@@ -1,4 +1,7 @@
 {
   "files": [],
-  "references": [{ "path": "./packages/kernel" }]
+  "references": [
+    { "path": "./packages/kernel" },
+    { "path": "./packages/observability" }
+  ]
 }
