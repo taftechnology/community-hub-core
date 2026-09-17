@@ -1,4 +1,5 @@
 import { check as checkEncryptedQuery } from "./encrypted-query/check.js";
+import { check as checkResidencyPayload } from "./residency-payload/check.js";
 import { check as checkSchemaRls } from "./schema-rls/check.js";
 import { check as checkWorkerConfig } from "./worker-config/check.js";
 
@@ -38,6 +39,19 @@ if (!encryptedResult.ok) {
   failed = true;
 } else if (encryptedResult.queryFileCount > 0) {
   console.log("encrypted-query: ok");
+}
+
+const residencyResult = checkResidencyPayload();
+if (residencyResult.notice) {
+  console.log(residencyResult.notice);
+}
+if (!residencyResult.ok) {
+  for (const v of residencyResult.violations) {
+    console.error(`${v.file} ${v.key}: ${v.message}`);
+  }
+  failed = true;
+} else if (residencyResult.payloadFileCount > 0) {
+  console.log("residency-payload: ok");
 }
 
 process.exit(failed ? 1 : 0);
