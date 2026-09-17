@@ -1,23 +1,8 @@
 import { healthPayload } from "@community-hub/kernel";
-import { createLogger } from "@community-hub/observability";
+import { createLogger, type Logger } from "@community-hub/observability";
 
-declare global {
-  // Vitest pool workers can redirect logs without crossing isolates.
-  var __gatewayTestLogWrite: ((line: string) => void) | undefined;
-}
-
-const logger = createLogger({
-  write(line) {
-    if (globalThis.__gatewayTestLogWrite) {
-      globalThis.__gatewayTestLogWrite(line);
-      return;
-    }
-    console.log(line);
-  },
-});
-
-export default {
-  async fetch(request: Request): Promise<Response> {
+export function createFetch(logger: Logger) {
+  return async function fetch(request: Request): Promise<Response> {
     const started = performance.now();
     const url = new URL(request.url);
     const method = request.method;
@@ -39,5 +24,9 @@ export default {
     });
 
     return response;
-  },
+  };
+}
+
+export default {
+  fetch: createFetch(createLogger()),
 };

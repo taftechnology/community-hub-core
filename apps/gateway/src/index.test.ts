@@ -1,28 +1,16 @@
 import { healthPayload } from "@community-hub/kernel";
+import { createLogger } from "@community-hub/observability";
 import {
   createExecutionContext,
   SELF,
   waitOnExecutionContext,
 } from "cloudflare:test";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import worker from "./index";
+import { describe, expect, it } from "vitest";
+import { createFetch } from "./index";
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
 describe("gateway", () => {
-  let logLines: string[];
-
-  beforeEach(() => {
-    logLines = [];
-    globalThis.__gatewayTestLogWrite = (line: string) => {
-      logLines.push(line);
-    };
-  });
-
-  afterEach(() => {
-    globalThis.__gatewayTestLogWrite = undefined;
-  });
-
   it("GET /health returns kernel healthPayload", async () => {
     const response = await SELF.fetch("https://gateway.test/health");
     expect(response.status).toBe(200);
@@ -39,6 +27,9 @@ describe("gateway", () => {
     const queryToken = "query-leak-token";
     const headerToken = "header-leak-token";
     const bodyToken = "body-leak-token";
+    const logLines: string[] = [];
+    const logger = createLogger({ write: (line) => logLines.push(line) });
+    const fetchHandler = createFetch(logger);
 
     const request = new IncomingRequest(
       `https://gateway.test/health?secret=${queryToken}`,
@@ -52,7 +43,7 @@ describe("gateway", () => {
       },
     );
     const ctx = createExecutionContext();
-    const response = await worker.fetch(request, {}, ctx);
+    const response = await fetchHandler(request, {}, ctx);
     await waitOnExecutionContext(ctx);
 
     expect(response.status).toBe(404);
