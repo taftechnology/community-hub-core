@@ -15,16 +15,16 @@ Applies to **every contributor: AI agents and humans**. If you are an agent, rea
 
 Everything else in this file is process. These are correctness. A change that breaks one of them is reverted, not discussed.
 
-1. **No personal data outside Australia.** Global Workers (`gateway`, `control-plane`), KV, D1 and feature flags hold IDs, slugs, counts and config — never names, emails, addresses, amounts or files (architecture §7.3).
+1. **No personal data outside Australia.** Global Workers (`gateway`, `control-plane`, `ops-console`), KV, D1 and feature flags hold IDs, slugs, counts and config — never names, emails, addresses, amounts or files. The ops console is a global UI: tenant reads proxy to `api-au` under a support grant; it must not decrypt, log or buffer those fields (architecture §7.3, §11.4).
 2. **`jobs` never handles personal data, including in a response.** `exec` does the whole unit of work and returns `{processed, failed, skipped}` plus IDs (§7.3 rule 2, §18).
-3. **Every `app`-schema table has `org_id`, RLS and `FORCE ROW LEVEL SECURITY`.** Tenant scope is set per transaction with `SET LOCAL`, never session-level (§6.3).
+3. **Every `app`-schema table has `org_id`, RLS and `FORCE ROW LEVEL SECURITY`.** Tenant scope is set per transaction with `SET LOCAL`, never session-level. Identity and platform schemas are region-scoped and have **no** `org_id` (§6.3).
 4. **A field that SQL must filter, sort or aggregate is not encrypted.** Use a blind index, a derived clear column, or reclassify (§12.2.1).
 5. **Minors' data is restricted by default.** When `is_minor` is true, that person's `confidential*` columns are held under the household key. Children never appear in public content, directories or data sources (§12.1, §12.3).
 6. **Durable Objects never hold personal data** — no Australian jurisdiction exists (§7.3 rule 7).
 7. **No personal data in URLs, logs, traces, analytics or AI calls.** Ever (§12.3, §17, §19.1).
 8. **No third-party analytics SDK or session replay on any surface** (D17).
 9. **Nothing touches production data outside production.** No prod dumps in dev, staging, tests, fixtures or an agent's context (§23.1).
-10. **Secrets never enter the repo, a prompt, a log or a commit.** If one leaks, stop and escalate immediately (§14).
+10. **Secrets never enter the repo, a prompt, a log or a commit.** If one leaks, stop and escalate immediately (this file, §14).
 
 CI enforces what it can. The rest is on the reviewer.
 
@@ -196,13 +196,14 @@ Architecture-specific rules that reviewers check on every diff. Most map to a CI
 **Tenancy and data**
 - Every new `app` table: `org_id`, `community_id` (unless organisation-level), RLS + FORCE RLS, classification on every column.
 - Queries go through `packages/db` helpers. No raw pool access, no session-level `SET`.
-- Identity-schema work uses the identity role and does not set `app.org_id`.
-- New encrypted column? Prove nothing filters, sorts or aggregates on it.
+- Identity- and platform-schema work uses those roles and does not set `app.org_id`. Those tables have no `org_id`.
+- New encrypted column? Prove nothing filters, sorts or aggregates on it. A minor's `confidential*` fields use the household key; their blind indexes are household-scoped, not community-wide.
 
 **Residency**
-- New Worker: `workers_dev = false`, regional hostname registered with Regional Services if it touches personal data.
+- New Worker: `workers_dev = false`, regional hostname registered with Regional Services if it touches personal data. A global Worker (including ops console) that would need personal data is the wrong Worker — proxy to `api-au` instead.
 - New queue/workflow/cron path: IDs in, status out, `exec` does the work.
-- New outbound call carrying personal data (provider, email, SMS, push): it originates from `exec`, not from a global Worker or a job.
+- New outbound call carrying personal data (Stripe, EmailProvider, SMS, push, other provider): it originates from `exec`, not from a global Worker or a job. Control-plane never calls Stripe; `customers.retrieve` returns email.
+- New inbound webhook whose payload may contain personal data: regional hostname (`webhooks-au`). Parse in-region; persist ids/status only before anything global sees it.
 
 **Modules**
 - Cross-module access only through `public/`; prefer events.
@@ -213,7 +214,7 @@ Architecture-specific rules that reviewers check on every diff. Most map to a CI
 **API and UI**
 - Contracts first: Zod in `packages/contracts`, OpenAPI regenerated, breaking change → `/v2` plus deprecation window.
 - No personal data in paths or query strings.
-- UI composes `packages/ui`; no second component library; WCAG 2.2 AA is a merge gate.
+- Web UI composes `packages/ui` (shadcn/ui). Mobile composes `packages/ui-native` (React Native Reusables) on the same tokens. No third catalogue; WCAG 2.2 AA is a merge gate (D16).
 - Entitlement-gated features hide or show an upgrade prompt — never render a control that only 403s.
 
 **Tests**
@@ -299,15 +300,15 @@ Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`, `build`, `ci`
 - module boundaries (dependency-cruiser)
 - manifest checks: entitlement/permission/event keys exist and are declared; plan catalogue keys resolve
 - traceability check: the branch name matches `<type>/<YYYY-MM-DD>-<slug>`; the PR body links a spec and a plan that exist, share that slug, and are marked `approved`; exactly one spec is referenced
-- schema checks: `app` tables have `org_id` + RLS + FORCE RLS; no module outside `core/identity` touches the identity schema; every column carries a classification
+- schema checks: `app` tables have `org_id` + RLS + FORCE RLS; no module outside `core/identity` touches the `identity` or `platform` schemas; every column carries a classification
 - encryption/queryability check: no encrypted column used in a `WHERE`, `ORDER BY`, `GROUP BY` or aggregate
 - secret scanning, dependency audit (fail on high/critical)
 
 **Stage 2 — Tests (every push)**
 - unit + module integration (`@cloudflare/vitest-pool-workers` + Postgres)
 - **tenant isolation**: every endpoint called with another organisation's and community's token must fail
-- **residency**: no personal data in queue payloads, workflow step results, KV writes or log output; `exec` routes return status shapes only
-- contract tests: mobile API, `PaymentProvider`, `JellycubeHost`
+- **residency**: no personal data in queue payloads, workflow step results, KV writes or log output; `exec` routes return status shapes only; control-plane has no Stripe client
+- contract tests: mobile API, `PaymentProvider`, `EmailProvider`, `JellycubeHost`
 - accessibility (axe) on changed surfaces
 
 **Stage 3 — Build and preview (every PR)**
@@ -331,9 +332,9 @@ Beyond "does it work":
 
 - [ ] Does the diff match the approved plan, or did scope creep in?
 - [ ] Tenancy: could any query return another organisation's row?
-- [ ] Residency: does any personal data reach a global Worker, queue, KV, log, or offshore service?
-- [ ] Children: any new path where a minor's data could become public, searchable, or reach a third party?
-- [ ] Money: are amounts integer minor units, idempotency keys present, ledger tenant-scoped?
+- [ ] Residency: does any personal data reach a global Worker (including ops console), queue, KV, log, or offshore service? Did a global Worker call Stripe or parse a billing/email payload?
+- [ ] Children: any new path where a minor's data could become public, searchable, or reach a third party? Are a minor's `confidential*` fields household-keyed, with household-scoped indexes only?
+- [ ] Money: are amounts integer minor units, idempotency keys present, ledger tenant-scoped? Stripe Billing traffic on `exec` / `webhooks-au` only?
 - [ ] Encryption: right classification, right key, and nothing encrypted that SQL must query?
 - [ ] Entitlements and permissions checked in API, UI **and** jobs?
 - [ ] Failure modes: what happens on provider timeout, replayed webhook, partial batch?
@@ -413,6 +414,7 @@ New work            → spec (brainstorming) → HUMAN APPROVES
 Never               → merge your own work · personal data outside AU · prod data anywhere else
                     → encrypted column in a WHERE/ORDER BY/aggregate · secrets in the repo
                     → a Durable Object holding personal data · analytics SDK on any surface
+                    → control-plane calling Stripe · ops console reading tenant rows itself
 
 Stuck twice         → stop and report
 Rule in the way     → say so in the PR, do not silently break it
