@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | **Approved** 2026-09-17 — baseline for implementation. Changes go through an ADR in `docs/adr/` ([AGENTS.md](AGENTS.md) §13) |
-| **Last updated** | 2026-09-17 (revision 14: Stripe entry points; ops console proxies tenant reads) |
+| **Last updated** | 2026-09-17 (revision 15: platform schema owned by `core/tenancy`) |
 | **Scope** | `community-hub-core` (the multi-tenant SaaS) and its contracts with the mobile apps, GivingJar and Jellycube |
 | **Launch region** | Australia (`au`). Canada, EU and US are designed for but not deployed |
 
@@ -232,21 +232,22 @@ create policy org_isolation on <table>
 ```
 
 - The application connects as a role **without** `BYPASSRLS`.
-- Organisation-scoped requests open a transaction and run `SET LOCAL app.org_id = …` and `SET LOCAL app.community_id = …`. Session-level `SET` is forbidden because Hyperdrive pools connections per transaction. **Identity-schema work uses the identity role and does not set `app.org_id`.**
+- Organisation-scoped requests open a transaction and run `SET LOCAL app.org_id = …` and `SET LOCAL app.community_id = …`. Session-level `SET` is forbidden because Hyperdrive pools connections per transaction. **Identity-schema work uses the identity role and does not set `app.org_id`. Platform-schema work uses the platform role and does not set `app.org_id`.**
 - `community_id` scoping is enforced by `packages/db` query helpers and verified by tests. It is a soft boundary because organisation-level staff may legitimately query across communities.
 
-**Not every table is organisation-scoped.** There are two categories, and each table declares which it is:
+**Not every table is organisation-scoped.** There are three categories, and each table declares which it is:
 
-| Category | Schema | Examples | Protection |
-|---|---|---|---|
-| **Organisation-scoped** | `app` | people, households, donations, events, volunteers, consents, audit events | `org_id` + RLS as above |
-| **Region-scoped platform** | `identity`, `platform` | users, credentials, sessions, OTP challenges, region routing | No `org_id`, because a user belongs to a **region** and may hold memberships in several organisations. Separate Postgres schema, separate database role, reachable only from `core/identity`; no module may query it directly |
+| Category | Schema | Owner | Examples | Protection |
+|---|---|---|---|---|
+| **Organisation-scoped** | `app` | the module that owns the table | people, households, donations, events, volunteers, consents, audit events | `org_id` + RLS as above |
+| **Region-scoped identity** | `identity` | `core/identity` | users, credentials, sessions, OTP challenges | No `org_id`. A user belongs to a **region** and may hold memberships in several organisations. Own Postgres schema and role; no other module may query it |
+| **Region-scoped platform** | `platform` | `core/tenancy` | region routing, organisation and community directory rows that are not tenant-RLS'd | No `org_id`. Own Postgres schema and role; no other module may query it |
 
 Identity rows are deliberately minimal — authentication identifiers, credentials and session metadata only. A person's name, contact details and any profile information live on the organisation-scoped `people` row. This keeps a shared user record from leaking the fact that someone is a member of another organisation.
 
 The domain **outbox** is organisation-scoped (`app` schema, `org_id` + RLS). It is not in the identity schema.
 
-CI fails if an `app`-schema table lacks `org_id`, RLS or `FORCE ROW LEVEL SECURITY`, and fails if any module outside `core/identity` references the `identity` schema.
+CI fails if an `app`-schema table lacks `org_id`, RLS or `FORCE ROW LEVEL SECURITY`; if any module outside `core/identity` references the `identity` schema; or if any module outside `core/tenancy` references the `platform` schema.
 
 ### 6.4 Moving a community
 
@@ -347,7 +348,7 @@ sequenceDiagram
   W-->>C: response
 ```
 
-This sequence is an organisation-scoped API request. Identity OTP does not set `app.org_id` ([§6.3](#63-isolation-in-the-database)).
+This sequence is an organisation-scoped API request. Identity OTP and platform-schema tenancy work do not set `app.org_id` ([§6.3](#63-isolation-in-the-database)).
 
 ### 7.5 Adding a region later
 

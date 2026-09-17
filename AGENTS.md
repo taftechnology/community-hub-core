@@ -90,6 +90,8 @@ A **chunk** is one shippable slice of behaviour. **One spec = one plan = one bra
 
 **Do not split** so far that a PR cannot be tested end to end. "Add a column" is not a chunk.
 
+**Work that has no spec.** A dependency bump, flaky-test quarantine, CI fix or similar chore is not a chunk: branch `chore/<YYYY-MM-DD>-<slug>` (or `fix/…`), and the PR body opens with `No spec:` plus why. The traceability check skips spec and plan for those branches. If the change would alter user-visible behaviour, add a table, or touch §1, it is a chunk — write the spec.
+
 ---
 
 ## 4. The lifecycle
@@ -181,9 +183,9 @@ Use superpowers **`finishing-a-development-branch`**. Open the PR with the templ
 
 ## 5. Working environment
 
-- **Branch per spec**, named `<type>/<spec-date>-<slug>` — `feat/`, `fix/`, `chore/`, `docs/`. No branch is opened before its spec is approved; a branch with no spec has nothing authorising it.
+- **Branch per spec**, named `<type>/<spec-date>-<slug>` — `feat/`, `fix/`, `chore/`, `docs/`. No chunk branch is opened before its spec is approved. The no-spec lane in §3 is the exception; its date is today, not a spec date.
 - Use superpowers **`using-git-worktrees`** so parallel chunks never share a working tree.
-- Never commit directly to `main`. Never force-push a shared branch.
+- Never commit directly to `main`. Never force-push a shared branch. **Carve-out:** docs-only edits to root documents (`architecture.md`, `AGENTS.md`) may land on `main` at the human owner's instruction. Anything that changes runtime behaviour still uses a branch.
 - Rebase on `main` before opening the PR; keep history linear.
 - Parallel implementers are allowed (**`dispatching-parallel-agents`**) only when tasks touch disjoint files. Two agents in one module at once is a merge conflict factory.
 
@@ -196,7 +198,7 @@ Architecture-specific rules that reviewers check on every diff. Most map to a CI
 **Tenancy and data**
 - Every new `app` table: `org_id`, `community_id` (unless organisation-level), RLS + FORCE RLS, classification on every column.
 - Queries go through `packages/db` helpers. No raw pool access, no session-level `SET`.
-- Identity- and platform-schema work uses those roles and does not set `app.org_id`. Those tables have no `org_id`.
+- Identity-schema work is `core/identity` only (identity role). Platform-schema work is `core/tenancy` only (platform role). Neither sets `app.org_id`; those tables have no `org_id`.
 - New encrypted column? Prove nothing filters, sorts or aggregates on it. A minor's `confidential*` fields use the household key; their blind indexes are household-scoped, not community-wide.
 
 **Residency**
@@ -273,10 +275,10 @@ Refs: docs/plans/2026-09-19-giving-checkout.md task 3
 
 Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`, `build`, `ci`. Scope is the module or package.
 
-**One PR implements exactly one spec.** If work grows past its spec, stop: either narrow the PR, or write a second spec and open a second branch.
+**One PR implements exactly one spec**, except the no-spec lane in §3. If chunk work grows past its spec, stop: either narrow the PR, or write a second spec and open a second branch.
 
 **PR description** states:
-- `Spec: docs/specs/<spec-date>-<slug>.md` and `Plan: docs/plans/<plan-date>-<slug>.md` (both required, both must be `approved`)
+- `Spec: docs/specs/<spec-date>-<slug>.md` and `Plan: docs/plans/<plan-date>-<slug>.md` (both required, both must be `approved`) — or, for the no-spec lane, `No spec:` and why
 - What changed, in behaviour terms
 - Data classification changes and migration wave
 - Which of §1 the chunk could plausibly have broken, and how it doesn't
@@ -299,8 +301,8 @@ Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`, `build`, `ci`
 - format, lint, typecheck
 - module boundaries (dependency-cruiser)
 - manifest checks: entitlement/permission/event keys exist and are declared; plan catalogue keys resolve
-- traceability check: the branch name matches `<type>/<YYYY-MM-DD>-<slug>`; the PR body links a spec and a plan that exist, share that slug, and are marked `approved`; exactly one spec is referenced
-- schema checks: `app` tables have `org_id` + RLS + FORCE RLS; no module outside `core/identity` touches the `identity` or `platform` schemas; every column carries a classification
+- traceability check: the branch name matches `<type>/<YYYY-MM-DD>-<slug>`. If the type is `chore/` or `fix/` and the PR body has `No spec:`, skip spec and plan. Otherwise the PR body links a spec and a plan that exist, share that slug, and are marked `approved`; exactly one spec is referenced.
+- schema checks: `app` tables have `org_id` + RLS + FORCE RLS; only `core/identity` touches the `identity` schema; only `core/tenancy` touches the `platform` schema; every column carries a classification
 - encryption/queryability check: no encrypted column used in a `WHERE`, `ORDER BY`, `GROUP BY` or aggregate
 - secret scanning, dependency audit (fail on high/critical)
 
@@ -403,6 +405,7 @@ If a rule in this file is slowing work without preventing a real failure, propos
 Naming              docs/specs/YYYY-MM-DD-<slug>.md   (date created)
                     docs/plans/YYYY-MM-DD-<slug>.md   (date created, same slug)
                     branch  <type>/<spec-date>-<slug> → one PR, one spec
+                    chore/<today>-<slug> + No spec:  → bump, quarantine, CI fix
 
 New work            → spec (brainstorming) → HUMAN APPROVES
                     → plan (writing-plans) → HUMAN APPROVES
@@ -410,6 +413,7 @@ New work            → spec (brainstorming) → HUMAN APPROVES
                     → each task reviewed by the reviewer agent
                       (single-agent tool: the HUMAN reviews each task diff)
                     → PR (finishing-a-development-branch) → HUMAN MERGES
+Root docs           → architecture.md / AGENTS.md, docs-only, may land on main
 
 Never               → merge your own work · personal data outside AU · prod data anywhere else
                     → encrypted column in a WHERE/ORDER BY/aggregate · secrets in the repo
