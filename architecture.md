@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | Draft v1 — agreed direction, not yet implemented |
-| **Last updated** | 2026-09-17 (revision 13: Stripe Billing outbound in-region; minor index trade-off) |
+| **Last updated** | 2026-09-17 (revision 14: Stripe entry points; ops console proxies tenant reads) |
 | **Scope** | `community-hub-core` (the multi-tenant SaaS) and its contracts with the mobile apps, GivingJar and Jellycube |
 | **Launch region** | Australia (`au`). Canada, EU and US are designed for but not deployed |
 
@@ -163,6 +163,7 @@ flowchart LR
   M --> AR --> API
   A --> API
   S --> CP
+  S -->|support grant, tenant reads| API
   V --> JC -->|data sources, forms| API
   API --> PG
   API --> KMS
@@ -302,7 +303,7 @@ A community can leave an organisation (a parish changing diocese, a club leaving
 | Third-party add-on code | Workers for Platforms | See [§16](#16-third-party-apps-and-integrations) |
 | Transactional email | `EmailProvider` port (adapter TBD) | Composed and sent from `exec-au`. Tenant sending domains with SPF/DKIM/DMARC. Provider must keep personal-data mail in-region, or be listed as an APP 8 subprocessor with a minimal payload (see Q9) |
 | SMS | Twilio (Australian sender IDs) | Behind `SmsProvider` port |
-| Staff access to ops tools | Cloudflare Access | Hardware-key MFA for platform operators |
+| Staff access to ops tools | Cloudflare Access | Hardware-key MFA. The ops console is a **global UI**. It must not read tenant records itself; those requests go to `api-au` under a support grant ([§11.4](#114-platform-support-access)) |
 
 ### 7.3 Residency rules specific to Cloudflare
 
@@ -385,7 +386,7 @@ community-hub/
 │   ├── webhooks/             # regional: GivingJar, Stripe Billing and add-on inbound webhooks
 │   ├── admin/                # tenant admin web (React Router v7)
 │   ├── portal/               # member portal (React Router v7), served on {slug}.communityhub.one
-│   ├── ops-console/          # SaaS operators (behind Cloudflare Access)
+│   ├── ops-console/          # SaaS operators; global UI behind Cloudflare Access; tenant reads via api-au
 │   └── mobile/               # Expo app; one codebase, many store apps via APP_KEY
 │
 ├── modules/
@@ -527,7 +528,7 @@ This is the **UI architecture**: which apps exist, what they share, and which do
 |---|---|---|---|
 | Tenant admin | `apps/admin` (React Router v7, regional hostname) | Community and organisation staff | `packages/ui` |
 | Member portal | `apps/portal` on `{slug}.communityhub.one` (with `api-au`) | Members and guardians | `packages/ui`; member-scoped chrome, not the staff shell |
-| Ops console | `apps/ops-console` (Cloudflare Access) | SaaS operators | `packages/ui`; ops chrome. Tenant data stays hidden until support access is granted ([§11](#11-identity-and-access)) |
+| Ops console | `apps/ops-console` (global UI, Cloudflare Access). Directory, plans, usage aggregates and Stripe **ids** go to control-plane. **Tenant record reads proxy through `api-au` under a support grant** ([§11.4](#114-platform-support-access)) | SaaS operators | `packages/ui`; ops chrome. Tenant data stays hidden until support access is granted |
 | Mobile | `apps/mobile` (Expo, many store apps) | Members and guests | `packages/ui` tokens plus native primitives. Theming per `APP_KEY`, not a fork of screens ([§13](#13-mobile-apps-and-the-app-registry)) |
 | Public site | Jellycube + `packages/website-widgets` | Visitors | Jellycube theme. Host tokens from core. Write islands in `packages/web-components` ([§15.5](#155-host-widget-pack)) |
 
@@ -719,6 +720,8 @@ Support staff cannot see tenant data by default. Access requires:
 2. Approval from a community or organisation admin inside the product.
 3. A time-boxed grant (default 4 hours, scoped to named modules).
 4. Every read is audited and visible to the tenant in their audit log.
+
+The ops console is a **global UI** (Cloudflare Access, no Regional Services guarantee). Directory, plans, App Registry, usage aggregates and Stripe ids are served from control-plane and contain no personal data. **An approved support read is proxied to `api-au`.** The global Worker must not decrypt, log or buffer tenant fields; it forwards the request under the grant and returns the regional response. That is the same split as Stripe Billing: personal data is processed only on a regional hostname.
 
 A break-glass procedure exists for security incidents, requires two platform security staff, and notifies the tenant after the fact.
 
@@ -941,9 +944,12 @@ POST webhooks.au.communityhub.one/billing/stripe
   → extract customerId, subscriptionId, status (drop email, name and address)
   → forward those ids to control-plane to recompute entitlements
 
-create / update Customer, Checkout, Billing Portal (from admin or ops)
-  → api-au decrypts billing contact in-region
-  → exec-au calls Stripe (request and response may contain email/name)
+create / update Customer, Checkout, Billing Portal
+  (whether initiated by an admin on api-au or by control-plane through jobs-au)
+  → exec-au is the Stripe client. The control-plane path sends ids only;
+    exec-au loads the billing contact from the regional database.
+    The admin/ops path decrypts the contact on api-au and calls exec-au.
+  → request and response may contain email/name; exec strips them
   → returns { customerId, subscriptionId, status, url } to control-plane
 ```
 
