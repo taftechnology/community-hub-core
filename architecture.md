@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft v1 — agreed direction, not yet implemented |
+| **Status** | **Approved** 2026-09-17 — baseline for implementation. Changes go through an ADR in `docs/adr/` ([AGENTS.md](AGENTS.md) §13) |
 | **Last updated** | 2026-09-17 (revision 14: Stripe entry points; ops console proxies tenant reads) |
 | **Scope** | `community-hub-core` (the multi-tenant SaaS) and its contracts with the mobile apps, GivingJar and Jellycube |
 | **Launch region** | Australia (`au`). Canada, EU and US are designed for but not deployed |
