@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | Draft v1 — agreed direction, not yet implemented |
-| **Last updated** | 2026-09-17 (revision 10: consistency pass — ports, usage vs Cloudflare products, keys vs tax records) |
+| **Last updated** | 2026-09-17 (revision 12: webhook diagram, identity SET LOCAL, auth hostnames, minor blind indexes) |
 | **Scope** | `community-hub-core` (the multi-tenant SaaS) and its contracts with the mobile apps, GivingJar and Jellycube |
 | **Launch region** | Australia (`au`). Canada, EU and US are designed for but not deployed |
 
@@ -91,7 +91,7 @@ Community Hub is an enterprise-grade, multi-tenant SaaS for communities — chur
 These are rules, not aspirations. Each is enforced by review, lint rules or tests.
 
 1. **Modular monolith first.** One codebase, strict module boundaries, deployed as a small number of Workers. Extract a service only when there is a measured reason.
-2. **Tenant isolation is enforced by the database**, not just by application code. Every tenant-owned row carries `org_id`; Postgres row-level security (RLS) rejects cross-organisation access.
+2. **Tenant isolation is enforced by the database**, not just by application code. Organisation-scoped (`app`) tables carry `org_id`; Postgres row-level security (RLS) rejects cross-organisation access. Identity and platform tables are region-scoped and have no `org_id` ([§6.3](#63-isolation-in-the-database)).
 3. **Data stays in its region.** Personal data is stored and processed only in the tenant's region. Global components hold no personal data.
 4. **Privacy by default.** The most protective setting is the default, particularly for children. Features opt into data access; they never opt out of protection.
 5. **Entitlements are separate from feature flags.** "What a customer paid for" and "what code is rolled out" are different systems.
@@ -147,6 +147,7 @@ flowchart LR
   subgraph AU["AU cell (Regional Services = Australia)"]
     API[api-au Worker]
     JOBS[jobs-au / exec-au]
+    WH[webhooks-au]
     RT[realtime-au<br/>DOs, non-personal]
     PG[(Postgres<br/>AWS Sydney)]
     KMS[(AWS KMS<br/>Sydney)]
@@ -169,7 +170,10 @@ flowchart LR
   API --> RT
   API --> JOBS
   API -->|PaymentProvider| GJ
-  GJ -->|webhooks| API
+  GJ -->|webhooks| WH
+  STRIPE -->|billing webhook| WH
+  WH --> JOBS
+  WH -->|ids/status only| CP
   CP --> STRIPE
   JOBS -->|via exec-au| PUSH
   JOBS -->|via exec-au| EMAIL
@@ -210,7 +214,7 @@ The admin UI hides the organisation layer while `kind = 'implicit'`. Adding a se
 
 ### 6.3 Isolation in the database
 
-Every tenant-owned table:
+Every organisation-scoped (`app`) table:
 
 ```sql
 org_id        uuid not null,
@@ -226,7 +230,7 @@ create policy org_isolation on <table>
 ```
 
 - The application connects as a role **without** `BYPASSRLS`.
-- Every request opens a transaction and runs `SET LOCAL app.org_id = …` and `SET LOCAL app.community_id = …`. Session-level `SET` is forbidden because Hyperdrive pools connections per transaction.
+- Organisation-scoped requests open a transaction and run `SET LOCAL app.org_id = …` and `SET LOCAL app.community_id = …`. Session-level `SET` is forbidden because Hyperdrive pools connections per transaction. **Identity-schema work uses the identity role and does not set `app.org_id`.**
 - `community_id` scoping is enforced by `packages/db` query helpers and verified by tests. It is a soft boundary because organisation-level staff may legitimately query across communities.
 
 **Not every table is organisation-scoped.** There are two categories, and each table declares which it is:
@@ -244,7 +248,7 @@ CI fails if an `app`-schema table lacks `org_id`, RLS or `FORCE ROW LEVEL SECURI
 
 ### 6.4 Moving a community
 
-A community can leave an organisation (a parish changing diocese, a club leaving a league). The move tool re-wraps the community key under the destination organisation key and rewrites `org_id` for that community's rows in one transaction, with a full audit record. Because data is encrypted with community-scoped keys, no re-encryption of field data is required.
+A community can leave an organisation (a parish changing diocese, a club leaving a league). The move tool re-wraps the community key under the destination organisation key and rewrites `org_id` for that community's rows in one transaction, with a full audit record. Household keys stay wrapped by the community key, so no re-encryption of field data is required.
 
 ---
 
@@ -259,7 +263,7 @@ A community can leave an organisation (a parish changing diocese, a club leaving
 │ D1 (control plane)    ids, slugs, region, plan, listing status, Stripe customer id               │
 │ KV                    hostname → {orgId, communityId, region}; entitlement snapshots; app config │
 │ Feature flags         vendor TBD (Q12); targeting org / community / plan / region only           │
-│ Stripe Billing        platform subscriptions (webhooks → control plane; persist ids/status only) │
+│ Stripe Billing        platform subscriptions (webhook → webhooks-au; CP gets ids/status only)    │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────── AU CELL — Regional Services = Australia on every regional hostname ──────────────┐
@@ -270,7 +274,7 @@ A community can leave an organisation (a parish changing diocese, a club leaving
 │                              ├─ Queue → jobs-au     consumers, Workflows, Cron (IDs only)          │
 │                              └─ fetch → exec-au     internal regional hostname for personal data   │
 │ auth.au.communityhub.one     → api-au       identity / OIDC issuer                                │
-│ webhooks.au.communityhub.one → webhooks-au  GivingJar and add-on inbound webhooks                 │
+│ webhooks.au.communityhub.one → webhooks-au  GivingJar, Stripe Billing and add-on inbound webhooks │
 │ {slug}.communityhub.one      → api-au       member portal + legacy mobile compatibility routes    │
 │                                                                                                   │
 │ Hyperdrive (query caching OFF) → Workers VPC → Cloudflare Tunnel → PostgreSQL, AWS ap-southeast-2 │
@@ -341,6 +345,8 @@ sequenceDiagram
   W-->>C: response
 ```
 
+This sequence is an organisation-scoped API request. Identity OTP does not set `app.org_id` ([§6.3](#63-isolation-in-the-database)).
+
 ### 7.5 Adding a region later
 
 1. Provision `infra/regions/<region>/` (Postgres, KMS, S3, Tunnel connectors).
@@ -370,12 +376,12 @@ pnpm workspaces + Turborepo.
 community-hub/
 ├── apps/
 │   ├── gateway/              # global: login discovery, redirects, legacy hostname routing
-│   ├── control-plane/        # global: orgs/communities directory, plans, add-ons, App Registry, Stripe Billing
+│   ├── control-plane/        # global: orgs/communities directory, plans, add-ons, App Registry, Stripe Billing facts
 │   ├── api/                  # regional: HTTP API, loads modules/*; compatibility router for legacy mobile routes
 │   ├── jobs/                 # regional: queue consumers, Workflows, Cron
 │   ├── exec/                 # regional: internal hostname for personal-data work started by jobs
 │   ├── realtime/             # regional: Durable Objects — non-personal coordination only, unused at launch (§7.6)
-│   ├── webhooks/             # regional: payment provider and add-on inbound webhooks
+│   ├── webhooks/             # regional: GivingJar, Stripe Billing and add-on inbound webhooks
 │   ├── admin/                # tenant admin web (React Router v7)
 │   ├── portal/               # member portal (React Router v7), served on {slug}.communityhub.one
 │   ├── ops-console/          # SaaS operators (behind Cloudflare Access)
@@ -462,7 +468,7 @@ modules/features/giving/
 ├── public/                   # the only surface other modules may import
 ├── events/                   # published event schemas (versioned)
 ├── db/
-│   ├── schema.ts             # Drizzle tables — every table has org_id and classifications
+│   ├── schema.ts             # Drizzle tables — app-schema tables have org_id and classifications
 │   └── migrations/
 └── tests/
 ```
@@ -663,13 +669,15 @@ Checks run in API middleware, in the admin UI (hide or show an upgrade prompt), 
 ### 10.4 Propagation
 
 ```
-Stripe Billing webhook → control-plane → recompute entitlements (D1)
+Stripe Billing webhook → webhooks-au (parse in-region; drop emails and names)
+  → control-plane { customerId, subscriptionId, status }
+  → recompute entitlements (D1)
   → Queue → write KV snapshot  ent:{orgId}            (orgs, allocations, limits)
           → publish tenancy.entitlements.changed.v1  (regional jobs react, e.g. provision add-on)
 ```
 
 - KV is eventually consistent; changes may take up to about a minute to be visible everywhere. That is acceptable for upgrades and downgrades.
-- **Hard usage limits** (SMS credits, member caps) are counted in a per-organisation Durable Object so they are exact. The object stores **counters only** — not names, emails or member lists — which is why a Durable Object is allowed here despite [§7.6](#76-real-time-without-durable-objects).
+- **Hard usage limits** (SMS credits, member caps) are counted in a per-organisation Durable Object so they are exact. The object stores **counters only** — not names, emails or member lists — which is why a Durable Object is allowed here despite [§7.3](#73-residency-rules-specific-to-cloudflare) rule 7.
 - **Downgrades hide, never delete.** Data of a disabled module remains until retention or an erasure request removes it.
 
 ---
@@ -679,6 +687,7 @@ Stripe Billing webhook → control-plane → recompute entitlements (D1)
 ### 11.1 Identity
 
 - Users are stored in the **regional** database, in the `identity` schema, which is region-scoped rather than organisation-scoped ([§6.3](#63-isolation-in-the-database)). A user belongs to a region and may hold memberships in several communities and organisations within it. Identity rows hold authentication data only; profile data lives on the organisation-scoped `people` row.
+- **`identity.users.email` is `confidential-blind`.** The display value is encrypted. OTP start looks up a region-scoped blind index (HMAC of the normalised address with the region's identity key), never a clear-text column and never on a global Worker. Identity HTTP is regional: OIDC on `auth.au.communityhub.one`, mobile OTP on `{api}/v1/auth/...`. Both hostnames are `api-au` under Regional Services = Australia ([§12.2.1](#1221-encryption-versus-queryability)).
 - **Sign-in methods:** email one-time code, passkeys; staff can be required to use passkeys or TOTP. Enterprise organisations can connect SAML/OIDC SSO and SCIM (later phase).
 - **Sessions:** short-lived access tokens + rotating refresh tokens. Mobile stores them in `expo-secure-store`.
 - **Core is an OIDC provider** for Jellycube and approved add-ons, issued from the regional hostname `auth.au.communityhub.one`, which is registered with Regional Services = Australia. There is **one issuer per region**; relying parties discover the issuer from the community they are bound to. Tokens carry `org`, `community` and role claims scoped to the relying party.
@@ -734,13 +743,13 @@ Every column and file has a class, declared in the module schema.
 ```
 AWS KMS (Sydney)  ── wraps ──►  Organisation key
                                    └─ wraps ──►  Community key
-                                                    ├─ wraps ──► Household key   (restricted person data)
-                                                    └─ encrypts  confidential fields, blind-index keys
+                                                    ├─ wraps ──► Household key   (restricted person data, and a minor's confidential* columns)
+                                                    └─ encrypts  adult confidential fields, blind-index keys
 ```
 
 - **Application-layer encryption** with WebCrypto AES-256-GCM in the Worker before data reaches Postgres. Database operators, Hyperdrive and backups see ciphertext.
 - **Unwrapped keys** are held in isolate memory for a short time only; never written to KV, Durable Object storage, logs or queues.
-- **Search** uses HMAC-SHA-256 blind indexes with community-scoped keys (e.g. normalised surname prefix).
+- **Search** uses HMAC-SHA-256 blind indexes. Adult `people.*` indexes are community-scoped. `identity.users.email` uses the region's identity key. A minor's `confidential-blind` indexes use the household key, so they die with household-key destruction.
 - **Deletion by key destruction:** erasing a household destroys its household key, making restricted copies (including backups and restricted files) unreadable. **The payment ledger is not encrypted with the household key.** DGR and tax-retention rows stay readable; the donor person link may become unlinkable.
 - **Transport:** TLS 1.3 at the edge; TLS with certificate verification between Tunnel and Postgres; storage encrypted at rest (RDS and S3 with KMS).
 - **Key rotation:** KMS keys rotate annually; organisation and community keys can be rotated online by re-wrapping.
@@ -756,11 +765,12 @@ Application-layer encryption means the database sees ciphertext, so `SUM`, `GROU
 | `donations.amount_minor` | `confidential-queryable` (clear) | Finance dashboards aggregate it. The sensitive fact is the donor-to-amount link, not the number |
 | `donations.donor_person_id` | `confidential-blind` | Pseudonymous reference plus blind index, so "donations by this person" still works |
 | `donations.donor_note` | `confidential` (encrypted) | Free text, never queried |
-| `persons.date_of_birth` | `restricted` (encrypted) | Never queried directly |
-| `persons.is_minor`, `persons.age_band`, `persons.birthday_md` | `confidential-queryable` (clear) | **Exception:** these are derived flags so youth rosters and age-gates work in SQL. The child's name, date of birth and other identity fields stay `restricted` |
+| `people.date_of_birth` | `restricted` (encrypted) | Never queried directly |
+| `people.is_minor`, `people.age_band`, `people.birthday_md` | `confidential-queryable` (clear) | **Exception:** these are derived flags so youth rosters and age-gates work in SQL. The child's name, date of birth and other identity fields stay `restricted` |
 | `volunteers.wwcc_number`, `blue_card_number` | `restricted` (encrypted) | Government identifiers, looked up by equality at most |
 | `volunteers.wwcc_expiry` | `confidential-queryable` (clear) | Expiry reports sort and range-filter on it |
-| `people.email`, `people.phone` | `confidential-blind` | Blind index for lookup and duplicate detection; display value encrypted |
+| `people.email`, `people.phone` | `confidential-blind` | Blind index for lookup and duplicate detection; display value encrypted. **If `is_minor` is true, these columns (and any other `confidential` / `confidential-blind` field on that person) are encrypted with the household key**, not the community confidential key. A guardian's phone is stored on the guardian's person row, not copied onto the child |
+| `identity.users.email` | `confidential-blind` | OTP and account lookup need equality match. Region-scoped blind index; ciphertext stored; processed only on `auth.{region}` ([§11.1](#111-identity)) |
 
 **Reporting reads rollups, not the ledger.** `reporting` maintains incrementally updated aggregates (per campaign, per fund, per day, per community), updated by the event subscriber that records a payment. Dashboards never scan `donations`, which is also the right decision for performance and cost.
 
@@ -776,7 +786,7 @@ These are invariants. A feature that violates one is not shipped.
 6. **Check-in and check-out** use pickup codes matched between the child's label and the guardian's; authorised pickup lists are enforced; every event is audited.
 7. **Volunteer eligibility.** Roles working with children require a current, verified WWCC (or state equivalent such as Blue Card). Expiry blocks rostering and notifies the coordinator.
 8. **No tracking.** No third-party analytics SDKs, advertising identifiers or session replay on any surface (D17). First-party usage beacons are off on screens that show children's data ([§19.3](#193-product-usage-intelligence)).
-9. **Minimum data.** Forms targeting children collect only fields justified by purpose; free-text medical notes are restricted.
+9. **Minimum data.** Forms targeting children collect only fields justified by purpose; free-text medical notes are restricted. Guardian contact details live on the guardian. When `is_minor` is true, that person's `confidential` and `confidential-blind` columns are held under the household key ([§12.2.1](#1221-encryption-versus-queryability)).
 10. **Push text is generic** when it concerns a child ("You have a new update from St Mary's"), because the push provider is outside Australia.
 
 ### 12.4 Retention and privacy requests
@@ -882,7 +892,7 @@ During migration the App Registry returns `site_url = https://{slug}.communityhu
 
 | Flow | Payer → payee | System |
 |---|---|---|
-| Platform subscription | Organisation → Community Hub | Stripe Billing, owned by `control-plane`. Webhooks may contain emails in Stripe's payload; **persist customer id, subscription id and status only** — never copy personal fields into D1 or KV |
+| Platform subscription | Organisation → Community Hub | Stripe Billing, owned by `control-plane`. **The webhook hostname is regional** (`webhooks.au.communityhub.one/billing/stripe`): the Worker that parses Stripe's payload (which may include a billing email) runs under Regional Services = Australia, then forwards `{ customerId, subscriptionId, status }` to control-plane. Control-plane never sees the email |
 | Community payments (donations, memberships, tickets, orders) | Member → community | `PaymentProvider` port, GivingJar adapter |
 
 ### 14.2 Port
@@ -924,6 +934,11 @@ POST webhooks.au.communityhub.one/payments/givingjar
   → Queue message { orgId, communityId, paymentEventId }
   → jobs-au → exec-au: load ledger row scoped to org/community, apply state transition,
     publish giving.donation.succeeded.v1
+
+POST webhooks.au.communityhub.one/billing/stripe
+  → verify Stripe signature in-region
+  → extract customerId, subscriptionId, status (drop email, name and address)
+  → forward those ids to control-plane to recompute entitlements
 ```
 
 ### 14.5 Rules
@@ -1392,7 +1407,7 @@ A client is not scheduled until every public write they actually use (forms, don
 
 ## 28. Appendix: verified platform facts
 
-Checked against Cloudflare documentation on 2026-09-16. Re-verify before relying on them; the platform changes frequently.
+Checked against Cloudflare documentation on **2026-09-16**, except rows marked *reported, not verified from public docs*. Re-verify before relying on them; the platform changes frequently.
 
 | Fact | Source |
 |---|---|
@@ -1400,7 +1415,7 @@ Checked against Cloudflare documentation on 2026-09-16. Re-verify before relying
 | D1 (Workers Paid): 10 GB per database, 50,000 databases per account (raisable) | developers.cloudflare.com/d1/platform/limits/ |
 | Durable Objects jurisdictions: `eu`, `us`, `fedramp`; location hints (including `oc`) are best effort | developers.cloudflare.com/durable-objects/reference/data-location/ |
 | R2 jurisdictions: `eu`, `us`, `fedramp`; location hints (including `oc`) are best effort | developers.cloudflare.com/r2/reference/data-location/ |
-| Workers KV: jurisdictions `eu`, `us`, `fedramp` in private beta — **still no Australian option**. KV holds no personal data either way | Cloudflare private beta, reported 2026-09-17 |
+| Workers KV: jurisdictions `eu`, `us`, `fedramp` in private beta — **still no Australian option**. KV holds no personal data either way | *Reported, not verified from public docs* — Cloudflare private beta, 2026-09-17 |
 | Durable Objects discard in-memory state on hibernation; anything that must survive goes to Durable Object storage or a WebSocket attachment (max 16 KiB), persisted wherever the object lives | developers.cloudflare.com/durable-objects/concepts/durable-object-lifecycle/ |
 | Regional Services managed regions include Australia and Canada; Customer Metadata Boundary supports only EU and US | developers.cloudflare.com/data-localization/region-support/ |
 | Regional Services regionalises Worker execution for custom domains only; not `workers.dev`, Queues, Cron Triggers or outbound subrequests; code and secrets are deployed globally | developers.cloudflare.com/data-localization/how-to/workers/ |
