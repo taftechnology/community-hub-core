@@ -2,12 +2,12 @@
 
 Applies to **every contributor: AI agents and humans**. If you are an agent, read this file before your first action in a session.
 
-|                        |                                                                                                                                          |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **Companion document** | [`architecture.md`](architecture.md) — what we are building and why. This file is _how_ we build it.                                     |
-| **Precedence**         | `architecture.md` decisions (D1…) > this file > personal preference. If you must break a rule here, say so in the PR and why.            |
-| **Repository state**   | Bootstrap. Only `architecture.md` and this file exist. Phase 0 of the roadmap creates the monorepo and the commands referenced below.    |
-| **Tooling**            | [Superpowers](https://github.com/obra/superpowers) is required for agent sessions: `/plugin install superpowers@claude-plugins-official` |
+|                        |                                                                                                                                                                          |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Companion document** | [`architecture.md`](architecture.md) — what we are building and why. This file is _how_ we build it.                                                                     |
+| **Precedence**         | `architecture.md` decisions (D1…) > this file > personal preference. If you must break a rule here, say so in the PR and why.                                            |
+| **Repository state**   | Phase 0 skeleton on this branch: pnpm workspace, `apps/gateway`, `packages/kernel`, `packages/observability`, `tooling/checks`, CI Stages 1–3. The commands in §8 exist. |
+| **Tooling**            | [Superpowers](https://github.com/obra/superpowers) is required for agent sessions: `/plugin install superpowers@claude-plugins-official`                                 |
 
 ---
 
@@ -214,7 +214,7 @@ Architecture-specific rules that reviewers check on every diff. Most map to a CI
 
 **Residency**
 
-- New Worker: `workers_dev = false`, regional hostname registered with Regional Services if it touches personal data. A global Worker (including ops console) that would need personal data is the wrong Worker — proxy to `api-au` instead.
+- New Worker: `workers_dev = false`; `preview_urls` must be set explicitly (never rely on Wrangler's default). `preview_urls = true` only when `worker.meta.json` declares `"class": "global-no-pii"`; otherwise `preview_urls = false`. Omit neither field; `worker.meta.json` with a valid class is required. Regional hostname registered with Regional Services if it touches personal data. A global Worker (including ops console) that would need personal data is the wrong Worker — proxy to `api-au` instead.
 - New queue/workflow/cron path: IDs in, status out, `exec` does the work.
 - New outbound call carrying personal data (Stripe, EmailProvider, SMS, push, other provider): it originates from `exec`, not from a global Worker or a job. Control-plane never calls Stripe; `customers.retrieve` returns email.
 - New inbound webhook whose payload may contain personal data: regional hostname (`webhooks-au`). Parse in-region; persist ids/status only before anything global sees it.
@@ -317,26 +317,22 @@ Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`, `build`, `ci`
 **Stage 1 — Static (fast, every push)**
 
 - format, lint, typecheck
-- module boundaries (dependency-cruiser)
-- manifest checks: entitlement/permission/event keys exist and are declared; plan catalogue keys resolve
-- traceability check: the branch name matches `<type>/<YYYY-MM-DD>-<slug>`. If the type is `chore/` or `fix/` and the PR body has `No spec:`, skip spec and plan. Otherwise the PR body links a spec and a plan that exist, share that slug, and are marked `approved`; exactly one spec is referenced.
-- schema checks: `app` tables have `org_id` + RLS + FORCE RLS; only `core/identity` touches the `identity` schema; only `core/tenancy` touches the `platform` schema; every column carries a classification
-- encryption/queryability check: no encrypted column used in a `WHERE`, `ORDER BY`, `GROUP BY` or aggregate
+- `check:boundaries` — worker-config, schema-rls, encrypted-query, residency-payload (each checker has must-fail fixtures exercised in Stage 2)
 - secret scanning, dependency audit (fail on high/critical)
+- traceability (pull requests only): branch matches `<type>/<YYYY-MM-DD>-<slug>`; PR body links one spec and one plan with the same slug, both `approved`, or `No spec:` on `chore/` / `fix/` branches
+
+A CI check is added only when it has a real input **and** a must-fail fixture — never stubbed always-green. Omitted until then: dependency-cruiser module boundaries, manifest and plan-catalogue checks, identity/platform schema ownership scans beyond the provisional schema-rls checker, OpenAPI diff, Terraform plan.
 
 **Stage 2 — Tests (every push)**
 
-- unit + module integration (`@cloudflare/vitest-pool-workers` + Postgres)
-- **tenant isolation**: every endpoint called with another organisation's and community's token must fail
-- **residency**: no personal data in queue payloads, workflow step results, KV writes or log output; `exec` routes return status shapes only; control-plane has no Stripe client
-- contract tests: mobile API, `PaymentProvider`, `EmailProvider`, `JellycubeHost`
-- accessibility (axe) on changed surfaces
+- `pnpm test` — unit tests for `packages/kernel` and `packages/observability`; `@cloudflare/vitest-pool-workers` for `apps/gateway`; checker self-tests (must-fail fixtures must still fail)
+
+Omitted until first real input plus a must-fail fixture: tenant-isolation suite, residency integration suite, contract tests, accessibility (axe).
 
 **Stage 3 — Build and preview (every PR)**
 
-- build all Workers and apps; publish OpenAPI diff as a comment
-- per-PR preview deployment seeded with synthetic data only
-- Terraform plan posted to the PR when `infra/` changed
+- `wrangler deploy --dry-run` for `apps/gateway`; on pull requests, `wrangler versions upload` and a PR comment with the `*.workers.dev` preview URL (only because gateway is `global-no-pii` with `preview_urls: true`). Regional Workers are not previewed on `workers.dev` — verify them on `staging-au` or a Regional Services custom hostname when those apps exist.
+- OpenAPI diff and Terraform plan comments apply only once those artefacts exist in the repo.
 
 **Stage 4 — Deploy**
 
