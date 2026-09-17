@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | Draft v1 — agreed direction, not yet implemented |
-| **Last updated** | 2026-09-17 (revision 2: residency corrections — real-time, jobs, identity issuer, encryption versus queryability, phasing) |
+| **Last updated** | 2026-09-17 (revision 10: consistency pass — ports, usage vs Cloudflare products, keys vs tax records) |
 | **Scope** | `community-hub-core` (the multi-tenant SaaS) and its contracts with the mobile apps, GivingJar and Jellycube |
 | **Launch region** | Australia (`au`). Canada, EU and US are designed for but not deployed |
 
@@ -20,7 +20,7 @@ This document is the source of truth for how the platform is structured and why.
 5. [System context](#5-system-context)
 6. [Tenancy model](#6-tenancy-model)
 7. [Regional cell architecture on Cloudflare](#7-regional-cell-architecture-on-cloudflare)
-8. [Codebase structure](#8-codebase-structure)
+8. [Codebase structure](#8-codebase-structure) — [client surfaces](#85-client-surfaces)
 9. [Module catalogue](#9-module-catalogue)
 10. [Plans, entitlements, add-ons and feature flags](#10-plans-entitlements-add-ons-and-feature-flags)
 11. [Identity and access](#11-identity-and-access)
@@ -31,7 +31,7 @@ This document is the source of truth for how the platform is structured and why.
 16. [Third-party apps and integrations](#16-third-party-apps-and-integrations)
 17. [API design](#17-api-design)
 18. [Events, jobs and workflows](#18-events-jobs-and-workflows)
-19. [Observability and audit](#19-observability-and-audit)
+19. [Observability and audit](#19-observability-and-audit) — [product usage](#193-product-usage-intelligence)
 20. [Security controls](#20-security-controls)
 21. [Compliance](#21-compliance)
 22. [Reliability, backup and disaster recovery](#22-reliability-backup-and-disaster-recovery)
@@ -62,7 +62,8 @@ Community Hub is an enterprise-grade, multi-tenant SaaS for communities — chur
 |---|---|---|
 | Website builder | Jellycube (our product, built on Cloudflare, shipped as an SDK for any platform) | `JellycubeHost` adapter — [§15](#15-website-builder-jellycube) |
 | Payment processing | GivingJar (our Stripe-based processor, hosted in Australia) | `PaymentProvider` port — [§14](#14-payments) |
-| Mobile apps | Community Hub mobile codebase (Parish Hub and white-label builds) | App Registry + mobile API — [§13](#13-mobile-apps-and-the-app-registry) |
+| Transactional email | Adapter chosen later | `EmailProvider` port — [§7.2](#72-what-runs-where); decision in [§26](#26-open-questions-and-risks) Q9 |
+| Mobile apps | Community Hub mobile codebase (Parish Hub at launch; other directory and white-label apps later) | App Registry + mobile API — [§13](#13-mobile-apps-and-the-app-registry) |
 
 ---
 
@@ -94,7 +95,7 @@ These are rules, not aspirations. Each is enforced by review, lint rules or test
 3. **Data stays in its region.** Personal data is stored and processed only in the tenant's region. Global components hold no personal data.
 4. **Privacy by default.** The most protective setting is the default, particularly for children. Features opt into data access; they never opt out of protection.
 5. **Entitlements are separate from feature flags.** "What a customer paid for" and "what code is rolled out" are different systems.
-6. **Integrations go through ports.** Payments, website, push and mobile distribution are interfaces with adapters. Core never imports a vendor SDK directly.
+6. **Integrations go through ports.** Payments, website, email, SMS, push and mobile distribution are interfaces with adapters. Core never imports a vendor SDK directly.
 7. **Contracts are versioned.** APIs, events and add-on interfaces have explicit versions and deprecation windows.
 8. **Everything important is audited.** Reads of restricted data, permission changes, exports and support access all produce audit events.
 9. **Infrastructure is code.** No console-only configuration in staging or production.
@@ -115,10 +116,14 @@ These are rules, not aspirations. Each is enforced by review, lint rules or test
 | D7 | **Payments through GivingJar** behind a `PaymentProvider` port; platform subscriptions billed directly with Stripe Billing | Keeps processor switchable; separates tenant revenue from our revenue | Accepted |
 | D8 | **Field-level encryption in the application** with keys wrapped by in-region AWS KMS | Protects restricted data from database access, backups and operators; enables deletion by key destruction | Accepted |
 | D9 | **Own identity service on Workers** (email OTP, passkeys, OIDC provider) storing users in the regional database | Replaces split Laravel + Supabase login; core must be the OIDC issuer for Jellycube and add-ons | Accepted — library choice in [§26](#26-open-questions-and-risks) |
-| D10 | **Communities are assigned to mobile apps by SaaS admins** through the App Registry | Preserves the Parish Hub directory model and enables white-label apps | Accepted |
+| D10 | **Each store app has its own community list.** SaaS admins assign communities to an app through the App Registry; the app never infers “all churches” or “all of Australia” | Parish Hub (AU churches), a future mosque app, a sports app, and a Canadian parish app are different store listings with different names. A community appears in an app only when it is listed there ([§13](#13-mobile-apps-and-the-app-registry)) | Accepted |
 | D11 | **Real-time features do not use Durable Objects for personal data.** Live screens poll a regional endpoint | Durable Objects have no Australian jurisdiction and `oc` is only a hint, so an object may run and persist outside Australia | Accepted |
 | D12 | **A field that must be filtered, sorted or aggregated in SQL is not encrypted.** Encrypted fields support equality matching through blind indexes only | Application-layer encryption makes `SUM`, `GROUP BY` and range queries impossible; decrypting rows in a Worker does not scale | Accepted |
-| D13 | **Transactional email is sent from AWS SES in ap-southeast-2** behind an `EmailProvider` port | Cloudflare Email Service has no confirmed Australian processing guarantee; it is a different product from Email Security's Australia region | Accepted — see Q9 |
+| D13 | **Transactional email goes through an `EmailProvider` port.** The adapter is chosen later; it must process mail in the tenant's region or be an explicit APP 8 subprocessor | Same switchability as payments. Cloudflare Email Service has no confirmed Australian processing guarantee and is a different product from Email Security's Australia region | Accepted — provider in [§26](#26-open-questions-and-risks) Q9 |
+| D14 | **A client cuts over as one unit:** system of record, admin, mobile and public website in the same window | Today's Laravel site is the same app and database as the platform. Events, notices, donations and forms are read and written in-process. A leftover "website-only" install cannot stay live ([§24](#24-migrating-from-self-hosted-laravel)) | Accepted |
+| D15 | **Jellycube stays generic.** Community Hub features on the public site are a **host widget pack** registered through the SDK, not widgets built into Jellycube | Jellycube is a Jamstack builder for any host and publishes static Astro (or similar). Lists must be HTML for SEO; forms and donate must post to core at request time ([§15.5](#155-host-widget-pack)) | Accepted |
+| D16 | **Do not invent a component library.** Web UI is **shadcn/ui** (Base UI primitives, Tailwind) copied into `packages/ui`. Mobile uses the same tokens via **React Native Reusables** | Building primitives from scratch is slow and inconsistent. shadcn is owned source, accessible and themable. Polaris React is deprecated; MUI/Ant lock a third-party look; a universal compiler (Tamagui) fights React Router and Astro islands ([§8.5](#85-client-surfaces)) | Accepted |
+| D17 | **Product usage is first-party and community-grained.** No third-party analytics SDK, no session replay, no user-level funnels in an offshore tool | Mixpanel/Amplitude/GA/PostHog Cloud would process personal data outside Australia and collide with children's screens. Domain events already exist; roll them up ([§19.3](#193-product-usage-intelligence)) | Accepted |
 
 ---
 
@@ -152,7 +157,7 @@ flowchart LR
   GJ[GivingJar<br/>payments, AU]
   STRIPE[Stripe Billing<br/>platform plans]
   PUSH[OneSignal]
-  EMAIL[AWS SES<br/>ap-southeast-2]
+  EMAIL[EmailProvider<br/>adapter TBD]
 
   M --> AR --> API
   A --> API
@@ -166,8 +171,8 @@ flowchart LR
   API -->|PaymentProvider| GJ
   GJ -->|webhooks| API
   CP --> STRIPE
-  JOBS --> PUSH
-  JOBS --> EMAIL
+  JOBS -->|via exec-au| PUSH
+  JOBS -->|via exec-au| EMAIL
 ```
 
 ---
@@ -201,7 +206,7 @@ Every current customer is a single community. On sign-up or import the platform 
 - an organisation with `kind = 'implicit'`, and
 - one community inside it.
 
-The admin UI hides the organisation layer while `kind = 'implicit'`. Adding a second community sets `kind = 'explicit'` and reveals organisation features. No data migration is needed.
+The admin UI hides the organisation layer while `kind = 'implicit'`. Adding a second community sets `kind = 'explicit'` and reveals organisation features. No data migration is needed. See [§8.5](#85-client-surfaces).
 
 ### 6.3 Isolation in the database
 
@@ -229,9 +234,11 @@ create policy org_isolation on <table>
 | Category | Schema | Examples | Protection |
 |---|---|---|---|
 | **Organisation-scoped** | `app` | people, households, donations, events, volunteers, consents, audit events | `org_id` + RLS as above |
-| **Region-scoped platform** | `identity`, `platform` | users, credentials, sessions, OTP challenges, region routing, outbox | No `org_id`, because a user belongs to a **region** and may hold memberships in several organisations. Separate Postgres schema, separate database role, reachable only from `core/identity`; no module may query it directly |
+| **Region-scoped platform** | `identity`, `platform` | users, credentials, sessions, OTP challenges, region routing | No `org_id`, because a user belongs to a **region** and may hold memberships in several organisations. Separate Postgres schema, separate database role, reachable only from `core/identity`; no module may query it directly |
 
 Identity rows are deliberately minimal — authentication identifiers, credentials and session metadata only. A person's name, contact details and any profile information live on the organisation-scoped `people` row. This keeps a shared user record from leaking the fact that someone is a member of another organisation.
+
+The domain **outbox** is organisation-scoped (`app` schema, `org_id` + RLS). It is not in the identity schema.
 
 CI fails if an `app`-schema table lacks `org_id`, RLS or `FORCE ROW LEVEL SECURITY`, and fails if any module outside `core/identity` references the `identity` schema.
 
@@ -251,8 +258,8 @@ A community can leave an organisation (a parish changing diocese, a club leaving
 │ control-plane Worker  organisations/communities directory, plans, add-ons, App Registry          │
 │ D1 (control plane)    ids, slugs, region, plan, listing status, Stripe customer id               │
 │ KV                    hostname → {orgId, communityId, region}; entitlement snapshots; app config │
-│ Flagship              feature flags                                                              │
-│ Stripe Billing        platform subscriptions (webhooks → control plane)                          │
+│ Feature flags         vendor TBD (Q12); targeting org / community / plan / region only           │
+│ Stripe Billing        platform subscriptions (webhooks → control plane; persist ids/status only) │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────── AU CELL — Regional Services = Australia on every regional hostname ──────────────┐
@@ -262,6 +269,7 @@ A community can leave an organisation (a parish changing diocese, a club leaving
 │                              ├─ RPC → realtime-au   Durable Objects (non-personal coordination)   │
 │                              ├─ Queue → jobs-au     consumers, Workflows, Cron (IDs only)          │
 │                              └─ fetch → exec-au     internal regional hostname for personal data   │
+│ auth.au.communityhub.one     → api-au       identity / OIDC issuer                                │
 │ webhooks.au.communityhub.one → webhooks-au  GivingJar and add-on inbound webhooks                 │
 │ {slug}.communityhub.one      → api-au       member portal + legacy mobile compatibility routes    │
 │                                                                                                   │
@@ -272,7 +280,7 @@ A community can leave an organisation (a parish changing diocese, a club leaving
 └───────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 7.2 Product usage
+### 7.2 What runs where
 
 | Need | Product | Rules |
 |---|---|---|
@@ -285,9 +293,9 @@ A community can leave an organisation (a parish changing diocese, a club leaving
 | Public media (logos, event images, public galleries) | R2 | Never children's photos or restricted documents |
 | Restricted files (children's photos, WWCC documents, certificates) | S3 in the cell's AWS region | Private bucket, short-lived presigned URLs, SSE-KMS plus application encryption |
 | Global lookups | D1 (control plane), KV | No personal data. Values are IDs, slugs, config |
-| Feature flags | Flagship | Rollout only |
+| Feature flags | Service TBD (Q12) | Rollout only. Targeting is organisation, community, plan and region — never personal identifiers |
 | Third-party add-on code | Workers for Platforms | See [§16](#16-third-party-apps-and-integrations) |
-| Transactional email | AWS SES in ap-southeast-2, behind `EmailProvider` | Sent from `exec-au`. Tenant sending domains with SPF/DKIM/DMARC. Cloudflare Email Service may carry only mail with no personal data (see Q9) |
+| Transactional email | `EmailProvider` port (adapter TBD) | Composed and sent from `exec-au`. Tenant sending domains with SPF/DKIM/DMARC. Provider must keep personal-data mail in-region, or be listed as an APP 8 subprocessor with a minimal payload (see Q9) |
 | SMS | Twilio (Australian sender IDs) | Behind `SmsProvider` port |
 | Staff access to ops tools | Cloudflare Access | Hardware-key MFA for platform operators |
 
@@ -369,8 +377,9 @@ community-hub/
 │   ├── realtime/             # regional: Durable Objects — non-personal coordination only, unused at launch (§7.6)
 │   ├── webhooks/             # regional: payment provider and add-on inbound webhooks
 │   ├── admin/                # tenant admin web (React Router v7)
+│   ├── portal/               # member portal (React Router v7), served on {slug}.communityhub.one
 │   ├── ops-console/          # SaaS operators (behind Cloudflare Access)
-│   └── mobile/               # Expo app; build variants selected by APP_KEY
+│   └── mobile/               # Expo app; one codebase, many store apps via APP_KEY
 │
 ├── modules/
 │   ├── core/
@@ -382,6 +391,7 @@ community-hub/
 │   │   ├── consent/          # consent records, guardian consent, jurisdiction rules
 │   │   ├── privacy/          # access/export/erasure requests, retention, legal holds
 │   │   ├── audit/            # tamper-evident audit log
+│   │   ├── usage/            # first-party product usage facts (community × feature × day)
 │   │   ├── notifications/    # email/SMS/push orchestration, preferences, Spam Act consent
 │   │   └── files/            # classification-aware file storage
 │   ├── features/
@@ -407,6 +417,7 @@ community-hub/
 │   ├── website-jellycube/    # implements JellycubeHost
 │   ├── push-onesignal/       # implements PushProvider
 │   ├── sms-twilio/           # implements SmsProvider
+│   ├── email-<provider>/     # implements EmailProvider — adapter chosen later (Q9)
 │   └── legacy-laravel-import/# imports self-hosted Laravel clients
 │
 ├── packages/
@@ -417,11 +428,14 @@ community-hub/
 │   ├── entitlements/         # snapshot reader, entitled(), limit()
 │   ├── policy/               # permission evaluation
 │   ├── payments/             # PaymentProvider port, ledger types
+│   ├── notifications/        # EmailProvider / SmsProvider / PushProvider ports
 │   ├── contracts/            # Zod schemas → OpenAPI; versioned event schemas
 │   ├── api-client/           # typed client used by admin, mobile and Jellycube adapter
 │   ├── app-sdk/              # SDK for third-party add-on developers
-│   ├── ui/                   # design system (WCAG 2.2 AA), semantic tokens
-│   ├── web-components/       # public embeds used by Jellycube data sources where needed
+│   ├── ui/                   # shadcn/ui (copied) + tokens + product patterns — §8.5
+│   ├── ui-native/            # React Native Reusables, same token names — §8.5
+│   ├── website-widgets/      # Astro components + islands registered with Jellycube (events, forms, donate, service times)
+│   ├── web-components/       # client islands used by write widgets (form submit, checkout redirect)
 │   └── observability/        # logger with personal-data scrubbing, tracing
 │
 ├── infra/
@@ -471,6 +485,7 @@ export default defineModule({
   publishes: ['giving.donation.succeeded.v1', 'giving.donation.refunded.v1'],
   subscribes: ['people.person.merged.v1', 'tenancy.community.offboarded.v1'],
   ports: ['PaymentProvider'],
+  websiteWidgets: ['giving.donate', 'giving.campaigns'],
 });
 ```
 
@@ -493,7 +508,78 @@ export default defineModule({
 | Validation | Zod schemas in `packages/contracts`, shared by API, admin, mobile |
 | Errors | Typed domain errors → RFC 9457 problem details at the edge |
 | Soft delete | Only where the domain needs restore; erasure uses hard delete or key destruction |
-| Terminology | Vertical packs provide labels (e.g. "Mass Times" vs "Prayer Times"); code uses generic names |
+| Terminology | Vertical packs provide labels (e.g. "Mass Times" vs "Prayer Times"); code uses generic names ([§8.5](#85-client-surfaces)) |
+
+### 8.5 Client surfaces
+
+This is the **UI architecture**: which apps exist, what they share, and which domain rules they must not fight. Visual design, journeys, copy and Figma live outside this document.
+
+#### Surfaces
+
+| Surface | Where | Audience | Appearance |
+|---|---|---|---|
+| Tenant admin | `apps/admin` (React Router v7, regional hostname) | Community and organisation staff | `packages/ui` |
+| Member portal | `apps/portal` on `{slug}.communityhub.one` (with `api-au`) | Members and guardians | `packages/ui`; member-scoped chrome, not the staff shell |
+| Ops console | `apps/ops-console` (Cloudflare Access) | SaaS operators | `packages/ui`; ops chrome. Tenant data stays hidden until support access is granted ([§11](#11-identity-and-access)) |
+| Mobile | `apps/mobile` (Expo, many store apps) | Members and guests | `packages/ui` tokens plus native primitives. Theming per `APP_KEY`, not a fork of screens ([§13](#13-mobile-apps-and-the-app-registry)) |
+| Public site | Jellycube + `packages/website-widgets` | Visitors | Jellycube theme. Host tokens from core. Write islands in `packages/web-components` ([§15.5](#155-host-widget-pack)) |
+
+There is one design language for products we ship. The public site may look like the parish; it must not invent a second Community Hub component set.
+
+#### Design system (`packages/ui`)
+
+**Adopt an existing kit. Do not design buttons, dialogs, tables or form controls from scratch.**
+
+| Layer | Choice | Why |
+|---|---|---|
+| Web primitives | **shadcn/ui**, Base UI primitives (the 2026 default), Tailwind | Accessible overlays and forms without owning ARIA. Source is copied into the repo, so we are not theming a black-box `node_modules` library. Works with React Router v7 on Workers Static Assets |
+| Web catalogue | `packages/ui` is the only shadcn registry in the monorepo | Apps do not `npx shadcn add` into `apps/admin`. Features import `@community-hub/ui` only |
+| Tokens | CSS custom properties in `packages/ui` (colour, type, space, radius, elevation) | White-label and vertical overlays change tokens, not components. Feature screens do not hard-code raw values |
+| Mobile | **React Native Reusables** + NativeWind, mapped to the **same token names** | Closest shadcn equivalent on Expo. Native primitives (not Radix/Base UI). gluestack-ui v5 is native-only now; do not use it on the web |
+| Public islands | `packages/web-components` styled with the same CSS variables | A static Jellycube page must not pull the admin React app. Parish look comes from Jellycube theme tokens ([§15.5](#155-host-widget-pack)) |
+| Icons | Lucide, one set | Do not mix icon packs |
+| Forms | shadcn Form + React Hook Form + Zod from `packages/contracts` | One validation story from API to UI |
+| Data tables | TanStack Table composed in `packages/ui`, not a second table kit | People, donations, events, volunteers |
+
+**Rejected for this platform:** Material UI, Ant Design, Chakra, daisyUI, Shopify Polaris (Polaris React is deprecated; the replacement is for Shopify apps), Tamagui as the admin stack, and building a private primitive layer.
+
+**Product patterns** (ours, thin, built *on* shadcn — this is the guideline layer):
+
+- `Page`, `PageHeader`, `IndexToolbar` — list/detail chrome
+- `EntitlementGate`, `UpgradePrompt` — rule 2
+- `RestrictedDataBanner` — children's / restricted screens
+- `CommunitySwitcher` — rule 9
+- `DataTable`, `FilterBar`, `EmptyState`, `ConfirmDialog`
+
+A feature screen composes these. It does not restyle a `Button` per module.
+
+**Enforcement**
+
+- Components are accessible by default. **WCAG 2.2 AA is a merge gate** for admin, portal, ops, mobile, and widget islands ([§21](#21-compliance)).
+- Dependency rules: `apps/admin`, `apps/ops-console` and the portal import UI only from `@community-hub/ui`. `apps/mobile` imports only from `@community-hub/ui-native` (Reusables, same tokens). No second component library.
+- Vertical packs supply **labels and a small token overlay** (for example the heading on service times). They do not ship a second component library.
+- White-label store apps may override tokens and store listing art. They reuse the same screens.
+- The public site may look like the parish; it must not invent a second Community Hub component set.
+
+Admin, portal and ops consume the React/shadcn implementation. Mobile maps the same tokens onto native primitives. Widget islands use the web-component subset.
+
+#### Rules the UI must follow
+
+These are already decided elsewhere. A screen that contradicts them is a bug.
+
+1. **Implicit organisation.** Hide organisation chrome while `kind = 'implicit'`. Reveal it when the organisation becomes explicit ([§6.2](#62-implicit-organisations)).
+2. **Entitlements.** Hide a feature or show an upgrade prompt. Do not render a control that only 403s ([§10.3](#103-evaluation-order)).
+3. **Permissions.** Hide actions the actor cannot perform. The API still enforces them.
+4. **Generic screens, vertical labels.** Routes, component names and copy keys stay generic (`service_times`, not `mass_times`). The vertical pack provides the string the user sees ([§8.4](#84-conventions)).
+5. **No personal data in URLs.** Lists and search use the session and opaque ids ([§17](#17-api-design)).
+6. **Children's and restricted screens.** No third-party analytics SDK or session replay on any surface (D17). First-party usage beacons are dropped here ([§12.3](#123-children-product-rules), [§19.3](#193-product-usage-intelligence)).
+7. **Live boards poll** a regional endpoint. Durable Objects are not used for personal UI ([§7.6](#76-real-time-without-durable-objects)).
+8. **Public lists are static HTML.** Forms, RSVP and donate are islands that POST to core ([§15.5](#155-host-widget-pack)).
+9. **Mobile community switcher** shows only memberships that are live on **this** `APP_KEY`. Admin and portal switch among communities the actor can access, not store listings ([§13.2](#132-listing-rules-enforced)).
+
+#### Not in this document
+
+Palettes, type scale, wireframes, per-screen layout, marketing pages, and brand for Parish Hub versus a future mosque or sports app.
 
 ---
 
@@ -532,16 +618,17 @@ Mapping from the Laravel application's module toggles to core modules.
 | **Allocation** | Which communities in an organisation receive an entitlement | Control plane D1 |
 | **Community toggle** | Community admin switching an entitled feature on or off | Regional database |
 | **Override** | Contracted exception for an enterprise deal, with expiry | Control plane D1 |
-| **Feature flag** | Code rollout control, independent of billing | Flagship (targeting on organisation, community, plan and region only — never personal identifiers) |
+| **Feature flag** | Code rollout control, independent of billing | Feature-flag service (vendor TBD, Q12). Targeting on organisation, community, plan and region only — never personal identifiers |
 
 ### 10.2 Example catalogue
 
 ```ts
-// Keys come from module manifests. Core modules (tenancy, identity, people, access,
-// consent, privacy, audit, files) are always on and are never entitlement-gated;
+// Core modules (tenancy, identity, people, access, consent, privacy, audit,
+// usage, notifications, files) are always on and are never entitlement-gated;
 // their optional capabilities are. CI fails on any key no manifest declares.
 
 plans.starter = ['module.engagement', 'module.forms', 'module.content',
+                 'module.giving',
                  'people.directory', 'groups.basic',
                  'communications.email', 'giving.one_off']
 plans.growth  = [...plans.starter,
@@ -552,8 +639,8 @@ plans.growth  = [...plans.starter,
 
 addons.ecommerce  = ['module.commerce']
 addons.website    = ['website.jellycube']             // system add-on
-addons.mobile     = ['mobile.listing']                // listed in a shared app (e.g. Parish Hub)
-addons.branded    = ['mobile.whitelabel']             // community's own app
+addons.mobile     = ['mobile.listing']                // may be listed in a directory app (which app is an ops choice)
+addons.branded    = ['mobile.whitelabel']             // community's own single-community store app
 addons.sms_pack   = [{ key: 'sms.monthly', limit: 2000 }]
 ```
 
@@ -564,7 +651,7 @@ Pricing and final plan contents are a product decision; the model supports any c
 A feature is available only when every step passes:
 
 ```
-1. Feature flag kill switch   (Flagship)         → is the code enabled at all?
+1. Feature flag kill switch   (flags service)    → is the code enabled at all?
 2. Entitlement                (KV snapshot)      → did the organisation pay for it?
 3. Allocation                 (KV snapshot)      → is it allocated to this community?
 4. Community toggle           (regional DB)      → has the community switched it on?
@@ -582,7 +669,7 @@ Stripe Billing webhook → control-plane → recompute entitlements (D1)
 ```
 
 - KV is eventually consistent; changes may take up to about a minute to be visible everywhere. That is acceptable for upgrades and downgrades.
-- **Hard usage limits** (SMS credits, member caps) are counted in a per-organisation Durable Object so they are exact.
+- **Hard usage limits** (SMS credits, member caps) are counted in a per-organisation Durable Object so they are exact. The object stores **counters only** — not names, emails or member lists — which is why a Durable Object is allowed here despite [§7.6](#76-real-time-without-durable-objects).
 - **Downgrades hide, never delete.** Data of a disabled module remains until retention or an erasure request removes it.
 
 ---
@@ -596,6 +683,7 @@ Stripe Billing webhook → control-plane → recompute entitlements (D1)
 - **Sessions:** short-lived access tokens + rotating refresh tokens. Mobile stores them in `expo-secure-store`.
 - **Core is an OIDC provider** for Jellycube and approved add-ons, issued from the regional hostname `auth.au.communityhub.one`, which is registered with Regional Services = Australia. There is **one issuer per region**; relying parties discover the issuer from the community they are bound to. Tokens carry `org`, `community` and role claims scoped to the relying party.
 - **Region discovery never involves an email address.** A global Worker that received an email in order to route it — even to hash it — would be processing personal data outside the region. Region comes from context that is not personal data: the mobile app already knows the community and its `api` base from the App Registry, admins arrive on a regional hostname, and the global landing page offers a country or community choice and then redirects. With a single region today, everything goes to `au`.
+- A user may hold memberships in several communities in the same region. **Which of those memberships a given store app can show is an App Registry question** ([§13.2](#132-listing-rules-enforced)), not an identity one.
 - **App store review accounts** are server-side, per mobile app, limited to a demo community, and audited.
 
 ### 11.2 Person versus user
@@ -639,7 +727,7 @@ Every column and file has a class, declared in the module schema.
 | `confidential` | Addresses, phone numbers, donor notes | Field encryption, export requires permission |
 | `confidential-queryable` | Donation amounts, check expiry dates, derived age bands | **Not encrypted**, because SQL must aggregate, sort or range-filter them. Protected by RLS, column-level permissions, at-rest encryption and audit ([§12.2.1](#1221-encryption-versus-queryability)) |
 | `confidential-blind` | Donor person reference, member email used for lookup | Pseudonymous identifier plus a blind index; equality matching only |
-| `restricted` | **Any data about a person under 18**, health and allergy information, safeguarding reports, WWCC/Blue Card numbers, religious records (sacramental certificates) | Field encryption with household or community keys, purpose-bound access, every read audited, never sent to AI, logs, analytics or third-party apps without explicit tenant approval |
+| `restricted` | **Identity and sensitive records of a person under 18** (name, date of birth, photos), health and allergy information, safeguarding reports, WWCC/Blue Card numbers, religious records (sacramental certificates) | Field encryption with household or community keys, purpose-bound access, every read audited, never sent to AI, logs, analytics or third-party apps without explicit tenant approval. Derived flags such as `is_minor` are the exception in [§12.2.1](#1221-encryption-versus-queryability) |
 
 ### 12.2 Encryption
 
@@ -653,7 +741,7 @@ AWS KMS (Sydney)  ── wraps ──►  Organisation key
 - **Application-layer encryption** with WebCrypto AES-256-GCM in the Worker before data reaches Postgres. Database operators, Hyperdrive and backups see ciphertext.
 - **Unwrapped keys** are held in isolate memory for a short time only; never written to KV, Durable Object storage, logs or queues.
 - **Search** uses HMAC-SHA-256 blind indexes with community-scoped keys (e.g. normalised surname prefix).
-- **Deletion by key destruction:** erasing a household destroys its household key, making all copies (including backups and restricted files) unreadable.
+- **Deletion by key destruction:** erasing a household destroys its household key, making restricted copies (including backups and restricted files) unreadable. **The payment ledger is not encrypted with the household key.** DGR and tax-retention rows stay readable; the donor person link may become unlinkable.
 - **Transport:** TLS 1.3 at the edge; TLS with certificate verification between Tunnel and Postgres; storage encrypted at rest (RDS and S3 with KMS).
 - **Key rotation:** KMS keys rotate annually; organisation and community keys can be rotated online by re-wrapping.
 
@@ -669,7 +757,7 @@ Application-layer encryption means the database sees ciphertext, so `SUM`, `GROU
 | `donations.donor_person_id` | `confidential-blind` | Pseudonymous reference plus blind index, so "donations by this person" still works |
 | `donations.donor_note` | `confidential` (encrypted) | Free text, never queried |
 | `persons.date_of_birth` | `restricted` (encrypted) | Never queried directly |
-| `persons.is_minor`, `persons.age_band`, `persons.birthday_md` | `confidential-queryable` (clear) | Youth rosters, age-gated flows and birthday lists depend on filtering |
+| `persons.is_minor`, `persons.age_band`, `persons.birthday_md` | `confidential-queryable` (clear) | **Exception:** these are derived flags so youth rosters and age-gates work in SQL. The child's name, date of birth and other identity fields stay `restricted` |
 | `volunteers.wwcc_number`, `blue_card_number` | `restricted` (encrypted) | Government identifiers, looked up by equality at most |
 | `volunteers.wwcc_expiry` | `confidential-queryable` (clear) | Expiry reports sort and range-filter on it |
 | `people.email`, `people.phone` | `confidential-blind` | Blind index for lookup and duplicate detection; display value encrypted |
@@ -687,7 +775,7 @@ These are invariants. A feature that violates one is not shipped.
 5. **No private adult-to-child messaging.** Messages to minors go to groups with guardians copied; conversations are retained for safeguarding review.
 6. **Check-in and check-out** use pickup codes matched between the child's label and the guardian's; authorised pickup lists are enforced; every event is audited.
 7. **Volunteer eligibility.** Roles working with children require a current, verified WWCC (or state equivalent such as Blue Card). Expiry blocks rostering and notifies the coordinator.
-8. **No tracking.** No analytics SDKs, advertising identifiers or session replay on screens that show children's data.
+8. **No tracking.** No third-party analytics SDKs, advertising identifiers or session replay on any surface (D17). First-party usage beacons are off on screens that show children's data ([§19.3](#193-product-usage-intelligence)).
 9. **Minimum data.** Forms targeting children collect only fields justified by purpose; free-text medical notes are restricted.
 10. **Push text is generic** when it concerns a child ("You have a new update from St Mary's"), because the push provider is outside Australia.
 
@@ -702,29 +790,61 @@ These are invariants. A feature that violates one is not shipped.
 
 ## 13. Mobile apps and the App Registry
 
+There is **one Expo codebase** (`apps/mobile`) and **many store apps**. Launch is Parish Hub for Australian churches. Later apps — mosques, sports clubs, another country's parish app with a different store name — are new App Registry rows and new EAS builds of the same code, not forks.
+
 ### 13.1 Model
 
 Control plane (global, no personal data):
 
 ```
 mobile_apps     id, key, name, bundle_ids, store_accounts, branding, push_app_id,
-                mode ('directory' | 'single'), min_supported_version, review_account_ref
+                mode ('directory' | 'single'),
+                region,                      -- cell this store app serves ('au' at launch)
+                community_types[],           -- types that may be listed, e.g. ['church']
+                vertical,                    -- faith-church | faith-mosque | sports-club
+                min_supported_version, review_account_ref
 app_listings    app_id, community_id, status ('draft' | 'live' | 'hidden'), featured, sort_order
 communities     id, org_id, slug, name, type, region, logo_url, public_location, verified
 ```
 
-- **Parish Hub** is a `directory` app listing many communities.
-- A **white-label app** for one community is a `single` app with one listing; it skips the community picker.
-- SaaS operators manage listings in the ops console. A community must hold the `mobile.listing` or `mobile.whitelabel` entitlement to be listed.
+| Kind | What it is | Example |
+|---|---|---|
+| **Directory app** | Store listing with a community picker. Shows **only** communities with a live `app_listings` row for this `app_id` | Parish Hub (`parish-hub-au`, region `au`, types `church`) |
+| **White-label / single** | One community; skips the picker | A parish's own branded app |
 
-### 13.2 Flow
+Launch row: `key = parish-hub-au` (existing Parish Hub builds may keep `parish-hub` as an alias), `name = Parish Hub`, `region = au`, `community_types = ['church']`, `vertical = faith-church`.
+
+Later rows are added without changing core, for example:
+
+- an Australian mosque directory (`region = au`, `community_types = ['mosque']`, its own store name and bundle IDs)
+- an Australian sports-club directory (`region = au`, `community_types = ['sports-club']`)
+- a Canadian parish directory (`region = ca`, `community_types = ['church']`, a **different store name**)
+
+SaaS operators create the app row and attach listings in the ops console. A community must hold `mobile.listing` (directory) or `mobile.whitelabel` (single). Entitlement is necessary, not sufficient: **nothing appears in an app until an operator lists it on that app.**
+
+### 13.2 Listing rules (enforced)
+
+The directory for `GET /v1/apps/{appKey}/communities` is **exactly** the live listings for that app. It is not “all communities”, “all of this type”, or “all of this region”.
+
+1. A community is returned only if `app_listings.status = 'live'` for this `app_id`.
+2. The community's `region` must match the app's `region` (Parish Hub AU never lists a Canadian parish, even if someone tries).
+3. The community's `type` must be in the app's `community_types` (Parish Hub never lists a mosque or a sports club).
+4. `?near=` only reorders **within that list**. It does not pull in communities listed on other apps.
+5. Draft and hidden listings are invisible to the store app. Featured and sort_order are display only.
+6. The same community may be live on more than one app (directory + white-label). It must not leak into an app it is not listed on.
+7. In a signed-in session, the community switcher shows only memberships that are also live on **this** `APP_KEY`. A person who belongs to a parish and a cricket club does not see the club inside Parish Hub.
+
+CI / contract tests: calling the communities endpoint with `parish-hub-au` must not return a community whose type is not `church` or whose region is not `au`, and must not return a church that has no live listing on that app.
+
+### 13.3 Flow
 
 ```
-App build contains APP_KEY (e.g. parish-hub)
+App build contains APP_KEY (e.g. parish-hub-au)
 
 1. GET https://api.communityhub.one/v1/apps/{appKey}
-      → branding, min_supported_version, mode
+      → name, branding, min_supported_version, mode, region, community_types
 2. GET https://api.communityhub.one/v1/apps/{appKey}/communities?near=lat,lng
+      → only live listings for this app
       → [{ id, slug, name, type, logo, region: 'au', api: 'https://au.api.communityhub.one' }]
 3. Guest:
    GET {api}/v1/c/{slug}/public/{events|bulletins|notices|service-times|campaigns|articles}
@@ -735,23 +855,24 @@ App build contains APP_KEY (e.g. parish-hub)
    GET  {api}/v1/c/{slug}/app-home      → welcome text, quick access cards, posts
 ```
 
-- One account can belong to several communities in the same region; switching community does not require signing in again.
-- Home screen cards are driven by entitlements plus community configuration, replacing today's `mobile-app/settings` payload.
+- Auth is regional (the `api` URL on the listing). The global app-discovery endpoints return directory metadata only — no personal data.
+- Home screen cards are driven by entitlements plus community configuration and the app's vertical pack, replacing today's `mobile-app/settings` payload.
 - Location for "near me" is sent as coarse coordinates and not stored.
 
-### 13.3 Builds
+### 13.4 Builds
 
-- One Expo codebase in `apps/mobile`. `app.config.ts` reads `APP_KEY` and selects bundle identifiers, icons and splash assets; everything else is fetched from the registry at runtime.
-- EAS Build and EAS Update per app key. Over-the-air updates respect `min_supported_version`.
+- One Expo codebase in `apps/mobile`. `app.config.ts` reads `APP_KEY` and selects bundle identifiers, display name, icons, splash and the vertical pack. Copy, labels and which home cards exist still come from the registry and the community at runtime.
+- EAS Build and EAS Update **per app key**. Each store app has its own bundle IDs, store listing name and review account. Over-the-air updates respect that app's `min_supported_version`.
+- Adding a country or a vertical is a new `mobile_apps` row plus a new store listing, not a new repository.
 - Store developer accounts for white-label apps are an open question ([§26](#26-open-questions-and-risks)).
 
-### 13.4 Push notifications
+### 13.5 Push notifications
 
-`PushProvider` port, OneSignal adapter initially. Device tokens are stored regionally and mirrored to OneSignal. Payloads contain generic text and an opaque deep link; the app fetches details after authentication.
+`PushProvider` port, OneSignal adapter initially. Each store app has its own `push_app_id`. Device tokens are stored regionally, scoped to the app key, and mirrored to that OneSignal app. Payloads contain generic text and an opaque deep link; the app fetches details after authentication.
 
-### 13.5 Compatibility with existing app versions
+### 13.6 Compatibility with existing app versions
 
-During migration the App Registry returns `site_url = https://{slug}.communityhub.one` to old app builds. `apps/api` serves the legacy `/api/mobile-app/*` and `/api/v1/mobile-app/*` response shapes for that hostname through a compatibility router, fixed to use session identity instead of email parameters. The router is removed once `min_supported_version` excludes those builds.
+During migration the App Registry returns `site_url = https://{slug}.communityhub.one` to old Parish Hub builds. `apps/api` serves the legacy `/api/mobile-app/*` and `/api/v1/mobile-app/*` response shapes for that hostname through a compatibility router, fixed to use session identity instead of email parameters. The router is removed once `min_supported_version` excludes those builds. Old builds still only see communities listed on Parish Hub.
 
 ---
 
@@ -761,7 +882,7 @@ During migration the App Registry returns `site_url = https://{slug}.communityhu
 
 | Flow | Payer → payee | System |
 |---|---|---|
-| Platform subscription | Organisation → Community Hub | Stripe Billing, owned by `control-plane` |
+| Platform subscription | Organisation → Community Hub | Stripe Billing, owned by `control-plane`. Webhooks may contain emails in Stripe's payload; **persist customer id, subscription id and status only** — never copy personal fields into D1 or KV |
 | Community payments (donations, memberships, tickets, orders) | Member → community | `PaymentProvider` port, GivingJar adapter |
 
 ### 14.2 Port
@@ -816,7 +937,9 @@ POST webhooks.au.communityhub.one/payments/givingjar
 
 ## 15. Website builder: Jellycube
 
-Jellycube is our own page builder, built on Cloudflare and shipped as an SDK so any platform can use it. Core is one host platform and uses the same public contract as any other host.
+Jellycube is our own **general-purpose Jamstack builder**. It publishes static sites (Astro first; other static adapters later) for SEO, speed and cacheability. Its editor palette is generic: layout, text, media, generic form controls. It must stay that way so other hosts can use it.
+
+Community Hub is one host. Platform content on the public site — events, notices, Mass/service times, forms, donate — is **not** copied into Jellycube and is **not** hard-coded in Jellycube's sidebar. Core registers a **host widget pack** through the SDK. The editor shows those widgets for this host only, filtered by the community's entitlements and vertical labels.
 
 ### 15.1 Host adapter contract
 
@@ -825,7 +948,7 @@ The Jellycube SDK defines the interface; core implements it in `adapters/website
 ```ts
 export interface JellycubeHost {
   identity: {
-    oidcIssuer: string;                                  // https://auth.communityhub.one
+    oidcIssuer: string;                                  // https://auth.au.communityhub.one
     mapRoles(claims: HostClaims): EditorRole[];          // community_admin → site_owner
   };
   provisioning: {
@@ -834,48 +957,99 @@ export interface JellycubeHost {
     onSiteDeleted(site: SiteRef): Promise<void>;
   };
   dataSources: {
-    list(host: HostRef): Promise<DataSourceDefinition[]>;        // key, params schema, preview
+    list(host: HostRef): Promise<DataSourceDefinition[]>;
     fetch(host: HostRef, key: string, params: unknown): Promise<PublicJson>;
   };
+  widgets: {
+    list(host: HostRef): Promise<HostWidget[]>;          // palette items for this community
+  };
   forms: {
-    submitEndpoint(host: HostRef, formKey: string): URL;         // submissions stored by host only
+    submitEndpoint(host: HostRef, formKey: string): URL; // submissions stored by host only
   };
   entitlements: {
     features(host: HostRef): Promise<string[]>;
   };
   theme: {
-    tokens(host: HostRef): Promise<ThemeTokens>;                 // shared branding with portal and app
+    tokens(host: HostRef): Promise<ThemeTokens>;
   };
-  events: ['content.published', 'content.updated', 'content.deleted'];  // cache invalidation
+  events: ['content.published', 'content.updated', 'content.deleted'];
+}
+
+export interface HostWidget {
+  key: string;                 // 'engagement.events.list', 'giving.donate', 'forms.embed', …
+  entitlement: string;         // hidden unless the community is entitled
+  label: string;               // vertical pack: "Mass Times" vs "Prayer Times"
+  render: 'static' | 'island' | 'static+island';
+  insert: { package: string; export: string };  // Astro component in @community-hub/website-widgets
+  inspector: unknown;          // Zod JSON schema: limit, formKey, campaignKey, …
+  dataSource?: string;         // optional key into dataSources.fetch
 }
 ```
+
+`widgets.list` is derived from module manifests (`websiteWidgets`) plus entitlements plus the community's vertical pack. Jellycube does not contain a Community Hub widget catalogue of its own.
 
 ### 15.2 Integration
 
 | Concern | Design |
 |---|---|
-| Provisioning | Enabling `website.jellycube` for a community triggers site creation; the site stores the core `HostRef` |
+| Provisioning | Enabling `website.jellycube` creates the site, stores `HostRef`, and adds `@community-hub/website-widgets` so Astro can import host components at build |
 | Editor sign-in | Core is the OIDC issuer; "Website" in the admin menu opens Jellycube signed in and scoped to the community |
-| Dynamic blocks | Data sources for events, bulletins, notices, service times, campaigns, articles, galleries, team. Transport: service binding RPC when deployed in the same Cloudflare account; signed HTTPS otherwise |
-| Forms | Jellycube renders forms; submissions post to core's form endpoint |
-| Donations | Donate blocks call core's checkout endpoint, which uses `PaymentProvider` |
-| Freshness | Core publishes content events; Jellycube purges caches |
-| Hostnames | Jellycube owns public website hostnames (`www.stmarys.org.au`); core owns portal and API hostnames (`stmarys.communityhub.one`, `au.api.communityhub.one`) |
+| Palette | Jellycube generic widgets plus `widgets.list()` from the host. Donate does not appear if `giving` is not entitled |
+| Lists (events, notices, bulletins, service times, articles, galleries, team) | **`static`.** HTML is generated at publish from the Public Content API so crawlers see real content. Rebuild or purge on `content.*` events |
+| Live figures (campaign totals) | **`island`** (or `static+island`): shell in HTML, amount fetched at request time so a rebuild is not required for every donation |
+| Forms | **`island`.** Widget loads the published form schema from core; submit POSTs to core. Jellycube does not store responses |
+| Donations | **`island`.** Widget lists public campaigns (static shell) and starts checkout on core (`PaymentProvider`). No card fields in the widget (PCI SAQ-A) |
+| RSVP / tickets | Event page is static; the action is an island posting to core |
+| Labels | Widget labels come from the vertical pack ("Mass Times" for `faith-church`) |
+| Freshness | Core publishes content events; Jellycube rebuilds or purges the affected routes |
+| Hostnames | Jellycube owns public website hostnames (`www.stmarys.org.au`); core owns portal and API hostnames |
+| Cutover | This contract is required **before** the first client leaves Laravel ([§24](#24-migrating-from-self-hosted-laravel)) |
 
-### 15.3 Privacy rules
+### 15.3 Why not put these widgets inside Jellycube
 
-- Data sources return `public` class data only.
-- Jellycube stores website content and editor identity (subject ID, name, email of staff). It does not store member, donor or children's data.
-- Jellycube custom hostnames for Australian communities use Regional Services = Australia, because form and donation requests pass through Jellycube Workers.
+- Jellycube would stop being a general builder. Every host would wait on Jellycube releases for domain features.
+- Events and Mass times would be edited in two places, which is the Laravel coupling we are leaving.
+- Static publish would either bake stale platform data with no rebuild story, or skip SEO by iframe-ing everything.
+
+Iframes of the member portal are allowed only as a last resort for a widget that cannot be expressed as static HTML plus an island. They are not the default.
+
+### 15.4 Privacy rules
+
+- Data sources and static widgets return `public` class data only. Children never appear.
+- Jellycube stores website chrome (pages, layout, editor identity). It does not store member, donor, form-response or children's data.
+- Form posts, donate starts and RSVPs go to regional core hostnames. Jellycube custom hostnames for Australian communities use Regional Services = Australia because those requests pass through Jellycube Workers on the way to core.
 - Jellycube is recorded as a subprocessor for editor identity data.
 
-### 15.4 Requirements on the Jellycube SDK
+### 15.5 Host widget pack
+
+Owned by core, in `packages/website-widgets` (Astro components) and `packages/web-components` (client islands). Modules declare which widgets they offer.
+
+| Widget key | Module | Render | Build / runtime |
+|---|---|---|---|
+| `engagement.events.list` / `.detail` | `engagement` | static + island (RSVP) | Events HTML at build; RSVP/ticket POST at runtime |
+| `engagement.notices.list` | `engagement` | static | Notices HTML at build |
+| `engagement.bulletins.list` | `engagement` | static | Bulletin list at build |
+| `engagement.service_times` | `engagement` + vertical | static | Mass / prayer / session times at build |
+| `content.articles.list` / `.detail` | `content` | static | Articles at build |
+| `content.gallery` / `content.team` | `content` | static | Public media and team at build |
+| `forms.embed` | `forms` | island | Schema from core; submit to core |
+| `giving.campaigns` / `giving.donate` | `giving` | static+island | Campaign copy at build; checkout and totals live |
+| `membership.join` | `membership` | island | Join / pay on core |
+
+Launch set for parish sites: events, notices, bulletins, service times, forms, donate. Gallery, team and articles follow content migration. Membership and commerce widgets follow those modules.
+
+Inspector fields are host-defined (which form, which campaign, how many events, category filter). Editors do not paste API URLs.
+
+### 15.6 Requirements on the Jellycube SDK
 
 1. Host-provided authentication (OIDC); no Jellycube-managed passwords for hosted sites.
 2. Pluggable data-source registry supporting RPC and HTTPS transports.
-3. No storage of form submissions when the host supplies a form endpoint.
-4. Lifecycle webhooks and a host reference on every site.
-5. Theme tokens supplied by the host.
+3. **Host widget registry:** palette entries, inspector schema, and insert of a named package export into the Astro (or other static) project — not opaque HTML that the builder cannot round-trip.
+4. Distinguish `static` vs `island` inserts so publish can prefetch data sources at build and leave client islands for writes.
+5. No storage of form submissions when the host supplies a form endpoint.
+6. Lifecycle webhooks and a host reference on every site.
+7. Theme tokens supplied by the host.
+8. Rebuild or targeted purge when the host emits `content.*` events.
 
 ---
 
@@ -883,7 +1057,7 @@ export interface JellycubeHost {
 
 ### 16.1 First-party integrations
 
-Accounting (Xero, MYOB), email marketing (Mailchimp), calendar feeds and similar live in `adapters/` and are enabled per community through entitlements. They use the public API with scoped credentials, never direct database access.
+Accounting (Xero, MYOB), email marketing (Mailchimp), calendar feeds and similar live in `adapters/` and are enabled **per community through entitlements, with an explicit tenant opt-in**. They use the public API with scoped credentials, never direct database access. They may disclose personal data offshore (APP 8); they are off by default and never receive restricted data without the extra approval in [§16.2](#162-partner-apps-later-phase).
 
 ### 16.2 Partner apps (later phase)
 
@@ -947,6 +1121,57 @@ Accounting (Xero, MYOB), email marketing (Mailchimp), calendar feeds and similar
 - Audited actions include: restricted reads, exports, permission and role changes, support access, consent changes, payment refunds, entitlement changes, key operations.
 - Tenants can view and export their audit log.
 
+### 19.3 Product usage intelligence
+
+This answers "how are communities using the platform?" It is **not** user-level analytics, and it is **not** observability (§19.1) or the audit log (§19.2).
+
+**Do not add Mixpanel, Amplitude, Google Analytics, PostHog Cloud, Hotjar, FullStory or similar.** Those tools process personal data outside Australia, identify people, and want an SDK on every screen — including children's and giving screens, which is forbidden ([§12.3](#123-children-product-rules)). Session replay is not used anywhere on this platform.
+
+#### What to measure
+
+Grain is **community × feature × day**. Never a person, email, device advertising id or session recording.
+
+Ask three questions, in this order:
+
+1. **Coverage** — of communities entitled to a feature, how many have it toggled on, and how many had at least one *success action* in 7 / 30 days? (A parish with 400 events must not hide that 80% of communities never created one.)
+2. **Intensity** — among communities that used it, how many success actions? Helps capacity and UX for power users.
+3. **Adoption lag** — days from entitle → toggle → first success. Shows whether a feature is discoverable.
+
+A **success action** is a domain event that already means the feature did its job: `engagement.event.published`, `forms.response.submitted`, `giving.donation.succeeded`, `communications.broadcast.sent`, `safeguarding.checkin.completed`, and so on. Page views of an admin route are supporting context, not the score.
+
+#### Sources (in-region)
+
+| Source | What it is good for | What it must not contain |
+|---|---|---|
+| **Outbox / domain events** | Success actions, the primary signal | No names, notes, amounts, or restricted fields. Counts and feature keys only in the usage table |
+| **Entitlements and toggles** | Coverage denominator (paid vs switched on vs used) | Already non-personal |
+| **Staff session counts** | "Is this community alive?" Distinct *count* of staff who used admin that day | No user ids in the ops copy; hash or count in the cell |
+| **Allowlisted first-party beacons** | Which admin surface was opened (`admin.feature.opened` with `feature_key`, `surface`, `role_bucket`) | Posted to `api-au` only. Schema-validated. Dropped on children's / restricted screens. No third-party SDK |
+| **Public site** | Form posts, donate starts, RSVPs already hit core — use those events | Do not inject a tracking pixel into Jellycube by default. A parish may add their own analytics on their site; that is their subprocessor, not ours |
+
+`core/usage` writes `usage_facts_daily` in the regional database (`org_id`, `community_id`, `feature_key`, `day`, `entitled`, `toggled`, `success_count`, `staff_active_count`, `surface_open_count`). A job copies **aggregates** to the control plane for the ops console: feature totals and distributions across Australia, never a row that could identify a member.
+
+Tenant **reporting** stays separate: a parish seeing their own donation totals is their data, in their admin, under RLS. Platform operators do not open that dashboard to "see how they're doing."
+
+#### Ops console
+
+The product view for SaaS operators:
+
+- Feature adoption: entitled / toggled / used in 7 and 30 days
+- Idle communities: entitled, little or no success actions
+- Surface mix: admin vs portal vs mobile vs public writes
+- After a release: adoption lag for that `feature_key`
+
+Access is Cloudflare Access, same as other ops tools. This is not support access to tenant records ([§11.4](#114-platform-support-access)).
+
+#### What this will not tell you
+
+Dashboards will not explain *why* a parish never used volunteers. For that: tagged support tickets, opt-in in-product feedback, and conversations with admins. Those sit outside this document. Do not try to replace them with a heatmap.
+
+#### Later, if the tables are not enough
+
+A BI tool (Metabase, or a warehouse) may read a replica **in Australia**, still on the same facts. Self-hosted PostHog in-region is only on the table if counsel signs APP 8 / children's rules and the event allowlist stays identical. It is not the launch path.
+
 ---
 
 ## 20. Security controls
@@ -985,7 +1210,7 @@ Accounting (Xero, MYOB), email marketing (Mailchimp), calendar feeds and similar
 | **Spam Act 2003** | Consent and unsubscribe records for email and SMS |
 | **ATO requirements for deductible gift recipients** | Compliant receipts generated by `giving` |
 | **Social media minimum age obligations** | Assess whether community messaging features fall in scope before launching member-to-member features |
-| **Accessibility** | WCAG 2.2 AA for admin, portal and mobile |
+| **Accessibility** | WCAG 2.2 AA for admin, portal, ops console, mobile and host widget islands ([§8.5](#85-client-surfaces)) |
 
 ### 21.2 Certifications
 
@@ -1046,12 +1271,25 @@ Production data is never copied to non-production environments.
 | Residency | Dedicated suite | No personal data in queue payloads, workflow results, KV or logs |
 | Contracts | Schema and consumer tests | Mobile API, Jellycube host adapter, PaymentProvider adapters |
 | End to end | Playwright (admin), Maestro or Detox (mobile) | Critical journeys: sign-in, donate, RSVP, check-in, consent |
+| Accessibility | axe (or equivalent) in Playwright; native a11y checks on mobile | WCAG 2.2 AA on admin, portal, ops and widget islands ([§8.5](#85-client-surfaces)) |
 
 ---
 
 ## 24. Migrating from self-hosted Laravel
 
-### 24.1 Steps per client
+Today's public website and the platform are **the same Laravel app and the same MySQL**. Blade templates call Eloquent in-process (`PagesController::getDynamicDataForView` loads events, notices, campaigns, bulletins, products, galleries and team from the models staff edit). Public routes write back into those tables: form submit (`FormResponse` plus `saveToContacts`), donate (PayHub → `Donation`), event RSVP and tickets, contact, volunteer apply, membership buy, shop checkout. Turning off the `website` module toggle does not isolate this — engagement, donations and forms are other keys in the same `module_toggles` JSON. There is no detached public content API.
+
+**A leftover "website-only" Laravel install cannot stay live.** Purging member tables still breaks form, contact, RSVP and donate paths that upsert `contacts`. Purging content tables empties the homepage and sends new donations and form fills into a database nobody is using.
+
+The end state is still a split of *roles*: core is the system of record; the public site (Jellycube, or a thin renderer that uses the same contract) displays public data and posts forms, donations and RSVPs to core. That is an API, not two products with their own copies.
+
+### 24.1 Rule
+
+No client is production on core while its public website still reads or writes the old Laravel database. Admin, mobile and the public domain cut over in **one window** per client (D14).
+
+A frozen **static export** to R2 is allowed only if the client agrees to a brochure freeze — no donate, forms, RSVP, tickets, shop, or live listings. Current parish customers do not qualify.
+
+### 24.2 Steps per client
 
 1. **Provision** an implicit organisation and one community in `au`.
 2. **Import** with `adapters/legacy-laravel-import` from a MySQL dump:
@@ -1070,19 +1308,26 @@ Production data is never copied to non-production environments.
    | `products`, `orders`, `categories` | commerce |
    | `blog_posts`, `photo_galleries`, `gallery_photos`, `team_members`, `media` | content, files |
    | `mobile_app_settings`, `mobile_app_services`, `mobile_app_ministries`, `push_subscriptions` | app home configuration, service times, device tokens |
-   | `pages`, `templates`, `page_templates`, `website_settings`, `homepage_settings` | Jellycube import (separate tool) |
+   | `pages`, `templates`, `page_templates`, `website_settings`, `homepage_settings` | public-site import (Jellycube, or the thin renderer if that is what ships in Phase 4) |
 
-3. **Verify** with row counts, checksums on money totals, and a sample review by the client.
-4. **Run in parallel:** App Registry points the community's `site_url` at `{slug}.communityhub.one`; legacy mobile routes are served by the compatibility router.
-5. **Reduce the old install to website-only.** The website cannot move until Jellycube is ready ([§25](#25-roadmap)), but the Laravel instance must not keep serving a full copy of member and children's data on infrastructure being decommissioned. Once the import is verified, either export the site to static pages served from R2, or purge every member-bearing table from the Laravel database, leaving pages, templates and media. Clients are told this timeline **before** they migrate.
-6. **Cut over the website** when the Jellycube adapter ships: content is imported, the domain becomes a Jellycube custom hostname.
-7. **Decommission:** deliver a final export to the client, securely delete the self-hosted database and files, record the deletion.
+3. **Verify** with row counts, checksums on money totals, and a sample review by the client — including a staging pass of the **public** homepage, donate, a form submit and an RSVP against core, not only admin screens.
+4. **Run in parallel on staging.** Laravel remains the live origin. Core admin, core public site and the mobile compatibility router run against the imported tenant. Staff do not treat core as production while the public domain still hits Laravel.
+5. **Cut over in one window:**
+   - Public hostname (`www.stmarys.org.au` or equivalent) → Jellycube (or the Phase 4 renderer), Regional Services = Australia.
+   - Forms, donate, RSVP and tickets post to core.
+   - App Registry / mobile → core API; portal → `{slug}.communityhub.one`.
+   - Staff admin → core.
+   - Laravel is set read-only immediately (no new form, donate or RSVP writes), then taken down.
+6. **Decommission:** deliver a final export to the client, securely delete the self-hosted database and files, record the deletion.
 
-### 24.2 Principles
+A client is not scheduled until every public write they actually use (forms, donate, RSVP, shop) already posts to core.
+
+### 24.3 Principles
 
 - Imports are repeatable and idempotent against staging until sign-off.
 - Restricted fields are encrypted during import; plaintext dumps are deleted after the run.
-- No client is migrated until the tenant isolation and residency suites pass for the modules they use.
+- No client is migrated until the tenant isolation and residency suites pass for the modules they use, **and** until the public site on core has passed donate, form submit and RSVP on staging.
+- After cutover, Laravel must not accept writes. A second source of truth is a failed migration.
 
 ---
 
@@ -1090,13 +1335,13 @@ Production data is never copied to non-production environments.
 
 | Phase | Deliverables |
 |---|---|
-| **0. Foundations** | Monorepo, CI, Terraform for Cloudflare and AU AWS, kernel, residency, db with RLS, crypto, observability, audit |
-| **1. Core platform** | Organisations and communities (implicit orgs), identity and OIDC, people and households, access, entitlements and control plane, Stripe Billing, ops console |
-| **2. Engagement and mobile** | Engagement, groups, forms, communications, content, Public Content API, App Registry, new mobile API, legacy compatibility router, mobile app on new API. **`verticals/faith-church` ships here** — every current customer is a parish, so Mass times, sacraments and parish wording are launch requirements, not a later nicety |
+| **0. Foundations** | Monorepo, CI, Terraform for Cloudflare and AU AWS, kernel, residency, db with RLS, crypto, observability, audit, **`packages/ui` from shadcn (D16)** |
+| **1. Core platform** | Organisations and communities (implicit orgs), identity and OIDC, people and households, access, entitlements and control plane, Stripe Billing, ops console, **`core/usage` (facts grow as modules ship)** |
+| **2. Engagement and mobile** | Engagement, groups, forms, communications, content, Public Content API, App Registry, new mobile API, legacy compatibility router, **Parish Hub (`parish-hub-au`) only**. **`verticals/faith-church` ships here** — every current customer is a parish, so Mass times, sacraments and parish wording are launch requirements, not a later nicety |
 | **3. Money and safeguarding** | Giving and membership through GivingJar adapter, payment ledger, rollups and receipts, volunteers, safeguarding and check-in, records |
-| **4. Migration (data, portal, mobile)** | Laravel importer, pilot client migrations, portal and mobile cutover. **Websites stay on the client's existing Laravel site, reduced to website-only** ([§24](#24-migrating-from-self-hosted-laravel)) |
-| **5. Website and commerce** | Jellycube host adapter and data sources, website cutover for migrated clients, commerce add-on |
-| **6. Growth** | White-label apps, organisation features (dioceses, leagues), SSO/SCIM, partner apps on Workers for Platforms, vertical packs for mosques and sports clubs |
+| **4. Public website on core** | Jellycube host adapter, **host widget pack** (events, notices, bulletins, service times, forms, donate), data sources, form/donate/RSVP posts to core. **Gate on first client migration.** If the Jellycube SDK is not frozen, ship a thin in-core public renderer on the same APIs; Jellycube replaces it later without a second data migration (Q2) |
+| **5. Client migration** | Laravel importer, pilot cutovers. **Each client moves admin, mobile and the public website in one window** ([§24](#24-migrating-from-self-hosted-laravel)). Commerce add-on if a pilot uses the shop |
+| **6. Growth** | Further directory apps (mosques, sports clubs, other countries with their own store names), white-label apps, organisation features (dioceses, leagues), SSO/SCIM, partner apps on Workers for Platforms, vertical packs for mosques and sports clubs |
 | **7. New regions** | Legal review and cell rollout for additional countries |
 
 ---
@@ -1106,19 +1351,20 @@ Production data is never copied to non-production environments.
 | # | Item | Type | Owner | Notes |
 |---|---|---|---|---|
 | Q1 | GivingJar API coverage: recurring payments, refunds, per-community account onboarding, webhook signing format | Question | Payments | Determines adapter scope |
-| Q2 | Jellycube SDK timeline and host adapter interface freeze | Dependency | Jellycube | Phase 5 depends on it |
+| Q2 | Jellycube SDK timeline: host adapter freeze **including host widget registry** (palette, inspector, static vs island insert, content rebuild) | Dependency | Jellycube | Phase 4 prefers Jellycube; if the SDK is not ready, the thin in-core renderer is the fallback so Phase 5 is not blocked. Either way the public site talks only to core |
 | Q3 | Identity library choice for OTP, passkeys and OIDC provider on Workers | Decision | Platform | Evaluate maturity, audit history, Workers compatibility |
 | Q4 | Permission engine: in-house policy package versus Cedar or OpenFGA when organisation features launch | Decision | Platform | Start in-house with a clean interface |
 | Q5 | Store developer accounts for white-label apps (ours versus the client's) | Question | Product | Affects app ownership and compliance responsibilities |
 | Q6 | Replace OneSignal with direct APNs/FCM to remove an offshore processor | Decision | Mobile | Not required for launch |
 | Q7 | Age thresholds for guardian consent and the content of the Children's Online Privacy Code | Legal | Compliance | Jurisdiction table must be signed off |
 | Q8 | Plan and add-on pricing | Product | Product | Model supports any structure |
-| Q9 | Does Cloudflare Email Service offer an Australian processing guarantee? (It is a different product from Email Security's Australia region, and the docs do not state one) | Question | Platform | Until answered, SES ap-southeast-2 sends anything containing personal data |
+| Q9 | Which `EmailProvider` adapter to use for transactional mail | Decision | Platform | Must process in the tenant's region, or be an APP 8 subprocessor with a minimal payload. Cloudflare Email Service has no confirmed Australian processing guarantee (it is a different product from Email Security's Australia region). No vendor is assumed until chosen |
 | Q10 | Sign-off on whether opaque identifiers (`sessionId`, `rev`) may transit a Durable Object outside Australia, if real-time fan-out is ever needed | Legal | Compliance | Default until then: polling only ([§7.6](#76-real-time-without-durable-objects)) |
 | Q11 | Availability target and the accepted consequence of having no out-of-country failover | Decision | Product | 99.9% is proposed, not agreed ([§22](#22-reliability-backup-and-disaster-recovery)) |
+| Q12 | Feature-flag service vendor | Decision | Platform | Placeholder was "Flagship". Targeting must stay organisation, community, plan and region — never personal identifiers. Prefer an in-region or APP 8-reviewed processor |
 | R1 | Cloudflare adds or changes storage jurisdictions | Risk / opportunity | Platform | If Australian jurisdictions arrive, D1 or Durable Object storage could replace Postgres per module behind `packages/db` |
 | R2 | Hyperdrive and Workers VPC are critical path dependencies | Risk | Platform | Monitor, load test, keep degraded modes |
-| R3 | Rebuild scope versus existing Laravel feature depth | Risk | Delivery | Migrate in phases; keep legacy compatibility routes |
+| R3 | Rebuild scope versus existing Laravel feature depth | Risk | Delivery | Build in phases; **migrate each client as one cutover**. Do not split a live parish across Laravel website and core admin |
 
 ---
 
@@ -1135,8 +1381,12 @@ Production data is never copied to non-production environments.
 | **Restricted data** | Highest data class: children, health, safeguarding, check numbers, religious records |
 | **Blind index** | Keyed hash used to search encrypted values |
 | **`exec` hostname** | Internal regional endpoint used by jobs so personal-data processing runs in-region |
-| **App Registry** | Control-plane records defining mobile apps and which communities each lists |
+| **App Registry** | Control-plane records defining each store app (key, region, community types) and **which communities that app lists** |
 | **Host adapter** | Core's implementation of the Jellycube SDK's host interface |
+| **Host widget pack** | Astro components and islands owned by core, registered into Jellycube's palette for this host only |
+| **Design system** | shadcn/ui copied into `packages/ui`, plus product patterns; mobile maps the same tokens via React Native Reusables ([§8.5](#85-client-surfaces)) |
+| **Usage facts** | Community × feature × day rollups for platform product intelligence; not user-level analytics ([§19.3](#193-product-usage-intelligence)) |
+| **Client cutover** | One window in which a parish's admin, mobile and public website leave Laravel and talk only to core |
 
 ---
 
