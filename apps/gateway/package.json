@@ -1,0 +1,23 @@
+{
+  "name": "@community-hub/gateway",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --build",
+    "test": "vitest run --config vitest.config.ts",
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "@community-hub/kernel": "workspace:*",
+    "@community-hub/observability": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.12.21",
+    "@cloudflare/workers-types": "^5.20260917.1",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.9",
+    "wrangler": "^4.134.0"
+  }
+}

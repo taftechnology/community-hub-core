@@ -2,6 +2,7 @@
   "files": [],
   "references": [
     { "path": "./packages/kernel" },
-    { "path": "./packages/observability" }
+    { "path": "./packages/observability" },
+    { "path": "./apps/gateway" }
   ]
 }
