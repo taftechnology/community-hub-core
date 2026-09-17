@@ -13,7 +13,7 @@
     "build": "turbo run build",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
-    "check:boundaries": "tsx tooling/checks/worker-config/run.ts"
+    "check:boundaries": "tsx tooling/checks/run.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.22.0",
