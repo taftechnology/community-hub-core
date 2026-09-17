@@ -52,17 +52,17 @@ pnpm lint && pnpm typecheck && pnpm test
 
 ## Files changed / added
 
-| Path | Role |
-|---|---|
-| `package.json` | Root workspace, turbo scripts, Node 24 + pnpm 10 |
-| `pnpm-workspace.yaml` | `packages/*`, `apps/*` |
-| `pnpm-lock.yaml` | Lockfile |
-| `turbo.json` | lint, typecheck, test, build |
-| `tsconfig.base.json`, `tsconfig.json` | Strict TS + project references |
-| `.nvmrc`, `.editorconfig`, `.gitignore` | Environment / ignore |
-| `eslint.config.js`, `.prettierrc` | ESLint 9 flat + Prettier |
-| `vitest.config.ts` | Shared Vitest include pattern |
-| `packages/kernel/*` | `@community-hub/kernel`, `healthPayload` export |
+| Path                                    | Role                                             |
+| --------------------------------------- | ------------------------------------------------ |
+| `package.json`                          | Root workspace, turbo scripts, Node 24 + pnpm 10 |
+| `pnpm-workspace.yaml`                   | `packages/*`, `apps/*`                           |
+| `pnpm-lock.yaml`                        | Lockfile                                         |
+| `turbo.json`                            | lint, typecheck, test, build                     |
+| `tsconfig.base.json`, `tsconfig.json`   | Strict TS + project references                   |
+| `.nvmrc`, `.editorconfig`, `.gitignore` | Environment / ignore                             |
+| `eslint.config.js`, `.prettierrc`       | ESLint 9 flat + Prettier                         |
+| `vitest.config.ts`                      | Shared Vitest include pattern                    |
+| `packages/kernel/*`                     | `@community-hub/kernel`, `healthPayload` export  |
 
 ## Concerns
 

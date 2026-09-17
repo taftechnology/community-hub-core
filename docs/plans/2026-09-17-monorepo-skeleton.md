@@ -13,14 +13,14 @@ Branch: `feat/2026-09-17-monorepo-skeleton` · one PR · 9 tasks, one commit eac
 
 The spec names capabilities; these are the concrete choices. Each is reversible and cheap to revisit while the tree is this small.
 
-| Choice | Decision | Why |
-|---|---|---|
-| Lint + format | **ESLint 9 flat config + Prettier** | Later chunks need bespoke rules (no adapter imports from modules, no raw pool access, no personal data in log calls, no encrypted column in a query). ESLint can express them; Biome's custom-rule story is still thin. Cost: two tools instead of one. |
-| Test runner | **Vitest 3**; `@cloudflare/vitest-pool-workers` for `apps/gateway` only | Spec §Workspace. Kernel, observability and checkers stay on plain Vitest — faster, no workerd boot. |
-| Checkers | TypeScript under `tooling/checks/<name>/`, each with a `*.selftest.ts` run by Vitest | Checkers are code with tests, not shell one-liners. They run in Stage 1 *and* in `pnpm test`, so a broken checker fails locally. |
-| Node / pnpm | Node **24 LTS** (`.nvmrc`, `engines`), pnpm 10 via `packageManager` + corepack | Spec §Workspace. |
-| Task runner | Turborepo: `lint`, `typecheck`, `test`, `build`. Root also has `pnpm check:boundaries` (the T4–T7 checkers). | Spec §Workspace; AGENTS.md §8 local gate. |
-| CI | One workflow, `.github/workflows/ci.yml`, three jobs: `static`, `test`, `build-preview` | Spec Stages 1–3. Stage 4 is out of scope. |
+| Choice        | Decision                                                                                                     | Why                                                                                                                                                                                                                                                     |
+| ------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Lint + format | **ESLint 9 flat config + Prettier**                                                                          | Later chunks need bespoke rules (no adapter imports from modules, no raw pool access, no personal data in log calls, no encrypted column in a query). ESLint can express them; Biome's custom-rule story is still thin. Cost: two tools instead of one. |
+| Test runner   | **Vitest 3**; `@cloudflare/vitest-pool-workers` for `apps/gateway` only                                      | Spec §Workspace. Kernel, observability and checkers stay on plain Vitest — faster, no workerd boot.                                                                                                                                                     |
+| Checkers      | TypeScript under `tooling/checks/<name>/`, each with a `*.selftest.ts` run by Vitest                         | Checkers are code with tests, not shell one-liners. They run in Stage 1 _and_ in `pnpm test`, so a broken checker fails locally.                                                                                                                        |
+| Node / pnpm   | Node **24 LTS** (`.nvmrc`, `engines`), pnpm 10 via `packageManager` + corepack                               | Spec §Workspace.                                                                                                                                                                                                                                        |
+| Task runner   | Turborepo: `lint`, `typecheck`, `test`, `build`. Root also has `pnpm check:boundaries` (the T4–T7 checkers). | Spec §Workspace; AGENTS.md §8 local gate.                                                                                                                                                                                                               |
+| CI            | One workflow, `.github/workflows/ci.yml`, three jobs: `static`, `test`, `build-preview`                      | Spec Stages 1–3. Stage 4 is out of scope.                                                                                                                                                                                                               |
 
 **Checker input formats are provisional.** Nothing real exists for the schema, encryption and residency checkers to read, so each defines a minimal input contract and is exercised only by fixtures. When `packages/db` lands, those contracts are expected to change; the checkers and their must-fail fixtures are what must survive, not the parsing details. Recorded as a risk below.
 
@@ -116,7 +116,7 @@ Each task is one commit, test-first, independently verifiable, and leaves the tr
   - `static` — format check, ESLint, `tsc --build`, `pnpm check:boundaries` (T4–T7 live scan of the real tree), secret scanning, `pnpm audit` (fail on high/critical), traceability.
   - `test` — `pnpm test` (kernel, observability, gateway, **checker self-tests**). The self-tests are what make an empty live tree acceptable: a checker that exits 0 on zero real tables is not a pass unless its fixtures still fail in this job.
   - `build-preview` — `wrangler deploy --dry-run` always; then `wrangler versions upload` and a PR comment with the `*.workers.dev` preview URL.
-- **Secrets:** `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`. **Missing secrets fail the job**; there is no conditional skip (spec §Gateway). Live preview is merge-blocking; the T8 *commit* may land locally before secrets exist.
+- **Secrets:** `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`. **Missing secrets fail the job**; there is no conditional skip (spec §Gateway). Live preview is merge-blocking; the T8 _commit_ may land locally before secrets exist.
 - **Traceability:** branch matches `<type>/<YYYY-MM-DD>-<slug>`; the PR body links one spec and one plan; both share the slug; both are `approved`. Verified on this PR itself. Runs on `pull_request` only.
 - **Omitted deliberately:** module manifests, plan catalogue, OpenAPI diff, Terraform plan, tenant isolation, contract tests, axe, **dependency-cruiser** — no real input yet, and per spec they are not stubbed green. Stage 4 (deploy) is out of scope.
 - **Must not break:** non-negotiable 1 on the preview URL (only `global-no-pii`). T8 does not create `check:boundaries`; it only invokes the script T4 introduced.
@@ -146,13 +146,13 @@ Each task is one commit, test-first, independently verifiable, and leaves the tr
 
 ## Risks carried by this plan
 
-| Risk | Handling |
-|---|---|
+| Risk                                                                    | Handling                                                                                                                                                                                         |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Checker input formats are invented before the real inputs exist (T5–T7) | Minimal contracts, documented as provisional in each `README.md`. The must-fail fixtures are the durable part. Expect rewrites when `packages/db` lands; that is cheaper than shipping no check. |
-| `versions upload` needs account credentials a human must provision | Spec Out-of-band. CI fails loudly if absent; the PR cannot go green until then. |
-| Traceability check needs PR context | It runs on `pull_request` events only; a bare branch push skips it by design, and merge requires the PR. |
-| ESLint + Prettier over a single-tool setup | Revisit before the tree grows past ~10 packages; migration cost now is minutes. |
-| Scaffolding tempts scope creep (an empty `apps/api`, a fuller kernel) | Spec Out and Risks are explicit; T3 and T1 state what must not appear. Reviewer rejects extra packages. |
+| `versions upload` needs account credentials a human must provision      | Spec Out-of-band. CI fails loudly if absent; the PR cannot go green until then.                                                                                                                  |
+| Traceability check needs PR context                                     | It runs on `pull_request` events only; a bare branch push skips it by design, and merge requires the PR.                                                                                         |
+| ESLint + Prettier over a single-tool setup                              | Revisit before the tree grows past ~10 packages; migration cost now is minutes.                                                                                                                  |
+| Scaffolding tempts scope creep (an empty `apps/api`, a fuller kernel)   | Spec Out and Risks are explicit; T3 and T1 state what must not appear. Reviewer rejects extra packages.                                                                                          |
 
 ## Definition of done for the chunk
 

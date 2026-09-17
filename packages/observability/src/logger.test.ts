@@ -39,9 +39,7 @@ describe("createLogger", () => {
 
     expect(() => logger.info("ok", null as unknown as LogFields)).not.toThrow();
     expect(() => logger.info("ok", undefined)).not.toThrow();
-    expect(() =>
-      logger.info("ok", 42 as unknown as LogFields),
-    ).not.toThrow();
+    expect(() => logger.info("ok", 42 as unknown as LogFields)).not.toThrow();
     expect(() => logger.info("ok", "nope" as unknown as LogFields)).not.toThrow();
   });
 });

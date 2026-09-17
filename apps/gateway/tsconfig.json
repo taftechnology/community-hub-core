@@ -10,8 +10,5 @@
   },
   "include": ["src/**/*.ts", "vitest.config.ts"],
   "exclude": ["src/**/*.test.ts"],
-  "references": [
-    { "path": "../../packages/kernel" },
-    { "path": "../../packages/observability" }
-  ]
+  "references": [{ "path": "../../packages/kernel" }, { "path": "../../packages/observability" }]
 }

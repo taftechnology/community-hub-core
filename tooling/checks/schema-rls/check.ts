@@ -92,11 +92,7 @@ function findAppTables(sql: string): { table: string; columnList: string }[] {
   return tables;
 }
 
-function validateSqlFile(
-  filePath: string,
-  root: string,
-  sql: string,
-): SchemaRlsViolation[] {
+function validateSqlFile(filePath: string, root: string, sql: string): SchemaRlsViolation[] {
   const relFile = path.relative(root, filePath);
   const violations: SchemaRlsViolation[] = [];
 

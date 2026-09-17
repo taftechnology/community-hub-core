@@ -102,9 +102,7 @@ function loadClassificationMap(root: string): Record<string, string> | null {
 }
 
 function parseColumnRef(token: string): ColumnRef | null {
-  const cleaned = token
-    .replace(/\s+(ASC|DESC)(\s+NULLS\s+(FIRST|LAST))?/gi, "")
-    .trim();
+  const cleaned = token.replace(/\s+(ASC|DESC)(\s+NULLS\s+(FIRST|LAST))?/gi, "").trim();
   if (cleaned.length === 0) {
     return null;
   }

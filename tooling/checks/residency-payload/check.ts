@@ -46,11 +46,7 @@ function discoverPayloadJsonFiles(root: string): string[] {
   return files;
 }
 
-function findPersonalDataKeys(
-  value: unknown,
-  pathKeys: string[],
-  out: string[],
-): void {
+function findPersonalDataKeys(value: unknown, pathKeys: string[], out: string[]): void {
   if (value === null || typeof value !== "object") {
     return;
   }
@@ -92,7 +88,8 @@ function scanPayloadFile(filePath: string, root: string): ResidencyPayloadViolat
   return unique.map((key) => ({
     file: relFile,
     key,
-    message: "queue and workflow payloads must not contain personal data fields (IDs in, status out)",
+    message:
+      "queue and workflow payloads must not contain personal data fields (IDs in, status out)",
   }));
 }
 

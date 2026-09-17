@@ -2,12 +2,12 @@
 
 Applies to **every contributor: AI agents and humans**. If you are an agent, read this file before your first action in a session.
 
-| | |
-|---|---|
-| **Companion document** | [`architecture.md`](architecture.md) — what we are building and why. This file is *how* we build it. |
-| **Precedence** | `architecture.md` decisions (D1…) > this file > personal preference. If you must break a rule here, say so in the PR and why. |
-| **Repository state** | Bootstrap. Only `architecture.md` and this file exist. Phase 0 of the roadmap creates the monorepo and the commands referenced below. |
-| **Tooling** | [Superpowers](https://github.com/obra/superpowers) is required for agent sessions: `/plugin install superpowers@claude-plugins-official` |
+|                        |                                                                                                                                          |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **Companion document** | [`architecture.md`](architecture.md) — what we are building and why. This file is _how_ we build it.                                     |
+| **Precedence**         | `architecture.md` decisions (D1…) > this file > personal preference. If you must break a rule here, say so in the PR and why.            |
+| **Repository state**   | Bootstrap. Only `architecture.md` and this file exist. Phase 0 of the roadmap creates the monorepo and the commands referenced below.    |
+| **Tooling**            | [Superpowers](https://github.com/obra/superpowers) is required for agent sessions: `/plugin install superpowers@claude-plugins-official` |
 
 ---
 
@@ -34,24 +34,24 @@ CI enforces what it can. The rest is on the reviewer.
 
 Three roles. **No agent both writes and signs off on the same work.**
 
-| Role | Who | Does | Must not |
-|---|---|---|---|
-| **Human owner** | You | Approves specs and plans. Merges PRs. Decides trade-offs, scope, legal and product questions. | — |
-| **Reviewer agent** | The session you talk to (where subagents exist) | Writes the spec, drafts the plan, spawns implementers, reviews every task and the final PR, keeps `architecture.md` honest | Write implementation code or tests for the chunk it is reviewing |
-| **Implementer agent** | Spawned subagent(s), fresh context | Implements one task at a time, with tests, and reports back | Approve its own work, merge, or change the spec/plan unilaterally |
+| Role                  | Who                                             | Does                                                                                                                       | Must not                                                          |
+| --------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| **Human owner**       | You                                             | Approves specs and plans. Merges PRs. Decides trade-offs, scope, legal and product questions.                              | —                                                                 |
+| **Reviewer agent**    | The session you talk to (where subagents exist) | Writes the spec, drafts the plan, spawns implementers, reviews every task and the final PR, keeps `architecture.md` honest | Write implementation code or tests for the chunk it is reviewing  |
+| **Implementer agent** | Spawned subagent(s), fresh context              | Implements one task at a time, with tests, and reports back                                                                | Approve its own work, merge, or change the spec/plan unilaterally |
 
 **If the tool has no subagent capability**
 
 Single-agent tools (or a session where spawning is unavailable) collapse to **two roles, not one**: the agent implements, and **the human is the reviewer**. The principle does not bend — nobody signs off on their own work.
 
-| | Multi-agent tool | Single-agent tool |
-|---|---|---|
-| Spec and plan | Reviewer agent drafts | Agent drafts |
-| Approval of spec and plan | Human | Human |
-| Implementation | Implementer agent(s) | The agent |
-| Task review | Reviewer agent, diff only | **Human**, diff only |
-| Sensitive chunks (§2) | Second fresh-context reviewer | Human review, and a fresh session re-reads the final diff with no memory of writing it |
-| Merge | Human | Human |
+|                           | Multi-agent tool              | Single-agent tool                                                                      |
+| ------------------------- | ----------------------------- | -------------------------------------------------------------------------------------- |
+| Spec and plan             | Reviewer agent drafts         | Agent drafts                                                                           |
+| Approval of spec and plan | Human                         | Human                                                                                  |
+| Implementation            | Implementer agent(s)          | The agent                                                                              |
+| Task review               | Reviewer agent, diff only     | **Human**, diff only                                                                   |
+| Sensitive chunks (§2)     | Second fresh-context reviewer | Human review, and a fresh session re-reads the final diff with no memory of writing it |
+| Merge                     | Human                         | Human                                                                                  |
 
 In that mode, keep tasks small enough that a human can review each commit in a few minutes — that is the whole reason for one commit per task.
 
@@ -70,11 +70,11 @@ A **chunk** is one shippable slice of behaviour. **One spec = one plan = one bra
 
 **Naming — the slug and date tie the chain together**
 
-| Artifact | Form | Example |
-|---|---|---|
-| Spec | `docs/specs/YYYY-MM-DD-<slug>.md` | `docs/specs/2026-09-17-giving-checkout.md` |
-| Plan | `docs/plans/YYYY-MM-DD-<slug>.md` | `docs/plans/2026-09-19-giving-checkout.md` |
-| Branch | `<type>/<spec-date>-<slug>` | `feat/2026-09-17-giving-checkout` |
+| Artifact | Form                                                 | Example                                    |
+| -------- | ---------------------------------------------------- | ------------------------------------------ |
+| Spec     | `docs/specs/YYYY-MM-DD-<slug>.md`                    | `docs/specs/2026-09-17-giving-checkout.md` |
+| Plan     | `docs/plans/YYYY-MM-DD-<slug>.md`                    | `docs/plans/2026-09-19-giving-checkout.md` |
+| Branch   | `<type>/<spec-date>-<slug>`                          | `feat/2026-09-17-giving-checkout`          |
 | PR title | `<type>(<scope>): <summary>` + spec link in the body | `feat(giving): checkout through GivingJar` |
 
 - The **date is the date that document was created** — a plan written two days after its spec keeps its own date. The **slug is identical** across spec, plan and branch; that is what pairs them.
@@ -82,6 +82,7 @@ A **chunk** is one shippable slice of behaviour. **One spec = one plan = one bra
 - Superseding a spec means a new file with a new date and a `Supersedes:` line, not an edit to a merged one.
 
 **Right-sized chunk**
+
 - Delivers something a user or another module can actually use (a vertical slice, not "the schema layer").
 - 3–10 tasks, each 1 commit.
 - Reviewable in one sitting: aim for **under ~800 changed lines** excluding generated files, lockfiles and migrations.
@@ -117,35 +118,44 @@ Write `docs/specs/YYYY-MM-DD-<slug>.md`:
 
 ```markdown
 # Spec: <chunk name>
-Slug: <slug>                     # identical in the plan and the branch name
+
+Slug: <slug> # identical in the plan and the branch name
 Status: draft | approved (YYYY-MM-DD, approver)
-Supersedes: docs/specs/…  (only when replacing an earlier spec)
+Supersedes: docs/specs/… (only when replacing an earlier spec)
 Architecture refs: §…, D…
 
 ## Problem
+
 What the community, member, child, guardian, staff member or operator cannot do today.
 
 ## Scope
+
 In: …
 Out: … (explicitly)
 
 ## Behaviour
+
 User-visible behaviour, including empty, error and offline states.
 
 ## Data
+
 New/changed tables and columns, each with a classification from architecture §12.1.
 Blind index or derived-clear decisions per §12.2.1.
 
 ## Rules touched
+
 Entitlement keys, permissions, consent, retention, residency, safeguarding.
 
 ## Contracts
+
 API routes, events published/consumed, port changes, widget keys.
 
 ## Risks
+
 What could break tenancy, residency, children's data or money. Mitigations.
 
 ## Out-of-band
+
 Legal sign-off needed? Architecture change needed? New subprocessor?
 ```
 
@@ -196,30 +206,35 @@ Use superpowers **`finishing-a-development-branch`**. Open the PR with the templ
 Architecture-specific rules that reviewers check on every diff. Most map to a CI check; all of them are your responsibility.
 
 **Tenancy and data**
+
 - Every new `app` table: `org_id`, `community_id` (unless organisation-level), RLS + FORCE RLS, classification on every column.
 - Queries go through `packages/db` helpers. No raw pool access, no session-level `SET`.
 - Identity-schema work is `core/identity` only (identity role). Platform-schema work is `core/tenancy` only (platform role). Neither sets `app.org_id`; those tables have no `org_id`.
 - New encrypted column? Prove nothing filters, sorts or aggregates on it. A minor's `confidential*` fields use the household key; their blind indexes are household-scoped, not community-wide.
 
 **Residency**
+
 - New Worker: `workers_dev = false`, regional hostname registered with Regional Services if it touches personal data. A global Worker (including ops console) that would need personal data is the wrong Worker — proxy to `api-au` instead.
 - New queue/workflow/cron path: IDs in, status out, `exec` does the work.
 - New outbound call carrying personal data (Stripe, EmailProvider, SMS, push, other provider): it originates from `exec`, not from a global Worker or a job. Control-plane never calls Stripe; `customers.retrieve` returns email.
 - New inbound webhook whose payload may contain personal data: regional hostname (`webhooks-au`). Parse in-region; persist ids/status only before anything global sees it.
 
 **Modules**
+
 - Cross-module access only through `public/`; prefer events.
 - `domain/` stays framework-free.
 - Modules never import adapters; they depend on ports.
 - New entitlement key, permission, event or widget: declare it in `module.manifest.ts`. Plans reference manifest keys only.
 
 **API and UI**
+
 - Contracts first: Zod in `packages/contracts`, OpenAPI regenerated, breaking change → `/v2` plus deprecation window.
 - No personal data in paths or query strings.
 - Web UI composes `packages/ui` (shadcn/ui). Mobile composes `packages/ui-native` (React Native Reusables) on the same tokens. No third catalogue; WCAG 2.2 AA is a merge gate (D16).
 - Entitlement-gated features hide or show an upgrade prompt — never render a control that only 403s.
 
 **Tests**
+
 - Unit for domain rules; integration for routes and repositories; **tenant-isolation and residency suites are not optional** for anything touching data.
 - Every bug fix starts with a failing regression test.
 - Synthetic data only. Fixtures never contain real people, real children, or production exports.
@@ -278,6 +293,7 @@ Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`, `build`, `ci`
 **One PR implements exactly one spec**, except the no-spec lane in §3. If chunk work grows past its spec, stop: either narrow the PR, or write a second spec and open a second branch.
 
 **PR description** states:
+
 - `Spec: docs/specs/<spec-date>-<slug>.md` and `Plan: docs/plans/<plan-date>-<slug>.md` (both required, both must be `approved`) — or, for the no-spec lane, `No spec:` and why
 - What changed, in behaviour terms
 - Data classification changes and migration wave
@@ -286,6 +302,7 @@ Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`, `build`, `ci`
 - Screenshots or a preview link for UI, test evidence for backend
 
 **Merge policy**
+
 - Required checks must pass. No exceptions, no admin override without a written reason in the PR.
 - **Agents never merge.** The human owner merges.
 - Squash when the commits are noise; merge commit when the task history is worth keeping (it usually is — the plan maps to it).
@@ -298,6 +315,7 @@ Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`, `build`, `ci`
 `main` is always releasable. CI runs on every push to a PR; the heavier suites run before deploy.
 
 **Stage 1 — Static (fast, every push)**
+
 - format, lint, typecheck
 - module boundaries (dependency-cruiser)
 - manifest checks: entitlement/permission/event keys exist and are declared; plan catalogue keys resolve
@@ -307,6 +325,7 @@ Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`, `build`, `ci`
 - secret scanning, dependency audit (fail on high/critical)
 
 **Stage 2 — Tests (every push)**
+
 - unit + module integration (`@cloudflare/vitest-pool-workers` + Postgres)
 - **tenant isolation**: every endpoint called with another organisation's and community's token must fail
 - **residency**: no personal data in queue payloads, workflow step results, KV writes or log output; `exec` routes return status shapes only; control-plane has no Stripe client
@@ -314,11 +333,13 @@ Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`, `build`, `ci`
 - accessibility (axe) on changed surfaces
 
 **Stage 3 — Build and preview (every PR)**
+
 - build all Workers and apps; publish OpenAPI diff as a comment
 - per-PR preview deployment seeded with synthetic data only
 - Terraform plan posted to the PR when `infra/` changed
 
 **Stage 4 — Deploy**
+
 - merge to `main` → migrations → deploy `staging-au` → smoke tests + critical-journey e2e (sign-in, donate, RSVP, check-in, consent)
 - production is a **human-triggered** promotion of that exact build: migrations → gradual deployment → automatic rollback on error-rate alert
 - Terraform apply on `infra/` changes requires human approval

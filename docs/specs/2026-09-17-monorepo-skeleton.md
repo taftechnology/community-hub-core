@@ -1,4 +1,5 @@
 # Spec: Monorepo skeleton
+
 Slug: `monorepo-skeleton`
 Status: approved (2026-09-17, Abdus Salam)
 Reviewed-by: Claude Opus 5 (reviewer agent), 2026-09-17 — no blocking findings
@@ -12,7 +13,7 @@ The repository is two markdown files. Nothing can be linted, typechecked, tested
 
 **In**
 
-- pnpm workspaces + Turborepo at the repo root (this repository *is* the monorepo; the `community-hub/` name in architecture §8.1 is the product, not a nested folder).
+- pnpm workspaces + Turborepo at the repo root (this repository _is_ the monorepo; the `community-hub/` name in architecture §8.1 is the product, not a nested folder).
 - TypeScript project references, format, lint, Vitest.
 - GitHub Actions for AGENTS.md §10 Stages 1–3, scoped to what this chunk can honestly run (see Behaviour). Stage 4 is out (see Out).
 - `packages/kernel` — one export that `apps/gateway` actually imports (proves the workspace graph, not the presence of folders).
@@ -54,10 +55,10 @@ The repository is two markdown files. Nothing can be linted, typechecked, tested
 
 Preview URLs are hosted only on `workers.dev`. Regional Services does not cover `*.workers.dev`. Default is `preview_urls = workers_dev`; with `workers_dev = false`, previews are off unless opted in.
 
-| Worker class (`worker.meta.json`) | When it exists | `workers_dev` | `preview_urls` | How it is verified |
-|---|---|---|---|---|
-| `global-no-pii` (`gateway`, later `control-plane`, `ops-console`) | this chunk: `gateway` | `false` | `true` | Per-PR preview URL |
-| `regional` (`api`, `exec`, `jobs`, `webhooks`, …) | later specs | `false` | `false` | `staging-au` or a preview **custom hostname** under Regional Services — never `workers.dev` |
+| Worker class (`worker.meta.json`)                                 | When it exists        | `workers_dev` | `preview_urls` | How it is verified                                                                          |
+| ----------------------------------------------------------------- | --------------------- | ------------- | -------------- | ------------------------------------------------------------------------------------------- |
+| `global-no-pii` (`gateway`, later `control-plane`, `ops-console`) | this chunk: `gateway` | `false`       | `true`         | Per-PR preview URL                                                                          |
+| `regional` (`api`, `exec`, `jobs`, `webhooks`, …)                 | later specs           | `false`       | `false`        | `staging-au` or a preview **custom hostname** under Regional Services — never `workers.dev` |
 
 CI reads `apps/<name>/worker.meta.json` (see Contracts). It fails if:
 
@@ -77,12 +78,12 @@ CI reads `apps/<name>/worker.meta.json` (see Contracts). It fails if:
 
 Land the checkers anyway. Each checker is tested against a fixture that **must fail**; a check that passes because the tree is empty is treated as a broken check.
 
-| Check | Must-fail fixture (this chunk) |
-|---|---|
-| `app` table `org_id` + RLS + FORCE RLS | A table with no `org_id` (and a table with `org_id` but RLS not forced) |
-| Encryption vs queryability | An encrypted column used in `ORDER BY` (and one in `WHERE`) |
-| Residency / queue payload | A queue payload JSON containing a `name` (and one containing an `email`) |
-| Wrangler residency | A Worker config with `workers_dev = true`; a `regional` Worker with `preview_urls = true`; a Worker with **no class** (missing `worker.meta.json` or missing `class`) |
+| Check                                  | Must-fail fixture (this chunk)                                                                                                                                        |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app` table `org_id` + RLS + FORCE RLS | A table with no `org_id` (and a table with `org_id` but RLS not forced)                                                                                               |
+| Encryption vs queryability             | An encrypted column used in `ORDER BY` (and one in `WHERE`)                                                                                                           |
+| Residency / queue payload              | A queue payload JSON containing a `name` (and one containing an `email`)                                                                                              |
+| Wrangler residency                     | A Worker config with `workers_dev = true`; a `regional` Worker with `preview_urls = true`; a Worker with **no class** (missing `worker.meta.json` or missing `class`) |
 
 Fixtures live under `tooling/checks/` and are not deployable packages. The checker self-test fails the chunk if any fixture unexpectedly passes.
 
@@ -108,23 +109,24 @@ None. This chunk introduces no tables and no classified columns. There is no bli
   ```
 
   or `{ "class": "regional" }`. No other values. The checker fails if the file is absent, `class` is absent, or `class` is unknown. Gateway's file is `global-no-pii`. Future Workers inherit this file; CI must not hardcode `gateway`.
+
 - No other public routes. No events published or consumed. No ports. No widget keys.
 - Package names: `@community-hub/kernel`, `@community-hub/observability`.
 
 ## Risks
 
-| Risk | Mitigation |
-|---|---|
-| Per-PR preview on `workers.dev` processes personal data | Only `global-no-pii` Workers set `preview_urls = true`. CI fails `regional` + `preview_urls = true`, missing class, and omitted `preview_urls`. ADR 0001. |
-| CI infers class from the folder name `gateway` | Class lives in `worker.meta.json`. A Worker with no class is a must-fail fixture. |
-| AGENTS.md §10 Stage 3 currently promises a preview for every PR | This PR rewrites Stage 3: preview URLs for `global-no-pii` Workers; regional Workers are not previewed on `workers.dev`. |
-| Logger ships too loose and later routes log emails | Untyped objects do not compile. Runtime drops unknown and personal-data-tagged keys and counts the drop. Gateway logs method/path/status/duration/request id only. |
-| Logger throws in production when a bad field appears | Runtime never throws for extra or tagged keys; it drops and counts. |
-| Checkers that always pass | Must-fail fixtures are merge-blocking. AGENTS.md forbids always-green stubs. |
-| Cloudflare credentials missing, Stage 3 looks green | Missing secrets fail the job. Human provisions GitHub Actions secrets before merge. |
-| Kernel grows into a framework in this chunk | One export used by `/health`. DI, outbox and manifests wait. |
-| Empty `apps/api` created "for later" | Forbidden. The next spec adds `api` with `packages/db` and Regional Services together. |
-| Merge to `main` is treated as a production/staging deploy | Stage 4 is out of this chunk. No `staging-au` exists. |
+| Risk                                                            | Mitigation                                                                                                                                                         |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Per-PR preview on `workers.dev` processes personal data         | Only `global-no-pii` Workers set `preview_urls = true`. CI fails `regional` + `preview_urls = true`, missing class, and omitted `preview_urls`. ADR 0001.          |
+| CI infers class from the folder name `gateway`                  | Class lives in `worker.meta.json`. A Worker with no class is a must-fail fixture.                                                                                  |
+| AGENTS.md §10 Stage 3 currently promises a preview for every PR | This PR rewrites Stage 3: preview URLs for `global-no-pii` Workers; regional Workers are not previewed on `workers.dev`.                                           |
+| Logger ships too loose and later routes log emails              | Untyped objects do not compile. Runtime drops unknown and personal-data-tagged keys and counts the drop. Gateway logs method/path/status/duration/request id only. |
+| Logger throws in production when a bad field appears            | Runtime never throws for extra or tagged keys; it drops and counts.                                                                                                |
+| Checkers that always pass                                       | Must-fail fixtures are merge-blocking. AGENTS.md forbids always-green stubs.                                                                                       |
+| Cloudflare credentials missing, Stage 3 looks green             | Missing secrets fail the job. Human provisions GitHub Actions secrets before merge.                                                                                |
+| Kernel grows into a framework in this chunk                     | One export used by `/health`. DI, outbox and manifests wait.                                                                                                       |
+| Empty `apps/api` created "for later"                            | Forbidden. The next spec adds `api` with `packages/db` and Regional Services together.                                                                             |
+| Merge to `main` is treated as a production/staging deploy       | Stage 4 is out of this chunk. No `staging-au` exists.                                                                                                              |
 
 ## Out-of-band
 

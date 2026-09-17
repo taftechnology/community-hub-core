@@ -12,9 +12,7 @@ describe("encrypted-query check fixtures", () => {
   for (const name of mustFail) {
     it(`fails fixture ${name}`, () => {
       const result = check(path.join(fixturesDir, name));
-      expect(result.ok, `expected violations: ${JSON.stringify(result.violations)}`).toBe(
-        false,
-      );
+      expect(result.ok, `expected violations: ${JSON.stringify(result.violations)}`).toBe(false);
       expect(result.violations.length).toBeGreaterThan(0);
     });
   }
@@ -22,9 +20,7 @@ describe("encrypted-query check fixtures", () => {
   for (const name of mustPass) {
     it(`passes fixture ${name}`, () => {
       const result = check(path.join(fixturesDir, name));
-      expect(result.ok, `unexpected violations: ${JSON.stringify(result.violations)}`).toBe(
-        true,
-      );
+      expect(result.ok, `unexpected violations: ${JSON.stringify(result.violations)}`).toBe(true);
       expect(result.violations).toEqual([]);
     });
   }

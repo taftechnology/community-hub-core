@@ -69,7 +69,9 @@ function parseJsonFile<T>(filePath: string): T {
   return JSON.parse(text) as T;
 }
 
-function discoverWranglerApps(root: string): { appName: string; appDir: string; wranglerPath: string }[] {
+function discoverWranglerApps(
+  root: string,
+): { appName: string; appDir: string; wranglerPath: string }[] {
   const appsDir = path.join(root, "apps");
   if (!fs.existsSync(appsDir)) {
     return [];

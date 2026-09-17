@@ -9,19 +9,14 @@ export type LogFields = {
 type LogFieldKey = keyof LogFields;
 
 /** Rejects `Record<string, unknown>` and other wide key sets at compile time. */
-type StrictLogFields<T extends LogFields> = [keyof T] extends [LogFieldKey]
-  ? T
-  : never;
+type StrictLogFields<T extends LogFields> = [keyof T] extends [LogFieldKey] ? T : never;
 
 export type CreateLoggerOptions = {
   write?: (line: string) => void;
 };
 
 export type Logger = {
-  info: <T extends LogFields>(
-    message: string,
-    fields?: StrictLogFields<T>,
-  ) => void;
+  info: <T extends LogFields>(message: string, fields?: StrictLogFields<T>) => void;
   getDroppedFieldCount: () => number;
 };
 
@@ -90,11 +85,7 @@ function sanitizeFields(raw: unknown): { fields: LogFields; dropped: number } {
   return { fields, dropped };
 }
 
-function formatLogLine(
-  level: string,
-  message: string,
-  fields: LogFields,
-): string {
+function formatLogLine(level: string, message: string, fields: LogFields): string {
   return JSON.stringify({ level, message, ...fields });
 }
 

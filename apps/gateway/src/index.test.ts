@@ -1,10 +1,6 @@
 import { healthPayload } from "@community-hub/kernel";
 import { createLogger } from "@community-hub/observability";
-import {
-  createExecutionContext,
-  SELF,
-  waitOnExecutionContext,
-} from "cloudflare:test";
+import { createExecutionContext, SELF, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { createFetch } from "./index";
 
@@ -31,17 +27,14 @@ describe("gateway", () => {
     const logger = createLogger({ write: (line) => logLines.push(line) });
     const fetchHandler = createFetch(logger);
 
-    const request = new IncomingRequest(
-      `https://gateway.test/health?secret=${queryToken}`,
-      {
-        method: "POST",
-        headers: {
-          "X-Secret": headerToken,
-          "Content-Type": "text/plain",
-        },
-        body: bodyToken,
+    const request = new IncomingRequest(`https://gateway.test/health?secret=${queryToken}`, {
+      method: "POST",
+      headers: {
+        "X-Secret": headerToken,
+        "Content-Type": "text/plain",
       },
-    );
+      body: bodyToken,
+    });
     const ctx = createExecutionContext();
     const response = await fetchHandler(request, {}, ctx);
     await waitOnExecutionContext(ctx);
@@ -63,14 +56,6 @@ describe("gateway", () => {
     expect(String(parsed.requestId).length).toBeGreaterThan(0);
 
     const keys = Object.keys(parsed).sort();
-    expect(keys).toEqual([
-      "duration",
-      "level",
-      "message",
-      "method",
-      "path",
-      "requestId",
-      "status",
-    ]);
+    expect(keys).toEqual(["duration", "level", "message", "method", "path", "requestId", "status"]);
   });
 });
