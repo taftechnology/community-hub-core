@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | Draft v1 — agreed direction, not yet implemented |
-| **Last updated** | 2026-09-17 (revision 12: webhook diagram, identity SET LOCAL, auth hostnames, minor blind indexes) |
+| **Last updated** | 2026-09-17 (revision 13: Stripe Billing outbound in-region; minor index trade-off) |
 | **Scope** | `community-hub-core` (the multi-tenant SaaS) and its contracts with the mobile apps, GivingJar and Jellycube |
 | **Launch region** | Australia (`au`). Canada, EU and US are designed for but not deployed |
 
@@ -174,7 +174,8 @@ flowchart LR
   STRIPE -->|billing webhook| WH
   WH --> JOBS
   WH -->|ids/status only| CP
-  CP --> STRIPE
+  CP -->|ids only| JOBS
+  JOBS -->|via exec-au| STRIPE
   JOBS -->|via exec-au| PUSH
   JOBS -->|via exec-au| EMAIL
 ```
@@ -263,7 +264,7 @@ A community can leave an organisation (a parish changing diocese, a club leaving
 │ D1 (control plane)    ids, slugs, region, plan, listing status, Stripe customer id               │
 │ KV                    hostname → {orgId, communityId, region}; entitlement snapshots; app config │
 │ Feature flags         vendor TBD (Q12); targeting org / community / plan / region only           │
-│ Stripe Billing        platform subscriptions (webhook → webhooks-au; CP gets ids/status only)    │
+│ Stripe Billing facts  customer id, subscription id, status, price — no emails                    │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────── AU CELL — Regional Services = Australia on every regional hostname ──────────────┐
@@ -769,8 +770,8 @@ Application-layer encryption means the database sees ciphertext, so `SUM`, `GROU
 | `people.is_minor`, `people.age_band`, `people.birthday_md` | `confidential-queryable` (clear) | **Exception:** these are derived flags so youth rosters and age-gates work in SQL. The child's name, date of birth and other identity fields stay `restricted` |
 | `volunteers.wwcc_number`, `blue_card_number` | `restricted` (encrypted) | Government identifiers, looked up by equality at most |
 | `volunteers.wwcc_expiry` | `confidential-queryable` (clear) | Expiry reports sort and range-filter on it |
-| `people.email`, `people.phone` | `confidential-blind` | Blind index for lookup and duplicate detection; display value encrypted. **If `is_minor` is true, these columns (and any other `confidential` / `confidential-blind` field on that person) are encrypted with the household key**, not the community confidential key. A guardian's phone is stored on the guardian's person row, not copied onto the child |
-| `identity.users.email` | `confidential-blind` | OTP and account lookup need equality match. Region-scoped blind index; ciphertext stored; processed only on `auth.{region}` ([§11.1](#111-identity)) |
+| `people.email`, `people.phone` | `confidential-blind` | Blind index for lookup and duplicate detection; display value encrypted. **If `is_minor` is true, these columns (and any other `confidential` / `confidential-blind` field on that person) are encrypted with the household key**, not the community confidential key. A guardian's phone is stored on the guardian's person row, not copied onto the child. **Trade-off:** a minor cannot be looked up or de-duplicated by email or phone outside their household — importers and merge tools match minors with household-scoped indexes only |
+| `identity.users.email` | `confidential-blind` | OTP and account lookup need equality match. Region-scoped blind index; ciphertext stored; processed only on `api-au` (`auth.{region}` and `{api}/v1/auth/...`) ([§11.1](#111-identity)) |
 
 **Reporting reads rollups, not the ledger.** `reporting` maintains incrementally updated aggregates (per campaign, per fund, per day, per community), updated by the event subscriber that records a payment. Dashboards never scan `donations`, which is also the right decision for performance and cost.
 
@@ -786,7 +787,7 @@ These are invariants. A feature that violates one is not shipped.
 6. **Check-in and check-out** use pickup codes matched between the child's label and the guardian's; authorised pickup lists are enforced; every event is audited.
 7. **Volunteer eligibility.** Roles working with children require a current, verified WWCC (or state equivalent such as Blue Card). Expiry blocks rostering and notifies the coordinator.
 8. **No tracking.** No third-party analytics SDKs, advertising identifiers or session replay on any surface (D17). First-party usage beacons are off on screens that show children's data ([§19.3](#193-product-usage-intelligence)).
-9. **Minimum data.** Forms targeting children collect only fields justified by purpose; free-text medical notes are restricted. Guardian contact details live on the guardian. When `is_minor` is true, that person's `confidential` and `confidential-blind` columns are held under the household key ([§12.2.1](#1221-encryption-versus-queryability)).
+9. **Minimum data.** Forms targeting children collect only fields justified by purpose; free-text medical notes are restricted. Guardian contact details live on the guardian. When `is_minor` is true, that person's `confidential` and `confidential-blind` columns are held under the household key ([§12.2.1](#1221-encryption-versus-queryability)). Importers and person-merge tools therefore match minors inside the household, not by a community-wide email or phone index.
 10. **Push text is generic** when it concerns a child ("You have a new update from St Mary's"), because the push provider is outside Australia.
 
 ### 12.4 Retention and privacy requests
@@ -892,7 +893,7 @@ During migration the App Registry returns `site_url = https://{slug}.communityhu
 
 | Flow | Payer → payee | System |
 |---|---|---|
-| Platform subscription | Organisation → Community Hub | Stripe Billing, owned by `control-plane`. **The webhook hostname is regional** (`webhooks.au.communityhub.one/billing/stripe`): the Worker that parses Stripe's payload (which may include a billing email) runs under Regional Services = Australia, then forwards `{ customerId, subscriptionId, status }` to control-plane. Control-plane never sees the email |
+| Platform subscription | Organisation → Community Hub | Stripe Billing **facts** (customer id, subscription id, status, price) live on `control-plane`. **Every Stripe API call whose request or response may contain a name, email or address is made from `exec-au`.** Control-plane never calls Stripe. Creating a customer, a Checkout or Billing Portal session, or reading a Customer object happens in-region; exec returns `{ customerId, subscriptionId, status, url }` only. Inbound webhooks follow the same split (`webhooks.au.communityhub.one/billing/stripe` → control-plane ids/status) |
 | Community payments (donations, memberships, tickets, orders) | Member → community | `PaymentProvider` port, GivingJar adapter |
 
 ### 14.2 Port
@@ -939,12 +940,18 @@ POST webhooks.au.communityhub.one/billing/stripe
   → verify Stripe signature in-region
   → extract customerId, subscriptionId, status (drop email, name and address)
   → forward those ids to control-plane to recompute entitlements
+
+create / update Customer, Checkout, Billing Portal (from admin or ops)
+  → api-au decrypts billing contact in-region
+  → exec-au calls Stripe (request and response may contain email/name)
+  → returns { customerId, subscriptionId, status, url } to control-plane
 ```
 
 ### 14.5 Rules
 
 - Hosted checkout only; card data never reaches core (PCI DSS SAQ-A scope).
 - GivingJar is hosted in Australia; a data processing agreement covers donor data.
+- **Control-plane never calls Stripe.** `customers.retrieve` returns email, so even an id-only fetch would process personal data on a global Worker. exec-au is the Stripe client; it strips personal fields before anything is stored globally.
 - Each community has a `payment_provider` setting. A community can move to a new provider for new payments while existing recurring payments continue on the old provider until migrated.
 - Idempotency keys are required on all payment-creating API calls.
 
