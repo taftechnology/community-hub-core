@@ -1,7 +1,7 @@
 # Spec: packages/db foundations
 
 Slug: `packages-db`
-Status: draft
+Status: approved (2026-09-18, Abdus Salam)
 Architecture refs: §6.3, §8.1, §12.1–12.2.1, §23.1–23.3; D2; ADR 0004 (this PR); AGENTS.md §1 (3, 4, 9), §6, §7, §10, §13
 Supersedes: —
 
