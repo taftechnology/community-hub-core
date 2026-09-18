@@ -261,7 +261,7 @@ function validateConnectorFile(
       }
     }
     if (resource.type === "aws_vpc_security_group_ingress_rule") {
-      if (/security_group_id\s*=\s*aws_security_group\.connector\b/.test(resource.body)) {
+      if (/^\s*security_group_id\s*=\s*aws_security_group\.connector\b/m.test(resource.body)) {
         violations.push({
           file: relFile,
           message:
