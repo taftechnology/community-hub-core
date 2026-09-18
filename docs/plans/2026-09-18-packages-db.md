@@ -4,7 +4,7 @@
 
 **Goal:** Land `@community-hub/db` with a privileged bootstrap, a Drizzle-Kit-wrapped runner on a direct connection, and CI proof that tenant scope is transaction-local under PgBouncer — without applying anything to RDS.
 
-**Architecture:** Bootstrap (privileged login, every apply, never destructive) creates four roles and schema `migrator`. The runner then `SET ROLE migrator` on an unpooled connection, wraps Kit `migrate()`, and records checksums. App-traffic tests go through PgBouncer as the `app` / `identity` / `platform` logins. Runtime never `SET ROLE`.
+**Architecture:** Bootstrap (privileged login, every apply, never destructive) creates four roles and schema `migrator`. The runner takes an advisory lock as the privileged login, then bootstraps, then `SET ROLE migrator` on an unpooled connection and wraps Kit `migrate()`. Already-applied files are checked against Drizzle's own journal `hash`. App-traffic tests go through PgBouncer as the `app` / `identity` / `platform` logins. Runtime never `SET ROLE`.
 
 **Tech Stack:** PostgreSQL 17, PgBouncer ≥ 1.21 transaction mode, `postgres` (postgres.js) 3.4.x, `drizzle-orm` 0.45.x, `drizzle-kit` 0.31.x, Vitest, Docker Compose in CI.
 
@@ -19,9 +19,9 @@ Status: draft
 - Runner connection: direct to Postgres, `max: 1`. Never PgBouncer, never Hyperdrive.
 - Runtime connections: pick a login (`app` / `identity` / `platform`). Never `SET ROLE`.
 - Tenant scope: bound `SELECT set_config(..., true)` only. No interpolated `SET` / `SET LOCAL` / `SET SESSION`.
-- Bootstrap before every journal apply. Idempotent. No `DROP`, no `PASSWORD` in SQL, no `CREATE ROLE` in the journal.
+- Bootstrap before every journal apply, **after** the advisory lock. Idempotent. No `DROP`, no `PASSWORD` in SQL, no `CREATE ROLE` in the journal.
 - Passwords: pre-computed SCRAM-SHA-256 verifier in `ALTER ROLE`. Plaintext never in SQL or server logs from this helper.
-- Product entry point cannot load `drizzle-test/`.
+- Product entry point cannot load `drizzle-test/`. `applyTestMigrations` takes `{ mode: 'test' }` only — no environment variable. `migrate-test` is not in the package `exports` map.
 - `encrypted-query` stays provisional. `schema-rls` does not.
 - No `infra/` change. No Hyperdrive on gateway. No roadmap `done` flip.
 - Session scratch (`.superpowers/`, `*-report.md`) is never committed.
@@ -31,14 +31,15 @@ Status: draft
 
 ## Tooling decisions this plan makes
 
-| Choice                     | Decision                                                                                                                                                                                                                                                                                                                                                                                                                               | Why                                                                                                                                                                                                                                                                                                                                                                                 |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| SQL driver                 | **`postgres` (postgres.js)**, not `pg`                                                                                                                                                                                                                                                                                                                                                                                                 | Tagged templates bind parameters; nested `begin` is a savepoint; Cloudflare Hyperdrive documents this driver.                                                                                                                                                                                                                                                                       |
-| Pooled `prepare`           | **`prepare: true`** on PgBouncer clients; PgBouncer `max_prepared_statements = 100`                                                                                                                                                                                                                                                                                                                                                    | Matches Hyperdrive's prepared-statement path. A pooler more lenient than Hyperdrive fails the spec.                                                                                                                                                                                                                                                                                 |
-| Migrator `prepare`         | **`prepare: false`**, `max: 1`, connection closed after the run                                                                                                                                                                                                                                                                                                                                                                        | `SET ROLE` and `pg_advisory_lock` are session-level. Do not return that connection to any pool.                                                                                                                                                                                                                                                                                     |
-| Checksums vs Kit `migrate` | **Join via outer `sql.begin`.** Construct `drizzle(tx)` on the transaction client, then `migrate()`. Kit's `session.transaction()` becomes a postgres.js **savepoint**. Insert checksum rows on `tx` before the outer callback returns. **Proof test in T2.** If it fails on the pinned versions, do not drive SQL files yourself: fail closed when any row in Kit's journal table lacks a checksum row (spec's equivalent guarantee). | `PgDialect.migrate` (drizzle-orm 0.45.2) always calls `session.transaction()`. It does not accept an outer handle. Driving files ourselves would violate "wrap Kit".                                                                                                                                                                                                                |
-| PgBouncer SCRAM            | **Passthrough, not plaintext in `auth_file`.** Compute the verifier once. `ALTER ROLE … PASSWORD '<verifier>'`. Write the **same** verifier into PgBouncer `userlist.txt`. `auth_type = scram-sha-256`. Database line **has no `user=`**. Clients connect with the env **plaintext** (postgres.js SCRAM). No `auth_user` / `auth_query`.                                                                                               | PgBouncer can use a SCRAM secret to talk to Postgres only when the client itself authenticated with SCRAM, the DB line has no `user=`, and the secrets are identical (same salt and iterations). A plaintext `auth_file` would reintroduce the log/leak the verifier was meant to avoid for the app roles. The `postgres` superuser used by bootstrap never goes through PgBouncer. |
-| UUIDv7                     | Small helper in `packages/db` using `node:crypto`. No `uuid` package. No `DEFAULT uuidv7()` in SQL.                                                                                                                                                                                                                                                                                                                                    | Cell engine is 17.                                                                                                                                                                                                                                                                                                                                                                  |
+| Choice                     | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Why                                                                                                                                                                                                                                                                                                                                                                                 |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SQL driver                 | **`postgres` (postgres.js)**, not `pg`                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Tagged templates bind parameters. Cloudflare Hyperdrive documents this driver. Nested `begin` is unused: we do not join Kit's transaction.                                                                                                                                                                                                                                          |
+| Pooled `prepare`           | **`prepare: true`** on PgBouncer clients; PgBouncer `max_prepared_statements = 100`                                                                                                                                                                                                                                                                                                                                                                                                            | Matches Hyperdrive's prepared-statement path. A pooler more lenient than Hyperdrive fails the spec.                                                                                                                                                                                                                                                                                 |
+| Migrator `prepare`         | **`prepare: false`**, `max: 1`, connection closed after the run                                                                                                                                                                                                                                                                                                                                                                                                                                | `SET ROLE` and `pg_advisory_lock` are session-level. Do not return that connection to any pool.                                                                                                                                                                                                                                                                                     |
+| Checksums vs Kit `migrate` | **No extra checksum table, no outer-transaction join.** Kit's journal row already stores `hash` (content SHA-256) and `created_at` (= journal `when`) in the same transaction as the apply. Before applying, recompute each already-applied file the same way 0.45.2's `readMigrationFiles` does and compare to stored `hash`, matching on `created_at`. **T2 confirms this against the pinned source.** If `hash` is not a content digest, stop and report — do not add a side table or join. | Removes the join (`drizzle(tx)` builds a top-level session and calls `client.begin()`; postgres.js transaction handles may not have `begin`, so the join throws rather than committing wrongly). Spec still holds: the hash is recorded in the apply transaction itself.                                                                                                            |
+| PgBouncer SCRAM            | **Passthrough, not plaintext in `auth_file`.** Compute the verifier once. `ALTER ROLE … PASSWORD '<verifier>'`. Write the **same** verifier into PgBouncer `userlist.txt`. `auth_type = scram-sha-256`. Database line **has no `user=`**. Clients connect with the env **plaintext** (postgres.js SCRAM). No `auth_user` / `auth_query`.                                                                                                                                                       | PgBouncer can use a SCRAM secret to talk to Postgres only when the client itself authenticated with SCRAM, the DB line has no `user=`, and the secrets are identical (same salt and iterations). A plaintext `auth_file` would reintroduce the log/leak the verifier was meant to avoid for the app roles. The `postgres` superuser used by bootstrap never goes through PgBouncer. |
+| Test pool size             | Compose PgBouncer: `pool_size=1` on the `hub` database line. Production Hyperdrive is unrelated.                                                                                                                                                                                                                                                                                                                                                                                               | T4's next-client reused-backend tests need a hard PID match, not luck.                                                                                                                                                                                                                                                                                                              |
+| UUIDv7                     | Small helper in `packages/db` using `node:crypto`. No `uuid` package. No `DEFAULT uuidv7()` in SQL.                                                                                                                                                                                                                                                                                                                                                                                            | Cell engine is 17.                                                                                                                                                                                                                                                                                                                                                                  |
 
 **Rollback:** revert the PR. Docker data is disposable. Nothing applied to RDS.
 
@@ -46,25 +47,26 @@ Status: draft
 
 ## File map
 
-| Path                                                 | Role                                                                           |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `packages/db/package.json`                           | `@community-hub/db`                                                            |
-| `packages/db/sql/bootstrap.sql`                      | Privileged bootstrap                                                           |
-| `packages/db/drizzle/`                               | Product journal (schemas + grants; no tables)                                  |
-| `packages/db/drizzle-test/`                          | Test-only synthetic `app` table                                                |
-| `packages/db/src/scram.ts`                           | SCRAM-SHA-256 verifier                                                         |
-| `packages/db/src/bootstrap.ts`                       | Run bootstrap + set LOGIN passwords from env                                   |
-| `packages/db/src/migrate.ts`                         | Unpooled runner; `applyProductMigrations` / `applyTestMigrations`              |
-| `packages/db/src/app-transaction.ts`                 | `withAppTransaction`                                                           |
-| `packages/db/src/connections.ts`                     | Direct vs pooled clients by **login**                                          |
-| `packages/db/src/ids.ts`                             | `newId()` UUIDv7                                                               |
-| `packages/db/test/docker-compose.yml`                | Postgres 17 + PgBouncer ≥ 1.21                                                 |
-| `packages/db/test/pgbouncer.ini`                     | Transaction mode, SCRAM, `max_prepared_statements`                             |
-| `packages/db/test/global-setup.ts`                   | Compose up, bootstrap, write `userlist.txt`, start PgBouncer                   |
-| `tooling/checks/schema-rls/`                         | Globs → `drizzle/` + `drizzle-test/`; drop "provisional"                       |
-| `tooling/checks/sql-session-ban/`                    | `PASSWORD`, `SET SESSION`, `RESET` of `app.*`, `SET ROLE` outside `migrate.ts` |
-| `docs/adr/0004-four-roles-and-migrator-ownership.md` | ADR 0004                                                                       |
-| `.github/workflows/ci.yml`                           | Test job starts Compose before `pnpm test`                                     |
+| Path                                                 | Role                                                              |
+| ---------------------------------------------------- | ----------------------------------------------------------------- |
+| `packages/db/package.json`                           | `@community-hub/db`                                               |
+| `packages/db/sql/bootstrap.sql`                      | Privileged bootstrap                                              |
+| `packages/db/drizzle/`                               | Product journal (schemas + grants; no tables)                     |
+| `packages/db/drizzle-test/`                          | Test-only synthetic `app` table                                   |
+| `packages/db/src/scram.ts`                           | SCRAM-SHA-256 verifier                                            |
+| `packages/db/src/bootstrap.ts`                       | Run bootstrap + set LOGIN passwords from env                      |
+| `packages/db/src/migrate.ts`                         | Unpooled product runner; `applyProductMigrations` only            |
+| `packages/db/src/migrate-test.ts`                    | Test-only runner; **not** in `package.json` `exports`             |
+| `packages/db/src/app-transaction.ts`                 | `withAppTransaction`                                              |
+| `packages/db/src/connections.ts`                     | Direct vs pooled clients by **login**                             |
+| `packages/db/src/ids.ts`                             | `newId()` UUIDv7                                                  |
+| `packages/db/test/docker-compose.yml`                | Postgres 17 + PgBouncer ≥ 1.21                                    |
+| `packages/db/test/pgbouncer.ini`                     | Transaction mode, SCRAM, `max_prepared_statements`, `pool_size=1` |
+| `packages/db/test/global-setup.ts`                   | Compose up, bootstrap, write `userlist.txt`, start PgBouncer      |
+| `tooling/checks/schema-rls/`                         | Globs → `drizzle/` + `drizzle-test/`; drop "provisional"          |
+| `tooling/checks/sql-session-ban/`                    | `PASSWORD`, session SET, `RESET` of `app.*`, role switches        |
+| `docs/adr/0004-four-roles-and-migrator-ownership.md` | ADR 0004                                                          |
+| `.github/workflows/ci.yml`                           | Test job starts Compose before `pnpm test`                        |
 
 Do not create `packages/db/migrations/` (old provisional glob).
 
@@ -109,8 +111,9 @@ Each task is one commit, test-first, independently verifiable, and leaves the tr
 
 ```ini
 [databases]
-hub = host=postgres port=5432 dbname=hub
+hub = host=postgres port=5432 dbname=hub pool_size=1
 ; no user=  — required for SCRAM secret passthrough
+; pool_size=1 is test-only so T4 can assert a reused backend PID
 
 [pgbouncer]
 listen_addr = 0.0.0.0
@@ -147,68 +150,54 @@ ignore_startup_parameters = extra_float_digits
 
 ### T2 — Product journal and wrapped runner
 
-**Commit:** `feat(db): wrap Drizzle migrate with lock, order and checksums`
+**Commit:** `feat(db): wrap Drizzle migrate with lock, order and hash checks`
 
 **Files:**
 
 - Create: `packages/db/drizzle/0000_schemas.sql`, `packages/db/drizzle/meta/_journal.json`
-- Create: `packages/db/src/migrate.ts`, `packages/db/src/migrate.test.ts`, `packages/db/src/migrate.integration.test.ts`
-- Modify: `packages/db/src/index.ts` (export product apply only)
+- Create: `packages/db/src/migrate.ts`, `packages/db/src/migrate.test.ts`
+- Create: `packages/db/test/migrate.integration.test.ts`
+- Modify: `packages/db/src/index.ts` (export `applyProductMigrations` only)
+- Modify: `packages/db/package.json` `exports` — only `"."` (and types). No `./migrate-test`.
 
 **Interfaces:**
 
 - Produces: `applyProductMigrations(directSql: Sql): Promise<void>`
-- Produces: `applyTestMigrations(directSql: Sql): Promise<void>` — implemented in T3; in T2 export a function whose `migrationsFolder` is a **different module** (`migrate-test.ts` created in T3). T2's `applyProductMigrations` must not import `drizzle-test/`.
-- Consumes: `runBootstrap` then `SET ROLE migrator` on `directSql` (same privileged URL, unpooled).
+- Consumes: unpooled privileged URL. Does not import `drizzle-test/` or `migrate-test.ts`.
 
 **`0000_schemas.sql`** (applied as `migrator`): `CREATE SCHEMA app / identity / platform`; `GRANT USAGE ON SCHEMA app TO app` (and identity/platform analogues); `ALTER DEFAULT PRIVILEGES FOR ROLE migrator IN SCHEMA app GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app` (and analogues). No `CREATE ROLE`. No `PASSWORD`. No `CREATE TABLE`.
 
-**Runner order (one unpooled connection):**
+**Confirm in this task against pinned drizzle-orm 0.45.2 source** (`node_modules/drizzle-orm/...` after install): `readMigrationFiles` / `PgDialect.migrate` store `hash` as a SHA-256 of the migration contents and `created_at` as the journal entry's `when`, inserted inside `session.transaction()` with the apply. Recompute with **that same function**, do not invent a parallel digest. If `hash` is not a content digest, **stop and report** — do not add `migrator.migration_checksums` or an outer-transaction join.
 
-1. `runBootstrap` as the privileged login (no `SET ROLE` yet).
-2. `SET ROLE migrator`
-3. `SELECT pg_advisory_lock($id)` (`id` is a constant bigint in `migrate.ts`)
+**Runner order (one unpooled connection, privileged login):**
+
+1. `SELECT pg_advisory_lock($id)` (`id` is a constant bigint in `migrate.ts`). Taken as the privileged login, **before** bootstrap — two deploys must not race `CREATE ROLE`.
+2. `runBootstrap`
+3. `SET ROLE migrator`
 4. Fail if any `_journal.json` entry is unapplied but older than the latest applied `created_at` (Kit would skip it).
-5. Fail if any already-applied file's SHA-256 differs from `migrator.migration_checksums`.
-6. `sql.begin`: `drizzle(tx)` → `migrate(db, { migrationsFolder, migrationsSchema: 'migrator', migrationsTable })` → insert checksums for newly applied files on `tx`.
+5. Fail if any already-applied file's digest differs from Kit's stored `hash` (match on `created_at` = `when`).
+6. `migrate(db, { migrationsFolder, migrationsSchema: 'migrator', migrationsTable: '__drizzle_migrations' })` on this connection. No outer `sql.begin`. No checksum table.
 7. `finally`: `pg_advisory_unlock`; `RESET ROLE`; `sql.end()`.
 
-Create `migrator.migration_checksums (tag text primary key, sha256 text not null)` with `CREATE TABLE IF NOT EXISTS` after `SET ROLE` and before step 4.
+**Must-fail fixtures** (unit tests against fake journal dirs; detector itself needs no Docker):
 
-**Proof test (join vs fallback):**
+| Fixture             | Fails because                                          |
+| ------------------- | ------------------------------------------------------ |
+| `out-of-order/`     | Unapplied entry older than latest applied `created_at` |
+| `checksum-changed/` | Already-applied file contents ≠ stored Kit `hash`      |
 
-```ts
-it("rolls back Kit journal rows when the outer transaction aborts", async () => {
-  await expect(
-    direct.begin(async (tx) => {
-      await applyProductMigrationsOn(tx); // inner migrate + checksum insert
-      throw new Error("forced-rollback");
-    }),
-  ).rejects.toThrow(/forced-rollback/);
-  const rows = await direct`select hash from migrator.__drizzle_migrations`;
-  expect(rows).toHaveLength(0);
-});
-```
+**Export-surface tests** (not a string search of `migrate.ts`):
 
-If this **fails** on the pinned drizzle-orm (Kit committed despite outer abort): keep wrapping `migrate()`, and after it returns fail the run when any `__drizzle_migrations` hash has no `migration_checksums` row. Record that outcome in the T2 commit message. Do **not** switch to driving SQL files.
+- `package.json` `exports` has no `migrate-test` key; `import.meta.resolve('@community-hub/db/migrate-test')` rejects (or the map is absent).
+- After `applyProductMigrations`, `to_regclass('migrator.__drizzle_migrations_test')` is null.
 
-**Must-fail fixtures** (unit tests against fake journal dirs, no Docker required for the detector itself):
-
-| Fixture                        | Fails because                                                 |
-| ------------------------------ | ------------------------------------------------------------- |
-| `out-of-order/`                | Unapplied entry older than latest applied `created_at`        |
-| `checksum-changed/`            | Already-applied file bytes ≠ stored sha256                    |
-| `product-imports-test-folder/` | `applyProductMigrations` module graph includes `drizzle-test` |
-
-The third is a unit test: `readFileSync` the compiled or source `migrate.ts` and assert it does not contain the string `drizzle-test`.
-
-- [ ] **Step 1: Detector unit tests RED, then GREEN**
-- [ ] **Step 2: Integration: apply product once, apply again (no-op), abort proof or checksum-gap fallback**
+- [ ] **Step 1: Read 0.45.2 migrator source; write detector unit tests — RED then GREEN**
+- [ ] **Step 2: Integration: apply product once, apply again (no-op); hash-changed fails before a sabotaged new file would run**
 - [ ] **Step 3: Commit**
 
-**Must not break:** bootstrap still runs first; runner never uses port 6432.
+**Must not break:** runner never uses port 6432. Lock is held across bootstrap.
 
-**Done when:** second apply is a no-op; out-of-order and checksum-changed fail **before** a new file would be applied (assert by making the new file throw if executed).
+**Done when:** second apply is a no-op; out-of-order and hash-changed fail **before** a new file would be applied.
 
 ---
 
@@ -218,32 +207,33 @@ The third is a unit test: `readFileSync` the compiled or source `migrate.ts` and
 
 **Files:**
 
-- Create: `packages/db/src/migrate-test.ts` — `applyTestMigrations`, folder `drizzle-test/`, table `migrator.__drizzle_migrations_test`
+- Create: `packages/db/src/migrate-test.ts` — `applyTestMigrations({ mode: 'test' }, sql)`, folder `drizzle-test/`, table `migrator.__drizzle_migrations_test`. **Not** listed in `package.json` `exports`.
 - Create: `packages/db/drizzle-test/0000_synthetic.sql`, `packages/db/drizzle-test/meta/_journal.json`
-- Create: `packages/db/src/rls.integration.test.ts`
+- Create: `packages/db/test/rls.integration.test.ts` (under `test/`, not `src/`, so T5 can exclude it)
 - Modify: `tooling/checks/schema-rls/{check.ts,README.md,selftest.ts}` — globs `packages/db/drizzle` and `packages/db/drizzle-test`; README drops "provisional"; empty-tree notice text no longer says provisional
-- Modify: `packages/db/src/migrate.ts` — `applyTestMigrations` is **not** re-exported from the product path; `src/index.ts` exports only `applyProductMigrations`
 
 **`0000_synthetic.sql`:** `CREATE TABLE app.synthetic (org_id uuid not null, id uuid not null, primary key (org_id, id));` enable RLS; policy `org_id = current_setting('app.org_id')::uuid` **without** `missing_ok`; **hand-added** `ALTER TABLE app.synthetic FORCE ROW LEVEL SECURITY`. Kit will not emit `FORCE`.
 
-**Tests:**
+**`applyTestMigrations`:** required argument `{ mode: 'test' }`. Any other mode, or a missing argument, throws. No environment variable.
 
-| Test                                                                                                                    | Proves                                                |
-| ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| `relowner` of `app.synthetic` is `migrator`                                                                             | Superuser did not own the table                       |
-| `SET ROLE migrator` then `SELECT`                                                                                       | Policy blocks the owner (`FORCE`)                     |
-| Two orgs via `withAppTransaction` (use T4 if needed; otherwise inline `set_config` here and delete the duplicate in T4) | Org A cannot see org B's row                          |
-| `applyProductMigrations` after test apply                                                                               | Product journal table does not gain the synthetic tag |
-| `schema-rls` on the real tree                                                                                           | Finds `app.synthetic`, passes                         |
-| Existing fixtures `no-org-id`, `rls-not-forced`                                                                         | Still fail                                            |
+**Tests (no `withAppTransaction` — that is T4):**
 
-`applyTestMigrations` refuses unless `options.mode === 'test'` (or `process.env.COMMUNITY_HUB_DB_TEST_MIGRATIONS === '1'` set only by global-setup / integration tests). Product apply does not read that env.
+| Test                                            | Proves                                                |
+| ----------------------------------------------- | ----------------------------------------------------- |
+| `relowner` of `app.synthetic` is `migrator`     | Superuser did not own the table                       |
+| `SET ROLE migrator` then `SELECT`               | Policy blocks the owner (`FORCE`)                     |
+| `applyProductMigrations` after test apply       | Product journal table does not gain the synthetic tag |
+| `applyProductMigrations` never creates          | `migrator.__drizzle_migrations_test` stays absent     |
+| `schema-rls` on the real tree                   | Finds `app.synthetic`, passes                         |
+| Existing fixtures `no-org-id`, `rls-not-forced` | Still fail                                            |
+
+Two-organisation isolation moves to T4.
 
 - [ ] **Step 1: RLS tests RED (table missing)**
 - [ ] **Step 2: Test journal + FORCE + schema-rls globs GREEN**
 - [ ] **Step 3: Commit**
 
-**Must not break:** `encrypted-query` README still says provisional; its live glob still notices zero files.
+**Must not break:** `encrypted-query` README still says provisional; its live glob still notices zero files. Package `exports` still omit `migrate-test`.
 
 ---
 
@@ -253,7 +243,7 @@ The third is a unit test: `readFileSync` the compiled or source `migrate.ts` and
 
 **Files:**
 
-- Create: `packages/db/src/app-transaction.ts`, `packages/db/src/ids.ts`, `packages/db/src/pooling.integration.test.ts`
+- Create: `packages/db/src/app-transaction.ts`, `packages/db/src/ids.ts`, `packages/db/test/pooling.integration.test.ts`
 - Modify: `packages/db/src/connections.ts` — `createAppSql` / `createIdentitySql` / `createPlatformSql` take the **pooled** URL (port 6432) and that login's password; no `SET ROLE`
 - Modify: `architecture.md` §6.3 (sample `id uuid not null` with application-minted UUIDv7 while the engine is 17; `set_config(..., true)` instead of `SET LOCAL`); §23.2 one sentence that **how** migrations reach private RDS is a later chunk
 - Modify: `AGENTS.md` §1.3 — transaction-local `set_config(..., true)`, never session-level `SET`
@@ -272,17 +262,18 @@ export async function withAppTransaction<T>(
 
 Implementation: `sql.begin`, then `select set_config('app.org_id', ${scope.orgId}, true)` and the same for `community_id` (postgres.js binds; third argument boolean `true`). Identity/platform helpers **do not exist** as `SET ROLE` wrappers; they are `createIdentitySql` / `createPlatformSql` only.
 
-**Pooling tests (port 6432, `app` login, `prepare: true`):**
+**Pooling tests — two clients, one server backend.** Compose already sets `pool_size=1` on `hub`. Open client A and client B (two `postgres()` instances, `app` login, port 6432, `prepare: true`). Assert `SELECT pg_backend_pid()` is **equal** as a **hard precondition**; if the PIDs differ the test **fails** (proved nothing). Then:
 
-| Test                                                                                                | Proves                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Session `set_config('app.org_id', id, false)` then checkout                                         | Next client on that server connection **sees** the value (must-fail fixture of the spec: session SET bleeds)                                                                                                                                                                                                                                                                                                                                   |
-| `withAppTransaction` then a new checkout on a **reused** connection (same PgBouncer server backend) | Wrapper's local setting does **not** leak as a readable tenant id; a query without the wrapper fail-closes. Accept either `unrecognized configuration parameter` or `invalid input syntax for type uuid` (`''::uuid`). Do **not** use a fresh Postgres connection. Hold one pooled client, run a wrapped tx, then `SELECT current_setting('app.org_id')` / `SELECT COUNT(*) FROM app.synthetic` **on that same client** outside a transaction. |
-| `createIdentitySql` source                                                                          | File does not contain `SET ROLE` or `set_config('app.org_id'`                                                                                                                                                                                                                                                                                                                                                                                  |
+| Test                                                                                                                                              | Proves                                                                                                                                                         |
+| ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Bleed: client A `set_config('app.org_id', id, false)` (session) and commits/returns; client B reads `current_setting('app.org_id')`               | Next **client** on that server connection **sees** the value                                                                                                   |
+| Fail-closed: client A `withAppTransaction` then returns; client B `SELECT` from `app.synthetic` / `current_setting('app.org_id')` with no wrapper | Local setting does not leak as a readable tenant id. Accept either `unrecognized configuration parameter` or `invalid input syntax for type uuid` (`''::uuid`) |
+| Two orgs via `withAppTransaction`                                                                                                                 | Org A cannot see org B's row in `app.synthetic`                                                                                                                |
+| `createIdentitySql` source                                                                                                                        | File does not contain `SET ROLE` or `set_config('app.org_id'`                                                                                                  |
 
-Getting a reused backend: `max_client_conn` small, `default_pool_size = 1` for the `app` user in a test-only pgbouncer.ini override **or** issue two consecutive queries on one `postgres.js` client (one connection). Prefer one client: first `begin`/`commit` wrapped, then a query on the same client. That is the pooled case that matters (Hyperdrive/PgBouncer reuse the server connection under one client session in transaction mode after COMMIT). Confirm with `SELECT pg_backend_pid()` stable across the two queries.
+Do not use one client for both steps. Do not use a direct Postgres connection. `createPooledSql` may keep `max: 4` on the client side; PgBouncer's `pool_size=1` is what serialises backends.
 
-- [ ] **Step 1: Pooling tests RED**
+- [ ] **Step 1: Pooling + two-org tests RED**
 - [ ] **Step 2: Wrapper + docs GREEN**
 - [ ] **Step 3: Commit**
 
@@ -297,27 +288,36 @@ Getting a reused backend: `max_client_conn` small, `default_pool_size = 1` for t
 **Files:**
 
 - Create: `tooling/checks/sql-session-ban/{package.json,tsconfig.json,vitest.config.ts,check.ts,selftest.ts,README.md}`
-- Create fixtures: `valid/`, `password-in-sql/`, `set-session/`, `reset-app/`, `set-role-in-sql/`
+- Create fixtures: `valid/`, `password-in-sql/`, `set-session/`, `reset-app/`, `set-role-in-sql/`, `set-role-in-src-ts/` (production `.ts` under `src/`, **not** a test file), `set-config-role/`, `set-session-authorization/`
 - Modify: `tooling/checks/run.ts` to run this checker
 - Modify: `AGENTS.md` §10 checker list to include `sql-session-ban` (one line; not a decision change)
 
-**Rules (scan `packages/db/sql/**/*.sql`, `packages/db/drizzle/**/*.sql`, `packages/db/drizzle-test/**/*.sql`, and `packages/db/src/**/*.ts`):**
+**Scan:**
 
-| Pattern                                             | Where it may appear                 | Elsewhere |
-| --------------------------------------------------- | ----------------------------------- | --------- |
-| `\bPASSWORD\b`                                      | nowhere in SQL trees                | fail      |
-| `SET\s+SESSION` / `set_config\([^)]*,\s*false\s*\)` | nowhere                             | fail      |
-| `RESET\s+app\.`                                     | nowhere                             | fail      |
-| `SET\s+ROLE`                                        | only `packages/db/src/migrate.ts`   | fail      |
-| `SET\s+LOCAL`                                       | nowhere (wrapper uses `set_config`) | fail      |
+- SQL: `packages/db/sql/**/*.sql`, `packages/db/drizzle/**/*.sql`, `packages/db/drizzle-test/**/*.sql`
+- TS: `packages/db/src/**/*.ts` **excluding** `**/*.test.ts`. Do **not** scan `packages/db/test/`. That is the exemption: T3's `SET ROLE migrator` and T4's `set_config(..., false)` live in `test/*.integration.test.ts`.
 
-Must-fail fixtures live under `tooling/checks/sql-session-ban/fixtures/` as mini trees, same `check(root)` pattern as schema-rls.
+**Allow-list:** `packages/db/src/migrate.ts` may contain `SET ROLE` / `set role` (the runner). Nothing else under `src/` may.
+
+**All patterns are case-insensitive** (`sql\`set role migrator\`` must fail). Also ban equivalents:
+
+| Pattern                                           | Where it may appear                 | Elsewhere |
+| ------------------------------------------------- | ----------------------------------- | --------- |
+| `PASSWORD`                                        | nowhere in SQL trees                | fail      |
+| `SET SESSION` / `set_config(..., false)`          | nowhere in scanned files            | fail      |
+| `RESET` of `app.*`                                | nowhere                             | fail      |
+| `SET ROLE`                                        | only `src/migrate.ts`               | fail      |
+| `set_config('role', …)` / `set_config("role", …)` | only `src/migrate.ts`               | fail      |
+| `SET SESSION AUTHORIZATION`                       | nowhere                             | fail      |
+| `SET LOCAL`                                       | nowhere (wrapper uses `set_config`) | fail      |
+
+`set-role-in-src-ts/` is the fixture that proves production code still fails: a non-test `src/foo.ts` containing `set role` must violate. A `src/foo.test.ts` containing the same string must **not** be scanned.
 
 - [ ] **Step 1: selftest RED**
 - [ ] **Step 2: checker + run.ts GREEN on the real tree**
 - [ ] **Step 3: Commit**
 
-**Must not break:** bootstrap SQL still has no `PASSWORD`; `migrate.ts` is the only `SET ROLE`.
+**Must not break:** bootstrap SQL still has no `PASSWORD`; `migrate.ts` is the only production `SET ROLE`; T3/T4 integration tests still pass `pnpm check:boundaries`.
 
 ---
 
@@ -371,16 +371,17 @@ Expected: all exit 0. `schema-rls: ok` (synthetic table). `encrypted-query` stil
 | SCRAM verifier helper; static `PASSWORD` ban                                                                                         | T1 + T5                   |
 | PgBouncer SCRAM passthrough (client SCRAM, same verifier, no `user=`)                                                                | T1                        |
 | Product journal as `migrator`; USAGE + default privileges                                                                            | T2                        |
-| Unpooled runner; `SET ROLE` only there; advisory lock                                                                                | T2                        |
-| Out-of-order fail; checksum **before** apply; join outer tx or journal-without-checksum fallback                                     | T2                        |
-| Product entry cannot load test set                                                                                                   | T2 + T3                   |
+| Unpooled runner; lock **then** bootstrap then `SET ROLE`; advisory lock                                                              | T2                        |
+| Out-of-order fail; already-applied hash check **before** apply using Kit's journal `hash`                                            | T2                        |
+| Product entry cannot load test set; `mode: 'test'` only; `migrate-test` not exported                                                 | T2 + T3                   |
 | Test-only synthetic; hand-added `FORCE`; owner `migrator`; policy blocks migrator                                                    | T3                        |
 | `schema-rls` de-provisionalised; `encrypted-query` not                                                                               | T3                        |
-| `set_config(..., true)`; reused pooled fail-closed; session SET bleed                                                                | T4                        |
+| Two-org isolation via `withAppTransaction`                                                                                           | T4                        |
+| `set_config(..., true)`; two-client reused-backend fail-closed; session SET bleed; PID precondition                                  | T4                        |
 | Runtime picks a login; no `SET ROLE` on pooled connections                                                                           | T4                        |
 | AGENTS §1.3; architecture §6.3 UUIDv7; §23.2 later RDS path                                                                          | T4                        |
 | ADR 0004                                                                                                                             | T1                        |
-| Static ban `SET SESSION` / `RESET app.*` / `SET ROLE`                                                                                | T5                        |
+| Static ban `SET SESSION` / `RESET app.*` / `SET ROLE` / `set_config('role')` / `SET SESSION AUTHORIZATION`; tests excluded           | T5                        |
 | Postgres 17 Compose in CI; no roadmap `done`; no `infra/`                                                                            | T6                        |
 | Production migrate-from-VPC                                                                                                          | Out-of-band (not this PR) |
 | Identity/platform Hyperdrive                                                                                                         | Out-of-band (not this PR) |
