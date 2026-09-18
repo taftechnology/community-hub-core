@@ -21,6 +21,7 @@ Roles are cluster-wide. Putting `CREATE ROLE` in a per-database, forward-only jo
 
 - Every `app` table is owned by `migrator`, so `FORCE RLS` applies to the owner. CI object ownership matches production.
 - Adding a role later is an edit to the bootstrap script, not a journaled `CREATE ROLE`.
+- Bootstrap **asserts** on every run that none of the four roles has `SUPERUSER`, `BYPASSRLS`, `CREATEROLE` or `CREATEDB`, and that `migrator` cannot log in. It `ALTER ROLE`s those attributes when the privileged login is allowed to (Docker superuser can clear `BYPASSRLS`/`SUPERUSER`; the RDS master cannot, so leftover `BYPASSRLS` fails the apply).
 - Identity and platform Hyperdrive configurations remain a later Terraform chunk; this decision only creates the LOGIN roles.
 
 ## Alternatives rejected

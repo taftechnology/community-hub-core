@@ -11,6 +11,50 @@ type Runtime = {
   passwords: { app: string; identity: string; platform: string };
 };
 
+type RoleAttrs = {
+  rolname: string;
+  rolcanlogin: boolean;
+  rolsuper: boolean;
+  rolbypassrls: boolean;
+  rolcreaterole: boolean;
+  rolcreatedb: boolean;
+};
+
+const LEAST_PRIVILEGE: RoleAttrs[] = [
+  {
+    rolname: "app",
+    rolcanlogin: true,
+    rolsuper: false,
+    rolbypassrls: false,
+    rolcreaterole: false,
+    rolcreatedb: false,
+  },
+  {
+    rolname: "identity",
+    rolcanlogin: true,
+    rolsuper: false,
+    rolbypassrls: false,
+    rolcreaterole: false,
+    rolcreatedb: false,
+  },
+  {
+    rolname: "migrator",
+    rolcanlogin: false,
+    rolsuper: false,
+    rolbypassrls: false,
+    rolcreaterole: false,
+    rolcreatedb: false,
+  },
+  {
+    rolname: "platform",
+    rolcanlogin: true,
+    rolsuper: false,
+    rolbypassrls: false,
+    rolcreaterole: false,
+    rolcreatedb: false,
+  },
+];
+
 function loadRuntime(): Runtime {
   const file = path.join(path.dirname(fileURLToPath(import.meta.url)), ".runtime.json");
   return JSON.parse(readFileSync(file, "utf8")) as Runtime;
@@ -32,23 +76,13 @@ describe("bootstrap", () => {
     const runtime = loadRuntime();
     const sql = createDirectSql(runtime.directUrl);
     try {
-      const roles = await sql<
-        {
-          rolname: string;
-          rolcanlogin: boolean;
-        }[]
-      >`
-        select rolname, rolcanlogin
+      const roles = await sql<RoleAttrs[]>`
+        select rolname, rolcanlogin, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb
         from pg_roles
         where rolname in ('migrator', 'app', 'identity', 'platform')
         order by rolname
       `;
-      expect(roles).toEqual([
-        { rolname: "app", rolcanlogin: true },
-        { rolname: "identity", rolcanlogin: true },
-        { rolname: "migrator", rolcanlogin: false },
-        { rolname: "platform", rolcanlogin: true },
-      ]);
+      expect(roles).toEqual(LEAST_PRIVILEGE);
 
       const schemas = await sql<{ nspname: string; owner: string }[]>`
         select n.nspname, r.rolname as owner
@@ -57,6 +91,29 @@ describe("bootstrap", () => {
         where n.nspname = 'migrator'
       `;
       expect(schemas).toEqual([{ nspname: "migrator", owner: "migrator" }]);
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("resets BYPASSRLS on an existing app role", async () => {
+    const runtime = loadRuntime();
+    const sql = createDirectSql(runtime.directUrl);
+    try {
+      await sql.unsafe("alter role app bypassrls");
+      await runBootstrap(sql);
+      const [app] = await sql<RoleAttrs[]>`
+        select rolname, rolcanlogin, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb
+        from pg_roles
+        where rolname = 'app'
+      `;
+      expect(app).toMatchObject({
+        rolname: "app",
+        rolbypassrls: false,
+        rolsuper: false,
+        rolcreaterole: false,
+        rolcreatedb: false,
+      });
     } finally {
       await sql.end({ timeout: 1 });
     }

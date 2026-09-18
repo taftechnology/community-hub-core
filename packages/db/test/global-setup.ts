@@ -54,33 +54,42 @@ async function waitForPgbouncer(appPassword: string, attempts = 60): Promise<voi
 
 export default async function setup(): Promise<() => void> {
   writeFileSync(USERLIST, `"placeholder" "unused"\n`, { encoding: "utf8" });
-  compose(["up", "-d", "postgres"]);
-  await waitForDirect();
-
-  const passwords = {
-    app: randomBytes(24).toString("base64url"),
-    identity: randomBytes(24).toString("base64url"),
-    platform: randomBytes(24).toString("base64url"),
-  };
-
-  const sql = createDirectSql(DIRECT_URL);
   try {
-    await runBootstrap(sql);
-    const { verifiers } = await setLoginPasswords(sql, passwords);
-    writeFileSync(
-      USERLIST,
-      `"app" "${verifiers.app}"\n"identity" "${verifiers.identity}"\n"platform" "${verifiers.platform}"\n`,
-      { encoding: "utf8" },
-    );
-    writeFileSync(RUNTIME, JSON.stringify({ directUrl: DIRECT_URL, passwords }, null, 2), {
-      encoding: "utf8",
-    });
-  } finally {
-    await sql.end({ timeout: 1 });
-  }
+    compose(["up", "-d", "postgres"]);
+    await waitForDirect();
 
-  compose(["up", "-d", "--force-recreate", "pgbouncer"]);
-  await waitForPgbouncer(passwords.app);
+    const passwords = {
+      app: randomBytes(24).toString("base64url"),
+      identity: randomBytes(24).toString("base64url"),
+      platform: randomBytes(24).toString("base64url"),
+    };
+
+    const sql = createDirectSql(DIRECT_URL);
+    try {
+      await runBootstrap(sql);
+      const { verifiers } = await setLoginPasswords(sql, passwords);
+      writeFileSync(
+        USERLIST,
+        `"app" "${verifiers.app}"\n"identity" "${verifiers.identity}"\n"platform" "${verifiers.platform}"\n`,
+        { encoding: "utf8" },
+      );
+      writeFileSync(RUNTIME, JSON.stringify({ directUrl: DIRECT_URL, passwords }, null, 2), {
+        encoding: "utf8",
+      });
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+
+    compose(["up", "-d", "--force-recreate", "pgbouncer"]);
+    await waitForPgbouncer(passwords.app);
+  } catch (error) {
+    try {
+      compose(["down", "-v"]);
+    } catch {
+      // Keep the original setup error.
+    }
+    throw error;
+  }
 
   return () => {
     compose(["down", "-v"]);
