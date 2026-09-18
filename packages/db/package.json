@@ -16,10 +16,12 @@
     "build": "tsc --build"
   },
   "dependencies": {
+    "drizzle-orm": "0.45.2",
     "postgres": "3.4.9"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",
+    "drizzle-kit": "0.31.10",
     "typescript": "^5.8.2",
     "vitest": "^3.0.9"
   }
