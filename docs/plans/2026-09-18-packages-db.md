@@ -38,7 +38,7 @@ Status: draft
 | Migrator `prepare`         | **`prepare: false`**, `max: 1`, connection closed after the run                                                                                                                                                                                                                                                                                                                                                                                                                                | `SET ROLE` and `pg_advisory_lock` are session-level. Do not return that connection to any pool.                                                                                                                                                                                                                                                                                     |
 | Checksums vs Kit `migrate` | **No extra checksum table, no outer-transaction join.** Kit's journal row already stores `hash` (content SHA-256) and `created_at` (= journal `when`) in the same transaction as the apply. Before applying, recompute each already-applied file the same way 0.45.2's `readMigrationFiles` does and compare to stored `hash`, matching on `created_at`. **T2 confirms this against the pinned source.** If `hash` is not a content digest, stop and report — do not add a side table or join. | Removes the join (`drizzle(tx)` builds a top-level session and calls `client.begin()`; postgres.js transaction handles may not have `begin`, so the join throws rather than committing wrongly). Spec still holds: the hash is recorded in the apply transaction itself.                                                                                                            |
 | PgBouncer SCRAM            | **Passthrough, not plaintext in `auth_file`.** Compute the verifier once. `ALTER ROLE … PASSWORD '<verifier>'`. Write the **same** verifier into PgBouncer `userlist.txt`. `auth_type = scram-sha-256`. Database line **has no `user=`**. Clients connect with the env **plaintext** (postgres.js SCRAM). No `auth_user` / `auth_query`.                                                                                                                                                       | PgBouncer can use a SCRAM secret to talk to Postgres only when the client itself authenticated with SCRAM, the DB line has no `user=`, and the secrets are identical (same salt and iterations). A plaintext `auth_file` would reintroduce the log/leak the verifier was meant to avoid for the app roles. The `postgres` superuser used by bootstrap never goes through PgBouncer. |
-| Test pool size             | Compose PgBouncer: `pool_size=1` on the `hub` database line. Production Hyperdrive is unrelated.                                                                                                                                                                                                                                                                                                                                                                                               | T4's next-client reused-backend tests need a hard PID match, not luck.                                                                                                                                                                                                                                                                                                              |
+| Test PgBouncer aliases     | `hub` = shared pool for ordinary tests (no `pool_size=1`). `hub_bleed` and `hub_reuse` = same Postgres db, **`pool_size=1`**, no `user=`. Bleed tests use only `hub_bleed` and `DISCARD ALL` on teardown. Fail-closed uses only `hub_reuse`. Production Hyperdrive is unrelated.                                                                                                                                                                                                               | One poisoned backend must not be the only backend. Equal-PID still needs `pool_size=1`, but on an alias no other test uses.                                                                                                                                                                                                                                                         |
 | UUIDv7                     | Small helper in `packages/db` using `node:crypto`. No `uuid` package. No `DEFAULT uuidv7()` in SQL.                                                                                                                                                                                                                                                                                                                                                                                            | Cell engine is 17.                                                                                                                                                                                                                                                                                                                                                                  |
 
 **Rollback:** revert the PR. Docker data is disposable. Nothing applied to RDS.
@@ -47,26 +47,26 @@ Status: draft
 
 ## File map
 
-| Path                                                 | Role                                                              |
-| ---------------------------------------------------- | ----------------------------------------------------------------- |
-| `packages/db/package.json`                           | `@community-hub/db`                                               |
-| `packages/db/sql/bootstrap.sql`                      | Privileged bootstrap                                              |
-| `packages/db/drizzle/`                               | Product journal (schemas + grants; no tables)                     |
-| `packages/db/drizzle-test/`                          | Test-only synthetic `app` table                                   |
-| `packages/db/src/scram.ts`                           | SCRAM-SHA-256 verifier                                            |
-| `packages/db/src/bootstrap.ts`                       | Run bootstrap + set LOGIN passwords from env                      |
-| `packages/db/src/migrate.ts`                         | Unpooled product runner; `applyProductMigrations` only            |
-| `packages/db/src/migrate-test.ts`                    | Test-only runner; **not** in `package.json` `exports`             |
-| `packages/db/src/app-transaction.ts`                 | `withAppTransaction`                                              |
-| `packages/db/src/connections.ts`                     | Direct vs pooled clients by **login**                             |
-| `packages/db/src/ids.ts`                             | `newId()` UUIDv7                                                  |
-| `packages/db/test/docker-compose.yml`                | Postgres 17 + PgBouncer ≥ 1.21                                    |
-| `packages/db/test/pgbouncer.ini`                     | Transaction mode, SCRAM, `max_prepared_statements`, `pool_size=1` |
-| `packages/db/test/global-setup.ts`                   | Compose up, bootstrap, write `userlist.txt`, start PgBouncer      |
-| `tooling/checks/schema-rls/`                         | Globs → `drizzle/` + `drizzle-test/`; drop "provisional"          |
-| `tooling/checks/sql-session-ban/`                    | `PASSWORD`, session SET, `RESET` of `app.*`, role switches        |
-| `docs/adr/0004-four-roles-and-migrator-ownership.md` | ADR 0004                                                          |
-| `.github/workflows/ci.yml`                           | Test job starts Compose before `pnpm test`                        |
+| Path                                                 | Role                                                         |
+| ---------------------------------------------------- | ------------------------------------------------------------ |
+| `packages/db/package.json`                           | `@community-hub/db`                                          |
+| `packages/db/sql/bootstrap.sql`                      | Privileged bootstrap                                         |
+| `packages/db/drizzle/`                               | Product journal (schemas + grants; no tables)                |
+| `packages/db/drizzle-test/`                          | Test-only synthetic `app` table                              |
+| `packages/db/src/scram.ts`                           | SCRAM-SHA-256 verifier                                       |
+| `packages/db/src/bootstrap.ts`                       | Run bootstrap + set LOGIN passwords from env                 |
+| `packages/db/src/migrate.ts`                         | Unpooled product runner; `applyProductMigrations` only       |
+| `packages/db/src/migrate-test.ts`                    | Test-only runner; **not** in `package.json` `exports`        |
+| `packages/db/src/app-transaction.ts`                 | `withAppTransaction`                                         |
+| `packages/db/src/connections.ts`                     | Direct vs pooled clients by **login**                        |
+| `packages/db/src/ids.ts`                             | `newId()` UUIDv7                                             |
+| `packages/db/test/docker-compose.yml`                | Postgres 17 + PgBouncer ≥ 1.21                               |
+| `packages/db/test/pgbouncer.ini`                     | Transaction mode, SCRAM, `hub` + `hub_bleed` + `hub_reuse`   |
+| `packages/db/test/global-setup.ts`                   | Compose up, bootstrap, write `userlist.txt`, start PgBouncer |
+| `tooling/checks/schema-rls/`                         | Globs → `drizzle/` + `drizzle-test/`; drop "provisional"     |
+| `tooling/checks/sql-session-ban/`                    | `PASSWORD`, session SET, `RESET` of `app.*`, role switches   |
+| `docs/adr/0004-four-roles-and-migrator-ownership.md` | ADR 0004                                                     |
+| `.github/workflows/ci.yml`                           | Test job starts Compose before `pnpm test`                   |
 
 Do not create `packages/db/migrations/` (old provisional glob).
 
@@ -82,7 +82,7 @@ Each task is one commit, test-first, independently verifiable, and leaves the tr
 
 **Files:**
 
-- Create: `packages/db/{package.json,tsconfig.json,src/index.ts,src/scram.ts,src/scram.test.ts,src/bootstrap.ts,src/connections.ts,sql/bootstrap.sql}`
+- Create: `packages/db/{package.json,tsconfig.json,vitest.config.ts,src/index.ts,src/scram.ts,src/scram.test.ts,src/bootstrap.ts,src/connections.ts,sql/bootstrap.sql}`
 - Create: `packages/db/test/{docker-compose.yml,pgbouncer.ini,global-setup.ts,bootstrap.integration.test.ts}`
 - Create: `docs/adr/0004-four-roles-and-migrator-ownership.md`
 - Modify: root `tsconfig.json` (add reference), `docs/adr` index if one exists (none today)
@@ -111,9 +111,11 @@ Each task is one commit, test-first, independently verifiable, and leaves the tr
 
 ```ini
 [databases]
-hub = host=postgres port=5432 dbname=hub pool_size=1
-; no user=  — required for SCRAM secret passthrough
-; pool_size=1 is test-only so T4 can assert a reused backend PID
+hub = host=postgres port=5432 dbname=hub
+hub_bleed = host=postgres port=5432 dbname=hub pool_size=1
+hub_reuse = host=postgres port=5432 dbname=hub pool_size=1
+; no user= on any line — required for SCRAM secret passthrough
+; hub_bleed / hub_reuse are test-only: T4 PID match without poisoning hub
 
 [pgbouncer]
 listen_addr = 0.0.0.0
@@ -244,6 +246,7 @@ Two-organisation isolation moves to T4.
 **Files:**
 
 - Create: `packages/db/src/app-transaction.ts`, `packages/db/src/ids.ts`, `packages/db/test/pooling.integration.test.ts`
+- Modify: `packages/db/vitest.config.ts` — `fileParallelism: false` so integration files do not interleave (T1 created the config)
 - Modify: `packages/db/src/connections.ts` — `createAppSql` / `createIdentitySql` / `createPlatformSql` take the **pooled** URL (port 6432) and that login's password; no `SET ROLE`
 - Modify: `architecture.md` §6.3 (sample `id uuid not null` with application-minted UUIDv7 while the engine is 17; `set_config(..., true)` instead of `SET LOCAL`); §23.2 one sentence that **how** migrations reach private RDS is a later chunk
 - Modify: `AGENTS.md` §1.3 — transaction-local `set_config(..., true)`, never session-level `SET`
@@ -262,16 +265,18 @@ export async function withAppTransaction<T>(
 
 Implementation: `sql.begin`, then `select set_config('app.org_id', ${scope.orgId}, true)` and the same for `community_id` (postgres.js binds; third argument boolean `true`). Identity/platform helpers **do not exist** as `SET ROLE` wrappers; they are `createIdentitySql` / `createPlatformSql` only.
 
-**Pooling tests — two clients, one server backend.** Compose already sets `pool_size=1` on `hub`. Open client A and client B (two `postgres()` instances, `app` login, port 6432, `prepare: true`). Assert `SELECT pg_backend_pid()` is **equal** as a **hard precondition**; if the PIDs differ the test **fails** (proved nothing). Then:
+**Pooling tests — two clients, isolated aliases, sequential file.** Vitest for `packages/db/test/*.integration.test.ts`: `fileParallelism: false` and no `concurrent` inside the pooling file (a sequential `describe`). Nothing else may interleave between client A and client B.
 
-| Test                                                                                                                                              | Proves                                                                                                                                                         |
-| ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Bleed: client A `set_config('app.org_id', id, false)` (session) and commits/returns; client B reads `current_setting('app.org_id')`               | Next **client** on that server connection **sees** the value                                                                                                   |
-| Fail-closed: client A `withAppTransaction` then returns; client B `SELECT` from `app.synthetic` / `current_setting('app.org_id')` with no wrapper | Local setting does not leak as a readable tenant id. Accept either `unrecognized configuration parameter` or `invalid input syntax for type uuid` (`''::uuid`) |
-| Two orgs via `withAppTransaction`                                                                                                                 | Org A cannot see org B's row in `app.synthetic`                                                                                                                |
-| `createIdentitySql` source                                                                                                                        | File does not contain `SET ROLE` or `set_config('app.org_id'`                                                                                                  |
+PgBouncer aliases (T1 ini): ordinary tests use `hub`. Bleed uses **`hub_bleed` only**. Fail-closed uses **`hub_reuse` only**. Two-org uses `hub`. Open client A and client B as two `postgres()` instances (`app` login, port 6432, `prepare: true`, database name = the alias). Assert `SELECT pg_backend_pid()` is **equal** as a **hard precondition**; if the PIDs differ the test **fails** (proved nothing).
 
-Do not use one client for both steps. Do not use a direct Postgres connection. `createPooledSql` may keep `max: 4` on the client side; PgBouncer's `pool_size=1` is what serialises backends.
+| Test                                                                                                                                                                 | Alias       | Proves                                                                                                                                                         |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Bleed: client A `set_config('app.org_id', id, false)` (session) and returns; client B reads `current_setting('app.org_id')`. Teardown: `DISCARD ALL` on `hub_bleed`. | `hub_bleed` | Next **client** on that server connection **sees** the value                                                                                                   |
+| Fail-closed: client A `withAppTransaction` then returns; client B `SELECT` from `app.synthetic` / `current_setting('app.org_id')` with no wrapper                    | `hub_reuse` | Local setting does not leak as a readable tenant id. Accept either `unrecognized configuration parameter` or `invalid input syntax for type uuid` (`''::uuid`) |
+| Two orgs via `withAppTransaction`                                                                                                                                    | `hub`       | Org A cannot see org B's row in `app.synthetic`                                                                                                                |
+| `createIdentitySql` source                                                                                                                                           | —           | File does not contain `SET ROLE` or `set_config('app.org_id'`                                                                                                  |
+
+Do not use one client for both steps. Do not use a direct Postgres connection. Do not run bleed and fail-closed on the same alias: transaction-mode PgBouncer issues no reset, so session `set_config(..., false)` would make fail-closed return rows. `createPooledSql` may keep `max: 4` on the client side.
 
 - [ ] **Step 1: Pooling + two-org tests RED**
 - [ ] **Step 2: Wrapper + docs GREEN**
@@ -288,7 +293,7 @@ Do not use one client for both steps. Do not use a direct Postgres connection. `
 **Files:**
 
 - Create: `tooling/checks/sql-session-ban/{package.json,tsconfig.json,vitest.config.ts,check.ts,selftest.ts,README.md}`
-- Create fixtures: `valid/`, `password-in-sql/`, `set-session/`, `reset-app/`, `set-role-in-sql/`, `set-role-in-src-ts/` (production `.ts` under `src/`, **not** a test file), `set-config-role/`, `set-session-authorization/`
+- Create fixtures: `valid/`, `password-in-sql/`, `set-session/`, `reset-app/`, `set-role-in-sql/`, `set-role-in-src-ts/` (production `.ts` under `src/`, **not** a test file), `set-config-role/`, `set-session-authorization/`, `set-local-in-comment/` (must pass)
 - Modify: `tooling/checks/run.ts` to run this checker
 - Modify: `AGENTS.md` §10 checker list to include `sql-session-ban` (one line; not a decision change)
 
@@ -296,6 +301,7 @@ Do not use one client for both steps. Do not use a direct Postgres connection. `
 
 - SQL: `packages/db/sql/**/*.sql`, `packages/db/drizzle/**/*.sql`, `packages/db/drizzle-test/**/*.sql`
 - TS: `packages/db/src/**/*.ts` **excluding** `**/*.test.ts`. Do **not** scan `packages/db/test/`. That is the exemption: T3's `SET ROLE migrator` and T4's `set_config(..., false)` live in `test/*.integration.test.ts`.
+- Strip `//` and `/* */` comments from TypeScript, and `--` / `/* */` from SQL, **before** matching. Fixture `set-local-in-comment/` (only hit is `// not SET LOCAL`) must **pass**. Implementers may document the ban in comments.
 
 **Allow-list:** `packages/db/src/migrate.ts` may contain `SET ROLE` / `set role` (the runner). Nothing else under `src/` may.
 
@@ -365,25 +371,25 @@ Expected: all exit 0. `schema-rls: ok` (synthetic table). `encrypted-query` stil
 
 ## Self-review (plan vs spec)
 
-| Spec requirement                                                                                                                     | Task                      |
-| ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------- |
-| Privileged bootstrap; roles without passwords; `GRANT CREATE` to migrator; `REVOKE TEMPORARY`; before every apply; never destructive | T1                        |
-| SCRAM verifier helper; static `PASSWORD` ban                                                                                         | T1 + T5                   |
-| PgBouncer SCRAM passthrough (client SCRAM, same verifier, no `user=`)                                                                | T1                        |
-| Product journal as `migrator`; USAGE + default privileges                                                                            | T2                        |
-| Unpooled runner; lock **then** bootstrap then `SET ROLE`; advisory lock                                                              | T2                        |
-| Out-of-order fail; already-applied hash check **before** apply using Kit's journal `hash`                                            | T2                        |
-| Product entry cannot load test set; `mode: 'test'` only; `migrate-test` not exported                                                 | T2 + T3                   |
-| Test-only synthetic; hand-added `FORCE`; owner `migrator`; policy blocks migrator                                                    | T3                        |
-| `schema-rls` de-provisionalised; `encrypted-query` not                                                                               | T3                        |
-| Two-org isolation via `withAppTransaction`                                                                                           | T4                        |
-| `set_config(..., true)`; two-client reused-backend fail-closed; session SET bleed; PID precondition                                  | T4                        |
-| Runtime picks a login; no `SET ROLE` on pooled connections                                                                           | T4                        |
-| AGENTS §1.3; architecture §6.3 UUIDv7; §23.2 later RDS path                                                                          | T4                        |
-| ADR 0004                                                                                                                             | T1                        |
-| Static ban `SET SESSION` / `RESET app.*` / `SET ROLE` / `set_config('role')` / `SET SESSION AUTHORIZATION`; tests excluded           | T5                        |
-| Postgres 17 Compose in CI; no roadmap `done`; no `infra/`                                                                            | T6                        |
-| Production migrate-from-VPC                                                                                                          | Out-of-band (not this PR) |
-| Identity/platform Hyperdrive                                                                                                         | Out-of-band (not this PR) |
+| Spec requirement                                                                                                                                      | Task                      |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| Privileged bootstrap; roles without passwords; `GRANT CREATE` to migrator; `REVOKE TEMPORARY`; before every apply; never destructive                  | T1                        |
+| SCRAM verifier helper; static `PASSWORD` ban                                                                                                          | T1 + T5                   |
+| PgBouncer SCRAM passthrough (client SCRAM, same verifier, no `user=`)                                                                                 | T1                        |
+| Product journal as `migrator`; USAGE + default privileges                                                                                             | T2                        |
+| Unpooled runner; lock **then** bootstrap then `SET ROLE`; advisory lock                                                                               | T2                        |
+| Out-of-order fail; already-applied hash check **before** apply using Kit's journal `hash`                                                             | T2                        |
+| Product entry cannot load test set; `mode: 'test'` only; `migrate-test` not exported                                                                  | T2 + T3                   |
+| Test-only synthetic; hand-added `FORCE`; owner `migrator`; policy blocks migrator                                                                     | T3                        |
+| `schema-rls` de-provisionalised; `encrypted-query` not                                                                                                | T3                        |
+| Two-org isolation via `withAppTransaction`                                                                                                            | T4                        |
+| `set_config(..., true)`; two-client PID match on **isolated** aliases (`hub_bleed` / `hub_reuse`); sequential pooling file; `DISCARD ALL` after bleed | T4                        |
+| Runtime picks a login; no `SET ROLE` on pooled connections                                                                                            | T4                        |
+| AGENTS §1.3; architecture §6.3 UUIDv7; §23.2 later RDS path                                                                                           | T4                        |
+| ADR 0004                                                                                                                                              | T1                        |
+| Static ban including comment-stripped `SET LOCAL`; tests excluded; `set-local-in-comment` must pass                                                   | T5                        |
+| Postgres 17 Compose in CI; no roadmap `done`; no `infra/`                                                                                             | T6                        |
+| Production migrate-from-VPC                                                                                                                           | Out-of-band (not this PR) |
+| Identity/platform Hyperdrive                                                                                                                          | Out-of-band (not this PR) |
 
 No placeholders. No third Hyperdrive. No `DEFAULT uuidv7()`.
