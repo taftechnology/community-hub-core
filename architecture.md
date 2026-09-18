@@ -448,14 +448,14 @@ community-hub/
 │   └── observability/        # logger with personal-data scrubbing, tracing
 │
 ├── tooling/
-│   └── checks/               # CI boundary checkers (worker-config, schema-rls, encrypted-query, residency-payload, traceability), each with must-fail fixtures
+│   └── checks/               # CI boundary checkers (worker-config, schema-rls, encrypted-query, residency-payload, terraform-invariants, traceability), each with must-fail fixtures
 │
 ├── infra/
-│   ├── cloudflare/           # Terraform: zones, SaaS hostnames, Regional Services, WAF, Access,
-│   │                         # Hyperdrive, R2, Queues, KV, D1, WfP namespaces
+│   ├── modules/              # shared Terraform modules; each has tests/ and is in the CI matrix
+│   ├── bootstrap/            # state bucket + KMS; local state then migrated into the bucket
+│   ├── global/               # dedicated staging zone (not communityhub.one). Prod zone is tfvars-only.
 │   └── regions/
-│       ├── au/               # Terraform: RDS, KMS, S3, VPC, Tunnel connectors, backups
-│       └── ca/ eu/ us/       # stubs
+│       └── au/               # one cell = one root: AWS + AU Cloudflare (Tunnel, Hyperdrive, Workers VPC)
 │
 └── docs/
     ├── adr/                  # architecture decision records
@@ -1300,8 +1300,9 @@ Production data is never copied to non-production environments.
 
 ### 23.2 Delivery
 
-- GitHub Actions: lint, type-check, unit and integration tests, boundary checks, RLS checks, OpenAPI diff, build.
-- Terraform plan on pull request; apply on merge with approval for production.
+- GitHub Actions: lint, type-check, unit and integration tests, boundary checks (including terraform-invariants), RLS checks, OpenAPI diff, build.
+- **Offline Terraform** on every PR: `fmt -check`, `validate`, `tflint`, `terraform test` after `init -backend=false -lockfile=readonly`, on every root **and every module**. No cloud credentials. Live `terraform plan` waits until GitHub OIDC (AWS) and a narrowly scoped Cloudflare token exist; until then that job is absent, not skip-green. Apply is a human-triggered operations step (see `docs/runbooks/apply-staging-au.md`), never on merge.
+- Wrangler owns Worker scripts, routes and bindings. Terraform owns zones, DNS except Wrangler custom-domain records, Regional Services, Tunnel, Hyperdrive, Workers VPC, and AWS ([ADR 0002](docs/adr/0002-terraform-roots-follow-failure-domains.md)).
 - Database migrations run before deployment and must be backward compatible with the previous Worker version (expand, migrate, contract).
 - Workers use gradual deployments for API changes; automatic rollback on error-rate alerts.
 - Mobile: EAS Build per app key; EAS Update channels per environment.
@@ -1312,6 +1313,7 @@ Production data is never copied to non-production environments.
 | ------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | Domain             | Vitest                                                          | Rules, state transitions, age and consent logic                                      |
 | Module integration | Vitest with `@cloudflare/vitest-pool-workers` + Postgres        | Routes, repositories, RLS behaviour                                                  |
+| `packages-db` CI   | Docker Postgres behind **PgBouncer in transaction mode**        | Must-fail fixture: a session-level `SET app.org_id` bleeds into the next checkout. Live Tunnel → Workers VPC → Hyperdrive is a staging smoke test, not CI |
 | Tenant isolation   | Dedicated suite                                                 | Every endpoint called with a token from another organisation and community must fail |
 | Residency          | Dedicated suite                                                 | No personal data in queue payloads, workflow results, KV or logs                     |
 | Contracts          | Schema and consumer tests                                       | Mobile API, Jellycube host adapter, PaymentProvider adapters                         |
