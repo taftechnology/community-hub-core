@@ -62,10 +62,10 @@ Top-tier secret. It sits in Secrets Manager and in Terraform state (KMS-encrypte
 
 ## Feature flags
 
-| Flag | First apply | Later |
-| --- | --- | --- |
-| `enable_hyperdrive` | `false` | `true` after the application role exists |
-| `enable_regional_hostnames` | `false` | `true` after Wrangler custom domain DNS |
+| Flag                        | First apply | Later                                    |
+| --------------------------- | ----------- | ---------------------------------------- |
+| `enable_hyperdrive`         | `false`     | `true` after the application role exists |
+| `enable_regional_hostnames` | `false`     | `true` after Wrangler custom domain DNS  |
 
 ## Never
 

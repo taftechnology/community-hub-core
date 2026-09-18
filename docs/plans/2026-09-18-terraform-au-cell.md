@@ -36,18 +36,18 @@
 
 ## Tooling decisions this plan makes
 
-| Choice | Decision | Why |
-| --- | --- | --- |
-| Terraform | **`~> 1.11`**, CI pin `1.11.x` current patch | S3-native `use_lockfile = true`. Cross-variable validation already exists. |
-| AWS provider | **hashicorp/aws `~> 6.0`** | Per-resource `region` is a configured argument, assertable under mocks. |
-| Cloudflare provider | **`~> 5.13`** (not `>=`) | Workers VPC in 5.13; `>=` would allow a 6.x on `init -upgrade`. |
-| Policies | **`jsonencode({...})` in HCL**, not `data.aws_iam_policy_document` | Plan-time known value; mocks do not invent `.json`. |
-| tflint AWS ruleset | Exact semver in `.tflint.hcl` | Spec: `--init` must not float. CI: `GITHUB_TOKEN` for GitHub API. |
-| `cloudflared` image | Digest-pinned; runbook prefers ECR pull-through | Anonymous Docker Hub pulls from Fargate fail. |
-| RDS CA | `rds-ca-rsa2048-g1` unless superseded in ap-southeast-2 | Pin; do not leave default implicit. |
-| RDS engine | Variable, latest PostgreSQL in ap-southeast-2 (17 or 18) | `uuidv7()` is `packages-db`. |
-| Staging instance | `db.t4g.medium`, Multi-AZ off; deletion protection / backup retention off | `environment = "prod"` flips those. |
-| Checker | `tooling/checks/terraform-invariants/` | Backend, `prevent_destroy`, connector ingress-rule resources, comment-stripped HCL. |
+| Choice              | Decision                                                                  | Why                                                                                 |
+| ------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Terraform           | **`~> 1.11`**, CI pin `1.11.x` current patch                              | S3-native `use_lockfile = true`. Cross-variable validation already exists.          |
+| AWS provider        | **hashicorp/aws `~> 6.0`**                                                | Per-resource `region` is a configured argument, assertable under mocks.             |
+| Cloudflare provider | **`~> 5.13`** (not `>=`)                                                  | Workers VPC in 5.13; `>=` would allow a 6.x on `init -upgrade`.                     |
+| Policies            | **`jsonencode({...})` in HCL**, not `data.aws_iam_policy_document`        | Plan-time known value; mocks do not invent `.json`.                                 |
+| tflint AWS ruleset  | Exact semver in `.tflint.hcl`                                             | Spec: `--init` must not float. CI: `GITHUB_TOKEN` for GitHub API.                   |
+| `cloudflared` image | Digest-pinned; runbook prefers ECR pull-through                           | Anonymous Docker Hub pulls from Fargate fail.                                       |
+| RDS CA              | `rds-ca-rsa2048-g1` unless superseded in ap-southeast-2                   | Pin; do not leave default implicit.                                                 |
+| RDS engine          | Variable, latest PostgreSQL in ap-southeast-2 (17 or 18)                  | `uuidv7()` is `packages-db`.                                                        |
+| Staging instance    | `db.t4g.medium`, Multi-AZ off; deletion protection / backup retention off | `environment = "prod"` flips those.                                                 |
+| Checker             | `tooling/checks/terraform-invariants/`                                    | Backend, `prevent_destroy`, connector ingress-rule resources, comment-stripped HCL. |
 
 **Rollback:** revert the PR. Nothing is applied. No data to restore.
 
@@ -55,17 +55,17 @@
 
 ## File map
 
-| Path | Role |
-| --- | --- |
-| `tooling/checks/terraform-invariants/` | Static HCL invariants + fixtures |
-| `infra/bootstrap/` | State bucket + KMS |
-| `infra/global/` | Dedicated staging zone |
-| `infra/regions/au/` | The cell |
-| `infra/modules/*` | Shared modules (each has `tests/`) |
-| `docs/adr/0002-terraform-roots-follow-failure-domains.md` | Roots + Wrangler line |
-| `docs/adr/0003-staging-tls-verification-exception.md` | Staging `disabled` / prod blocked |
-| `docs/runbooks/apply-staging-au.md` | Later human apply |
-| `.github/workflows/ci.yml` | `terraform` job |
+| Path                                                      | Role                               |
+| --------------------------------------------------------- | ---------------------------------- |
+| `tooling/checks/terraform-invariants/`                    | Static HCL invariants + fixtures   |
+| `infra/bootstrap/`                                        | State bucket + KMS                 |
+| `infra/global/`                                           | Dedicated staging zone             |
+| `infra/regions/au/`                                       | The cell                           |
+| `infra/modules/*`                                         | Shared modules (each has `tests/`) |
+| `docs/adr/0002-terraform-roots-follow-failure-domains.md` | Roots + Wrangler line              |
+| `docs/adr/0003-staging-tls-verification-exception.md`     | Staging `disabled` / prod blocked  |
+| `docs/runbooks/apply-staging-au.md`                       | Later human apply                  |
+| `.github/workflows/ci.yml`                                | `terraform` job                    |
 
 **CI matrix directories (T8 — keep in sync when adding a module):**
 
@@ -95,6 +95,7 @@ Each task is one commit, test-first, independently verifiable, and leaves the tr
 **Commit:** `feat(tooling): fail CI if Terraform state or connector SG invariants break`
 
 **Files:**
+
 - Create: `tooling/checks/terraform-invariants/{package.json,tsconfig.json,vitest.config.ts,check.ts,selftest.ts}`
 - Create: fixtures under `tooling/checks/terraform-invariants/fixtures/`:
   - `valid/` — good backend + bootstrap `prevent_destroy` + connector SG with `ingress = []` and no separate ingress-rule resource
@@ -105,20 +106,21 @@ Each task is one commit, test-first, independently verifiable, and leaves the tr
 - Modify: `tooling/checks/run.ts`
 
 **Interfaces:**
+
 - Produces: `check(root?: string): { ok: boolean; notice?: string; violations: { file: string; message: string }[] }`
 - Strip `#` and `//` comments before matching (same idea as worker-config JSONC strip). Empty real `infra/` until T2: `ok: true` plus a notice.
 
 **Must-fail coverage:**
 
-| Fixture | Fails because |
-| --- | --- |
-| `wrong-region` | backend `region` not `ap-southeast-2` |
-| `encrypt-false` | `encrypt = false` |
-| `missing-kms` | no `kms_key_id` |
-| `missing-lockfile` | no `use_lockfile = true` |
-| `commented-region` | only the live `region` counts |
-| `missing-prevent-destroy` | bootstrap bucket/key lack `prevent_destroy = true` |
-| `connector-ingress-rule` | separate ingress-rule resource targets connector SG |
+| Fixture                   | Fails because                                       |
+| ------------------------- | --------------------------------------------------- |
+| `wrong-region`            | backend `region` not `ap-southeast-2`               |
+| `encrypt-false`           | `encrypt = false`                                   |
+| `missing-kms`             | no `kms_key_id`                                     |
+| `missing-lockfile`        | no `use_lockfile = true`                            |
+| `commented-region`        | only the live `region` counts                       |
+| `missing-prevent-destroy` | bootstrap bucket/key lack `prevent_destroy = true`  |
+| `connector-ingress-rule`  | separate ingress-rule resource targets connector SG |
 
 - [ ] **Step 1: Write `selftest.ts` — RED**
 - [ ] **Step 2: Implement `check.ts`; wire `run.ts`**
@@ -247,10 +249,10 @@ RDS SG: ingress 5432 only from connector SG (configured argument on the ingress 
 
 **ECS roles (do not conflate):**
 
-| Role | Permissions |
-| --- | --- |
+| Role               | Permissions                                                                                                                                                                                                                 |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Execution role** | `secretsmanager:GetSecretValue` on **one** secret ARN; `logs:CreateLogStream` / `PutLogEvents` on **one** log-group ARN; `kms:Decrypt` on the customer key **if** the secret is encrypted with it. Policy via `jsonencode`. |
-| **Task role** | Omit, or attach an empty role. `cloudflared` needs no AWS API. |
+| **Task role**      | Omit, or attach an empty role. `cloudflared` needs no AWS API.                                                                                                                                                              |
 
 Assert execution-role `jsonencode` document contains those ARNs and does not contain `"Action":"*"`. Assert task definition `environment` has no tunnel token; secret uses `valueFrom`. Image contains `sha256:`. `retention_in_days >= 1` (`0` = never expire = fail).
 
@@ -429,18 +431,18 @@ Expected: all exit 0. No AWS/Cloudflare credentials used.
 
 ## Self-review (plan vs spec)
 
-| Spec requirement | Task |
-| --- | --- |
-| Three roots + modules; no unused S3 module | T2–T6 |
-| Invariants checker: backend, lockfile, comments, prevent_destroy, connector ingress-rule | T1 |
-| Bootstrap jsonencode deny-TLS; region validation; prevent_destroy via T1 | T2 |
-| Connector `ingress = []`; RDS private; storage KMS | T3 |
-| Execution role vs empty task role; digest; retention ≥ 1 | T4 |
-| Workers VPC; Hyperdrive flags; **cf-zone variable validation**; RS `au` | T5 |
-| `environment`; prod `verify_full` / backup checks; all tfvars | T6 |
-| ADR 0002/0003, architecture, AGENTS, runbook + ECR line | T7 |
-| Matrix includes **modules**; `-lockfile=readonly`; `GITHUB_TOKEN` for tflint | T8 |
-| `packages-db` / PgBouncer | T7 docs only |
-| Never applied | T7–T8 |
+| Spec requirement                                                                         | Task         |
+| ---------------------------------------------------------------------------------------- | ------------ |
+| Three roots + modules; no unused S3 module                                               | T2–T6        |
+| Invariants checker: backend, lockfile, comments, prevent_destroy, connector ingress-rule | T1           |
+| Bootstrap jsonencode deny-TLS; region validation; prevent_destroy via T1                 | T2           |
+| Connector `ingress = []`; RDS private; storage KMS                                       | T3           |
+| Execution role vs empty task role; digest; retention ≥ 1                                 | T4           |
+| Workers VPC; Hyperdrive flags; **cf-zone variable validation**; RS `au`                  | T5           |
+| `environment`; prod `verify_full` / backup checks; all tfvars                            | T6           |
+| ADR 0002/0003, architecture, AGENTS, runbook + ECR line                                  | T7           |
+| Matrix includes **modules**; `-lockfile=readonly`; `GITHUB_TOKEN` for tflint             | T8           |
+| `packages-db` / PgBouncer                                                                | T7 docs only |
+| Never applied                                                                            | T7–T8        |
 
 No live apply, no Access origin, no Worker routes, no computed-attribute asserts under mocks.

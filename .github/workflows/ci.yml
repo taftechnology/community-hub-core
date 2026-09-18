@@ -86,6 +86,46 @@ jobs:
       - name: Test
         run: pnpm test
 
+  terraform:
+    name: terraform
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir:
+          - infra/bootstrap
+          - infra/global
+          - infra/regions/au
+          - infra/modules/aws-network
+          - infra/modules/aws-kms-storage
+          - infra/modules/aws-rds
+          - infra/modules/aws-ecs-tunnel
+          - infra/modules/cf-tunnel
+          - infra/modules/cf-vpc-service
+          - infra/modules/cf-hyperdrive
+          - infra/modules/cf-regional-hostname
+          - infra/modules/cf-zone
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.11.4
+
+      - uses: terraform-linters/setup-tflint@v4
+
+      - name: Terraform checks
+        working-directory: ${{ matrix.dir }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          terraform init -backend=false -lockfile=readonly
+          terraform fmt -check
+          terraform validate
+          tflint --init
+          tflint
+          terraform test
+
   build-preview:
     name: build-preview
     runs-on: ubuntu-latest

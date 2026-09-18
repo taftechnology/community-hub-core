@@ -1309,16 +1309,16 @@ Production data is never copied to non-production environments.
 
 ### 23.3 Testing strategy
 
-| Layer              | Tooling                                                         | Focus                                                                                |
-| ------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Domain             | Vitest                                                          | Rules, state transitions, age and consent logic                                      |
-| Module integration | Vitest with `@cloudflare/vitest-pool-workers` + Postgres        | Routes, repositories, RLS behaviour                                                  |
+| Layer              | Tooling                                                         | Focus                                                                                                                                                     |
+| ------------------ | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Domain             | Vitest                                                          | Rules, state transitions, age and consent logic                                                                                                           |
+| Module integration | Vitest with `@cloudflare/vitest-pool-workers` + Postgres        | Routes, repositories, RLS behaviour                                                                                                                       |
 | `packages-db` CI   | Docker Postgres behind **PgBouncer in transaction mode**        | Must-fail fixture: a session-level `SET app.org_id` bleeds into the next checkout. Live Tunnel → Workers VPC → Hyperdrive is a staging smoke test, not CI |
-| Tenant isolation   | Dedicated suite                                                 | Every endpoint called with a token from another organisation and community must fail |
-| Residency          | Dedicated suite                                                 | No personal data in queue payloads, workflow results, KV or logs                     |
-| Contracts          | Schema and consumer tests                                       | Mobile API, Jellycube host adapter, PaymentProvider adapters                         |
-| End to end         | Playwright (admin), Maestro or Detox (mobile)                   | Critical journeys: sign-in, donate, RSVP, check-in, consent                          |
-| Accessibility      | axe (or equivalent) in Playwright; native a11y checks on mobile | WCAG 2.2 AA on admin, portal, ops and widget islands ([§8.5](#85-client-surfaces))   |
+| Tenant isolation   | Dedicated suite                                                 | Every endpoint called with a token from another organisation and community must fail                                                                      |
+| Residency          | Dedicated suite                                                 | No personal data in queue payloads, workflow results, KV or logs                                                                                          |
+| Contracts          | Schema and consumer tests                                       | Mobile API, Jellycube host adapter, PaymentProvider adapters                                                                                              |
+| End to end         | Playwright (admin), Maestro or Detox (mobile)                   | Critical journeys: sign-in, donate, RSVP, check-in, consent                                                                                               |
+| Accessibility      | axe (or equivalent) in Playwright; native a11y checks on mobile | WCAG 2.2 AA on admin, portal, ops and widget islands ([§8.5](#85-client-surfaces))                                                                        |
 
 ---
 
