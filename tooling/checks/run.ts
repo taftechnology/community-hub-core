@@ -1,6 +1,7 @@
 import { check as checkEncryptedQuery } from "./encrypted-query/check.js";
 import { check as checkResidencyPayload } from "./residency-payload/check.js";
 import { check as checkSchemaRls } from "./schema-rls/check.js";
+import { check as checkTerraformInvariants } from "./terraform-invariants/check.js";
 import { check as checkWorkerConfig } from "./worker-config/check.js";
 
 let failed = false;
@@ -52,6 +53,19 @@ if (!residencyResult.ok) {
   failed = true;
 } else if (residencyResult.payloadFileCount > 0) {
   console.log("residency-payload: ok");
+}
+
+const terraformResult = checkTerraformInvariants();
+if (terraformResult.notice) {
+  console.log(terraformResult.notice);
+}
+if (!terraformResult.ok) {
+  for (const v of terraformResult.violations) {
+    console.error(`${v.file}: ${v.message}`);
+  }
+  failed = true;
+} else if (!terraformResult.notice) {
+  console.log("terraform-invariants: ok");
 }
 
 process.exit(failed ? 1 : 0);
