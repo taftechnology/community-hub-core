@@ -317,11 +317,12 @@ Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`, `build`, `ci`
 **Stage 1 — Static (fast, every push)**
 
 - format, lint, typecheck
-- `check:boundaries` — worker-config, schema-rls, encrypted-query, residency-payload (each checker has must-fail fixtures exercised in Stage 2)
+- `check:boundaries` — worker-config, schema-rls, encrypted-query, residency-payload, terraform-invariants (each checker has must-fail fixtures exercised in Stage 2)
 - secret scanning, dependency audit (fail on high/critical)
 - traceability (pull requests only): branch matches `<type>/<YYYY-MM-DD>-<slug>`; PR body links one spec and one plan with the same slug, both `approved`, or `No spec:` on `chore/` / `fix/` branches
+- **offline Terraform** (every root and every module under `infra/`): `terraform init -backend=false -lockfile=readonly`, `fmt -check`, `validate`, `tflint --init && tflint`, `terraform test`. Missing Terraform or a failed `init` fails the job. No live `plan`. No cloud provider secrets. `GITHUB_TOKEN` is passed so `tflint --init` does not hit unauthenticated GitHub rate limits.
 
-A CI check is added only when it has a real input **and** a must-fail fixture — never stubbed always-green. Omitted until then: dependency-cruiser module boundaries, manifest and plan-catalogue checks, identity/platform schema ownership scans beyond the provisional schema-rls checker, OpenAPI diff, Terraform plan.
+A CI check is added only when it has a real input **and** a must-fail fixture — never stubbed always-green. Omitted until then: dependency-cruiser module boundaries, manifest and plan-catalogue checks, identity/platform schema ownership scans beyond the provisional schema-rls checker, OpenAPI diff, live Terraform `plan`. A job is present and fail-closed, or absent — never present and silently skipping.
 
 **Stage 2 — Tests (every push)**
 
@@ -332,7 +333,7 @@ Omitted until first real input plus a must-fail fixture: tenant-isolation suite,
 **Stage 3 — Build and preview (every PR)**
 
 - `wrangler deploy --dry-run` for `apps/gateway`; on pull requests, `wrangler versions upload` and a PR comment with the `*.workers.dev` preview URL (only because gateway is `global-no-pii` with `preview_urls: true`). Regional Workers are not previewed on `workers.dev` — verify them on `staging-au` or a Regional Services custom hostname when those apps exist.
-- OpenAPI diff and Terraform plan comments apply only once those artefacts exist in the repo.
+- OpenAPI diff comments apply only once those artefacts exist in the repo. Live Terraform `plan` comments wait on CI identities (AWS OIDC, Cloudflare token).
 
 **Stage 4 — Deploy**
 
