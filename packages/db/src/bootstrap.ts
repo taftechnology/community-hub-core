@@ -45,7 +45,7 @@ async function constrainRoleAttributes(sql: Sql): Promise<void> {
   }
 }
 
-async function assertRoleAttributes(sql: Sql): Promise<void> {
+export async function assertRoleAttributes(sql: Sql): Promise<void> {
   const roles = await sql<RoleAttrs[]>`
     select rolname, rolcanlogin, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb
     from pg_roles

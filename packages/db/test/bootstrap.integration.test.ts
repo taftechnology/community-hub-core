@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { runBootstrap } from "../src/bootstrap.js";
+import { assertRoleAttributes, runBootstrap } from "../src/bootstrap.js";
 import { createDirectSql, createPooledSql } from "../src/connections.js";
 
 type Runtime = {
@@ -101,19 +101,40 @@ describe("bootstrap", () => {
     const sql = createDirectSql(runtime.directUrl);
     try {
       await sql.unsafe("alter role app bypassrls");
-      await runBootstrap(sql);
-      const [app] = await sql<RoleAttrs[]>`
-        select rolname, rolcanlogin, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb
-        from pg_roles
-        where rolname = 'app'
-      `;
-      expect(app).toMatchObject({
-        rolname: "app",
-        rolbypassrls: false,
-        rolsuper: false,
-        rolcreaterole: false,
-        rolcreatedb: false,
-      });
+      try {
+        await runBootstrap(sql);
+        const [app] = await sql<RoleAttrs[]>`
+          select rolname, rolcanlogin, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb
+          from pg_roles
+          where rolname = 'app'
+        `;
+        expect(app).toMatchObject({
+          rolname: "app",
+          rolbypassrls: false,
+          rolsuper: false,
+          rolcreaterole: false,
+          rolcreatedb: false,
+        });
+      } finally {
+        await sql.unsafe("alter role app nobypassrls");
+      }
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("fails closed when app still has BYPASSRLS", async () => {
+    const runtime = loadRuntime();
+    const sql = createDirectSql(runtime.directUrl);
+    try {
+      await sql.unsafe("alter role app bypassrls");
+      try {
+        await expect(assertRoleAttributes(sql)).rejects.toThrow(
+          "forbidden attributes: BYPASSRLS",
+        );
+      } finally {
+        await sql.unsafe("alter role app nobypassrls");
+      }
     } finally {
       await sql.end({ timeout: 1 });
     }
