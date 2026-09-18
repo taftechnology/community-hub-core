@@ -1,6 +1,6 @@
 # Product roadmap
 
-Status: draft (2026-09-18) — living companion to [architecture.md](../architecture.md) §25  
+Status: approved (2026-09-18, Abdus Salam) — living companion to [architecture.md](../architecture.md) §25  
 Sequence only: no calendar dates, quarters, or deadlines  
 First customer: one live Australian parish, full cutover (admin + Parish Hub + public site in one window)
 
