@@ -80,6 +80,7 @@ A **chunk** is one shippable slice of behaviour. **One spec = one plan = one bra
 - The **date is the date that document was created** — a plan written two days after its spec keeps its own date. The **slug is identical** across spec, plan and branch; that is what pairs them.
 - The branch carries the **spec's** date, so the branch always points back to the document that authorised the work.
 - Superseding a spec means a new file with a new date and a `Supersedes:` line, not an edit to a merged one.
+- `docs/plans/` holds only those approved plans. Implementer reports (`t1-report.md`, `task-N-report.md`, and the like) are not plans — see §5.
 
 **Right-sized chunk**
 
@@ -179,7 +180,7 @@ Use superpowers **`executing-plans`** and **`subagent-driven-development`** to d
 Per task:
 
 1. Implementer writes the failing test (RED), the minimum code (GREEN), then refactors.
-2. Implementer runs the local gate (§8) and reports: what changed, what the test proves, what it did **not** do.
+2. Implementer runs the local gate (§8) and reports to the parent: what changed, what the test proves, what it did **not** do. A Superpowers report file, if used, is `.superpowers/sdd/task-N-report.md` — never `docs/plans/`. The commit contains only files named in that task.
 3. Reviewer agent reviews the **diff** against the plan, the spec and §1 — using superpowers **`requesting-code-review`** for an independent pass on sensitive chunks.
 4. Reviewer either accepts (commit stands) or returns it with specific findings. Returned work is fixed by the implementer, not by the reviewer.
 
@@ -187,7 +188,7 @@ A task is not done because the implementer says so. It is done when the reviewer
 
 ### Phase 4 — PR (human merges)
 
-Use superpowers **`finishing-a-development-branch`**. Open the PR with the template in §9, then **stop**. Agents do not merge.
+Run the session-scratch cleanup in §5, then use superpowers **`finishing-a-development-branch`**. Open the PR with the template in §9, then **stop**. Agents do not merge.
 
 ---
 
@@ -198,6 +199,21 @@ Use superpowers **`finishing-a-development-branch`**. Open the PR with the templ
 - Never commit directly to `main`. Never force-push a shared branch. **Carve-out:** docs-only edits to root documents (`architecture.md`, `AGENTS.md`) may land on `main` at the human owner's instruction. Anything that changes runtime behaviour still uses a branch.
 - Rebase on `main` before opening the PR; keep history linear.
 - Parallel implementers are allowed (**`dispatching-parallel-agents`**) only when tasks touch disjoint files. Two agents in one module at once is a merge conflict factory.
+
+**Session scratch — never committed**
+
+Superpowers subagent-driven development writes task briefs, implementer reports, review diffs and a progress ledger. Those files belong in `.superpowers/sdd/` (gitignored). They are not plans and they are not part of the chunk.
+
+- Dispatch reports to `.superpowers/sdd/task-N-report.md`. Do not write them under `docs/plans/`.
+- Implementer commits contain only the files named in that task. Never `git add` a `*-report.md`, `.superpowers/`, or other session scratch.
+- **At the end of the chunk** — before finishing-a-development-branch, opening a PR, merging, or reporting done — delete leftover reports from the wrong place and confirm nothing scratch is staged:
+
+```bash
+rm -f docs/plans/*-report.md
+git status --short
+```
+
+`.superpowers/` may stay on disk for the rest of the session; it must not appear in `git status` as staged. If a report was already committed, remove it in a follow-up commit — do not rewrite shared history.
 
 ---
 
@@ -263,6 +279,7 @@ pnpm lint && pnpm typecheck && pnpm test --filter <touched-packages> && pnpm che
 - [ ] No non-negotiable from §1 touched (or explicitly justified)
 - [ ] Manifest updated if keys/permissions/events changed
 - [ ] Commit message follows §9
+- [ ] Commit contains only files named in the task (no `*-report.md`, no `.superpowers/`)
 
 **Per chunk (before requesting merge):**
 
@@ -272,6 +289,7 @@ pnpm lint && pnpm typecheck && pnpm test --filter <touched-packages> && pnpm che
 - [ ] Spec's behaviour verified against a running preview, not just tests
 - [ ] `architecture.md` updated in the same PR if the chunk changed a documented decision, plus an ADR in `docs/adr/` for anything at decision level
 - [ ] Reviewer agent sign-off recorded in the PR; second independent review for sensitive chunks (§2)
+- [ ] Session scratch cleaned up (§5): no `docs/plans/*-report.md` on disk; nothing under `.superpowers/` staged
 
 ---
 
@@ -289,6 +307,8 @@ Refs: docs/plans/2026-09-19-giving-checkout.md task 3
 ```
 
 Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`, `build`, `ci`. Scope is the module or package.
+
+Never stage `docs/plans/*-report.md`, `.superpowers/`, or other session scratch. If an implementer wrote a report next to the plan, delete it before committing — do not `git add` it. The durable review record is the PR body, not a markdown dump beside the plan.
 
 **One PR implements exactly one spec**, except the no-spec lane in §3. If chunk work grows past its spec, stop: either narrow the PR, or write a second spec and open a second branch.
 
@@ -351,6 +371,7 @@ Omitted until first real input plus a must-fail fixture: tenant-isolation suite,
 Beyond "does it work":
 
 - [ ] Does the diff match the approved plan, or did scope creep in?
+- [ ] Session scratch: no implementer reports, task briefs, or `.superpowers/` in the commit.
 - [ ] Tenancy: could any query return another organisation's row?
 - [ ] Residency: does any personal data reach a global Worker (including ops console), queue, KV, log, or offshore service? Did a global Worker call Stripe or parse a billing/email payload?
 - [ ] Children: any new path where a minor's data could become public, searchable, or reach a third party? Are a minor's `confidential*` fields household-keyed, with household-scoped indexes only?
@@ -386,7 +407,7 @@ Report progress honestly. "Tests fail, here is the output" is worth more than a 
 - `architecture.md` is the source of truth. Change it **in the same PR** as the behaviour change, not later.
 - Decisions at architecture level get an ADR in `docs/adr/NNNN-title.md`: context, decision, consequences, alternatives.
 - Runbooks in `docs/runbooks/` for anything operable: incidents, breach assessment, restores, key rotation, provider outages.
-- Specs and plans stay in the repo after merge. They are the record of why the code looks like this.
+- Specs and plans stay in the repo after merge. They are the record of why the code looks like this. Implementer reports do not.
 
 ---
 
@@ -437,6 +458,7 @@ Never               → merge your own work · personal data outside AU · prod 
                     → encrypted column in a WHERE/ORDER BY/aggregate · secrets in the repo
                     → a Durable Object holding personal data · analytics SDK on any surface
                     → control-plane calling Stripe · ops console reading tenant rows itself
+                    → implementer reports in docs/plans/ or in a commit
 
 Stuck twice         → stop and report
 Rule in the way     → say so in the PR, do not silently break it
