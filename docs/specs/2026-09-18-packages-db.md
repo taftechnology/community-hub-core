@@ -14,7 +14,7 @@ The workspace has checkers that look for `packages/db` and a cell Terraform grap
 **In**
 
 - `packages/db`: Drizzle Kit **wrapped** by our runner (advisory lock, checksums, out-of-order journal detection). Product SQL under Drizzle's layout (`drizzle/` + `meta/_journal.json`).
-- **Privileged bootstrap** (idempotent, not journaled): four roles, schema `migrator` owned by `migrator`, `GRANT migrator TO <runner login>`, database-level privileges. Run by the privileged login (Docker superuser in CI; RDS master in production).
+- **Privileged bootstrap** (idempotent, not journaled, **never destructive**): four roles, schema `migrator` owned by `migrator`, `GRANT migrator TO <runner login>`, `GRANT CREATE ON DATABASE … TO migrator`, `REVOKE TEMPORARY ON DATABASE … FROM PUBLIC`. Runs **before every journal apply**. Privileged login (Docker superuser in CI; RDS master in production).
 - **Product journal** (append-only, applied as `migrator`): schemas `app`, `identity`, `platform`; grants; default privileges. **No product tables.** No `CREATE ROLE`. No passwords.
 - Test-only migration set (CI Docker only): one synthetic `app` table with `org_id`, RLS, `FORCE ROW LEVEL SECURITY`. Separate journal and bookkeeping. The product entry point cannot load this set.
 - Transaction wrapper: `SELECT set_config('app.org_id', $1, true)` and the same for `app.community_id`. Bind parameters only. No interpolated `SET LOCAL`.
@@ -26,7 +26,9 @@ The workspace has checkers that look for `packages/db` and a cell Terraform grap
 - Fail-closed query **on a reused PgBouncer connection** that just served a wrapped transaction (see Behaviour).
 - Static ban (must-fail fixtures): session-level `SET`, `SET SESSION`, `set_config(..., false)`, `RESET` of `app.*`, and `SET ROLE` except inside the runner. `PASSWORD` in any SQL this package ships (bootstrap, `drizzle/`, `drizzle-test/`).
 - De-provisionalise **`schema-rls` only**: scan Kit-generated `.sql` (product and test-only trees); keep existing must-fail fixtures; exempt schema `migrator`.
-- Wrapper must-fail fixture: a journal entry older than the latest applied entry is unapplied → fail (Drizzle Kit would skip it).
+- Wrapper must-fail fixtures: a journal entry older than the latest applied entry is unapplied → fail (Drizzle Kit would skip it); already-applied file checksum changed → fail **before** apply.
+- `app`, `identity` and `platform` each fail `CREATE TEMP TABLE` (TEMPORARY revoked from `PUBLIC`).
+- Password-setting helper sends a **pre-computed SCRAM-SHA-256 verifier**, not the plaintext password (same pattern production ops will copy).
 - ADR 0004: four-role model and `migrator` object ownership.
 - Docs: architecture §6.3 sample SQL (application-minted UUIDv7 while the cell is 17); AGENTS.md §1.3 wording (`set_config(..., true)` as the implementation of transaction-local scope). §23.2 note that **how** migrations reach private RDS is later (Out-of-band).
 
@@ -48,12 +50,14 @@ The workspace has checkers that look for `packages/db` and a cell Terraform grap
 
 `SET ROLE migrator` cannot run before `migrator` exists. A `NOLOGIN` role without `CREATEROLE` cannot create `app` / `identity` / `platform`. Revoking on the database needs the database owner. Drizzle needs schema `migrator` to exist **before** it applies journal entry 0. Roles are **cluster-wide**, so `CREATE ROLE` in a per-database journal fails on the second database in the same cluster.
 
-Split:
+Bootstrap runs **before every journal apply**. It is idempotent by construction, so adding a role later is an edit to the script. It may **never** contain destructive statements (`DROP`, `ALTER … RENAME`, or privilege revokes that would strand existing objects). The documented `REVOKE TEMPORARY` (and the optional explicit `REVOKE CREATE`) are the allowed privilege tightening, not an exception to sneak `DROP` in later. A once-only bootstrap would leave the next chunk with no path to add a role.
 
-| Step                        | Who                                                             | Connection                                               | What                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| --------------------------- | --------------------------------------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **1. Privileged bootstrap** | Privileged login (CI: Docker superuser; production: RDS master) | Direct, unpooled                                         | Idempotent. Create the four roles **without passwords**. `CREATE SCHEMA migrator AUTHORIZATION migrator`. `GRANT migrator TO <runner login>`. `GRANT CREATE ON DATABASE … TO migrator` (so the journal can create `app` / `identity` / `platform` after `PUBLIC` loses `CREATE`). `REVOKE CREATE ON DATABASE … FROM PUBLIC`. `REVOKE CREATE ON SCHEMA public FROM PUBLIC` (`public` is not owned by `migrator`). Not recorded in the Drizzle journal. |
-| **2. Journal apply**        | Same runner login, then `SET ROLE migrator`                     | Direct, unpooled. **Not** PgBouncer. **Not** Hyperdrive. | Everything else: `app` / `identity` / `platform` schemas, `GRANT USAGE`, default privileges, product (and, in test mode, test-only) SQL.                                                                                                                                                                                                                                                                                                              |
+Postgres grants `PUBLIC` `CONNECT` and `TEMPORARY` on a new database, not `CREATE`. `GRANT CREATE ON DATABASE … TO migrator` is required because `migrator` never had `CREATE`, not because of a revoke. `REVOKE CREATE ON DATABASE … FROM PUBLIC` and `REVOKE CREATE ON SCHEMA public FROM PUBLIC` are harmless explicit statements (the latter is already the default from Postgres 15; the cell is 17) — they do not close a hole. The hole that exists is `TEMPORARY`: a temp table lives for the whole session, has no RLS, and PgBouncer pools server connections per login, so a table filled in one tenant's transaction is still there for the next `app` checkout. That is a cross-tenant channel through session state, and it would make "DDL: no" in the roles table false.
+
+| Step                        | Who                                                             | Connection                                               | What                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| --------------------------- | --------------------------------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1. Privileged bootstrap** | Privileged login (CI: Docker superuser; production: RDS master) | Direct, unpooled                                         | Idempotent, non-destructive, before every apply. Create the four roles **without passwords**. `CREATE SCHEMA migrator AUTHORIZATION migrator`. `GRANT migrator TO <runner login>`. `GRANT CREATE ON DATABASE … TO migrator`. `REVOKE TEMPORARY ON DATABASE … FROM PUBLIC`. Optional explicit `REVOKE CREATE` on the database and on schema `public` from `PUBLIC` (no-ops at 17; document intent). Not recorded in the Drizzle journal. |
+| **2. Journal apply**        | Same runner login, then `SET ROLE migrator`                     | Direct, unpooled. **Not** PgBouncer. **Not** Hyperdrive. | Everything else: `app` / `identity` / `platform` schemas, `GRANT USAGE`, default privileges, product (and, in test mode, test-only) SQL.                                                                                                                                                                                                                                                                                                |
 
 `pg_advisory_lock` and `SET ROLE migrator` are session-level. Under transaction pooling the lock can be held on one server connection while the migration runs on another, and the role change can leak to the next client — the bleed this chunk exists to rule out. Production migrations do not go through Hyperdrive either, so CI and production agree: **the runner never uses a pooler**.
 
@@ -70,7 +74,7 @@ Privilege, not one role per schema. Superusers bypass RLS even with `FORCE ROW L
 | **identity** | yes   | no  | `identity` only            | Follow-up Hyperdrive; CI connects as this login |
 | **platform** | yes   | no  | `platform` only            | Follow-up Hyperdrive; CI connects as this login |
 
-`FORCE ROW LEVEL SECURITY` applies to `migrator` (the owner). It never applies to a superuser — which is why CI must not leave objects owned by the bootstrap superuser. Tests: every `app` table is owned by `migrator`; `migrator` itself is blocked by the policy.
+`FORCE ROW LEVEL SECURITY` applies to `migrator` (the owner). It never applies to a superuser — which is why CI must not leave objects owned by the bootstrap superuser. Tests: every `app` table is owned by `migrator`; `migrator` itself is blocked by the policy; `app`, `identity` and `platform` each fail `CREATE TEMP TABLE`.
 
 Ownership (architecture §6.3, AGENTS §6): `identity` schema → `core/identity` + identity role; `platform` schema → `core/tenancy` + platform role; `app` tables → the module that owns them, reached as `app`.
 
@@ -81,8 +85,8 @@ Runtime code **picks a credential**: a different login, and later a different Hy
 `LOGIN` roles need passwords in order to connect. `CREATE ROLE app LOGIN PASSWORD '…'` in a committed file puts a secret in git — the same credential the cell spec feeds to Hyperdrive.
 
 - Bootstrap `CREATE ROLE` statements have **no** `PASSWORD` clause.
-- CI sets passwords from environment variables after bootstrap (`ALTER ROLE … PASSWORD` with a bound parameter, not a committed SQL file).
-- Staging and production set them from Secrets Manager in the operations step (same later chunk as the production migration path).
+- After bootstrap, CI computes a **SCRAM-SHA-256 verifier** from the environment password (the same client-side construction `psql`'s `\password` uses) and issues `ALTER ROLE … PASSWORD '<verifier>'`. `$1` is not accepted: `ALTER ROLE`, like `SET`, is a utility statement. A bound parameter would push the implementation into client-side literal escaping of the plaintext, and the statement text can land in the server log (`log_statement = ddl`, or on error). On RDS those logs go to CloudWatch. The verifier in the log is acceptable; the password is not.
+- Staging and production set the same verifier from Secrets Manager in the operations step (same later chunk as the production migration path). This chunk sets the pattern they will copy.
 - A static check fails CI if `PASSWORD` appears in bootstrap SQL, `drizzle/`, or `drizzle-test/`.
 
 ### Product journal (append-only, as `migrator`)
@@ -117,8 +121,8 @@ Schema `migrator`, owned by role `migrator`, created in bootstrap so Kit can cre
 1. `SET ROLE migrator`
 2. `pg_advisory_lock` for the run
 3. Fail if any journal entry is **unapplied** but **older** than the latest applied entry (Kit's Postgres migrator applies only entries newer than the last applied timestamp; two branches that each generate a migration will silently skip the older file if it merges second). Must-fail fixture required. Checksums of applied files do not catch this.
-4. Kit apply
-5. Fail if a previously applied file's checksum changed
+4. Fail if a **previously applied** file's checksum has changed. This runs **before** applying anything — if history has been edited, do not apply new migrations on top of it.
+5. Kit apply, and record checksums for newly applied files **in the same transaction as the apply**.
 
 Forward-only: no down migrations. Expand → migrate → contract (AGENTS §7).
 
@@ -166,42 +170,44 @@ The `migrator` schema holds runner metadata only (file names, checksums, apply t
 - Permissions: none.
 - Consent / minors / encryption of fields: none (`packages-crypto` is next; that chunk should also replace `encrypted-query`'s SQL scanner with a typed column).
 - Residency: no Hyperdrive on gateway; no personal data in CI; Docker only.
-- Tenancy: `set_config(..., true)` only; `FORCE RLS`; non-superuser ownership; four roles as above.
-- Secrets: no `PASSWORD` in committed SQL; CI/ops set passwords from env / Secrets Manager.
+- Tenancy: `set_config(..., true)` only; `FORCE RLS`; non-superuser ownership; four roles as above; no `TEMPORARY` for runtime roles.
+- Secrets: no `PASSWORD` in committed SQL; CI/ops set a SCRAM-SHA-256 verifier, never the plaintext, in `ALTER ROLE`.
 - AGENTS §1.3: replace the `SET LOCAL` wording with transaction-local `set_config(..., true)` in the same implementation PR.
 - AGENTS §7: forward-only migrations.
 - AGENTS §13: ADR 0004 (four roles + migrator ownership). Hard to undo once objects exist in production.
 
 ## Contracts
 
-- Package `@community-hub/db`: `withAppTransaction`; product vs test migrator entry points; bootstrap entry point; connection factories that select the `app` / `identity` / `platform` **login** (DSN), not `SET ROLE`.
+- Package `@community-hub/db`: `withAppTransaction`; product vs test migrator entry points; bootstrap (invoked before every apply); SCRAM-SHA-256 password helper; connection factories that select the `app` / `identity` / `platform` **login** (DSN), not `SET ROLE`.
 - No API routes. No events. No widget keys.
 - Hyperdrive: documented mapping only (`app` role → existing cell config). Identity and platform Hyperdrive configs are a later Terraform chunk.
 - `schema-rls` input contract: no longer "provisional until packages/db". `encrypted-query` remains provisional.
 
 ## Risks
 
-| Risk                                                                   | Mitigation                                                                                                      |
-| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Superuser-owned tables in CI, RLS tests lie                            | Bootstrap then `SET ROLE migrator` before journaled DDL; assert owner; assert migrator is blocked by the policy |
-| `SET ROLE migrator` / `CREATE ROLE` / database `REVOKE` in the journal | Privileged bootstrap is a separate, idempotent step; journal has no `CREATE ROLE`                               |
-| `PASSWORD` in git                                                      | Roles created without passwords; static ban; CI/ops set passwords from env / Secrets Manager                    |
-| Test-only SQL applied to staging/prod                                  | Separate journal; runner refuses test set unless test mode; product entry cannot load it                        |
-| Bookkeeping table in `app` fails schema-rls or needs fake `org_id`     | Schema `migrator` from bootstrap, exempt from schema-rls                                                        |
-| Fail-closed test on a fresh connection                                 | Reused PgBouncer connection after a wrapped transaction; accept empty-uuid or unset-GUC errors                  |
-| Session `SET` / `SET ROLE` bleeds under Hyperdrive-like pooling        | Runner unpooled; app tests through PgBouncer; must-fail bleed; static ban; runtime never `SET ROLE`             |
-| Advisory lock held on a different pooled backend than the migration    | Runner does not use PgBouncer or Hyperdrive                                                                     |
-| Out-of-order Drizzle journal silently skipped                          | Wrapper fails unapplied entries older than the latest applied; must-fail fixture                                |
-| `encrypted-query` declared non-provisional with no real SQL queries    | Leave it provisional; typed encrypted column in `packages-crypto`                                               |
-| Missing `FORCE` because Kit does not emit it                           | Hand-added `ALTER TABLE … FORCE`; `schema-rls` must-fail                                                        |
-| Runtime roles can see no objects                                       | `GRANT USAGE ON SCHEMA` plus default table privileges                                                           |
-| `PUBLIC` still has `CREATE`                                            | Bootstrap revokes database and `public` schema `CREATE` from `PUBLIC`                                           |
-| Roadmap `done` before merge                                            | Do not flip the row in this PR                                                                                  |
-| Interpolating tenant ids into `SET LOCAL`                              | Wrapper uses bound `set_config` only; static ban                                                                |
+| Risk                                                                   | Mitigation                                                                                                       |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Superuser-owned tables in CI, RLS tests lie                            | Bootstrap then `SET ROLE migrator` before journaled DDL; assert owner; assert migrator is blocked by the policy  |
+| `SET ROLE migrator` / `CREATE ROLE` / database `REVOKE` in the journal | Privileged bootstrap is a separate, idempotent step; journal has no `CREATE ROLE`                                |
+| `PASSWORD` in git / plaintext in Postgres logs                         | Roles created without passwords; static ban; CI/ops send a SCRAM-SHA-256 verifier, not the password              |
+| Test-only SQL applied to staging/prod                                  | Separate journal; runner refuses test set unless test mode; product entry cannot load it                         |
+| Bookkeeping table in `app` fails schema-rls or needs fake `org_id`     | Schema `migrator` from bootstrap, exempt from schema-rls                                                         |
+| Fail-closed test on a fresh connection                                 | Reused PgBouncer connection after a wrapped transaction; accept empty-uuid or unset-GUC errors                   |
+| Session `SET` / `SET ROLE` bleeds under Hyperdrive-like pooling        | Runner unpooled; app tests through PgBouncer; must-fail bleed; static ban; runtime never `SET ROLE`              |
+| Advisory lock held on a different pooled backend than the migration    | Runner does not use PgBouncer or Hyperdrive                                                                      |
+| Out-of-order Drizzle journal silently skipped                          | Wrapper fails unapplied entries older than the latest applied; must-fail fixture                                 |
+| Checksum check after apply leaves rewritten history already stacked    | Verify already-applied checksums before apply; record new checksums in the same transaction as the apply         |
+| `encrypted-query` declared non-provisional with no real SQL queries    | Leave it provisional; typed encrypted column in `packages-crypto`                                                |
+| Missing `FORCE` because Kit does not emit it                           | Hand-added `ALTER TABLE … FORCE`; `schema-rls` must-fail                                                         |
+| Runtime roles can see no objects                                       | `GRANT USAGE ON SCHEMA` plus default table privileges                                                            |
+| `PUBLIC` keeps `TEMPORARY`; temp tables are a cross-tenant channel     | Bootstrap `REVOKE TEMPORARY ON DATABASE … FROM PUBLIC`; `app` / `identity` / `platform` fail `CREATE TEMP TABLE` |
+| Bootstrap runs once and a later chunk cannot add a role                | Bootstrap before every apply; idempotent; never destructive                                                      |
+| Roadmap `done` before merge                                            | Do not flip the row in this PR                                                                                   |
+| Interpolating tenant ids into `SET LOCAL`                              | Wrapper uses bound `set_config` only; static ban                                                                 |
 
 ## Out-of-band
 
-- **Production migration path** (login, network path to private RDS — probably a one-off ECS task in the cell VPC) is a later chunk. That chunk also sets `LOGIN` role passwords from Secrets Manager. Architecture §23.2 says migrations run before deployment; it does not yet say how they reach RDS. Do not invent a bastion in this spec.
+- **Production migration path** (login, network path to private RDS — probably a one-off ECS task in the cell VPC) is a later chunk. That chunk sets `LOGIN` role passwords from Secrets Manager using this chunk's SCRAM-SHA-256 verifier helper — not a plaintext `ALTER ROLE … PASSWORD`. Architecture §23.2 says migrations run before deployment; it does not yet say how they reach RDS. Do not invent a bastion in this spec.
 - **Identity and platform Hyperdrive configurations** (one credential per Hyperdrive config) are a Terraform follow-up. This chunk creates the LOGIN roles; it does not change `infra/`.
 - Legal: none. New subprocessor: none (Docker Postgres in CI). Architecture change: §6.3 sample SQL + AGENTS §1.3 wording, plus **ADR 0004**, in the implementation PR.
 
