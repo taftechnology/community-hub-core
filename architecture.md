@@ -3,7 +3,7 @@
 |                   |                                                                                                                              |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | **Status**        | **Approved** 2026-09-17 — baseline for implementation. Changes go through an ADR in `docs/adr/` ([AGENTS.md](AGENTS.md) §13) |
-| **Last updated**  | 2026-09-17 (revision 16: preview URLs; tooling/; ADR 0001)                                                                   |
+| **Last updated**  | 2026-09-18 (revision 17: living roadmap at docs/roadmap.md)                                                                  |
 | **Scope**         | `community-hub-core` (the multi-tenant SaaS) and its contracts with the mobile apps, GivingJar and Jellycube                 |
 | **Launch region** | Australia (`au`). Canada, EU and US are designed for but not deployed                                                        |
 
@@ -1379,6 +1379,8 @@ A client is not scheduled until every public write they actually use (forms, don
 ---
 
 ## 25. Roadmap
+
+Phases, remaining chunks, admin navigation, and launch gates: [`docs/roadmap.md`](docs/roadmap.md). This table is the short summary; do not fork a second phase list.
 
 | Phase                         | Deliverables                                                                                                                                                                                                                                                                                                                                          |
 | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
