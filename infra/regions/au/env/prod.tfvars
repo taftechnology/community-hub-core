@@ -1,0 +1,11 @@
+aws_region                = "ap-southeast-2"
+aws_account_id            = "123456789012"
+cloudflare_account_id     = "00000000000000000000000000000000"
+environment               = "prod"
+cert_verification_mode    = "verify_full"
+deletion_protection       = true
+backup_retention_days     = 7
+zone_id                   = "00000000000000000000000000000000"
+zone_name                 = "communityhub.one"
+enable_hyperdrive         = false
+enable_regional_hostnames = false

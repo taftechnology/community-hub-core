@@ -1,0 +1,11 @@
+aws_region                = "ap-southeast-2"
+aws_account_id            = "123456789012"
+cloudflare_account_id     = "00000000000000000000000000000000"
+environment               = "staging"
+cert_verification_mode    = "disabled"
+deletion_protection       = false
+backup_retention_days     = 0
+zone_id                   = "00000000000000000000000000000000"
+zone_name                 = "communityhub-staging.net"
+enable_hyperdrive         = false
+enable_regional_hostnames = false
