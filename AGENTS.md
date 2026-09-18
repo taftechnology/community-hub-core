@@ -92,7 +92,7 @@ A **chunk** is one shippable slice of behaviour. **One spec = one plan = one bra
 
 **Do not split** so far that a PR cannot be tested end to end. "Add a column" is not a chunk.
 
-**Work that has no spec.** A dependency bump, flaky-test quarantine, CI fix or similar chore is not a chunk: branch `chore/<YYYY-MM-DD>-<slug>` (or `fix/…`), and the PR body opens with `No spec:` plus why. The traceability check skips spec and plan for those branches. If the change would alter user-visible behaviour, add a table, or touch §1, it is a chunk — write the spec.
+**Work that has no spec.** A dependency bump, flaky-test quarantine, CI fix, or a docs-only edit to `AGENTS.md` / `architecture.md` that does **not** change a documented decision is not a chunk: branch `chore/<YYYY-MM-DD>-<slug>` (or `fix/…`), and the PR body opens with `No spec:` plus why. The traceability check skips spec and plan for those branches. If the change would alter user-visible behaviour, add a table, touch §1, or change an architecture decision, it is a chunk — write the spec (and an ADR when §13 requires one).
 
 ---
 
@@ -196,8 +196,16 @@ Run the session-scratch cleanup in §5, then use superpowers **`finishing-a-deve
 
 - **Branch per spec**, named `<type>/<spec-date>-<slug>` — `feat/`, `fix/`, `chore/`, `docs/`. No chunk branch is opened before its spec is approved. The no-spec lane in §3 is the exception; its date is today, not a spec date.
 - Use superpowers **`using-git-worktrees`** so parallel chunks never share a working tree.
-- Never commit directly to `main`. Never force-push a shared branch. **Carve-out:** docs-only edits to root documents (`architecture.md`, `AGENTS.md`) may land on `main` at the human owner's instruction. Anything that changes runtime behaviour still uses a branch.
-- Rebase on `main` before opening the PR; keep history linear.
+- **Never commit to `main`.** Not docs, not AGENTS, not a hotfix. `main` moves only by a human merging a PR. Never force-push a shared branch.
+- Create every branch from **`origin/main`**, not from a local `main` that may have unpushed commits:
+
+```bash
+git fetch origin
+git switch -c <type>/<YYYY-MM-DD>-<slug> origin/main
+```
+
+- Rebase on `origin/main` before opening the PR; keep history linear.
+- After the human merges: `git switch main && git pull --ff-only && git branch -d <branch>`. Do not accumulate personal commits on local `main`.
 - Parallel implementers are allowed (**`dispatching-parallel-agents`**) only when tasks touch disjoint files. Two agents in one module at once is a merge conflict factory.
 
 **Session scratch — never committed**
@@ -312,9 +320,9 @@ Never stage `docs/plans/*-report.md`, `.superpowers/`, or other session scratch.
 
 **One PR implements exactly one spec**, except the no-spec lane in §3. If chunk work grows past its spec, stop: either narrow the PR, or write a second spec and open a second branch.
 
-**PR description** states:
+**PR description** uses `.github/PULL_REQUEST_TEMPLATE.md` and states:
 
-- `Spec: docs/specs/<spec-date>-<slug>.md` and `Plan: docs/plans/<plan-date>-<slug>.md` (both required, both must be `approved`) — or, for the no-spec lane, `No spec:` and why
+- `Spec: docs/specs/<spec-date>-<slug>.md` and `Plan: docs/plans/<plan-date>-<slug>.md` (both required, both must be `approved`) — or, for the no-spec lane, `No spec:` and why. Plan `Status:` must be a plain line (not `**Status:**`) so the traceability check can see `approved`.
 - What changed, in behaviour terms
 - Data classification changes and migration wave
 - Which of §1 the chunk could plausibly have broken, and how it doesn't
@@ -452,9 +460,11 @@ New work            → spec (brainstorming) → HUMAN APPROVES
                     → each task reviewed by the reviewer agent
                       (single-agent tool: the HUMAN reviews each task diff)
                     → PR (finishing-a-development-branch) → HUMAN MERGES
-Root docs           → architecture.md / AGENTS.md, docs-only, may land on main
+Root docs           → architecture.md / AGENTS.md still go through a branch + PR
+                    → no spec: if they do not change a decision; spec + ADR if they do
 
-Never               → merge your own work · personal data outside AU · prod data anywhere else
+Never               → commit or merge to main except by merging a PR
+                    → merge your own work · personal data outside AU · prod data anywhere else
                     → encrypted column in a WHERE/ORDER BY/aggregate · secrets in the repo
                     → a Durable Object holding personal data · analytics SDK on any surface
                     → control-plane calling Stripe · ops console reading tenant rows itself
