@@ -10,7 +10,7 @@
 
 **Spec:** `docs/specs/2026-09-18-terraform-au-cell.md` (approved 2026-09-18, Abdus Salam)
 
-**Status:** approved (2026-09-18, Abdus Salam)
+Status: approved (2026-09-18, Abdus Salam)
 
 **Branch:** `feat/2026-09-18-terraform-au-cell` · one PR · 8 tasks, one commit each
 
