@@ -352,6 +352,9 @@ export default {
         if (isAllowlistedCallee(node)) {
           return;
         }
+        if (!innermostCallOrTag(node)) {
+          return;
+        }
         if (reported.has(node)) {
           return;
         }
@@ -367,6 +370,11 @@ export default {
         }
         reported.add(node);
         context.report({ node, messageId: "query" });
+      },
+      NewExpression(node) {
+        for (const argument of node.arguments) {
+          inspect(argument, context, services, checker, reported);
+        }
       },
       VariableDeclarator(node) {
         inspectWiden(node.init, context, services, checker, reported);

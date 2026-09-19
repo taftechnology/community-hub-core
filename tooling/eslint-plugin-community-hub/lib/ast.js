@@ -33,7 +33,7 @@ export function innermostCallOrTag(node) {
   let current = node;
   while (current.parent) {
     const parent = current.parent;
-    if (parent.type === "CallExpression") {
+    if (parent.type === "CallExpression" || parent.type === "NewExpression") {
       const inArgs = parent.arguments.some((arg) => arg === current || containsNode(arg, current));
       if (inArgs) {
         return parent;

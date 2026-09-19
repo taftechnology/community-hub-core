@@ -23,6 +23,7 @@ Application-layer AES-256-GCM is decided (architecture §12.2, D8, D12) but ther
 - NIST 2³² GCM encryptions per key. Rotation (later chunk) is the remedy.
 - `KmsPort` is AWS `GenerateDataKey` / `Decrypt` only. Production callers inject a port into `generateKmsRoot` / `unwrapKmsRoot`. Application code never holds root bytes.
 - Queryability is branded `Ciphertext` / `BlindIndex<…>` plus ESLint `@community-hub/no-encrypted-column-query`, `@community-hub/no-kms-port-outside-crypto`, `@community-hub/no-restricted-disable`, `@community-hub/no-ts-ignore`, and `@community-hub/no-crypto-testing-import`.
+- The encrypted-column rule flags query arguments (including `new`) and column widening onto an unbranded type. It does not walk into a whole table or `getTableColumns` result assigned to `Record<string, AnyPgColumn>` / a destructuring annotation. That remaining gap is documented in `tooling/checks/encrypted-column/README.md`.
 - Production HKDF roots are imported with `["deriveKey"]` only. `deriveBits` is reserved for RFC-vector helpers that never return the key.
 
 ## Consequences

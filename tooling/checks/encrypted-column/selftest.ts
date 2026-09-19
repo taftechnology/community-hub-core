@@ -42,6 +42,7 @@ const mustFail: { file: string; ruleId: string; count: number }[] = [
   { file: "fail/call-result.ts", ruleId: QUERY, count: 1 },
   { file: "fail/widen-call.ts", ruleId: QUERY, count: 1 },
   { file: "fail/satisfies.ts", ruleId: QUERY, count: 1 },
+  { file: "fail/new-expression.ts", ruleId: QUERY, count: 1 },
   { file: "fail/eq-bidx-bidx.ts", ruleId: QUERY, count: 2 },
   { file: "fail/ciphertext-index.ts", ruleId: QUERY, count: 1 },
   { file: "fail/subquery-alias.ts", ruleId: QUERY, count: 1 },
@@ -76,6 +77,7 @@ const mustPass = [
   "pass/hold-ciphertext.ts",
   "pass/packages/crypto/src/hold-ciphertext.ts",
   "pass/packages/db/src/decrypt-insert.ts",
+  "pass/packages/db/src/define-column.ts",
 ] as const;
 
 let eslint: ESLint;
