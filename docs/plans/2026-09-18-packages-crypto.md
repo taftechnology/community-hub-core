@@ -10,7 +10,7 @@
 
 **Spec:** `docs/specs/2026-09-18-packages-crypto.md` (approved 2026-09-18, Abdus Salam)
 
-Status: draft
+Status: approved (2026-09-18, Abdus Salam)
 
 **Branch:** `feat/2026-09-18-packages-crypto` · one PR · 7 tasks, one commit each
 
