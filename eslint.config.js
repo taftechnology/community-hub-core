@@ -19,6 +19,7 @@ export default tseslint.config(
     files: ["**/*.{js,ts}"],
     ignores: [
       "**/*.test.ts",
+      "**/src/testing.ts",
       "**/vitest.config.ts",
       "**/vitest.worker.config.ts",
       "**/global-setup.ts",
@@ -37,6 +38,7 @@ export default tseslint.config(
   {
     files: [
       "**/*.test.ts",
+      "**/src/testing.ts",
       "**/global-setup.ts",
       "**/migrate-test.ts",
       "**/schema-test.ts",
