@@ -20,6 +20,7 @@ export default tseslint.config(
     ignores: [
       "**/*.test.ts",
       "**/vitest.config.ts",
+      "**/vitest.worker.config.ts",
       "**/global-setup.ts",
       "**/migrate-test.ts",
       "**/schema-test.ts",
@@ -40,6 +41,7 @@ export default tseslint.config(
       "**/migrate-test.ts",
       "**/schema-test.ts",
       "**/vitest.config.ts",
+      "**/vitest.worker.config.ts",
       "**/drizzle.config.ts",
       "**/drizzle-test.config.ts",
     ],

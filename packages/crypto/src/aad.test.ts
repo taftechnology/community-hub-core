@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { encodeAad, encodeLengthPrefixed } from "./aad.js";
-import type { CommunityFieldAad, IdentityFieldAad } from "./aad.js";
+import type { CommunityFieldAad, IdentityFieldAad, WrapAad } from "./aad.js";
+import { fromHex } from "../test/vectors/bytes.js";
 
 const utf8 = (s: string) => new TextEncoder().encode(s);
 
@@ -53,5 +54,36 @@ describe("encodeAad", () => {
         communityId: new Uint8Array(0),
       }),
     ).toThrow();
+  });
+
+  it("encodes wrap AAD as length-prefixed tag, child_kind, child_id, child_key_id, parent_key_id", () => {
+    const wrap: WrapAad = {
+      tag: "chub/wrap/v1",
+      childKind: "community",
+      childId: fromHex("018f0000000000000000000000000010"),
+      childKeyId: fromHex("018f0000000000000000000000000011"),
+      parentKeyId: fromHex("018f0000000000000000000000000012"),
+    };
+    expect(encodeAad(wrap)).toEqual(
+      encodeLengthPrefixed([
+        utf8("chub/wrap/v1"),
+        utf8("community"),
+        wrap.childId,
+        wrap.childKeyId,
+        wrap.parentKeyId,
+      ]),
+    );
+  });
+
+  it("differs for household vs community childKind with the same remaining bytes", () => {
+    const community: WrapAad = {
+      tag: "chub/wrap/v1",
+      childKind: "community",
+      childId: sixteen,
+      childKeyId: sixteen,
+      parentKeyId: sixteen,
+    };
+    const household: WrapAad = { ...community, childKind: "household" };
+    expect(encodeAad(community)).not.toEqual(encodeAad(household));
   });
 });

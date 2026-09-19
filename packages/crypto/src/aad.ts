@@ -12,6 +12,14 @@ export type IdentityFieldAad = {
   region: string;
 };
 
+export type WrapAad = {
+  tag: "chub/wrap/v1";
+  childKind: "community" | "household";
+  childId: Uint8Array;
+  childKeyId: Uint8Array;
+  parentKeyId: Uint8Array;
+};
+
 const ROW_ID_LENGTH = 16;
 const COMMUNITY_ID_LENGTH = 16;
 
@@ -59,7 +67,19 @@ function assertRowId(rowId: Uint8Array): void {
   }
 }
 
-export function encodeAad(aad: CommunityFieldAad | IdentityFieldAad): Uint8Array {
+export function encodeAad(aad: CommunityFieldAad | IdentityFieldAad | WrapAad): Uint8Array {
+  if (aad.tag === "chub/wrap/v1") {
+    assertRowId(aad.childId);
+    assertRowId(aad.childKeyId);
+    assertRowId(aad.parentKeyId);
+    return encodeLengthPrefixed([
+      utf8(aad.tag),
+      utf8(aad.childKind),
+      aad.childId,
+      aad.childKeyId,
+      aad.parentKeyId,
+    ]);
+  }
   assertNoNul(aad.label);
   assertRowId(aad.rowId);
   if (aad.tag === "chub/field/v1") {

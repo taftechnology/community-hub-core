@@ -5,5 +5,5 @@
     "lib": ["ES2022"],
     "types": ["@cloudflare/workers-types"]
   },
-  "include": ["vectors/**/*.ts"]
+  "include": ["vectors/**/*.ts", "workerd-entry.ts"]
 }
