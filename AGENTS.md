@@ -17,7 +17,7 @@ Everything else in this file is process. These are correctness. A change that br
 
 1. **No personal data outside Australia.** Global Workers (`gateway`, `control-plane`, `ops-console`), KV, D1 and feature flags hold IDs, slugs, counts and config — never names, emails, addresses, amounts or files. The ops console is a global UI: tenant reads proxy to `api-au` under a support grant; it must not decrypt, log or buffer those fields (architecture §7.3, §11.4).
 2. **`jobs` never handles personal data, including in a response.** `exec` does the whole unit of work and returns `{processed, failed, skipped}` plus IDs (§7.3 rule 2, §18).
-3. **Every `app`-schema table has `org_id`, RLS and `FORCE ROW LEVEL SECURITY`.** Tenant scope is set per transaction with `SET LOCAL`, never session-level. Identity and platform schemas are region-scoped and have **no** `org_id` (§6.3).
+3. **Every `app`-schema table has `org_id`, RLS and `FORCE ROW LEVEL SECURITY`.** Tenant scope is set per transaction with `set_config(..., true)`, never session-level `SET`. Identity and platform schemas are region-scoped and have **no** `org_id` (§6.3).
 4. **A field that SQL must filter, sort or aggregate is not encrypted.** Use a blind index, a derived clear column, or reclassify (§12.2.1).
 5. **Minors' data is restricted by default.** When `is_minor` is true, that person's `confidential*` columns are held under the household key. Children never appear in public content, directories or data sources (§12.1, §12.3).
 6. **Durable Objects never hold personal data** — no Australian jurisdiction exists (§7.3 rule 7).
