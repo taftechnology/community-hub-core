@@ -1,7 +1,7 @@
 # Spec: packages/crypto foundations
 
 Slug: `packages-crypto`
-Status: draft
+Status: approved (2026-09-18, Abdus Salam)
 Architecture refs: §6.3–6.4, §8.1, §12.1–12.2.1; D8; D12; ADR 0005 (this PR); AGENTS.md §1 (4, 7, 10), §8, §10
 Supersedes: —
 
