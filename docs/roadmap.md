@@ -57,7 +57,7 @@ Architecture: monorepo, CI, Terraform, kernel, residency, db with RLS, crypto, o
 | not started | `packages-ui`            | shadcn copied into the repo + tokens (D16). No product screens.                                                   |
 | not started | `audit-log`              | Tamper-evident append. First events when identity writes.                                                         |
 | not started | `api-au-skeleton`        | Regional Worker, `class: regional`, `preview_urls: false`, health through kernel.                                 |
-| not started | `terraform-envelope-kms` | Wrapping key in ap-southeast-2, key policy, live `KmsPort`. Not this PR.                                          |
+| not started | `terraform-envelope-kms` | Wrapping key in ap-southeast-2, key policy, live AWS `KmsPort`. After `api-au-skeleton`.                          |
 
 Kernel is **not** yet `defineModule` / request context / DI / outbox. Observability is the logger only (no product analytics SDK — D17).
 
