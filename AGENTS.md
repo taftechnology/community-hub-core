@@ -2,12 +2,12 @@
 
 Applies to **every contributor: AI agents and humans**. If you are an agent, read this file before your first action in a session.
 
-|                        |                                                                                                                                                                          |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Companion document** | [`architecture.md`](architecture.md) — what we are building and why. This file is _how_ we build it.                                                                     |
-| **Precedence**         | `architecture.md` decisions (D1…) > this file > personal preference. If you must break a rule here, say so in the PR and why.                                            |
-| **Repository state**   | Phase 0 skeleton on this branch: pnpm workspace, `apps/gateway`, `packages/kernel`, `packages/observability`, `tooling/checks`, CI Stages 1–3. The commands in §8 exist. |
-| **Tooling**            | [Superpowers](https://github.com/obra/superpowers) is required for agent sessions: `/plugin install superpowers@claude-plugins-official`                                 |
+|                        |                                                                                                                                                                           |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Companion document** | [`architecture.md`](architecture.md) — what we are building and why. This file is _how_ we build it.                                                                      |
+| **Precedence**         | `architecture.md` decisions (D1…) > this file > personal preference. If you must break a rule here, say so in the PR and why.                                             |
+| **Repository state**   | Phase 0 on `main`: pnpm workspace, `apps/gateway`, `packages/kernel`, `packages/observability`, `packages/db`, `tooling/checks`, CI Stages 1–3. The commands in §8 exist. |
+| **Tooling**            | [Superpowers](https://github.com/obra/superpowers) is required for agent sessions: `/plugin install superpowers@claude-plugins-official`                                  |
 
 ---
 
@@ -171,7 +171,7 @@ Use superpowers **`writing-plans`**. Write `docs/plans/YYYY-MM-DD-<slug>.md`, op
 - Migration wave marked explicitly (expand → migrate → contract; see §7).
 - Rollback note: what undoes this chunk.
 
-**Approval criteria:** tasks are genuinely sequential, no task is "and then wire everything together", and the last task leaves the system releasable.
+**Approval criteria:** tasks are genuinely sequential, no task is "and then wire everything together", and the last task leaves the system releasable. The last task on the branch updates [`docs/roadmap.md`](docs/roadmap.md) (this chunk **done**, snapshot, next chunk) so the PR that merges the work also updates the catalogue. Do not defer that to a follow-up chore.
 
 ### Phase 3 — Tasks (implementer agents, reviewed one by one)
 
@@ -188,7 +188,7 @@ A task is not done because the implementer says so. It is done when the reviewer
 
 ### Phase 4 — PR (human merges)
 
-Run the session-scratch cleanup in §5, then use superpowers **`finishing-a-development-branch`**. Open the PR with the template in §9, then **stop**. Agents do not merge.
+The last commit on the chunk branch has already updated `docs/roadmap.md`. Run the session-scratch cleanup in §5, then use superpowers **`finishing-a-development-branch`**. Open the PR with the template in §9, then **stop**. Agents do not merge.
 
 ---
 
@@ -296,6 +296,7 @@ pnpm lint && pnpm typecheck && pnpm test --filter <touched-packages> && pnpm che
 - [ ] Tenant-isolation and residency suites green
 - [ ] Spec's behaviour verified against a running preview, not just tests
 - [ ] `architecture.md` updated in the same PR if the chunk changed a documented decision, plus an ADR in `docs/adr/` for anything at decision level
+- [ ] `docs/roadmap.md` updated in the **same PR**, last commit on this branch: this chunk **done**, snapshot (last shipped / next chunk / counts) current. Not a follow-up chore after merge.
 - [ ] Reviewer agent sign-off recorded in the PR; second independent review for sensitive chunks (§2)
 - [ ] Session scratch cleaned up (§5): no `docs/plans/*-report.md` on disk; nothing under `.superpowers/` staged
 
@@ -457,6 +458,7 @@ Naming              docs/specs/YYYY-MM-DD-<slug>.md   (date created)
 New work            → spec (brainstorming) → HUMAN APPROVES
                     → plan (writing-plans) → HUMAN APPROVES
                     → tasks (subagent-driven-development, TDD, one commit each)
+                    → last task: docs/roadmap.md on this branch (done + snapshot)
                     → each task reviewed by the reviewer agent
                       (single-agent tool: the HUMAN reviews each task diff)
                     → PR (finishing-a-development-branch) → HUMAN MERGES
