@@ -448,7 +448,8 @@ community-hub/
 │   └── observability/        # logger with personal-data scrubbing, tracing
 │
 ├── tooling/
-│   └── checks/               # CI boundary checkers (worker-config, schema-rls, encrypted-query, residency-payload, terraform-invariants, sql-session-ban, traceability), each with must-fail fixtures
+│   ├── eslint-plugin-community-hub/  # `@community-hub/no-encrypted-column-query`, `@community-hub/no-kms-port-outside-crypto`
+│   └── checks/               # CI boundary checkers (worker-config, schema-rls, residency-payload, terraform-invariants, sql-session-ban, traceability), each with must-fail fixtures; encrypted-column/ holds ESLint fixtures
 │
 ├── infra/
 │   ├── modules/              # shared Terraform modules; each has tests/ and is in the CI matrix
@@ -775,6 +776,7 @@ AWS KMS (Sydney)  ── wraps ──►  Organisation key
 - **Deletion by key destruction:** erasing a household destroys its household key, making restricted copies (including backups and restricted files) unreadable. **The payment ledger is not encrypted with the household key.** DGR and tax-retention rows stay readable; the donor person link may become unlinkable.
 - **Transport:** TLS 1.3 at the edge; TLS with certificate verification between Tunnel and Postgres; storage encrypted at rest (RDS and S3 with KMS).
 - **Key rotation:** KMS keys rotate annually; organisation and community keys can be rotated online by re-wrapping.
+- **Field envelope (`0x01`):** `version || key_id (16) || iv (12) || ciphertext || tag (16)`. GCM AAD is `version || key_id` plus length-prefixed bound fields (tag first). Field AAD binds `community_id`, not `org_id` (a community move rewrites `org_id` without re-encrypt). Labels are stable (`people.email`), not SQL names. Each wrapped root is HKDF-split into `chub/v1/enc`, `chub/v1/bidx`, and `chub/v1/wrap`. NIST 2³² encryptions per key; rotation is the remedy. See [ADR 0005](docs/adr/0005-field-encryption-envelope.md).
 
 #### 12.2.1 Encryption versus queryability
 
