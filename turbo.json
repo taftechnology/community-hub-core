@@ -1,5 +1,6 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "globalDependencies": ["eslint.config.js", "tooling/eslint-plugin-community-hub/**"],
   "tasks": {
     "lint": {},
     "typecheck": {
