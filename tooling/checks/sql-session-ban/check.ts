@@ -325,6 +325,121 @@ function isRoleName(arg: string): boolean {
   return /^(['"])role\1$/i.test(arg.trim());
 }
 
+/** Session SET of a GUC: first word of a statement, then name = or name TO. */
+const STATEMENT_SET_SETTING =
+  /(?:^|;)\s*SET\s+(?!ROLE\b|SESSION\b|LOCAL\b)(?!(?:app\.|"app"\s*\.))(?:"[^"]+"|[A-Za-z_][\w$]*)(?:\s*\.\s*(?:"[^"]+"|[A-Za-z_][\w$]*))*\s*(?:=|\bTO\b)/gi;
+
+function skipTemplateExpression(src: string, from: number): number {
+  let depth = 1;
+  let state: "code" | "sq" | "dq" | "tmpl" = "code";
+  let i = from;
+  while (i < src.length && depth > 0) {
+    const ch = src[i];
+    const next = src[i + 1];
+    if (state !== "code") {
+      if (ch === "\\" && next !== undefined) {
+        i += 2;
+        continue;
+      }
+      if (state === "sq" && ch === "'") {
+        state = "code";
+      } else if (state === "dq" && ch === '"') {
+        state = "code";
+      } else if (state === "tmpl" && ch === "`") {
+        state = "code";
+      }
+      i += 1;
+      continue;
+    }
+    if (ch === "'") {
+      state = "sq";
+      i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      state = "dq";
+      i += 1;
+      continue;
+    }
+    if (ch === "`") {
+      state = "tmpl";
+      i += 1;
+      continue;
+    }
+    if (ch === "{") {
+      depth += 1;
+    } else if (ch === "}") {
+      depth -= 1;
+    }
+    i += 1;
+  }
+  return i;
+}
+
+function extractTsStringContents(src: string): string[] {
+  const contents: string[] = [];
+  let i = 0;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === "'" || ch === '"') {
+      const quote = ch;
+      i += 1;
+      let body = "";
+      while (i < src.length) {
+        const cur = src[i];
+        const next = src[i + 1];
+        if (cur === "\\" && next !== undefined) {
+          body += cur + next;
+          i += 2;
+          continue;
+        }
+        if (cur === quote) {
+          i += 1;
+          break;
+        }
+        body += cur;
+        i += 1;
+      }
+      contents.push(body);
+      continue;
+    }
+    if (ch === "`") {
+      i += 1;
+      let body = "";
+      while (i < src.length) {
+        const cur = src[i];
+        const next = src[i + 1];
+        if (cur === "\\" && next !== undefined) {
+          body += cur + next;
+          i += 2;
+          continue;
+        }
+        if (cur === "`") {
+          i += 1;
+          break;
+        }
+        if (cur === "$" && next === "{") {
+          const end = skipTemplateExpression(src, i + 2);
+          body += src.slice(i, end);
+          i = end;
+          continue;
+        }
+        body += cur;
+        i += 1;
+      }
+      contents.push(body);
+      continue;
+    }
+    i += 1;
+  }
+  return contents;
+}
+
+function hasStatementSetSetting(text: string): boolean {
+  STATEMENT_SET_SETTING.lastIndex = 0;
+  return STATEMENT_SET_SETTING.test(text);
+}
+
 function pushIfMatch(
   violations: SqlSessionBanViolation[],
   file: string,
@@ -342,6 +457,12 @@ function scanSql(file: string, raw: string, violations: SqlSessionBanViolation[]
   const text = stripSqlComments(raw);
   pushIfMatch(violations, file, text, /\bPASSWORD\b/i, "PASSWORD is forbidden in SQL");
   scanShared(file, text, violations, false);
+  if (hasStatementSetSetting(text)) {
+    violations.push({
+      file,
+      message: `session SET of a setting is forbidden outside ${MIGRATE_ALLOWLIST}`,
+    });
+  }
 }
 
 function scanTs(
@@ -352,14 +473,11 @@ function scanTs(
 ): void {
   const text = stripTsComments(raw);
   scanShared(file, text, violations, allowRoleSwitch);
-  if (!allowRoleSwitch) {
-    pushIfMatch(
-      violations,
+  if (!allowRoleSwitch && extractTsStringContents(text).some(hasStatementSetSetting)) {
+    violations.push({
       file,
-      text,
-      /\bSET\s+(?!ROLE\b|SESSION\b|LOCAL\b)(?!(?:app\.|"app"\s*\.))/i,
-      `session SET of a setting is forbidden outside ${MIGRATE_ALLOWLIST}`,
-    );
+      message: `session SET of a setting is forbidden outside ${MIGRATE_ALLOWLIST}`,
+    });
   }
 }
 

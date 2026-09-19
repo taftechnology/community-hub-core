@@ -21,7 +21,7 @@ Relative to the scan root:
 | `SET SESSION` / `set_config(..., false)` | nowhere in scanned files |
 | `RESET` of `app.*` | nowhere |
 | `SET ROLE` / `set_config('role', …)` | only `packages/db/src/migrate.ts` |
-| Plain session `SET` of a setting in TypeScript | only `packages/db/src/migrate.ts` |
+| Plain session `SET <name> =` / `SET <name> TO` as the first word of a statement, inside TypeScript strings/templates (and SQL statements) | only `packages/db/src/migrate.ts` |
 | `SET SESSION AUTHORIZATION` | nowhere |
 | `SET LOCAL` | nowhere (`withAppTransaction` uses bound `set_config(..., true)`) |
 

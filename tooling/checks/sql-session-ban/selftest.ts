@@ -18,8 +18,9 @@ const mustFail = [
   "set-app-equals",
   "set-app-to",
   "set-role-in-modules",
+  "set-search-path",
 ] as const;
-const mustPass = ["valid", "set-local-in-comment"] as const;
+const mustPass = ["valid", "set-local-in-comment", "ordinary-set-words"] as const;
 
 describe("sql-session-ban check fixtures", () => {
   for (const name of mustFail) {
