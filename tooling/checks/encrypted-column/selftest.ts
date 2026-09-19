@@ -82,7 +82,12 @@ const mustPass = [
 
 let eslint: ESLint;
 
+/** One type-aware pass per fixture. Relinting the same file on a shared ESLint
+ *  instance drops parser services in CI (0 reports for fail/order-by.ts). */
+const lintByFile = new Map<string, Promise<Hit[]>>();
+
 beforeAll(() => {
+  lintByFile.clear();
   eslint = new ESLint({
     cwd: fixturesDir,
     overrideConfigFile: true,
@@ -110,19 +115,27 @@ beforeAll(() => {
 });
 
 async function lint(file: string): Promise<Hit[]> {
-  const results = await eslint.lintFiles([file]);
-  const hits: Hit[] = [];
-  for (const result of results) {
-    for (const message of result.messages) {
-      hits.push({
-        ruleId: message.ruleId,
-        message: message.message,
-        line: message.line,
-        fatal: message.fatal,
-      });
-    }
+  const cached = lintByFile.get(file);
+  if (cached) {
+    return cached;
   }
-  return hits;
+  const pending = (async () => {
+    const results = await eslint.lintFiles([file]);
+    const hits: Hit[] = [];
+    for (const result of results) {
+      for (const message of result.messages) {
+        hits.push({
+          ruleId: message.ruleId,
+          message: message.message,
+          line: message.line,
+          fatal: message.fatal,
+        });
+      }
+    }
+    return hits;
+  })();
+  lintByFile.set(file, pending);
+  return pending;
 }
 
 describe("encrypted-column ESLint fixtures", () => {
