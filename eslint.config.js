@@ -11,7 +11,7 @@ export default tseslint.config(
   },
   {
     files: ["**/*.{js,ts}"],
-    ignores: ["**/*.test.ts", "**/vitest.config.ts", "**/global-setup.ts"],
+    ignores: ["**/*.test.ts", "**/vitest.config.ts", "**/global-setup.ts", "**/drizzle.config.ts"],
     languageOptions: {
       parserOptions: {
         projectService: true,
@@ -20,7 +20,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["**/*.test.ts", "**/global-setup.ts", "**/vitest.config.ts"],
+    files: ["**/*.test.ts", "**/global-setup.ts", "**/vitest.config.ts", "**/drizzle.config.ts"],
     extends: [...tseslint.configs.recommended],
   },
 );

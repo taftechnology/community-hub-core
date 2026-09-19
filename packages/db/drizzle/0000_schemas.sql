@@ -1,8 +1,8 @@
-CREATE SCHEMA IF NOT EXISTS app;
+CREATE SCHEMA IF NOT EXISTS "app";
 --> statement-breakpoint
-CREATE SCHEMA IF NOT EXISTS identity;
+CREATE SCHEMA IF NOT EXISTS "identity";
 --> statement-breakpoint
-CREATE SCHEMA IF NOT EXISTS platform;
+CREATE SCHEMA IF NOT EXISTS "platform";
 --> statement-breakpoint
 GRANT USAGE ON SCHEMA app TO app;
 --> statement-breakpoint

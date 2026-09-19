@@ -6,12 +6,14 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import type { Sql } from "postgres";
 
 import { runBootstrap } from "./bootstrap.js";
+import { createDirectSql } from "./connections.js";
 
 /** Session advisory lock taken as the privileged login before bootstrap. */
 export const MIGRATION_LOCK_ID = 1_667_788_130;
 
 const PRODUCT_FOLDER = path.join(path.dirname(fileURLToPath(import.meta.url)), "../drizzle");
 const PRODUCT_TABLE = "__drizzle_migrations";
+const JOURNAL_TABLE = /^__drizzle_migrations(?:_test)?$/;
 
 export type AppliedMigration = {
   hash: string;
@@ -52,29 +54,39 @@ export function assertMigrationPreflight(
   }
 }
 
-export async function applyProductMigrations(directSql: Sql): Promise<void> {
-  try {
-    await applyProductMigrationsOnConnection(directSql);
-  } finally {
-    await directSql.end({ timeout: 1 });
-  }
+export async function applyProductMigrations(url: string): Promise<void> {
+  await applyMigrations({
+    url,
+    folder: PRODUCT_FOLDER,
+    table: PRODUCT_TABLE,
+  });
 }
 
-async function applyProductMigrationsOnConnection(sql: Sql): Promise<void> {
+/** Not in package `exports`. Tests and `applyTestMigrations` pass a folder and table. */
+export async function applyMigrations(opts: {
+  url: string;
+  folder: string;
+  table: string;
+}): Promise<void> {
+  if (!JOURNAL_TABLE.test(opts.table)) {
+    throw new Error(`unsupported migrations table ${opts.table}`);
+  }
+  const sql = createDirectSql(opts.url);
   try {
     await sql`select pg_advisory_lock(${MIGRATION_LOCK_ID})`;
     await runBootstrap(sql);
     await sql.unsafe("set role migrator");
-    await preflightFromDb(sql, PRODUCT_FOLDER, PRODUCT_TABLE);
+    await preflightFromDb(sql, opts.folder, opts.table);
     const db = drizzle(sql);
     await migrate(db, {
-      migrationsFolder: PRODUCT_FOLDER,
+      migrationsFolder: opts.folder,
       migrationsSchema: "migrator",
-      migrationsTable: PRODUCT_TABLE,
+      migrationsTable: opts.table,
     });
   } finally {
     await sql.unsafe("reset role").catch(() => undefined);
     await sql`select pg_advisory_unlock(${MIGRATION_LOCK_ID})`.catch(() => undefined);
+    await sql.end({ timeout: 1 });
   }
 }
 
