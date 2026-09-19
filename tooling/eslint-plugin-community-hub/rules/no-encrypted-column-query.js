@@ -29,9 +29,6 @@ function isBannedExecuteArg(node, services, checker) {
   if (isStringish(node)) {
     return true;
   }
-  if (node.type !== "Identifier") {
-    return false;
-  }
   const tsNode = services.esTreeNodeToTSNodeMap.get(node);
   if (!tsNode) {
     return true;
@@ -149,6 +146,9 @@ function inspect(node, context, services, checker, reported, extra = {}) {
     case "ChainExpression":
       inspect(node.expression, context, services, checker, reported, extra);
       return;
+    case "AwaitExpression":
+      inspect(node.argument, context, services, checker, reported, extra);
+      return;
     case "TSNonNullExpression":
       inspect(node.expression, context, services, checker, reported, extra);
       return;
@@ -228,6 +228,20 @@ export default {
           inspect(node.callee.object, context, services, checker, reported, {
             forceDisallow: true,
           });
+        }
+      },
+      VariableDeclarator(node) {
+        inspect(node.init, context, services, checker, reported);
+      },
+      AssignmentExpression(node) {
+        inspect(node.right, context, services, checker, reported);
+      },
+      ReturnStatement(node) {
+        inspect(node.argument, context, services, checker, reported);
+      },
+      ArrowFunctionExpression(node) {
+        if (node.body.type !== "BlockStatement") {
+          inspect(node.body, context, services, checker, reported);
         }
       },
       TaggedTemplateExpression(node) {

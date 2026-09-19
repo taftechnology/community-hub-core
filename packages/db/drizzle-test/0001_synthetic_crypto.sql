@@ -2,8 +2,8 @@ CREATE TABLE "app"."synthetic_crypto" (
 	"org_id" uuid NOT NULL,
 	"community_id" uuid NOT NULL,
 	"id" uuid NOT NULL,
-	"payload" bytea NOT NULL,
-	"email_bidx" bytea NOT NULL,
+	"payload" "bytea" NOT NULL,
+	"email_bidx" "bytea" NOT NULL,
 	CONSTRAINT "synthetic_crypto_org_id_id_pk" PRIMARY KEY("org_id","id")
 );
 --> statement-breakpoint

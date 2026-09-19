@@ -200,6 +200,87 @@ export function isSqlType(type, checker) {
   return typeNames(type).has("SQL");
 }
 
+export function isKmsPortMethodType(type) {
+  if (!type || typeof type.getCallSignatures !== "function") {
+    return false;
+  }
+  for (const sig of type.getCallSignatures()) {
+    const decl = sig.declaration;
+    if (!decl) {
+      continue;
+    }
+    let current = decl.parent;
+    while (current) {
+      if (
+        (current.kind === ts.SyntaxKind.InterfaceDeclaration ||
+          current.kind === ts.SyntaxKind.TypeAliasDeclaration) &&
+        current.name &&
+        String(current.name.escapedText ?? current.name.text) === "KmsPort"
+      ) {
+        return true;
+      }
+      current = current.parent;
+    }
+  }
+  return false;
+}
+
+function nodeText(node) {
+  if (!node) {
+    return "";
+  }
+  if (typeof node.getText === "function") {
+    return node.getText();
+  }
+  return String(node.escapedText ?? node.text ?? "");
+}
+
+export function identifierIsKmsPortMethod(tsNode, checker) {
+  if (!tsNode || !checker) {
+    return false;
+  }
+  if (isKmsPortMethodType(checker.getTypeAtLocation(tsNode))) {
+    return true;
+  }
+  const symbol = checker.getSymbolAtLocation(tsNode);
+  if (!symbol) {
+    return false;
+  }
+  for (const decl of symbol.declarations ?? []) {
+    if (ts.isBindingElement(decl)) {
+      const name = nodeText(decl.propertyName ?? decl.name);
+      if (name !== "decrypt" && name !== "generateDataKey") {
+        continue;
+      }
+      const pattern = decl.parent;
+      if (!ts.isObjectBindingPattern(pattern)) {
+        continue;
+      }
+      const variable = pattern.parent;
+      if (!ts.isVariableDeclaration(variable) || !variable.initializer) {
+        continue;
+      }
+      if (typeNames(checker.getTypeAtLocation(variable.initializer)).has("KmsPort")) {
+        return true;
+      }
+    }
+    if (
+      ts.isVariableDeclaration(decl) &&
+      decl.initializer &&
+      ts.isPropertyAccessExpression(decl.initializer)
+    ) {
+      const prop = nodeText(decl.initializer.name);
+      if (prop !== "decrypt" && prop !== "generateDataKey") {
+        continue;
+      }
+      if (typeNames(checker.getTypeAtLocation(decl.initializer.expression)).has("KmsPort")) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 export function typeNames(type) {
   const names = new Set();
   function add(symbol) {

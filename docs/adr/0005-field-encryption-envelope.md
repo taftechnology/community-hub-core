@@ -11,6 +11,7 @@ Application-layer AES-256-GCM is decided (architecture §12.2, D8, D12) but ther
 ## Decision
 
 - Envelope version `0x01`, stored as `bytea`: `version || key_id (16) || iv (12) || ciphertext || tag (16)`.
+- Field envelopes put the encrypting key's id in that header. Wrap envelopes put the **child** key id there (`aad.childKeyId`), not the parent wrap key. The parent is identified in wrap AAD (`parent_key_id`) and by which wrap key the caller unwraps with. This is permanent for `0x01`.
 - GCM AAD is `version || key_id || length-prefixed bound fields`. The context tag is the first bound field. Bound fields come from the caller, not the blob. `decrypt` / `unwrapKey` take that AAD from the caller.
 - Field AAD binds `community_id`, not `org_id`. Labels are stable classification keys (`people.email`), not physical table or column names.
 - Each wrapped 32-byte root is imported as a non-extractable HKDF key and split into three single-use keys. Frozen HKDF parameters:
@@ -21,7 +22,8 @@ Application-layer AES-256-GCM is decided (architecture §12.2, D8, D12) but ther
   - HMAC import `{ name: "HMAC", hash: "SHA-256", length: 256 }`
 - NIST 2³² GCM encryptions per key. Rotation (later chunk) is the remedy.
 - `KmsPort` is AWS `GenerateDataKey` / `Decrypt` only. Production callers inject a port into `generateKmsRoot` / `unwrapKmsRoot`. Application code never holds root bytes.
-- Queryability is branded `Ciphertext` / `BlindIndex<…>` plus ESLint `@community-hub/no-encrypted-column-query` and `@community-hub/no-kms-port-outside-crypto`.
+- Queryability is branded `Ciphertext` / `BlindIndex<…>` plus ESLint `@community-hub/no-encrypted-column-query`, `@community-hub/no-kms-port-outside-crypto`, `@community-hub/no-restricted-disable`, `@community-hub/no-ts-ignore`, and `@community-hub/no-crypto-testing-import`.
+- Production HKDF roots are imported with `["deriveKey"]` only. `deriveBits` is reserved for RFC-vector helpers that never return the key.
 
 ## Consequences
 

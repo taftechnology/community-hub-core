@@ -48,6 +48,21 @@ function expectNoPersonalData(err: unknown, ...identifiers: string[]): void {
   }
 }
 
+async function expectDeriveBitsRejected(key: CryptoKey): Promise<void> {
+  await expect(
+    crypto.subtle.deriveBits(
+      {
+        name: "HKDF",
+        hash: "SHA-256",
+        salt: new Uint8Array(),
+        info: new TextEncoder().encode("chub/v1/enc"),
+      },
+      key,
+      256,
+    ),
+  ).rejects.toThrow();
+}
+
 describe("generateKmsRoot / unwrapKmsRoot", () => {
   it("round-trips an org root against the local adapter and returns a non-extractable HKDF key", async () => {
     const port = createLocalKmsPort();
@@ -56,10 +71,12 @@ describe("generateKmsRoot / unwrapKmsRoot", () => {
     expect(generated).not.toHaveProperty("plaintext");
     expect(generated.hkdfKey.algorithm).toMatchObject({ name: "HKDF" });
     await expect(crypto.subtle.exportKey("raw", generated.hkdfKey)).rejects.toThrow();
+    await expectDeriveBitsRejected(generated.hkdfKey);
 
     const unwrapped = await unwrapKmsRoot(port, "kms-key-1", generated.blob, ORG_CTX);
     expect(unwrapped.algorithm).toMatchObject({ name: "HKDF" });
     await expect(crypto.subtle.exportKey("raw", unwrapped)).rejects.toThrow();
+    await expectDeriveBitsRejected(unwrapped);
     await assertCanEncryptWithBoth(generated.hkdfKey, unwrapped);
   });
 
@@ -126,5 +143,28 @@ describe("generateKmsRoot / unwrapKmsRoot", () => {
     } catch (err) {
       expectNoPersonalData(err, "org-1", "au");
     }
+  });
+
+  it("rejects generateDataKey plaintext that is not 32 bytes", async () => {
+    const inner = createLocalKmsPort();
+    const port: KmsPort = {
+      async generateDataKey() {
+        return { plaintext: new Uint8Array(16), blob: new Uint8Array(8) };
+      },
+      decrypt: (keyId, blob, context) => inner.decrypt(keyId, blob, context),
+    };
+    await expect(generateKmsRoot(port, "kms-key-1", ORG_CTX)).rejects.toThrow(/32 bytes/);
+  });
+
+  it("rejects decrypt plaintext that is not 32 bytes", async () => {
+    const inner = createLocalKmsPort();
+    const { blob } = await generateKmsRoot(inner, "kms-key-1", ORG_CTX);
+    const port: KmsPort = {
+      generateDataKey: (keyId, context) => inner.generateDataKey(keyId, context),
+      async decrypt() {
+        return new Uint8Array(16);
+      },
+    };
+    await expect(unwrapKmsRoot(port, "kms-key-1", blob, ORG_CTX)).rejects.toThrow(/32 bytes/);
   });
 });

@@ -1,7 +1,7 @@
 import { ESLintUtils } from "@typescript-eslint/utils";
 
 import { getCalleeName, isCryptoSource } from "../lib/ast.js";
-import { typeNames } from "../lib/types.js";
+import { identifierIsKmsPortMethod, typeNames } from "../lib/types.js";
 
 export default {
   meta: {
@@ -28,18 +28,27 @@ export default {
         if (name !== "generateDataKey" && name !== "decrypt") {
           return;
         }
-        if (node.callee.type !== "MemberExpression") {
+        if (node.callee.type === "MemberExpression") {
+          const tsNode = services.esTreeNodeToTSNodeMap.get(node.callee.object);
+          if (!tsNode) {
+            return;
+          }
+          const type = checker.getTypeAtLocation(tsNode);
+          if (typeNames(type).has("KmsPort")) {
+            context.report({ node, messageId: "kmsPort" });
+          }
           return;
         }
-        const tsNode = services.esTreeNodeToTSNodeMap.get(node.callee.object);
+        if (node.callee.type !== "Identifier") {
+          return;
+        }
+        const tsNode = services.esTreeNodeToTSNodeMap.get(node.callee);
         if (!tsNode) {
           return;
         }
-        const type = checker.getTypeAtLocation(tsNode);
-        if (!typeNames(type).has("KmsPort")) {
-          return;
+        if (identifierIsKmsPortMethod(tsNode, checker)) {
+          context.report({ node, messageId: "kmsPort" });
         }
-        context.report({ node, messageId: "kmsPort" });
       },
     };
   },
