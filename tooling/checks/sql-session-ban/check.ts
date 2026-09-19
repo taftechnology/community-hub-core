@@ -6,8 +6,11 @@ export const SQL_SEARCH_DIRS = [
   "packages/db/drizzle",
   "packages/db/drizzle-test",
 ] as const;
-export const TS_SEARCH_DIR = "packages/db/src" as const;
+export const TS_SRC_PARENTS = ["packages", "apps"] as const;
+export const TS_TREE_DIRS = ["modules"] as const;
 export const MIGRATE_ALLOWLIST = "packages/db/src/migrate.ts";
+
+const SKIP_DIRS = new Set(["node_modules", "dist", "coverage", "test", "tests", ".turbo"]);
 
 export type SqlSessionBanViolation = {
   file: string;
@@ -31,6 +34,9 @@ function collectFiles(dir: string, suffix: string, out: string[]): void {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
+      if (SKIP_DIRS.has(entry.name)) {
+        continue;
+      }
       collectFiles(full, suffix, out);
     } else if (entry.isFile() && entry.name.endsWith(suffix)) {
       out.push(full);
@@ -48,7 +54,21 @@ function discoverSqlFiles(root: string): string[] {
 
 function discoverTsFiles(root: string): string[] {
   const files: string[] = [];
-  collectFiles(path.join(root, TS_SEARCH_DIR), ".ts", files);
+  for (const parent of TS_SRC_PARENTS) {
+    const parentDir = path.join(root, parent);
+    if (!fs.existsSync(parentDir)) {
+      continue;
+    }
+    for (const entry of fs.readdirSync(parentDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || SKIP_DIRS.has(entry.name)) {
+        continue;
+      }
+      collectFiles(path.join(parentDir, entry.name, "src"), ".ts", files);
+    }
+  }
+  for (const tree of TS_TREE_DIRS) {
+    collectFiles(path.join(root, tree), ".ts", files);
+  }
   return files.filter((filePath) => !filePath.endsWith(".test.ts"));
 }
 
@@ -332,6 +352,15 @@ function scanTs(
 ): void {
   const text = stripTsComments(raw);
   scanShared(file, text, violations, allowRoleSwitch);
+  if (!allowRoleSwitch) {
+    pushIfMatch(
+      violations,
+      file,
+      text,
+      /\bSET\s+(?!ROLE\b|SESSION\b|LOCAL\b)(?!(?:app\.|"app"\s*\.))/i,
+      `session SET of a setting is forbidden outside ${MIGRATE_ALLOWLIST}`,
+    );
+  }
 }
 
 function scanShared(
@@ -355,7 +384,14 @@ function scanShared(
     "SET SESSION is forbidden",
   );
   pushIfMatch(violations, file, text, /\bSET\s+LOCAL\b/i, "SET LOCAL is forbidden");
-  pushIfMatch(violations, file, text, /\bRESET\s+(?:app\.|"app"\.)/i, "RESET of app.* is forbidden");
+  pushIfMatch(
+    violations,
+    file,
+    text,
+    /\bSET\s+(?:(?:LOCAL|SESSION)\s+)?(?:app\.|"app"\s*\.)/i,
+    "SET of app.* is forbidden",
+  );
+  pushIfMatch(violations, file, text, /\bRESET\s+(?:app\.|"app"\s*\.)/i, "RESET of app.* is forbidden");
 
   if (!allowRoleSwitch) {
     pushIfMatch(

@@ -15,6 +15,9 @@ const mustFail = [
   "set-config-role",
   "set-session-authorization",
   "set-local",
+  "set-app-equals",
+  "set-app-to",
+  "set-role-in-modules",
 ] as const;
 const mustPass = ["valid", "set-local-in-comment"] as const;
 
@@ -42,7 +45,30 @@ describe("sql-session-ban check fixtures", () => {
     ]);
   });
 
-  it("passes the repository packages/db trees", () => {
+  it("flags SET app.org_id = in both SQL and TypeScript", () => {
+    const result = check(path.join(fixturesDir, "set-app-equals"));
+    expect(result.violations.map((v) => v.file.replaceAll("\\", "/")).sort()).toEqual([
+      "packages/db/sql/bad.sql",
+      "packages/db/src/bad.ts",
+    ]);
+  });
+
+  it("flags SET app.org_id TO, including quoted app, in both trees", () => {
+    const result = check(path.join(fixturesDir, "set-app-to"));
+    expect(result.violations.map((v) => v.file.replaceAll("\\", "/")).sort()).toEqual([
+      "packages/db/sql/bad.sql",
+      "packages/db/src/bad.ts",
+    ]);
+  });
+
+  it("flags SET ROLE under modules", () => {
+    const result = check(path.join(fixturesDir, "set-role-in-modules"));
+    expect(result.violations.map((v) => v.file.replaceAll("\\", "/"))).toEqual([
+      "modules/features/giving/infrastructure/repo.ts",
+    ]);
+  });
+
+  it("passes the repository production TypeScript and SQL trees", () => {
     const result = check(repoRoot);
     expect(result.ok, `unexpected violations: ${JSON.stringify(result.violations)}`).toBe(true);
     expect(result.scannedFileCount).toBeGreaterThan(0);
