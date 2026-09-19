@@ -17,7 +17,7 @@ Everything else in this file is process. These are correctness. A change that br
 
 1. **No personal data outside Australia.** Global Workers (`gateway`, `control-plane`, `ops-console`), KV, D1 and feature flags hold IDs, slugs, counts and config — never names, emails, addresses, amounts or files. The ops console is a global UI: tenant reads proxy to `api-au` under a support grant; it must not decrypt, log or buffer those fields (architecture §7.3, §11.4).
 2. **`jobs` never handles personal data, including in a response.** `exec` does the whole unit of work and returns `{processed, failed, skipped}` plus IDs (§7.3 rule 2, §18).
-3. **Every `app`-schema table has `org_id`, RLS and `FORCE ROW LEVEL SECURITY`.** Tenant scope is set per transaction with `SET LOCAL`, never session-level. Identity and platform schemas are region-scoped and have **no** `org_id` (§6.3).
+3. **Every `app`-schema table has `org_id`, RLS and `FORCE ROW LEVEL SECURITY`.** Tenant scope is set per transaction with `set_config(..., true)`, never session-level `SET`. Identity and platform schemas are region-scoped and have **no** `org_id` (§6.3).
 4. **A field that SQL must filter, sort or aggregate is not encrypted.** Use a blind index, a derived clear column, or reclassify (§12.2.1).
 5. **Minors' data is restricted by default.** When `is_minor` is true, that person's `confidential*` columns are held under the household key. Children never appear in public content, directories or data sources (§12.1, §12.3).
 6. **Durable Objects never hold personal data** — no Australian jurisdiction exists (§7.3 rule 7).
@@ -345,7 +345,7 @@ Never stage `docs/plans/*-report.md`, `.superpowers/`, or other session scratch.
 **Stage 1 — Static (fast, every push)**
 
 - format, lint, typecheck
-- `check:boundaries` — worker-config, schema-rls, encrypted-query, residency-payload, terraform-invariants (each checker has must-fail fixtures exercised in Stage 2)
+- `check:boundaries` — worker-config, schema-rls, encrypted-query, residency-payload, terraform-invariants, sql-session-ban (each checker has must-fail fixtures exercised in Stage 2)
 - secret scanning, dependency audit (fail on high/critical)
 - traceability (pull requests only): branch matches `<type>/<YYYY-MM-DD>-<slug>`; PR body links one spec and one plan with the same slug, both `approved`, or `No spec:` on `chore/` / `fix/` branches
 - **offline Terraform** (every root and every module under `infra/`): `terraform init -backend=false -lockfile=readonly`, `fmt -check`, `validate`, `tflint --init && tflint`, `terraform test`. Missing Terraform or a failed `init` fails the job. No live `plan`. No cloud provider secrets. `GITHUB_TOKEN` is passed so `tflint --init` does not hit unauthenticated GitHub rate limits.

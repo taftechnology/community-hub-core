@@ -221,7 +221,7 @@ Every organisation-scoped (`app`) table:
 ```sql
 org_id        uuid not null,
 community_id  uuid not null,          -- omitted only on organisation-level tables
-id            uuid not null default uuidv7(),
+id            uuid not null,          -- application-minted UUIDv7; cell engine is 17 (no DEFAULT uuidv7())
 primary key (org_id, id)
 
 alter table <table> enable row level security;
@@ -232,7 +232,7 @@ create policy org_isolation on <table>
 ```
 
 - The application connects as a role **without** `BYPASSRLS`.
-- Organisation-scoped requests open a transaction and run `SET LOCAL app.org_id = …` and `SET LOCAL app.community_id = …`. Session-level `SET` is forbidden because Hyperdrive pools connections per transaction. **Identity-schema work uses the identity role and does not set `app.org_id`. Platform-schema work uses the platform role and does not set `app.org_id`.**
+- Organisation-scoped requests open a transaction and run `SELECT set_config('app.org_id', $1, true)` and the same for `app.community_id` (bound parameters). Session-level `SET` / `set_config(..., false)` is forbidden because Hyperdrive pools connections per transaction. **Identity-schema work uses the identity role and does not set `app.org_id`. Platform-schema work uses the platform role and does not set `app.org_id`.**
 - `community_id` scoping is enforced by `packages/db` query helpers and verified by tests. It is a soft boundary because organisation-level staff may legitimately query across communities.
 
 **Not every table is organisation-scoped.** There are three categories, and each table declares which it is:
@@ -341,7 +341,7 @@ sequenceDiagram
   W->>K: hostname → org, community, region (cached in isolate)
   W->>W: authenticate session, load entitlements snapshot
   W->>W: authorise (entitlement → community toggle → permission)
-  W->>H: BEGIN; SET LOCAL app.org_id / app.community_id
+  W->>H: BEGIN; set_config('app.org_id' / 'app.community_id', $1, true)
   H->>P: query (RLS enforced)
   P-->>W: rows (restricted fields encrypted)
   W->>W: decrypt only fields the actor may read; write audit event
@@ -448,7 +448,7 @@ community-hub/
 │   └── observability/        # logger with personal-data scrubbing, tracing
 │
 ├── tooling/
-│   └── checks/               # CI boundary checkers (worker-config, schema-rls, encrypted-query, residency-payload, terraform-invariants, traceability), each with must-fail fixtures
+│   └── checks/               # CI boundary checkers (worker-config, schema-rls, encrypted-query, residency-payload, terraform-invariants, sql-session-ban, traceability), each with must-fail fixtures
 │
 ├── infra/
 │   ├── modules/              # shared Terraform modules; each has tests/ and is in the CI matrix
@@ -474,10 +474,11 @@ modules/features/giving/
 ├── public/                   # the only surface other modules may import
 ├── events/                   # published event schemas (versioned)
 ├── db/
-│   ├── schema.ts             # Drizzle tables — app-schema tables have org_id and classifications
-│   └── migrations/
+│   └── schema.ts             # Drizzle tables — app-schema tables have org_id and classifications
 └── tests/
 ```
+
+Modules contribute schema files. They do not ship a journal: `packages/db` owns the single product journal (`packages/db/drizzle`).
 
 ```ts
 // modules/features/giving/module.manifest.ts
@@ -1303,7 +1304,7 @@ Production data is never copied to non-production environments.
 - GitHub Actions: lint, type-check, unit and integration tests, boundary checks (including terraform-invariants), RLS checks, OpenAPI diff, build.
 - **Offline Terraform** on every PR: `fmt -check`, `validate`, `tflint`, `terraform test` after `init -backend=false -lockfile=readonly`, on every root **and every module**. No cloud credentials. Live `terraform plan` waits until GitHub OIDC (AWS) and a narrowly scoped Cloudflare token exist; until then that job is absent, not skip-green. Apply is a human-triggered operations step (see `docs/runbooks/apply-staging-au.md`), never on merge.
 - Wrangler owns Worker scripts, routes and bindings. Terraform owns zones, DNS except Wrangler custom-domain records, Regional Services, Tunnel, Hyperdrive, Workers VPC, and AWS ([ADR 0002](docs/adr/0002-terraform-roots-follow-failure-domains.md)).
-- Database migrations run before deployment and must be backward compatible with the previous Worker version (expand, migrate, contract).
+- Database migrations run before deployment and must be backward compatible with the previous Worker version (expand, migrate, contract). How those migrations reach private RDS is a later chunk.
 - Workers use gradual deployments for API changes; automatic rollback on error-rate alerts.
 - Mobile: EAS Build per app key; EAS Update channels per environment.
 

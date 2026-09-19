@@ -5,3 +5,5 @@ coverage
 node_modules
 *.tsbuildinfo
 *.jsonc
+packages/db/drizzle/
+packages/db/drizzle-test/

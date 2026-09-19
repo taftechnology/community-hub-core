@@ -1,6 +1,7 @@
 import { check as checkEncryptedQuery } from "./encrypted-query/check.js";
 import { check as checkResidencyPayload } from "./residency-payload/check.js";
 import { check as checkSchemaRls } from "./schema-rls/check.js";
+import { check as checkSqlSessionBan } from "./sql-session-ban/check.js";
 import { check as checkTerraformInvariants } from "./terraform-invariants/check.js";
 import { check as checkWorkerConfig } from "./worker-config/check.js";
 
@@ -66,6 +67,16 @@ if (!terraformResult.ok) {
   failed = true;
 } else if (!terraformResult.notice) {
   console.log("terraform-invariants: ok");
+}
+
+const sqlSessionResult = checkSqlSessionBan();
+if (!sqlSessionResult.ok) {
+  for (const v of sqlSessionResult.violations) {
+    console.error(`${v.file}: ${v.message}`);
+  }
+  failed = true;
+} else {
+  console.log("sql-session-ban: ok");
 }
 
 process.exit(failed ? 1 : 0);

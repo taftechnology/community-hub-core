@@ -1,8 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-/** Provisional until `packages/db` lands — see README.md */
-export const SQL_SEARCH_DIRS = ["packages/db/migrations", "packages/db/schema"] as const;
+export const SQL_SEARCH_DIRS = ["packages/db/drizzle", "packages/db/drizzle-test"] as const;
 
 export type SchemaRlsViolation = {
   file: string;
@@ -116,7 +115,7 @@ function validateSqlFile(filePath: string, root: string, sql: string): SchemaRls
   return violations;
 }
 
-/** Scan provisional SQL globs under `root` (defaults to `process.cwd()`). */
+/** Scan SQL globs under `root` (defaults to `process.cwd()`). */
 export function check(root: string = process.cwd()): CheckResult {
   const resolvedRoot = path.resolve(root);
   const sqlFiles = discoverSqlFiles(resolvedRoot);
@@ -138,7 +137,7 @@ export function check(root: string = process.cwd()): CheckResult {
   if (appTableCount === 0) {
     return {
       ...base,
-      notice: `schema-rls: zero app-schema tables found under ${SQL_SEARCH_DIRS.join(", ")} (provisional glob)`,
+      notice: `schema-rls: zero app-schema tables found under ${SQL_SEARCH_DIRS.join(", ")}`,
     };
   }
 

@@ -7,11 +7,25 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   eslintConfigPrettier,
   {
-    ignores: ["**/dist/**", "**/node_modules/**", "**/.turbo/**", "**/coverage/**"],
+    ignores: [
+      "**/dist/**",
+      "**/node_modules/**",
+      "**/.turbo/**",
+      "**/coverage/**",
+      "**/fixtures/**",
+    ],
   },
   {
     files: ["**/*.{js,ts}"],
-    ignores: ["**/*.test.ts"],
+    ignores: [
+      "**/*.test.ts",
+      "**/vitest.config.ts",
+      "**/global-setup.ts",
+      "**/migrate-test.ts",
+      "**/schema-test.ts",
+      "**/drizzle.config.ts",
+      "**/drizzle-test.config.ts",
+    ],
     languageOptions: {
       parserOptions: {
         projectService: true,
@@ -20,7 +34,15 @@ export default tseslint.config(
     },
   },
   {
-    files: ["**/*.test.ts"],
+    files: [
+      "**/*.test.ts",
+      "**/global-setup.ts",
+      "**/migrate-test.ts",
+      "**/schema-test.ts",
+      "**/vitest.config.ts",
+      "**/drizzle.config.ts",
+      "**/drizzle-test.config.ts",
+    ],
     extends: [...tseslint.configs.recommended],
   },
 );

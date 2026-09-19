@@ -12,3 +12,5 @@ docs/plans/*-report.md
 *.tfstate.*
 crash.log
 crash.*.log
+packages/db/test/.userlist.txt
+packages/db/test/.runtime.json

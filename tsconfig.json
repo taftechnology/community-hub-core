@@ -3,6 +3,7 @@
   "references": [
     { "path": "./packages/kernel" },
     { "path": "./packages/observability" },
+    { "path": "./packages/db" },
     { "path": "./apps/gateway" },
     { "path": "./tooling/checks/worker-config" }
   ]
