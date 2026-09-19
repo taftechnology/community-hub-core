@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { createDirectSql } from "../src/connections.js";
 import { applyProductMigrations } from "../src/migrate.js";
-import { applyTestMigrations } from "../src/migrate-test.js";
+import { applyTestMigrations } from "./migrate-test.js";
 
 type Runtime = {
   directUrl: string;

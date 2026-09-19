@@ -15,6 +15,8 @@ export default tseslint.config(
       "**/*.test.ts",
       "**/vitest.config.ts",
       "**/global-setup.ts",
+      "**/migrate-test.ts",
+      "**/schema-test.ts",
       "**/drizzle.config.ts",
       "**/drizzle-test.config.ts",
     ],
@@ -29,6 +31,8 @@ export default tseslint.config(
     files: [
       "**/*.test.ts",
       "**/global-setup.ts",
+      "**/migrate-test.ts",
+      "**/schema-test.ts",
       "**/vitest.config.ts",
       "**/drizzle.config.ts",
       "**/drizzle-test.config.ts",

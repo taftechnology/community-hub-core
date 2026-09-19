@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { pgPolicy, primaryKey, uuid } from "drizzle-orm/pg-core";
 
-import { app } from "./schema.js";
+import { app } from "../src/schema.js";
 
 export const synthetic = app
   .table(

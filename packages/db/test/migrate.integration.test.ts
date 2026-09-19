@@ -9,6 +9,7 @@ import { applyMigrations, applyProductMigrations } from "../src/migrate.js";
 
 type Runtime = {
   directUrl: string;
+  productOnlyUrl: string;
 };
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -21,16 +22,10 @@ function loadRuntime(): Runtime {
 describe("applyProductMigrations", () => {
   it("applies the product journal and is a no-op on the second run", async () => {
     const runtime = loadRuntime();
-    const cleanup = createDirectSql(runtime.directUrl);
-    try {
-      await cleanup.unsafe("drop table if exists migrator.__drizzle_migrations_test");
-    } finally {
-      await cleanup.end({ timeout: 1 });
-    }
-    await applyProductMigrations(runtime.directUrl);
-    await applyProductMigrations(runtime.directUrl);
+    await applyProductMigrations(runtime.productOnlyUrl);
+    await applyProductMigrations(runtime.productOnlyUrl);
 
-    const sql = createDirectSql(runtime.directUrl);
+    const sql = createDirectSql(runtime.productOnlyUrl);
     try {
       const schemas = await sql<{ nspname: string; owner: string }[]>`
         select n.nspname, r.rolname as owner

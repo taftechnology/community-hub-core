@@ -12,6 +12,7 @@ const COMPOSE = path.join(DIR, "docker-compose.yml");
 const USERLIST = path.join(DIR, ".userlist.txt");
 const RUNTIME = path.join(DIR, ".runtime.json");
 const DIRECT_URL = "postgres://hub:local-bootstrap-only@127.0.0.1:5432/hub";
+const PRODUCT_ONLY_URL = "postgres://hub:local-bootstrap-only@127.0.0.1:5432/hub_product_only";
 
 function compose(args: string[]): void {
   execFileSync("docker", ["compose", "-f", COMPOSE, ...args], { stdio: "inherit" });
@@ -68,14 +69,17 @@ export default async function setup(): Promise<() => void> {
     try {
       await runBootstrap(sql);
       const { verifiers } = await setLoginPasswords(sql, passwords);
+      await sql.unsafe("create database hub_product_only").simple();
       writeFileSync(
         USERLIST,
         `"app" "${verifiers.app}"\n"identity" "${verifiers.identity}"\n"platform" "${verifiers.platform}"\n`,
         { encoding: "utf8" },
       );
-      writeFileSync(RUNTIME, JSON.stringify({ directUrl: DIRECT_URL, passwords }, null, 2), {
-        encoding: "utf8",
-      });
+      writeFileSync(
+        RUNTIME,
+        JSON.stringify({ directUrl: DIRECT_URL, productOnlyUrl: PRODUCT_ONLY_URL, passwords }, null, 2),
+        { encoding: "utf8" },
+      );
     } finally {
       await sql.end({ timeout: 1 });
     }

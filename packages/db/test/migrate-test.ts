@@ -1,7 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { applyMigrations } from "./migrate.js";
+import { applyMigrations } from "../src/migrate.js";
 
 const TEST_FOLDER = path.join(path.dirname(fileURLToPath(import.meta.url)), "../drizzle-test");
 const TEST_TABLE = "__drizzle_migrations_test";
