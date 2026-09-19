@@ -66,6 +66,18 @@ importers:
         specifier: ^4.134.0
         version: 4.134.0(@cloudflare/workers-types@5.20260917.1)(@types/node@22.20.3)
 
+  packages/crypto:
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^5.20260917.1
+        version: 5.20260917.1
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.9
+        version: 3.2.7(@types/node@22.20.3)(tsx@4.23.13)
+
   packages/db:
     dependencies:
       drizzle-orm:
