@@ -21,6 +21,12 @@ function loadRuntime(): Runtime {
 describe("applyProductMigrations", () => {
   it("applies the product journal and is a no-op on the second run", async () => {
     const runtime = loadRuntime();
+    const cleanup = createDirectSql(runtime.directUrl);
+    try {
+      await cleanup.unsafe("drop table if exists migrator.__drizzle_migrations_test");
+    } finally {
+      await cleanup.end({ timeout: 1 });
+    }
     await applyProductMigrations(runtime.directUrl);
     await applyProductMigrations(runtime.directUrl);
 

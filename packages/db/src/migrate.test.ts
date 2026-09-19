@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { readMigrationFiles } from "drizzle-orm/migrator";
 import { describe, expect, it } from "vitest";
 
-import { assertMigrationPreflight } from "./migrate.js";
+import { applyMigrations, assertMigrationPreflight } from "./migrate.js";
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), "../test/fixtures/migrate");
 
@@ -49,6 +49,18 @@ describe("package exports", () => {
     ) as { exports: Record<string, unknown> };
     expect(pkg.exports["./migrate-test"]).toBeUndefined();
     expect(Object.keys(pkg.exports)).toEqual(["."]);
+  });
+});
+
+describe("applyMigrations folder pairing", () => {
+  it("rejects drizzle-test paired with the product journal table", async () => {
+    await expect(
+      applyMigrations({
+        url: "postgres://hub:unused@127.0.0.1:5432/hub",
+        folder: path.join(FIXTURES, "drizzle-test"),
+        table: "__drizzle_migrations",
+      }),
+    ).rejects.toThrow(/drizzle-test cannot use the product journal/i);
   });
 });
 

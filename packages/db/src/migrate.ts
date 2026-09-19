@@ -14,6 +14,7 @@ export const MIGRATION_LOCK_ID = 1_667_788_130;
 const PRODUCT_FOLDER = path.join(path.dirname(fileURLToPath(import.meta.url)), "../drizzle");
 const PRODUCT_TABLE = "__drizzle_migrations";
 const JOURNAL_TABLE = /^__drizzle_migrations(?:_test)?$/;
+const TEST_FOLDER_NAME = "drizzle-test";
 
 export type AppliedMigration = {
   hash: string;
@@ -54,6 +55,10 @@ export function assertMigrationPreflight(
   }
 }
 
+/**
+ * Direct Postgres URL only — never PgBouncer/Hyperdrive. The runner takes
+ * an advisory lock, SET ROLE, and migrate() on one unpooled session.
+ */
 export async function applyProductMigrations(url: string): Promise<void> {
   await applyMigrations({
     url,
@@ -68,15 +73,29 @@ export async function applyMigrations(opts: {
   folder: string;
   table: string;
 }): Promise<void> {
+  if (path.basename(path.resolve(opts.folder)) === TEST_FOLDER_NAME && opts.table === PRODUCT_TABLE) {
+    throw new Error("drizzle-test cannot use the product journal table");
+  }
   if (!JOURNAL_TABLE.test(opts.table)) {
     throw new Error(`unsupported migrations table ${opts.table}`);
   }
   const sql = createDirectSql(opts.url);
   try {
     await sql`select pg_advisory_lock(${MIGRATION_LOCK_ID})`;
+    const lockRows = await sql<{ pid: number }[]>`select pg_backend_pid() as pid`;
+    const lockPid = Number(lockRows[0]?.pid);
     await runBootstrap(sql);
     await sql.unsafe("set role migrator");
     await preflightFromDb(sql, opts.folder, opts.table);
+    const session = await sql<{ pid: number; usr: string }[]>`
+      select pg_backend_pid() as pid, current_user as usr
+    `;
+    if (Number(session[0]?.pid) !== lockPid) {
+      throw new Error("migration runner lost the session; pass a direct Postgres URL, not a pooler");
+    }
+    if (session[0]?.usr !== "migrator") {
+      throw new Error("migration runner is not SET ROLE migrator");
+    }
     const db = drizzle(sql);
     await migrate(db, {
       migrationsFolder: opts.folder,
