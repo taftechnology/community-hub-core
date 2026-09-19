@@ -61,7 +61,9 @@ describe("applyProductMigrations", () => {
     const folder = mkdtempSync(path.join(tmpdir(), "hub-db-migrate-"));
     try {
       cpSync(DRIZZLE, folder, { recursive: true });
-      const base = readdirSync(folder).find((name) => name.startsWith("0000_") && name.endsWith(".sql"));
+      const base = readdirSync(folder).find(
+        (name) => name.startsWith("0000_") && name.endsWith(".sql"),
+      );
       expect(base).toBeDefined();
       writeFileSync(
         path.join(folder, base!),
@@ -70,7 +72,13 @@ describe("applyProductMigrations", () => {
       writeFileSync(path.join(folder, "0001_pwn.sql"), "create table app.pwn (id int);\n");
       const journalPath = path.join(folder, "meta/_journal.json");
       const journal = JSON.parse(readFileSync(journalPath, "utf8")) as {
-        entries: { idx: number; version: string; when: number; tag: string; breakpoints: boolean }[];
+        entries: {
+          idx: number;
+          version: string;
+          when: number;
+          tag: string;
+          breakpoints: boolean;
+        }[];
       };
       journal.entries.push({
         idx: 1,

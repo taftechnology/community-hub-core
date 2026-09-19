@@ -39,9 +39,7 @@ export function assertMigrationPreflight(
       );
     }
     if (match.hash !== row.hash) {
-      throw new Error(
-        `already-applied file ${row.created_at} hash does not match Kit digest`,
-      );
+      throw new Error(`already-applied file ${row.created_at} hash does not match Kit digest`);
     }
   }
 
@@ -73,7 +71,10 @@ export async function applyMigrations(opts: {
   folder: string;
   table: string;
 }): Promise<void> {
-  if (path.basename(path.resolve(opts.folder)) === TEST_FOLDER_NAME && opts.table === PRODUCT_TABLE) {
+  if (
+    path.basename(path.resolve(opts.folder)) === TEST_FOLDER_NAME &&
+    opts.table === PRODUCT_TABLE
+  ) {
     throw new Error("drizzle-test cannot use the product journal table");
   }
   if (!JOURNAL_TABLE.test(opts.table)) {
@@ -91,7 +92,9 @@ export async function applyMigrations(opts: {
       select pg_backend_pid() as pid, current_user as usr
     `;
     if (Number(session[0]?.pid) !== lockPid) {
-      throw new Error("migration runner lost the session; pass a direct Postgres URL, not a pooler");
+      throw new Error(
+        "migration runner lost the session; pass a direct Postgres URL, not a pooler",
+      );
     }
     if (session[0]?.usr !== "migrator") {
       throw new Error("migration runner is not SET ROLE migrator");

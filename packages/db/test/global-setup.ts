@@ -77,7 +77,11 @@ export default async function setup(): Promise<() => void> {
       );
       writeFileSync(
         RUNTIME,
-        JSON.stringify({ directUrl: DIRECT_URL, productOnlyUrl: PRODUCT_ONLY_URL, passwords }, null, 2),
+        JSON.stringify(
+          { directUrl: DIRECT_URL, productOnlyUrl: PRODUCT_ONLY_URL, passwords },
+          null,
+          2,
+        ),
         { encoding: "utf8" },
       );
     } finally {

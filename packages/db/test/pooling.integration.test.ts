@@ -72,13 +72,9 @@ describe.sequential("pooled tenant scope", () => {
     const b = createAppSql(url);
     try {
       await assertSameBackend(a, b);
-      await withAppTransaction(
-        a,
-        { orgId: newId(), communityId: newId() },
-        async (tx) => {
-          await tx`select 1`;
-        },
-      );
+      await withAppTransaction(a, { orgId: newId(), communityId: newId() }, async (tx) => {
+        await tx`select 1`;
+      });
       await expect(b`select * from app.synthetic`).rejects.toThrow(
         /unrecognized configuration parameter "app\.org_id"|invalid input syntax for type uuid/i,
       );
@@ -103,12 +99,20 @@ describe.sequential("pooled tenant scope", () => {
         await tx`insert into app.synthetic (org_id, id) values (${orgB}, ${idB})`;
       });
 
-      const seenA = await withAppTransaction(sql, { orgId: orgA, communityId: newId() }, async (tx) => {
-        return tx<{ id: string }[]>`select id from app.synthetic`;
-      });
-      const seenB = await withAppTransaction(sql, { orgId: orgB, communityId: newId() }, async (tx) => {
-        return tx<{ id: string }[]>`select id from app.synthetic`;
-      });
+      const seenA = await withAppTransaction(
+        sql,
+        { orgId: orgA, communityId: newId() },
+        async (tx) => {
+          return tx<{ id: string }[]>`select id from app.synthetic`;
+        },
+      );
+      const seenB = await withAppTransaction(
+        sql,
+        { orgId: orgB, communityId: newId() },
+        async (tx) => {
+          return tx<{ id: string }[]>`select id from app.synthetic`;
+        },
+      );
       expect(seenA.map((row) => row.id)).toEqual([idA]);
       expect(seenB.map((row) => row.id)).toEqual([idB]);
     } finally {

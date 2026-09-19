@@ -81,6 +81,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Start Postgres and PgBouncer
+        run: docker compose -f packages/db/test/docker-compose.yml up -d postgres
+        # global-setup of @community-hub/db starts PgBouncer after writing userlist
+
       - name: Test
         run: pnpm test
 

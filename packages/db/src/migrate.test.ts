@@ -6,7 +6,10 @@ import { describe, expect, it } from "vitest";
 
 import { applyMigrations, assertMigrationPreflight } from "./migrate.js";
 
-const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), "../test/fixtures/migrate");
+const FIXTURES = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../test/fixtures/migrate",
+);
 
 describe("assertMigrationPreflight", () => {
   it("fails when an unapplied journal entry is older than the latest applied created_at", () => {
@@ -45,7 +48,10 @@ describe("assertMigrationPreflight", () => {
 describe("package exports", () => {
   it("does not export migrate-test", () => {
     const pkg = JSON.parse(
-      readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../package.json"), "utf8"),
+      readFileSync(
+        path.join(path.dirname(fileURLToPath(import.meta.url)), "../package.json"),
+        "utf8",
+      ),
     ) as { exports: Record<string, unknown> };
     expect(pkg.exports["./migrate-test"]).toBeUndefined();
     expect(Object.keys(pkg.exports)).toEqual(["."]);
@@ -68,7 +74,10 @@ describe("product snapshot", () => {
   it("records app, identity and platform so a later generate will not CREATE SCHEMA again", () => {
     const snapshot = JSON.parse(
       readFileSync(
-        path.join(path.dirname(fileURLToPath(import.meta.url)), "../drizzle/meta/0000_snapshot.json"),
+        path.join(
+          path.dirname(fileURLToPath(import.meta.url)),
+          "../drizzle/meta/0000_snapshot.json",
+        ),
         "utf8",
       ),
     ) as { schemas: Record<string, string> };

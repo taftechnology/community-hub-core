@@ -39,9 +39,7 @@ async function constrainRoleAttributes(sql: Sql): Promise<void> {
   const privileged = rows[0]?.rolsuper === true ? " NOSUPERUSER NOBYPASSRLS" : "";
   for (const role of ALL_ROLES) {
     const login = role === "migrator" ? "NOLOGIN" : "LOGIN";
-    await sql.unsafe(
-      `ALTER ROLE ${role} NOINHERIT NOCREATEROLE NOCREATEDB ${login}${privileged}`,
-    );
+    await sql.unsafe(`ALTER ROLE ${role} NOINHERIT NOCREATEROLE NOCREATEDB ${login}${privileged}`);
   }
 }
 

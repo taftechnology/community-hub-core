@@ -448,7 +448,7 @@ community-hub/
 │   └── observability/        # logger with personal-data scrubbing, tracing
 │
 ├── tooling/
-│   └── checks/               # CI boundary checkers (worker-config, schema-rls, encrypted-query, residency-payload, terraform-invariants, traceability), each with must-fail fixtures
+│   └── checks/               # CI boundary checkers (worker-config, schema-rls, encrypted-query, residency-payload, terraform-invariants, sql-session-ban, traceability), each with must-fail fixtures
 │
 ├── infra/
 │   ├── modules/              # shared Terraform modules; each has tests/ and is in the CI matrix

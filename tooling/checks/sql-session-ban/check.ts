@@ -168,7 +168,7 @@ function stripTsComments(src: string): string {
     }
     if (ch === "/" && next === "*") {
       i += 2;
-      while (i < src.length && !(sqlStarSlash(src, i))) {
+      while (i < src.length && !sqlStarSlash(src, i)) {
         i += 1;
       }
       i += 2;
@@ -509,7 +509,13 @@ function scanShared(
     /\bSET\s+(?:(?:LOCAL|SESSION)\s+)?(?:app\.|"app"\s*\.)/i,
     "SET of app.* is forbidden",
   );
-  pushIfMatch(violations, file, text, /\bRESET\s+(?:app\.|"app"\s*\.)/i, "RESET of app.* is forbidden");
+  pushIfMatch(
+    violations,
+    file,
+    text,
+    /\bRESET\s+(?:app\.|"app"\s*\.)/i,
+    "RESET of app.* is forbidden",
+  );
 
   if (!allowRoleSwitch) {
     pushIfMatch(

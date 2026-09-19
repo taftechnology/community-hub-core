@@ -26,10 +26,7 @@
       "compositePrimaryKeys": {
         "synthetic_org_id_id_pk": {
           "name": "synthetic_org_id_id_pk",
-          "columns": [
-            "org_id",
-            "id"
-          ]
+          "columns": ["org_id", "id"]
         }
       },
       "uniqueConstraints": {},
@@ -38,9 +35,7 @@
           "name": "tenant_isolation",
           "as": "PERMISSIVE",
           "for": "ALL",
-          "to": [
-            "public"
-          ],
+          "to": ["public"],
           "using": "\"app\".\"synthetic\".\"org_id\" = current_setting('app.org_id')::uuid"
         }
       },

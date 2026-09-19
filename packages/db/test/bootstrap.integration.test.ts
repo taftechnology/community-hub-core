@@ -129,9 +129,7 @@ describe("bootstrap", () => {
     try {
       await sql.unsafe("alter role app bypassrls");
       try {
-        await expect(assertRoleAttributes(sql)).rejects.toThrow(
-          "forbidden attributes: BYPASSRLS",
-        );
+        await expect(assertRoleAttributes(sql)).rejects.toThrow("forbidden attributes: BYPASSRLS");
       } finally {
         await sql.unsafe("alter role app nobypassrls");
       }
