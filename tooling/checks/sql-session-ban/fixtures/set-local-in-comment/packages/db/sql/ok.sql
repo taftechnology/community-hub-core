@@ -1,0 +1,3 @@
+-- SET LOCAL app.org_id
+/* SET SESSION AUTHORIZATION */
+SELECT 1;

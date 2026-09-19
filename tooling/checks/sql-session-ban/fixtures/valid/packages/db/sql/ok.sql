@@ -1,0 +1,2 @@
+CREATE ROLE migrator NOLOGIN;
+GRANT CREATE ON DATABASE hub TO migrator;

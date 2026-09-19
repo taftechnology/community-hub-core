@@ -142,6 +142,18 @@ importers:
         specifier: ^3.0.9
         version: 3.2.7(@types/node@22.20.3)(tsx@4.23.13)
 
+  tooling/checks/sql-session-ban:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.10
+        version: 22.20.3
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.9
+        version: 3.2.7(@types/node@22.20.3)(tsx@4.23.13)
+
   tooling/checks/terraform-invariants:
     devDependencies:
       '@types/node':

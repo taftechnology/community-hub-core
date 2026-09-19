@@ -345,7 +345,7 @@ Never stage `docs/plans/*-report.md`, `.superpowers/`, or other session scratch.
 **Stage 1 — Static (fast, every push)**
 
 - format, lint, typecheck
-- `check:boundaries` — worker-config, schema-rls, encrypted-query, residency-payload, terraform-invariants (each checker has must-fail fixtures exercised in Stage 2)
+- `check:boundaries` — worker-config, schema-rls, encrypted-query, residency-payload, terraform-invariants, sql-session-ban (each checker has must-fail fixtures exercised in Stage 2)
 - secret scanning, dependency audit (fail on high/critical)
 - traceability (pull requests only): branch matches `<type>/<YYYY-MM-DD>-<slug>`; PR body links one spec and one plan with the same slug, both `approved`, or `No spec:` on `chore/` / `fix/` branches
 - **offline Terraform** (every root and every module under `infra/`): `terraform init -backend=false -lockfile=readonly`, `fmt -check`, `validate`, `tflint --init && tflint`, `terraform test`. Missing Terraform or a failed `init` fails the job. No live `plan`. No cloud provider secrets. `GITHUB_TOKEN` is passed so `tflint --init` does not hit unauthenticated GitHub rate limits.
