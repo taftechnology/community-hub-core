@@ -112,53 +112,93 @@ function isAllowed(node, classification, services, checker, filename) {
   return false;
 }
 
-function walk(node, reported, onLeaf) {
+function isDirectBrandedArg(node, services, checker) {
+  let current = node;
+  while (
+    current &&
+    (current.type === "TSSatisfiesExpression" ||
+      current.type === "TSNonNullExpression" ||
+      current.type === "ChainExpression")
+  ) {
+    current = current.expression;
+  }
+  if (
+    !current ||
+    current.type === "CallExpression" ||
+    current.type === "TaggedTemplateExpression" ||
+    current.type === "NewExpression"
+  ) {
+    return false;
+  }
+  return isBranded(classifyNode(current, services, checker));
+}
+
+function isAllowlistedCallee(node) {
+  const name = getCalleeName(node);
+  if (CRYPTO_VALUE_CALLEES.has(name) || SELECT_LIKE.has(name)) {
+    return true;
+  }
+  if (name === "eq" || name === "inArray" || name === "execute" || name === "as") {
+    return true;
+  }
+  if (CONFLICT.has(name)) {
+    return true;
+  }
+  return name === "on" && isIndexOnCall(node);
+}
+
+function walk(node, reported, onLeaf, calls = "skip") {
   if (!node || reported.has(node)) {
     return;
   }
   switch (node.type) {
     case "ArrayExpression":
       for (const element of node.elements) {
-        walk(element, reported, onLeaf);
+        walk(element, reported, onLeaf, calls);
       }
       return;
     case "ObjectExpression":
       for (const property of node.properties) {
         if (property.type === "SpreadElement") {
-          walk(property.argument, reported, onLeaf);
+          walk(property.argument, reported, onLeaf, calls);
         } else {
-          walk(property.value, reported, onLeaf);
+          walk(property.value, reported, onLeaf, calls);
         }
       }
       return;
     case "SpreadElement":
-      walk(node.argument, reported, onLeaf);
+      walk(node.argument, reported, onLeaf, calls);
       return;
     case "ConditionalExpression":
-      walk(node.consequent, reported, onLeaf);
-      walk(node.alternate, reported, onLeaf);
+      walk(node.consequent, reported, onLeaf, calls);
+      walk(node.alternate, reported, onLeaf, calls);
       return;
     case "LogicalExpression":
     case "BinaryExpression":
-      walk(node.left, reported, onLeaf);
-      walk(node.right, reported, onLeaf);
+      walk(node.left, reported, onLeaf, calls);
+      walk(node.right, reported, onLeaf, calls);
       return;
     case "ChainExpression":
-      walk(node.expression, reported, onLeaf);
+      walk(node.expression, reported, onLeaf, calls);
       return;
     case "AwaitExpression":
-      walk(node.argument, reported, onLeaf);
+      walk(node.argument, reported, onLeaf, calls);
       return;
     case "TSNonNullExpression":
-      walk(node.expression, reported, onLeaf);
+      walk(node.expression, reported, onLeaf, calls);
+      return;
+    case "TSSatisfiesExpression":
+      walk(node.expression, reported, onLeaf, calls);
       return;
     case "TSAsExpression":
     case "TSTypeAssertion":
-    case "TSSatisfiesExpression":
       return;
     case "CallExpression":
     case "TaggedTemplateExpression":
     case "NewExpression":
+      if (calls === "leaf") {
+        onLeaf(node);
+      }
       return;
     default:
       onLeaf(node);
@@ -215,6 +255,16 @@ function assignedType(node, services, checker) {
   if (parent.type === "AssignmentExpression") {
     return typeOfEsNode(parent.left, services, checker);
   }
+  if (parent.type === "TSSatisfiesExpression") {
+    const annotation = parent.typeAnnotation;
+    if (!annotation) {
+      return undefined;
+    }
+    const tsAnn = services.esTreeNodeToTSNodeMap.get(annotation);
+    return tsAnn && typeof checker.getTypeFromTypeNode === "function"
+      ? checker.getTypeFromTypeNode(tsAnn)
+      : undefined;
+  }
   return undefined;
 }
 
@@ -222,21 +272,29 @@ function inspectWiden(node, context, services, checker, reported) {
   if (isCryptoSource(context.filename)) {
     return;
   }
-  walk(node, reported, (leaf) => {
-    const classification = classifyNode(leaf, services, checker);
-    if (!isBranded(classification) || isBrandedValue(classification)) {
-      return;
-    }
-    if (isAllowed(leaf, classification, services, checker, context.filename)) {
-      return;
-    }
-    const dest = assignedType(leaf, services, checker);
-    if (!dest || isBranded(classifyType(dest, checker))) {
-      return;
-    }
-    reported.add(leaf);
-    context.report({ node: leaf, messageId: "query" });
-  });
+  walk(
+    node,
+    reported,
+    (leaf) => {
+      const classification = classifyNode(leaf, services, checker);
+      if (!isBranded(classification) || isBrandedValue(classification)) {
+        return;
+      }
+      if (leaf.type === "CallExpression" && isAllowlistedCallee(leaf)) {
+        return;
+      }
+      if (isAllowed(leaf, classification, services, checker, context.filename)) {
+        return;
+      }
+      const dest = assignedType(leaf, services, checker);
+      if (!dest || isBranded(classifyType(dest, checker))) {
+        return;
+      }
+      reported.add(leaf);
+      context.report({ node: leaf, messageId: "query" });
+    },
+    "leaf",
+  );
 }
 
 export default {
@@ -291,6 +349,24 @@ export default {
             forceDisallow: true,
           });
         }
+        if (isAllowlistedCallee(node)) {
+          return;
+        }
+        if (reported.has(node)) {
+          return;
+        }
+        if (node.arguments.some((argument) => isDirectBrandedArg(argument, services, checker))) {
+          return;
+        }
+        const classification = classifyNode(node, services, checker);
+        if (!isBranded(classification) || isBrandedValue(classification)) {
+          return;
+        }
+        if (isAllowed(node, classification, services, checker, context.filename)) {
+          return;
+        }
+        reported.add(node);
+        context.report({ node, messageId: "query" });
       },
       VariableDeclarator(node) {
         inspectWiden(node.init, context, services, checker, reported);
