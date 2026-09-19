@@ -58,7 +58,7 @@ jobs:
             -o "/tmp/${archive}"
           echo "${GITLEAKS_SHA256}  /tmp/${archive}" | sha256sum -c -
           tar -xzf "/tmp/${archive}" -C /tmp gitleaks
-          /tmp/gitleaks detect --source . --verbose --redact --exit-code 1
+          /tmp/gitleaks detect --source . --config .gitleaks.toml --verbose --redact --exit-code 1
 
       - name: Dependency audit
         run: pnpm audit --audit-level=high

@@ -1,0 +1,8 @@
+title = "community-hub-core"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Published NIST/RFC/envelope test vectors — not production keys"
+paths = ['''(^|/)packages/crypto/test/vectors/''']
