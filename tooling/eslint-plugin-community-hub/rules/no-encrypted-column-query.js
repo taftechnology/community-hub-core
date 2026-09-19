@@ -112,45 +112,45 @@ function isAllowed(node, classification, services, checker, filename) {
   return false;
 }
 
-function inspect(node, context, services, checker, reported, extra = {}) {
+function walk(node, reported, onLeaf) {
   if (!node || reported.has(node)) {
     return;
   }
   switch (node.type) {
     case "ArrayExpression":
       for (const element of node.elements) {
-        inspect(element, context, services, checker, reported, extra);
+        walk(element, reported, onLeaf);
       }
       return;
     case "ObjectExpression":
       for (const property of node.properties) {
         if (property.type === "SpreadElement") {
-          inspect(property.argument, context, services, checker, reported, extra);
+          walk(property.argument, reported, onLeaf);
         } else {
-          inspect(property.value, context, services, checker, reported, extra);
+          walk(property.value, reported, onLeaf);
         }
       }
       return;
     case "SpreadElement":
-      inspect(node.argument, context, services, checker, reported, extra);
+      walk(node.argument, reported, onLeaf);
       return;
     case "ConditionalExpression":
-      inspect(node.consequent, context, services, checker, reported, extra);
-      inspect(node.alternate, context, services, checker, reported, extra);
+      walk(node.consequent, reported, onLeaf);
+      walk(node.alternate, reported, onLeaf);
       return;
     case "LogicalExpression":
     case "BinaryExpression":
-      inspect(node.left, context, services, checker, reported, extra);
-      inspect(node.right, context, services, checker, reported, extra);
+      walk(node.left, reported, onLeaf);
+      walk(node.right, reported, onLeaf);
       return;
     case "ChainExpression":
-      inspect(node.expression, context, services, checker, reported, extra);
+      walk(node.expression, reported, onLeaf);
       return;
     case "AwaitExpression":
-      inspect(node.argument, context, services, checker, reported, extra);
+      walk(node.argument, reported, onLeaf);
       return;
     case "TSNonNullExpression":
-      inspect(node.expression, context, services, checker, reported, extra);
+      walk(node.expression, reported, onLeaf);
       return;
     case "TSAsExpression":
     case "TSTypeAssertion":
@@ -160,21 +160,83 @@ function inspect(node, context, services, checker, reported, extra = {}) {
     case "TaggedTemplateExpression":
     case "NewExpression":
       return;
-    default: {
-      const classification = classifyNode(node, services, checker);
-      if (!isBranded(classification)) {
-        return;
+    default:
+      onLeaf(node);
+  }
+}
+
+function inspect(node, context, services, checker, reported, extra = {}) {
+  walk(node, reported, (leaf) => {
+    const classification = classifyNode(leaf, services, checker);
+    if (!isBranded(classification)) {
+      return;
+    }
+    if (
+      !extra.forceDisallow &&
+      isAllowed(leaf, classification, services, checker, context.filename)
+    ) {
+      return;
+    }
+    reported.add(leaf);
+    context.report({ node: leaf, messageId: "query" });
+  });
+}
+
+function typeOfEsNode(node, services, checker) {
+  const tsNode = services.esTreeNodeToTSNodeMap.get(node);
+  return tsNode ? checker.getTypeAtLocation(tsNode) : undefined;
+}
+
+function assignedType(node, services, checker) {
+  const tsNode = services.esTreeNodeToTSNodeMap.get(node);
+  if (tsNode) {
+    try {
+      const contextual = checker.getContextualType(tsNode);
+      if (contextual) {
+        return contextual;
       }
-      if (
-        !extra.forceDisallow &&
-        isAllowed(node, classification, services, checker, context.filename)
-      ) {
-        return;
-      }
-      reported.add(node);
-      context.report({ node, messageId: "query" });
+    } catch {
+      // not an expression TypeScript will contextualise
     }
   }
+  const parent = node.parent;
+  if (!parent) {
+    return undefined;
+  }
+  if (parent.type === "AssignmentPattern") {
+    return typeOfEsNode(parent.left, services, checker);
+  }
+  if (parent.type === "PropertyDefinition" || parent.type === "Property") {
+    return typeOfEsNode(parent, services, checker);
+  }
+  if (parent.type === "VariableDeclarator") {
+    return typeOfEsNode(parent.id, services, checker);
+  }
+  if (parent.type === "AssignmentExpression") {
+    return typeOfEsNode(parent.left, services, checker);
+  }
+  return undefined;
+}
+
+function inspectWiden(node, context, services, checker, reported) {
+  if (isCryptoSource(context.filename)) {
+    return;
+  }
+  walk(node, reported, (leaf) => {
+    const classification = classifyNode(leaf, services, checker);
+    if (!isBranded(classification) || isBrandedValue(classification)) {
+      return;
+    }
+    if (isAllowed(leaf, classification, services, checker, context.filename)) {
+      return;
+    }
+    const dest = assignedType(leaf, services, checker);
+    if (!dest || isBranded(classifyType(dest, checker))) {
+      return;
+    }
+    reported.add(leaf);
+    context.report({ node: leaf, messageId: "query" });
+  });
 }
 
 export default {
@@ -231,18 +293,24 @@ export default {
         }
       },
       VariableDeclarator(node) {
-        inspect(node.init, context, services, checker, reported);
+        inspectWiden(node.init, context, services, checker, reported);
       },
       AssignmentExpression(node) {
-        inspect(node.right, context, services, checker, reported);
+        inspectWiden(node.right, context, services, checker, reported);
       },
       ReturnStatement(node) {
-        inspect(node.argument, context, services, checker, reported);
+        inspectWiden(node.argument, context, services, checker, reported);
       },
       ArrowFunctionExpression(node) {
         if (node.body.type !== "BlockStatement") {
-          inspect(node.body, context, services, checker, reported);
+          inspectWiden(node.body, context, services, checker, reported);
         }
+      },
+      AssignmentPattern(node) {
+        inspectWiden(node.right, context, services, checker, reported);
+      },
+      PropertyDefinition(node) {
+        inspectWiden(node.value, context, services, checker, reported);
       },
       TaggedTemplateExpression(node) {
         if (!isSqlTag(node.tag)) {

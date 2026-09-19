@@ -37,6 +37,8 @@ const mustFail: { file: string; ruleId: string; count: number }[] = [
   { file: "fail/widen-array.ts", ruleId: QUERY, count: 1 },
   { file: "fail/widen-return.ts", ruleId: QUERY, count: 1 },
   { file: "fail/widen-object.ts", ruleId: QUERY, count: 1 },
+  { file: "fail/widen-default.ts", ruleId: QUERY, count: 1 },
+  { file: "fail/widen-field.ts", ruleId: QUERY, count: 1 },
   { file: "fail/eq-bidx-bidx.ts", ruleId: QUERY, count: 2 },
   { file: "fail/ciphertext-index.ts", ruleId: QUERY, count: 1 },
   { file: "fail/subquery-alias.ts", ruleId: QUERY, count: 1 },
@@ -44,7 +46,7 @@ const mustFail: { file: string; ruleId: string; count: number }[] = [
   { file: "fail/as-alias.ts", ruleId: QUERY, count: 1 },
   { file: "fail/spread-columns.ts", ruleId: QUERY, count: 1 },
   { file: "fail/nullable.ts", ruleId: QUERY, count: 1 },
-  { file: "fail/cast.ts", ruleId: QUERY, count: 4 },
+  { file: "fail/cast.ts", ruleId: QUERY, count: 2 },
   {
     file: "fail/modules/features/giving/infrastructure/order-by.ts",
     ruleId: QUERY,
@@ -68,6 +70,7 @@ const mustPass = [
   "pass/index-bidx.ts",
   "pass/on-conflict-bidx.ts",
   "pass/execute-sql.ts",
+  "pass/hold-ciphertext.ts",
   "pass/packages/crypto/src/hold-ciphertext.ts",
   "pass/packages/db/src/decrypt-insert.ts",
 ] as const;
