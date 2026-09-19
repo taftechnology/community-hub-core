@@ -15,7 +15,8 @@ describe("production packaging", () => {
     expect(JSON.stringify(pkg.exports)).not.toContain("testing");
   });
 
-  it.skipIf(!existsSync(distDir))("does not emit testing.js after tsc --build", () => {
+  it("does not emit testing.js after tsc --build", () => {
+    expect(existsSync(distDir)).toBe(true);
     expect(existsSync(join(distDir, "testing.js"))).toBe(false);
     expect(existsSync(join(distDir, "testing.d.ts"))).toBe(false);
   });

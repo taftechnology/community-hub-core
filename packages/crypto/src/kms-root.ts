@@ -3,6 +3,14 @@ import type { KmsContext, KmsPort } from "./kms-port.js";
 
 export type { KmsContext, KmsPort };
 
+const ROOT_LENGTH = 32;
+
+function assertRootLength(bytes: Uint8Array): void {
+  if (bytes.byteLength !== ROOT_LENGTH) {
+    throw new Error("root must be 32 bytes");
+  }
+}
+
 export async function generateKmsRoot(
   port: KmsPort,
   keyId: string,
@@ -10,6 +18,7 @@ export async function generateKmsRoot(
 ): Promise<{ blob: Uint8Array; hkdfKey: CryptoKey }> {
   const { plaintext, blob } = await port.generateDataKey(keyId, context);
   try {
+    assertRootLength(plaintext);
     const hkdfKey = await importHkdfKey(plaintext);
     return { blob, hkdfKey };
   } finally {
@@ -25,6 +34,7 @@ export async function unwrapKmsRoot(
 ): Promise<CryptoKey> {
   const plaintext = await port.decrypt(keyId, blob, context);
   try {
+    assertRootLength(plaintext);
     return await importHkdfKey(plaintext);
   } finally {
     plaintext.fill(0);

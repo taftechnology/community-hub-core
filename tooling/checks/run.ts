@@ -1,4 +1,3 @@
-import { check as checkEncryptedQuery } from "./encrypted-query/check.js";
 import { check as checkResidencyPayload } from "./residency-payload/check.js";
 import { check as checkSchemaRls } from "./schema-rls/check.js";
 import { check as checkSqlSessionBan } from "./sql-session-ban/check.js";
@@ -28,19 +27,6 @@ if (!schemaResult.ok) {
   failed = true;
 } else if (schemaResult.appTableCount > 0) {
   console.log("schema-rls: ok");
-}
-
-const encryptedResult = checkEncryptedQuery();
-if (encryptedResult.notice) {
-  console.log(encryptedResult.notice);
-}
-if (!encryptedResult.ok) {
-  for (const v of encryptedResult.violations) {
-    console.error(`${v.file} ${v.column} (${v.context}): ${v.message}`);
-  }
-  failed = true;
-} else if (encryptedResult.queryFileCount > 0) {
-  console.log("encrypted-query: ok");
 }
 
 const residencyResult = checkResidencyPayload();

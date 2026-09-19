@@ -8,6 +8,13 @@
       "when": 1789777495608,
       "tag": "0000_synthetic",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789841274063,
+      "tag": "0001_synthetic_crypto",
+      "breakpoints": true
     }
   ]
 }

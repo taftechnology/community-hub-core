@@ -56,6 +56,21 @@ function expectNoSecrets(err: unknown, plaintext: Uint8Array, key: Uint8Array): 
   expect(message.toLowerCase()).not.toContain(toHex(key));
 }
 
+async function expectDeriveBitsRejected(key: CryptoKey): Promise<void> {
+  await expect(
+    crypto.subtle.deriveBits(
+      {
+        name: "HKDF",
+        hash: "SHA-256",
+        salt: new Uint8Array(),
+        info: new TextEncoder().encode("chub/v1/enc"),
+      },
+      key,
+      256,
+    ),
+  ).rejects.toThrow();
+}
+
 async function assertCanEncryptField(hkdfKey: CryptoKey): Promise<void> {
   const { enc } = await deriveKeys(hkdfKey);
   const plaintext = utf8("wrap-child-field");
@@ -95,11 +110,13 @@ describe("generateAndWrap / unwrapKey", () => {
     expect(Object.keys(result).sort()).toEqual(["blob", "childHkdfKey"]);
     const { blob, childHkdfKey } = result;
     await expect(crypto.subtle.exportKey("raw", childHkdfKey)).rejects.toThrow();
+    await expectDeriveBitsRejected(childHkdfKey);
 
     await assertCanEncryptField(childHkdfKey);
 
     const unwrapped = await unwrapKey(blob, wrap, aad);
     await expect(crypto.subtle.exportKey("raw", unwrapped)).rejects.toThrow();
+    await expectDeriveBitsRejected(unwrapped);
     await assertCanEncryptField(unwrapped);
   });
 
@@ -182,6 +199,7 @@ describe("generateAndWrap / unwrapKey", () => {
     });
     const unwrapped = await unwrapKey(fromHex(wrapV1.envelopeHex), wrapKey, aad);
     await expect(crypto.subtle.exportKey("raw", unwrapped)).rejects.toThrow();
+    await expectDeriveBitsRejected(unwrapped);
     await assertCanEncryptField(unwrapped);
   });
 });

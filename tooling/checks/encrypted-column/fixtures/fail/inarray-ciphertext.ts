@@ -1,0 +1,9 @@
+import { inArray } from "drizzle-orm";
+
+import { db, payload, people } from "../table.js";
+
+export function run(): void {
+  db.select()
+    .from(people)
+    .where(inArray(people.payload, [payload]));
+}

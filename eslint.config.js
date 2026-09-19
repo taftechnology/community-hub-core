@@ -2,6 +2,8 @@ import eslint from "@eslint/js";
 import eslintConfigPrettier from "eslint-config-prettier";
 import tseslint from "typescript-eslint";
 
+import communityHub from "./tooling/eslint-plugin-community-hub/index.js";
+
 export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
@@ -27,12 +29,23 @@ export default tseslint.config(
       "**/schema-test.ts",
       "**/drizzle.config.ts",
       "**/drizzle-test.config.ts",
+      "tooling/eslint-plugin-community-hub/**",
     ],
     languageOptions: {
       parserOptions: {
         projectService: true,
         tsconfigRootDir: import.meta.dirname,
       },
+    },
+    plugins: {
+      "@community-hub": communityHub,
+    },
+    rules: {
+      "@community-hub/no-encrypted-column-query": "error",
+      "@community-hub/no-kms-port-outside-crypto": "error",
+      "@community-hub/no-restricted-disable": "error",
+      "@community-hub/no-ts-ignore": "error",
+      "@community-hub/no-crypto-testing-import": "error",
     },
   },
   {

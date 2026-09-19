@@ -17,7 +17,7 @@ function hkdfParams(
 }
 
 export async function importHkdfKey(ikm: Uint8Array): Promise<CryptoKey> {
-  return crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveKey", "deriveBits"]);
+  return crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveKey"]);
 }
 
 export async function hkdfRaw(
@@ -26,7 +26,7 @@ export async function hkdfRaw(
   info: Uint8Array,
   lengthBytes: number,
 ): Promise<Uint8Array> {
-  const key = await importHkdfKey(ikm);
+  const key = await crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
   return new Uint8Array(
     await crypto.subtle.deriveBits(hkdfParams(info, salt), key, lengthBytes * 8),
   );

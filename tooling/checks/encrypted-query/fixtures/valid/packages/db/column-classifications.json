@@ -1,5 +1,0 @@
-{
-  "app.donations.amount_minor": "confidential-queryable",
-  "app.donations.donor_person_id": "confidential-blind",
-  "app.donations.donor_note": "confidential"
-}

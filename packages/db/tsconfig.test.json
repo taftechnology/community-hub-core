@@ -6,7 +6,10 @@
     "declaration": false,
     "declarationMap": false,
     "rootDir": ".",
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "@community-hub/crypto/testing": ["./src/testing.ts"]
+    }
   },
   "include": ["src/**/*.ts", "test/migrate-test.ts", "test/schema-test.ts"]
 }

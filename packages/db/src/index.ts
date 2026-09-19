@@ -1,5 +1,6 @@
 export { withAppTransaction } from "./app-transaction.js";
 export { runBootstrap, setLoginPasswords } from "./bootstrap.js";
+export { blindIndexColumn, encryptedColumn, labelOf } from "./columns.js";
 export {
   createAppSql,
   createDirectSql,
@@ -8,5 +9,6 @@ export {
   createPooledSql,
 } from "./connections.js";
 export { newId } from "./ids.js";
+export { insertEncrypted } from "./insert-encrypted.js";
 export { applyProductMigrations } from "./migrate.js";
 export { scramSha256Verifier } from "./scram.js";

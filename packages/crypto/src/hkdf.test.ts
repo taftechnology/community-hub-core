@@ -43,6 +43,18 @@ describe("deriveKeys", () => {
     await expect(crypto.subtle.exportKey("raw", bidx)).rejects.toThrow();
     await expect(crypto.subtle.exportKey("raw", wrap)).rejects.toThrow();
     await expect(crypto.subtle.exportKey("raw", root)).rejects.toThrow();
+    await expect(
+      crypto.subtle.deriveBits(
+        {
+          name: "HKDF",
+          hash: "SHA-256",
+          salt: new Uint8Array(),
+          info: new TextEncoder().encode("chub/v1/enc"),
+        },
+        root,
+        256,
+      ),
+    ).rejects.toThrow();
 
     expect(enc.algorithm).toMatchObject({ name: "AES-GCM", length: 256 });
     expect(wrap.algorithm).toMatchObject({ name: "AES-GCM", length: 256 });

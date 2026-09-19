@@ -61,17 +61,30 @@ function assertNoNul(label: string): void {
   }
 }
 
+function assertBytes(value: Uint8Array, message: string): void {
+  if (value.byteLength !== ROW_ID_LENGTH) {
+    throw new Error(message);
+  }
+}
+
 function assertRowId(rowId: Uint8Array): void {
-  if (rowId.byteLength !== ROW_ID_LENGTH) {
-    throw new Error("row id must be 16 bytes");
+  assertBytes(rowId, "row id must be 16 bytes");
+}
+
+function assertRegion(region: string): void {
+  if (region.length === 0) {
+    throw new Error("region must not be empty");
+  }
+  if (region.includes("\0")) {
+    throw new Error("region must not contain NUL");
   }
 }
 
 export function encodeAad(aad: CommunityFieldAad | IdentityFieldAad | WrapAad): Uint8Array {
   if (aad.tag === "chub/wrap/v1") {
-    assertRowId(aad.childId);
-    assertRowId(aad.childKeyId);
-    assertRowId(aad.parentKeyId);
+    assertBytes(aad.childId, "child id must be 16 bytes");
+    assertBytes(aad.childKeyId, "child key id must be 16 bytes");
+    assertBytes(aad.parentKeyId, "parent key id must be 16 bytes");
     return encodeLengthPrefixed([
       utf8(aad.tag),
       utf8(aad.childKind),
@@ -88,5 +101,6 @@ export function encodeAad(aad: CommunityFieldAad | IdentityFieldAad | WrapAad): 
     }
     return encodeLengthPrefixed([utf8(aad.tag), utf8(aad.label), aad.rowId, aad.communityId]);
   }
+  assertRegion(aad.region);
   return encodeLengthPrefixed([utf8(aad.tag), utf8(aad.label), aad.rowId, utf8(aad.region)]);
 }
