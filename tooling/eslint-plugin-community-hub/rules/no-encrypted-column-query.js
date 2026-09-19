@@ -10,10 +10,34 @@ import {
   isSqlTag,
   isStringish,
 } from "../lib/ast.js";
-import { classifyType, isBranded, isBrandedColumn, isBrandedValue } from "../lib/types.js";
+import {
+  classifyType,
+  isBranded,
+  isBrandedColumn,
+  isBrandedValue,
+  isSqlType,
+} from "../lib/types.js";
 
 const SELECT_LIKE = new Set(["select", "returning", "values", "set"]);
 const CONFLICT = new Set(["onConflictDoNothing", "onConflictDoUpdate"]);
+const CRYPTO_VALUE_CALLEES = new Set(["decrypt", "encrypt", "blindIndex", "insertEncrypted"]);
+
+function isBannedExecuteArg(node, services, checker) {
+  if (!node) {
+    return false;
+  }
+  if (isStringish(node)) {
+    return true;
+  }
+  if (node.type !== "Identifier") {
+    return false;
+  }
+  const tsNode = services.esTreeNodeToTSNodeMap.get(node);
+  if (!tsNode) {
+    return true;
+  }
+  return !isSqlType(checker.getTypeAtLocation(tsNode), checker);
+}
 
 function classifyNode(node, services, checker) {
   const tsNode = services.esTreeNodeToTSNodeMap.get(node);
@@ -63,6 +87,9 @@ function isAllowed(node, classification, services, checker, filename) {
     return false;
   }
   const name = getCalleeName(enclosing);
+  if (CRYPTO_VALUE_CALLEES.has(name)) {
+    return true;
+  }
   if (SELECT_LIKE.has(name)) {
     return true;
   }
@@ -185,11 +212,14 @@ export default {
 
     return {
       CallExpression(node) {
-        if (isSqlRawCall(node) && isStringish(node.arguments[0])) {
-          context.report({ node: node.arguments[0], messageId: "sqlRaw" });
+        if (isSqlRawCall(node, services, checker)) {
+          context.report({ node: node.arguments[0] ?? node, messageId: "sqlRaw" });
         }
-        if (getCalleeName(node) === "execute" && isStringish(node.arguments[0])) {
-          context.report({ node: node.arguments[0], messageId: "executeString" });
+        if (getCalleeName(node) === "execute") {
+          const arg = node.arguments[0];
+          if (arg && isBannedExecuteArg(arg, services, checker)) {
+            context.report({ node: arg, messageId: "executeString" });
+          }
         }
         for (const argument of node.arguments) {
           inspect(argument, context, services, checker, reported);

@@ -25,17 +25,20 @@ export async function generateAndWrap(
     throw new Error("key id must be 16 bytes");
   }
   const root = crypto.getRandomValues(new Uint8Array(ROOT_LENGTH));
-  const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
-  const blob = await sealWith({
-    key: parentWrapKey,
-    plaintext: root,
-    keyId: aad.childKeyId,
-    iv,
-    boundFields: encodeAad(aad),
-  });
-  const childHkdfKey = await importHkdfKey(root);
-  root.fill(0);
-  return { blob, childHkdfKey };
+  try {
+    const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
+    const blob = await sealWith({
+      key: parentWrapKey,
+      plaintext: root,
+      keyId: aad.childKeyId,
+      iv,
+      boundFields: encodeAad(aad),
+    });
+    const childHkdfKey = await importHkdfKey(root);
+    return { blob, childHkdfKey };
+  } finally {
+    root.fill(0);
+  }
 }
 
 export async function unwrapKey(
@@ -55,7 +58,9 @@ export async function unwrapKey(
     parsed.ciphertextAndTag,
     additionalData,
   );
-  const childHkdfKey = await importHkdfKey(root);
-  root.fill(0);
-  return childHkdfKey;
+  try {
+    return await importHkdfKey(root);
+  } finally {
+    root.fill(0);
+  }
 }

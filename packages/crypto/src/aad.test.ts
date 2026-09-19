@@ -75,6 +75,35 @@ describe("encodeAad", () => {
     );
   });
 
+  it("rejects wrap ids that are not 16 bytes without reusing the row-id message", () => {
+    const wrap: WrapAad = {
+      tag: "chub/wrap/v1",
+      childKind: "community",
+      childId: sixteen,
+      childKeyId: sixteen,
+      parentKeyId: sixteen,
+    };
+    const empty = new Uint8Array(0);
+    expect(() => encodeAad({ ...wrap, childId: empty })).toThrow(/child id must be 16 bytes/);
+    expect(() => encodeAad({ ...wrap, childKeyId: empty })).toThrow(
+      /child key id must be 16 bytes/,
+    );
+    expect(() => encodeAad({ ...wrap, parentKeyId: empty })).toThrow(
+      /parent key id must be 16 bytes/,
+    );
+  });
+
+  it("rejects an empty identity region and a region containing NUL", () => {
+    const identity: IdentityFieldAad = {
+      tag: "chub/field-identity/v1",
+      label: "people.email",
+      rowId,
+      region: "au",
+    };
+    expect(() => encodeAad({ ...identity, region: "" })).toThrow(/region/);
+    expect(() => encodeAad({ ...identity, region: "au\0" })).toThrow(/region/);
+  });
+
   it("differs for household vs community childKind with the same remaining bytes", () => {
     const community: WrapAad = {
       tag: "chub/wrap/v1",

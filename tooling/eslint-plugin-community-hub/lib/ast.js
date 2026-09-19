@@ -1,3 +1,5 @@
+import * as ts from "typescript";
+
 export function getCalleeName(node) {
   if (!node || node.type !== "CallExpression") {
     return null;
@@ -63,18 +65,53 @@ export function isSqlTag(tag) {
   return false;
 }
 
-export function isSqlRawCall(node) {
+function followAlias(checker, symbol) {
+  if (!symbol) {
+    return symbol;
+  }
+  if (symbol.flags & ts.SymbolFlags.Alias) {
+    try {
+      return checker.getAliasedSymbol(symbol);
+    } catch {
+      return symbol;
+    }
+  }
+  return symbol;
+}
+
+export function isDrizzleSqlObject(node, services, checker) {
+  if (!node) {
+    return false;
+  }
+  if (node.type === "Identifier") {
+    if (node.name === "sql") {
+      return true;
+    }
+    if (!services || !checker) {
+      return false;
+    }
+    const tsNode = services.esTreeNodeToTSNodeMap.get(node);
+    if (!tsNode) {
+      return false;
+    }
+    const symbol = followAlias(checker, checker.getSymbolAtLocation(tsNode));
+    return Boolean(symbol && symbol.getName() === "sql");
+  }
+  if (node.type === "MemberExpression" && !node.computed && node.property.type === "Identifier") {
+    return node.property.name === "sql";
+  }
+  return false;
+}
+
+export function isSqlRawCall(node, services, checker) {
   if (node.type !== "CallExpression" || node.callee.type !== "MemberExpression") {
     return false;
   }
   const callee = node.callee;
-  return (
-    !callee.computed &&
-    callee.property.type === "Identifier" &&
-    callee.property.name === "raw" &&
-    callee.object.type === "Identifier" &&
-    callee.object.name === "sql"
-  );
+  if (callee.computed || callee.property.type !== "Identifier" || callee.property.name !== "raw") {
+    return false;
+  }
+  return isDrizzleSqlObject(callee.object, services, checker);
 }
 
 export function isStringish(node) {

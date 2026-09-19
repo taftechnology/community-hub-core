@@ -179,6 +179,27 @@ export function isBrandedValue(classification) {
   return classification.ownCiphertext || classification.ownBlindIndex;
 }
 
+export function isSqlType(type, checker) {
+  if (!type) {
+    return false;
+  }
+  if (type.flags & ts.TypeFlags.StringLike) {
+    return false;
+  }
+  for (const current of unwrapTypes(type)) {
+    if (current.flags & ts.TypeFlags.StringLike) {
+      return false;
+    }
+    if (typeNames(current).has("SQL")) {
+      return true;
+    }
+  }
+  if (typeof checker?.typeToString === "function" && checker.typeToString(type) === "SQL") {
+    return true;
+  }
+  return typeNames(type).has("SQL");
+}
+
 export function typeNames(type) {
   const names = new Set();
   function add(symbol) {

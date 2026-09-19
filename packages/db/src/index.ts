@@ -1,6 +1,6 @@
 export { withAppTransaction } from "./app-transaction.js";
 export { runBootstrap, setLoginPasswords } from "./bootstrap.js";
-export { blindIndexColumn, encryptedColumn } from "./columns.js";
+export { blindIndexColumn, encryptedColumn, labelOf } from "./columns.js";
 export {
   createAppSql,
   createDirectSql,

@@ -28,7 +28,10 @@ const mustFail: { file: string; ruleId: string; count: number }[] = [
   { file: "fail/gt.ts", ruleId: QUERY, count: 2 },
   { file: "fail/sql-interpolation.ts", ruleId: QUERY, count: 1 },
   { file: "fail/sql-raw.ts", ruleId: QUERY, count: 1 },
+  { file: "fail/sql-raw-var.ts", ruleId: QUERY, count: 1 },
+  { file: "fail/sql-raw-renamed.ts", ruleId: QUERY, count: 1 },
   { file: "fail/execute-string.ts", ruleId: QUERY, count: 1 },
+  { file: "fail/execute-var.ts", ruleId: QUERY, count: 1 },
   { file: "fail/eq-bidx-bidx.ts", ruleId: QUERY, count: 2 },
   { file: "fail/ciphertext-index.ts", ruleId: QUERY, count: 1 },
   { file: "fail/subquery-alias.ts", ruleId: QUERY, count: 1 },
@@ -57,7 +60,9 @@ const mustPass = [
   "pass/inarray-bidx.ts",
   "pass/index-bidx.ts",
   "pass/on-conflict-bidx.ts",
+  "pass/execute-sql.ts",
   "pass/packages/crypto/src/hold-ciphertext.ts",
+  "pass/packages/db/src/decrypt-insert.ts",
 ] as const;
 
 let eslint: ESLint;

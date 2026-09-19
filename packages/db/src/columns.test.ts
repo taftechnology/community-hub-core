@@ -12,7 +12,7 @@ import {
 } from "@community-hub/crypto";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 
-import { blindIndexColumn, encryptedColumn } from "./columns.js";
+import { blindIndexColumn, encryptedColumn, labelOf } from "./columns.js";
 import { insertEncrypted } from "./insert-encrypted.js";
 import { newId } from "./ids.js";
 import { app } from "./schema.js";
@@ -68,10 +68,14 @@ function compileInsertRequiresId(
 
 describe("encryptedColumn label", () => {
   it("encrypts and decrypts with people.email when SQL names differ", async () => {
-    const original = encryptedColumn("email_cipher", { label: "people.email" });
-    const renamed = encryptedColumn("renamed_email", { label: "people.email" });
-    expect(original.label).toBe("people.email");
-    expect(renamed.label).toBe("people.email");
+    const originalTable = app.table("encrypted_label_original", {
+      payload: encryptedColumn("email_cipher", { label: "people.email" }).notNull(),
+    });
+    const renamedTable = app.table("encrypted_label_renamed", {
+      payload: encryptedColumn("renamed_email", { label: "people.email" }).notNull(),
+    });
+    expect(labelOf(originalTable.payload)).toBe("people.email");
+    expect(labelOf(renamedTable.payload)).toBe("people.email");
 
     const port = createLocalKmsPort();
     const { hkdfKey } = await generateKmsRoot(port, "kms-test", {
@@ -87,13 +91,13 @@ describe("encryptedColumn label", () => {
 
     const ciphertext = await encrypt(enc, plaintext, keyId, {
       tag: "chub/field/v1",
-      label: original.label,
+      label: labelOf(originalTable.payload),
       rowId,
       communityId,
     });
     const opened = await decrypt(ciphertext, () => enc, {
       tag: "chub/field/v1",
-      label: renamed.label,
+      label: labelOf(renamedTable.payload),
       rowId,
       communityId,
     });
