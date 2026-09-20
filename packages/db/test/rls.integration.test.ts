@@ -61,7 +61,7 @@ describe("applyTestMigrations", () => {
       const product = await sql<{ hash: string }[]>`
         select hash from migrator.__drizzle_migrations
       `;
-      expect(product).toHaveLength(1);
+      expect(product).toHaveLength(2);
 
       const [{ testN }] = await sql<{ testN: string }[]>`
         select count(*)::text as "testN" from migrator.__drizzle_migrations_test

@@ -92,6 +92,9 @@ importers:
       '@community-hub/crypto':
         specifier: workspace:*
         version: link:../crypto
+      '@community-hub/kernel':
+        specifier: workspace:*
+        version: link:../kernel
       drizzle-orm:
         specifier: 0.45.2
         version: 0.45.2(@cloudflare/workers-types@5.20260917.1)(postgres@3.4.9)
@@ -111,6 +114,9 @@ importers:
       vitest:
         specifier: ^3.0.9
         version: 3.2.7(@types/node@22.20.3)(tsx@4.23.13)
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
 
   packages/kernel:
     dependencies:
