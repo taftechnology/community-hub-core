@@ -1,7 +1,7 @@
 # Spec: packages/residency foundations
 
 Slug: `packages-residency`
-Status: draft
+Status: approved (2026-09-20, Abdus Salam)
 Architecture refs: §7.1–7.5, §8.1, §8.3; D3; ADR 0001; AGENTS.md §1 (1, 7), §6 (Residency), §8, §10
 Supersedes: —
 
@@ -17,7 +17,7 @@ Cell configuration and the “global Workers cannot import personal-data modules
 - `packages/residency/src/catalog.json`: checker-readable source. TypeScript derives unions from it (no parallel handwritten `RegionId` list).
 - `tooling/checks/residency-cell`: `check(root?: string)` (default `process.cwd()`), wired through `check:boundaries`. Two jobs: catalog ↔ Terraform AWS region; `global-no-pii` Workers must not reach a regional-only package (direct, deep, relative, or transitive `workspace:*`).
 - ESLint `no-restricted-imports` on `apps/gateway/**`: add `@community-hub/crypto` (fast path). The checker is the fail-closed, class-keyed rule.
-- Architecture §8.3 (enforcement sentence) and §7.5 step 3 (catalog + enable + Terraform must agree). AGENTS.md §10 checker list. Last commit of the branch updates `docs/roadmap.md` (`packages-residency` **done**, next `packages-ui` unless the human picks another remaining Phase 0 row).
+- Architecture §8.3 (enforcement sentence) and §7.5 step 3 (catalog + enable + Terraform must agree). AGENTS.md §10 checker list. Root `tsconfig.json` project reference for `packages/residency` (same as `packages/crypto`). Last commit of the branch updates `docs/roadmap.md` (`packages-residency` **done**, next `packages-ui` unless the human picks another remaining Phase 0 row).
 
 **Out** (explicitly)
 
@@ -75,7 +75,9 @@ A package test also parses the JSON and asserts: exactly those four keys; every 
 
 `getCell(id: EnabledRegionId)` returns the enabled cell including `id`. `getCell("ca")` is a compile error (`@ts-expect-error` in a test file). `getCell` does not accept `string`.
 
-`parseRegionId(id: string): EnabledRegionId` is the backstop for dynamic ids. Unknown or stub throws. No personal data in the message (the id is a region code, not PII; still keep the message generic: region is not enabled).
+**Runtime:** `getCell` also throws if the record is missing or `enabled !== true`. `EnabledRegionId` is handwritten (JSON types widen `true` to `boolean`); the package test keeps the alias honest, and the throw is the backstop if the alias is mis-widened (`getCell("ca" as EnabledRegionId)` must throw, not return a stub). Message stays generic: region is not enabled.
+
+`parseRegionId(id: string): EnabledRegionId` is the backstop for dynamic ids. Unknown or stub throws. Same generic message.
 
 ### JSON import on a Worker
 
@@ -85,11 +87,11 @@ The workerd test imports the public entry and reads `getCell("au").awsRegion`. T
 
 If JSON modules cannot be imported under that pool, **stop and report**. Do not duplicate the catalog as a TypeScript object. Do not switch the checker to parse `.ts`.
 
-`packages/residency` tsconfig sets `resolveJsonModule: true`. `catalog.json` lives under `src/` so `rootDir` emit includes it. Public exports stay the package root (`.`); no Cloudflare/AWS `dependencies`.
+`packages/residency` tsconfig sets `resolveJsonModule: true`. `catalog.json` lives under `src/` so `rootDir` emit includes it. Public exports stay the package root (`.`); no Cloudflare/AWS `dependencies`. Add `packages/residency` to the root `tsconfig.json` `references` array (next to `packages/crypto`). Omitting it fails `pnpm typecheck` in a way that looks unrelated.
 
 ### Checker API
 
-`check(root?: string)` resolves `root` (default `process.cwd()`) and reads **only that tree**. Must-fail fixtures are mini-repos (`catalog.json`, `infra/regions/…`, `apps/…`), the same pattern as `sql-session-ban` and `worker-config`. No mocked filesystem.
+`check(root?: string)` resolves `root` (default `process.cwd()`) and reads **only that tree**. Returns `{ ok, violations, notice? }` (`notice` is set on zero-input, same as `event-names`). Missing `packages/residency/src/catalog.json` fails. Must-fail fixtures are mini-repos (`catalog.json`, `infra/regions/…`, `apps/…`), the same pattern as `sql-session-ban` and `worker-config`. No mocked filesystem.
 
 Self-tests call `check(fixtureRoot)`. CI calls `check()` on the real repo.
 
@@ -108,8 +110,15 @@ Scan `infra/regions/*/` directories that look like cell roots (contain `backend/
 | Disabled catalog cell, no Terraform root | pass |
 | Disabled catalog cell **with** a Terraform root | **pass** (`ca` / `eu` / `us` roots may land before the catalog flag flips) |
 | Live AU catalog `ap-southeast-2` vs live `infra/regions/au/` tfvars + backends | pass (day-one live input) |
+| Zero Terraform cell roots in the scanned tree | fail with a notice (not a silent pass) |
+| Zero enabled cells in the catalog | fail with a notice |
+| Zero apps with a Wrangler config in the scanned tree | fail with a notice |
 
 Parse tfvars / HCL with comment-stripping (quoted strings left intact), same idea as `terraform-invariants`. A commented-out correct `region` must not hide a wrong one.
+
+Zero-input (same idea as `event-names`): if the checker finds no Terraform cell roots, or no enabled catalog cells, or no Wrangler apps, it sets `notice` **and** `ok: false`. An empty-tree fixture is a must-fail, not a must-pass. A refactor that moved `apps/` or `infra/regions/` must not report ok.
+
+Every other fixture therefore includes all three live inputs: a catalog with at least one enabled cell, at least one `infra/regions/<id>/`, and at least one app with Wrangler. Otherwise it trips the zero-input notice instead of the rule under test.
 
 `cloudflareRegionalServices` is **not** cross-checked this chunk. AU Terraform does not take `region_key` at the cell root; it defaults to `"au"` on `infra/modules/cf-regional-hostname` (`variables.tf` validation `region_key == "au"`, must-fail test `"ee"`). **Retirement:** when `api-au-skeleton` passes `region_key` from `infra/regions/au` tfvars, this checker extends to `cloudflareRegionalServices`. Until then the field is on the catalog for application use and is pinned in the module, not at the cell root.
 
@@ -119,18 +128,22 @@ For each `apps/<name>/` that has `wrangler.json` or `wrangler.jsonc`:
 
 1. **Missing `worker.meta.json` fails.** Do not skip, do not treat as regional. Deleting the meta file is otherwise the bypass. `worker-config` already fails this (`missing worker.meta.json`; fixture `missing-class` includes `apps/orphan` with Wrangler and no meta file). This checker **also** fails; it does not assume the other job ran.
 2. Missing or unknown `class` fails (same fail-closed reason). `worker-config` already rejects those; this checker does not skip them either.
-3. `class === "regional"`: import rule does not apply (regional Workers may import db/crypto).
+3. `class === "regional"`: import rule does not apply (regional Workers may import db/crypto). **No live regional app exists yet.** The must-pass fixture is the only coverage until `api-au-skeleton`.
 4. `class === "global-no-pii"`: the app must not **reach** a `regionalOnlyPackages` name.
+
+**Scan set.** Every non-test TypeScript file under the **app directory** (not only `src/`). Skip `node_modules`, `dist`, `coverage`, `test`, `tests`, `.turbo`, `fixtures`, and `*.test.ts`. Wrangler `main` is not assumed to be `src/index.ts`; a Worker with `main: "worker/entry.ts"` must still be scanned. Reached workspace packages use the same scan set under that package directory.
 
 **Reach** means any of:
 
-**A. Direct specifier** on the app’s `src/**/*.ts` (skip `*.test.ts`, `test/`, `tests/`): exact `@community-hub/db` or `@community-hub/crypto`, value or `import type`, static `import` / `import()` / `export … from`.
+**A. Direct specifier** (value or `import type`, static `import` / `export … from`, and `import("literal")`): exact `@community-hub/db` or `@community-hub/crypto`.
 
 **B. Deep specifier:** `@community-hub/db/…` or `@community-hub/crypto/…` (prefix `name + "/"`). Exact-name matching is not enough.
 
 **C. Relative path:** resolve against the importing file. If the resolved path is inside that package’s directory (`packages/db/**`, `packages/crypto/**`), fail. `../../packages/crypto/src/index.ts` is the bypass this clause exists for.
 
-**D. Transitive workspace graph.** Start from workspace packages the app’s src actually imports. Resolve `@community-hub/<pkg>` to `packages/<pkg>` or `apps/<pkg>` under `root` when that directory exists and `package.json` `"name"` matches. Fixtures do not need `pnpm-workspace.yaml` or an install. Follow each reached package’s `package.json` `dependencies` and `peerDependencies` whose version is the `workspace:` protocol, transitively. `devDependencies` are not followed (not what Wrangler ships). If a reached package’s `name` is in `regionalOnlyPackages`, fail. Then scan each reached **workspace** package’s `src` with A–C as well, so a helper that relative-imports crypto without declaring it still fails.
+**D. Transitive workspace graph.** Start from workspace packages those files actually import. Resolve `@community-hub/<pkg>` to `packages/<pkg>` or `apps/<pkg>` under `root` when that directory exists and `package.json` `"name"` matches. Fixtures do not need `pnpm-workspace.yaml` or an install. Follow each reached package’s `package.json` `dependencies` and `peerDependencies` whose version is the `workspace:` protocol, transitively. `devDependencies` are not followed (not what Wrangler ships). If a reached package’s `name` is in `regionalOnlyPackages`, fail. Then scan each reached **workspace** package with A–C and E as well, so a helper that relative-imports crypto without declaring it still fails.
+
+**E. Non-literal dynamic import.** `import(name)` where the specifier is not a string literal (variable, concatenation, template with substitution) fails inside a `global-no-pii` app and inside every workspace package it reaches. Literal `import("@community-hub/kernel")` is fine and is handled by A–D. Nothing in the repo does this today; it is the one-line bypass if left open.
 
 Do not follow npm registry dependencies (`zod`, `drizzle-orm`, …).
 
@@ -160,6 +173,7 @@ Consolidated. Each item is independently testable; the plan maps one commit to a
 - Enabled JSON keys are exactly `["au"]` and match `EnabledRegionId`.
 - `getCell("au")` returns `awsRegion: "ap-southeast-2"`, `enabled: true`, `id: "au"`.
 - `getCell("ca")` is a type error (`@ts-expect-error`).
+- `getCell("ca" as EnabledRegionId)` throws at runtime.
 - `parseRegionId("au")` returns `"au"`; `parseRegionId("ca")`, `parseRegionId("us")`, `parseRegionId("")`, `parseRegionId("nope")` throw.
 - Workerd: import public entry, `getCell("au").awsRegion === "ap-southeast-2"`. Stop and report if JSON import fails in the pool.
 - `package.json` production `dependencies` do not include Cloudflare or AWS SDKs, db, or crypto.
@@ -179,13 +193,16 @@ Must-fail:
 - `global-no-pii` app relative-imports `../../packages/crypto/src/…`.
 - `global-no-pii` app imports a workspace helper whose `package.json` `dependencies` include `@community-hub/crypto` (indirect).
 - App with Wrangler and **no** `worker.meta.json`.
+- Empty tree (no `infra/regions/`, no enabled cells, and/or no Wrangler apps) — honest notice, `ok: false`.
+- `global-no-pii` app (or a reached workspace package) uses `import(name)` with a non-literal specifier.
+- `global-no-pii` app whose only TypeScript is outside `src/` (e.g. `worker/entry.ts`) imports crypto — proves the scan is not `src/`-only.
 
 Must-pass:
 
 - Live-shaped AU catalog matching tfvars + both backends `ap-southeast-2`.
 - Disabled cell with a Terraform root.
 - Disabled cell with no Terraform root.
-- `regional` Worker that imports db or crypto.
+- `regional` Worker that imports db or crypto (fixture-only until `api-au-skeleton`; no live regional app).
 - `global-no-pii` app that imports kernel / observability / residency only.
 
 **ESLint**
@@ -220,7 +237,10 @@ Must-pass:
 | Deleting `worker.meta.json` skips the rule | Missing meta fails; cite `worker-config`; own must-fail fixture |
 | Checker reads the live repo inside fixtures | `check(root)` only; mini-trees |
 | Handwritten `RegionId` drifts from JSON | `RegionId` is `keyof typeof catalog.cells` |
-| `EnabledRegionId` drifts from JSON `enabled` flags | JSON types `enabled` as `boolean`; test that enabled keys === the union |
+| `EnabledRegionId` drifts from JSON `enabled` flags | JSON types `enabled` as `boolean`; test that enabled keys === the union; `getCell` throws if the record is not enabled |
+| Empty `apps/` or `infra/regions/` after a refactor | Zero cell roots / zero enabled cells / zero Wrangler apps → notice and fail; empty-tree fixture |
+| `import(name)` bypasses specifier scan | Non-literal dynamic import fails on `global-no-pii` apps and reached packages; must-fail fixture |
+| Scan `src/` only; `main` is `worker/entry.ts` | Scan every non-test `.ts` under the app directory; fixture with crypto import outside `src/` |
 | JSON import fails in workerd; catalog duplicated in TS | Stop and report; no TS duplicate |
 | Catalog AU region `us-east-1` while Terraform stays Sydney | Cross-check tfvars **and** backend; mismatch fixture including tfvars-vs-backend |
 | Enabling `ca` in JSON without a cell root | Enabled-without-root must-fail |
