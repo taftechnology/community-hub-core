@@ -11,6 +11,7 @@ const mustFail = [
   "missing-class",
   "unknown-class",
   "missing-preview-urls",
+  "kernel-import-no-als",
 ] as const;
 
 const mustPass = ["valid-global", "valid-regional"] as const;

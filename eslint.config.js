@@ -50,6 +50,42 @@ export default tseslint.config(
     },
   },
   {
+    files: ["**/packages/kernel/**/*.{js,ts}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@community-hub/db",
+              message: "kernel must not import @community-hub/db (including import type).",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["**/apps/gateway/**/*.{js,ts}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@community-hub/db",
+              message: "gateway must not import @community-hub/db (including import type).",
+            },
+            {
+              name: "@community-hub/kernel/module",
+              message: "gateway must not import @community-hub/kernel/module.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: [
       "**/*.test.ts",
       "**/src/testing.ts",

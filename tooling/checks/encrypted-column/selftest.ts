@@ -15,6 +15,7 @@ const DISABLE = "@community-hub/no-restricted-disable";
 const TS_IGNORE = "@community-hub/no-ts-ignore";
 const TESTING = "@community-hub/no-crypto-testing-import";
 const PAYLOAD = "@community-hub/no-event-payload";
+const RESTRICTED = "no-restricted-imports";
 
 type Hit = { ruleId: string | null; message: string; line: number; fatal?: boolean | undefined };
 
@@ -71,6 +72,8 @@ const mustFail: { file: string; ruleId: string; count: number }[] = [
   { file: "fail/event-extend.ts", ruleId: PAYLOAD, count: 1 },
   { file: "fail/event-nested-string.ts", ruleId: PAYLOAD, count: 1 },
   { file: "fail/event-invalid-name.ts", ruleId: PAYLOAD, count: 1 },
+  { file: "fail/apps/gateway/src/import-db.ts", ruleId: RESTRICTED, count: 1 },
+  { file: "fail/apps/gateway/src/import-type-db.ts", ruleId: RESTRICTED, count: 1 },
 ];
 
 const mustPass = [
@@ -118,6 +121,42 @@ beforeAll(() => {
           [TS_IGNORE]: "error",
           [TESTING]: "error",
           [PAYLOAD]: "error",
+        },
+      },
+      {
+        files: ["**/packages/kernel/**"],
+        rules: {
+          "no-restricted-imports": [
+            "error",
+            {
+              paths: [
+                {
+                  name: "@community-hub/db",
+                  message: "kernel must not import @community-hub/db (including import type).",
+                },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        files: ["**/apps/gateway/**"],
+        rules: {
+          "no-restricted-imports": [
+            "error",
+            {
+              paths: [
+                {
+                  name: "@community-hub/db",
+                  message: "gateway must not import @community-hub/db (including import type).",
+                },
+                {
+                  name: "@community-hub/kernel/module",
+                  message: "gateway must not import @community-hub/kernel/module.",
+                },
+              ],
+            },
+          ],
         },
       },
     ],
@@ -177,7 +216,8 @@ describe("encrypted-column ESLint fixtures", () => {
           hit.ruleId === DISABLE ||
           hit.ruleId === TS_IGNORE ||
           hit.ruleId === TESTING ||
-          hit.ruleId === PAYLOAD,
+          hit.ruleId === PAYLOAD ||
+          hit.ruleId === RESTRICTED,
       );
       expect(ours, JSON.stringify(hits)).toEqual([]);
     });
