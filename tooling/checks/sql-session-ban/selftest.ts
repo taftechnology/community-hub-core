@@ -19,8 +19,16 @@ const mustFail = [
   "set-app-to",
   "set-role-in-modules",
   "set-search-path",
+  "set-local-timeout-in-src",
+  "set-local-work-mem-in-drizzle",
+  "set-lock-timeout-in-drizzle",
 ] as const;
-const mustPass = ["valid", "set-local-in-comment", "ordinary-set-words"] as const;
+const mustPass = [
+  "valid",
+  "set-local-in-comment",
+  "ordinary-set-words",
+  "set-local-timeout-in-drizzle",
+] as const;
 
 describe("sql-session-ban check fixtures", () => {
   for (const name of mustFail) {
