@@ -3,7 +3,7 @@
 |                   |                                                                                                                              |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | **Status**        | **Approved** 2026-09-17 — baseline for implementation. Changes go through an ADR in `docs/adr/` ([AGENTS.md](AGENTS.md) §13) |
-| **Last updated**  | 2026-09-19 (revision 18: kernel-runtime — defineModule, outbox, §8.3 enforcement)                                            |
+| **Last updated**  | 2026-09-20 (revision 19: packages-residency — cell catalog, residency-cell checker)                                          |
 | **Scope**         | `community-hub-core` (the multi-tenant SaaS) and its contracts with the mobile apps, GivingJar and Jellycube                 |
 | **Launch region** | Australia (`au`). Canada, EU and US are designed for but not deployed                                                        |
 
@@ -354,7 +354,7 @@ This sequence is an organisation-scoped API request. Identity OTP and platform-s
 
 1. Provision `infra/regions/<region>/` (Postgres, KMS, S3, Tunnel connectors).
 2. Add the wrangler environment for each regional Worker.
-3. Add the region to `packages/residency` and enable it in the control plane.
+3. Add the region to `packages/residency/src/catalog.json` with `enabled: true`, provision `infra/regions/<id>/`, and pass `residency-cell` (catalog `awsRegion` matches that root's tfvars and backends). Control-plane enablement is a later chunk.
 4. Register regional hostnames with the matching Regional Services region; for EU/US, use R2 and Durable Object jurisdictions.
 5. Run the cross-tenant and residency test suites against the new cell.
 
@@ -509,8 +509,8 @@ export default defineModule({
 - A module never reads or writes another module's tables.
 - `domain/` has no imports from Hono, Drizzle, Cloudflare bindings or adapters.
 - Adapters depend on ports; modules never import adapters.
-- Global apps (`gateway`, `control-plane`) cannot import modules that declare personal-data classes.
-- Enforced with ESLint `no-restricted-imports` (global apps and kernel must not import `@community-hub/db`, including `import type`) plus checkers (worker-config, schema-rls, event-names, sql-session-ban). dependency-cruiser is omitted until it has a real input and a must-fail fixture.
+- Global apps (`gateway`, later `control-plane`, `ops-console`) cannot import packages the residency catalog marks `regionalOnlyPackages` (`@community-hub/db` and `@community-hub/crypto` today), including `import type`, deep specifiers, relative paths, transitive `workspace:` dependencies, and non-literal `import()`. Enforcement is `residency-cell` keyed off `worker.meta.json` `class: global-no-pii`, plus ESLint `no-restricted-imports` on `apps/gateway` as a fast path. Worker class vocabulary stays in `worker.meta.json` / `worker-config` (ADR 0001).
+- Also still: kernel must not import `@community-hub/db`; checkers worker-config, schema-rls, event-names, sql-session-ban, residency-payload, residency-cell. dependency-cruiser omitted until it has a real input and a must-fail fixture.
 
 ### 8.4 Conventions
 

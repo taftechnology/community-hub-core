@@ -25,7 +25,7 @@ Cell configuration and the “global Workers cannot import personal-data modules
 - `apps/api-au`, `exec`, `jobs`, `webhooks`, control-plane, ops-console.
 - Empty `infra/regions/ca|eu|us/` roots.
 - Passing `region_key` from AU tfvars (that is `api-au-skeleton`). Cross-checking `cloudflareRegionalServices` waits on that (known gap below).
-- Residency *integration* suite (Hyperdrive, Regional Services hostname, live cell). This chunk is catalog + static guards.
+- Residency _integration_ suite (Hyperdrive, Regional Services hostname, live cell). This chunk is catalog + static guards.
 - Changing Worker class vocabulary, ADR 0001, or `worker-config` preview/ALS rules.
 - Module-manifest `dataClasses` import bans (no feature modules yet).
 - Extending `residency-payload`. dependency-cruiser.
@@ -35,13 +35,13 @@ Cell configuration and the “global Workers cannot import personal-data modules
 
 ### Split
 
-| Piece | Owns | Must not |
-| ----- | ---- | -------- |
-| `@community-hub/residency` | Catalog types, `getCell`, `parseRegionId`, `regionalOnlyPackages` | Import Cloudflare/AWS SDKs, db, or crypto (value or type) |
-| `catalog.json` | Cell records and the regional-only package list | Hostnames or secrets |
-| `residency-cell` checker | Catalog ↔ `infra/regions/<id>/` AWS region; global Worker import graph | Own the Worker class enum; skip a Worker that has Wrangler and no `worker.meta.json` |
-| `worker-config` | Wrangler flags, class allow-list, ALS | Package scope |
-| Gateway ESLint | Fast-path ban of db and crypto by folder | Be the only enforcement |
+| Piece                      | Owns                                                                   | Must not                                                                             |
+| -------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `@community-hub/residency` | Catalog types, `getCell`, `parseRegionId`, `regionalOnlyPackages`      | Import Cloudflare/AWS SDKs, db, or crypto (value or type)                            |
+| `catalog.json`             | Cell records and the regional-only package list                        | Hostnames or secrets                                                                 |
+| `residency-cell` checker   | Catalog ↔ `infra/regions/<id>/` AWS region; global Worker import graph | Own the Worker class enum; skip a Worker that has Wrangler and no `worker.meta.json` |
+| `worker-config`            | Wrangler flags, class allow-list, ALS                                  | Package scope                                                                        |
+| Gateway ESLint             | Fast-path ban of db and crypto by folder                               | Be the only enforcement                                                              |
 
 **Worker class stays in `worker.meta.json` / `worker-config` / ADR 0001** (`global-no-pii` | `regional`). Preview policy and package scope are different questions. Residency does not export a Worker class enum. `residency-cell` reads the same `class` field `worker-config` already requires.
 
@@ -51,11 +51,11 @@ Path: `packages/residency/src/catalog.json`. Keys under `cells` are exactly `au`
 
 Each cell record has exactly these fields (no endpoints, buckets, URLs):
 
-| Field | Type | AU (enabled) | Stubs (`ca`, `eu`, `us`) |
-| ----- | ---- | ------------ | ------------------------ |
-| `enabled` | boolean | `true` | `false` |
-| `cloudflareRegionalServices` | string | `au` (Cloudflare `region_key`) | placeholder; not a deploy decision |
-| `awsRegion` | string | `ap-southeast-2` | placeholder; not a deploy decision |
+| Field                        | Type    | AU (enabled)                   | Stubs (`ca`, `eu`, `us`)           |
+| ---------------------------- | ------- | ------------------------------ | ---------------------------------- |
+| `enabled`                    | boolean | `true`                         | `false`                            |
+| `cloudflareRegionalServices` | string  | `au` (Cloudflare `region_key`) | placeholder; not a deploy decision |
+| `awsRegion`                  | string  | `ap-southeast-2`               | placeholder; not a deploy decision |
 
 Stub AWS / Cloudflare values exist so the record shape is uniform. They must be non-empty strings; this chunk does not pin which strings. The checker does not read them until the cell is `enabled`. Phase 7 + a Terraform root is when they become truth.
 
@@ -99,20 +99,20 @@ Self-tests call `check(fixtureRoot)`. CI calls `check()` on the real repo.
 
 Scan `infra/regions/*/` directories that look like cell roots (contain `backend/` or `env/`). Ignore `infra/modules/`, `infra/bootstrap/`, `infra/global/`.
 
-| Situation | Result |
-| --------- | ------ |
-| Enabled catalog cell, no `infra/regions/<id>/` | fail |
-| Enabled catalog cell: root has no `env/*.tfvars` or no `backend/*.hcl` | fail |
-| Enabled catalog cell: `awsRegion` ≠ any `env/*.tfvars` `aws_region` | fail |
-| Enabled catalog cell: `awsRegion` ≠ any `backend/*.hcl` `region` | fail |
-| Enabled catalog cell: tfvars and backend disagree with each other (even if the catalog matches one) | fail |
-| `infra/regions/<id>/` exists, `<id>` not a key in `catalog.cells` | fail |
-| Disabled catalog cell, no Terraform root | pass |
-| Disabled catalog cell **with** a Terraform root | **pass** (`ca` / `eu` / `us` roots may land before the catalog flag flips) |
-| Live AU catalog `ap-southeast-2` vs live `infra/regions/au/` tfvars + backends | pass (day-one live input) |
-| Zero Terraform cell roots in the scanned tree | fail with a notice (not a silent pass) |
-| Zero enabled cells in the catalog | fail with a notice |
-| Zero apps with a Wrangler config in the scanned tree | fail with a notice |
+| Situation                                                                                           | Result                                                                     |
+| --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Enabled catalog cell, no `infra/regions/<id>/`                                                      | fail                                                                       |
+| Enabled catalog cell: root has no `env/*.tfvars` or no `backend/*.hcl`                              | fail                                                                       |
+| Enabled catalog cell: `awsRegion` ≠ any `env/*.tfvars` `aws_region`                                 | fail                                                                       |
+| Enabled catalog cell: `awsRegion` ≠ any `backend/*.hcl` `region`                                    | fail                                                                       |
+| Enabled catalog cell: tfvars and backend disagree with each other (even if the catalog matches one) | fail                                                                       |
+| `infra/regions/<id>/` exists, `<id>` not a key in `catalog.cells`                                   | fail                                                                       |
+| Disabled catalog cell, no Terraform root                                                            | pass                                                                       |
+| Disabled catalog cell **with** a Terraform root                                                     | **pass** (`ca` / `eu` / `us` roots may land before the catalog flag flips) |
+| Live AU catalog `ap-southeast-2` vs live `infra/regions/au/` tfvars + backends                      | pass (day-one live input)                                                  |
+| Zero Terraform cell roots in the scanned tree                                                       | fail with a notice (not a silent pass)                                     |
+| Zero enabled cells in the catalog                                                                   | fail with a notice                                                         |
+| Zero apps with a Wrangler config in the scanned tree                                                | fail with a notice                                                         |
 
 Parse tfvars / HCL with comment-stripping (quoted strings left intact), same idea as `terraform-invariants`. A commented-out correct `region` must not hide a wrong one.
 
@@ -230,27 +230,27 @@ Must-pass:
 
 ## Risks
 
-| Risk | Mitigation |
-| ---- | ---------- |
-| Direct-import scan misses a bundled dependency | Transitive `workspace:*` walk from app imports; must-fail indirect fixture |
-| Deep specifier or relative path bypasses exact name | Prefix `name/` and resolved-path-inside-package; fixture each |
-| Deleting `worker.meta.json` skips the rule | Missing meta fails; cite `worker-config`; own must-fail fixture |
-| Checker reads the live repo inside fixtures | `check(root)` only; mini-trees |
-| Handwritten `RegionId` drifts from JSON | `RegionId` is `keyof typeof catalog.cells` |
-| `EnabledRegionId` drifts from JSON `enabled` flags | JSON types `enabled` as `boolean`; test that enabled keys === the union; `getCell` throws if the record is not enabled |
-| Empty `apps/` or `infra/regions/` after a refactor | Zero cell roots / zero enabled cells / zero Wrangler apps → notice and fail; empty-tree fixture |
-| `import(name)` bypasses specifier scan | Non-literal dynamic import fails on `global-no-pii` apps and reached packages; must-fail fixture |
-| Scan `src/` only; `main` is `worker/entry.ts` | Scan every non-test `.ts` under the app directory; fixture with crypto import outside `src/` |
-| JSON import fails in workerd; catalog duplicated in TS | Stop and report; no TS duplicate |
-| Catalog AU region `us-east-1` while Terraform stays Sydney | Cross-check tfvars **and** backend; mismatch fixture including tfvars-vs-backend |
-| Enabling `ca` in JSON without a cell root | Enabled-without-root must-fail |
-| Stub Terraform landing blocked by the checker | Disabled + Terraform root is an explicit pass |
-| `cloudflareRegionalServices` never contradicted | Known gap; retire when `api-au-skeleton` passes `region_key` from tfvars. Module validation + `"ee"` test pin AU today |
-| ESLint glob forgets a new global app | Checker keys off class, not folder |
-| Checker imports `@community-hub/residency` and cannot see fixture catalogs | Read `packages/residency/src/catalog.json` from `root`; do not import the live package for the scan |
-| `devDependencies` on crypto fail a global app | Do not follow `devDependencies` |
-| Kernel later adds a crypto dependency | Transitive walk fails gateway on the next CI run |
-| Residency harness Wrangler scanned as a product Worker | Harness lives under `packages/residency`, not `apps/` |
+| Risk                                                                       | Mitigation                                                                                                             |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Direct-import scan misses a bundled dependency                             | Transitive `workspace:*` walk from app imports; must-fail indirect fixture                                             |
+| Deep specifier or relative path bypasses exact name                        | Prefix `name/` and resolved-path-inside-package; fixture each                                                          |
+| Deleting `worker.meta.json` skips the rule                                 | Missing meta fails; cite `worker-config`; own must-fail fixture                                                        |
+| Checker reads the live repo inside fixtures                                | `check(root)` only; mini-trees                                                                                         |
+| Handwritten `RegionId` drifts from JSON                                    | `RegionId` is `keyof typeof catalog.cells`                                                                             |
+| `EnabledRegionId` drifts from JSON `enabled` flags                         | JSON types `enabled` as `boolean`; test that enabled keys === the union; `getCell` throws if the record is not enabled |
+| Empty `apps/` or `infra/regions/` after a refactor                         | Zero cell roots / zero enabled cells / zero Wrangler apps → notice and fail; empty-tree fixture                        |
+| `import(name)` bypasses specifier scan                                     | Non-literal dynamic import fails on `global-no-pii` apps and reached packages; must-fail fixture                       |
+| Scan `src/` only; `main` is `worker/entry.ts`                              | Scan every non-test `.ts` under the app directory; fixture with crypto import outside `src/`                           |
+| JSON import fails in workerd; catalog duplicated in TS                     | Stop and report; no TS duplicate                                                                                       |
+| Catalog AU region `us-east-1` while Terraform stays Sydney                 | Cross-check tfvars **and** backend; mismatch fixture including tfvars-vs-backend                                       |
+| Enabling `ca` in JSON without a cell root                                  | Enabled-without-root must-fail                                                                                         |
+| Stub Terraform landing blocked by the checker                              | Disabled + Terraform root is an explicit pass                                                                          |
+| `cloudflareRegionalServices` never contradicted                            | Known gap; retire when `api-au-skeleton` passes `region_key` from tfvars. Module validation + `"ee"` test pin AU today |
+| ESLint glob forgets a new global app                                       | Checker keys off class, not folder                                                                                     |
+| Checker imports `@community-hub/residency` and cannot see fixture catalogs | Read `packages/residency/src/catalog.json` from `root`; do not import the live package for the scan                    |
+| `devDependencies` on crypto fail a global app                              | Do not follow `devDependencies`                                                                                        |
+| Kernel later adds a crypto dependency                                      | Transitive walk fails gateway on the next CI run                                                                       |
+| Residency harness Wrangler scanned as a product Worker                     | Harness lives under `packages/residency`, not `apps/`                                                                  |
 
 ## Out-of-band
 

@@ -43,19 +43,19 @@ In either case: **stop**. Do not duplicate the catalog in `.ts`. Do not drop the
 
 ## Tooling decisions this plan makes
 
-| Choice | Decision | Why |
-| ------ | -------- | --- |
-| Catalog path | `packages/residency/src/catalog.json` | `rootDir` emit includes it; checker path is stable |
-| Stub AWS/CF strings | `ca`: `ca-central-1` / `ca`; `eu`: `eu-central-1` / `ee`; `us`: `us-east-1` / `us` | Uniform record shape; not cross-checked; not a Phase 7 decision |
-| HCL parse | Small `assignmentValue` + comment-strip copied into this checker (do not import `terraform-invariants`) | Checkers stay independent |
-| Import scan | Copy and extend `worker-config`'s comment-strip / specifier walk; do not import that package | Same reason |
-| Non-literal `import()` | Fail unless the specifier is a `"…"` or `'…'` quote immediately inside `import(` | Templates and variables are the bypass |
-| Relative path | Resolved path is inside a directory already mapped from `regionalOnlyPackages` names | Do not hard-code `/packages/db/` or `/packages/crypto/` |
-| Typecheck tests | `tsc --build && tsc --noEmit -p tsconfig.test.json`; test tsconfig `types` includes `node` | Vitest strips types; `@ts-expect-error` is otherwise unenforced. Do not copy crypto's `tsconfig.test.json` include (it misses `test/*.test.ts`) |
-| App scan | Every non-test `.ts` under `apps/<name>/`, not `src/` only | Wrangler `main` is not guaranteed |
-| Wire `run.ts` | Task 4, after import-graph exists | Live tree must pass both jobs |
-| ESLint crypto | Task 5; folder glob on gateway; checker remains class-keyed | Fast path vs fail-closed |
-| Workerd | Same `src/**/*.test.ts` on a second vitest config, like crypto | Spec: JSON must survive a Worker bundle |
+| Choice                 | Decision                                                                                                | Why                                                                                                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Catalog path           | `packages/residency/src/catalog.json`                                                                   | `rootDir` emit includes it; checker path is stable                                                                                              |
+| Stub AWS/CF strings    | `ca`: `ca-central-1` / `ca`; `eu`: `eu-central-1` / `ee`; `us`: `us-east-1` / `us`                      | Uniform record shape; not cross-checked; not a Phase 7 decision                                                                                 |
+| HCL parse              | Small `assignmentValue` + comment-strip copied into this checker (do not import `terraform-invariants`) | Checkers stay independent                                                                                                                       |
+| Import scan            | Copy and extend `worker-config`'s comment-strip / specifier walk; do not import that package            | Same reason                                                                                                                                     |
+| Non-literal `import()` | Fail unless the specifier is a `"…"` or `'…'` quote immediately inside `import(`                        | Templates and variables are the bypass                                                                                                          |
+| Relative path          | Resolved path is inside a directory already mapped from `regionalOnlyPackages` names                    | Do not hard-code `/packages/db/` or `/packages/crypto/`                                                                                         |
+| Typecheck tests        | `tsc --build && tsc --noEmit -p tsconfig.test.json`; test tsconfig `types` includes `node`              | Vitest strips types; `@ts-expect-error` is otherwise unenforced. Do not copy crypto's `tsconfig.test.json` include (it misses `test/*.test.ts`) |
+| App scan               | Every non-test `.ts` under `apps/<name>/`, not `src/` only                                              | Wrangler `main` is not guaranteed                                                                                                               |
+| Wire `run.ts`          | Task 4, after import-graph exists                                                                       | Live tree must pass both jobs                                                                                                                   |
+| ESLint crypto          | Task 5; folder glob on gateway; checker remains class-keyed                                             | Fast path vs fail-closed                                                                                                                        |
+| Workerd                | Same `src/**/*.test.ts` on a second vitest config, like crypto                                          | Spec: JSON must survive a Worker bundle                                                                                                         |
 
 **Rollback:** revert the PR. No Terraform apply. No RDS. No Worker class change.
 
@@ -63,28 +63,28 @@ In either case: **stop**. Do not duplicate the catalog in `.ts`. Do not drop the
 
 ## File map
 
-| Path | Role |
-| ---- | ---- |
-| `packages/residency/src/catalog.json` | Cells + `regionalOnlyPackages` |
-| `packages/residency/src/index.ts` | `getCell`, `parseRegionId`, types, re-export list |
-| `packages/residency/src/index.test.ts` | Schema, types lock, runtime throw (Node + workerd) |
-| `packages/residency/test/package-graph.test.ts` | No production dependencies (Node only) |
-| `packages/residency/tsconfig.test.json` | Type-checks tests (`@ts-expect-error` + `node:fs`) |
-| `packages/residency/package.json` | `@community-hub/residency` |
-| `packages/residency/tsconfig.json` | `resolveJsonModule`, include JSON |
-| `packages/residency/wrangler.jsonc` | Test harness only (not under `apps/`) |
-| `packages/residency/vitest.config.ts` | Node |
-| `packages/residency/vitest.worker.config.ts` | workerd |
-| `tsconfig.json` | Add project reference |
-| `tooling/checks/residency-cell/check.ts` | Catalog ↔ Terraform + import graph |
-| `tooling/checks/residency-cell/selftest.ts` | Fixture matrix |
-| `tooling/checks/residency-cell/fixtures/` | Mini-repos |
-| `tooling/checks/run.ts` | Wire the checker |
-| `eslint.config.js` | Gateway crypto ban |
-| `tooling/checks/encrypted-column/` | Gateway-shaped crypto import fixtures |
-| `architecture.md` | §8.3, §7.5 |
-| `AGENTS.md` | §10 checker list |
-| `docs/roadmap.md` | Last commit |
+| Path                                            | Role                                               |
+| ----------------------------------------------- | -------------------------------------------------- |
+| `packages/residency/src/catalog.json`           | Cells + `regionalOnlyPackages`                     |
+| `packages/residency/src/index.ts`               | `getCell`, `parseRegionId`, types, re-export list  |
+| `packages/residency/src/index.test.ts`          | Schema, types lock, runtime throw (Node + workerd) |
+| `packages/residency/test/package-graph.test.ts` | No production dependencies (Node only)             |
+| `packages/residency/tsconfig.test.json`         | Type-checks tests (`@ts-expect-error` + `node:fs`) |
+| `packages/residency/package.json`               | `@community-hub/residency`                         |
+| `packages/residency/tsconfig.json`              | `resolveJsonModule`, include JSON                  |
+| `packages/residency/wrangler.jsonc`             | Test harness only (not under `apps/`)              |
+| `packages/residency/vitest.config.ts`           | Node                                               |
+| `packages/residency/vitest.worker.config.ts`    | workerd                                            |
+| `tsconfig.json`                                 | Add project reference                              |
+| `tooling/checks/residency-cell/check.ts`        | Catalog ↔ Terraform + import graph                 |
+| `tooling/checks/residency-cell/selftest.ts`     | Fixture matrix                                     |
+| `tooling/checks/residency-cell/fixtures/`       | Mini-repos                                         |
+| `tooling/checks/run.ts`                         | Wire the checker                                   |
+| `eslint.config.js`                              | Gateway crypto ban                                 |
+| `tooling/checks/encrypted-column/`              | Gateway-shaped crypto import fixtures              |
+| `architecture.md`                               | §8.3, §7.5                                         |
+| `AGENTS.md`                                     | §10 checker list                                   |
+| `docs/roadmap.md`                               | Last commit                                        |
 
 Do not edit merged specs/plans. Do not add `infra/regions/ca`.
 
@@ -97,9 +97,7 @@ export type RegionId = keyof typeof catalog.cells; // "au" | "ca" | "eu" | "us"
 export type EnabledRegionId = "au";
 export type Cell = (typeof catalog.cells)[RegionId] & { id: RegionId };
 
-export declare function getCell(
-  id: EnabledRegionId,
-): Cell & { id: EnabledRegionId };
+export declare function getCell(id: EnabledRegionId): Cell & { id: EnabledRegionId };
 export declare function parseRegionId(id: string): EnabledRegionId;
 export declare const regionalOnlyPackages: readonly string[];
 ```
@@ -188,12 +186,7 @@ Root `tsconfig.json` `references`: add `{ "path": "./packages/residency" }` next
 ```ts
 import { describe, expect, it } from "vitest";
 import catalog from "./catalog.json" with { type: "json" };
-import {
-  getCell,
-  parseRegionId,
-  regionalOnlyPackages,
-  type EnabledRegionId,
-} from "./index.js";
+import { getCell, parseRegionId, regionalOnlyPackages, type EnabledRegionId } from "./index.js";
 
 describe("catalog.json", () => {
   it("has exactly au, ca, eu, us with the required fields", () => {
@@ -355,16 +348,16 @@ Apply the spec table. Enabled cell with no matching root fails even when another
 
 **Fixtures:**
 
-| Fixture | Tree | Expect |
-| ------- | ---- | ------ |
-| `empty-tree/` | Catalog present, **every** cell `enabled: false`; no `infra/regions/`; no `apps/` | fail, `notice` matches `/zero/i`, no missing-catalog violation |
-| `missing-catalog/` | No `packages/residency/src/catalog.json`; **has** matching AU terraform + a Wrangler app (so zero-input would not fire if the catalog existed) | fail, violation message `missing catalog.json`, `notice` undefined |
-| `aws-mismatch/` | AU catalog `us-east-1`, tfvars+backend `ap-southeast-2` + Wrangler | fail |
-| `tfvars-backend-disagree/` | tfvars `ap-southeast-2`, backend `us-east-1` + Wrangler | fail |
-| `enabled-without-root/` | au enabled, only `infra/regions/ca/` present + Wrangler | fail |
-| `unknown-root/` | `infra/regions/jp/` and no catalog key `jp` (still include au enabled + matching `infra/regions/au/` + Wrangler) | fail |
-| `valid-au/` | Mini copy of live AU (`ap-southeast-2` in both tfvars and both backends) + disabled `ca` with no terraform + Wrangler | pass |
-| `disabled-with-root/` | au matching + `infra/regions/ca/` present, catalog `ca.enabled: false` + Wrangler | pass |
+| Fixture                    | Tree                                                                                                                                           | Expect                                                             |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `empty-tree/`              | Catalog present, **every** cell `enabled: false`; no `infra/regions/`; no `apps/`                                                              | fail, `notice` matches `/zero/i`, no missing-catalog violation     |
+| `missing-catalog/`         | No `packages/residency/src/catalog.json`; **has** matching AU terraform + a Wrangler app (so zero-input would not fire if the catalog existed) | fail, violation message `missing catalog.json`, `notice` undefined |
+| `aws-mismatch/`            | AU catalog `us-east-1`, tfvars+backend `ap-southeast-2` + Wrangler                                                                             | fail                                                               |
+| `tfvars-backend-disagree/` | tfvars `ap-southeast-2`, backend `us-east-1` + Wrangler                                                                                        | fail                                                               |
+| `enabled-without-root/`    | au enabled, only `infra/regions/ca/` present + Wrangler                                                                                        | fail                                                               |
+| `unknown-root/`            | `infra/regions/jp/` and no catalog key `jp` (still include au enabled + matching `infra/regions/au/` + Wrangler)                               | fail                                                               |
+| `valid-au/`                | Mini copy of live AU (`ap-southeast-2` in both tfvars and both backends) + disabled `ca` with no terraform + Wrangler                          | pass                                                               |
+| `disabled-with-root/`      | au matching + `infra/regions/ca/` present, catalog `ca.enabled: false` + Wrangler                                                              | pass                                                               |
 
 - [ ] **Step 1: RED** — `selftest.ts` loops must-fail / must-pass names calling `check(path.join(fixturesDir, name))`. Run `pnpm test --filter @community-hub/check-residency-cell`. Expected: FAIL.
 
@@ -401,21 +394,21 @@ Non-literal `import(`: after stripping comments, `import` + `(` + not a quoted s
 
 **New fixtures** (each includes the valid AU terraform trio + catalog with au enabled):
 
-| Fixture | Expect |
-| ------- | ------ |
-| `import-db/` | fail |
-| `import-crypto/` | fail |
-| `import-type-crypto/` | fail |
-| `import-deep-db/` `from "@community-hub/db/foo"` | fail |
-| `import-relative-crypto/` file at `apps/edge/worker/entry.ts` importing `../../../packages/crypto/src/index.ts` | fail |
-| `import-transitive-crypto/` app imports `@community-hub/helper`; `packages/helper/package.json` has `"@community-hub/crypto": "workspace:*"` | fail |
-| `missing-meta/` Wrangler, no `worker.meta.json` | fail |
-| `dynamic-nonliteral/` `const name = "@community-hub/kernel"; await import(name);` | fail |
-| `entry-outside-src/` `worker/entry.ts` imports crypto, no `src/` | fail |
-| `regional-imports-db/` `class: regional`, imports db | pass |
-| `global-safe/` imports only a stub `@community-hub/kernel` (fixture-local package, no crypto dep) | pass |
-| `dynamic-literal/` `await import("@community-hub/kernel")` | pass |
-| `import-call-in-string/` source contains the characters `import(` only inside a string and a JSDoc block, no real `import(` call | pass |
+| Fixture                                                                                                                                      | Expect |
+| -------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| `import-db/`                                                                                                                                 | fail   |
+| `import-crypto/`                                                                                                                             | fail   |
+| `import-type-crypto/`                                                                                                                        | fail   |
+| `import-deep-db/` `from "@community-hub/db/foo"`                                                                                             | fail   |
+| `import-relative-crypto/` file at `apps/edge/worker/entry.ts` importing `../../../packages/crypto/src/index.ts`                              | fail   |
+| `import-transitive-crypto/` app imports `@community-hub/helper`; `packages/helper/package.json` has `"@community-hub/crypto": "workspace:*"` | fail   |
+| `missing-meta/` Wrangler, no `worker.meta.json`                                                                                              | fail   |
+| `dynamic-nonliteral/` `const name = "@community-hub/kernel"; await import(name);`                                                            | fail   |
+| `entry-outside-src/` `worker/entry.ts` imports crypto, no `src/`                                                                             | fail   |
+| `regional-imports-db/` `class: regional`, imports db                                                                                         | pass   |
+| `global-safe/` imports only a stub `@community-hub/kernel` (fixture-local package, no crypto dep)                                            | pass   |
+| `dynamic-literal/` `await import("@community-hub/kernel")`                                                                                   | pass   |
+| `import-call-in-string/` source contains the characters `import(` only inside a string and a JSDoc block, no real `import(` call             | pass   |
 
 Live `check()` with no args must pass on this repo (gateway + `infra/regions/au/` + real catalog).
 
@@ -501,26 +494,26 @@ Refs: docs/plans/2026-09-20-packages-residency.md task 6
 
 ## Spec coverage
 
-| Spec item | Task |
-| --------- | ---- |
-| `catalog.json`, derived `RegionId`, handwritten `EnabledRegionId` + lock test | 1 |
-| `getCell` / `parseRegionId`; runtime throw on stub | 1 |
-| `@ts-expect-error` via `tsconfig.test.json` two-part typecheck | 1 |
-| Root `tsconfig.json` reference | 1 |
-| No Cloudflare/AWS/db/crypto deps (`test/package-graph.test.ts` under test tsconfig with `types: ["node", …]`) | 1 |
-| Workerd JSON import; stop-and-report | 2 |
-| Catalog ↔ Terraform AWS region; tfvars vs backend | 3 |
-| Zero-input notice; empty-tree (all cells disabled) | 3 |
-| Missing `catalog.json` (separate fixture, no notice) | 3 |
-| Disabled cell with Terraform root allowed | 3 |
-| Direct / type / deep / relative / transitive imports | 4 |
-| Relative path uses resolved package dirs, not `/packages/db/` strings | 4 |
-| Non-literal `import()`; must-pass literal `import("…")` and `import(` in a string | 4 |
-| Scan whole app directory (`worker/entry.ts`) | 4 |
-| Missing `worker.meta.json` fails | 4 |
-| `regional` fixture-only pass | 4 |
-| Wire `check:boundaries` | 4 |
-| Gateway ESLint crypto | 5 |
-| Architecture §8.3 / §7.5, AGENTS §10, roadmap | 6 |
-| Gateway `/health` unchanged | 6 (re-run) |
-| `cloudflareRegionalServices` not cross-checked | out (documented) |
+| Spec item                                                                                                     | Task             |
+| ------------------------------------------------------------------------------------------------------------- | ---------------- |
+| `catalog.json`, derived `RegionId`, handwritten `EnabledRegionId` + lock test                                 | 1                |
+| `getCell` / `parseRegionId`; runtime throw on stub                                                            | 1                |
+| `@ts-expect-error` via `tsconfig.test.json` two-part typecheck                                                | 1                |
+| Root `tsconfig.json` reference                                                                                | 1                |
+| No Cloudflare/AWS/db/crypto deps (`test/package-graph.test.ts` under test tsconfig with `types: ["node", …]`) | 1                |
+| Workerd JSON import; stop-and-report                                                                          | 2                |
+| Catalog ↔ Terraform AWS region; tfvars vs backend                                                             | 3                |
+| Zero-input notice; empty-tree (all cells disabled)                                                            | 3                |
+| Missing `catalog.json` (separate fixture, no notice)                                                          | 3                |
+| Disabled cell with Terraform root allowed                                                                     | 3                |
+| Direct / type / deep / relative / transitive imports                                                          | 4                |
+| Relative path uses resolved package dirs, not `/packages/db/` strings                                         | 4                |
+| Non-literal `import()`; must-pass literal `import("…")` and `import(` in a string                             | 4                |
+| Scan whole app directory (`worker/entry.ts`)                                                                  | 4                |
+| Missing `worker.meta.json` fails                                                                              | 4                |
+| `regional` fixture-only pass                                                                                  | 4                |
+| Wire `check:boundaries`                                                                                       | 4                |
+| Gateway ESLint crypto                                                                                         | 5                |
+| Architecture §8.3 / §7.5, AGENTS §10, roadmap                                                                 | 6                |
+| Gateway `/health` unchanged                                                                                   | 6 (re-run)       |
+| `cloudflareRegionalServices` not cross-checked                                                                | out (documented) |

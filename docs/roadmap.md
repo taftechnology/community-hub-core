@@ -21,9 +21,9 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 |              |                      |
 | ------------ | -------------------- |
 | Phase        | 0 — Foundations      |
-| Last shipped | `kernel-runtime`     |
-| Next chunk   | `packages-residency` |
-| Phase 0      | 5 / 10 done          |
+| Last shipped | `packages-residency` |
+| Next chunk   | `packages-ui`        |
+| Phase 0      | 6 / 10 done          |
 | Later phases | not started          |
 
 Update the snapshot and the row in the **same PR**, last commit on the chunk branch, before the PR opens. Do not defer to a follow-up chore after merge. Do not put implementer reports here ([AGENTS.md](../AGENTS.md) §5).
@@ -53,7 +53,7 @@ Architecture: monorepo, CI, Terraform, kernel, residency, db with RLS, crypto, o
 | done        | `packages-db`            | Privileged bootstrap, wrapped Drizzle runner, transaction-local `set_config`, RLS. Spec `2026-09-18-packages-db`. |
 | done        | `packages-crypto`        | AES-256-GCM, KMS wrap, blind indexes. Synthetic data only. Spec `2026-09-18-packages-crypto`.                     |
 | done        | `kernel-runtime`         | `defineModule`, request context, DI, outbox. Keeps `healthPayload`. Spec `2026-09-19-kernel-runtime`.             |
-| not started | `packages-residency`     | Cell config; global Workers cannot import personal-data modules.                                                  |
+| done        | `packages-residency`     | Cell config; global Workers cannot import personal-data modules. Spec `2026-09-20-packages-residency`.            |
 | not started | `packages-ui`            | shadcn copied into the repo + tokens (D16). No product screens.                                                   |
 | not started | `audit-log`              | Tamper-evident append. First events when identity writes.                                                         |
 | not started | `api-au-skeleton`        | Regional Worker, `class: regional`, `preview_urls: false`, health through kernel.                                 |
@@ -198,7 +198,7 @@ From architecture §26. Do not invent answers in a spec.
 
 ## Next spec
 
-The next approved chunk on this list is **`packages-residency`**, unless the human picks another remaining Phase 0 row.
+The next approved chunk on this list is **`packages-ui`**, unless the human picks another remaining Phase 0 row.
 
 ---
 
