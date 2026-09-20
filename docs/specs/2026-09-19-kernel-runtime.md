@@ -1,7 +1,7 @@
 # Spec: kernel runtime
 
 Slug: `kernel-runtime`
-Status: draft
+Status: approved (2026-09-19, Abdus Salam)
 Architecture refs: §6.3, §7.3 rules 1–2, §8.1–8.3, §12.1, §17, §18; ADR 0004; AGENTS.md §1 (1, 2, 3, 7), §6, §7, §8, §10
 Supersedes: —
 
