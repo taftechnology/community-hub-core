@@ -238,7 +238,19 @@ function parseQuoted(text: string, index: number): { value: string; end: number 
   return null;
 }
 
-function collectTsFiles(dir: string, out: string[]): void {
+const SOURCE_EXTENSIONS = [".tsx", ".mts", ".cts", ".jsx", ".mjs", ".cjs", ".ts", ".js"] as const;
+
+function isScannableSourceFile(name: string): boolean {
+  if (name.endsWith(".d.ts")) {
+    return false;
+  }
+  if (/\.test\.[^.]+$/.test(name)) {
+    return false;
+  }
+  return SOURCE_EXTENSIONS.some((ext) => name.endsWith(ext));
+}
+
+function collectSourceFiles(dir: string, out: string[]): void {
   if (!fs.existsSync(dir)) {
     return;
   }
@@ -248,14 +260,18 @@ function collectTsFiles(dir: string, out: string[]): void {
       if (SKIP_DIRS.has(entry.name)) {
         continue;
       }
-      collectTsFiles(full, out);
-    } else if (entry.isFile() && entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) {
+      collectSourceFiles(full, out);
+    } else if (entry.isFile() && isScannableSourceFile(entry.name)) {
       out.push(full);
     }
   }
 }
 
-function readPackageJson(dir: string): PackageJson {
+function readPackageJson(
+  dir: string,
+  root: string | undefined,
+  violations: ResidencyCellViolation[] | undefined,
+): PackageJson {
   const filePath = path.join(dir, "package.json");
   if (!fs.existsSync(filePath)) {
     return {};
@@ -263,11 +279,21 @@ function readPackageJson(dir: string): PackageJson {
   try {
     return JSON.parse(fs.readFileSync(filePath, "utf8")) as PackageJson;
   } catch {
+    if (root !== undefined && violations !== undefined) {
+      violations.push({
+        file: posixRel(root, filePath),
+        message: "package.json is not valid JSON",
+      });
+    }
     return {};
   }
 }
 
-function resolveCommunityHubPackageDir(root: string, pkgName: string): string | null {
+function resolveCommunityHubPackageDir(
+  root: string,
+  pkgName: string,
+  violations: ResidencyCellViolation[],
+): string | null {
   if (!pkgName.startsWith(COMMUNITY_HUB_PREFIX)) {
     return null;
   }
@@ -277,10 +303,46 @@ function resolveCommunityHubPackageDir(root: string, pkgName: string): string | 
     if (!fs.existsSync(path.join(dir, "package.json"))) {
       continue;
     }
-    const { name } = readPackageJson(dir);
+    const { name } = readPackageJson(dir, root, violations);
     if (name === pkgName) {
       return dir;
     }
+  }
+  return null;
+}
+
+function workspacePackageDirFromResolvedPath(
+  root: string,
+  resolvedPath: string,
+  violations: ResidencyCellViolation[],
+): string | null {
+  let dir = path.resolve(resolvedPath);
+  if (fs.existsSync(dir)) {
+    if (fs.statSync(dir).isFile()) {
+      dir = path.dirname(dir);
+    }
+  } else {
+    dir = path.dirname(dir);
+  }
+
+  const rootResolved = path.resolve(root);
+  let current = dir;
+  while (current.startsWith(rootResolved) && current !== rootResolved) {
+    const parent = path.dirname(current);
+    const parentBase = path.basename(parent);
+    if (parentBase === "packages" || parentBase === "apps") {
+      const grandparent = path.dirname(parent);
+      if (path.resolve(grandparent) === rootResolved) {
+        const pkgJsonPath = path.join(current, "package.json");
+        if (fs.existsSync(pkgJsonPath)) {
+          const { name } = readPackageJson(current, root, violations);
+          if (name) {
+            return current;
+          }
+        }
+      }
+    }
+    current = parent;
   }
   return null;
 }
@@ -297,15 +359,22 @@ function communityHubPackageNameFromSpecifier(specifier: string): string | null 
   return `${COMMUNITY_HUB_PREFIX}${rest.slice(0, slash)}`;
 }
 
-function workspacePackageFromSpecifier(root: string, specifier: string): string | null {
-  if (specifier.startsWith(".") || specifier.startsWith("/")) {
-    return null;
+function workspacePackageFromSpecifier(
+  root: string,
+  specifier: string,
+  filePath: string,
+  violations: ResidencyCellViolation[],
+): string | null {
+  const bare = stripImportQuery(specifier);
+  if (bare.startsWith(".") || bare.startsWith("/")) {
+    const resolved = bare.startsWith("/") ? bare : path.resolve(path.dirname(filePath), bare);
+    return workspacePackageDirFromResolvedPath(root, resolved, violations);
   }
-  const pkgName = communityHubPackageNameFromSpecifier(specifier);
+  const pkgName = communityHubPackageNameFromSpecifier(bare);
   if (!pkgName) {
     return null;
   }
-  return resolveCommunityHubPackageDir(root, pkgName);
+  return resolveCommunityHubPackageDir(root, pkgName, violations);
 }
 
 function stripImportQuery(specifier: string): string {
@@ -325,8 +394,12 @@ function isPathInsideRegionalDir(absDir: string, targetPath: string): boolean {
   return !rel.startsWith("..");
 }
 
-function collectWorkspaceDependencyNames(pkgDir: string): string[] {
-  const pkg = readPackageJson(pkgDir);
+function collectWorkspaceDependencyNames(
+  root: string,
+  pkgDir: string,
+  violations: ResidencyCellViolation[],
+): string[] {
+  const pkg = readPackageJson(pkgDir, root, violations);
   const names: string[] = [];
   for (const field of ["dependencies", "peerDependencies"] as const) {
     const deps = pkg[field];
@@ -573,7 +646,7 @@ function scanTsFilesForRegionalReach(
   workspaceSeen: Set<string>,
 ): void {
   const files: string[] = [];
-  collectTsFiles(dir, files);
+  collectSourceFiles(dir, files);
   for (const filePath of files) {
     const src = fs.readFileSync(filePath, "utf8");
     const relFile = posixRel(root, filePath);
@@ -585,7 +658,7 @@ function scanTsFilesForRegionalReach(
     }
     for (const spec of extractModuleSpecifiers(src)) {
       checkSpecifierAgainstRegional(root, filePath, spec, regionalNames, regionalDirs, violations);
-      const pkgDir = workspacePackageFromSpecifier(root, spec);
+      const pkgDir = workspacePackageFromSpecifier(root, spec, filePath, violations);
       if (pkgDir) {
         workspaceSeen.add(pkgDir);
       }
@@ -610,7 +683,7 @@ function walkTransitiveWorkspaceGraph(
     }
     visited.add(pkgDir);
 
-    const { name } = readPackageJson(pkgDir);
+    const { name } = readPackageJson(pkgDir, root, violations);
     const relPkg = posixRel(root, pkgDir);
     if (name && regionalNames.has(name)) {
       violations.push({
@@ -619,14 +692,14 @@ function walkTransitiveWorkspaceGraph(
       });
     }
 
-    for (const depName of collectWorkspaceDependencyNames(pkgDir)) {
+    for (const depName of collectWorkspaceDependencyNames(root, pkgDir, violations)) {
       if (regionalNames.has(depName)) {
         violations.push({
           file: `${relPkg}/package.json`,
           message: `global-no-pii Worker reaches regional-only package "${depName}" via workspace dependency graph`,
         });
       }
-      const depDir = resolveCommunityHubPackageDir(root, depName);
+      const depDir = resolveCommunityHubPackageDir(root, depName, violations);
       if (depDir && !visited.has(depDir)) {
         queue.push(depDir);
       }
@@ -650,7 +723,14 @@ function validateGlobalWorkerImportGraph(
   violations: ResidencyCellViolation[],
 ): void {
   const workspaceSeeds = new Set<string>();
-  scanTsFilesForRegionalReach(root, appDir, regionalNames, regionalDirs, violations, workspaceSeeds);
+  scanTsFilesForRegionalReach(
+    root,
+    appDir,
+    regionalNames,
+    regionalDirs,
+    violations,
+    workspaceSeeds,
+  );
   walkTransitiveWorkspaceGraph(root, workspaceSeeds, regionalNames, regionalDirs, violations);
 }
 
@@ -666,13 +746,17 @@ function readWorkerMeta(root: string, appDir: string): WorkerMeta | null {
   }
 }
 
-function validateImportGraph(root: string, catalog: Catalog, violations: ResidencyCellViolation[]): void {
+function validateImportGraph(
+  root: string,
+  catalog: Catalog,
+  violations: ResidencyCellViolation[],
+): void {
   const regionalOnly = catalog.regionalOnlyPackages ?? [];
   const regionalNames = new Set(regionalOnly);
   const regionalDirs = new Map<string, string>();
 
   for (const name of regionalOnly) {
-    const dir = resolveCommunityHubPackageDir(root, name);
+    const dir = resolveCommunityHubPackageDir(root, name, violations);
     if (!dir) {
       violations.push({
         file: CATALOG_REL,
@@ -903,6 +987,19 @@ function validateEnabledCell(
 
   const tfvarsUnique = uniqueSorted(tfvarsRegions);
   const backendUnique = uniqueSorted(backendRegions);
+
+  if (tfvarsFiles.length > 0 && tfvarsRegions.length === 0) {
+    violations.push({
+      file: regionRel,
+      message: `enabled cell "${cellId}" env/*.tfvars must set aws_region`,
+    });
+  }
+  if (backendFiles.length > 0 && backendRegions.length === 0) {
+    violations.push({
+      file: regionRel,
+      message: `enabled cell "${cellId}" backend/*.hcl must set region`,
+    });
+  }
 
   if (tfvarsUnique.length > 1) {
     violations.push({

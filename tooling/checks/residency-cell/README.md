@@ -14,16 +14,16 @@ Self-tests use mini-trees under `fixtures/` calling the same `check(root)` entry
 
 ## Rules
 
-| Finding | Result |
-| ------- | ------ |
-| Enabled catalog cell with no matching Terraform root | fail |
-| Enabled cell root missing `env/*.tfvars` or `backend/*.hcl` | fail |
-| Catalog `awsRegion` ≠ any tfvars `aws_region` or backend `region` | fail |
-| tfvars `aws_region` values disagree, or backends disagree, or tfvars vs backend disagree | fail |
-| Terraform root with no catalog key | fail |
-| Disabled cell with or without a Terraform root | pass |
-| Zero Terraform roots, zero enabled cells, or zero Wrangler apps | notice **and** `ok: false` |
-| Missing or invalid catalog JSON | fail (no notice) |
+| Finding                                                                                  | Result                     |
+| ---------------------------------------------------------------------------------------- | -------------------------- |
+| Enabled catalog cell with no matching Terraform root                                     | fail                       |
+| Enabled cell root missing `env/*.tfvars` or `backend/*.hcl`                              | fail                       |
+| Catalog `awsRegion` ≠ any tfvars `aws_region` or backend `region`                        | fail                       |
+| tfvars `aws_region` values disagree, or backends disagree, or tfvars vs backend disagree | fail                       |
+| Terraform root with no catalog key                                                       | fail                       |
+| Disabled cell with or without a Terraform root                                           | pass                       |
+| Zero Terraform roots, zero enabled cells, or zero Wrangler apps                          | notice **and** `ok: false` |
+| Missing or invalid catalog JSON                                                          | fail (no notice)           |
 
 ## API
 

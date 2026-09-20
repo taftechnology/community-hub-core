@@ -1,1 +1,6 @@
-{"name":"@community-hub/helper","dependencies":{"@community-hub/crypto":"workspace:*"}}
+{
+  "name": "@community-hub/helper",
+  "dependencies": {
+    "@community-hub/crypto": "workspace:*"
+  }
+}

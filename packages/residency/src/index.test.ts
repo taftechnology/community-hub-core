@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 import catalog from "./catalog.json" with { type: "json" };
-import {
-  getCell,
-  parseRegionId,
-  regionalOnlyPackages,
-  type EnabledRegionId,
-} from "./index.js";
+import { getCell, parseRegionId, regionalOnlyPackages, type EnabledRegionId } from "./index.js";
 
 describe("catalog.json", () => {
   it("has exactly au, ca, eu, us with the required fields", () => {

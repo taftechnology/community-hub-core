@@ -7,3 +7,4 @@ node_modules
 *.jsonc
 packages/db/drizzle/
 packages/db/drizzle-test/
+tooling/checks/residency-cell/fixtures/

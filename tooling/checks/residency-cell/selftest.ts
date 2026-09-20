@@ -18,11 +18,15 @@ const mustFail = [
   "import-deep-db",
   "import-relative-crypto",
   "import-transitive-crypto",
+  "import-relative-helper",
+  "missing-aws-region",
+  "invalid-package-json",
   "missing-meta",
   "dynamic-nonliteral",
   "import-from-binding",
   "dynamic-concat",
   "entry-outside-src",
+  "entry-js",
 ] as const;
 
 const mustPass = [

@@ -1,1 +1,1 @@
-{"name":"edge","main":"worker/entry.ts"}
+{ "name": "edge", "main": "worker/entry.ts" }
