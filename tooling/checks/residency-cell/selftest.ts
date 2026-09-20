@@ -20,6 +20,8 @@ const mustFail = [
   "import-transitive-crypto",
   "missing-meta",
   "dynamic-nonliteral",
+  "import-from-binding",
+  "dynamic-concat",
   "entry-outside-src",
 ] as const;
 

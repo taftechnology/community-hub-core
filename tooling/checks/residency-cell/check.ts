@@ -414,11 +414,11 @@ function extractModuleSpecifiers(src: string): string[] {
           if (spec) {
             specs.push(spec.value);
             i = spec.end;
-          } else {
-            i = j + 4;
+            foundFrom = true;
+            break;
           }
-          foundFrom = true;
-          break;
+          j = j + 4;
+          continue;
         }
         j += 1;
       }
@@ -443,11 +443,11 @@ function extractModuleSpecifiers(src: string): string[] {
           if (spec) {
             specs.push(spec.value);
             i = spec.end;
-          } else {
-            i = j + 4;
+            foundFrom = true;
+            break;
           }
-          foundFrom = true;
-          break;
+          j = j + 4;
+          continue;
         }
         j += 1;
       }
@@ -509,7 +509,11 @@ function hasNonLiteralDynamicImport(src: string): boolean {
         if (!literal) {
           return true;
         }
-        i = literal.end;
+        const afterLiteral = skipWs(text, literal.end);
+        if (text[afterLiteral] !== ")") {
+          return true;
+        }
+        i = afterLiteral + 1;
         continue;
       }
     }
