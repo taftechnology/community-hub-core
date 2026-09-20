@@ -1,10 +1,19 @@
 import { getRequestContext, healthPayload, withRequest } from "@community-hub/kernel";
 import { createLogger, type Logger } from "@community-hub/observability";
 
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function requestIdFromHeader(inboundId: string | null): string {
+  if (inboundId && UUID.test(inboundId)) {
+    return inboundId;
+  }
+  return crypto.randomUUID();
+}
+
 export function createFetch(logger: Logger) {
   return async function fetch(request: Request): Promise<Response> {
-    const inboundId = request.headers.get("x-request-id");
-    const requestId = inboundId ? inboundId : crypto.randomUUID();
+    const requestId = requestIdFromHeader(request.headers.get("x-request-id"));
 
     return withRequest({ requestId, idempotencyKey: requestId }, async () => {
       const started = performance.now();

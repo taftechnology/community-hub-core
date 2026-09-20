@@ -86,6 +86,33 @@ describe("gateway", () => {
     expect(keys).toEqual(["duration", "level", "message", "method", "path", "requestId", "status"]);
   });
 
+  it("mints a UUID requestId when x-request-id is not a UUID", async () => {
+    const inboundId = "alice@example.com";
+    const logLines: string[] = [];
+    const logger = createLogger({ write: (line) => logLines.push(line) });
+    const fetchHandler = createFetch(logger);
+
+    const request = new IncomingRequest("https://gateway.test/health", {
+      headers: { "x-request-id": inboundId },
+    });
+    const ctx = createExecutionContext();
+    const response = await fetchHandler(request, {}, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(healthPayload());
+
+    expect(logLines).toHaveLength(1);
+    const raw = logLines[0]!;
+    expect(raw).not.toContain(inboundId);
+
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    expect(String(parsed.requestId)).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
+    expect(parsed.requestId).not.toBe(inboundId);
+  });
+
   it("mints a UUID requestId when x-request-id is absent", async () => {
     const logLines: string[] = [];
     const logger = createLogger({ write: (line) => logLines.push(line) });
