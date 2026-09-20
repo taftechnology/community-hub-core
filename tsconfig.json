@@ -5,6 +5,7 @@
     { "path": "./packages/observability" },
     { "path": "./packages/db" },
     { "path": "./packages/crypto" },
+    { "path": "./packages/residency" },
     { "path": "./apps/gateway" },
     { "path": "./tooling/checks/worker-config" }
   ]
