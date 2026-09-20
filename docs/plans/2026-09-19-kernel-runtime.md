@@ -4,13 +4,13 @@
 
 **Goal:** Land `defineModule` / `defineEvent`, ALS request context, an organisation-scoped `app.outbox` table, and the payload/duplicate-name gates, without putting Postgres or Zod on the gateway graph.
 
-**Architecture:** Kernel owns types and ALS; it never binds the transaction type parameter. db owns the branded client, `withOrgTransaction`, and the adapter (one-way import of `@community-hub/kernel/module`). Gateway imports `@community-hub/kernel` only, wraps `/health` in `withRequest`, and still returns `healthPayload()`.
+**Architecture:** Kernel owns types and ALS; it never binds the transaction type parameter. db owns the branded client, `withOrgTransaction`, and the adapter (one-way import of `@community-hub/kernel/module`). Gateway imports `@community-hub/kernel` only. `withRequest` wraps **inside** the function `createFetch` returns (not around `export default`), so both `SELF.fetch` and `createFetch(logger)` see a populated store. `/health` still returns `healthPayload()`.
 
 **Tech Stack:** Node 24 + workerd (`nodejs_als`), `zod@4.6.5` (exact, `/module` only), Drizzle 0.45.2, postgres.js 3.4.9, existing Docker Postgres 17 + PgBouncer, typescript-eslint, Vitest.
 
 **Spec:** `docs/specs/2026-09-19-kernel-runtime.md` (approved 2026-09-19, Abdus Salam)
 
-Status: draft
+Status: approved
 
 **Branch:** `feat/2026-09-19-kernel-runtime` · one PR · 9 tasks, one commit each
 
@@ -26,6 +26,16 @@ Status: draft
 - No Queue, `waitUntil`, sweeper, claim/retry columns, FIFO, RFC 9457, or `residency-payload` changes.
 - Last commit updates `docs/roadmap.md` (`kernel-runtime` **done**) and architecture §8.3 / §12.1.
 - Session scratch is never committed.
+- Gateway mints `requestId` with `crypto.randomUUID()` (or an inbound request-id header). It must not import `newId()` from `@community-hub/db`. For `/health`, `idempotencyKey` equals `requestId`.
+- `withRequest` wraps **inside** the function `createFetch` returns. Do not wrap only `export default { fetch }` — `createFetch(logger)` is a direct test path and would then run with an empty store. An empty store throwing is a fail, not a reason to make context optional.
+- `app.outbox` is visible to Drizzle Kit through `packages/db/src/schema.ts` (`drizzle.config.ts` schema path is exactly `./src/schema.ts`).
+
+**Stop and report** (do not work around):
+
+- `nodejs_als` is not accepted at the pinned `compatibility_date` of `2026-03-10`.
+- `AsyncLocalStorage` is not usable in the Workers test pool (`@cloudflare/vitest-pool-workers`).
+
+In either case: **stop**. Do not drop `withRequest` from the gateway. Do not move the context onto a function argument. Do not switch the gateway to Node-only tests and call the workerd path done.
 
 ---
 
@@ -40,6 +50,9 @@ Status: draft
 | Restricted imports | Root `eslint.config.js` `no-restricted-imports` plus the same patterns in the encrypted-column fixture ESLint (must-fail gateway-shaped files). | Spec asked for ESLint, not a new checker. |
 | Zod pin | `4.6.5` exact. | Same pin style as `drizzle-orm` / `postgres`. |
 | Event name | Shared regex string in kernel and the ESLint rule (comment: must match the spec). Do not import kernel from the plugin. | Plugin is plain ESM JS with no kernel build edge. |
+| Kit schema | `app.outbox` is defined in `outbox.ts` **and re-exported from `schema.ts`**. | `drizzle.config.ts` schema is exactly `./src/schema.ts`. |
+| Workerd ALS | Gateway test reads `getRequestContext()` on the `/health` path under the Workers pool. Wrapping lives inside `createFetch`. | Same Node-versus-workerd gap as crypto. `SELF.fetch` and `createFetch(logger)` must both see the store. |
+| Named conflict | Adapter hard-codes Kit's `conname`; a `pg_constraint` test locks it. | `onConflictDoNothing` in 0.45.2 cannot take a constraint name. |
 
 **Rollback:** revert the PR. Docker data is disposable. Nothing applied to RDS.
 
@@ -58,11 +71,12 @@ Status: draft
 | `packages/kernel/src/outbox-port.ts` | `OutboxPort<Tx>`, `bindPublisher` |
 | `packages/kernel/src/module.ts` | `/module` barrel |
 | `packages/kernel/package.json` | `exports` `.` and `./module`; `zod` `4.6.5` |
-| `apps/gateway/src/index.ts` | `withRequest` around `/health` |
+| `apps/gateway/src/index.ts` | `withRequest` inside the function `createFetch` returns |
 | `apps/gateway/wrangler.jsonc` | `compatibility_flags: ["nodejs_als"]` |
 | `packages/db/src/tx.ts` | Brands + `withOrgTransaction` |
 | `packages/db/src/app-transaction.ts` | Keep requiring both ids; brand `AppTransaction` |
 | `packages/db/src/outbox.ts` | Drizzle table `app.outbox` |
+| `packages/db/src/schema.ts` | Re-exports the outbox table (required: Kit reads only this file) |
 | `packages/db/src/outbox-adapter.ts` | `append` implementation |
 | `packages/db/drizzle/0001_*.sql` | Kit generate + hand `FORCE ROW LEVEL SECURITY` |
 | `tooling/eslint-plugin-community-hub/rules/no-event-payload.js` | Type-aware payload + name rule |
@@ -162,7 +176,18 @@ export function withOrgTransaction<T>(
 export function createOutbox(): OutboxPort<AppTransaction | OrgTransaction>;
 ```
 
-`append` SQL: `INSERT INTO app.outbox (id, org_id, event_name, payload, idempotency_key) VALUES ($id, current_setting('app.org_id')::uuid, $name, $payload::jsonb, $key) ON CONFLICT ON CONSTRAINT outbox_org_id_event_name_idempotency_key_unique DO NOTHING RETURNING id` — if no row, `SELECT id FROM app.outbox WHERE org_id = current_setting('app.org_id')::uuid AND event_name = $name AND idempotency_key = $key`. Mint `$id` with `newId()`. Do not send `occurred_at` (DEFAULT `now()`).
+`append` SQL (illustrative — postgres.js uses tagged-template interpolation, not `$n` placeholders):
+
+```sql
+INSERT INTO app.outbox (id, org_id, event_name, payload, idempotency_key)
+VALUES (${id}, current_setting('app.org_id')::uuid, ${name}, ${payload}::jsonb, ${key})
+ON CONFLICT ON CONSTRAINT <kit-generated-name> DO NOTHING
+RETURNING id
+```
+
+If no row: `SELECT id FROM app.outbox WHERE org_id = current_setting('app.org_id')::uuid AND event_name = ${name} AND idempotency_key = ${key}`. Mint `id` with `newId()` in db. Do not send `occurred_at` (DEFAULT `now()`).
+
+The adapter uses a postgres.js `sql` tagged template, not Drizzle's query builder. In drizzle-orm 0.45.2, `onConflictDoNothing` takes only column targets, so the named-constraint form cannot be expressed there. Do not rewrite this as `sql.raw` — `@community-hub/no-encrypted-column-query` bans it.
 
 Banned payload keys (ESLint + spec, one list in the rule file): `name`, `email`, `emailAddress`, `e_mail`, `full_name`, `fullName`, `dob`, `dateOfBirth`, `address`, `phone`, `notes`, `note`, `comment`, `label`, `amount`.
 
@@ -174,12 +199,14 @@ Banned payload keys (ESLint + spec, one list in the rule file): `name`, `email`,
 
 **Interfaces:** Produces `withRequest`, `getRequestContext`, `RequestContext`. Consumes unchanged `healthPayload`.
 
-**Must not break:** `GET /health` still `{ ok: true }`. Kernel `.` export must not import `./module.js`.
+**Must not break:** `GET /health` still `{ ok: true }`. Kernel `.` export must not import `./module.js`. Gateway must not import `@community-hub/db` (so it cannot call `newId()`).
 
-- [ ] **Step 1:** Failing tests in `packages/kernel/src/request.test.ts`: `getRequestContext()` throws outside `withRequest`; two `Promise.all` `withRequest` calls keep distinct `requestId` / `idempotencyKey`; nested `withRequest` sees the inner context and restores the outer after.
-- [ ] **Step 2:** Run `pnpm test --filter @community-hub/kernel`. Expected: FAIL (module missing).
-- [ ] **Step 3:** Implement ALS. `index.ts` exports only `healthPayload`, `withRequest`, `getRequestContext`. Gateway `fetch` wraps the handler in `withRequest({ requestId, idempotencyKey: requestId })`. Wrangler: `"compatibility_flags": ["nodejs_als"]`.
-- [ ] **Step 4:** `pnpm test --filter @community-hub/kernel --filter @community-hub/gateway` and existing health assertion still pass.
+**Stop and report** if Wrangler rejects `nodejs_als` at `compatibility_date` `2026-03-10`, or if `getRequestContext()` throws / is empty under `@cloudflare/vitest-pool-workers`. Do not drop `withRequest` from the gateway. Do not pass context as an argument.
+
+- [ ] **Step 1:** Failing tests in `packages/kernel/src/request.test.ts` (Node): `getRequestContext()` throws outside `withRequest`; two `Promise.all` `withRequest` calls keep distinct `requestId` / `idempotencyKey`; nested `withRequest` sees the inner context and restores the outer after. Failing workerd test in `apps/gateway/src/index.test.ts` using `createFetch` (so the structured log is visible): the `/health` handler **must** call `getRequestContext()` on the same path that returns `healthPayload()`, log that `requestId` (not a second mint), and the test asserts the logged value is a non-empty UUID and that `idempotencyKey` equals `requestId` (handler may compare the two fields and throw on mismatch; a 500 from an empty store is a fail, not a skip). `{ ok: true }` alone is not this test — kernel Node tests would still pass if the workerd store were empty.
+- [ ] **Step 2:** Run `pnpm test --filter @community-hub/kernel --filter @community-hub/gateway`. Expected: FAIL (ALS module missing / context not read on the Worker path).
+- [ ] **Step 3:** Implement ALS. `index.ts` exports only `healthPayload`, `withRequest`, `getRequestContext`. Inside the function **`createFetch` returns** (not around `export default { fetch }`): mint `requestId` with `crypto.randomUUID()` (or an inbound request-id header if present), then wrap the rest of that function in `withRequest({ requestId, idempotencyKey: requestId })`. Both `SELF.fetch` (default export) and the log test's `createFetch(logger)` must hit this wrap. Do not make `getRequestContext()` optional if a direct-call test sees an empty store — that is the banned escape hatch; the wrap is in the wrong place. The handler reads `getRequestContext()` (use that `requestId` for the structured log — one mint, not a second UUID). Wrangler: `"compatibility_flags": ["nodejs_als"]`.
+- [ ] **Step 4:** Kernel tests pass. Gateway workerd tests pass, including the populated-context assertion and existing `{ ok: true }`. If ALS is empty under workerd, stop and report.
 - [ ] **Step 5:** Commit
 
 ```
@@ -311,7 +338,13 @@ Refs: docs/plans/2026-09-19-kernel-runtime.md task 6
 
 **Files:** `packages/db/src/tx.ts` (or extend `app-transaction.ts`), `index.ts`; `packages/db/test/pooling.integration.test.ts` (and/or a new `org-transaction.integration.test.ts`).
 
-- [ ] **Step 1:** Failing tests: `withOrgTransaction` + `select current_setting('app.community_id')` errors (unset); `select` from `app.synthetic` fails loudly; `hub_reuse` after `withAppTransaction` does not leak `community_id` into a following `withOrgTransaction`; `withAppTransaction` still requires `communityId` (typecheck).
+- [ ] **Step 1:** Failing tests: `withOrgTransaction` + `select current_setting('app.community_id')` fails (see error note below); `select` from `app.synthetic` fails loudly; `hub_reuse` after `withAppTransaction` does not leak `community_id` into a following `withOrgTransaction`; `withAppTransaction` still requires `communityId` (typecheck).
+
+  **Unset GUC on a reused connection.** `set_config(..., true)` is transaction-local. Once a custom GUC has been set in a session, Postgres reverts it to `''` rather than unsetting it. So `current_setting('app.community_id')` inside `withOrgTransaction` is fail-closed in two ways:
+  - fresh connection: raises `unrecognized configuration parameter` (**42704**);
+  - connection that earlier ran `withAppTransaction`: returns `''`, and a policy `::uuid` cast fails with `invalid input syntax for type uuid` (**22P02**).
+
+  The test asserts the query **fails** and accepts **either** SQLSTATE. Do not assert one message — `hub_reuse` would flake depending on connection order.
 - [ ] **Step 2:** Implement. Do not set `app.community_id`. Brand the callback client.
 - [ ] **Step 3:** Integration tests pass through PgBouncer.
 - [ ] **Step 4:** Commit
@@ -329,13 +362,15 @@ Refs: docs/plans/2026-09-19-kernel-runtime.md task 7
 
 ### Task 8: `app.outbox` and the Postgres adapter
 
-**Files:** `packages/db/src/outbox.ts` (Drizzle table); `outbox-adapter.ts`; `schema.ts` re-export if needed; `packages/db/package.json` (dependency `@community-hub/kernel`); `drizzle/` Kit generate **then** hand-add `ALTER TABLE app.outbox FORCE ROW LEVEL SECURITY`; optional `SET LOCAL lock_timeout` at the top of the migration; `test/outbox.integration.test.ts`; `@ts-expect-error` that pooled `Sql` is not assignable to `append`.
+**Files:** `packages/db/src/outbox.ts` (Drizzle table definition); `packages/db/src/schema.ts` (**must** re-export the table — `drizzle.config.ts` schema is `./src/schema.ts`; a table that lives only in `outbox.ts` is invisible to Kit); `outbox-adapter.ts`; `packages/db/package.json` (dependency `@community-hub/kernel`); `drizzle/` Kit generate **then** hand-add `ALTER TABLE app.outbox FORCE ROW LEVEL SECURITY`; optional `SET LOCAL lock_timeout` at the top of the migration; `test/outbox.integration.test.ts`; `@ts-expect-error` that pooled `Sql` is not assignable to `append`.
 
-Table: all columns `NOT NULL`; PK `(org_id, id)`; unique constraint named so `ON CONFLICT ON CONSTRAINT` works — use `outbox_org_id_event_name_idempotency_key_unique` (adjust to Kit's generated name and **put that exact name in the adapter**). Policy `org_id = current_setting('app.org_id')::uuid`. No `community_id`. `id` no default. `occurred_at` default `now()`.
+Table: all columns `NOT NULL`; PK `(org_id, id)`; unique constraint named so `ON CONFLICT ON CONSTRAINT` works — use Kit's generated name and **put that exact name in the adapter**. Policy `org_id = current_setting('app.org_id')::uuid`. No `community_id`. `id` no default. `occurred_at` default `now()`.
 
-- [ ] **Step 1:** Failing integration tests from the spec Tests section (RLS, FORCE, one-row retry, two events one key, rollback, commit together, Zod failure leaves no row).
-- [ ] **Step 2:** Generate SQL; FORCE; adapter using `current_setting('app.org_id')::uuid`; `createOutbox()`.
-- [ ] **Step 3:** Tests pass. `schema-rls` on the live tree is ok (product table exists). Generated SQL grep: every column `NOT NULL`.
+Adapter SQL is a postgres.js tagged template with `ON CONFLICT ON CONSTRAINT`. Do not switch to Drizzle `onConflictDoNothing` (0.45.2: column targets only) and do not use `sql.raw`.
+
+- [ ] **Step 1:** Failing integration tests from the spec Tests section (RLS, FORCE, one-row retry, two events one key, rollback, commit together, Zod failure leaves no row) **plus** a query against `pg_constraint` that the unique constraint's `conname` equals the identifier hard-coded in the adapter. A later Kit rename would otherwise surface as a runtime error in an unrelated chunk.
+- [ ] **Step 2:** Define the table in `outbox.ts`, re-export it from `schema.ts`, generate SQL, add FORCE, implement the adapter using `current_setting('app.org_id')::uuid`, `createOutbox()`. If Kit emits nothing for `app.outbox`, `schema.ts` is not exporting the table — fix that, do not point Kit at a second file.
+- [ ] **Step 3:** Tests pass, including the `pg_constraint` name assertion. `schema-rls` on the live tree is ok (product table exists). Generated SQL grep: every column `NOT NULL`.
 - [ ] **Step 4:** Commit
 
 ```
@@ -386,7 +421,8 @@ Refs: docs/plans/2026-09-19-kernel-runtime.md task 9
 | Spec item | Task |
 | --------- | ---- |
 | ALS, no orgId, no escape hatch, concurrent store | 1 |
-| Gateway `/health` + `nodejs_als` | 1 |
+| Gateway `/health` + `nodejs_als`; `requestId` from `crypto.randomUUID()` / inbound header; `/health` `idempotencyKey === requestId`; `withRequest` inside `createFetch` | 1 |
+| Workerd test: `getRequestContext()` populated on the `/health` path | 1 |
 | `defineModule` / `defineEvent` / parse / undeclared | 2 |
 | Health `defineModule` live input | 2 |
 | Zod 4.6.5 on `/module` only | 2, 9 dry-run |
@@ -394,12 +430,17 @@ Refs: docs/plans/2026-09-19-kernel-runtime.md task 9
 | Duplicate names repo-wide | 4 |
 | `sql-session-ban` exception | 5 |
 | worker-config src scan + restricted imports including `import type` | 6 |
-| `withOrgTransaction` fail-loudly + bleed | 7 |
-| `app.outbox` NOT NULL, PK, unique constraint, adapter, RLS tests | 8 |
+| `withOrgTransaction` fail-loudly + bleed; unset community GUC accepts 42704 or 22P02 | 7 |
+| `app.outbox` NOT NULL, PK, unique constraint, adapter, RLS tests; table exported from `schema.ts`; `pg_constraint` name matches adapter | 8 |
 | §8.3, §12.1, roadmap last | 9 |
 
 ## Self-review
 
-- No TBD. Constraint name: implementer uses Kit's generated name and must wire `ON CONFLICT ON CONSTRAINT` to that exact identifier.
+- No TBD. Constraint name: implementer uses Kit's generated name, wires `ON CONFLICT ON CONSTRAINT` to that identifier, and a `pg_constraint` test locks it.
+- Table is re-exported from `schema.ts` so Kit (`drizzle.config.ts` → `./src/schema.ts`) generates SQL. `outbox.ts` alone is not enough.
+- `append` SQL in Interfaces is illustrative tagged-template, not `$n` placeholders. Adapter stays on postgres.js `sql`, not `sql.raw`, not Drizzle `onConflictDoNothing`.
+- Unset `app.community_id` tests accept 42704 or 22P02 so `hub_reuse` does not flake.
+- Gateway `requestId` is `crypto.randomUUID()` (or inbound request-id header), never `newId()`. Workerd test reads ALS on the `/health` path. `withRequest` wraps inside `createFetch`, covering `SELF.fetch` and `createFetch(logger)`.
+- Stop-and-report: `nodejs_als` rejected at `2026-03-10`, or ALS empty under the Workers test pool. Do not drop `withRequest` or pass context as an argument.
 - `bindPublisher` / `append` names are used consistently from the Interfaces section.
 - Final task runs prettier, lint, typecheck, boundaries, test `--force`, and gateway wrangler dry-run (Stage 3 subset that this chunk can run without Cloudflare upload secrets).
