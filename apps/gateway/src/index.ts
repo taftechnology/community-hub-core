@@ -1,8 +1,7 @@
 import { getRequestContext, healthPayload, withRequest } from "@community-hub/kernel";
 import { createLogger, type Logger } from "@community-hub/observability";
 
-const UUID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function requestIdFromHeader(inboundId: string | null): string {
   if (inboundId && UUID.test(inboundId)) {
