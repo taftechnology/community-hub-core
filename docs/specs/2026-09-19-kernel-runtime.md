@@ -45,11 +45,11 @@ Modules, request context, DI and the organisation-scoped outbox are decided in a
 
 ### Split (import graph)
 
-| Package | Owns | Must not |
-| ------- | ---- | -------- |
+| Package                 | Owns                                                                                 | Must not                                                                     |
+| ----------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
 | `@community-hub/kernel` | Module/event registry, ALS request context, `OutboxPort<Tx>` type, `healthPayload()` | Import `postgres`, Drizzle, or `@community-hub/db` (including `import type`) |
-| `@community-hub/db` | `app.outbox`, `withOrgTransaction`, branded tx, `OutboxPort<BrandedTx>` adapter | Be imported by gateway or kernel |
-| `apps/gateway` | `withRequest` around `/health` | Import db, the adapter, or `@community-hub/kernel/module` |
+| `@community-hub/db`     | `app.outbox`, `withOrgTransaction`, branded tx, `OutboxPort<BrandedTx>` adapter      | Be imported by gateway or kernel                                             |
+| `apps/gateway`          | `withRequest` around `/health`                                                       | Import db, the adapter, or `@community-hub/kernel/module`                    |
 
 Kernel declares `OutboxPort<Tx>` and never binds `Tx`. It does not name or import a transaction type from `packages/db`. db defines the brand and supplies it: `OutboxPort<OrgTx | AppTx>`. That is a one-way import (db → kernel `/module`). A type-only kernel → db import is still a cycle and still forbidden.
 
@@ -67,12 +67,12 @@ Kernel ships a health module (`key` matching the gateway health surface, `publis
 
 Also accepted and **type-checked only** (not enforced):
 
-| Field | Enforced in |
-| ----- | ----------- |
-| `entitlement`, `features` | `entitlements-plans` |
-| `permissions` | `access-roles` |
-| `websiteWidgets` | website-widget / `packages-ui` chunk when widgets exist |
-| `dataClasses` | the module that first ships classified columns in a manifest |
+| Field                     | Enforced in                                                  |
+| ------------------------- | ------------------------------------------------------------ |
+| `entitlement`, `features` | `entitlements-plans`                                         |
+| `permissions`             | `access-roles`                                               |
+| `websiteWidgets`          | website-widget / `packages-ui` chunk when widgets exist      |
+| `dataClasses`             | the module that first ships classified columns in a manifest |
 
 `publishes` is the set of event names the module may pass to `publish()`. An undeclared name is a type error and a runtime throw. `subscribes` is stored on the registry and unused: no dispatch, no queue consumer.
 
@@ -121,14 +121,14 @@ Every column is `NOT NULL`. Distinct NULLs do not collide in a unique index; a n
 
 **Idempotency uniqueness:** a **named unique constraint** on `(org_id, event_name, idempotency_key)`, not a standalone unique index. `INSERT … ON CONFLICT ON CONSTRAINT … DO NOTHING` then `SELECT` the row.
 
-| Column | Type | Null | Default | Class | Notes |
-| ------ | ---- | ---- | ------- | ----- | ----- |
-| `id` | `uuid` | `NOT NULL` | none | `internal` | App-minted `newId()` (UUIDv7). No database default. Later sweeper order leans on `id`, not `occurred_at`. |
-| `org_id` | `uuid` | `NOT NULL` | none | `internal` | Insert uses `current_setting('app.org_id')::uuid`, not a caller argument. |
-| `event_name` | `text` | `NOT NULL` | none | `internal` | Full name including `.vN`. |
-| `payload` | `jsonb` | `NOT NULL` | none | `internal` | Identifiers/enums/bools/ints/timestamps only. |
-| `occurred_at` | `timestamptz` | `NOT NULL` | `now()` | `internal` | Database default. Worker does not pass it. `ON CONFLICT DO NOTHING` keeps the first row's timestamp. `now()` is transaction-start time, which is another reason it is not FIFO. |
-| `idempotency_key` | `text` | `NOT NULL` | none | `internal` | From request context, not a fresh id. |
+| Column            | Type          | Null       | Default | Class      | Notes                                                                                                                                                                           |
+| ----------------- | ------------- | ---------- | ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`              | `uuid`        | `NOT NULL` | none    | `internal` | App-minted `newId()` (UUIDv7). No database default. Later sweeper order leans on `id`, not `occurred_at`.                                                                       |
+| `org_id`          | `uuid`        | `NOT NULL` | none    | `internal` | Insert uses `current_setting('app.org_id')::uuid`, not a caller argument.                                                                                                       |
+| `event_name`      | `text`        | `NOT NULL` | none    | `internal` | Full name including `.vN`.                                                                                                                                                      |
+| `payload`         | `jsonb`       | `NOT NULL` | none    | `internal` | Identifiers/enums/bools/ints/timestamps only.                                                                                                                                   |
+| `occurred_at`     | `timestamptz` | `NOT NULL` | `now()` | `internal` | Database default. Worker does not pass it. `ON CONFLICT DO NOTHING` keeps the first row's timestamp. `now()` is transaction-start time, which is another reason it is not FIFO. |
+| `idempotency_key` | `text`        | `NOT NULL` | none    | `internal` | From request context, not a fresh id.                                                                                                                                           |
 
 Same request key and two different event names → two rows. Same request key and the same event name → one row; `publish()` returns the existing `id`. Callers must not assume the return is a newly minted id. A test of two publishes of the same event under the same request key asserts **one row** (that is what would catch a nullable key).
 
@@ -144,7 +144,7 @@ No ordering guarantee across isolates. Concurrent writers in one org are allowed
 
 `withOrgTransaction(orgId, fn)` is a **separate function**, not an optional `communityId`. Organisation-scoped work (outbox, later billing/entitlements) uses it deliberately.
 
-Inside `withOrgTransaction`, `app.community_id` is **never set**. A policy that reads `current_setting('app.community_id')` raises. An org-only transaction cannot read community-scoped tables; it fails loudly, not with a partial set. Test: `app.synthetic` (existing community-scoped test table) is unreadable / errors inside `withOrgTransaction`.
+Inside `withOrgTransaction`, `app.community_id` is **never set**. A policy that reads `current_setting('app.community_id')` raises. An org-only transaction cannot read community-scoped tables; it fails loudly, not with a partial set. Test: `app.synthetic_community` (drizzle-test table whose policy reads `current_setting('app.community_id')::uuid`) is unreadable inside `withOrgTransaction`. `app.synthetic` stays org-scoped.
 
 Bleed test on `hub_reuse`: after a community-scoped `withAppTransaction`, a `withOrgTransaction` on the reused pooled connection must not see a leftover `community_id`.
 
@@ -158,7 +158,7 @@ A checker under `tooling/checks` walks `defineEvent({ name })` and `defineModule
 
 ### Payload ESLint (per file, type-aware)
 
-On `defineEvent` calls. Uses the type checker (aliases and imported shapes resolve). Fail closed if the shape is not statically readable: `.extend()` the rule cannot resolve, object spread, `z.record`, `.passthrough()`, `.catchall()`. Must-fail fixtures for: free-form `z.string()`, banned key with an allowed type, `z.record`, `.passthrough()`, unreadable `.extend()`, nested object containing any of those, invalid event name. Must-pass: ids, enums, boolean, timestamp. Disable of this rule stays banned (`no-restricted-disable`).
+On `defineEvent` calls. Uses the type checker (aliases and imported shapes resolve). Fail closed if the shape is not statically readable: `.extend()` the rule cannot resolve, object spread, `z.record`, `.passthrough()`, `.catchall()`. Must-fail fixtures for: free-form `z.string()`, banned key with an allowed type, `z.record`, `.passthrough()`, unreadable `.extend()`, nested object containing any of those, invalid event name, **imported** schema with a banned key / free-form string. Must-pass: ids, enums, boolean, timestamp, **imported** ids-only schema. Disable of this rule stays banned (`no-restricted-disable`).
 
 `residency-payload` is unchanged.
 
@@ -176,12 +176,12 @@ Migration wave: expand only (`CREATE TABLE`, composite PK, unique constraint, RL
 
 `sql-session-ban` change (shipped checker):
 
-| Statement | Where | Result |
-| --------- | ----- | ------ |
+| Statement                                                        | Where                                                               | Result  |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------- | ------- |
 | `SET LOCAL lock_timeout = …` / `SET LOCAL statement_timeout = …` | `packages/db/drizzle/**/*.sql`, `packages/db/drizzle-test/**/*.sql` | allowed |
-| Same `SET LOCAL` | `packages/db/src/**` or any other scanned TS/SQL | fail |
-| `SET LOCAL` of any other GUC (e.g. `work_mem`) | migration SQL | fail |
-| Session `SET lock_timeout` (no `LOCAL`) | anywhere scanned | fail |
+| Same `SET LOCAL`                                                 | `packages/db/src/**` or any other scanned TS/SQL                    | fail    |
+| `SET LOCAL` of any other GUC (e.g. `work_mem`)                   | migration SQL                                                       | fail    |
+| Session `SET lock_timeout` (no `LOCAL`)                          | anywhere scanned                                                    | fail    |
 
 Must-fail fixtures for the three fail rows; must-pass fixture for `SET LOCAL lock_timeout` in a drizzle-shaped SQL file. Migrations **may** set those two LOCAL timeouts; they are not required on this small table, but the exception exists so the first product table does not teach "never set timeouts."
 
@@ -212,14 +212,14 @@ Consolidated. Each item is independently testable; the plan maps one commit to a
 **Transactions**
 
 - `withAppTransaction` still requires `communityId`.
-- Inside `withOrgTransaction`, reading `app.synthetic` fails loudly (`app.community_id` unset).
+- Inside `withOrgTransaction`, reading `app.synthetic_community` fails loudly (`app.community_id` unset).
 - `hub_reuse`: `withOrgTransaction` does not see a `community_id` left by an earlier `withAppTransaction`.
 - Pooled `Sql` is not assignable to `publish`'s transaction argument.
 
 **Lint / checkers**
 
-- Payload ESLint must-fail: free-form `z.string()`, banned key with allowed type, `z.record`, `.passthrough()`, unreadable `.extend()`, nested object containing any of those, invalid event name.
-- Payload ESLint must-pass: ids, enums, boolean, timestamp.
+- Payload ESLint must-fail: free-form `z.string()`, banned key with allowed type, `z.record`, `.passthrough()`, unreadable `.extend()`, nested object containing any of those, invalid event name, imported schema with a banned key / free-form string.
+- Payload ESLint must-pass: ids, enums, boolean, timestamp, imported ids-only schema.
 - Duplicate-name checker must-fail fixture (two modules, same name); must-pass (name declared once); live tree includes the health `defineModule`; empty live glob fails with a notice.
 - `sql-session-ban`: three must-fail rows in the exception table; must-pass `SET LOCAL lock_timeout` in drizzle SQL.
 - `worker-config` must-fail: value-import of kernel, no ALS flag.
@@ -247,23 +247,23 @@ Consolidated. Each item is independently testable; the plan maps one commit to a
 
 ## Risks
 
-| Risk | Mitigation |
-| ---- | ---------- |
-| Gateway bundles db / ALS missing at deploy | `no-restricted-imports` including `import type` + fixture; `worker-config` scans src imports + ALS flag + fixture |
-| Zod in the gateway Worker | `/module` subpath; gateway imports `.` only; dry-run graph must not list `zod` |
-| Kernel ↔ db import cycle | Kernel never binds `Tx`; db supplies the brand; ban includes `import type` |
-| Nullable `idempotency_key` defeats unique | All columns `NOT NULL`; two-publish test asserts one row |
-| `orgId` on context disagrees with tx | `orgId` is not on context; insert uses `current_setting('app.org_id')` |
-| Fresh `newId()` as idempotency key | `publish()` reads ALS only; no key argument |
-| Unique key too wide; second event swallowed | Unique constraint `(org_id, event_name, idempotency_key)`; test two names, one request key → two rows |
-| Duplicate event names across packages | Repo-wide checker, not ESLint; health `defineModule` is day-one live input |
-| Zod source scanner skips `.extend` / `z.record` | Fail closed; fixtures |
-| Lint-only payload, runtime `unknown` | `publish()` parses with the event schema |
-| Org tx silently reads community tables | `community_id` unset; synthetic table test |
-| Pooled client used to publish | Branded tx type; does not compile |
-| Session `SET` in migration for timeouts | Checker allows only `SET LOCAL` of the two timeout GUCs in drizzle SQL |
-| Classification with no home | Architecture §12.1 platform-tables list |
-| FIFO assumed from `occurred_at` | `now()` is transaction start, not commit order; sweeper later uses `id` |
+| Risk                                            | Mitigation                                                                                                        |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Gateway bundles db / ALS missing at deploy      | `no-restricted-imports` including `import type` + fixture; `worker-config` scans src imports + ALS flag + fixture |
+| Zod in the gateway Worker                       | `/module` subpath; gateway imports `.` only; dry-run graph must not list `zod`                                    |
+| Kernel ↔ db import cycle                        | Kernel never binds `Tx`; db supplies the brand; ban includes `import type`                                        |
+| Nullable `idempotency_key` defeats unique       | All columns `NOT NULL`; two-publish test asserts one row                                                          |
+| `orgId` on context disagrees with tx            | `orgId` is not on context; insert uses `current_setting('app.org_id')`                                            |
+| Fresh `newId()` as idempotency key              | `publish()` reads ALS only; no key argument                                                                       |
+| Unique key too wide; second event swallowed     | Unique constraint `(org_id, event_name, idempotency_key)`; test two names, one request key → two rows             |
+| Duplicate event names across packages           | Repo-wide checker, not ESLint; health `defineModule` is day-one live input                                        |
+| Zod source scanner skips `.extend` / `z.record` | Fail closed; fixtures                                                                                             |
+| Lint-only payload, runtime `unknown`            | `publish()` parses with the event schema                                                                          |
+| Org tx silently reads community tables          | `community_id` unset; `app.synthetic_community` policy test                                                       |
+| Pooled client used to publish                   | Branded tx type; does not compile                                                                                 |
+| Session `SET` in migration for timeouts         | Checker allows only `SET LOCAL` of the two timeout GUCs in drizzle SQL                                            |
+| Classification with no home                     | Architecture §12.1 platform-tables list                                                                           |
+| FIFO assumed from `occurred_at`                 | `now()` is transaction start, not commit order; sweeper later uses `id`                                           |
 
 ## Out-of-band
 

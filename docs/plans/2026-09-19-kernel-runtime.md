@@ -41,18 +41,18 @@ In either case: **stop**. Do not drop `withRequest` from the gateway. Do not mov
 
 ## Tooling decisions this plan makes
 
-| Choice | Decision | Why |
-| ------ | -------- | --- |
-| Kernel entries | `@community-hub/kernel` = `healthPayload` + `withRequest`. `@community-hub/kernel/module` = `defineModule`, `defineEvent`, `bindPublisher`, `OutboxPort`, health `defineModule`. | Combined index would put Zod in the gateway graph even with tree-shaking hopes. |
-| Publisher | `bindPublisher(module, outbox)` does ALS read, `publishes` check, Zod `parse`, then `outbox.append`. Adapter only inserts. | Kernel owns the rules; db owns SQL. |
-| Brand | `OrgTransaction` / `AppTransaction` are `TransactionSql` plus a unique-symbol brand, cast at the `with*Transaction` callback. | Pooled `Sql` is not assignable. |
-| Duplicate names | New `@community-hub/check-event-names` under `tooling/checks`, wired in `run.ts`. | Turbo ESLint cannot see two packages. |
-| Restricted imports | Root `eslint.config.js` `no-restricted-imports` plus the same patterns in the encrypted-column fixture ESLint (must-fail gateway-shaped files). | Spec asked for ESLint, not a new checker. |
-| Zod pin | `4.6.5` exact. | Same pin style as `drizzle-orm` / `postgres`. |
-| Event name | Shared regex string in kernel and the ESLint rule (comment: must match the spec). Do not import kernel from the plugin. | Plugin is plain ESM JS with no kernel build edge. |
-| Kit schema | `app.outbox` is defined in `outbox.ts` **and re-exported from `schema.ts`**. | `drizzle.config.ts` schema is exactly `./src/schema.ts`. |
-| Workerd ALS | Gateway test reads `getRequestContext()` on the `/health` path under the Workers pool. Wrapping lives inside `createFetch`. | Same Node-versus-workerd gap as crypto. `SELF.fetch` and `createFetch(logger)` must both see the store. |
-| Named conflict | Adapter hard-codes Kit's `conname`; a `pg_constraint` test locks it. | `onConflictDoNothing` in 0.45.2 cannot take a constraint name. |
+| Choice             | Decision                                                                                                                                                                         | Why                                                                                                     |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Kernel entries     | `@community-hub/kernel` = `healthPayload` + `withRequest`. `@community-hub/kernel/module` = `defineModule`, `defineEvent`, `bindPublisher`, `OutboxPort`, health `defineModule`. | Combined index would put Zod in the gateway graph even with tree-shaking hopes.                         |
+| Publisher          | `bindPublisher(module, outbox)` does ALS read, `publishes` check, Zod `parse`, then `outbox.append`. Adapter only inserts.                                                       | Kernel owns the rules; db owns SQL.                                                                     |
+| Brand              | `OrgTransaction` / `AppTransaction` are `TransactionSql` plus a unique-symbol brand, cast at the `with*Transaction` callback.                                                    | Pooled `Sql` is not assignable.                                                                         |
+| Duplicate names    | New `@community-hub/check-event-names` under `tooling/checks`, wired in `run.ts`.                                                                                                | Turbo ESLint cannot see two packages.                                                                   |
+| Restricted imports | Root `eslint.config.js` `no-restricted-imports` plus the same patterns in the encrypted-column fixture ESLint (must-fail gateway-shaped files).                                  | Spec asked for ESLint, not a new checker.                                                               |
+| Zod pin            | `4.6.5` exact.                                                                                                                                                                   | Same pin style as `drizzle-orm` / `postgres`.                                                           |
+| Event name         | Shared regex string in kernel and the ESLint rule (comment: must match the spec). Do not import kernel from the plugin.                                                          | Plugin is plain ESM JS with no kernel build edge.                                                       |
+| Kit schema         | `app.outbox` is defined in `outbox.ts` **and re-exported from `schema.ts`**.                                                                                                     | `drizzle.config.ts` schema is exactly `./src/schema.ts`.                                                |
+| Workerd ALS        | Gateway test reads `getRequestContext()` on the `/health` path under the Workers pool. Wrapping lives inside `createFetch`.                                                      | Same Node-versus-workerd gap as crypto. `SELF.fetch` and `createFetch(logger)` must both see the store. |
+| Named conflict     | Adapter hard-codes Kit's `conname`; a `pg_constraint` test locks it.                                                                                                             | `onConflictDoNothing` in 0.45.2 cannot take a constraint name.                                          |
 
 **Rollback:** revert the PR. Docker data is disposable. Nothing applied to RDS.
 
@@ -60,35 +60,35 @@ In either case: **stop**. Do not drop `withRequest` from the gateway. Do not mov
 
 ## File map
 
-| Path | Role |
-| ---- | ---- |
-| `packages/kernel/src/request.ts` | ALS `withRequest` / `getRequestContext` |
-| `packages/kernel/src/health.ts` | Unchanged `healthPayload` |
-| `packages/kernel/src/index.ts` | Re-exports health + request only |
-| `packages/kernel/src/event.ts` | Name regex, `defineEvent` |
-| `packages/kernel/src/define-module.ts` | `defineModule` |
-| `packages/kernel/src/health-module.ts` | Live `defineModule` with `publishes: []` |
-| `packages/kernel/src/outbox-port.ts` | `OutboxPort<Tx>`, `bindPublisher` |
-| `packages/kernel/src/module.ts` | `/module` barrel |
-| `packages/kernel/package.json` | `exports` `.` and `./module`; `zod` `4.6.5` |
-| `apps/gateway/src/index.ts` | `withRequest` inside the function `createFetch` returns |
-| `apps/gateway/wrangler.jsonc` | `compatibility_flags: ["nodejs_als"]` |
-| `packages/db/src/tx.ts` | Brands + `withOrgTransaction` |
-| `packages/db/src/app-transaction.ts` | Keep requiring both ids; brand `AppTransaction` |
-| `packages/db/src/outbox.ts` | Drizzle table `app.outbox` |
-| `packages/db/src/schema.ts` | Re-exports the outbox table (required: Kit reads only this file) |
-| `packages/db/src/outbox-adapter.ts` | `append` implementation |
-| `packages/db/drizzle/0001_*.sql` | Kit generate + hand `FORCE ROW LEVEL SECURITY` |
-| `tooling/eslint-plugin-community-hub/rules/no-event-payload.js` | Type-aware payload + name rule |
-| `tooling/checks/encrypted-column/fixtures/` | Payload + restricted-import fixtures |
-| `tooling/checks/event-names/` | Duplicate-name checker |
-| `tooling/checks/sql-session-ban/` | Timeout exception + fixtures |
-| `tooling/checks/worker-config/` | Scan app `src` for kernel value imports |
-| `eslint.config.js` | New rule + `no-restricted-imports` |
-| `tooling/checks/run.ts` | Wire event-names |
-| `docs/adr/` | none |
-| `architecture.md` | §8.3, §12.1 |
-| `docs/roadmap.md` | last commit |
+| Path                                                            | Role                                                             |
+| --------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `packages/kernel/src/request.ts`                                | ALS `withRequest` / `getRequestContext`                          |
+| `packages/kernel/src/health.ts`                                 | Unchanged `healthPayload`                                        |
+| `packages/kernel/src/index.ts`                                  | Re-exports health + request only                                 |
+| `packages/kernel/src/event.ts`                                  | Name regex, `defineEvent`                                        |
+| `packages/kernel/src/define-module.ts`                          | `defineModule`                                                   |
+| `packages/kernel/src/health-module.ts`                          | Live `defineModule` with `publishes: []`                         |
+| `packages/kernel/src/outbox-port.ts`                            | `OutboxPort<Tx>`, `bindPublisher`                                |
+| `packages/kernel/src/module.ts`                                 | `/module` barrel                                                 |
+| `packages/kernel/package.json`                                  | `exports` `.` and `./module`; `zod` `4.6.5`                      |
+| `apps/gateway/src/index.ts`                                     | `withRequest` inside the function `createFetch` returns          |
+| `apps/gateway/wrangler.jsonc`                                   | `compatibility_flags: ["nodejs_als"]`                            |
+| `packages/db/src/tx.ts`                                         | Brands + `withOrgTransaction`                                    |
+| `packages/db/src/app-transaction.ts`                            | Keep requiring both ids; brand `AppTransaction`                  |
+| `packages/db/src/outbox.ts`                                     | Drizzle table `app.outbox`                                       |
+| `packages/db/src/schema.ts`                                     | Re-exports the outbox table (required: Kit reads only this file) |
+| `packages/db/src/outbox-adapter.ts`                             | `append` implementation                                          |
+| `packages/db/drizzle/0001_*.sql`                                | Kit generate + hand `FORCE ROW LEVEL SECURITY`                   |
+| `tooling/eslint-plugin-community-hub/rules/no-event-payload.js` | Type-aware payload + name rule                                   |
+| `tooling/checks/encrypted-column/fixtures/`                     | Payload + restricted-import fixtures                             |
+| `tooling/checks/event-names/`                                   | Duplicate-name checker                                           |
+| `tooling/checks/sql-session-ban/`                               | Timeout exception + fixtures                                     |
+| `tooling/checks/worker-config/`                                 | Scan app `src` for kernel value imports                          |
+| `eslint.config.js`                                              | New rule + `no-restricted-imports`                               |
+| `tooling/checks/run.ts`                                         | Wire event-names                                                 |
+| `docs/adr/`                                                     | none                                                             |
+| `architecture.md`                                               | §8.3, §12.1                                                      |
+| `docs/roadmap.md`                                               | last commit                                                      |
 
 Do not add `packages/contracts`. Do not edit merged specs other than this chunk's spec status (already approved).
 
@@ -105,8 +105,7 @@ export function getRequestContext(): RequestContext; // throws if missing
 export function healthPayload(): { ok: true };
 
 // @community-hub/kernel/module
-export const EVENT_NAME_RE =
-  /^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.v[1-9][0-9]*$/;
+export const EVENT_NAME_RE = /^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.v[1-9][0-9]*$/;
 
 export type DefinedEvent<S extends z.ZodTypeAny = z.ZodTypeAny> = {
   name: string;
@@ -246,9 +245,9 @@ Refs: docs/plans/2026-09-19-kernel-runtime.md task 2
 
 **Files:** `tooling/eslint-plugin-community-hub/rules/no-event-payload.js`; plugin `index.js` / `index.d.ts`; `eslint.config.js` (enable `@community-hub/no-event-payload`); `tooling/checks/encrypted-column/fixtures/fail|pass/` (see spec list); `selftest.ts`; `AGENTS.md` §10 rule name; `no-restricted-disable` must include the new id.
 
-**Must-fail:** free-form `z.string()`, banned key with allowed type, `z.record`, `.passthrough()`, unreadable `.extend()`, nested object containing any of those, invalid event name.
+**Must-fail:** free-form `z.string()`, banned key with allowed type, `z.record`, `.passthrough()`, unreadable `.extend()`, nested object containing any of those, invalid event name, imported schema with a banned key / free-form string.
 
-**Must-pass:** ids, enums, boolean, timestamp.
+**Must-pass:** ids, enums, boolean, timestamp, imported ids-only schema.
 
 - [ ] **Step 1:** Add fixtures and selftest rows (counts). Run `pnpm test --filter @community-hub/check-encrypted-column`. Expected: FAIL (missing fixtures or 0 hits).
 - [ ] **Step 2:** Implement the type-aware rule; fail closed on unreadable shapes. Copy `EVENT_NAME_RE` source text.
@@ -338,13 +337,14 @@ Refs: docs/plans/2026-09-19-kernel-runtime.md task 6
 
 **Files:** `packages/db/src/tx.ts` (or extend `app-transaction.ts`), `index.ts`; `packages/db/test/pooling.integration.test.ts` (and/or a new `org-transaction.integration.test.ts`).
 
-- [ ] **Step 1:** Failing tests: `withOrgTransaction` + `select current_setting('app.community_id')` fails (see error note below); `select` from `app.synthetic` fails loudly; `hub_reuse` after `withAppTransaction` does not leak `community_id` into a following `withOrgTransaction`; `withAppTransaction` still requires `communityId` (typecheck).
+- [ ] **Step 1:** Failing tests: `withOrgTransaction` + `select current_setting('app.community_id')` fails (see error note below); `select` from `app.synthetic_community` (policy reads `app.community_id`) fails loudly; `hub_reuse` after `withAppTransaction` does not leak `community_id` into a following `withOrgTransaction`; `withAppTransaction` still requires `communityId` (typecheck).
 
   **Unset GUC on a reused connection.** `set_config(..., true)` is transaction-local. Once a custom GUC has been set in a session, Postgres reverts it to `''` rather than unsetting it. So `current_setting('app.community_id')` inside `withOrgTransaction` is fail-closed in two ways:
   - fresh connection: raises `unrecognized configuration parameter` (**42704**);
   - connection that earlier ran `withAppTransaction`: returns `''`, and a policy `::uuid` cast fails with `invalid input syntax for type uuid` (**22P02**).
 
   The test asserts the query **fails** and accepts **either** SQLSTATE. Do not assert one message — `hub_reuse` would flake depending on connection order.
+
 - [ ] **Step 2:** Implement. Do not set `app.community_id`. Brand the callback client.
 - [ ] **Step 3:** Integration tests pass through PgBouncer.
 - [ ] **Step 4:** Commit
@@ -418,21 +418,21 @@ Refs: docs/plans/2026-09-19-kernel-runtime.md task 9
 
 ## Spec coverage
 
-| Spec item | Task |
-| --------- | ---- |
-| ALS, no orgId, no escape hatch, concurrent store | 1 |
-| Gateway `/health` + `nodejs_als`; `requestId` from `crypto.randomUUID()` / inbound header; `/health` `idempotencyKey === requestId`; `withRequest` inside `createFetch` | 1 |
-| Workerd test: `getRequestContext()` populated on the `/health` path | 1 |
-| `defineModule` / `defineEvent` / parse / undeclared | 2 |
-| Health `defineModule` live input | 2 |
-| Zod 4.6.5 on `/module` only | 2, 9 dry-run |
-| Payload ESLint + fixtures + disable ban | 3 |
-| Duplicate names repo-wide | 4 |
-| `sql-session-ban` exception | 5 |
-| worker-config src scan + restricted imports including `import type` | 6 |
-| `withOrgTransaction` fail-loudly + bleed; unset community GUC accepts 42704 or 22P02 | 7 |
-| `app.outbox` NOT NULL, PK, unique constraint, adapter, RLS tests; table exported from `schema.ts`; `pg_constraint` name matches adapter | 8 |
-| §8.3, §12.1, roadmap last | 9 |
+| Spec item                                                                                                                                                               | Task         |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| ALS, no orgId, no escape hatch, concurrent store                                                                                                                        | 1            |
+| Gateway `/health` + `nodejs_als`; `requestId` from `crypto.randomUUID()` / inbound header; `/health` `idempotencyKey === requestId`; `withRequest` inside `createFetch` | 1            |
+| Workerd test: `getRequestContext()` populated on the `/health` path                                                                                                     | 1            |
+| `defineModule` / `defineEvent` / parse / undeclared                                                                                                                     | 2            |
+| Health `defineModule` live input                                                                                                                                        | 2            |
+| Zod 4.6.5 on `/module` only                                                                                                                                             | 2, 9 dry-run |
+| Payload ESLint + fixtures + disable ban (including imported schema)                                                                                                     | 3            |
+| Duplicate names repo-wide                                                                                                                                               | 4            |
+| `sql-session-ban` exception                                                                                                                                             | 5            |
+| worker-config src scan + restricted imports including `import type`                                                                                                     | 6            |
+| `withOrgTransaction` fail-loudly + bleed; `app.synthetic_community` policy reads `app.community_id`; unset GUC accepts 42704 or 22P02                                   | 7            |
+| `app.outbox` NOT NULL, PK, unique constraint, adapter, RLS tests; table exported from `schema.ts`; `pg_constraint` name matches adapter                                 | 8            |
+| §8.3, §12.1, roadmap last                                                                                                                                               | 9            |
 
 ## Self-review
 

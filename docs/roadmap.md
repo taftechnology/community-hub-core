@@ -18,13 +18,13 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 
 ## Where we are
 
-|              |                   |
-| ------------ | ----------------- |
-| Phase        | 0 — Foundations   |
-| Last shipped | `packages-crypto` |
-| Next chunk   | `kernel-runtime`  |
-| Phase 0      | 4 / 10 done       |
-| Later phases | not started       |
+|              |                      |
+| ------------ | -------------------- |
+| Phase        | 0 — Foundations      |
+| Last shipped | `kernel-runtime`     |
+| Next chunk   | `packages-residency` |
+| Phase 0      | 5 / 10 done          |
+| Later phases | not started          |
 
 Update the snapshot and the row in the **same PR**, last commit on the chunk branch, before the PR opens. Do not defer to a follow-up chore after merge. Do not put implementer reports here ([AGENTS.md](../AGENTS.md) §5).
 
@@ -52,14 +52,14 @@ Architecture: monorepo, CI, Terraform, kernel, residency, db with RLS, crypto, o
 | done        | `terraform-au-cell`      | Cloudflare + AU AWS foundations. No tenant data. Spec `2026-09-18-terraform-au-cell`.                             |
 | done        | `packages-db`            | Privileged bootstrap, wrapped Drizzle runner, transaction-local `set_config`, RLS. Spec `2026-09-18-packages-db`. |
 | done        | `packages-crypto`        | AES-256-GCM, KMS wrap, blind indexes. Synthetic data only. Spec `2026-09-18-packages-crypto`.                     |
-| not started | `kernel-runtime`         | `defineModule`, request context, DI, outbox. Keeps `healthPayload`.                                               |
+| done        | `kernel-runtime`         | `defineModule`, request context, DI, outbox. Keeps `healthPayload`. Spec `2026-09-19-kernel-runtime`.             |
 | not started | `packages-residency`     | Cell config; global Workers cannot import personal-data modules.                                                  |
 | not started | `packages-ui`            | shadcn copied into the repo + tokens (D16). No product screens.                                                   |
 | not started | `audit-log`              | Tamper-evident append. First events when identity writes.                                                         |
 | not started | `api-au-skeleton`        | Regional Worker, `class: regional`, `preview_urls: false`, health through kernel.                                 |
 | not started | `terraform-envelope-kms` | Wrapping key in ap-southeast-2, key policy, live AWS `KmsPort`. After `api-au-skeleton`.                          |
 
-Kernel is **not** yet `defineModule` / request context / DI / outbox. Observability is the logger only (no product analytics SDK — D17).
+Kernel ships `defineModule`, request context, and the organisation-scoped outbox. Observability is the logger only (no product analytics SDK — D17).
 
 Shipped with the skeleton (not separate chunks): `@community-hub/kernel` `healthPayload()`, structured logger, `apps/gateway`, `tooling/checks/`, ADR 0001 preview URLs, session-scratch gitignore.
 
@@ -198,7 +198,7 @@ From architecture §26. Do not invent answers in a spec.
 
 ## Next spec
 
-The next approved chunk on this list is **`kernel-runtime`**, unless the human picks another remaining Phase 0 row.
+The next approved chunk on this list is **`packages-residency`**, unless the human picks another remaining Phase 0 row.
 
 ---
 

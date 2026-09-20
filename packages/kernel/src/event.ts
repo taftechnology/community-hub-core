@@ -1,7 +1,6 @@
 import type { z } from "zod";
 
-export const EVENT_NAME_RE =
-  /^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.v[1-9][0-9]*$/;
+export const EVENT_NAME_RE = /^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.v[1-9][0-9]*$/;
 
 export type DefinedEvent<S extends z.ZodTypeAny = z.ZodTypeAny> = {
   name: string;
