@@ -75,6 +75,8 @@ const mustFail: { file: string; ruleId: string; count: number }[] = [
   { file: "fail/event-imported-banned.ts", ruleId: PAYLOAD, count: 1 },
   { file: "fail/apps/gateway/src/import-db.ts", ruleId: RESTRICTED, count: 1 },
   { file: "fail/apps/gateway/src/import-type-db.ts", ruleId: RESTRICTED, count: 1 },
+  { file: "fail/apps/gateway/src/import-crypto.ts", ruleId: RESTRICTED, count: 1 },
+  { file: "fail/apps/gateway/src/import-type-crypto.ts", ruleId: RESTRICTED, count: 1 },
 ];
 
 const mustPass = [
@@ -155,6 +157,10 @@ beforeAll(() => {
                 {
                   name: "@community-hub/kernel/module",
                   message: "gateway must not import @community-hub/kernel/module.",
+                },
+                {
+                  name: "@community-hub/crypto",
+                  message: "gateway must not import @community-hub/crypto (including import type).",
                 },
               ],
             },

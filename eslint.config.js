@@ -80,6 +80,10 @@ export default tseslint.config(
               name: "@community-hub/kernel/module",
               message: "gateway must not import @community-hub/kernel/module.",
             },
+            {
+              name: "@community-hub/crypto",
+              message: "gateway must not import @community-hub/crypto (including import type).",
+            },
           ],
         },
       ],
