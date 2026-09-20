@@ -72,6 +72,7 @@ const mustFail: { file: string; ruleId: string; count: number }[] = [
   { file: "fail/event-extend.ts", ruleId: PAYLOAD, count: 1 },
   { file: "fail/event-nested-string.ts", ruleId: PAYLOAD, count: 1 },
   { file: "fail/event-invalid-name.ts", ruleId: PAYLOAD, count: 1 },
+  { file: "fail/event-imported-banned.ts", ruleId: PAYLOAD, count: 1 },
   { file: "fail/apps/gateway/src/import-db.ts", ruleId: RESTRICTED, count: 1 },
   { file: "fail/apps/gateway/src/import-type-db.ts", ruleId: RESTRICTED, count: 1 },
 ];
@@ -90,6 +91,7 @@ const mustPass = [
   "pass/packages/db/src/decrypt-insert.ts",
   "pass/packages/db/src/define-column.ts",
   "pass/event-allowed.ts",
+  "pass/event-imported-ids.ts",
 ] as const;
 
 let eslint: ESLint;
