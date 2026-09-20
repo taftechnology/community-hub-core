@@ -42,6 +42,7 @@ export default tseslint.config(
     },
     rules: {
       "@community-hub/no-encrypted-column-query": "error",
+      "@community-hub/no-event-payload": "error",
       "@community-hub/no-kms-port-outside-crypto": "error",
       "@community-hub/no-restricted-disable": "error",
       "@community-hub/no-ts-ignore": "error",
