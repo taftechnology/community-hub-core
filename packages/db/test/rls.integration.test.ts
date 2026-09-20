@@ -66,7 +66,7 @@ describe("applyTestMigrations", () => {
       const [{ testN }] = await sql<{ testN: string }[]>`
         select count(*)::text as "testN" from migrator.__drizzle_migrations_test
       `;
-      expect(testN).toBe("2");
+      expect(testN).toBe("3");
     } finally {
       await sql.end({ timeout: 1 });
     }

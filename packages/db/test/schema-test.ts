@@ -40,3 +40,21 @@ export const syntheticCrypto = app
     ],
   )
   .enableRLS();
+
+export const syntheticCommunity = app
+  .table(
+    "synthetic_community",
+    {
+      orgId: uuid("org_id").notNull(),
+      communityId: uuid("community_id").notNull(),
+      id: uuid("id").notNull(),
+    },
+    (t) => [
+      primaryKey({ columns: [t.orgId, t.id] }),
+      pgPolicy("community_isolation", {
+        for: "all",
+        using: sql`${t.orgId} = current_setting('app.org_id')::uuid and ${t.communityId} = current_setting('app.community_id')::uuid`,
+      }),
+    ],
+  )
+  .enableRLS();

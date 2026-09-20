@@ -52,7 +52,7 @@ describe.sequential("withOrgTransaction", () => {
     await applyTestMigrations({ mode: "test" }, runtime.directUrl);
   });
 
-  it("sets app.org_id and fails closed on app.community_id as a usable uuid", async () => {
+  it("sets app.org_id and cannot read community-scoped tables", async () => {
     const runtime = loadRuntime();
     const sql = createAppSql(pooledAppUrl(runtime, "hub"));
     const orgId = newId();
@@ -62,12 +62,9 @@ describe.sequential("withOrgTransaction", () => {
       });
       expect(orgRows[0]?.value).toBe(orgId);
 
-      // app.synthetic is org-scoped only (schema-test.ts); a select may succeed.
-      // Fail-loudly proof is the community GUC cast, not a synthetic miss.
-      // Assert on the transaction: a failed query aborts sql.begin.
       await expect(
         withOrgTransaction(sql, orgId, async (tx) => {
-          await tx`select current_setting('app.community_id')::uuid`;
+          await tx`select * from app.synthetic_community`;
         }),
       ).rejects.toThrow(COMMUNITY_ID_UNSET);
     } finally {
@@ -87,7 +84,7 @@ describe.sequential("withOrgTransaction", () => {
       });
       await expect(
         withOrgTransaction(b, newId(), async (tx) => {
-          await tx`select current_setting('app.community_id')::uuid`;
+          await tx`select * from app.synthetic_community`;
         }),
       ).rejects.toThrow(COMMUNITY_ID_UNSET);
     } finally {
