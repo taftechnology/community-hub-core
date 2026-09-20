@@ -1,3 +1,4 @@
+import { check as checkEventNames } from "./event-names/check.js";
 import { check as checkResidencyPayload } from "./residency-payload/check.js";
 import { check as checkSchemaRls } from "./schema-rls/check.js";
 import { check as checkSqlSessionBan } from "./sql-session-ban/check.js";
@@ -63,6 +64,19 @@ if (!sqlSessionResult.ok) {
   failed = true;
 } else {
   console.log("sql-session-ban: ok");
+}
+
+const eventNamesResult = checkEventNames();
+if (eventNamesResult.notice) {
+  console.log(eventNamesResult.notice);
+}
+if (!eventNamesResult.ok) {
+  for (const v of eventNamesResult.violations) {
+    console.error(`${v.file}: ${v.message}`);
+  }
+  failed = true;
+} else {
+  console.log("event-names: ok");
 }
 
 process.exit(failed ? 1 : 0);
