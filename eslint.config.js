@@ -42,10 +42,47 @@ export default tseslint.config(
     },
     rules: {
       "@community-hub/no-encrypted-column-query": "error",
+      "@community-hub/no-event-payload": "error",
       "@community-hub/no-kms-port-outside-crypto": "error",
       "@community-hub/no-restricted-disable": "error",
       "@community-hub/no-ts-ignore": "error",
       "@community-hub/no-crypto-testing-import": "error",
+    },
+  },
+  {
+    files: ["**/packages/kernel/**/*.{js,ts}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@community-hub/db",
+              message: "kernel must not import @community-hub/db (including import type).",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["**/apps/gateway/**/*.{js,ts}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@community-hub/db",
+              message: "gateway must not import @community-hub/db (including import type).",
+            },
+            {
+              name: "@community-hub/kernel/module",
+              message: "gateway must not import @community-hub/kernel/module.",
+            },
+          ],
+        },
+      ],
     },
   },
   {

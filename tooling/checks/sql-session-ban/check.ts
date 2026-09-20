@@ -9,6 +9,11 @@ export const SQL_SEARCH_DIRS = [
 export const TS_SRC_PARENTS = ["packages", "apps"] as const;
 export const TS_TREE_DIRS = ["modules"] as const;
 export const MIGRATE_ALLOWLIST = "packages/db/src/migrate.ts";
+const DRIZZLE_SQL_PREFIXES = ["packages/db/drizzle/", "packages/db/drizzle-test/"] as const;
+
+/** SET LOCAL lock_timeout / statement_timeout, optional `=` / `TO` value — drizzle SQL only. */
+const DRIZZLE_TIMEOUT_SET_LOCAL =
+  /\bSET\s+LOCAL\s+(?:lock_timeout|statement_timeout)(?:\s*(?:=|\bTO\b)[^;]*)?/gi;
 
 const SKIP_DIRS = new Set(["node_modules", "dist", "coverage", "test", "tests", ".turbo"]);
 
@@ -440,6 +445,15 @@ function hasStatementSetSetting(text: string): boolean {
   return STATEMENT_SET_SETTING.test(text);
 }
 
+function isDrizzleSqlFile(file: string): boolean {
+  return DRIZZLE_SQL_PREFIXES.some((prefix) => file.startsWith(prefix));
+}
+
+function stripAllowedDrizzleTimeouts(text: string): string {
+  DRIZZLE_TIMEOUT_SET_LOCAL.lastIndex = 0;
+  return text.replace(DRIZZLE_TIMEOUT_SET_LOCAL, "");
+}
+
 function pushIfMatch(
   violations: SqlSessionBanViolation[],
   file: string,
@@ -501,7 +515,8 @@ function scanShared(
     /\bSET\s+SESSION(?!\s+AUTHORIZATION)\b/i,
     "SET SESSION is forbidden",
   );
-  pushIfMatch(violations, file, text, /\bSET\s+LOCAL\b/i, "SET LOCAL is forbidden");
+  const setLocalText = isDrizzleSqlFile(file) ? stripAllowedDrizzleTimeouts(text) : text;
+  pushIfMatch(violations, file, setLocalText, /\bSET\s+LOCAL\b/i, "SET LOCAL is forbidden");
   pushIfMatch(
     violations,
     file,

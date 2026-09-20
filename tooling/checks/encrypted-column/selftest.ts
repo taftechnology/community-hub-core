@@ -14,6 +14,8 @@ const KMS = "@community-hub/no-kms-port-outside-crypto";
 const DISABLE = "@community-hub/no-restricted-disable";
 const TS_IGNORE = "@community-hub/no-ts-ignore";
 const TESTING = "@community-hub/no-crypto-testing-import";
+const PAYLOAD = "@community-hub/no-event-payload";
+const RESTRICTED = "no-restricted-imports";
 
 type Hit = { ruleId: string | null; message: string; line: number; fatal?: boolean | undefined };
 
@@ -63,6 +65,16 @@ const mustFail: { file: string; ruleId: string; count: number }[] = [
   { file: "fail/packages/db/src/inline-config.ts", ruleId: DISABLE, count: 1 },
   { file: "fail/packages/db/src/ts-ignore.ts", ruleId: TS_IGNORE, count: 1 },
   { file: "fail/packages/db/src/ts-expect-error.ts", ruleId: TS_IGNORE, count: 1 },
+  { file: "fail/event-free-string.ts", ruleId: PAYLOAD, count: 1 },
+  { file: "fail/event-banned-key.ts", ruleId: PAYLOAD, count: 1 },
+  { file: "fail/event-record.ts", ruleId: PAYLOAD, count: 1 },
+  { file: "fail/event-passthrough.ts", ruleId: PAYLOAD, count: 1 },
+  { file: "fail/event-extend.ts", ruleId: PAYLOAD, count: 1 },
+  { file: "fail/event-nested-string.ts", ruleId: PAYLOAD, count: 1 },
+  { file: "fail/event-invalid-name.ts", ruleId: PAYLOAD, count: 1 },
+  { file: "fail/event-imported-banned.ts", ruleId: PAYLOAD, count: 1 },
+  { file: "fail/apps/gateway/src/import-db.ts", ruleId: RESTRICTED, count: 1 },
+  { file: "fail/apps/gateway/src/import-type-db.ts", ruleId: RESTRICTED, count: 1 },
 ];
 
 const mustPass = [
@@ -78,6 +90,8 @@ const mustPass = [
   "pass/packages/crypto/src/hold-ciphertext.ts",
   "pass/packages/db/src/decrypt-insert.ts",
   "pass/packages/db/src/define-column.ts",
+  "pass/event-allowed.ts",
+  "pass/event-imported-ids.ts",
 ] as const;
 
 let eslint: ESLint;
@@ -108,6 +122,43 @@ beforeAll(() => {
           [DISABLE]: "error",
           [TS_IGNORE]: "error",
           [TESTING]: "error",
+          [PAYLOAD]: "error",
+        },
+      },
+      {
+        files: ["**/packages/kernel/**"],
+        rules: {
+          "no-restricted-imports": [
+            "error",
+            {
+              paths: [
+                {
+                  name: "@community-hub/db",
+                  message: "kernel must not import @community-hub/db (including import type).",
+                },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        files: ["**/apps/gateway/**"],
+        rules: {
+          "no-restricted-imports": [
+            "error",
+            {
+              paths: [
+                {
+                  name: "@community-hub/db",
+                  message: "gateway must not import @community-hub/db (including import type).",
+                },
+                {
+                  name: "@community-hub/kernel/module",
+                  message: "gateway must not import @community-hub/kernel/module.",
+                },
+              ],
+            },
+          ],
         },
       },
     ],
@@ -142,6 +193,7 @@ describe("encrypted-column ESLint fixtures", () => {
   it("loads the community-hub plugin", () => {
     expect(plugin.rules?.["no-encrypted-column-query"]).toBeDefined();
     expect(plugin.rules?.["no-kms-port-outside-crypto"]).toBeDefined();
+    expect(plugin.rules?.["no-event-payload"]).toBeDefined();
   });
 
   for (const { file, ruleId, count } of mustFail) {
@@ -165,7 +217,9 @@ describe("encrypted-column ESLint fixtures", () => {
           hit.ruleId === KMS ||
           hit.ruleId === DISABLE ||
           hit.ruleId === TS_IGNORE ||
-          hit.ruleId === TESTING,
+          hit.ruleId === TESTING ||
+          hit.ruleId === PAYLOAD ||
+          hit.ruleId === RESTRICTED,
       );
       expect(ours, JSON.stringify(hits)).toEqual([]);
     });

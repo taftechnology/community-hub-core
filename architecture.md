@@ -3,7 +3,7 @@
 |                   |                                                                                                                              |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | **Status**        | **Approved** 2026-09-17 — baseline for implementation. Changes go through an ADR in `docs/adr/` ([AGENTS.md](AGENTS.md) §13) |
-| **Last updated**  | 2026-09-18 (revision 17: living roadmap at docs/roadmap.md)                                                                  |
+| **Last updated**  | 2026-09-19 (revision 18: kernel-runtime — defineModule, outbox, §8.3 enforcement)                                            |
 | **Scope**         | `community-hub-core` (the multi-tenant SaaS) and its contracts with the mobile apps, GivingJar and Jellycube                 |
 | **Launch region** | Australia (`au`). Canada, EU and US are designed for but not deployed                                                        |
 
@@ -448,8 +448,8 @@ community-hub/
 │   └── observability/        # logger with personal-data scrubbing, tracing
 │
 ├── tooling/
-│   ├── eslint-plugin-community-hub/  # `@community-hub/no-encrypted-column-query`, `@community-hub/no-kms-port-outside-crypto`
-│   └── checks/               # CI boundary checkers (worker-config, schema-rls, residency-payload, terraform-invariants, sql-session-ban, traceability), each with must-fail fixtures; encrypted-column/ holds ESLint fixtures
+│   ├── eslint-plugin-community-hub/  # `@community-hub/no-encrypted-column-query`, `@community-hub/no-event-payload`, `@community-hub/no-kms-port-outside-crypto`, `@community-hub/no-restricted-disable`, `@community-hub/no-ts-ignore`, `@community-hub/no-crypto-testing-import`
+│   └── checks/               # CI boundary checkers (worker-config, schema-rls, residency-payload, terraform-invariants, sql-session-ban, event-names, traceability), each with must-fail fixtures; encrypted-column/ holds ESLint fixtures
 │
 ├── infra/
 │   ├── modules/              # shared Terraform modules; each has tests/ and is in the CI matrix
@@ -510,7 +510,7 @@ export default defineModule({
 - `domain/` has no imports from Hono, Drizzle, Cloudflare bindings or adapters.
 - Adapters depend on ports; modules never import adapters.
 - Global apps (`gateway`, `control-plane`) cannot import modules that declare personal-data classes.
-- Enforced with dependency-cruiser rules plus a custom check over manifests.
+- Enforced with ESLint `no-restricted-imports` (global apps and kernel must not import `@community-hub/db`, including `import type`) plus checkers (worker-config, schema-rls, event-names, sql-session-ban). dependency-cruiser is omitted until it has a real input and a must-fail fixture.
 
 ### 8.4 Conventions
 
@@ -760,6 +760,16 @@ Every column and file has a class, declared in the module schema.
 | `confidential-queryable` | Donation amounts, check expiry dates, derived age bands                                                                                                                                                           | **Not encrypted**, because SQL must aggregate, sort or range-filter them. Protected by RLS, column-level permissions, at-rest encryption and audit ([§12.2.1](#1221-encryption-versus-queryability))                                                                                       |
 | `confidential-blind`     | Donor person reference, member email used for lookup                                                                                                                                                              | Pseudonymous identifier plus a blind index; equality matching only                                                                                                                                                                                                                         |
 | `restricted`             | **Identity and sensitive records of a person under 18** (name, date of birth, photos), health and allergy information, safeguarding reports, WWCC/Blue Card numbers, religious records (sacramental certificates) | Field encryption with household or community keys, purpose-bound access, every read audited, never sent to AI, logs, analytics or third-party apps without explicit tenant approval. Derived flags such as `is_minor` are the exception in [§12.2.1](#1221-encryption-versus-queryability) |
+
+#### Platform tables
+
+Feature-module columns will use `dataClasses` on `defineModule` when those modules exist. Tables that are not a feature module (this outbox; later kernel/db platform tables) are listed here.
+
+| Table        | Columns                                                                   | Classification |
+| ------------ | ------------------------------------------------------------------------- | -------------- |
+| `app.outbox` | `id`, `org_id`, `event_name`, `payload`, `occurred_at`, `idempotency_key` | all `internal` |
+
+Not encrypted: SQL must filter `org_id`, `event_name`, and `idempotency_key`.
 
 ### 12.2 Encryption
 

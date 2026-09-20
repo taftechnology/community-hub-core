@@ -10,7 +10,8 @@
     "types": ["node"],
     "baseUrl": ".",
     "paths": {
-      "@community-hub/crypto/testing": ["../../../../packages/crypto/src/testing.ts"]
+      "@community-hub/crypto/testing": ["../../../../packages/crypto/src/testing.ts"],
+      "@community-hub/kernel/module": ["../../../../packages/kernel/src/module.ts"]
     }
   },
   "include": ["**/*.ts"]

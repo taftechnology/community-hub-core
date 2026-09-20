@@ -1,5 +1,6 @@
 import noCryptoTestingImport from "./rules/no-crypto-testing-import.js";
 import noEncryptedColumnQuery from "./rules/no-encrypted-column-query.js";
+import noEventPayload from "./rules/no-event-payload.js";
 import noKmsPortOutsideCrypto from "./rules/no-kms-port-outside-crypto.js";
 import noRestrictedDisable from "./rules/no-restricted-disable.js";
 import noTsIgnore from "./rules/no-ts-ignore.js";
@@ -11,6 +12,7 @@ const plugin = {
   },
   rules: {
     "no-encrypted-column-query": noEncryptedColumnQuery,
+    "no-event-payload": noEventPayload,
     "no-kms-port-outside-crypto": noKmsPortOutsideCrypto,
     "no-restricted-disable": noRestrictedDisable,
     "no-ts-ignore": noTsIgnore,

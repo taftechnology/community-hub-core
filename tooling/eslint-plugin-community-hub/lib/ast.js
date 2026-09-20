@@ -172,6 +172,7 @@ export function isTestFile(filename) {
 
 export const QUERY_RULE_IDS = [
   "@community-hub/no-encrypted-column-query",
+  "@community-hub/no-event-payload",
   "@community-hub/no-kms-port-outside-crypto",
   "@community-hub/no-restricted-disable",
   "@community-hub/no-ts-ignore",
