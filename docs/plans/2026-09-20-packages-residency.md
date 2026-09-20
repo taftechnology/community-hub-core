@@ -10,7 +10,7 @@
 
 **Spec:** `docs/specs/2026-09-20-packages-residency.md` (approved 2026-09-20, Abdus Salam)
 
-Status: draft
+Status: approved (2026-09-20, Abdus Salam)
 
 **Branch:** `feat/2026-09-20-packages-residency` · one PR · 6 tasks, one commit each
 
@@ -20,9 +20,10 @@ Status: draft
 - Catalog holds `enabled`, `cloudflareRegionalServices`, `awsRegion` only. No hostnames, buckets, URLs, account ids, KMS ARNs.
 - `catalog.json` is the source. Do not duplicate it as a TypeScript object. If JSON modules fail under the Workers pool: **stop and report**.
 - Checker reads `packages/residency/src/catalog.json` from `root`. It does not import the live `@community-hub/residency` package.
+- **Missing catalog first:** if that file is absent, return `{ ok: false, violations: [{ file: "packages/residency/src/catalog.json", message: "missing catalog.json" }] }` and do **not** set `notice`. Zero-input runs only after a catalog has been parsed.
 - `check(root?: string)` only. No mocked filesystem. Default `process.cwd()`.
-- Zero Terraform cell roots, zero enabled cells, or zero Wrangler apps → `notice` and `ok: false`.
-- Every non-empty fixture includes all three live inputs (enabled catalog cell, `infra/regions/<id>/`, Wrangler app) or it hits the zero-input notice instead of the rule under test.
+- Zero Terraform cell roots, zero enabled cells, or zero Wrangler apps → `notice` and `ok: false` (after a catalog exists).
+- Every fixture that is not `empty-tree` or `missing-catalog` includes all three live inputs (enabled catalog cell, `infra/regions/<id>/`, Wrangler app) or it hits the zero-input notice instead of the rule under test.
 - Do not follow `devDependencies`. Do not follow npm registry deps.
 - Worker class is not owned by residency. Do not export a Worker class enum.
 - Do not change `residency-payload`, ADR 0001, or `worker-config` preview/ALS rules.
@@ -49,6 +50,8 @@ In either case: **stop**. Do not duplicate the catalog in `.ts`. Do not drop the
 | HCL parse | Small `assignmentValue` + comment-strip copied into this checker (do not import `terraform-invariants`) | Checkers stay independent |
 | Import scan | Copy and extend `worker-config`'s comment-strip / specifier walk; do not import that package | Same reason |
 | Non-literal `import()` | Fail unless the specifier is a `"…"` or `'…'` quote immediately inside `import(` | Templates and variables are the bypass |
+| Relative path | Resolved path is inside a directory already mapped from `regionalOnlyPackages` names | Do not hard-code `/packages/db/` or `/packages/crypto/` |
+| Typecheck tests | `tsc --build && tsc --noEmit -p tsconfig.test.json`; test tsconfig `types` includes `node` | Vitest strips types; `@ts-expect-error` is otherwise unenforced. Do not copy crypto's `tsconfig.test.json` include (it misses `test/*.test.ts`) |
 | App scan | Every non-test `.ts` under `apps/<name>/`, not `src/` only | Wrangler `main` is not guaranteed |
 | Wire `run.ts` | Task 4, after import-graph exists | Live tree must pass both jobs |
 | ESLint crypto | Task 5; folder glob on gateway; checker remains class-keyed | Fast path vs fail-closed |
@@ -66,6 +69,7 @@ In either case: **stop**. Do not duplicate the catalog in `.ts`. Do not drop the
 | `packages/residency/src/index.ts` | `getCell`, `parseRegionId`, types, re-export list |
 | `packages/residency/src/index.test.ts` | Schema, types lock, runtime throw (Node + workerd) |
 | `packages/residency/test/package-graph.test.ts` | No production dependencies (Node only) |
+| `packages/residency/tsconfig.test.json` | Type-checks tests (`@ts-expect-error` + `node:fs`) |
 | `packages/residency/package.json` | `@community-hub/residency` |
 | `packages/residency/tsconfig.json` | `resolveJsonModule`, include JSON |
 | `packages/residency/wrangler.jsonc` | Test harness only (not under `apps/`) |
@@ -116,7 +120,7 @@ Zero-input notice string (exact, for the empty-tree assertion):
 residency-cell: zero Terraform cell roots, zero enabled catalog cells, or zero Wrangler apps
 ```
 
-Use it whenever **any** of those three counts is zero.
+Use it whenever **any** of those three counts is zero, **after** `catalog.json` has been parsed. Missing catalog uses the violation message `missing catalog.json` and no `notice`.
 
 ---
 
@@ -154,9 +158,28 @@ Use it whenever **any** of those three counts is zero.
 }
 ```
 
-`tsconfig.json` (package): extend `tsconfig.base.json`; `resolveJsonModule: true`; `rootDir` `./src`; `outDir` `./dist`; `lib` `ES2022`; `types` `@cloudflare/workers-types` (no `@types/node` — same as crypto); `include` `src/**/*.ts` and `src/**/*.json`; `exclude` `src/**/*.test.ts`.
+`tsconfig.json` (package): extend `tsconfig.base.json`; `resolveJsonModule: true`; `rootDir` `./src`; `outDir` `./dist`; `lib` `ES2022`; `types` `@cloudflare/workers-types` (no `@types/node` in the **build** config — same as crypto); `include` `src/**/*.ts` and `src/**/*.json`; `exclude` `src/**/*.test.ts`.
 
-`package.json`: name `@community-hub/residency`; `exports` `.` → `dist`; scripts `lint` / `typecheck` (`tsc --build`) / `test` (`pnpm run build && vitest run --config vitest.config.ts`) / `build`; devDeps typescript, vitest, `@cloudflare/workers-types`. No production `dependencies`.
+`tsconfig.test.json` (this is what makes `@ts-expect-error` real). Same pattern as `packages/db` / `packages/crypto`, except **do** include `test/package-graph.test.ts` (crypto's test tsconfig only includes `src/**` and `test/vectors/**`, so `test/dist-absence.test.ts` is a blind spot — do not copy that):
+
+```json
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "rootDir": ".",
+    "lib": ["ES2022"],
+    "types": ["node", "@cloudflare/workers-types"],
+    "resolveJsonModule": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.json", "test/package-graph.test.ts"]
+}
+```
+
+`package.json`: name `@community-hub/residency`; `exports` `.` → `dist`; scripts `lint` / `typecheck` (`tsc --build && tsc --noEmit -p tsconfig.test.json`) / `test` (`pnpm run build && vitest run --config vitest.config.ts`) / `build`; devDeps typescript, vitest, `@cloudflare/workers-types`, `@types/node` (needed for the test tsconfig). No production `dependencies`.
 
 Root `tsconfig.json` `references`: add `{ "path": "./packages/residency" }` next to crypto.
 
@@ -276,7 +299,7 @@ describe("package graph", () => {
 });
 ```
 
-`pnpm test --filter @community-hub/residency` and `pnpm typecheck` pass.
+`pnpm test --filter @community-hub/residency` and `pnpm typecheck` pass. `tsc --noEmit -p packages/residency/tsconfig.test.json` must error if the `@ts-expect-error` on `getCell("ca")` becomes unused (that is the compile-time half of the test).
 
 - [ ] **Step 4: Commit**
 
@@ -322,29 +345,30 @@ Refs: docs/plans/2026-09-20-packages-residency.md task 2
 
 `package.json` name: `@community-hub/check-residency-cell`.
 
-**Terraform job.** Read `packages/residency/src/catalog.json` from `root` (fail if missing or invalid). Discover `infra/regions/<id>/` directories that contain `backend/` or `env/`. Ignore `infra/modules`, `infra/bootstrap`, `infra/global`.
+**Terraform job.** Read `packages/residency/src/catalog.json` from `root`. If the file is missing, return immediately with a violation `{ file: "packages/residency/src/catalog.json", message: "missing catalog.json" }`, `ok: false`, **no** `notice`. Invalid JSON is the same shape with message `catalog.json is not valid JSON`. Only after a catalog object exists: discover `infra/regions/<id>/` directories that contain `backend/` or `env/`. Ignore `infra/modules`, `infra/bootstrap`, `infra/global`.
 
 Comment-strip HCL/tfvars (quoted strings intact). Collect `aws_region` from every `env/*.tfvars` and `region` from every `backend/*.hcl`.
 
 Apply the spec table. Enabled cell with no matching root fails even when another region's root exists (see `enabled-without-root` below). Disabled cell with a root passes. tfvars vs backend disagreement fails even if the catalog matches one side.
 
-**Zero-input.** If Terraform cell root count is 0, **or** enabled catalog cells is 0, **or** Wrangler app count is 0: set `notice` to the locked string above and `ok: false`. Count Wrangler apps the same way as `worker-config` (`apps/*/wrangler.json` or `wrangler.jsonc`) so this job has a real input on the live tree before task 4 scans their source.
+**Zero-input.** Evaluated only after a catalog has been parsed. If Terraform cell root count is 0, **or** enabled catalog cells is 0, **or** Wrangler app count is 0: set `notice` to the locked string above and `ok: false`. Count Wrangler apps the same way as `worker-config` (`apps/*/wrangler.json` or `wrangler.jsonc`) so this job has a real input on the live tree before task 4 scans their source.
 
-**Fixtures** (each non-empty tree also has a Wrangler app + `worker.meta.json` so it does not trip zero Wrangler apps):
+**Fixtures:**
 
-| Fixture | Expect |
-| ------- | ------ |
-| `empty-tree/` (no catalog, no `infra/regions`, no `apps`) | fail, `notice` matches `/zero/i` |
-| `aws-mismatch/` AU catalog `us-east-1`, tfvars+backend `ap-southeast-2` | fail |
-| `tfvars-backend-disagree/` tfvars `ap-southeast-2`, backend `us-east-1` | fail |
-| `enabled-without-root/` au enabled, only `infra/regions/ca/` present | fail |
-| `unknown-root/` `infra/regions/jp/` and no catalog key `jp` (still include au enabled + `infra/regions/au/` matching so the jp root is the violation) | fail |
-| `valid-au/` mini copy of live AU (`ap-southeast-2` in both tfvars and both backends) + disabled `ca` with no terraform | pass |
-| `disabled-with-root/` au matching + `infra/regions/ca/` present, catalog `ca.enabled: false` | pass |
+| Fixture | Tree | Expect |
+| ------- | ---- | ------ |
+| `empty-tree/` | Catalog present, **every** cell `enabled: false`; no `infra/regions/`; no `apps/` | fail, `notice` matches `/zero/i`, no missing-catalog violation |
+| `missing-catalog/` | No `packages/residency/src/catalog.json`; **has** matching AU terraform + a Wrangler app (so zero-input would not fire if the catalog existed) | fail, violation message `missing catalog.json`, `notice` undefined |
+| `aws-mismatch/` | AU catalog `us-east-1`, tfvars+backend `ap-southeast-2` + Wrangler | fail |
+| `tfvars-backend-disagree/` | tfvars `ap-southeast-2`, backend `us-east-1` + Wrangler | fail |
+| `enabled-without-root/` | au enabled, only `infra/regions/ca/` present + Wrangler | fail |
+| `unknown-root/` | `infra/regions/jp/` and no catalog key `jp` (still include au enabled + matching `infra/regions/au/` + Wrangler) | fail |
+| `valid-au/` | Mini copy of live AU (`ap-southeast-2` in both tfvars and both backends) + disabled `ca` with no terraform + Wrangler | pass |
+| `disabled-with-root/` | au matching + `infra/regions/ca/` present, catalog `ca.enabled: false` + Wrangler | pass |
 
 - [ ] **Step 1: RED** — `selftest.ts` loops must-fail / must-pass names calling `check(path.join(fixturesDir, name))`. Run `pnpm test --filter @community-hub/check-residency-cell`. Expected: FAIL.
 
-- [ ] **Step 2: GREEN** — implement Terraform + zero-input only. Import-graph function may be a no-op that still counts Wrangler apps. Empty-tree notice assertion required. `valid-au` passes.
+- [ ] **Step 2: GREEN** — implement Terraform + zero-input only. Missing catalog returns immediately (no `notice`). Import-graph function may be a no-op that still counts Wrangler apps. Empty-tree notice assertion required (`notice` matches `/zero/i`). `missing-catalog` asserts message `missing catalog.json` and `notice` undefined. `valid-au` passes.
 
 - [ ] **Step 3: Commit**
 
@@ -369,9 +393,11 @@ Refs: docs/plans/2026-09-20-packages-residency.md task 3
 
 **`regional`:** do not apply reach rules. Fixture-only until `api-au-skeleton`.
 
-**`global-no-pii` reach (A–E)** as the spec. Resolve `@community-hub/<pkg>` to `packages/<pkg>` or `apps/<pkg>` when `package.json` `name` matches. Follow `dependencies` and `peerDependencies` with a `workspace:` version. `devDependencies` ignored. Relative specifier: `path.resolve(dirname(file), specifier)` without the query string; if the normalised path contains `/packages/db/` or `/packages/crypto/` (from `regionalOnlyPackages` names), fail.
+**`global-no-pii` reach (A–E)** as the spec. Resolve `@community-hub/<pkg>` to `packages/<pkg>` or `apps/<pkg>` when that directory exists and `package.json` `name` matches. Build a `Map<packageName, absDir>` from `regionalOnlyPackages` using that same resolver (fail the check if a listed name cannot be resolved under `root`). Follow `dependencies` and `peerDependencies` with a `workspace:` version. `devDependencies` ignored.
 
-Non-literal `import(`: after stripping comments, `import` + `(` + not a quoted string → violation.
+Relative specifier: `path.resolve(dirname(file), specifier)` without the query string. Fail if the resolved path is **inside** any mapped regional-only directory (`path.relative(absDir, resolved)` is empty or does not start with `..` and is not an absolute escape). Do **not** string-match `/packages/db/` or `/packages/crypto/`.
+
+Non-literal `import(`: after stripping comments, `import` + `(` + not a quoted string → violation. A quoted `import("@community-hub/kernel")` is a literal and is handled by A–D (kernel is not regional-only → pass). The substring `import(` inside a string literal or a remaining JSDoc/prose comment after strip must not fire.
 
 **New fixtures** (each includes the valid AU terraform trio + catalog with au enabled):
 
@@ -388,6 +414,8 @@ Non-literal `import(`: after stripping comments, `import` + `(` + not a quoted s
 | `entry-outside-src/` `worker/entry.ts` imports crypto, no `src/` | fail |
 | `regional-imports-db/` `class: regional`, imports db | pass |
 | `global-safe/` imports only a stub `@community-hub/kernel` (fixture-local package, no crypto dep) | pass |
+| `dynamic-literal/` `await import("@community-hub/kernel")` | pass |
+| `import-call-in-string/` source contains the characters `import(` only inside a string and a JSDoc block, no real `import(` call | pass |
 
 Live `check()` with no args must pass on this repo (gateway + `infra/regions/au/` + real catalog).
 
@@ -477,14 +505,17 @@ Refs: docs/plans/2026-09-20-packages-residency.md task 6
 | --------- | ---- |
 | `catalog.json`, derived `RegionId`, handwritten `EnabledRegionId` + lock test | 1 |
 | `getCell` / `parseRegionId`; runtime throw on stub | 1 |
+| `@ts-expect-error` via `tsconfig.test.json` two-part typecheck | 1 |
 | Root `tsconfig.json` reference | 1 |
-| No Cloudflare/AWS/db/crypto deps | 1 |
+| No Cloudflare/AWS/db/crypto deps (`test/package-graph.test.ts` under test tsconfig with `types: ["node", …]`) | 1 |
 | Workerd JSON import; stop-and-report | 2 |
 | Catalog ↔ Terraform AWS region; tfvars vs backend | 3 |
-| Zero-input notice; empty-tree must-fail | 3 |
+| Zero-input notice; empty-tree (all cells disabled) | 3 |
+| Missing `catalog.json` (separate fixture, no notice) | 3 |
 | Disabled cell with Terraform root allowed | 3 |
 | Direct / type / deep / relative / transitive imports | 4 |
-| Non-literal `import()` | 4 |
+| Relative path uses resolved package dirs, not `/packages/db/` strings | 4 |
+| Non-literal `import()`; must-pass literal `import("…")` and `import(` in a string | 4 |
 | Scan whole app directory (`worker/entry.ts`) | 4 |
 | Missing `worker.meta.json` fails | 4 |
 | `regional` fixture-only pass | 4 |
