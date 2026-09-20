@@ -343,13 +343,6 @@ export function check(root: string = process.cwd()): CheckResult {
     }
   }
 
-  if (zeroInput) {
-    violations.push({
-      file: CATALOG_REL,
-      message: ZERO_INPUT_NOTICE,
-    });
-  }
-
   return {
     ok: !zeroInput && violations.length === 0,
     violations,

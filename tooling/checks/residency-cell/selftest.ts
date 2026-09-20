@@ -6,7 +6,6 @@ import { check } from "./check.js";
 const fixturesDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
 
 const mustFail = [
-  "empty-tree",
   "missing-catalog",
   "aws-mismatch",
   "tfvars-backend-disagree",
@@ -37,8 +36,10 @@ describe("residency-cell check fixtures", () => {
   it("fails the empty tree with an honest notice, not a silent pass", () => {
     const result = check(path.join(fixturesDir, "empty-tree"));
     expect(result.ok).toBe(false);
-    expect(result.notice).toMatch(/zero/i);
-    expect(result.violations.some((v) => v.message === "missing catalog.json")).toBe(false);
+    expect(result.notice).toBe(
+      "residency-cell: zero Terraform cell roots, zero enabled catalog cells, or zero Wrangler apps",
+    );
+    expect(result.violations).toEqual([]);
   });
 
   it("reports missing catalog without a notice", () => {
