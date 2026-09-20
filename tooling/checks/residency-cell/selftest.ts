@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { check } from "./check.js";
 
 const fixturesDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
 const mustFail = [
   "missing-catalog",
@@ -11,9 +12,25 @@ const mustFail = [
   "tfvars-backend-disagree",
   "enabled-without-root",
   "unknown-root",
+  "import-db",
+  "import-crypto",
+  "import-type-crypto",
+  "import-deep-db",
+  "import-relative-crypto",
+  "import-transitive-crypto",
+  "missing-meta",
+  "dynamic-nonliteral",
+  "entry-outside-src",
 ] as const;
 
-const mustPass = ["valid-au", "disabled-with-root"] as const;
+const mustPass = [
+  "valid-au",
+  "disabled-with-root",
+  "regional-imports-db",
+  "global-safe",
+  "dynamic-literal",
+  "import-call-in-string",
+] as const;
 
 describe("residency-cell check fixtures", () => {
   for (const name of mustFail) {
@@ -49,6 +66,12 @@ describe("residency-cell check fixtures", () => {
       file: "packages/residency/src/catalog.json",
       message: "missing catalog.json",
     });
+    expect(result.notice).toBeUndefined();
+  });
+
+  it("passes the live repository", () => {
+    const result = check(repoRoot);
+    expect(result.ok, `unexpected violations: ${JSON.stringify(result.violations)}`).toBe(true);
     expect(result.notice).toBeUndefined();
   });
 });

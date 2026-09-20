@@ -1,4 +1,5 @@
 import { check as checkEventNames } from "./event-names/check.js";
+import { check as checkResidencyCell } from "./residency-cell/check.js";
 import { check as checkResidencyPayload } from "./residency-payload/check.js";
 import { check as checkSchemaRls } from "./schema-rls/check.js";
 import { check as checkSqlSessionBan } from "./sql-session-ban/check.js";
@@ -77,6 +78,19 @@ if (!eventNamesResult.ok) {
   failed = true;
 } else {
   console.log("event-names: ok");
+}
+
+const residencyCellResult = checkResidencyCell();
+if (residencyCellResult.notice) {
+  console.log(residencyCellResult.notice);
+}
+if (!residencyCellResult.ok) {
+  for (const v of residencyCellResult.violations) {
+    console.error(`${v.file}: ${v.message}`);
+  }
+  failed = true;
+} else {
+  console.log("residency-cell: ok");
 }
 
 process.exit(failed ? 1 : 0);
