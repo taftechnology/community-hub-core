@@ -15,8 +15,8 @@
   },
   "scripts": {
     "lint": "eslint .",
-    "typecheck": "tsc --build",
-    "test": "vitest run --config ../../vitest.config.ts",
+    "typecheck": "tsc --build && tsc -p tsconfig.typecheck.json",
+    "test": "vitest run --typecheck --typecheck.tsconfig ./tsconfig.typecheck.json --config ../../vitest.config.ts",
     "build": "tsc --build"
   },
   "dependencies": {

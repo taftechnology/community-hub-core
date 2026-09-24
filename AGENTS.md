@@ -149,7 +149,7 @@ Entitlement keys, permissions, consent, retention, residency, safeguarding.
 
 ## Contracts
 
-API routes, events published/consumed, port changes, widget keys.
+API routes, events published/consumed, port changes, website collection / island / block keys (architecture §15.5).
 
 ## Risks
 
@@ -248,7 +248,17 @@ Architecture-specific rules that reviewers check on every diff. Most map to a CI
 - Cross-module access only through `public/`; prefer events.
 - `domain/` stays framework-free.
 - Modules never import adapters; they depend on ports.
-- New entitlement key, permission, event or widget: declare it in `module.manifest.ts`. Plans reference manifest keys only.
+- New entitlement key, permission, event, or website collection / island / block: declare it in `module.manifest.ts` (`website: { collections, islands, blocks }`). Plans reference manifest keys only.
+
+**Public website (Jellycube host — architecture §15, ADR 0006)**
+
+- Default to an **external collection**: a Zod schema in `packages/contracts` and a public-only projection on the module's Public Content API. Parishes design the list and detail pages in Jellycube; core does not ship list markup.
+- Add a **host island** (`packages/web-components`) only for a write (form, donate, RSVP, join) or a live value (campaign total). The spec names the write or value.
+- Add a **host block pack** (`packages/website-blocks`) only when the spec explains why a collection binding cannot express it.
+- Projections are allow-lists of `public`-class columns, never "row minus hidden fields". Every collection has a must-fail test with a `restricted` field and a minor fixture. Children never appear (§1 rule 5).
+- Nothing core ships is added to a site project's `package.json`.
+- `website.source.changed.v1` carries IDs, the source key and a content version only. Deep links to "Edit in Community Hub" carry opaque IDs only.
+- Islands POST only to regional core hostnames, carry no card fields (PCI SAQ-A), use Turnstile on public writes, and meet WCAG 2.2 AA.
 
 **API and UI**
 
@@ -387,6 +397,7 @@ Beyond "does it work":
 - [ ] Money: are amounts integer minor units, idempotency keys present, ledger tenant-scoped? Stripe Billing traffic on `exec` / `webhooks-au` only?
 - [ ] Encryption: right classification, right key, and nothing encrypted that SQL must query?
 - [ ] Entitlements and permissions checked in API, UI **and** jobs?
+- [ ] Public website: is a new surface a collection (not an island or block without a stated reason)? Is the projection a `public`-only allow-list, with a must-fail minor test?
 - [ ] Failure modes: what happens on provider timeout, replayed webhook, partial batch?
 - [ ] Tests actually fail without the fix (spot-check by reverting the source change)?
 - [ ] Is this simpler than it looks, or is the plan over-built for a first customer?
@@ -469,6 +480,7 @@ Never               → commit or merge to main except by merging a PR
                     → merge your own work · personal data outside AU · prod data anywhere else
                     → encrypted column in a WHERE/ORDER BY/aggregate · secrets in the repo
                     → a Durable Object holding personal data · analytics SDK on any surface
+                    → a non-public field or a minor in a website collection
                     → control-plane calling Stripe · ops console reading tenant rows itself
                     → implementer reports in docs/plans/ or in a commit
 

@@ -18,13 +18,13 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 
 ## Where we are
 
-|              |                      |
-| ------------ | -------------------- |
-| Phase        | 0 — Foundations      |
-| Last shipped | `packages-residency` |
-| Next chunk   | `packages-ui`        |
-| Phase 0      | 6 / 10 done          |
-| Later phases | not started          |
+|              |                         |
+| ------------ | ----------------------- |
+| Phase        | 0 — Foundations         |
+| Last shipped | `website-host-contract` |
+| Next chunk   | `packages-ui`           |
+| Phase 0      | 6 / 10 done             |
+| Later phases | not started             |
 
 Update the snapshot and the row in the **same PR**, last commit on the chunk branch, before the PR opens. Do not defer to a follow-up chore after merge. Do not put implementer reports here ([AGENTS.md](../AGENTS.md) §5).
 
@@ -39,6 +39,16 @@ Update the snapshot and the row in the **same PR**, last commit on the chunk bra
 | **not started** | No approved spec yet.      |
 
 Phase 0–1 rows are **chunks** (one spec → plan → branch → PR). Phase 2–7 rows are **journeys**; specs are cut when we enter that phase.
+
+---
+
+## Architecture decisions
+
+Chunks that change a documented decision without belonging to a phase. They do not count toward phase totals.
+
+| Status | Chunk                   | What                                                                                                                                                   |
+| ------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| done   | `website-host-contract` | Collections, host islands and block packs replace the widget pack; kernel `website` manifest field. ADR 0006. Spec `2026-09-24-website-host-contract`. |
 
 ---
 
@@ -89,19 +99,22 @@ Phase 1 does **not** fill Enquires, Engagement, Family Records, Membership, Reco
 
 Journeys, not a full backlog. Cut specs when this phase starts. Fill nav in this order where possible. Ship **`verticals/faith-church`** here (Mass times, sacraments, parish wording).
 
-| Status      | Journey                      | Nav / surface                             | Must include                                                                                                        |
-| ----------- | ---------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| not started | Groups                       | Contacts & Members → Groups               | Ministries, members, export                                                                                         |
-| not started | All Contacts admin           | Contacts & Members → All Contacts         | Built on people/households; no children in public directories                                                       |
-| not started | Family Records               | Family Records                            | Household UI; **life events** inside this item                                                                      |
-| not started | Mass Timings                 | Engagement → Mass Timings                 | Service times; labels from faith-church                                                                             |
-| not started | Notice Board                 | Engagement → Notice Board                 | Pin; **approve / reject**                                                                                           |
-| not started | Bulletins                    | Engagement → Bulletins                    | CRUD, PDF as in Laravel if still required                                                                           |
-| not started | Events                       | Engagement → Events                       | Free and **paid** RSVP, ticket types, capacity, booking detail, external ticketing URL. Staging **RSVP** gate       |
-| not started | Forms + Enquires             | Forms; Enquires                           | Builder, classification on fields, public submit, enquiry inbox. Staging **form submit** gate                       |
-| not started | Broadcast Messages           | Communication                             | Email to entitled audiences; IDs in, send from `exec`. No personal data in jobs                                     |
-| not started | Content                      | Website & CMS: Blog, Gallery, Team, Media | Public Content API. Our Schools / Our Places as content, not new modules                                            |
-| not started | Mobile home CMS + Parish Hub | Mobile App                                | Cards, nav, ministries, sacraments, mass times. App Registry. **`parish-hub-au` only**. Legacy compatibility router |
+**Every public-facing journey** (Mass Timings, Notice Board, Bulletins, Events, Content) ships its **external collection** with the Public Content API: a Zod schema in `packages/contracts`, a public-only projection, and a must-fail minor test (architecture §15.5, ADR 0006). The same projection feeds Parish Hub, so this is not extra work. It is what makes Phase 4 small.
+
+| Status      | Journey                      | Nav / surface                             | Must include                                                                                                          |
+| ----------- | ---------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| not started | Groups                       | Contacts & Members → Groups               | Ministries, members, export                                                                                           |
+| not started | All Contacts admin           | Contacts & Members → All Contacts         | Built on people/households; no children in public directories                                                         |
+| not started | Family Records               | Family Records                            | Household UI; **life events** inside this item                                                                        |
+| not started | Mass Timings                 | Engagement → Mass Timings                 | Service times; labels from faith-church                                                                               |
+| not started | Notice Board                 | Engagement → Notice Board                 | Pin; **approve / reject**                                                                                             |
+| not started | Bulletins                    | Engagement → Bulletins                    | CRUD, PDF as in Laravel if still required                                                                             |
+| not started | Events                       | Engagement → Events                       | Free and **paid** RSVP, ticket types, capacity, booking detail, external ticketing URL. Staging **RSVP** gate         |
+| not started | Forms + Enquires             | Forms; Enquires                           | Builder, classification on fields, public submit, enquiry inbox. Staging **form submit** gate                         |
+| not started | Broadcast Messages           | Communication                             | Email to entitled audiences; IDs in, send from `exec`. No personal data in jobs                                       |
+| not started | Content                      | Website & CMS: Blog, Gallery, Team, Media | Public Content API + collections (articles, gallery, team). Our Schools / Our Places as content, not new modules      |
+| not started | Website host contract freeze | — (agreement with Jellycube)              | Freeze `dataSources`, `islands`, notifications, role mapping with Jellycube while collection schemas are written (Q2) |
+| not started | Mobile home CMS + Parish Hub | Mobile App                                | Cards, nav, ministries, sacraments, mass times. App Registry. **`parish-hub-au` only**. Legacy compatibility router   |
 
 Laravel has **no check-in**. Do not port it here.
 
@@ -125,9 +138,14 @@ After this phase, donate + form submit + RSVP can be proven on staging APIs even
 
 ## Phase 4 — Public website on core
 
-| Status      | Journey                                   | Must include                                                                                                                                 |
-| ----------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| not started | Jellycube host adapter + host widget pack | Events, notices, bulletins, service times, forms, donate — or the thin in-core renderer if the SDK is not frozen (Q2). Same APIs either way. |
+| Status      | Journey                           | Must include                                                                                                                                                        |
+| ----------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| not started | Jellycube host adapter            | `dataSources` over the Phase 2 collections (events, notices, bulletins, service times), OIDC + `mapRoles`, lifecycle, theme tokens, **Edit in Community Hub** links |
+| not started | Host islands                      | `forms.embed`, `giving.donate`, `engagement.rsvp` in `packages/web-components`. Turnstile, WCAG 2.2 AA. Staging form submit, donate and RSVP gates                  |
+| not started | Freshness notification            | `website.source.changed.v1` from the outbox via `jobs-au`, signed, IDs only; Jellycube re-renders the affected routes                                               |
+| not started | Embedded editor + parish template | Website & CMS opens the Jellycube editor in the admin; sites provisioned from the `faith-church` template into Jellycube-managed Git. Needs Q13                     |
+
+If Jellycube collections are not ready, ship the thin in-core renderer on the **same data sources** (Q2). Islands and the notification are the same either way.
 
 Fills Website & CMS → Pages, Global Setting, Templates, and the top-bar **Website** button. Header/Footer live in the builder.
 
@@ -185,14 +203,15 @@ Inventory: `/Users/iamabdus/ai-coding-2/Community-Hub` against architecture §9 
 
 From architecture §26. Do not invent answers in a spec.
 
-| #   | Blocks                                       |
-| --- | -------------------------------------------- |
-| Q1  | Recurring giving, refunds, GivingJar onboard |
-| Q2  | Phase 4 Jellycube vs thin renderer           |
-| Q3  | Identity library (Phase 1 `identity-otp`)    |
-| Q8  | Plan contents and pricing (entitlements)     |
-| Q9  | EmailProvider (Settings → Email Settings)    |
-| Q12 | Feature-flag vendor                          |
+| #   | Blocks                                                             |
+| --- | ------------------------------------------------------------------ |
+| Q1  | Recurring giving, refunds, GivingJar onboard                       |
+| Q2  | Phase 4 Jellycube vs thin renderer; contract freeze row in Phase 2 |
+| Q13 | Phase 4 Jellycube hosting zone with Regional Services = Australia  |
+| Q3  | Identity library (Phase 1 `identity-otp`)                          |
+| Q8  | Plan contents and pricing (entitlements)                           |
+| Q9  | EmailProvider (Settings → Email Settings)                          |
+| Q12 | Feature-flag vendor                                                |
 
 ---
 
