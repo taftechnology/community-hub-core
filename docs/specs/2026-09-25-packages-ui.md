@@ -101,7 +101,7 @@ The checker fails when a token property is a name `theme.css` defines (the left-
 
 ### Copied Button
 
-`components.json` records CLI version `4.21.0` and style `base-nova`. The same CLI's `new-york-v4` Button imports `Slot` from `radix-ui`. This chunk does not. `base-nova` imports `@base-ui/react/button`.
+`components.json` records style `base-nova` and no version field. `shadcn@4.21.0` rejects a `version` field, so the CLI version is pinned in the `shadcn` script (`pnpm dlx shadcn@4.21.0`), in `packages/ui/README.md`, and in each copied file's header (`CLI 4.21.0`). A test fails when those three disagree. Amended 2026-09-25, after the CLI rejected the field: dropping it is this decision, not a workaround. The same CLI's `new-york-v4` Button imports `Slot` from `radix-ui`. This chunk does not. `base-nova` imports `@base-ui/react/button`.
 
 The registry file has no MIT header. It starts at the import of `ButtonPrimitive`. Each copied file gets a header this repo writes, naming shadcn/ui and the MIT licence. `packages/ui/THIRD_PARTY_NOTICES` carries the licence text, so the licence does not live only in a comment a later CLI refresh can overwrite. After any refresh, the header is put back before commit.
 
@@ -129,7 +129,7 @@ The test fails when a focus ring or a default-state background carries an opacit
 
 The package script `shadcn` creates `.shadcn.css` when it is missing, then runs `pnpm dlx shadcn@4.21.0` with the arguments it was given. `packages/ui/README.md` documents that command (`pnpm --filter @community-hub/ui shadcn`). A fresh clone has no `.shadcn.css` until the script runs. Values the CLI writes into the scratch file are copied into `tokens.json`, and the generator is re-run.
 
-If the published components schema rejects the `version` or `style` field, stop and report. Do not drop them to make the CLI start.
+If the published components schema rejects the `style` field, stop and report. Do not drop it to make the CLI start.
 
 ### Dependencies
 
@@ -214,7 +214,7 @@ No tables, columns, or personal data. Tokens are color, length, and weight. Both
 | Two Reacts in one bundle                                                         | `react` and `react-dom` are peers (`^19`); exact versions are devDependencies                                                                                                                                                                         |
 | UI installed without the token CSS                                               | `@community-hub/tokens` is a peer of `@community-hub/ui`                                                                                                                                                                                              |
 | Native package depends on React to read tokens                                   | Tokens live in a package with no runtime dependencies                                                                                                                                                                                                 |
-| CLI returns the Radix Button                                                     | `components.json` pins style `base-nova` with CLI `4.21.0`; no `radix-ui` dependency                                                                                                                                                                  |
+| CLI returns the Radix Button                                                     | `components.json` pins style `base-nova`; the `shadcn` script pins CLI `4.21.0`; no `radix-ui` dependency                                                                                                                                             |
 | Parish `--primary` clashes with island tokens                                    | Token properties are `--ch-*`; Tailwind names stay in `theme.css`                                                                                                                                                                                     |
 | A theme variable resolves to Tailwind's default, or `--radius-md` is not emitted | Node compile test: the five utilities contain their `var(--ch-…)` tokens, and `rounded-[min(var(--radius-md),10px)]` both uses `var(--radius-md)` and defines `--radius-md` as `var(--ch-rounded-md)`. First run that misses either stops and reports |
 | `var(--radius-md)` fails `unknown-var`                                           | Theme left-hand sides count as known names                                                                                                                                                                                                            |

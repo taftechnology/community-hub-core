@@ -33,7 +33,7 @@ Status: approved (2026-09-25, Abdus Salam)
 
 **Stop and report** (do not work around):
 
-- `components.json` schema rejects `version` or `style`. Do not drop either field.
+- `components.json` schema rejects `style`. Do not drop it. The CLI pin is the `shadcn@4.21.0` script, not a `version` field: `shadcn@4.21.0` rejects that field.
 - The shadcn CLI returns a Button that imports `radix-ui`.
 - The first Tailwind compile emits a baked length instead of `var(--ch-…)`, or does not define `--radius-md` as `var(--ch-rounded-md)`. Do not weaken the assertion, retarget the Button at `--ch-rounded-md`, or remove `@theme inline` in that change.
 - `pnpm install` or the shadcn CLI cannot be reached.
@@ -56,7 +56,7 @@ Status: approved (2026-09-25, Abdus Salam)
 | `packages/ui/src/opacity.ts`            | Class-string scanner                                                                   |
 | `packages/ui/src/alias.ts`              | Rejects `@/` imports the package `paths` would hide                                    |
 | `packages/ui/theme.css`                 | Generated Tailwind map                                                                 |
-| `packages/ui/components.json`           | CLI `4.21.0`, style `base-nova`                                                        |
+| `packages/ui/components.json`           | Style `base-nova`; no `version` field                                                  |
 | `packages/ui/THIRD_PARTY_NOTICES`       | MIT text                                                                               |
 | `docs/adr/0007-token-source-is-json.md` | Amends the D16 token row                                                               |
 
@@ -251,7 +251,7 @@ Checker path constants: `packages/tokens/src/tokens.json`, `packages/tokens/src/
 
 - [ ] **GREEN.** Package peers and devDependency pins as in the spec, plus dependencies `@base-ui/react@1.8.0`, `class-variance-authority@0.7.1`, `clsx@2.1.1`, `tailwind-merge@3.7.0`. Do not add `@tailwindcss/node` until task 4. Exports `.` → `./src/index.ts` and `./theme.css` → `./theme.css`. `tsconfig.json` sets `"jsx": "react-jsx"`, includes `src/**/*.ts` and `src/**/*.tsx`, excludes tests. `tsconfig.test.json` sets `composite: false`, `noEmit: true`, the same `jsx`, and includes the tests. `typecheck` runs `tsc --build && tsc --noEmit -p tsconfig.test.json`.
 
-  `components.json`: `"version": "4.21.0"`, `"style": "base-nova"`, Tailwind CSS path `packages/ui/.shadcn.css`, and `aliases.utils` set to `@/lib/utils`. The CLI resolves aliases through tsconfig `paths`, so `tsconfig.json` maps `@/*` to `./src/*`. There is no `cn` alias. Add `packages/ui/.shadcn.css` to `.gitignore`. The package Vitest config sets `environment: "jsdom"`. Script `shadcn` creates the scratch file if missing, then runs `pnpm dlx shadcn@4.21.0` with the arguments it received. README documents `pnpm --filter @community-hub/ui shadcn`.
+  `components.json`: `"style": "base-nova"` and no `version` field, because `shadcn@4.21.0` rejects that field. Tailwind CSS path `packages/ui/.shadcn.css`, and `aliases.utils` set to `@/lib/utils`. The CLI resolves aliases through tsconfig `paths`, so `tsconfig.json` maps `@/*` to `./src/*`. There is no `cn` alias. Add `packages/ui/.shadcn.css` to `.gitignore`. The package Vitest config sets `environment: "jsdom"`. Script `shadcn` creates the scratch file if missing, then runs `pnpm dlx shadcn@4.21.0` with the arguments it received. README documents `pnpm --filter @community-hub/ui shadcn` and names CLI `4.21.0`. A test fails when the `shadcn@` version in that script, the version in the README, and the `CLI` version in each copied file's header are not the same.
 
   Run the script to add the Button. Confirm the primitive import is `@base-ui/react/button`. The registry source says `{ cn } from "cn"`; the CLI rewrites that to the `utils` alias, usually `@/lib/utils`. After the copy, change that import to `./lib/utils`. An `@/` import would resolve to the first app's `src`, because `exports` point at source and the app's bundler compiles `button.tsx`. The alias test stays red until that rewrite, and a later `shadcn add` that leaves `@/lib/utils` in any non-test file under `src` fails the same way. Do not delete the `@/*` paths; the CLI still resolves the alias through them. Add this header to `button.tsx` and `src/lib/utils.ts`:
 
