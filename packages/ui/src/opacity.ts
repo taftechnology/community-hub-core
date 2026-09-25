@@ -6,8 +6,7 @@ function stripHoverUtilities(source: string): string {
 
 function extractClassTokens(source: string): string[] {
   const tokens: string[] = [];
-  const pattern =
-    /(?<![\w-])((?:[a-z][\w-]*:)*[\w[\]./%+-]+(?:\/[\d.]+)?)(?![\w-])/gi;
+  const pattern = /(?<![\w-])((?:[a-z][\w-]*:)*[\w[\]./%+-]+(?:\/[\d.]+)?)(?![\w-])/gi;
   for (const match of source.matchAll(pattern)) {
     const token = match[1];
     if (token !== undefined && token.includes("/")) {

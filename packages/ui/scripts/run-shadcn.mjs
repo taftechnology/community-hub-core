@@ -11,10 +11,9 @@ if (!existsSync(scratchCss)) {
   writeFileSync(scratchCss, '@import "tailwindcss";\n', "utf8");
 }
 
-const result = spawnSync(
-  "pnpm",
-  ["dlx", "shadcn@4.21.0", ...process.argv.slice(2)],
-  { cwd: packageRoot, stdio: "inherit" },
-);
+const result = spawnSync("pnpm", ["dlx", "shadcn@4.21.0", ...process.argv.slice(2)], {
+  cwd: packageRoot,
+  stdio: "inherit",
+});
 
 process.exit(result.status ?? 1);
