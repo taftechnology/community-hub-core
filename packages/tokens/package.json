@@ -1,0 +1,23 @@
+{
+  "name": "@community-hub/tokens",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tokens.css": "./src/tokens.css",
+    "./generate": "./src/generate.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --build",
+    "test": "vitest run --config vitest.config.ts",
+    "build": "tsc --build",
+    "generate": "pnpm exec tsx src/write-tokens-css.ts && pnpm exec prettier --write src/tokens.css"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.9"
+  }
+}
