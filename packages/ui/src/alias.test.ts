@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { aliasViolations, aliasViolationsInSrc } from "./alias";
 
 it("rejects an @/ import the package paths would resolve", () => {
