@@ -54,6 +54,7 @@ Status: draft
 | `packages/ui/src/button.tsx`            | Copied `base-nova` Button, opacity edits applied                                       |
 | `packages/ui/src/lib/utils.ts`          | `cn`                                                                                   |
 | `packages/ui/src/opacity.ts`            | Class-string scanner                                                                   |
+| `packages/ui/src/alias.ts`              | Rejects `@/` imports the package `paths` would hide                                    |
 | `packages/ui/theme.css`                 | Generated Tailwind map                                                                 |
 | `packages/ui/components.json`           | CLI `4.21.0`, style `base-nova`                                                        |
 | `packages/ui/THIRD_PARTY_NOTICES`       | MIT text                                                                               |
@@ -207,6 +208,34 @@ Checker path constants: `packages/tokens/src/tokens.json`, `packages/tokens/src/
   });
   ```
 
+  `packages/ui/src/alias.test.ts`, beside that file. `aliasViolations(source)` returns every line that contains `from "@/`, `from '@/`, `import("@/`, or `import('@/`. `export … from "@/…"` is included, because the line still contains `from "@/`.
+
+  ```ts
+  import { aliasViolations, aliasViolationsInSrc } from "./alias";
+
+  it("rejects an @/ import the package paths would resolve", () => {
+    expect(aliasViolations('import { cn } from "@/lib/utils"')).toEqual([
+      'import { cn } from "@/lib/utils"',
+    ]);
+  });
+
+  it("rejects a single-quoted @/ import", () => {
+    expect(aliasViolations("import { cn } from '@/lib/utils'")).toEqual([
+      "import { cn } from '@/lib/utils'",
+    ]);
+  });
+
+  it("accepts a relative utils import", () => {
+    expect(aliasViolations('import { cn } from "./lib/utils"')).toEqual([]);
+  });
+
+  it("finds no @/ import under src", () => {
+    expect(aliasViolationsInSrc(new URL(".", import.meta.url))).toEqual([]);
+  });
+  ```
+
+  `aliasViolationsInSrc` reads every file under `packages/ui/src` except `*.test.ts` and `*.test.tsx` — the must-fail string lives in the test, and scanning it would fail the live check. Zero non-test files is a failure, not a pass. The `@/*` path mapping stays, so typecheck and lint still resolve a forgotten `@/lib/utils` inside this package. This test is what fails before an app exists.
+
   Classification, applied after stripping utilities under `hover:` (including `dark:hover:`):
 
   - Focus ring: any `ring-*`, and any `border-*` or `outline-*` under `focus-visible:`.
@@ -219,7 +248,7 @@ Checker path constants: `packages/tokens/src/tokens.json`, `packages/tokens/src/
 
   `components.json`: `"version": "4.21.0"`, `"style": "base-nova"`, Tailwind CSS path `packages/ui/.shadcn.css`, and `aliases.utils` set to `@/lib/utils`. The CLI resolves aliases through tsconfig `paths`, so `tsconfig.json` maps `@/*` to `./src/*`. There is no `cn` alias. Add `packages/ui/.shadcn.css` to `.gitignore`. The package Vitest config sets `environment: "jsdom"`. Script `shadcn` creates the scratch file if missing, then runs `pnpm dlx shadcn@4.21.0` with the arguments it received. README documents `pnpm --filter @community-hub/ui shadcn`.
 
-  Run the script to add the Button. Confirm the primitive import is `@base-ui/react/button`. The registry source says `{ cn } from "cn"`; the CLI rewrites that to the `utils` alias, usually `@/lib/utils`. After the copy, change that import to `./lib/utils`. An `@/` import would resolve to the first app's `src`, because `exports` point at source and the app's bundler compiles `button.tsx`. Add this header to `button.tsx` and `src/lib/utils.ts`:
+  Run the script to add the Button. Confirm the primitive import is `@base-ui/react/button`. The registry source says `{ cn } from "cn"`; the CLI rewrites that to the `utils` alias, usually `@/lib/utils`. After the copy, change that import to `./lib/utils`. An `@/` import would resolve to the first app's `src`, because `exports` point at source and the app's bundler compiles `button.tsx`. The alias test stays red until that rewrite, and a later `shadcn add` that leaves `@/lib/utils` in any non-test file under `src` fails the same way. Do not delete the `@/*` paths; the CLI still resolves the alias through them. Add this header to `button.tsx` and `src/lib/utils.ts`:
 
   ```ts
   // Copied from shadcn/ui base-nova (CLI 4.21.0). MIT License. See THIRD_PARTY_NOTICES.
@@ -246,10 +275,10 @@ Checker path constants: `packages/tokens/src/tokens.json`, `packages/tokens/src/
 
   UI script `generate` calls `generateTokens` and writes `theme.css` through the repo Prettier. Run it before the resolve test, because the export path must exist. ESLint: typed block `files` become `**/*.{js,ts,tsx}` and its ignores gain `**/*.test.tsx`; the untyped test block's `files` gain `**/*.test.tsx`. Root references gain `./packages/ui`.
 
-  Run the opacity test again. Expected: PASS.
+  Run the opacity test and the alias test again. Expected: PASS.
 
 - [ ] Local gate: `pnpm --filter @community-hub/ui lint && pnpm --filter @community-hub/ui typecheck && pnpm --filter @community-hub/ui test && pnpm check:boundaries`
-- [ ] Commit: `feat(ui): copy the base-nova Button and lock its opacity rule` with `Refs: docs/plans/2026-09-25-packages-ui.md task 3`
+- [ ] Commit: `feat(ui): copy the base-nova Button and lock its import and opacity rules` with `Refs: docs/plans/2026-09-25-packages-ui.md task 3`
 
 ## Task 4: Theme compile test, axe, wire the checker
 
