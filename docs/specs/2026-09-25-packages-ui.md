@@ -52,15 +52,17 @@ There is no component CSS build and no published JS bundle. `exports` point at T
 
 `modes` is exactly `{ light, dark }`. Each mode has a `color` object. The two color-key sets are equal. Colors are `#` plus six lowercase hex digits. Eight-digit hex, shorthand, and any other string are `bad-color`. Token values have no alpha. Utility opacity in the copied Button is a separate gap, below. It is not prevented by `bad-color`.
 
-Every key in `radius`, `fontSize`, `fontWeight`, and `color` matches `[a-z0-9-]+`. Anything else, and a `space` value that is not a non-negative number, is `bad-key`.
+Every key in `radius`, `fontSize`, `fontWeight`, and `color` matches `[a-z0-9-]+`. Anything else is `bad-key`. `bad-key` is only about keys. `space` has no keys, so a bad `space` value is not `bad-key`.
 
-`radius`, `fontSize`, and `fontWeight` values are non-negative numbers. Font families are absent. The generator dispatches on the group: `space`, `radius`, and `fontSize` become `rem` by dividing by 16, using the shortest decimal that equals that quotient; `fontWeight` is copied as a number; `color` is copied as hex. An unknown group is not treated as a length.
+`space`, `radius`, `fontSize`, and `fontWeight` values are non-negative finite numbers. A negative, a string, `NaN`, or any other JSON type is `bad-value`. Font families are absent. The generator dispatches on the group: `space`, `radius`, and `fontSize` become `rem` by dividing by 16, using the shortest decimal that equals that quotient; `fontWeight` is copied as a number; `color` is copied as hex. An unknown group is not treated as a length. `bad-value` runs in validation, so a bad number never becomes `-0.25rem` or `NaNrem` in committed CSS.
 
 Each pair has `id`, `mode` (`light` or `dark`), `purpose` (`text`, `large-text`, or `non-text`), `foreground`, and `background`. The last two are color keys in that mode. A purpose outside that set is `unknown-purpose`. A key that is not a color in that mode is `unknown-key`. Thresholds, compared on the unrounded WCAG ratio: `text` passes only when `ratio >= 4.5`; `large-text` and `non-text` pass when `ratio >= 3`. A ratio of 4.499 fails `text`.
 
 `missing-pair` is a color key that is present in both modes and appears in no pair of that mode. A key that exists in only one mode is `mode-keys`, not `missing-pair`.
 
-The real color keys, taken from the `base-nova` Button's utility classes, are `background`, `border`, `destructive`, `foreground`, `input`, `muted`, `primary`, `primary-foreground`, `ring`, `secondary`, and `secondary-foreground`. Each exists in both modes and appears in at least one pair of that mode. The palette is a neutral starter. Every real pair passes. The `valid` fixture, not the live palette, is what proves the 3:1 path: its `non-text` pair has an unrounded ratio `>= 3` and `< 4.5`, and it contains `var(--ch-background)`. `contrast-fail` is a dark `text` pair with an unrounded ratio `< 3`, so a checker that uses 3:1 for every purpose still reports `contrast`.
+The real color keys, taken from the `base-nova` Button's utility classes, are `background`, `border`, `destructive`, `foreground`, `input`, `muted`, `primary`, `primary-foreground`, `ring`, `secondary`, and `secondary-foreground`. Each exists in both modes and appears in at least one pair of that mode.
+
+The real non-colour keys, taken from the same file, are `radius` `md` and `lg`, `fontSize` `xs` and `sm`, and `fontWeight` `medium`. Tailwind v4's default theme already defines `--radius-md`, `--radius-lg`, `--text-sm`, `--text-xs`, and `--font-weight-medium`. Omitting one of these keys would let the Button render on Tailwind's value. The live `tokens.json` includes each of them. The palette is a neutral starter. Every real pair passes. The `valid` fixture, not the live palette, is what proves the 3:1 path: its `non-text` pair has an unrounded ratio `>= 3` and `< 4.5`, and it contains `var(--ch-background)`. `contrast-fail` is a dark `text` pair with an unrounded ratio `< 3`, so a checker that uses 3:1 for every purpose still reports `contrast`.
 
 ### Generated CSS
 
@@ -82,7 +84,7 @@ Token properties also must not start with a Tailwind v4 theme namespace: `--colo
 
 `theme.css` contains `@source "./src"`, `@custom-variant dark (&:is(.dark *))`, and `@theme inline` with those mappings. `@theme inline` is what makes `bg-background` follow `.dark` at runtime. The `dark` variant matches descendants of `.dark` and does not match the element that carries the class. That is the shadcn default.
 
-The `base-nova` Button uses `rounded-[min(var(--radius-md),10px)]` on its `xs`, `sm`, and icon sizes. `--radius-md` is the theme left-hand side, not the token property `--ch-rounded-md`. Implementation verifies that, after Tailwind v4 processes `theme.css`, `var(--radius-md)` resolves at computed-value time. If `@theme inline` does not leave that custom property available, stop and report. Do not retarget the Button at `--ch-rounded-md`, and do not remove `inline`, in that same change.
+The `base-nova` Button uses `rounded-[min(var(--radius-md),10px)]` on its `xs`, `sm`, and icon sizes, and it uses `rounded-lg`, `text-sm`, `text-xs`, and `font-medium`. `--radius-md` is the theme left-hand side, not the token property `--ch-rounded-md`. Implementation verifies that, after Tailwind v4 processes `theme.css`, each of `--radius-md`, `--radius-lg`, `--text-sm`, `--text-xs`, and `--font-weight-medium` resolves to the same value the generator wrote for that token. A property that resolves to Tailwind's default, or that does not resolve, fails the check. Stop and report. Do not retarget the Button at `--ch-rounded-md`, and do not remove `inline`, in that same change.
 
 The checker fails when a token property is a name `theme.css` defines (the left-hand side). That is `self-reference`. A correct generator cannot emit `--radius-md: var(--radius-md)` from valid JSON, so this rule is proved by a unit test of the function that scans a CSS string, using that declaration as input. The same function runs on the generated `theme.css` during the generation-dependent pass.
 
@@ -91,7 +93,7 @@ The checker fails when a token property is a name `theme.css` defines (the left-
 **Known gaps**
 
 - A typo in a utility class (`bg-primry`) is invisible to the `var(--…)` check. Tailwind drops unknown classes, and jsdom does not compute styles.
-- Utility opacity and `color-mix` are not inputs to the contrast check. The copied Button keeps `hover:bg-primary/80`, `dark:bg-input/30`, and `color-mix(in oklch, …)`. The JSON check measures the opaque token only, so it overstates contrast for those states.
+- Hover opacity and `color-mix` are not inputs to the contrast check. They are transient states. The copied Button may keep them, including `hover:bg-primary/80` and `color-mix(in oklch, …)`. The JSON check measures the opaque token only, so it overstates contrast for those states. Default-state backgrounds and focus rings are not part of this gap.
 
 ### Copied Button
 
@@ -101,7 +103,16 @@ The registry file has no MIT header. It starts at the import of `ButtonPrimitive
 
 The Button imports `{ cn } from "cn"`. `components.json` aliases that specifier to `packages/ui/src/lib/utils.ts`, which exports `cn` built from `clsx` and `tailwind-merge`. That file is why those two dependencies exist. It is a copied helper, not a second component, and it gets the same header.
 
-The variant API stays the upstream component. Edits beyond the header, `verbatimModuleSyntax`, and ESLint are limited to these class strings: `focus-visible:ring-ring/50` becomes an opaque `ring` utility, and `bg-destructive/10` is replaced so destructive text sits on an opaque background token. That text and its background are a `text` pair. A CLI refresh that restores either class is re-edited before commit.
+The variant API stays the upstream component. Edits beyond the header, `verbatimModuleSyntax`, and ESLint follow one rule: in the copied Button, every focus-ring utility, and every background under text in the default state, carries no opacity modifier, in both modes. That changes these classes:
+
+- `focus-visible:ring-ring/50`
+- `focus-visible:ring-destructive/20` and `dark:focus-visible:ring-destructive/40`
+- `aria-invalid:ring-destructive/20` and `dark:aria-invalid:ring-destructive/40`
+- `focus-visible:border-destructive/40`
+- `bg-destructive/10` and `dark:bg-destructive/20`
+- `dark:bg-input/30`
+
+Each ring or focus border names an opaque token. Destructive text sits on an opaque background token, and that text and its background are a `text` pair, in both modes. A CLI refresh that restores an opacity modifier on any of these is re-edited before commit.
 
 `packages/ui/components.json` points Tailwind's CSS field at `packages/ui/.shadcn.css`. That file is gitignored. `theme.css` is never the CLI target and is never hand-edited, so `drift-theme` means the generator and the committed file disagree.
 
@@ -133,7 +144,7 @@ Order:
 
 1. No `tokens.json` under `root`: report `{missing-tokens}` and stop. The message says the file is absent and includes the path.
 2. The file exists but is not valid JSON: report `{invalid-tokens}` and stop. The message says the file is not valid JSON and includes the path.
-3. Otherwise run these six together: `unknown-group`, `bad-color`, `bad-key`, `mode-keys`, `unknown-key`, `unknown-purpose`.
+3. Otherwise run these seven together: `unknown-group`, `bad-color`, `bad-key`, `bad-value`, `mode-keys`, `unknown-key`, `unknown-purpose`.
 4. If that set is non-empty, stop. Do not generate. Do not run drift, contrast, missing-pair, namespace, self-reference, or unknown-var.
 5. Otherwise generate, format both strings, and run `drift-tokens`, `drift-theme`, `contrast`, `missing-pair`, `namespace`, `self-reference`, and `unknown-var`.
 
@@ -153,10 +164,11 @@ Each tree fixture's set of violation ids equals the singleton in the table. A se
 | `unknown-var`     | `{unknown-var}`     |
 | `bad-color`       | `{bad-color}`       |
 | `bad-key`         | `{bad-key}`         |
+| `bad-value`       | `{bad-value}`       |
 | `missing-tokens`  | `{missing-tokens}`  |
 | `invalid-tokens`  | `{invalid-tokens}`  |
 
-`self-reference` and `namespace` are the unit tests described above, not rows in this table. `bad-key`'s fixture is a color key outside `[a-z0-9-]+`, with `space` left as a valid number, so the singleton stays that one id.
+`self-reference` and `namespace` are the unit tests described above, not rows in this table. `bad-key`'s fixture is a color key outside `[a-z0-9-]+`, with every value left valid, so the singleton stays that one id. `bad-value`'s fixture is a non-colour value that is not a non-negative finite number (a negative `radius`, or a `space` that is not a number), with every key left valid.
 
 ### Residency and lint
 
@@ -186,32 +198,33 @@ No tables, columns, or personal data. Tokens are color, length, and weight. Both
 
 ## Risks
 
-| Risk                                                        | Mitigation                                                                                                                                |
-| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Two Reacts in one bundle                                    | `react` and `react-dom` are peers (`^19`); exact versions are devDependencies                                                             |
-| UI installed without the token CSS                          | `@community-hub/tokens` is a peer of `@community-hub/ui`                                                                                  |
-| Native package depends on React to read tokens              | Tokens live in a package with no runtime dependencies                                                                                     |
-| CLI returns the Radix Button                                | `components.json` pins style `base-nova` with CLI `4.21.0`; no `radix-ui` dependency                                                      |
-| Parish `--primary` clashes with island tokens               | Token properties are `--ch-*`; Tailwind names stay in `theme.css`                                                                         |
-| `--radius-md` missing at runtime under `@theme inline`      | Stop and report. Do not retarget the Button or drop `inline` in that change                                                               |
-| `var(--radius-md)` fails `unknown-var`                      | Theme left-hand sides count as known names                                                                                                |
-| Fractional spacing keys (`2.5`)                             | One `--ch-space-unit` mapped to `--spacing`; `bad-key` rejects keys outside `[a-z0-9-]+`                                                  |
-| Focus ring measured on an opaque token while painted at 50% | `ring-ring/50` and `bg-destructive/10` are edited to opaque utilities; remaining opacity and `color-mix` are a known gap                  |
-| CSS units in JSON                                           | Lengths are pixel numbers; the generator appends `rem` by group                                                                           |
-| `--radius-md: var(--radius-md)`                             | Token names stay outside Tailwind namespaces; self-reference scan on the generated theme; unit test on the bad declaration                |
-| Token name overrides a Tailwind default (`--shadow-sm`)     | Prefix ban, plus the `--ch-` prefix; `namespace` unit test                                                                                |
-| CLI writes into `theme.css` and drift fails                 | CLI target is gitignored `.shadcn.css`; the `shadcn` script creates it                                                                    |
-| Fresh clone has no scratch file                             | The script creates `.shadcn.css` before the CLI runs                                                                                      |
-| Drift check and `prettier --check` disagree                 | `resolveConfig` for the path under `root`; fixtures directory in `.prettierignore`                                                        |
-| Malformed JSON cascades into drift                          | Validation stops before generation; each fixture expects one id                                                                           |
-| `missing-pair` and `mode-keys` both fire                    | `missing-pair` counts only keys present in both modes, and `mode-keys` stops generation                                                   |
-| Empty `violations` from a misconfigured axe run             | `button-name` must appear in `passes`; the missing-name fixture must put it in `violations`; `color-contrast` is absent from every bucket |
-| jsdom cannot compute contrast                               | Contrast is the JSON check, unrounded `>=`, for opaque tokens                                                                             |
-| Tailwind never scans `packages/ui/src`                      | `@source "./src"` in `theme.css`, documented for the first app                                                                            |
-| Bundler serves `.ts` source as JavaScript                   | Vite transpiles it; any other tool must be configured to                                                                                  |
-| `tsc --noEmit` skips TSX                                    | `jsx: react-jsx` and `.tsx` in `include`                                                                                                  |
-| `regionalOnlyPackages` grows unnoticed                      | `toEqual` the two-name list                                                                                                               |
-| Utility class typo (`bg-primry`)                            | Known gap, listed, not half-fixed                                                                                                         |
+| Risk                                                           | Mitigation                                                                                                                                                                    |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Two Reacts in one bundle                                       | `react` and `react-dom` are peers (`^19`); exact versions are devDependencies                                                                                                 |
+| UI installed without the token CSS                             | `@community-hub/tokens` is a peer of `@community-hub/ui`                                                                                                                      |
+| Native package depends on React to read tokens                 | Tokens live in a package with no runtime dependencies                                                                                                                         |
+| CLI returns the Radix Button                                   | `components.json` pins style `base-nova` with CLI `4.21.0`; no `radix-ui` dependency                                                                                          |
+| Parish `--primary` clashes with island tokens                  | Token properties are `--ch-*`; Tailwind names stay in `theme.css`                                                                                                             |
+| A theme variable resolves to Tailwind's default, or not at all | Compare `--radius-md`, `--radius-lg`, `--text-sm`, `--text-xs`, and `--font-weight-medium` with the token value. Stop and report. Do not retarget the Button or drop `inline` |
+| `var(--radius-md)` fails `unknown-var`                         | Theme left-hand sides count as known names                                                                                                                                    |
+| Fractional spacing keys (`2.5`)                                | One `--ch-space-unit` mapped to `--spacing`; `bad-key` rejects keys outside `[a-z0-9-]+`                                                                                      |
+| A negative length or `NaN` is written into CSS                 | `bad-value` covers `space`, `radius`, `fontSize`, and `fontWeight`, and it stops before generation                                                                            |
+| Focus ring or default background still uses opacity            | Every focus-ring utility and every default-state background under text has no opacity modifier, in both modes. Hover and `color-mix` stay a known gap                         |
+| CSS units in JSON                                              | Lengths are pixel numbers; the generator appends `rem` by group                                                                                                               |
+| `--radius-md: var(--radius-md)`                                | Token names stay outside Tailwind namespaces; self-reference scan on the generated theme; unit test on the bad declaration                                                    |
+| Token name overrides a Tailwind default (`--shadow-sm`)        | Prefix ban, plus the `--ch-` prefix; `namespace` unit test                                                                                                                    |
+| CLI writes into `theme.css` and drift fails                    | CLI target is gitignored `.shadcn.css`; the `shadcn` script creates it                                                                                                        |
+| Fresh clone has no scratch file                                | The script creates `.shadcn.css` before the CLI runs                                                                                                                          |
+| Drift check and `prettier --check` disagree                    | `resolveConfig` for the path under `root`; fixtures directory in `.prettierignore`                                                                                            |
+| Malformed JSON cascades into drift                             | Validation stops before generation; each fixture expects one id                                                                                                               |
+| `missing-pair` and `mode-keys` both fire                       | `missing-pair` counts only keys present in both modes, and `mode-keys` stops generation                                                                                       |
+| Empty `violations` from a misconfigured axe run                | `button-name` must appear in `passes`; the missing-name fixture must put it in `violations`; `color-contrast` is absent from every bucket                                     |
+| jsdom cannot compute contrast                                  | Contrast is the JSON check, unrounded `>=`, for opaque tokens                                                                                                                 |
+| Tailwind never scans `packages/ui/src`                         | `@source "./src"` in `theme.css`, documented for the first app                                                                                                                |
+| Bundler serves `.ts` source as JavaScript                      | Vite transpiles it; any other tool must be configured to                                                                                                                      |
+| `tsc --noEmit` skips TSX                                       | `jsx: react-jsx` and `.tsx` in `include`                                                                                                                                      |
+| `regionalOnlyPackages` grows unnoticed                         | `toEqual` the two-name list                                                                                                                                                   |
+| Utility class typo (`bg-primry`)                               | Known gap, listed, not half-fixed                                                                                                                                             |
 
 ## Out-of-band
 
