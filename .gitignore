@@ -5,6 +5,7 @@ coverage
 *.tsbuildinfo
 *.log
 .DS_Store
+packages/ui/.shadcn.css
 .superpowers/
 docs/plans/*-report.md
 .terraform/

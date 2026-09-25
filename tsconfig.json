@@ -4,6 +4,7 @@
     { "path": "./packages/kernel" },
     { "path": "./packages/observability" },
     { "path": "./packages/tokens" },
+    { "path": "./packages/ui" },
     { "path": "./packages/db" },
     { "path": "./packages/crypto" },
     { "path": "./packages/residency" },
