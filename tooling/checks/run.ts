@@ -1,5 +1,6 @@
 import { check as checkEventNames } from "./event-names/check.js";
 import { check as checkResidencyCell } from "./residency-cell/check.js";
+import { check as checkTokens } from "./tokens/check.js";
 import { check as checkResidencyPayload } from "./residency-payload/check.js";
 import { check as checkSchemaRls } from "./schema-rls/check.js";
 import { check as checkSqlSessionBan } from "./sql-session-ban/check.js";
@@ -91,6 +92,16 @@ if (!residencyCellResult.ok) {
   failed = true;
 } else {
   console.log("residency-cell: ok");
+}
+
+const tokensResult = await checkTokens(process.cwd());
+if (!tokensResult.ok) {
+  for (const v of tokensResult.violations) {
+    console.error(`${v.id}: ${v.message}`);
+  }
+  failed = true;
+} else {
+  console.log("tokens: ok");
 }
 
 process.exit(failed ? 1 : 0);
