@@ -208,7 +208,7 @@ Checker path constants: `packages/tokens/src/tokens.json`, `packages/tokens/src/
   });
   ```
 
-  `packages/ui/src/alias.test.ts`, beside that file. `aliasViolations(source)` returns every line that contains `from "@/`, `from '@/`, `import("@/`, or `import('@/`. `export … from "@/…"` is included, because the line still contains `from "@/`.
+  `packages/ui/src/alias.test.ts`, beside that file. `aliasViolations(source)` returns every line that contains `from "@/`, `from '@/`, `import "@/`, `import '@/`, `import("@/`, or `import('@/`. `export … from "@/…"` is included, because the line still contains `from "@/`. `import "@/styles.css"` has no `from`, so the `import "@/` and `import '@/` patterns are what catch a side-effect import.
 
   ```ts
   import { aliasViolations, aliasViolationsInSrc } from "./alias";
@@ -225,6 +225,11 @@ Checker path constants: `packages/tokens/src/tokens.json`, `packages/tokens/src/
     ]);
   });
 
+  it("rejects a side-effect @/ import", () => {
+    expect(aliasViolations('import "@/styles.css"')).toEqual(['import "@/styles.css"']);
+    expect(aliasViolations("import '@/styles.css'")).toEqual(["import '@/styles.css'"]);
+  });
+
   it("accepts a relative utils import", () => {
     expect(aliasViolations('import { cn } from "./lib/utils"')).toEqual([]);
   });
@@ -234,7 +239,7 @@ Checker path constants: `packages/tokens/src/tokens.json`, `packages/tokens/src/
   });
   ```
 
-  `aliasViolationsInSrc` reads every file under `packages/ui/src` except `*.test.ts` and `*.test.tsx` — the must-fail string lives in the test, and scanning it would fail the live check. Zero non-test files is a failure, not a pass. The `@/*` path mapping stays, so typecheck and lint still resolve a forgotten `@/lib/utils` inside this package. This test is what fails before an app exists.
+  `aliasViolationsInSrc` reads every file under `packages/ui/src` except `*.test.ts`, `*.test.tsx`, and `alias.ts`. Test files are excluded because the must-fail strings live there. `alias.ts` is excluded by name for the same reason: its source contains those sequences (`from "@/` and the rest) when the patterns are written as string literals, and the live check would fail on the scanner itself. Do not rely on a regex whose source text happens to omit the matched sequence. Zero files left to scan is a failure, not a pass. The `@/*` path mapping stays, so typecheck and lint still resolve a forgotten `@/lib/utils` inside this package. This test is what fails before an app exists.
 
   Classification, applied after stripping utilities under `hover:` (including `dark:hover:`):
 
