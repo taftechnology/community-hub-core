@@ -12,7 +12,7 @@
 
 **ADR:** `docs/adr/0007-token-source-is-json.md` (written in task 5; accepted with this plan's approval)
 
-Status: draft
+Status: approved (2026-09-25, Abdus Salam)
 
 **Branch:** `feat/2026-09-25-packages-ui` · one PR · 6 tasks, one commit each
 
