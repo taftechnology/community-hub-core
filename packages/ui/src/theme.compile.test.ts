@@ -1,9 +1,8 @@
 // @vitest-environment node
-import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { compile } from "@tailwindcss/node";
 
-const uiPackageDir = path.dirname(fileURLToPath(new URL("../", import.meta.url)));
+const uiPackageDir = fileURLToPath(new URL("..", import.meta.url));
 
 const input = `@import "tailwindcss";
 @import "@community-hub/tokens/tokens.css";
