@@ -103,7 +103,7 @@ Checker path constants: `packages/tokens/src/tokens.json`, `packages/tokens/src/
 
   - `contrastRatio("#888888", "#ffffff")` is `>= 3` and `< 4.5`, and `contrastRatio("#171717", "#ffffff")` is `>= 4.5`. A ratio of `4.499` fails a `text` comparison (`>= 4.5` is false).
   - `validateTokens` on the committed JSON returns `[]`. `missingPairViolations` and `contrastViolations` on it return `[]`.
-  - A color key `"2.5"` returns `[{ id: "bad-key" }]`. A `space` of `"-1"` or a string returns `[{ id: "bad-value" }]` and does not return `bad-key`.
+  - A color key `"2.5"` returns `[{ id: "bad-key" }]`. A `space` of `-1` (the number) returns `[{ id: "bad-value" }]`. A `space` of the string `"4"` also returns `[{ id: "bad-value" }]`. Neither returns `bad-key`.
   - `generateTokens` on the committed JSON includes `--ch-space-unit: 0.25rem`, `--ch-background: #ffffff`, `--spacing: var(--ch-space-unit)`, and `--radius-md: var(--ch-rounded-md)`. It does not include a property whose name starts with a banned prefix.
   - `namespaceViolations(["--shadow-sm"])` is `[{ id: "namespace" }]`. `namespaceViolations(["--ch-background"])` is `[]`.
   - `selfReferenceViolations("--radius-md: var(--radius-md);")` is `[{ id: "self-reference" }]`. `selfReferenceViolations("--radius-md: var(--ch-rounded-md);")` is `[]`.
@@ -157,7 +157,7 @@ Checker path constants: `packages/tokens/src/tokens.json`, `packages/tokens/src/
   | `missing-tokens`  | `missing-tokens`  |
   | `invalid-tokens`  | `invalid-tokens`  |
 
-  `valid` is the committed JSON shape with one extra non-text pair: foreground `#888888`, background `#ffffff` (ratio `3.545`). Its `packages/ui/src/example.tsx` contains `var(--ch-background)`. Both CSS files are the formatted generator output. Each other fixture copies `valid` and changes one thing: a trailing space in one CSS file; a dark text pair `#991b1b` on `#171717` (ratio `2.157`); a color key in neither of that mode's pairs; light missing `ring`; `purpose: "txt"`; a pair key `nope`; a top-level `lineHeight`; `var(--not-a-token)`; color `#fff`; color key `2.5`; `space: "4"`; no `tokens.json`; `tokens.json` containing `{`. `bad-key` keeps every value valid. `bad-value` keeps every key valid.
+  `valid` is the committed JSON plus a color key `subtle` set to `#888888` in both modes, and a `non-text` pair of `subtle` against `background` in both modes. Light `subtle` on `#ffffff` is ratio `3.545`. Dark `subtle` on `#171717` is ratio `5.057`, which still passes `non-text`. Its `packages/ui/src/example.tsx` contains `var(--ch-background)`. Both CSS files are the formatted generator output. Each other fixture copies `valid` and changes one thing: a trailing space in one CSS file; dark `destructive` set to `#991b1b`, so the existing dark `destructive`/`background` text pair is ratio `2.157`; a color key in neither of that mode's pairs; light missing `ring`; `purpose: "txt"`; a pair key `nope`; a top-level `lineHeight`; `var(--not-a-token)`; color `#fff`; color key `2.5`; `space: "4"`; no `tokens.json`; `tokens.json` containing `{`. `bad-key` keeps every value valid. `bad-value` keeps every key valid.
 
   Also assert `missing-tokens` message says the file is absent, and `invalid-tokens` says it is not valid JSON. Both include the path.
 
@@ -217,9 +217,9 @@ Checker path constants: `packages/tokens/src/tokens.json`, `packages/tokens/src/
 
 - [ ] **GREEN.** Package peers and devDependency pins as in the spec, plus dependencies `@base-ui/react@1.8.0`, `class-variance-authority@0.7.1`, `clsx@2.1.1`, `tailwind-merge@3.7.0`. Do not add `@tailwindcss/node` until task 4. Exports `.` → `./src/index.ts` and `./theme.css` → `./theme.css`. `tsconfig.json` sets `"jsx": "react-jsx"`, includes `src/**/*.ts` and `src/**/*.tsx`, excludes tests. `tsconfig.test.json` sets `composite: false`, `noEmit: true`, the same `jsx`, and includes the tests. `typecheck` runs `tsc --build && tsc --noEmit -p tsconfig.test.json`.
 
-  `components.json`: `"version": "4.21.0"`, `"style": "base-nova"`, Tailwind CSS path `packages/ui/.shadcn.css`, alias `cn` → `src/lib/utils.ts`. Add `packages/ui/.shadcn.css` to `.gitignore`. Script `shadcn` creates that file if missing, then runs `pnpm dlx shadcn@4.21.0` with the arguments it received. README documents `pnpm --filter @community-hub/ui shadcn`.
+  `components.json`: `"version": "4.21.0"`, `"style": "base-nova"`, Tailwind CSS path `packages/ui/.shadcn.css`, and `aliases.utils` set to `@/lib/utils`. The CLI resolves aliases through tsconfig `paths`, so `tsconfig.json` maps `@/*` to `./src/*`. There is no `cn` alias. Add `packages/ui/.shadcn.css` to `.gitignore`. The package Vitest config sets `environment: "jsdom"`. Script `shadcn` creates the scratch file if missing, then runs `pnpm dlx shadcn@4.21.0` with the arguments it received. README documents `pnpm --filter @community-hub/ui shadcn`.
 
-  Run the script to add the Button. Confirm the import is `@base-ui/react/button` and `{ cn } from "cn"`. Add this header to `button.tsx` and `src/lib/utils.ts`:
+  Run the script to add the Button. Confirm the primitive import is `@base-ui/react/button`. The registry source says `{ cn } from "cn"`; the CLI rewrites that to the `utils` alias, usually `@/lib/utils`. After the copy, change that import to `./lib/utils`. An `@/` import would resolve to the first app's `src`, because `exports` point at source and the app's bundler compiles `button.tsx`. Add this header to `button.tsx` and `src/lib/utils.ts`:
 
   ```ts
   // Copied from shadcn/ui base-nova (CLI 4.21.0). MIT License. See THIRD_PARTY_NOTICES.
@@ -227,7 +227,9 @@ Checker path constants: `packages/tokens/src/tokens.json`, `packages/tokens/src/
 
   `THIRD_PARTY_NOTICES` carries the MIT licence text for shadcn/ui. `utils.ts` exports `cn` from `clsx` and `tailwind-merge`.
 
-  Remove the opacity modifier from every class the scanner classifies as a focus ring or a default-state background. The upstream list is `focus-visible:ring-ring/50`, `focus-visible:ring-destructive/20`, `dark:focus-visible:ring-destructive/40`, `aria-invalid:ring-destructive/20`, `dark:aria-invalid:ring-destructive/40`, `focus-visible:border-destructive/40`, `bg-destructive/10`, `dark:bg-destructive/20`, and `dark:bg-input/30`. Leave `hover:` and `color-mix` in place. Destructive text and its background must be a `text` pair already in `tokens.json` (`destructive` on `background`). Do not change the variant API.
+  Edit classes as follows. Rings and the focus border lose only the opacity modifier, so they stay the same utility: `focus-visible:ring-ring/50`, `focus-visible:ring-destructive/20`, `dark:focus-visible:ring-destructive/40`, `aria-invalid:ring-destructive/20`, `dark:aria-invalid:ring-destructive/40`, and `focus-visible:border-destructive/40`. Backgrounds are replaced, not stripped. Stripping `/N` would paint a solid fill of that colour: `bg-destructive` under `text-destructive` is red on red (1.0:1), and `dark:bg-input` with dark `input` of `#ffffff` is white on white. Replace `bg-destructive/10` and `dark:bg-destructive/20` with `bg-background`, which is the background of the declared `destructive`/`background` text pair. Remove `dark:bg-input/30` so the outline variant keeps `bg-background` in dark. Leave `hover:` and `color-mix` in place. Do not change the variant API.
+
+  `shadcn add` rewrites `package.json` and installs the Button's dependencies with caret ranges. After it runs, set dependencies and devDependencies back to the exact pins in this plan. The commit contains only the files this task names.
 
   `src/index.ts` exports `Button` and does not import CSS. Add `packages/ui/src/exports.test.ts`:
 
@@ -251,13 +253,13 @@ Checker path constants: `packages/tokens/src/tokens.json`, `packages/tokens/src/
 
 ## Task 4: Theme compile test, axe, wire the checker
 
-**Files:** `packages/ui/src/theme.compile.test.ts`, `packages/ui/src/button.a11y.test.tsx`, `packages/ui/src/a11y-fixtures/no-name.tsx` (not exported), `packages/ui/package.json` (add `@tailwindcss/node`), `packages/ui/vitest` config if the compile test must run under Node, `tooling/checks/run.ts`
+**Files:** `packages/ui/src/theme.compile.test.ts`, `packages/ui/src/button.a11y.test.tsx`, `packages/ui/src/a11y-fixtures/no-name.tsx` (not exported), `packages/ui/package.json` (add `@tailwindcss/node`), `tooling/checks/run.ts`
 
 **Consumes:** `theme.css`, `Button`, `check` from task 2
 
 **Rule it must not break:** axe does not run `color-contrast`. The root Vitest config stays Node and does not gain jsdom.
 
-- [ ] **RED.** Compile test: `compile` from `@tailwindcss/node` at `4.3.3`, input stylesheet `@import "tailwindcss";` then `@import` of `tokens.css` and `theme.css`, `base` the UI package directory. `build` candidates: `rounded-md`, `rounded-lg`, `text-sm`, `text-xs`, `font-medium`, `rounded-[min(var(--radius-md),10px)]`. Assert the five named utilities' CSS contains `var(--ch-rounded-md)`, `var(--ch-rounded-lg)`, `var(--ch-type-sm)`, `var(--ch-type-xs)`, and `var(--ch-weight-medium)`. Assert the arbitrary candidate's CSS uses `var(--radius-md)` in that rule and defines `--radius-md: var(--ch-rounded-md)`. Read the string from `build`. Do not use jsdom.
+- [ ] **RED.** `theme.compile.test.ts` starts with `// @vitest-environment node`. The package default stays jsdom for the axe test. Compile test: `compile` from `@tailwindcss/node` at `4.3.3`, input stylesheet `@import "tailwindcss";` then `@import` of `tokens.css` and `theme.css`, `base` the UI package directory. `build` candidates: `rounded-md`, `rounded-lg`, `text-sm`, `text-xs`, `font-medium`, `rounded-[min(var(--radius-md),10px)]`. Assert the five named utilities' CSS contains `var(--ch-rounded-md)`, `var(--ch-rounded-lg)`, `var(--ch-type-sm)`, `var(--ch-type-xs)`, and `var(--ch-weight-medium)`. Assert the arbitrary candidate's CSS uses `var(--radius-md)` in that rule and defines `--radius-md: var(--ch-rounded-md)`. Read the string from `build`. Do not use jsdom.
 
   Axe test, jsdom, `@testing-library/react` and `axe-core`: render `<Button>Save</Button>`. Disable `color-contrast` with a comment that the JSON check covers opaque tokens. Assert that id is absent from `passes`, `violations`, `incomplete`, and `inapplicable`. Assert `button-name` is in `passes`. Assert at least one id matching `/^aria-/` is in `passes` or `inapplicable`. Render the unexported fixture (a `<button />` with no accessible name) and assert `button-name` is in `violations`.
 
@@ -294,7 +296,7 @@ Checker path constants: `packages/tokens/src/tokens.json`, `packages/tokens/src/
 
 **Rule it must not break:** phase totals. `website-host-contract` stays in the architecture-decisions table and is not counted in the 7.
 
-- [ ] Snapshot: Last shipped `packages-ui`. Next chunk `audit-log`. Phase 0 `7 / 10`. Row `packages-ui` → **done**, spec `2026-09-24` is wrong; the spec is `2026-09-25-packages-ui`. Next-spec paragraph names `audit-log`.
+- [ ] Snapshot: Last shipped `packages-ui`. Next chunk `audit-log`. Phase 0 `7 / 10`. Row `packages-ui` → **done**, with the text `shadcn copied into the repo + tokens (D16). No product screens.` and spec `2026-09-25-packages-ui`. Next-spec paragraph names `audit-log`.
 - [ ] `pnpm exec prettier --check docs/roadmap.md`
 - [ ] `rm -f docs/plans/*-report.md`
 - [ ] Full local CI, in workflow order. Do not skip a step.
