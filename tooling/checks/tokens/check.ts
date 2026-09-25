@@ -23,6 +23,8 @@ const TOKENS_CSS_REL = "packages/tokens/src/tokens.css";
 const THEME_CSS_REL = "packages/ui/theme.css";
 const UI_SRC_REL = "packages/ui";
 
+const UI_SKIP_DIRS = new Set(["dist", "node_modules", ".turbo"]);
+
 function toViolation(v: TokenViolation): Violation {
   return { id: v.id, message: v.message };
 }
@@ -76,6 +78,9 @@ function collectUiSourceFiles(dir: string, out: string[]): void {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
+      if (UI_SKIP_DIRS.has(entry.name)) {
+        continue;
+      }
       collectUiSourceFiles(full, out);
     } else if (
       entry.isFile() &&
