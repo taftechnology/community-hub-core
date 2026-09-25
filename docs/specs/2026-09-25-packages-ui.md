@@ -1,7 +1,7 @@
 # Spec: packages/ui foundations
 
 Slug: `packages-ui`
-Status: draft
+Status: approved (2026-09-25, Abdus Salam)
 Supersedes: —
 Architecture refs: §8.1, §8.5, D16; AGENTS.md §6, §10, §14
 
