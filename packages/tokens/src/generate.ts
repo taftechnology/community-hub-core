@@ -1,13 +1,6 @@
 export type Violation = { id: string; message: string };
 
-const ALLOWED_TOP_LEVEL = new Set([
-  "space",
-  "radius",
-  "fontSize",
-  "fontWeight",
-  "modes",
-  "pairs",
-]);
+const ALLOWED_TOP_LEVEL = new Set(["space", "radius", "fontSize", "fontWeight", "modes", "pairs"]);
 
 const KEY_PATTERN = /^[a-z0-9-]+$/;
 const COLOR_PATTERN = /^#[0-9a-f]{6}$/;
@@ -84,10 +77,7 @@ export function selfReferenceViolations(themeCss: string): Violation[] {
     const reference = match[2];
     if (property !== undefined && property === reference) {
       hits.push(
-        violation(
-          "self-reference",
-          `Theme property ${property} must not reference itself`,
-        ),
+        violation("self-reference", `Theme property ${property} must not reference itself`),
       );
     }
   }
@@ -323,18 +313,14 @@ export function missingPairViolations(value: unknown): Violation[] {
   if (!isRecord(lightColors) || !isRecord(darkColors)) {
     return [];
   }
-  const sharedKeys = Object.keys(lightColors).filter((key) =>
-    Object.hasOwn(darkColors, key),
-  );
+  const sharedKeys = Object.keys(lightColors).filter((key) => Object.hasOwn(darkColors, key));
   const pairs = value.pairs;
   if (!Array.isArray(pairs)) {
     return [];
   }
   const hits: Violation[] = [];
   for (const mode of MODES) {
-    const modePairs = pairs.filter(
-      (pair) => isRecord(pair) && pair.mode === mode,
-    );
+    const modePairs = pairs.filter((pair) => isRecord(pair) && pair.mode === mode);
     const keysInPairs = new Set<string>();
     for (const pair of modePairs) {
       if (!isRecord(pair)) {
@@ -349,9 +335,7 @@ export function missingPairViolations(value: unknown): Violation[] {
     }
     for (const key of sharedKeys) {
       if (!keysInPairs.has(key)) {
-        hits.push(
-          violation("missing-pair", `Color key ${key} is missing from ${mode} pairs`),
-        );
+        hits.push(violation("missing-pair", `Color key ${key} is missing from ${mode} pairs`));
       }
     }
   }
@@ -402,14 +386,10 @@ export function contrastViolations(value: unknown): Violation[] {
       continue;
     }
     const ratio = contrastRatio(foreground, background);
-    const passes =
-      purpose === "text" ? ratio >= 4.5 : ratio >= 3;
+    const passes = purpose === "text" ? ratio >= 4.5 : ratio >= 3;
     if (!passes) {
       hits.push(
-        violation(
-          "contrast",
-          `Contrast ratio ${ratio} fails ${purpose} for ${String(pair.id)}`,
-        ),
+        violation("contrast", `Contrast ratio ${ratio} fails ${purpose} for ${String(pair.id)}`),
       );
     }
   }
@@ -495,9 +475,7 @@ export function generateTokens(value: unknown): { tokensCss: string; themeCss: s
       .map((key) => [`--text-${key}`, `var(--ch-type-${key})`] as [string, string]),
     ...Object.keys(fontWeight)
       .sort((a, b) => a.localeCompare(b))
-      .map(
-        (key) => [`--font-weight-${key}`, `var(--ch-weight-${key})`] as [string, string],
-      ),
+      .map((key) => [`--font-weight-${key}`, `var(--ch-weight-${key})`] as [string, string]),
     ...Object.keys(lightColors)
       .sort((a, b) => a.localeCompare(b))
       .map((key) => [`--color-${key}`, `var(--ch-${key})`] as [string, string]),

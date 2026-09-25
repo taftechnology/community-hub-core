@@ -82,20 +82,13 @@ function collectUiSourceFiles(dir: string, out: string[]): void {
         continue;
       }
       collectUiSourceFiles(full, out);
-    } else if (
-      entry.isFile() &&
-      /\.(tsx?|jsx?|css)$/.test(entry.name)
-    ) {
+    } else if (entry.isFile() && /\.(tsx?|jsx?|css)$/.test(entry.name)) {
       out.push(full);
     }
   }
 }
 
-function unknownVarViolations(
-  root: string,
-  tokensCss: string,
-  themeCss: string,
-): Violation[] {
+function unknownVarViolations(root: string, tokensCss: string, themeCss: string): Violation[] {
   const known = new Set<string>([
     ...extractTokenPropertyNames(tokensCss),
     ...extractThemePropertyNames(themeCss),

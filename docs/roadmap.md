@@ -18,13 +18,13 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 
 ## Where we are
 
-|              |                         |
-| ------------ | ----------------------- |
-| Phase        | 0 — Foundations         |
-| Last shipped | `website-host-contract` |
-| Next chunk   | `packages-ui`           |
-| Phase 0      | 6 / 10 done             |
-| Later phases | not started             |
+|              |                 |
+| ------------ | --------------- |
+| Phase        | 0 — Foundations |
+| Last shipped | `packages-ui`   |
+| Next chunk   | `audit-log`     |
+| Phase 0      | 7 / 10 done     |
+| Later phases | not started     |
 
 Update the snapshot and the row in the **same PR**, last commit on the chunk branch, before the PR opens. Do not defer to a follow-up chore after merge. Do not put implementer reports here ([AGENTS.md](../AGENTS.md) §5).
 
@@ -64,7 +64,7 @@ Architecture: monorepo, CI, Terraform, kernel, residency, db with RLS, crypto, o
 | done        | `packages-crypto`        | AES-256-GCM, KMS wrap, blind indexes. Synthetic data only. Spec `2026-09-18-packages-crypto`.                     |
 | done        | `kernel-runtime`         | `defineModule`, request context, DI, outbox. Keeps `healthPayload`. Spec `2026-09-19-kernel-runtime`.             |
 | done        | `packages-residency`     | Cell config; global Workers cannot import personal-data modules. Spec `2026-09-20-packages-residency`.            |
-| not started | `packages-ui`            | shadcn copied into the repo + tokens (D16). No product screens.                                                   |
+| done        | `packages-ui`            | shadcn copied into the repo + tokens (D16). No product screens. Spec `2026-09-25-packages-ui`.                    |
 | not started | `audit-log`              | Tamper-evident append. First events when identity writes.                                                         |
 | not started | `api-au-skeleton`        | Regional Worker, `class: regional`, `preview_urls: false`, health through kernel.                                 |
 | not started | `terraform-envelope-kms` | Wrapping key in ap-southeast-2, key policy, live AWS `KmsPort`. After `api-au-skeleton`.                          |
@@ -217,7 +217,7 @@ From architecture §26. Do not invent answers in a spec.
 
 ## Next spec
 
-The next approved chunk on this list is **`packages-ui`**, unless the human picks another remaining Phase 0 row.
+The next approved chunk on this list is **`audit-log`**, unless the human picks another remaining Phase 0 row.
 
 ---
 
