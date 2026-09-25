@@ -1,0 +1,23 @@
+@source "./src";
+@custom-variant dark (&:is(.dark *));
+@theme inline {
+  --color-accent: var(--ch-accent);
+  --color-background: var(--ch-background);
+  --color-border: var(--ch-border);
+  --color-destructive: var(--ch-destructive);
+  --color-foreground: var(--ch-foreground);
+  --color-input: var(--ch-input);
+  --color-muted: var(--ch-muted);
+  --color-primary: var(--ch-primary);
+  --color-primary-foreground: var(--ch-primary-foreground);
+  --color-ring: var(--ch-ring);
+  --color-secondary: var(--ch-secondary);
+  --color-secondary-foreground: var(--ch-secondary-foreground);
+  --color-subtle: var(--ch-subtle);
+  --font-weight-medium: var(--ch-weight-medium);
+  --radius-lg: var(--ch-rounded-lg);
+  --radius-md: var(--ch-rounded-md);
+  --spacing: var(--ch-space-unit);
+  --text-sm: var(--ch-type-sm);
+  --text-xs: var(--ch-type-xs);
+}
