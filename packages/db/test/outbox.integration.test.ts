@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bindPublisher, defineEvent, defineModule } from "@community-hub/kernel/module";
-import { withRequest } from "@community-hub/kernel";
+import { withChangeKey, withRequest } from "@community-hub/kernel";
 import { beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
@@ -185,9 +185,11 @@ describe("app.outbox", () => {
     const { publish } = publisher();
     const recordId = newId();
     try {
-      await withRequest({ requestId: newId(), idempotencyKey: `cross-${orgA}` }, async () => {
-        await withOrgTransaction(sql, orgA, async (tx) => {
-          await publish(tx, recorded, { recordId });
+      await withRequest({ requestId: newId() }, async () => {
+        await withChangeKey(newId(), "1", async () => {
+          await withOrgTransaction(sql, orgA, async (tx) => {
+            await publish(tx, recorded, { recordId });
+          });
         });
       });
 
@@ -221,13 +223,15 @@ describe("app.outbox", () => {
     const orgId = newId();
     const { publish } = publisher();
     const recordId = newId();
-    const idempotencyKey = `retry-${orgId}`;
+    const changeId = newId();
     try {
-      const ids = await withRequest({ requestId: newId(), idempotencyKey }, async () => {
-        return withOrgTransaction(sql, orgId, async (tx) => {
-          const first = await publish(tx, recorded, { recordId });
-          const second = await publish(tx, recorded, { recordId });
-          return { first, second };
+      const ids = await withRequest({ requestId: newId() }, async () => {
+        return withChangeKey(changeId, "1", async () => {
+          return withOrgTransaction(sql, orgId, async (tx) => {
+            const first = await publish(tx, recorded, { recordId });
+            const second = await publish(tx, recorded, { recordId });
+            return { first, second };
+          });
         });
       });
       expect(ids.first.id).toBe(ids.second.id);
@@ -250,12 +254,14 @@ describe("app.outbox", () => {
     const sql = createAppSql(pooledAppUrl(runtime));
     const orgId = newId();
     const { publish } = publisher();
-    const idempotencyKey = `two-events-${orgId}`;
+    const changeId = newId();
     try {
-      await withRequest({ requestId: newId(), idempotencyKey }, async () => {
-        await withOrgTransaction(sql, orgId, async (tx) => {
-          await publish(tx, recorded, { recordId: newId() });
-          await publish(tx, confirmed, { recordId: newId() });
+      await withRequest({ requestId: newId() }, async () => {
+        await withChangeKey(changeId, "1", async () => {
+          await withOrgTransaction(sql, orgId, async (tx) => {
+            await publish(tx, recorded, { recordId: newId() });
+            await publish(tx, confirmed, { recordId: newId() });
+          });
         });
       });
 
@@ -278,14 +284,16 @@ describe("app.outbox", () => {
     const { publish } = publisher();
     try {
       await expect(
-        withRequest({ requestId: newId(), idempotencyKey: `rollback-${orgId}` }, async () => {
-          await withOrgTransaction(sql, orgId, async (tx) => {
-            await publish(tx, recorded, { recordId: newId() });
-            await tx`
-              insert into app.synthetic (org_id, id)
-              values (current_setting('app.org_id')::uuid, ${domainId})
-            `;
-            throw new Error("force rollback");
+        withRequest({ requestId: newId() }, async () => {
+          await withChangeKey(newId(), "1", async () => {
+            await withOrgTransaction(sql, orgId, async (tx) => {
+              await publish(tx, recorded, { recordId: newId() });
+              await tx`
+                insert into app.synthetic (org_id, id)
+                values (current_setting('app.org_id')::uuid, ${domainId})
+              `;
+              throw new Error("force rollback");
+            });
           });
         }),
       ).rejects.toThrow("force rollback");
@@ -310,9 +318,8 @@ describe("app.outbox", () => {
     const domainId = newId();
     const { publish } = publisher();
     try {
-      const published = await withRequest(
-        { requestId: newId(), idempotencyKey: `commit-${orgId}` },
-        async () => {
+      const published = await withRequest({ requestId: newId() }, async () => {
+        return withChangeKey(newId(), "1", async () => {
           return withOrgTransaction(sql, orgId, async (tx) => {
             const row = await publish(tx, recorded, { recordId: newId() });
             await tx`
@@ -321,8 +328,8 @@ describe("app.outbox", () => {
             `;
             return row;
           });
-        },
-      );
+        });
+      });
 
       await withOrgTransaction(sql, orgId, async (tx) => {
         const outbox = await tx<{ id: string }[]>`select id from app.outbox`;
@@ -343,9 +350,11 @@ describe("app.outbox", () => {
     const orgId = newId();
     const { publish } = publisher();
     try {
-      await withRequest({ requestId: newId(), idempotencyKey: `zod-${orgId}` }, async () => {
-        await withOrgTransaction(sql, orgId, async (tx) => {
-          await expect(publish(tx, recorded, { recordId: "not-a-uuid" })).rejects.toThrow();
+      await withRequest({ requestId: newId() }, async () => {
+        await withChangeKey(newId(), "1", async () => {
+          await withOrgTransaction(sql, orgId, async (tx) => {
+            await expect(publish(tx, recorded, { recordId: "not-a-uuid" })).rejects.toThrow();
+          });
         });
       });
 

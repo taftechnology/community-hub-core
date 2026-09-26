@@ -14,16 +14,12 @@ export function createFetch(logger: Logger) {
   return async function fetch(request: Request): Promise<Response> {
     const requestId = requestIdFromHeader(request.headers.get("x-request-id"));
 
-    return withRequest({ requestId, idempotencyKey: requestId }, async () => {
+    return withRequest({ requestId }, async () => {
       const started = performance.now();
       const url = new URL(request.url);
       const method = request.method;
       const path = url.pathname;
       const context = getRequestContext();
-
-      if (method === "GET" && path === "/health" && context.idempotencyKey !== context.requestId) {
-        throw new Error("idempotencyKey must equal requestId");
-      }
 
       let response: Response;
       if (method === "GET" && path === "/health") {

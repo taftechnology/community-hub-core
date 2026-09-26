@@ -59,33 +59,6 @@ describe("gateway", () => {
     expect(keys).toEqual(["duration", "level", "message", "method", "path", "requestId", "status"]);
   });
 
-  it("GET /health logs requestId from ALS and keeps idempotencyKey equal", async () => {
-    const inboundId = "11111111-1111-4111-8111-111111111111";
-    const logLines: string[] = [];
-    const logger = createLogger({ write: (line) => logLines.push(line) });
-    const fetchHandler = createFetch(logger);
-
-    const request = new IncomingRequest("https://gateway.test/health", {
-      headers: { "x-request-id": inboundId },
-    });
-    const ctx = createExecutionContext();
-    const response = await fetchHandler(request, {}, ctx);
-    await waitOnExecutionContext(ctx);
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual(healthPayload());
-
-    expect(logLines).toHaveLength(1);
-    const parsed = JSON.parse(logLines[0]!) as Record<string, unknown>;
-    expect(parsed.requestId).toBe(inboundId);
-    expect(String(parsed.requestId)).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
-    );
-
-    const keys = Object.keys(parsed).sort();
-    expect(keys).toEqual(["duration", "level", "message", "method", "path", "requestId", "status"]);
-  });
-
   it("mints a UUID requestId when x-request-id is not a UUID", async () => {
     const inboundId = "alice@example.com";
     const logLines: string[] = [];

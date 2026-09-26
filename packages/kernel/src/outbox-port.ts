@@ -18,6 +18,9 @@ export function bindPublisher<Tx>(
   return {
     async publish(tx, event, payload) {
       const ctx = getRequestContext();
+      if (ctx.idempotencyKey === undefined) {
+        throw new Error("idempotencyKey is missing");
+      }
       if (!module.publishes.includes(event.name)) {
         throw new Error(`Event ${event.name} is not declared in module publishes`);
       }
