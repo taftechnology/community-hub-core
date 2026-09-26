@@ -264,7 +264,7 @@ Architecture-specific rules that reviewers check on every diff. Most map to a CI
 
 - Contracts first: Zod in `packages/contracts`, OpenAPI regenerated, breaking change → `/v2` plus deprecation window.
 - No personal data in paths or query strings.
-- Web UI composes `packages/ui` (shadcn/ui). Mobile composes `packages/ui-native` (React Native Reusables) on the same tokens. No third catalogue; WCAG 2.2 AA is a merge gate (D16).
+- Web UI composes `packages/ui` (shadcn/ui). Mobile will compose `packages/ui-native` (React Native Reusables) on these tokens. No third catalogue; WCAG 2.2 AA is a merge gate (D16).
 - Entitlement-gated features hide or show an upgrade prompt — never render a control that only 403s.
 
 **Tests**
@@ -356,7 +356,7 @@ Never stage `docs/plans/*-report.md`, `.superpowers/`, or other session scratch.
 **Stage 1 — Static (fast, every push)**
 
 - format, lint, typecheck
-- `check:boundaries` — worker-config, schema-rls, residency-payload, terraform-invariants, sql-session-ban, event-names, residency-cell (each checker has must-fail fixtures exercised in Stage 2). Encrypted columns: ESLint `@community-hub/no-encrypted-column-query`, `@community-hub/no-event-payload`, `@community-hub/no-kms-port-outside-crypto`, `@community-hub/no-restricted-disable`, `@community-hub/no-ts-ignore`, and `@community-hub/no-crypto-testing-import`; fixture-tested via `pnpm test` on `@community-hub/check-encrypted-column`, not `run.ts`.
+- `check:boundaries` — worker-config, schema-rls, residency-payload, terraform-invariants, sql-session-ban, event-names, residency-cell, check-tokens (each checker has must-fail fixtures exercised in Stage 2). Encrypted columns: ESLint `@community-hub/no-encrypted-column-query`, `@community-hub/no-event-payload`, `@community-hub/no-kms-port-outside-crypto`, `@community-hub/no-restricted-disable`, `@community-hub/no-ts-ignore`, and `@community-hub/no-crypto-testing-import`; fixture-tested via `pnpm test` on `@community-hub/check-encrypted-column`, not `run.ts`.
 - secret scanning, dependency audit (fail on high/critical)
 - traceability (pull requests only): branch matches `<type>/<YYYY-MM-DD>-<slug>`; PR body links one spec and one plan with the same slug, both `approved`, or `No spec:` on `chore/` / `fix/` branches
 - **offline Terraform** (every root and every module under `infra/`): `terraform init -backend=false -lockfile=readonly`, `fmt -check`, `validate`, `tflint --init && tflint`, `terraform test`. Missing Terraform or a failed `init` fails the job. No live `plan`. No cloud provider secrets. `GITHUB_TOKEN` is passed so `tflint --init` does not hit unauthenticated GitHub rate limits.
@@ -366,8 +366,9 @@ A CI check is added only when it has a real input **and** a must-fail fixture �
 **Stage 2 — Tests (every push)**
 
 - `pnpm test` — unit tests for `packages/kernel` and `packages/observability`; `@cloudflare/vitest-pool-workers` for `apps/gateway`; checker self-tests including `@community-hub/check-event-names` (must-fail fixtures must still fail)
+- axe runs in `@community-hub/ui` (Button plus a missing-name fixture)
 
-Omitted until first real input plus a must-fail fixture: tenant-isolation suite, residency integration suite, contract tests, accessibility (axe).
+Omitted until first real input plus a must-fail fixture: tenant-isolation suite, residency integration suite, contract tests.
 
 **Stage 3 — Build and preview (every PR)**
 

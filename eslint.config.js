@@ -18,9 +18,10 @@ export default tseslint.config(
     ],
   },
   {
-    files: ["**/*.{js,ts}"],
+    files: ["**/*.{js,ts,tsx}"],
     ignores: [
       "**/*.test.ts",
+      "**/*.test.tsx",
       "**/*.test-d.ts",
       "**/src/testing.ts",
       "**/vitest.config.ts",
@@ -91,8 +92,17 @@ export default tseslint.config(
     },
   },
   {
+    files: ["**/packages/ui/scripts/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        process: "readonly",
+      },
+    },
+  },
+  {
     files: [
       "**/*.test.ts",
+      "**/*.test.tsx",
       "**/*.test-d.ts",
       "**/src/testing.ts",
       "**/global-setup.ts",
