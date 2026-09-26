@@ -251,7 +251,7 @@ CI fails if an `app`-schema table lacks `org_id`, RLS or `FORCE ROW LEVEL SECURI
 
 ### 6.4 Moving a community
 
-A community can leave an organisation (a parish changing diocese, a club leaving a league). The move tool re-wraps the community key under the destination organisation key and rewrites `org_id` for that community's rows in one transaction, with a full audit record. Household keys stay wrapped by the community key, so no re-encryption of field data is required.
+A community can leave an organisation (a parish changing diocese, a club leaving a league). The move tool re-wraps the community key under the destination organisation key and rewrites `org_id` for that community's rows in one transaction, with a full audit record. Household keys stay wrapped by the community key, so no re-encryption of field data is required. A community move does not rewrite `app.audit_events`. Those rows have no `community_id`. The move appends one event in the source organisation and one in the destination.
 
 ---
 
@@ -779,11 +779,12 @@ Every column and file has a class, declared in the module schema.
 
 Feature-module columns will use `dataClasses` on `defineModule` when those modules exist. Tables that are not a feature module (this outbox; later kernel/db platform tables) are listed here.
 
-| Table        | Columns                                                                   | Classification |
-| ------------ | ------------------------------------------------------------------------- | -------------- |
-| `app.outbox` | `id`, `org_id`, `event_name`, `payload`, `occurred_at`, `idempotency_key` | all `internal` |
+| Table              | Columns                                                                                                                                              | Classification |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| `app.outbox`       | `id`, `org_id`, `event_name`, `payload`, `occurred_at`, `idempotency_key`                                                                            | all `internal` |
+| `app.audit_events` | `id`, `org_id`, `seq`, `hash_version`, `prev_hash`, `hash`, `actor_kind`, `actor_id`, `action`, `target_ids`, `purpose`, `request_id`, `occurred_at` | all `internal` |
 
-Not encrypted: SQL must filter `org_id`, `event_name`, and `idempotency_key`.
+Not encrypted: SQL must filter `org_id`, `event_name`, and `idempotency_key` on the outbox. `app.audit_events` columns are not encrypted because SQL orders `org_id` and `seq`.
 
 ### 12.2 Encryption
 
@@ -1232,7 +1233,8 @@ Accounting (Xero, MYOB), email marketing (Mailchimp), calendar feeds and similar
 ### 19.2 Audit log
 
 - Append-only `audit_events` table per organisation: actor, action, target IDs, purpose, request ID, timestamp, previous-event hash.
-- Hash chaining makes tampering detectable; a daily job writes the chain head to write-once storage (S3 Object Lock, Sydney).
+- The chain is per organisation. Hash version `0x01` covers every stored column. `actor_kind` is `user` | `support` | `system`. Rows are not rewritten on a community move.
+- Hash chaining makes tampering detectable; a daily job writes the chain head to write-once storage (S3 Object Lock, Sydney). That daily Object Lock write is still later. Until that seal, tamper-evidence is against the `app` role.
 - Audited actions include: restricted reads, exports, permission and role changes, support access, consent changes, payment refunds, entitlement changes, key operations.
 - Tenants can view and export their audit log.
 
