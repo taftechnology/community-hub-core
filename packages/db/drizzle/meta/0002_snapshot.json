@@ -1,0 +1,257 @@
+{
+  "id": "deb19371-2dc8-40a4-b51d-8039798fe54f",
+  "prevId": "16f41609-7e1b-4043-abce-21a9506ecf8c",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "app.audit_events": {
+      "name": "audit_events",
+      "schema": "app",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "org_id": {
+          "name": "org_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "seq": {
+          "name": "seq",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "hash_version": {
+          "name": "hash_version",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "prev_hash": {
+          "name": "prev_hash",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "hash": {
+          "name": "hash",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_kind": {
+          "name": "actor_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "target_ids": {
+          "name": "target_ids",
+          "type": "uuid[]",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "purpose": {
+          "name": "purpose",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "request_id": {
+          "name": "request_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "audit_events_org_id_id_pk": {
+          "name": "audit_events_org_id_id_pk",
+          "columns": [
+            "org_id",
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "audit_events_org_id_seq_unique": {
+          "name": "audit_events_org_id_seq_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "org_id",
+            "seq"
+          ]
+        }
+      },
+      "policies": {
+        "audit_events_select": {
+          "name": "audit_events_select",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "public"
+          ],
+          "using": "\"app\".\"audit_events\".\"org_id\" = current_setting('app.org_id')::uuid"
+        },
+        "audit_events_insert": {
+          "name": "audit_events_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "public"
+          ],
+          "withCheck": "\"app\".\"audit_events\".\"org_id\" = current_setting('app.org_id')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "audit_events_seq_positive": {
+          "name": "audit_events_seq_positive",
+          "value": "\"app\".\"audit_events\".\"seq\" >= 1"
+        },
+        "audit_events_prev_hash_len": {
+          "name": "audit_events_prev_hash_len",
+          "value": "octet_length(\"app\".\"audit_events\".\"prev_hash\") = 32"
+        },
+        "audit_events_hash_len": {
+          "name": "audit_events_hash_len",
+          "value": "octet_length(\"app\".\"audit_events\".\"hash\") = 32"
+        },
+        "audit_events_actor": {
+          "name": "audit_events_actor",
+          "value": "\"app\".\"audit_events\".\"actor_kind\" in ('user', 'support', 'system')\n          and (\n            (\"app\".\"audit_events\".\"actor_kind\" = 'system' and \"app\".\"audit_events\".\"actor_id\" is null)\n            or (\"app\".\"audit_events\".\"actor_kind\" in ('user', 'support') and \"app\".\"audit_events\".\"actor_id\" is not null)\n          )"
+        },
+        "audit_events_action": {
+          "name": "audit_events_action",
+          "value": "\"app\".\"audit_events\".\"action\" ~ '^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$'"
+        },
+        "audit_events_purpose": {
+          "name": "audit_events_purpose",
+          "value": "\"app\".\"audit_events\".\"purpose\" ~ '^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$'"
+        },
+        "audit_events_target_ids": {
+          "name": "audit_events_target_ids",
+          "value": "CASE\n  WHEN cardinality(\"app\".\"audit_events\".\"target_ids\") = 0 THEN true\n  WHEN array_ndims(\"app\".\"audit_events\".\"target_ids\") IS DISTINCT FROM 1 THEN false\n  ELSE array_position(\"app\".\"audit_events\".\"target_ids\", NULL) IS NULL\nEND"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "app.outbox": {
+      "name": "outbox",
+      "schema": "app",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "org_id": {
+          "name": "org_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_name": {
+          "name": "event_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "outbox_org_id_id_pk": {
+          "name": "outbox_org_id_id_pk",
+          "columns": [
+            "org_id",
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "outbox_org_id_event_name_idempotency_key_unique": {
+          "name": "outbox_org_id_event_name_idempotency_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "org_id",
+            "event_name",
+            "idempotency_key"
+          ]
+        }
+      },
+      "policies": {
+        "tenant_isolation": {
+          "name": "tenant_isolation",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "\"app\".\"outbox\".\"org_id\" = current_setting('app.org_id')::uuid"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    }
+  },
+  "enums": {},
+  "schemas": {
+    "app": "app",
+    "identity": "identity",
+    "platform": "platform"
+  },
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

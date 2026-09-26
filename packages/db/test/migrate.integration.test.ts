@@ -43,7 +43,10 @@ describe("applyProductMigrations", () => {
       const [{ n }] = await sql<{ n: string }[]>`
         select count(*)::text as n from migrator.__drizzle_migrations
       `;
-      expect(n).toBe("2");
+      const journal = JSON.parse(
+        readFileSync(path.join(DRIZZLE, "meta/_journal.json"), "utf8"),
+      ) as { entries: unknown[] };
+      expect(n).toBe(String(journal.entries.length));
 
       const [{ rel }] = await sql<{ rel: string | null }[]>`
         select to_regclass('migrator.__drizzle_migrations_test')::text as rel

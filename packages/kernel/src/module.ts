@@ -1,3 +1,10 @@
+export {
+  AUDIT_NAME_RE,
+  defineAuditAction,
+  defineAuditPurpose,
+  isAuditAction,
+  isAuditPurpose,
+} from "./audit-names.js";
 export { defineModule } from "./define-module.js";
 export type { ModuleDefinition, ModuleWebsite } from "./define-module.js";
 export { defineEvent, EVENT_NAME_RE } from "./event.js";
