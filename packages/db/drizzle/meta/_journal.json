@@ -15,6 +15,13 @@
       "when": 1789891801741,
       "tag": "0001_fuzzy_ultimatum",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790443348312,
+      "tag": "0002_rare_jimmy_woo",
+      "breakpoints": true
     }
   ]
 }

@@ -12,6 +12,7 @@ type Runtime = {
 };
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
+const DRIZZLE = path.join(DIR, "../drizzle");
 
 function loadRuntime(): Runtime {
   return JSON.parse(readFileSync(path.join(DIR, ".runtime.json"), "utf8")) as Runtime;
@@ -61,7 +62,10 @@ describe("applyTestMigrations", () => {
       const product = await sql<{ hash: string }[]>`
         select hash from migrator.__drizzle_migrations
       `;
-      expect(product).toHaveLength(2);
+      const journal = JSON.parse(
+        readFileSync(path.join(DRIZZLE, "meta/_journal.json"), "utf8"),
+      ) as { entries: unknown[] };
+      expect(product).toHaveLength(journal.entries.length);
 
       const [{ testN }] = await sql<{ testN: string }[]>`
         select count(*)::text as "testN" from migrator.__drizzle_migrations_test
