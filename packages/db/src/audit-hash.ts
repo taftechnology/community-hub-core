@@ -93,6 +93,9 @@ export function auditEventPreimage(input: AuditHashInput): Uint8Array {
 }
 
 export async function auditEventHash(input: AuditHashInput): Promise<Uint8Array> {
-  const digest = await crypto.subtle.digest("SHA-256", auditEventPreimage(input));
+  const preimage = auditEventPreimage(input);
+  const buffer = new ArrayBuffer(preimage.byteLength);
+  new Uint8Array(buffer).set(preimage);
+  const digest = await crypto.subtle.digest("SHA-256", buffer);
   return new Uint8Array(digest);
 }
