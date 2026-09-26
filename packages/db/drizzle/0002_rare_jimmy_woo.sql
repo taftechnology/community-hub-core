@@ -96,8 +96,14 @@ BEGIN
   preimage := preimage || int4send(length(field_bytes)::integer) || field_bytes;
 
   target_bytes := ''::bytea;
-  IF p_target_ids IS NOT NULL THEN
-    FOR i IN 1..COALESCE(cardinality(p_target_ids), 0) LOOP
+  IF p_target_ids IS NOT NULL AND COALESCE(cardinality(p_target_ids), 0) > 0 THEN
+    IF array_ndims(p_target_ids) IS DISTINCT FROM 1 THEN
+      RAISE EXCEPTION 'audit_event_hash: target_ids must be a one-dimensional uuid array';
+    END IF;
+    FOR i IN 1..cardinality(p_target_ids) LOOP
+      IF p_target_ids[i] IS NULL THEN
+        RAISE EXCEPTION 'audit_event_hash: target_ids must not contain null elements';
+      END IF;
       target_bytes := target_bytes || uuid_send(p_target_ids[i]);
     END LOOP;
   END IF;

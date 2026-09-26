@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { auditEventHash } from "../src/audit-hash.js";
-import { createAppSql } from "../src/connections.js";
+import { createAppSql, createDirectSql } from "../src/connections.js";
 import { newId } from "../src/ids.js";
 import { applyProductMigrations } from "../src/migrate.js";
 import { withOrgTransaction } from "../src/tx.js";
@@ -373,6 +373,108 @@ describe("app.audit_events", () => {
         expect(err.constraint_name).toBe("audit_events_target_ids");
         expect(err.message ?? "").not.toMatch(/searching for elements in multidimensional arrays/i);
       }
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("declared CHECK rejects null element and 2D uuid[] when the trigger is bypassed", async () => {
+    const runtime = loadRuntime();
+    const sql = createDirectSql(runtime.directUrl);
+    const orgId = newId();
+    const actorId = newId();
+    const requestId = newId();
+
+    async function insertWithTriggerBypassed(targetSql: string) {
+      return sql.begin(async (tx) => {
+        await tx.unsafe("SET LOCAL session_replication_role = replica");
+        await tx.unsafe(`
+          insert into app.audit_events (
+            id, org_id, seq, hash_version, prev_hash, hash,
+            actor_kind, actor_id, action, target_ids, purpose, request_id, occurred_at
+          ) values (
+            '${newId()}'::uuid,
+            '${orgId}'::uuid,
+            1,
+            1,
+            decode(repeat('00', 32), 'hex'),
+            decode(repeat('11', 32), 'hex'),
+            'user',
+            '${actorId}'::uuid,
+            'audit.chain.recorded',
+            ${targetSql},
+            'audit.chain.test',
+            '${requestId}'::uuid,
+            clock_timestamp()
+          )
+        `);
+      });
+    }
+
+    try {
+      try {
+        await insertWithTriggerBypassed("ARRAY[NULL::uuid]");
+        expect.unreachable("null element should fail the CHECK");
+      } catch (error) {
+        const err = error as { code?: string; constraint_name?: string; message?: string };
+        expect(err.code).toBe("23514");
+        expect(err.constraint_name).toBe("audit_events_target_ids");
+      }
+
+      try {
+        await insertWithTriggerBypassed(`ARRAY[ARRAY['${newId()}'::uuid]]`);
+        expect.unreachable("two-dimensional array should fail the CHECK");
+      } catch (error) {
+        const err = error as { code?: string; constraint_name?: string; message?: string };
+        expect(err.code).toBe("23514");
+        expect(err.constraint_name).toBe("audit_events_target_ids");
+      }
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("app.audit_event_hash raises on null target element and two-dimensional uuid[]", async () => {
+    const runtime = loadRuntime();
+    const sql = createAppSql(pooledAppUrl(runtime));
+    try {
+      await expect(
+        sql`
+          select app.audit_event_hash(
+            1::smallint,
+            ${FROZEN_ORG}::uuid,
+            ${FROZEN_ID}::uuid,
+            1::bigint,
+            decode(repeat('00', 32), 'hex'),
+            'user',
+            ${FROZEN_ACTOR}::uuid,
+            'audit.chain.recorded',
+            ARRAY[NULL::uuid],
+            'audit.chain.test',
+            ${FROZEN_REQUEST}::uuid,
+            ${FROZEN_OCCURRED_AT}::timestamptz
+          )
+        `,
+      ).rejects.toThrow(/target_ids/i);
+
+      await expect(
+        sql.unsafe(`
+          select app.audit_event_hash(
+            1::smallint,
+            '${FROZEN_ORG}'::uuid,
+            '${FROZEN_ID}'::uuid,
+            1::bigint,
+            decode(repeat('00', 32), 'hex'),
+            'user',
+            '${FROZEN_ACTOR}'::uuid,
+            'audit.chain.recorded',
+            ARRAY[ARRAY['${FROZEN_ID}'::uuid]],
+            'audit.chain.test',
+            '${FROZEN_REQUEST}'::uuid,
+            '${FROZEN_OCCURRED_AT}'::timestamptz
+          )
+        `),
+      ).rejects.toThrow(/target_ids/i);
     } finally {
       await sql.end({ timeout: 1 });
     }
