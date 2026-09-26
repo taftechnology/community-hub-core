@@ -505,6 +505,11 @@ export function generateTokens(value: unknown): { tokensCss: string; themeCss: s
 
   const themeCss = [
     '@source "./src";',
+    '@source not "./src/**/*.test.*";',
+    '@source not "./src/alias.ts";',
+    '@source not "./src/cli-pin.ts";',
+    '@source not "./src/opacity.ts";',
+    '@source not "./src/write-theme-css.ts";',
     "@custom-variant dark (&:is(.dark *));",
     "@theme inline {",
     ...sortedDeclarations(themeEntries).map((line) => `  ${line}`),
