@@ -23,6 +23,25 @@ describe("bundle-no-zod", () => {
     );
   });
 
+  it("fails when a file cannot be read", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bundle-no-zod-"));
+    const blocked = path.join(dir, "blocked.js");
+    fs.writeFileSync(path.join(dir, "worker.js"), "export const ready = true;\n");
+    fs.writeFileSync(blocked, "export const hidden = true;\n");
+    fs.chmodSync(blocked, 0);
+    try {
+      const result = check(dir);
+      expect(result.ok).toBe(false);
+      expect(result.violations).toContainEqual({
+        file: blocked,
+        message: "bundle file is unreadable",
+      });
+    } finally {
+      fs.chmodSync(blocked, 0o644);
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
   it("fails an empty directory", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bundle-no-zod-"));
     try {

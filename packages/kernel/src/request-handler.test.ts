@@ -87,22 +87,28 @@ describe("createRequestHandler", () => {
   });
 
   it.each([
-    ["missing header", {} as Record<string, string>],
-    ["non-uuid header", { "x-request-id": "not-a-uuid" }],
-    ["acceptInboundRequestId false with uuid header", { "x-request-id": REJECTED_UUID }],
-  ])("mints requestId when %s", async (_label, headers) => {
+    ["missing header", {} as Record<string, string>, false],
+    ["non-uuid header", { "x-request-id": "not-a-uuid" }, false],
+    ["acceptInboundRequestId false with uuid header", { "x-request-id": REJECTED_UUID }, false],
+    ["accept inbound with missing header", {} as Record<string, string>, true],
+    ["accept inbound with non-uuid header", { "x-request-id": "not-a-uuid" }, true],
+    ["accept inbound with email header", { "x-request-id": "person@example.test" }, true],
+  ])("mints requestId when %s", async (_label, headers, acceptInboundRequestId) => {
     const info = vi.fn();
-    const run = createRequestHandler({ info, acceptInboundRequestId: false }, async () => {
+    const run = createRequestHandler({ info, acceptInboundRequestId }, async () => {
       return new Response(null, { status: 204 });
     });
 
     await run(new Request("https://example.test/anything", { headers }));
 
     const fields = info.mock.calls[0]![0];
+    const inbound = headers["x-request-id"];
     expect(fields.requestId).toMatch(UUID_RE);
-    expect(fields.requestId).not.toBe(REJECTED_UUID);
-    for (const value of fieldValues(fields)) {
-      expect(value).not.toContain(REJECTED_UUID);
+    if (inbound !== undefined) {
+      expect(fields.requestId).not.toBe(inbound);
+      for (const value of fieldValues(fields)) {
+        expect(value).not.toContain(inbound);
+      }
     }
   });
 

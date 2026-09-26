@@ -44,6 +44,7 @@ export function check(dir: string): BundleCheckResult {
     try {
       text = fs.readFileSync(file, "utf8");
     } catch {
+      violations.push({ file, message: "bundle file is unreadable" });
       continue;
     }
     if (ZOD.test(text)) {
