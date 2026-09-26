@@ -10,6 +10,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { appendAuditEvent } from "../src/audit-append.js";
 import { auditEventHash } from "../src/audit-hash.js";
+import { verifyAuditChain } from "../src/audit-verify.js";
 import { createAppSql, createDirectSql } from "../src/connections.js";
 import { newId } from "../src/ids.js";
 import { applyProductMigrations } from "../src/migrate.js";
@@ -814,6 +815,342 @@ describe("appendAuditEvent", () => {
       expect(toHex(asBytes(results.rows[0]!.hash))).not.toBe(toHex(asBytes(results.rows[1]!.hash)));
     } finally {
       await sql.end({ timeout: 1 });
+    }
+  });
+});
+
+describe("verifyAuditChain", () => {
+  beforeAll(async () => {
+    const runtime = loadRuntime();
+    await applyProductMigrations(runtime.directUrl);
+    await applyTestMigrations({ mode: "test" }, runtime.directUrl);
+  });
+
+  it("resolves on an organisation with no rows", async () => {
+    const runtime = loadRuntime();
+    const sql = createAppSql(pooledAppUrl(runtime));
+    const orgId = newId();
+    try {
+      await expect(
+        withOrgTransaction(sql, orgId, async (tx) => {
+          await verifyAuditChain(tx);
+        }),
+      ).resolves.toBeUndefined();
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("verifies a chain whose occurred_at has a non-zero microsecond part", async () => {
+    const runtime = loadRuntime();
+    const sql = createAppSql(pooledAppUrl(runtime));
+    const orgId = newId();
+    const actorId = newId();
+    try {
+      let chosen: {
+        id: string;
+        seq: string;
+        hash: Uint8Array | Buffer | string;
+        prev_hash: Uint8Array | Buffer | string;
+        actor_kind: string;
+        actor_id: string | null;
+        action: string;
+        target_ids: string[];
+        purpose: string;
+        request_id: string;
+        occurred_at_micros: string;
+        org_id: string;
+        hash_version: number;
+      } | null = null;
+
+      for (let i = 0; i < 10; i += 1) {
+        const requestId = newId();
+        const row = await withRequest(
+          { requestId, idempotencyKey: `verify-micros-${i}` },
+          async () => {
+            return withOrgTransaction(sql, orgId, async (tx) => {
+              const appended = await appendAuditEvent(tx, {
+                actorKind: "user",
+                actorId,
+                action: APPEND_ACTION,
+                purpose: APPEND_PURPOSE,
+                targetIds: [],
+              });
+              const rows = await tx<
+                {
+                  id: string;
+                  seq: string;
+                  hash: Uint8Array | Buffer | string;
+                  prev_hash: Uint8Array | Buffer | string;
+                  actor_kind: string;
+                  actor_id: string | null;
+                  action: string;
+                  target_ids: string[];
+                  purpose: string;
+                  request_id: string;
+                  occurred_at_micros: string;
+                  org_id: string;
+                  hash_version: number;
+                }[]
+              >`
+                select
+                  id::text,
+                  org_id::text,
+                  seq::text,
+                  hash_version,
+                  prev_hash,
+                  hash,
+                  actor_kind,
+                  actor_id::text,
+                  action,
+                  coalesce(target_ids::text[], '{}'::text[]) as target_ids,
+                  purpose,
+                  request_id::text,
+                  trunc(extract(epoch from occurred_at) * 1000000)::bigint::text as occurred_at_micros
+                from app.audit_events
+                where id = ${appended.id}::uuid
+              `;
+              return rows[0]!;
+            });
+          },
+        );
+
+        const micros = BigInt(row.occurred_at_micros);
+        if (micros % 1000n !== 0n) {
+          chosen = row;
+          break;
+        }
+      }
+
+      if (chosen === null) {
+        throw new Error("ten appends were all millisecond-aligned");
+      }
+
+      await expect(
+        withOrgTransaction(sql, orgId, async (tx) => {
+          await verifyAuditChain(tx);
+        }),
+      ).resolves.toBeUndefined();
+
+      const floored = BigInt(chosen.occurred_at_micros) - (BigInt(chosen.occurred_at_micros) % 1000n);
+      const flooredHash = await auditEventHash({
+        hashVersion: 1,
+        orgId: chosen.org_id,
+        id: chosen.id,
+        seq: BigInt(chosen.seq),
+        prevHash: asBytes(chosen.prev_hash),
+        actorKind: chosen.actor_kind as "user" | "support" | "system",
+        actorId: chosen.actor_id,
+        action: chosen.action,
+        targetIds: chosen.target_ids,
+        purpose: chosen.purpose,
+        requestId: chosen.request_id,
+        occurredAtMicros: floored,
+      });
+      expect(toHex(flooredHash)).not.toBe(toHex(asBytes(chosen.hash)));
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("retries after a forced seq collision on hub and verify accepts the chain", async () => {
+    const runtime = loadRuntime();
+    const hubUrl = pooledAppUrl(runtime);
+    const sql = createAppSql(hubUrl);
+    const poller = createAppSql(hubUrl);
+    const orgId = newId();
+    const actorId = newId();
+
+    let releaseA!: () => void;
+    const aGate = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    let signalAInserted!: () => void;
+    const aInserted = new Promise<void>((resolve) => {
+      signalAInserted = resolve;
+    });
+
+    try {
+      const aDone = withRequest(
+        { requestId: newId(), idempotencyKey: "verify-collision-a" },
+        async () => {
+          await withOrgTransaction(sql, orgId, async (tx) => {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId,
+              action: APPEND_ACTION,
+              purpose: APPEND_PURPOSE,
+              targetIds: [],
+            });
+            signalAInserted();
+            await aGate;
+          });
+        },
+      );
+
+      await aInserted;
+
+      let attempts = 0;
+      let resolveFirstAttempt!: () => void;
+      const firstAttempt = new Promise<void>((resolve) => {
+        resolveFirstAttempt = resolve;
+      });
+
+      const bDone = withRequest(
+        { requestId: newId(), idempotencyKey: "verify-collision-b" },
+        async () => {
+          return withOrgTransaction(sql, orgId, async (tx) => {
+            return appendAuditEvent(
+              tx,
+              {
+                actorKind: "user",
+                actorId,
+                action: APPEND_ACTION,
+                purpose: APPEND_PURPOSE,
+                targetIds: [],
+              },
+              {
+                onAttempt: () => {
+                  attempts += 1;
+                  if (attempts === 1) {
+                    resolveFirstAttempt();
+                  }
+                },
+              },
+            );
+          });
+        },
+      );
+
+      await firstAttempt;
+
+      const deadline = Date.now() + 15_000;
+      let sawLockWait = false;
+      while (Date.now() < deadline) {
+        const rows = await poller<{ n: string }[]>`
+          select count(*)::text as n
+          from pg_stat_activity
+          where wait_event_type = 'Lock'
+            and datname = current_database()
+            and usename = current_user
+            and pid <> pg_backend_pid()
+        `;
+        if (Number(rows[0]?.n ?? "0") > 0) {
+          sawLockWait = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+
+      expect(sawLockWait).toBe(true);
+
+      releaseA();
+      await aDone;
+      const bResult = await bDone;
+
+      expect(bResult.seq).toBe("2");
+      expect(attempts).toBe(2);
+
+      await expect(
+        withOrgTransaction(sql, orgId, async (tx) => {
+          await verifyAuditChain(tx);
+        }),
+      ).resolves.toBeUndefined();
+    } finally {
+      releaseA();
+      await sql.end({ timeout: 1 });
+      await poller.end({ timeout: 1 });
+    }
+  }, 30_000);
+
+  it("keeps org B from selecting org A's row and verifies org B after one append", async () => {
+    const runtime = loadRuntime();
+    const sql = createAppSql(pooledAppUrl(runtime));
+    const orgA = newId();
+    const orgB = newId();
+    const actorId = newId();
+    try {
+      const aId = await withRequest(
+        { requestId: newId(), idempotencyKey: "verify-cross-a" },
+        async () => {
+          return withOrgTransaction(sql, orgA, async (tx) => {
+            const row = await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId,
+              action: APPEND_ACTION,
+              purpose: APPEND_PURPOSE,
+              targetIds: [],
+            });
+            return row.id;
+          });
+        },
+      );
+
+      const fromB = await withOrgTransaction(sql, orgB, async (tx) => {
+        return tx<{ id: string }[]>`
+          select id::text from app.audit_events where id = ${aId}::uuid
+        `;
+      });
+      expect(fromB).toHaveLength(0);
+
+      await withRequest({ requestId: newId(), idempotencyKey: "verify-cross-b" }, async () => {
+        await withOrgTransaction(sql, orgB, async (tx) => {
+          await appendAuditEvent(tx, {
+            actorKind: "user",
+            actorId,
+            action: APPEND_ACTION,
+            purpose: APPEND_PURPOSE,
+            targetIds: [],
+          });
+        });
+      });
+
+      await expect(
+        withOrgTransaction(sql, orgB, async (tx) => {
+          await verifyAuditChain(tx);
+        }),
+      ).resolves.toBeUndefined();
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("rejects after a privileged one-byte hash flip with audit.chain.broken and that seq", async () => {
+    const runtime = loadRuntime();
+    const sql = createAppSql(pooledAppUrl(runtime));
+    const direct = createDirectSql(runtime.directUrl);
+    const orgId = newId();
+    const actorId = newId();
+    try {
+      const appended = await withRequest(
+        { requestId: newId(), idempotencyKey: "verify-tamper" },
+        async () => {
+          return withOrgTransaction(sql, orgId, async (tx) => {
+            return appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId,
+              action: APPEND_ACTION,
+              purpose: APPEND_PURPOSE,
+              targetIds: [],
+            });
+          });
+        },
+      );
+
+      await direct`
+        update app.audit_events
+        set hash = set_byte(hash, 0, get_byte(hash, 0) # 1)
+        where id = ${appended.id}::uuid
+      `;
+
+      await expect(
+        withOrgTransaction(sql, orgId, async (tx) => {
+          await verifyAuditChain(tx);
+        }),
+      ).rejects.toThrow(new RegExp(`audit\\.chain\\.broken seq ${appended.seq}`));
+    } finally {
+      await sql.end({ timeout: 1 });
+      await direct.end({ timeout: 1 });
     }
   });
 });

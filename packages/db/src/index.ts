@@ -1,5 +1,6 @@
 export { withAppTransaction } from "./app-transaction.js";
 export { appendAuditEvent } from "./audit-append.js";
+export { verifyAuditChain } from "./audit-verify.js";
 export { createOutbox } from "./outbox-adapter.js";
 export { withOrgTransaction } from "./tx.js";
 export type { AppTransaction, OrgTransaction } from "./tx.js";

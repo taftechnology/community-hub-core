@@ -95,12 +95,14 @@ export async function appendAuditEvent(
 
   const targetIds = [...input.targetIds];
 
+  // Use postgres.js savepoint() so a 23505 is scoped to an inner handler.
+  // Raw SAVEPOINT SQL still sets the outer transaction's uncaughtError, and
+  // begin() rethrows it after a successful retry (poisoning the commit).
   return insertWithSeqRetry(async () => {
-    await tx`savepoint audit_append`;
-    try {
+    return tx.savepoint("audit_append", async (sp) => {
       hooks?.onAttempt?.();
       const id = newId();
-      const rows = await tx<{ id: string; seq: string }[]>`
+      const rows = await sp<{ id: string; seq: string }[]>`
         insert into app.audit_events (
           id, actor_kind, actor_id, action, target_ids, purpose, request_id
         ) values (
@@ -118,12 +120,7 @@ export async function appendAuditEvent(
       if (row === undefined) {
         throw new Error("audit append returned no row");
       }
-      await tx`release savepoint audit_append`;
       return { id: row.id, seq: row.seq };
-    } catch (error) {
-      await tx`rollback to savepoint audit_append`;
-      await tx`release savepoint audit_append`;
-      throw error;
-    }
+    });
   });
 }
