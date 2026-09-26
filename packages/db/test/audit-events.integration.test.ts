@@ -1,13 +1,20 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { withRequest } from "@community-hub/kernel";
+import {
+  defineAuditAction,
+  defineAuditPurpose,
+} from "@community-hub/kernel/module";
 import { beforeAll, describe, expect, it } from "vitest";
 
+import { appendAuditEvent } from "../src/audit-append.js";
 import { auditEventHash } from "../src/audit-hash.js";
 import { createAppSql, createDirectSql } from "../src/connections.js";
 import { newId } from "../src/ids.js";
 import { applyProductMigrations } from "../src/migrate.js";
 import { withOrgTransaction } from "../src/tx.js";
+import { applyTestMigrations } from "./migrate-test.js";
 
 type Runtime = {
   directUrl: string;
@@ -55,10 +62,14 @@ function asBytes(value: Uint8Array | Buffer | string): Uint8Array {
   return value instanceof Uint8Array ? value : new Uint8Array(value);
 }
 
+const APPEND_ACTION = defineAuditAction("audit.append.recorded");
+const APPEND_PURPOSE = defineAuditPurpose("audit.append.test");
+
 describe("app.audit_events", () => {
   beforeAll(async () => {
     const runtime = loadRuntime();
     await applyProductMigrations(runtime.directUrl);
+    await applyTestMigrations({ mode: "test" }, runtime.directUrl);
   });
 
   it("journal SQL contains revoke, policies, force RLS, CASE WHEN, sha256, search_path, and grant", () => {
@@ -536,6 +547,271 @@ describe("app.audit_events", () => {
           `;
         }),
       ).rejects.toThrow();
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+});
+
+describe("appendAuditEvent", () => {
+  it("throws outside withRequest and leaves no row", async () => {
+    const runtime = loadRuntime();
+    const sql = createAppSql(pooledAppUrl(runtime));
+    const orgId = newId();
+    const actorId = newId();
+    try {
+      await expect(
+        withOrgTransaction(sql, orgId, async (tx) => {
+          await appendAuditEvent(tx, {
+            actorKind: "user",
+            actorId,
+            action: APPEND_ACTION,
+            purpose: APPEND_PURPOSE,
+            targetIds: [],
+          });
+        }),
+      ).rejects.toThrow();
+
+      const rows = await withOrgTransaction(sql, orgId, async (tx) => {
+        return tx<{ n: string }[]>`select count(*)::text as n from app.audit_events`;
+      });
+      expect(rows[0]?.n).toBe("0");
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("rejects a non-UUID requestId", async () => {
+    const runtime = loadRuntime();
+    const sql = createAppSql(pooledAppUrl(runtime));
+    const orgId = newId();
+    const actorId = newId();
+    try {
+      await expect(
+        withRequest({ requestId: "not-a-uuid", idempotencyKey: "append-bad-req" }, async () => {
+          await withOrgTransaction(sql, orgId, async (tx) => {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId,
+              action: APPEND_ACTION,
+              purpose: APPEND_PURPOSE,
+              targetIds: [],
+            });
+          });
+        }),
+      ).rejects.toThrow();
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("rolls back a companion synthetic write when the action is unregistered", async () => {
+    const runtime = loadRuntime();
+    const sql = createAppSql(pooledAppUrl(runtime));
+    const orgId = newId();
+    const actorId = newId();
+    const syntheticId = newId();
+    try {
+      await expect(
+        withRequest({ requestId: newId(), idempotencyKey: "append-bad-action" }, async () => {
+          await withOrgTransaction(sql, orgId, async (tx) => {
+            await tx`insert into app.synthetic (org_id, id) values (${orgId}, ${syntheticId})`;
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId,
+              action: "audit.append.unknown_action",
+              purpose: APPEND_PURPOSE,
+              targetIds: [],
+            });
+          });
+        }),
+      ).rejects.toThrow();
+
+      const rows = await withOrgTransaction(sql, orgId, async (tx) => {
+        return tx<{ id: string }[]>`select id from app.synthetic where id = ${syntheticId}`;
+      });
+      expect(rows).toHaveLength(0);
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("rolls back a companion synthetic write when the purpose is unregistered", async () => {
+    const runtime = loadRuntime();
+    const sql = createAppSql(pooledAppUrl(runtime));
+    const orgId = newId();
+    const actorId = newId();
+    const syntheticId = newId();
+    try {
+      await expect(
+        withRequest({ requestId: newId(), idempotencyKey: "append-bad-purpose" }, async () => {
+          await withOrgTransaction(sql, orgId, async (tx) => {
+            await tx`insert into app.synthetic (org_id, id) values (${orgId}, ${syntheticId})`;
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId,
+              action: APPEND_ACTION,
+              purpose: "audit.append.unknown_purpose",
+              targetIds: [],
+            });
+          });
+        }),
+      ).rejects.toThrow();
+
+      const rows = await withOrgTransaction(sql, orgId, async (tx) => {
+        return tx<{ id: string }[]>`select id from app.synthetic where id = ${syntheticId}`;
+      });
+      expect(rows).toHaveLength(0);
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("rejects system with actor id and user with null actor id before insert", async () => {
+    const runtime = loadRuntime();
+    const sql = createAppSql(pooledAppUrl(runtime));
+    const orgId = newId();
+    const actorId = newId();
+    try {
+      await expect(
+        withRequest({ requestId: newId(), idempotencyKey: "append-system-actor" }, async () => {
+          await withOrgTransaction(sql, orgId, async (tx) => {
+            await appendAuditEvent(tx, {
+              actorKind: "system",
+              actorId,
+              action: APPEND_ACTION,
+              purpose: APPEND_PURPOSE,
+              targetIds: [],
+            });
+          });
+        }),
+      ).rejects.toThrow();
+
+      await expect(
+        withRequest({ requestId: newId(), idempotencyKey: "append-user-null" }, async () => {
+          await withOrgTransaction(sql, orgId, async (tx) => {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: null,
+              action: APPEND_ACTION,
+              purpose: APPEND_PURPOSE,
+              targetIds: [],
+            });
+          });
+        }),
+      ).rejects.toThrow();
+
+      const rows = await withOrgTransaction(sql, orgId, async (tx) => {
+        return tx<{ n: string }[]>`select count(*)::text as n from app.audit_events`;
+      });
+      expect(rows[0]?.n).toBe("0");
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("rejects a null entry in targetIds before insert", async () => {
+    const runtime = loadRuntime();
+    const sql = createAppSql(pooledAppUrl(runtime));
+    const orgId = newId();
+    const actorId = newId();
+    try {
+      await expect(
+        withRequest({ requestId: newId(), idempotencyKey: "append-null-target" }, async () => {
+          await withOrgTransaction(sql, orgId, async (tx) => {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId,
+              action: APPEND_ACTION,
+              purpose: APPEND_PURPOSE,
+              targetIds: [null as unknown as string],
+            });
+          });
+        }),
+      ).rejects.toThrow();
+
+      const rows = await withOrgTransaction(sql, orgId, async (tx) => {
+        return tx<{ n: string }[]>`select count(*)::text as n from app.audit_events`;
+      });
+      expect(rows[0]?.n).toBe("0");
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("refuses isolation other than read committed before insert", async () => {
+    const runtime = loadRuntime();
+    const sql = createAppSql(pooledAppUrl(runtime));
+    const orgId = newId();
+    const actorId = newId();
+    try {
+      await expect(
+        withRequest({ requestId: newId(), idempotencyKey: "append-rr" }, async () => {
+          await sql.begin("isolation level repeatable read", async (tx) => {
+            await tx`select set_config('app.org_id', ${orgId}, ${true})`;
+            await appendAuditEvent(tx as Parameters<typeof appendAuditEvent>[0], {
+              actorKind: "user",
+              actorId,
+              action: APPEND_ACTION,
+              purpose: APPEND_PURPOSE,
+              targetIds: [],
+            });
+          });
+        }),
+      ).rejects.toThrow();
+
+      const rows = await withOrgTransaction(sql, orgId, async (tx) => {
+        return tx<{ n: string }[]>`select count(*)::text as n from app.audit_events`;
+      });
+      expect(rows[0]?.n).toBe("0");
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("inserts two rows for two appends in one request with seq 1 and 2", async () => {
+    const runtime = loadRuntime();
+    const sql = createAppSql(pooledAppUrl(runtime));
+    const orgId = newId();
+    const actorId = newId();
+    const targetId = newId();
+    try {
+      const results = await withRequest(
+        { requestId: newId(), idempotencyKey: "append-two" },
+        async () => {
+          return withOrgTransaction(sql, orgId, async (tx) => {
+            const first = await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId,
+              action: APPEND_ACTION,
+              purpose: APPEND_PURPOSE,
+              targetIds: [targetId],
+            });
+            const second = await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId,
+              action: APPEND_ACTION,
+              purpose: APPEND_PURPOSE,
+              targetIds: [targetId],
+            });
+            const rows = await tx<
+              { id: string; seq: string; hash: Uint8Array | Buffer | string }[]
+            >`
+              select id::text, seq::text, hash
+              from app.audit_events
+              order by seq
+            `;
+            return { first, second, rows };
+          });
+        },
+      );
+
+      expect(results.first.seq).toBe("1");
+      expect(results.second.seq).toBe("2");
+      expect(results.rows).toHaveLength(2);
+      expect(results.rows[0]?.seq).toBe("1");
+      expect(results.rows[1]?.seq).toBe("2");
+      expect(toHex(asBytes(results.rows[0]!.hash))).not.toBe(toHex(asBytes(results.rows[1]!.hash)));
     } finally {
       await sql.end({ timeout: 1 });
     }
