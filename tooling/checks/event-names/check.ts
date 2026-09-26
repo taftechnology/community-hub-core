@@ -14,6 +14,10 @@ const SKIP_DIRS = new Set([
   "fixtures",
 ]);
 
+/** Keep in sync with `AUDIT_NAME_RE` in `@community-hub/kernel/module` (selftest asserts `.source`). */
+export const AUDIT_NAME_RE =
+  /^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/;
+
 const EMPTY_NOTICE =
   "event-names: zero defineModule/defineEvent declarations found under packages/*/src, apps/*/src, modules/**";
 
@@ -402,9 +406,46 @@ function parseStringLiteralArray(value: string): string[] | "unreadable" {
 
 type FileScan = {
   names: Set<string>;
+  auditActions: Set<string>;
+  auditPurposes: Set<string>;
   declarationCount: number;
   violations: EventNameViolation[];
 };
+
+function isCalleeFunctionDefinition(text: string, calleeIndex: number): boolean {
+  const prefix = text.slice(Math.max(0, calleeIndex - 48), calleeIndex);
+  return /(?:declare\s+)?(?:export\s+)?function\s*$/.test(prefix);
+}
+
+function forEachStringLiteralCall(
+  text: string,
+  callee: string,
+  onCall: (literal: string | null, unclosed: boolean) => void,
+): void {
+  const re = new RegExp(`\\b${callee}\\s*\\(`, "g");
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) !== null) {
+    const calleeIndex = match.index ?? 0;
+    if (isCalleeFunctionDefinition(text, calleeIndex)) {
+      continue;
+    }
+    const open = calleeIndex + match[0].length - 1;
+    const close = matchingDelim(text, open, "(", ")");
+    if (close < 0) {
+      onCall(null, true);
+      break;
+    }
+    const inner = text.slice(open + 1, close).trim();
+    re.lastIndex = close + 1;
+    const args = splitTopLevelArgs(inner);
+    const first = args[0];
+    if (first === undefined) {
+      onCall(null, false);
+      continue;
+    }
+    onCall(parseStringLiteral(first), false);
+  }
+}
 
 function forEachObjectCall(
   text: string,
@@ -429,9 +470,37 @@ function forEachObjectCall(
   }
 }
 
+function scanAuditDefine(
+  relFile: string,
+  text: string,
+  callee: "defineAuditAction" | "defineAuditPurpose",
+  auditNames: Set<string>,
+  violations: EventNameViolation[],
+): void {
+  forEachStringLiteralCall(text, callee, (lit, unclosed) => {
+    if (unclosed || lit === null) {
+      violations.push({
+        file: relFile,
+        message: `${callee} name is not a string literal`,
+      });
+      return;
+    }
+    if (!AUDIT_NAME_RE.test(lit)) {
+      violations.push({
+        file: relFile,
+        message: `${callee} name "${lit}" is invalid`,
+      });
+      return;
+    }
+    auditNames.add(lit);
+  });
+}
+
 function scanFile(relFile: string, raw: string): FileScan {
   const text = stripTsComments(raw);
   const names = new Set<string>();
+  const auditActions = new Set<string>();
+  const auditPurposes = new Set<string>();
   const violations: EventNameViolation[] = [];
   let declarationCount = 0;
 
@@ -491,7 +560,10 @@ function scanFile(relFile: string, raw: string): FileScan {
     }
   });
 
-  return { names, declarationCount, violations };
+  scanAuditDefine(relFile, text, "defineAuditAction", auditActions, violations);
+  scanAuditDefine(relFile, text, "defineAuditPurpose", auditPurposes, violations);
+
+  return { names, auditActions, auditPurposes, declarationCount, violations };
 }
 
 /** Scan `defineEvent` / `defineModule` under `root` (defaults to `process.cwd()`). */
@@ -500,6 +572,8 @@ export function check(root: string = process.cwd()): CheckResult {
   const files = discoverTsFiles(resolvedRoot);
   const violations: EventNameViolation[] = [];
   const namesToFiles = new Map<string, string[]>();
+  const auditActionsToFiles = new Map<string, string[]>();
+  const auditPurposesToFiles = new Map<string, string[]>();
   let declarationCount = 0;
 
   for (const filePath of files) {
@@ -512,6 +586,16 @@ export function check(root: string = process.cwd()): CheckResult {
       holders.push(rel);
       namesToFiles.set(name, holders);
     }
+    for (const name of scan.auditActions) {
+      const holders = auditActionsToFiles.get(name) ?? [];
+      holders.push(rel);
+      auditActionsToFiles.set(name, holders);
+    }
+    for (const name of scan.auditPurposes) {
+      const holders = auditPurposesToFiles.get(name) ?? [];
+      holders.push(rel);
+      auditPurposesToFiles.set(name, holders);
+    }
   }
 
   for (const [name, holders] of namesToFiles) {
@@ -522,6 +606,30 @@ export function check(root: string = process.cwd()): CheckResult {
       violations.push({
         file,
         message: `duplicate event name "${name}"`,
+      });
+    }
+  }
+
+  for (const [name, holders] of auditActionsToFiles) {
+    if (holders.length < 2) {
+      continue;
+    }
+    for (const file of holders) {
+      violations.push({
+        file,
+        message: `duplicate audit action name "${name}"`,
+      });
+    }
+  }
+
+  for (const [name, holders] of auditPurposesToFiles) {
+    if (holders.length < 2) {
+      continue;
+    }
+    for (const file of holders) {
+      violations.push({
+        file,
+        message: `duplicate audit purpose name "${name}"`,
       });
     }
   }

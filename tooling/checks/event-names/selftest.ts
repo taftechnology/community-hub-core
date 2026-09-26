@@ -1,15 +1,27 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { check } from "./check.js";
+import { AUDIT_NAME_RE as kernelAuditNameRe } from "@community-hub/kernel/module";
+import { AUDIT_NAME_RE as checkerAuditNameRe, check } from "./check.js";
 
 const fixturesDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
-const mustFail = ["duplicate-publishes", "unreadable-publishes"] as const;
-const mustPass = ["unique-name", "same-file-claim"] as const;
+const mustFail = [
+  "duplicate-publishes",
+  "unreadable-publishes",
+  "audit-version-suffix",
+  "audit-two-segments",
+  "audit-non-literal",
+  "audit-duplicate",
+] as const;
+const mustPass = ["unique-name", "same-file-claim", "audit-ok"] as const;
 
 describe("event-names check fixtures", () => {
+  it("keeps AUDIT_NAME_RE in sync with kernel", () => {
+    expect(checkerAuditNameRe.source).toBe(kernelAuditNameRe.source);
+  });
+
   for (const name of mustFail) {
     it(`fails fixture ${name}`, () => {
       const result = check(path.join(fixturesDir, name));
