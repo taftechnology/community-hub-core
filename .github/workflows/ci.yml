@@ -156,11 +156,23 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build workspace packages
-        run: pnpm --filter @community-hub/gateway... build
+        run: pnpm --filter @community-hub/gateway... --filter @community-hub/api... build
 
-      - name: Wrangler deploy dry-run
+      - name: Wrangler deploy dry-run (gateway)
         working-directory: apps/gateway
-        run: pnpm exec wrangler deploy --dry-run
+        run: |
+          dir=$(mktemp -d)
+          trap 'rm -rf "$dir"' EXIT
+          pnpm exec wrangler deploy --dry-run --outdir "$dir"
+          pnpm --dir ../.. exec tsx tooling/checks/bundle-no-zod/cli.ts "$dir"
+
+      - name: Wrangler deploy dry-run (api)
+        working-directory: apps/api
+        run: |
+          dir=$(mktemp -d)
+          trap 'rm -rf "$dir"' EXIT
+          pnpm exec wrangler deploy --dry-run --outdir "$dir"
+          pnpm --dir ../.. exec tsx tooling/checks/bundle-no-zod/cli.ts "$dir"
 
       - name: Require Cloudflare credentials
         if: github.event_name == 'pull_request'

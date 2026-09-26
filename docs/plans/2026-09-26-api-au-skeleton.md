@@ -29,6 +29,7 @@ Status: approved (2026-09-26, Abdus Salam)
 - `.` does not import `./module`. Neither Worker imports `@community-hub/kernel/module`. No Hono. No `@community-hub/db` or `@community-hub/crypto` import from `apps/api`.
 - `region_key` on `infra/regions/au` has no default and validates `== "au"`. Do not add a default to make `terraform test` pass. File-level `variables { region_key = "au" }` in each AU root `*.tftest.hcl`. Only the `"ee"` run overrides it. `enable_regional_hostnames` stays false.
 - No `wrangler versions upload` for `apps/api`. The no-`zod` check searches files under `--outdir`, not Wrangler's console log.
+- Deviation (2026-09-26, after approval): the no-`zod` check is `tooling/checks/bundle-no-zod` with fixtures, per AGENTS.md §10. It fails when the output has no `.js` file, or any file matches `zod` case-insensitively.
 - Do not edit `docs/specs/2026-09-19-kernel-runtime.md`. The last commit updates `docs/roadmap.md`: `api-au-skeleton` done, next `terraform-envelope-kms`, Phase 0 `9 / 11`, new row `api-au-hostname` after `terraform-envelope-kms`. Session scratch is never committed.
 
 **Stop and report** (do not work around):
