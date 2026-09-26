@@ -1151,6 +1151,53 @@ describe("verifyAuditChain", () => {
       await direct.end({ timeout: 1 });
     }
   });
+
+  it("verifies one organisation on the direct connection when another organisation has rows", async () => {
+    const runtime = loadRuntime();
+    const sql = createAppSql(pooledAppUrl(runtime));
+    const direct = createDirectSql(runtime.directUrl);
+    const orgA = newId();
+    const orgB = newId();
+    const actorId = newId();
+    try {
+      await withRequest({ requestId: newId(), idempotencyKey: "verify-priv-scope-a" }, async () => {
+        await withOrgTransaction(sql, orgA, async (tx) => {
+          await appendAuditEvent(tx, {
+            actorKind: "user",
+            actorId,
+            action: APPEND_ACTION,
+            purpose: APPEND_PURPOSE,
+            targetIds: [],
+          });
+        });
+      });
+      await withRequest({ requestId: newId(), idempotencyKey: "verify-priv-scope-b" }, async () => {
+        await withOrgTransaction(sql, orgB, async (tx) => {
+          await appendAuditEvent(tx, {
+            actorKind: "user",
+            actorId,
+            action: APPEND_ACTION,
+            purpose: APPEND_PURPOSE,
+            targetIds: [],
+          });
+        });
+      });
+
+      await expect(
+        withOrgTransaction(direct, orgA, async (tx) => {
+          await verifyAuditChain(tx);
+        }),
+      ).resolves.toBeUndefined();
+      await expect(
+        withOrgTransaction(direct, orgB, async (tx) => {
+          await verifyAuditChain(tx);
+        }),
+      ).resolves.toBeUndefined();
+    } finally {
+      await sql.end({ timeout: 1 });
+      await direct.end({ timeout: 1 });
+    }
+  });
 });
 
 describe("schema-rls sees audit_events", () => {

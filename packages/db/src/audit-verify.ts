@@ -62,6 +62,7 @@ export async function verifyAuditChain(tx: OrgTransaction): Promise<void> {
       request_id::text,
       trunc(extract(epoch from occurred_at) * 1000000)::bigint::text as occurred_at_micros
     from app.audit_events
+    where org_id = current_setting('app.org_id')::uuid
     order by seq
   `;
 
