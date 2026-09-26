@@ -9,3 +9,4 @@ zone_id                   = "00000000000000000000000000000000"
 zone_name                 = "communityhub-staging.net"
 enable_hyperdrive         = false
 enable_regional_hostnames = false
+region_key                = "au"
