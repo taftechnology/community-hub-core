@@ -1,7 +1,7 @@
 # Spec: api-au skeleton
 
 Slug: `api-au-skeleton`
-Status: draft
+Status: approved (2026-09-26, Abdus Salam)
 Supersedes: docs/specs/2026-09-19-kernel-runtime.md (Request context section only)
 Architecture refs: §7.3, §8.1, §8.3, §17; ADR 0001; AGENTS.md §1 (1, 7), §6, §8, §10
 Branch: `feat/2026-09-26-api-au-skeleton`, created from `origin/main` after `audit-log` merged. Not stacked on another open PR.
@@ -164,15 +164,15 @@ Kernel `.` exports `createRequestHandler`, `healthRequest`, `withChangeKey`, and
 
 ## Risks
 
-| Risk | What this chunk does |
-| --- | --- |
-| Inbound `x-request-id` planted in a future audit row | `acceptInboundRequestId` is false on `apps/api`. The wiring test sends a UUID and asserts the log line's `requestId` is a different UUID, and that the inbound value is absent. |
-| Client key equals a derived key, or one client key covers two changes | Prefixed keys. The client key does not replace the change. `withChangeKey` validates the UUID and the integer. |
-| `publish` called with `newId()` | `publish` has no key argument. `withRequest` does not accept `idempotencyKey`. |
-| `zod` on a Worker bundle | `.` does not import `./module`. The dry-run `--outdir` bundle for each Worker is searched for `zod`. |
-| Regional Worker previewed on `workers.dev` | `preview_urls: false`, `workers_dev: false`. No `versions upload` for `apps/api`. |
-| `region_key` drifts from the catalog, or disappears behind a default | No default. Checker fails a missing assignment and an `"ee"` assignment. Root validation fails `"ee"` while hostnames are disabled. |
-| Personal data in the log line | `info` takes five fields. Tests use tokens that must be absent from those fields. A thrown error's message is absent from the 500 body and the line. |
+| Risk                                                                  | What this chunk does                                                                                                                                                            |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Inbound `x-request-id` planted in a future audit row                  | `acceptInboundRequestId` is false on `apps/api`. The wiring test sends a UUID and asserts the log line's `requestId` is a different UUID, and that the inbound value is absent. |
+| Client key equals a derived key, or one client key covers two changes | Prefixed keys. The client key does not replace the change. `withChangeKey` validates the UUID and the integer.                                                                  |
+| `publish` called with `newId()`                                       | `publish` has no key argument. `withRequest` does not accept `idempotencyKey`.                                                                                                  |
+| `zod` on a Worker bundle                                              | `.` does not import `./module`. The dry-run `--outdir` bundle for each Worker is searched for `zod`.                                                                            |
+| Regional Worker previewed on `workers.dev`                            | `preview_urls: false`, `workers_dev: false`. No `versions upload` for `apps/api`.                                                                                               |
+| `region_key` drifts from the catalog, or disappears behind a default  | No default. Checker fails a missing assignment and an `"ee"` assignment. Root validation fails `"ee"` while hostnames are disabled.                                             |
+| Personal data in the log line                                         | `info` takes five fields. Tests use tokens that must be absent from those fields. A thrown error's message is absent from the 500 body and the line.                            |
 
 ## Tests
 
