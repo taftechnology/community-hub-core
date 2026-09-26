@@ -64,22 +64,19 @@ describe("request context", () => {
     });
   });
 
-  it.each(["-1", "1.5", "01"])(
-    "rejects version %s without echoing the value",
-    async (version) => {
-      await withRequest({ requestId: "req-1" }, async () => {
-        expect(() => {
-          void withChangeKey(AGGREGATE, version, async () => "ok");
-        }).toThrow("version must be a non-negative integer");
+  it.each(["-1", "1.5", "01"])("rejects version %s without echoing the value", async (version) => {
+    await withRequest({ requestId: "req-1" }, async () => {
+      expect(() => {
+        void withChangeKey(AGGREGATE, version, async () => "ok");
+      }).toThrow("version must be a non-negative integer");
 
-        try {
-          void withChangeKey(AGGREGATE, version, async () => "ok");
-        } catch (error) {
-          expect((error as Error).message).not.toContain(version);
-        }
-      });
-    },
-  );
+      try {
+        void withChangeKey(AGGREGATE, version, async () => "ok");
+      } catch (error) {
+        expect((error as Error).message).not.toContain(version);
+      }
+    });
+  });
 
   it("accepts version 0 and scopes a change key", async () => {
     await withRequest({ requestId: "req-1" }, async () => {
@@ -145,9 +142,7 @@ describe("request context", () => {
 
     await withRequest({ requestId: "req-1", clientIdempotencyKey: clientKey }, async () => {
       await withChangeKey(aggregate, "1", async () => {
-        expect(getRequestContext().idempotencyKey).toBe(
-          `client:${clientKey}:${aggregate}:1`,
-        );
+        expect(getRequestContext().idempotencyKey).toBe(`client:${clientKey}:${aggregate}:1`);
       });
     });
   });

@@ -1,8 +1,7 @@
 import { SELF } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 
-const UUID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 describe("api", () => {
   it("GET /health mints request id instead of trusting inbound x-request-id", async () => {

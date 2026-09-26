@@ -3,8 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { getRequestContext } from "./request";
 import { createRequestHandler, healthRequest } from "./request-handler";
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const INBOUND_UUID = "11111111-1111-4111-8111-111111111111";
 const REJECTED_UUID = "22222222-2222-4222-8222-222222222222";
@@ -72,15 +71,12 @@ describe("createRequestHandler", () => {
 
   it("accepts a UUID x-request-id when acceptInboundRequestId is true", async () => {
     const info = vi.fn();
-    const run = createRequestHandler(
-      { info, acceptInboundRequestId: true },
-      async () => {
-        const ctx = getRequestContext();
-        expect(ctx.requestId).toBe(INBOUND_UUID);
-        expect(ctx.idempotencyKey).toBeUndefined();
-        return new Response(null, { status: 204 });
-      },
-    );
+    const run = createRequestHandler({ info, acceptInboundRequestId: true }, async () => {
+      const ctx = getRequestContext();
+      expect(ctx.requestId).toBe(INBOUND_UUID);
+      expect(ctx.idempotencyKey).toBeUndefined();
+      return new Response(null, { status: 204 });
+    });
 
     await run(
       new Request("https://example.test/anything", {
@@ -93,10 +89,7 @@ describe("createRequestHandler", () => {
   it.each([
     ["missing header", {} as Record<string, string>],
     ["non-uuid header", { "x-request-id": "not-a-uuid" }],
-    [
-      "acceptInboundRequestId false with uuid header",
-      { "x-request-id": REJECTED_UUID },
-    ],
+    ["acceptInboundRequestId false with uuid header", { "x-request-id": REJECTED_UUID }],
   ])("mints requestId when %s", async (_label, headers) => {
     const info = vi.fn();
     const run = createRequestHandler({ info, acceptInboundRequestId: false }, async () => {
