@@ -10,7 +10,7 @@
 
 **Spec:** `docs/specs/2026-09-26-api-au-skeleton.md` (approved 2026-09-26, Abdus Salam)
 
-Status: draft
+Status: approved (2026-09-26, Abdus Salam)
 
 **Branch:** `feat/2026-09-26-api-au-skeleton` · one PR · 7 tasks, one commit each
 
@@ -327,7 +327,7 @@ assert {
 
 `prod_tfvars` uses `file("env/prod.tfvars")` the same way.
 
-- [ ] **Step 3:** Terraform is `~/bin/terraform` (1.11.4). Run it. From `infra/regions/au`: `terraform init -backend=false -lockfile=readonly`, `terraform fmt -check`, `terraform validate`, `terraform test`. From `infra/modules/cf-regional-hostname`: `terraform test`. Expected: all pass. The new `"ee"` run fails the variable, which `expect_failures` treats as success.
+- [ ] **Step 3:** Terraform 1.11.4 (locally `~/bin/terraform`). Run it. From `infra/regions/au`: `terraform init -backend=false -lockfile=readonly`, `terraform fmt -check`, `terraform validate`, `terraform test`. From `infra/modules/cf-regional-hostname`: `terraform test`. Expected: all pass. The new `"ee"` run fails the variable, which `expect_failures` treats as success.
 
 - [ ] **Step 4:** Commit
 
@@ -428,7 +428,7 @@ pnpm check:boundaries
 pnpm test --force
 ```
 
-Terraform is `~/bin/terraform` (1.11.4). From `infra/regions/au` and from `infra/modules/cf-regional-hostname`: `terraform init -backend=false -lockfile=readonly`, `terraform fmt -check`, `terraform validate`, `terraform test`.
+Terraform 1.11.4 (locally `~/bin/terraform`). From `infra/regions/au` and from `infra/modules/cf-regional-hostname`: `terraform init -backend=false -lockfile=readonly`, `terraform fmt -check`, `terraform validate`, `terraform test`.
 
 From `apps/gateway` and from `apps/api`, the `--outdir` dry-run script above. Both must succeed and neither temp directory may contain `zod`.
 
