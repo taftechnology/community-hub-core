@@ -15,8 +15,7 @@ const SKIP_DIRS = new Set([
 ]);
 
 /** Keep in sync with `AUDIT_NAME_RE` in `@community-hub/kernel/module` (selftest asserts `.source`). */
-export const AUDIT_NAME_RE =
-  /^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/;
+export const AUDIT_NAME_RE = /^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/;
 
 const EMPTY_NOTICE =
   "event-names: zero defineModule/defineEvent declarations found under packages/*/src, apps/*/src, modules/**";

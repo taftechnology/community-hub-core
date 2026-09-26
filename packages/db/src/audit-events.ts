@@ -21,9 +21,7 @@ const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({
 });
 
 // Matches AUDIT_NAME_RE in @community-hub/kernel (drizzle-kit cannot import that package).
-const auditNameSql = sql.raw(
-  `'^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$'`,
-);
+const auditNameSql = sql.raw(`'^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$'`);
 
 export const auditEvents = app
   .table(

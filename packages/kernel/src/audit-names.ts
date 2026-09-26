@@ -1,5 +1,4 @@
-export const AUDIT_NAME_RE =
-  /^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/;
+export const AUDIT_NAME_RE = /^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/;
 
 const auditActions = new Set<string>();
 const auditPurposes = new Set<string>();

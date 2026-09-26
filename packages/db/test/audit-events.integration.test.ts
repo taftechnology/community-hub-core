@@ -2,10 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { withRequest } from "@community-hub/kernel";
-import {
-  defineAuditAction,
-  defineAuditPurpose,
-} from "@community-hub/kernel/module";
+import { defineAuditAction, defineAuditPurpose } from "@community-hub/kernel/module";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { appendAuditEvent } from "../src/audit-append.js";
@@ -932,7 +929,8 @@ describe("verifyAuditChain", () => {
         }),
       ).resolves.toBeUndefined();
 
-      const floored = BigInt(chosen.occurred_at_micros) - (BigInt(chosen.occurred_at_micros) % 1000n);
+      const floored =
+        BigInt(chosen.occurred_at_micros) - (BigInt(chosen.occurred_at_micros) % 1000n);
       const flooredHash = await auditEventHash({
         hashVersion: 1,
         orgId: chosen.org_id,
@@ -1159,6 +1157,8 @@ describe("schema-rls sees audit_events", () => {
   it("product journal includes FORCE RLS for audit_events", () => {
     const sql = productSql();
     expect(sql).toMatch(/CREATE TABLE ["']?app["']?\.\s*["']?audit_events["']?/i);
-    expect(sql).toMatch(/ALTER TABLE ["']?app["']?\.\s*["']?audit_events["']? FORCE ROW LEVEL SECURITY/i);
+    expect(sql).toMatch(
+      /ALTER TABLE ["']?app["']?\.\s*["']?audit_events["']? FORCE ROW LEVEL SECURITY/i,
+    );
   });
 });

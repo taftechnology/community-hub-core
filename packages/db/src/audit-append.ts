@@ -5,8 +5,7 @@ import type { AuditActorKind } from "./audit-hash.js";
 import { newId } from "./ids.js";
 import type { OrgTransaction } from "./tx.js";
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const SEQ_UNIQUE = "audit_events_org_id_seq_unique";
 const MAX_ATTEMPTS = 5;
