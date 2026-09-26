@@ -40,20 +40,20 @@ Status: draft
 
 ## File map
 
-| File                                                                                | Responsibility                                   |
-| ----------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `packages/kernel/src/request.ts`                                                    | Context, `withRequest`, `withChangeKey`          |
-| `packages/kernel/src/request-handler.ts`                                            | `createRequestHandler`, `healthRequest`          |
-| `packages/kernel/src/outbox-port.ts`                                                | `publish` throws when the key is absent          |
-| `packages/kernel/src/index.ts`                                                      | `.` exports. No `./module` import                |
-| `packages/db/test/outbox.integration.test.ts`                                       | Publishes go through `withChangeKey`             |
-| `packages/db/test/audit-events.integration.test.ts`                                 | Drop the unused `idempotencyKey` argument        |
-| `apps/gateway/src/index.ts`                                                         | Shared handler, `acceptInboundRequestId: true`   |
-| `apps/api/**`                                                                       | Regional Worker, `acceptInboundRequestId: false` |
-| `infra/regions/au/variables.tf`, `main.tf`, `env/*.tfvars`, `tests/cell.tftest.hcl` | Required `region_key`                            |
-| `tooling/checks/residency-cell/**`                                                  | Compare `region_key` to the catalog              |
-| `.github/workflows/ci.yml`                                                          | `apps/api` dry-run and both `--outdir` checks    |
-| `docs/roadmap.md`                                                                   | Last commit only                                 |
+| File                                                                                | Responsibility                                                  |
+| ----------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `packages/kernel/src/request.ts`                                                    | Context, `withRequest`, `withChangeKey`                         |
+| `packages/kernel/src/request-handler.ts`                                            | `createRequestHandler`, `healthRequest`                         |
+| `packages/kernel/src/outbox-port.ts`                                                | `publish` throws when the key is absent                         |
+| `packages/kernel/src/index.ts`                                                      | `.` exports. No `./module` import                               |
+| `packages/db/test/outbox.integration.test.ts`                                       | Publishes go through `withChangeKey`                            |
+| `packages/db/test/audit-events.integration.test.ts`                                 | Drop the unused `idempotencyKey` argument                       |
+| `apps/gateway/src/index.ts`, `index.test.ts`                                        | Task 1 drops the request-id key; task 3 uses the shared handler |
+| `apps/api/**`                                                                       | Regional Worker, `acceptInboundRequestId: false`                |
+| `infra/regions/au/variables.tf`, `main.tf`, `env/*.tfvars`, `tests/cell.tftest.hcl` | Required `region_key`                                           |
+| `tooling/checks/residency-cell/**`                                                  | Compare `region_key` to the catalog                             |
+| `.github/workflows/ci.yml`                                                          | `apps/api` dry-run and both `--outdir` checks                   |
+| `docs/roadmap.md`                                                                   | Last commit only                                                |
 
 ## Interfaces (locked)
 
@@ -100,11 +100,11 @@ export function healthRequest(request: Request): Response;
 
 ### Task 1: Change-scoped idempotency keys
 
-**Files:** `packages/kernel/src/request.ts`, `request.test.ts`, `outbox-port.ts`, `outbox-port.test.ts`, `packages/db/test/outbox.integration.test.ts`, `packages/db/test/audit-events.integration.test.ts`.
+**Files:** `packages/kernel/src/request.ts`, `request.test.ts`, `outbox-port.ts`, `outbox-port.test.ts`, `packages/db/test/outbox.integration.test.ts`, `packages/db/test/audit-events.integration.test.ts`, `apps/gateway/src/index.ts`, `apps/gateway/src/index.test.ts`.
 
 **Interfaces:** Produces `withRequest`, `withChangeKey`, and `RequestContext` as locked above. `publish` reads `idempotencyKey` and throws `idempotencyKey is missing` when it is absent.
 
-**Must not break:** `publish` still has no key argument. Do not edit the merged kernel-runtime spec. Audit append still reads `requestId` only.
+**Must not break:** `publish` still has no key argument. Do not edit the merged kernel-runtime spec. Audit append still reads `requestId` only. Gateway still serves `GET /health` through `createFetch`. Do not swap in `createRequestHandler` here. `outbox-adapter.test.ts` uses `idempotencyKey` as an append-row field and is not edited.
 
 - [ ] **Step 1:** Rewrite `request.test.ts` so concurrent and nested `withRequest` calls pass only `requestId`. Add tests: `withChangeKey` outside `withRequest` throws `Request context is missing`; `aggregateId` `not-a-uuid` throws `aggregateId must be a UUID` and the message does not contain `not-a-uuid`; versions `-1`, `1.5`, and `01` throw `version must be a non-negative integer` and the message does not contain the bad version; version `0` is accepted; inside the scope `getRequestContext().idempotencyKey` is `change:<lowercase-uuid>:1` and after the scope it is `undefined`; two sibling scopes with versions `1` and `2` produce those two distinct keys and neither sees the other; a nested `withChangeKey` with version `2` sees `…:2` and, after it returns, the outer scope still sees `…:1`; a `clientIdempotencyKey` of `00000000-0000-7000-8000-000000000001:3` with aggregate `00000000-0000-7000-8000-000000000002` and version `1` yields `client:00000000-0000-7000-8000-000000000001:3:00000000-0000-7000-8000-000000000002:1`.
 
@@ -153,17 +153,17 @@ if (ctx.idempotencyKey === undefined) {
 }
 ```
 
-- [ ] **Step 5:** Update `packages/db` callers so the package typechecks. In `audit-events.integration.test.ts`, delete every `idempotencyKey` property passed to `withRequest`. Leave `requestId` as it is, including `"not-a-uuid"`. In `outbox.integration.test.ts`, import `withChangeKey` from `@community-hub/kernel`. Drop `idempotencyKey` from `withRequest`. Wrap each `publish` in `withChangeKey` using a UUID from `newId()` and version `"1"` when the test wants one shared key (the retry test, the two-event test). Do not pass a free-form string as the outbox key.
+- [ ] **Step 5:** Update callers so the tree typechecks. In `audit-events.integration.test.ts`, delete every `idempotencyKey` property passed to `withRequest`. Leave `requestId` as it is, including `"not-a-uuid"`. In `outbox.integration.test.ts`, import `withChangeKey` from `@community-hub/kernel`. Drop `idempotencyKey` from `withRequest`. Wrap each `publish` in `withChangeKey` using a UUID from `newId()` and version `"1"` when the test wants one shared key (the retry test, the two-event test). Do not pass a free-form string as the outbox key. In `apps/gateway/src/index.ts`, change the call to `withRequest({ requestId }, …)` and delete the `if` that throws `idempotencyKey must equal requestId`. Delete the test `"GET /health logs requestId from ALS and keeps idempotencyKey equal"` in `apps/gateway/src/index.test.ts`. Leave `createFetch` and the other gateway tests in place.
 
-- [ ] **Step 6:** `pnpm test --filter @community-hub/kernel` and `pnpm exec tsc --build --pretty false -p packages/db` pass. The db integration suite still needs Docker; run `pnpm test --filter @community-hub/db` once before the commit.
+- [ ] **Step 6:** These pass: `pnpm test --filter @community-hub/kernel`, `pnpm test --filter @community-hub/gateway`, `pnpm exec tsc --build --pretty false -p packages/db`, `pnpm exec tsc --build --pretty false -p apps/gateway`. The db integration suite needs Docker; run `pnpm test --filter @community-hub/db` once before the commit.
 
 - [ ] **Step 7:** Commit
 
 ```
 feat(kernel): scope idempotency keys to one change
 
-publish reads a nested withChangeKey context, so a client key cannot
-stand in for a derived key or cover two changes in one request.
+publish reads a nested withChangeKey context. Gateway drops the
+request-id key so this commit still typechecks and serves /health.
 
 Refs: docs/plans/2026-09-26-api-au-skeleton.md task 1
 ```
@@ -219,7 +219,7 @@ Refs: docs/plans/2026-09-26-api-au-skeleton.md task 2
 
 **Interfaces:** Consumes `createRequestHandler` and `healthRequest` from `@community-hub/kernel`, `createLogger` from `@community-hub/observability`.
 
-**Must not break:** Gateway does not import `@community-hub/kernel/module`. `preview_urls` stays true. The idempotency-equals-request-id throw in the current `index.ts` is deleted.
+**Must not break:** Gateway does not import `@community-hub/kernel/module`. `preview_urls` stays true. Task 1 already removed the `idempotencyKey` argument and the mismatch throw. This task replaces `createFetch` with `createRequestHandler`. Do not reintroduce `createFetch`.
 
 - [ ] **Step 1:** Replace `index.test.ts` with one test. `vi.spyOn(console, "log")` during `SELF.fetch("https://gateway.test/health", { headers: { "x-request-id": "11111111-1111-4111-8111-111111111111" } })`. Expect status 200, body `{ ok: true }`, one log line, and `requestId` equal to that UUID.
 
@@ -251,8 +251,8 @@ export default {
 ```
 refactor(gateway): log requests through the kernel handler
 
-The gateway keeps an inbound UUID request id and no longer stores
-that id as an idempotency key.
+Gateway fetch is createRequestHandler with acceptInboundRequestId
+true, so an inbound UUID stays the logged request id.
 
 Refs: docs/plans/2026-09-26-api-au-skeleton.md task 3
 ```
@@ -316,9 +316,18 @@ variables {
 }
 ```
 
-Do not repeat `region_key` inside the existing run blocks. They inherit `"au"`. Add a run that copies `staging_happy`'s variables, sets `region_key = "ee"` and `enable_regional_hostnames = false`, and uses `expect_failures = [var.region_key]`. In `staging_happy` and `prod_tfvars`, assert both tfvars files match `(?m)^\\s*region_key\\s*=\\s*\"au\"`.
+Do not repeat `region_key` inside the existing run blocks. They inherit `"au"`. Add a run that copies `staging_happy`'s variables, sets `region_key = "ee"` and `enable_regional_hostnames = false`, and uses `expect_failures = [var.region_key]`. In `staging_happy` and `prod_tfvars`, assert the tfvars files with `can(regex(…))` so a no-match is a false condition. Paths are relative to the root module:
 
-- [ ] **Step 3:** From `infra/regions/au`: `terraform init -backend=false -lockfile=readonly`, `terraform fmt -check`, `terraform validate`, `terraform test`. From `infra/modules/cf-regional-hostname`: `terraform test`. Expected: all pass. The new `"ee"` run fails the variable, which `expect_failures` treats as success.
+```hcl
+assert {
+  condition     = can(regex("(?m)^\\s*region_key\\s*=\\s*\"au\"", file("env/staging.tfvars")))
+  error_message = "env/staging.tfvars must set region_key = \"au\""
+}
+```
+
+`prod_tfvars` uses `file("env/prod.tfvars")` the same way.
+
+- [ ] **Step 3:** Terraform is `~/bin/terraform` (1.11.4). Run it. From `infra/regions/au`: `terraform init -backend=false -lockfile=readonly`, `terraform fmt -check`, `terraform validate`, `terraform test`. From `infra/modules/cf-regional-hostname`: `terraform test`. Expected: all pass. The new `"ee"` run fails the variable, which `expect_failures` treats as success.
 
 - [ ] **Step 4:** Commit
 
@@ -373,16 +382,30 @@ Refs: docs/plans/2026-09-26-api-au-skeleton.md task 6
   run: pnpm --filter @community-hub/gateway... --filter @community-hub/api... build
 ```
 
-Replace the gateway dry-run step, and add an api step, each running:
+Replace the gateway dry-run step and add an api step. Each step sets `working-directory` and runs the same script:
 
-```bash
-dir=$(mktemp -d)
-pnpm exec wrangler deploy --dry-run --outdir "$dir"
-if grep -R -q "zod" "$dir"; then
-  echo "bundle contains zod"
-  exit 1
-fi
-rm -rf "$dir"
+```yaml
+- name: Wrangler deploy dry-run (gateway)
+  working-directory: apps/gateway
+  run: |
+    dir=$(mktemp -d)
+    pnpm exec wrangler deploy --dry-run --outdir "$dir"
+    if grep -R -q "zod" "$dir"; then
+      echo "bundle contains zod"
+      exit 1
+    fi
+    rm -rf "$dir"
+
+- name: Wrangler deploy dry-run (api)
+  working-directory: apps/api
+  run: |
+    dir=$(mktemp -d)
+    pnpm exec wrangler deploy --dry-run --outdir "$dir"
+    if grep -R -q "zod" "$dir"; then
+      echo "bundle contains zod"
+      exit 1
+    fi
+    rm -rf "$dir"
 ```
 
 Leave `versions upload` and the preview comment in `apps/gateway` only.
@@ -405,7 +428,7 @@ pnpm check:boundaries
 pnpm test --force
 ```
 
-From `infra/regions/au` and from `infra/modules/cf-regional-hostname`: `terraform init -backend=false -lockfile=readonly`, `terraform fmt -check`, `terraform validate`, `terraform test`.
+Terraform is `~/bin/terraform` (1.11.4). From `infra/regions/au` and from `infra/modules/cf-regional-hostname`: `terraform init -backend=false -lockfile=readonly`, `terraform fmt -check`, `terraform validate`, `terraform test`.
 
 From `apps/gateway` and from `apps/api`, the `--outdir` dry-run script above. Both must succeed and neither temp directory may contain `zod`.
 
@@ -427,7 +450,7 @@ Refs: docs/plans/2026-09-26-api-au-skeleton.md task 7
 | Spec item                                                                      | Task      |
 | ------------------------------------------------------------------------------ | --------- |
 | `withChangeKey`, prefixed keys, validation, publish throws with no key         | 1         |
-| Existing `withRequest({ idempotencyKey })` callers                             | 1         |
+| Existing `withRequest({ idempotencyKey })` callers, including gateway          | 1         |
 | `createRequestHandler`, `healthRequest`, log line, bare 500, POST /health      | 2         |
 | Gateway accepts inbound UUID; no `./module` on `.`                             | 2, 3      |
 | `apps/api` mints request ids; regional Wrangler flags; `nodejs_als`            | 4         |
