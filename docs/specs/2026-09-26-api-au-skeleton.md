@@ -2,7 +2,7 @@
 
 Slug: `api-au-skeleton`
 Status: draft
-Supersedes: —
+Supersedes: docs/specs/2026-09-19-kernel-runtime.md (Request context section only)
 Architecture refs: §7.3, §8.1, §8.3, §17; ADR 0001; AGENTS.md §1 (1, 7), §6, §8, §10
 Branch: `feat/2026-09-26-api-au-skeleton`, created from `origin/main` after `audit-log` merged. Not stacked on another open PR.
 
@@ -23,13 +23,13 @@ The gateway's request wrapper cannot be copied. It accepts any UUID `x-request-i
 - `withChangeKey(aggregateId, version, fn)` is the only way to set `idempotencyKey`. `publish` still reads the key only from the request context.
 - AU root variable `region_key`, no default, passed into `cf-regional-hostname`. `residency-cell` requires it in every enabled cell's `env/*.tfvars` and compares it to `cloudflareRegionalServices`.
 - Stage 3: `wrangler deploy --dry-run` for `apps/api`, and a no-`zod` assertion on that bundle and on gateway's. `versions upload` and the preview comment stay gateway-only.
-- Roadmap, last commit of the implementation branch: `api-au-skeleton` **done**, next `terraform-envelope-kms`, Phase 0 `9 / 10`.
+- Roadmap, last commit of the implementation branch: `api-au-skeleton` **done**, next `terraform-envelope-kms`, Phase 0 `9 / 11`. That commit also adds Phase 0 row `api-au-hostname` after `terraform-envelope-kms`, the same way `packages-crypto` added `terraform-envelope-kms`. The row is not started. It is not the next chunk.
 
 **Out** (explicitly)
 
 - Hono, and mounting any module. Architecture describes `api-au` as a Hono app. Deferring that is a scope choice: the first module mount brings Hono and replaces `healthRequest` with that app. This chunk does not add the dependency.
 - Database, Hyperdrive, KMS, queues, cron, or any import of `@community-hub/db` or `@community-hub/crypto`.
-- Setting `enable_regional_hostnames` to true, a Terraform apply, a DNS record, or a Worker route. `au.api.<zone>` is already declared in `infra/regions/au` behind that flag, and `cf-regional-hostname` does not create the DNS record. The later chunk is the apply plus the route, not a new hostname resource.
+- Setting `enable_regional_hostnames` to true, a Terraform apply, a DNS record, or a Worker route. `au.api.<zone>` is already declared in `infra/regions/au` behind that flag, and `cf-regional-hostname` does not create the DNS record. `api-au-hostname` is the apply plus the route, not a new hostname resource.
 - A `workers.dev` preview or `wrangler versions upload` for `apps/api`.
 - Scoping a client idempotency key to the caller. That is `identity-otp` (out-of-band).
 - Product routes, audit writes, or outbox publishes from this Worker. `healthRequest` does not publish.
@@ -87,7 +87,7 @@ Exactly one `info` call, after `handle` settles. On success, `status` is the res
 
 ### Idempotency key
 
-This amends `docs/specs/2026-09-19-kernel-runtime.md` (Request context):
+This spec supersedes the Request context section of `docs/specs/2026-09-19-kernel-runtime.md`. That file has merged and is not edited. A reader of it follows the `Supersedes:` line here. What changed:
 
 - `RequestContext` is `requestId`, optional `clientIdempotencyKey`, and optional `idempotencyKey`.
 - `withRequest` takes `requestId` and optional `clientIdempotencyKey` only. It does not take `idempotencyKey`. Callers cannot pass `newId()` or any other string as the outbox key.
@@ -112,7 +112,9 @@ The client key may contain `:`. The tail is a lowercase UUID and an integer, so 
 
 `infra/regions/au` gains `variable "region_key"` with no default and validation `region_key == "au"`. `env/staging.tfvars` and `env/prod.tfvars` both set `region_key = "au"`. `module.regional_hostname` passes `region_key = var.region_key`. The module's own `region_key == "au"` validation and its `"ee"` test stay.
 
-The module is behind `count = var.enable_regional_hostnames ? 1 : 0`, and that flag stays `false`. Module validation does not run while the count is zero, so the root variable's validation is what `terraform validate` enforces. The existing AU cell test passes `region_key = "au"` with hostnames disabled, asserts both tfvars files set `region_key = "au"`, and a run with `region_key = "ee"` expects the variable validation to fail.
+The module is behind `count = var.enable_regional_hostnames ? 1 : 0`, and that flag stays `false`. Module validation does not run while the count is zero, so the root variable's validation is what `terraform validate` enforces. `terraform validate` does not need a value. `terraform test` does: a required variable with no default fails every existing run that omits it, before the assertion under test. Do not give `region_key` a default to make those runs pass. The checker would then be right to fail a tfvars file that omits it, and the suite would no longer prove the variable is required.
+
+Every `infra/regions/au/**/*.tftest.hcl` file gets a file-level `variables` block with `region_key = "au"`. Today that is `tests/cell.tftest.hcl`. Every run inherits it. Only the run that expects failure overrides `region_key = "ee"` in its own `variables` block, with `enable_regional_hostnames` still false. Both tfvars files must contain `region_key = "au"`.
 
 ### Checker
 
@@ -134,7 +136,7 @@ For this chunk only, the running-preview check is deferred. What stands in for i
 - `@cloudflare/vitest-pool-workers` tests for gateway and `apps/api`.
 - `wrangler dev` against the built `apps/api` Worker, locally, when someone wants a process. Not a CI step.
 
-The chunk that retires the exception is the one that sets `enable_regional_hostnames` true, applies, and attaches the `api` Worker route on `au.api.<zone>`. That chunk is not `terraform-envelope-kms`.
+`api-au-hostname` retires the exception: it sets `enable_regional_hostnames` true, applies, and attaches the `api` Worker route on `au.api.<zone>`. It is a Phase 0 row after `terraform-envelope-kms`, added in this chunk's roadmap commit. It is not the next chunk.
 
 CI Stage 3 `build-preview` keeps `wrangler versions upload` and the preview comment for `apps/gateway` only. It gains `pnpm exec wrangler deploy --dry-run` in `apps/api`. Both dry-runs must succeed. The no-`zod` check is the one under Tests: `--outdir` into a temp directory, then the bundle files, not Wrangler's console log. Tree-shaking a combined kernel entry is not the mechanism: `.` does not import `./module`.
 
@@ -146,7 +148,7 @@ No new table and no new column. No personal data in the health response or the l
 
 ## Rules touched
 
-- **Amends `kernel-runtime`.** `RequestContext.idempotencyKey` is optional. `withRequest` no longer accepts it. `/health` no longer sets it equal to `requestId`. Optional `clientIdempotencyKey` is the validated header, kept separate from the request id. `withChangeKey` is how a publisher obtains `idempotencyKey`. `publish` still reads only the context and still takes no key argument.
+- **Supersedes `kernel-runtime`'s Request context section.** The merged spec is not edited. `RequestContext.idempotencyKey` is optional. `withRequest` no longer accepts it. `/health` no longer sets it equal to `requestId`. Optional `clientIdempotencyKey` is the validated header, kept separate from the request id. `withChangeKey` is how a publisher obtains `idempotencyKey`. `publish` still reads only the context and still takes no key argument.
 - **AGENTS.md §8**, for this chunk only: the running-preview check is the exception written under Preview exception. The general rule is unchanged.
 - **AGENTS.md §10 Stage 3:** `apps/api` is dry-run only. Preview upload stays on gateway because gateway is `global-no-pii`.
 - Residency: the catalog's `cloudflareRegionalServices` for an enabled cell must match `region_key` in that cell's tfvars. No personal data leaves the regional class. This Worker holds none.
@@ -212,7 +214,7 @@ Kernel `.` exports `createRequestHandler`, `healthRequest`, `withChangeKey`, and
 **Terraform, offline**
 
 - `terraform validate` and `terraform test` for the AU root and for `cf-regional-hostname`.
-- Cell test: `region_key = "au"` with `enable_regional_hostnames = false` plans. Both tfvars files contain `region_key = "au"`. `region_key = "ee"` fails validation with hostnames still disabled.
+- `tests/cell.tftest.hcl` has a file-level `variables { region_key = "au" }`. Runs that do not override it plan with hostnames disabled. The `"ee"` run overrides only that variable and fails validation. Both tfvars files contain `region_key = "au"`. The root variable still has no default.
 - The module's existing `"ee"` test still fails.
 
 **Bundles**
@@ -222,10 +224,10 @@ Kernel `.` exports `createRequestHandler`, `healthRequest`, `withChangeKey`, and
 ## Out-of-band
 
 - **`identity-otp`:** scope a client idempotency key to the caller. Two users who send the same `Idempotency-Key` must not share an outbox slot. This chunk's prefix does not do that.
-- **Regional hostname chunk:** set `enable_regional_hostnames` true, apply, attach the `api` route on `au.api.<zone>`, and verify the running Worker there. That retires this spec's preview exception. It is not `terraform-envelope-kms`.
+- **`api-au-hostname`:** set `enable_regional_hostnames` true, apply, attach the `api` route on `au.api.<zone>`, and verify the running Worker there. That retires this spec's preview exception. Roadmap Phase 0 row after `terraform-envelope-kms`, added by this chunk's last commit. Not the next chunk.
 - **First module mount:** add Hono and pass that app as `handle`. `createRequestHandler` stays.
 - No new subprocessor. No ADR. ADR 0001 already requires `preview_urls: false` on `regional`.
 
 ## Next spec
 
-`terraform-envelope-kms`, unless the human picks another remaining Phase 0 row. This chunk's last commit updates `docs/roadmap.md`: `api-au-skeleton` **done**, next `terraform-envelope-kms`, Phase 0 `9 / 10`.
+`terraform-envelope-kms`, unless the human picks another remaining Phase 0 row. `api-au-hostname` is catalogued after it and is not next. This chunk's last commit updates `docs/roadmap.md`: `api-au-skeleton` **done**, next `terraform-envelope-kms`, Phase 0 `9 / 11`, plus the new `api-au-hostname` row.
