@@ -586,7 +586,7 @@ describe("appendAuditEvent", () => {
     const actorId = newId();
     try {
       await expect(
-        withRequest({ requestId: "not-a-uuid", idempotencyKey: "append-bad-req" }, async () => {
+        withRequest({ requestId: "not-a-uuid" }, async () => {
           await withOrgTransaction(sql, orgId, async (tx) => {
             await appendAuditEvent(tx, {
               actorKind: "user",
@@ -611,7 +611,7 @@ describe("appendAuditEvent", () => {
     const syntheticId = newId();
     try {
       await expect(
-        withRequest({ requestId: newId(), idempotencyKey: "append-bad-action" }, async () => {
+        withRequest({ requestId: newId() }, async () => {
           await withOrgTransaction(sql, orgId, async (tx) => {
             await tx`insert into app.synthetic (org_id, id) values (${orgId}, ${syntheticId})`;
             await appendAuditEvent(tx, {
@@ -642,7 +642,7 @@ describe("appendAuditEvent", () => {
     const syntheticId = newId();
     try {
       await expect(
-        withRequest({ requestId: newId(), idempotencyKey: "append-bad-purpose" }, async () => {
+        withRequest({ requestId: newId() }, async () => {
           await withOrgTransaction(sql, orgId, async (tx) => {
             await tx`insert into app.synthetic (org_id, id) values (${orgId}, ${syntheticId})`;
             await appendAuditEvent(tx, {
@@ -672,7 +672,7 @@ describe("appendAuditEvent", () => {
     const actorId = newId();
     try {
       await expect(
-        withRequest({ requestId: newId(), idempotencyKey: "append-system-actor" }, async () => {
+        withRequest({ requestId: newId() }, async () => {
           await withOrgTransaction(sql, orgId, async (tx) => {
             await appendAuditEvent(tx, {
               actorKind: "system",
@@ -686,7 +686,7 @@ describe("appendAuditEvent", () => {
       ).rejects.toThrow();
 
       await expect(
-        withRequest({ requestId: newId(), idempotencyKey: "append-user-null" }, async () => {
+        withRequest({ requestId: newId() }, async () => {
           await withOrgTransaction(sql, orgId, async (tx) => {
             await appendAuditEvent(tx, {
               actorKind: "user",
@@ -715,7 +715,7 @@ describe("appendAuditEvent", () => {
     const actorId = newId();
     try {
       await expect(
-        withRequest({ requestId: newId(), idempotencyKey: "append-null-target" }, async () => {
+        withRequest({ requestId: newId() }, async () => {
           await withOrgTransaction(sql, orgId, async (tx) => {
             await appendAuditEvent(tx, {
               actorKind: "user",
@@ -744,7 +744,7 @@ describe("appendAuditEvent", () => {
     const actorId = newId();
     try {
       await expect(
-        withRequest({ requestId: newId(), idempotencyKey: "append-rr" }, async () => {
+        withRequest({ requestId: newId() }, async () => {
           await sql.begin("isolation level repeatable read", async (tx) => {
             await tx`select set_config('app.org_id', ${orgId}, ${true})`;
             await appendAuditEvent(tx as Parameters<typeof appendAuditEvent>[0], {
@@ -774,35 +774,30 @@ describe("appendAuditEvent", () => {
     const actorId = newId();
     const targetId = newId();
     try {
-      const results = await withRequest(
-        { requestId: newId(), idempotencyKey: "append-two" },
-        async () => {
-          return withOrgTransaction(sql, orgId, async (tx) => {
-            const first = await appendAuditEvent(tx, {
-              actorKind: "user",
-              actorId,
-              action: APPEND_ACTION,
-              purpose: APPEND_PURPOSE,
-              targetIds: [targetId],
-            });
-            const second = await appendAuditEvent(tx, {
-              actorKind: "user",
-              actorId,
-              action: APPEND_ACTION,
-              purpose: APPEND_PURPOSE,
-              targetIds: [targetId],
-            });
-            const rows = await tx<
-              { id: string; seq: string; hash: Uint8Array | Buffer | string }[]
-            >`
+      const results = await withRequest({ requestId: newId() }, async () => {
+        return withOrgTransaction(sql, orgId, async (tx) => {
+          const first = await appendAuditEvent(tx, {
+            actorKind: "user",
+            actorId,
+            action: APPEND_ACTION,
+            purpose: APPEND_PURPOSE,
+            targetIds: [targetId],
+          });
+          const second = await appendAuditEvent(tx, {
+            actorKind: "user",
+            actorId,
+            action: APPEND_ACTION,
+            purpose: APPEND_PURPOSE,
+            targetIds: [targetId],
+          });
+          const rows = await tx<{ id: string; seq: string; hash: Uint8Array | Buffer | string }[]>`
               select id::text, seq::text, hash
               from app.audit_events
               order by seq
             `;
-            return { first, second, rows };
-          });
-        },
-      );
+          return { first, second, rows };
+        });
+      });
 
       expect(results.first.seq).toBe("1");
       expect(results.second.seq).toBe("2");
@@ -862,34 +857,32 @@ describe("verifyAuditChain", () => {
 
       for (let i = 0; i < 10; i += 1) {
         const requestId = newId();
-        const row = await withRequest(
-          { requestId, idempotencyKey: `verify-micros-${i}` },
-          async () => {
-            return withOrgTransaction(sql, orgId, async (tx) => {
-              const appended = await appendAuditEvent(tx, {
-                actorKind: "user",
-                actorId,
-                action: APPEND_ACTION,
-                purpose: APPEND_PURPOSE,
-                targetIds: [],
-              });
-              const rows = await tx<
-                {
-                  id: string;
-                  seq: string;
-                  hash: Uint8Array | Buffer | string;
-                  prev_hash: Uint8Array | Buffer | string;
-                  actor_kind: string;
-                  actor_id: string | null;
-                  action: string;
-                  target_ids: string[];
-                  purpose: string;
-                  request_id: string;
-                  occurred_at_micros: string;
-                  org_id: string;
-                  hash_version: number;
-                }[]
-              >`
+        const row = await withRequest({ requestId }, async () => {
+          return withOrgTransaction(sql, orgId, async (tx) => {
+            const appended = await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId,
+              action: APPEND_ACTION,
+              purpose: APPEND_PURPOSE,
+              targetIds: [],
+            });
+            const rows = await tx<
+              {
+                id: string;
+                seq: string;
+                hash: Uint8Array | Buffer | string;
+                prev_hash: Uint8Array | Buffer | string;
+                actor_kind: string;
+                actor_id: string | null;
+                action: string;
+                target_ids: string[];
+                purpose: string;
+                request_id: string;
+                occurred_at_micros: string;
+                org_id: string;
+                hash_version: number;
+              }[]
+            >`
                 select
                   id::text,
                   org_id::text,
@@ -907,10 +900,9 @@ describe("verifyAuditChain", () => {
                 from app.audit_events
                 where id = ${appended.id}::uuid
               `;
-              return rows[0]!;
-            });
-          },
-        );
+            return rows[0]!;
+          });
+        });
 
         const micros = BigInt(row.occurred_at_micros);
         if (micros % 1000n !== 0n) {
@@ -969,22 +961,19 @@ describe("verifyAuditChain", () => {
     });
 
     try {
-      const aDone = withRequest(
-        { requestId: newId(), idempotencyKey: "verify-collision-a" },
-        async () => {
-          await withOrgTransaction(sql, orgId, async (tx) => {
-            await appendAuditEvent(tx, {
-              actorKind: "user",
-              actorId,
-              action: APPEND_ACTION,
-              purpose: APPEND_PURPOSE,
-              targetIds: [],
-            });
-            signalAInserted();
-            await aGate;
+      const aDone = withRequest({ requestId: newId() }, async () => {
+        await withOrgTransaction(sql, orgId, async (tx) => {
+          await appendAuditEvent(tx, {
+            actorKind: "user",
+            actorId,
+            action: APPEND_ACTION,
+            purpose: APPEND_PURPOSE,
+            targetIds: [],
           });
-        },
-      );
+          signalAInserted();
+          await aGate;
+        });
+      });
 
       await aInserted;
 
@@ -994,31 +983,28 @@ describe("verifyAuditChain", () => {
         resolveFirstAttempt = resolve;
       });
 
-      const bDone = withRequest(
-        { requestId: newId(), idempotencyKey: "verify-collision-b" },
-        async () => {
-          return withOrgTransaction(sql, orgId, async (tx) => {
-            return appendAuditEvent(
-              tx,
-              {
-                actorKind: "user",
-                actorId,
-                action: APPEND_ACTION,
-                purpose: APPEND_PURPOSE,
-                targetIds: [],
+      const bDone = withRequest({ requestId: newId() }, async () => {
+        return withOrgTransaction(sql, orgId, async (tx) => {
+          return appendAuditEvent(
+            tx,
+            {
+              actorKind: "user",
+              actorId,
+              action: APPEND_ACTION,
+              purpose: APPEND_PURPOSE,
+              targetIds: [],
+            },
+            {
+              onAttempt: () => {
+                attempts += 1;
+                if (attempts === 1) {
+                  resolveFirstAttempt();
+                }
               },
-              {
-                onAttempt: () => {
-                  attempts += 1;
-                  if (attempts === 1) {
-                    resolveFirstAttempt();
-                  }
-                },
-              },
-            );
-          });
-        },
-      );
+            },
+          );
+        });
+      });
 
       await firstAttempt;
 
@@ -1068,21 +1054,18 @@ describe("verifyAuditChain", () => {
     const orgB = newId();
     const actorId = newId();
     try {
-      const aId = await withRequest(
-        { requestId: newId(), idempotencyKey: "verify-cross-a" },
-        async () => {
-          return withOrgTransaction(sql, orgA, async (tx) => {
-            const row = await appendAuditEvent(tx, {
-              actorKind: "user",
-              actorId,
-              action: APPEND_ACTION,
-              purpose: APPEND_PURPOSE,
-              targetIds: [],
-            });
-            return row.id;
+      const aId = await withRequest({ requestId: newId() }, async () => {
+        return withOrgTransaction(sql, orgA, async (tx) => {
+          const row = await appendAuditEvent(tx, {
+            actorKind: "user",
+            actorId,
+            action: APPEND_ACTION,
+            purpose: APPEND_PURPOSE,
+            targetIds: [],
           });
-        },
-      );
+          return row.id;
+        });
+      });
 
       const fromB = await withOrgTransaction(sql, orgB, async (tx) => {
         return tx<{ id: string }[]>`
@@ -1091,7 +1074,7 @@ describe("verifyAuditChain", () => {
       });
       expect(fromB).toHaveLength(0);
 
-      await withRequest({ requestId: newId(), idempotencyKey: "verify-cross-b" }, async () => {
+      await withRequest({ requestId: newId() }, async () => {
         await withOrgTransaction(sql, orgB, async (tx) => {
           await appendAuditEvent(tx, {
             actorKind: "user",
@@ -1120,20 +1103,17 @@ describe("verifyAuditChain", () => {
     const orgId = newId();
     const actorId = newId();
     try {
-      const appended = await withRequest(
-        { requestId: newId(), idempotencyKey: "verify-tamper" },
-        async () => {
-          return withOrgTransaction(sql, orgId, async (tx) => {
-            return appendAuditEvent(tx, {
-              actorKind: "user",
-              actorId,
-              action: APPEND_ACTION,
-              purpose: APPEND_PURPOSE,
-              targetIds: [],
-            });
+      const appended = await withRequest({ requestId: newId() }, async () => {
+        return withOrgTransaction(sql, orgId, async (tx) => {
+          return appendAuditEvent(tx, {
+            actorKind: "user",
+            actorId,
+            action: APPEND_ACTION,
+            purpose: APPEND_PURPOSE,
+            targetIds: [],
           });
-        },
-      );
+        });
+      });
 
       await direct`
         update app.audit_events
@@ -1160,7 +1140,7 @@ describe("verifyAuditChain", () => {
     const orgB = newId();
     const actorId = newId();
     try {
-      await withRequest({ requestId: newId(), idempotencyKey: "verify-priv-scope-a" }, async () => {
+      await withRequest({ requestId: newId() }, async () => {
         await withOrgTransaction(sql, orgA, async (tx) => {
           await appendAuditEvent(tx, {
             actorKind: "user",
@@ -1171,7 +1151,7 @@ describe("verifyAuditChain", () => {
           });
         });
       });
-      await withRequest({ requestId: newId(), idempotencyKey: "verify-priv-scope-b" }, async () => {
+      await withRequest({ requestId: newId() }, async () => {
         await withOrgTransaction(sql, orgB, async (tx) => {
           await appendAuditEvent(tx, {
             actorKind: "user",

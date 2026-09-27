@@ -924,6 +924,7 @@ function validateEnabledCell(
   root: string,
   cellId: string,
   awsRegion: string,
+  cloudflareRegionalServices: string,
   violations: ResidencyCellViolation[],
 ): void {
   const regionRoot = path.join(root, "infra", "regions", cellId);
@@ -966,6 +967,28 @@ function validateEnabledCell(
         violations.push({
           file: rel,
           message: `aws_region "${region}" does not match catalog awsRegion "${awsRegion}" for enabled cell "${cellId}"`,
+        });
+      }
+    }
+  }
+
+  for (const file of tfvarsFiles) {
+    const hcl = stripHclComments(fs.readFileSync(file, "utf8"));
+    const rel = posixRel(root, file);
+    const regionKeys = assignmentValue(hcl, "region_key");
+    if (regionKeys.length === 0) {
+      violations.push({
+        file: rel,
+        message: `enabled cell "${cellId}" env/*.tfvars must set region_key`,
+      });
+      continue;
+    }
+    for (const value of regionKeys) {
+      const regionKey = unquote(value);
+      if (regionKey !== cloudflareRegionalServices) {
+        violations.push({
+          file: rel,
+          message: `region_key "${regionKey}" does not match catalog cloudflareRegionalServices "${cloudflareRegionalServices}" for enabled cell "${cellId}"`,
         });
       }
     }
@@ -1062,7 +1085,13 @@ export function check(root: string = process.cwd()): CheckResult {
     if (!cell) {
       continue;
     }
-    validateEnabledCell(resolvedRoot, cellId, cell.awsRegion, violations);
+    validateEnabledCell(
+      resolvedRoot,
+      cellId,
+      cell.awsRegion,
+      cell.cloudflareRegionalServices,
+      violations,
+    );
   }
 
   for (const regionId of terraformCellIds) {

@@ -18,13 +18,13 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 
 ## Where we are
 
-|              |                   |
-| ------------ | ----------------- |
-| Phase        | 0 — Foundations   |
-| Last shipped | `audit-log`       |
-| Next chunk   | `api-au-skeleton` |
-| Phase 0      | 8 / 10 done       |
-| Later phases | not started       |
+|              |                          |
+| ------------ | ------------------------ |
+| Phase        | 0 — Foundations          |
+| Last shipped | `api-au-skeleton`        |
+| Next chunk   | `terraform-envelope-kms` |
+| Phase 0      | 9 / 11 done              |
+| Later phases | not started              |
 
 Update the snapshot and the row in the **same PR**, last commit on the chunk branch, before the PR opens. Do not defer to a follow-up chore after merge. Do not put implementer reports here ([AGENTS.md](../AGENTS.md) §5).
 
@@ -56,18 +56,19 @@ Chunks that change a documented decision without belonging to a phase. They do n
 
 Architecture: monorepo, CI, Terraform, kernel, residency, db with RLS, crypto, observability, audit, `packages/ui`.
 
-| Status      | Chunk                    | What                                                                                                              |
-| ----------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------- |
-| done        | `monorepo-skeleton`      | Workspace, gateway `/health`, checkers, CI Stages 1–3. Spec `2026-09-17-monorepo-skeleton`.                       |
-| done        | `terraform-au-cell`      | Cloudflare + AU AWS foundations. No tenant data. Spec `2026-09-18-terraform-au-cell`.                             |
-| done        | `packages-db`            | Privileged bootstrap, wrapped Drizzle runner, transaction-local `set_config`, RLS. Spec `2026-09-18-packages-db`. |
-| done        | `packages-crypto`        | AES-256-GCM, KMS wrap, blind indexes. Synthetic data only. Spec `2026-09-18-packages-crypto`.                     |
-| done        | `kernel-runtime`         | `defineModule`, request context, DI, outbox. Keeps `healthPayload`. Spec `2026-09-19-kernel-runtime`.             |
-| done        | `packages-residency`     | Cell config; global Workers cannot import personal-data modules. Spec `2026-09-20-packages-residency`.            |
-| done        | `packages-ui`            | shadcn copied into the repo + tokens (D16). No product screens. Spec `2026-09-25-packages-ui`.                    |
-| done        | `audit-log`              | Tamper-evident append. First events when identity writes. Spec `2026-09-25-audit-log`.                            |
-| not started | `api-au-skeleton`        | Regional Worker, `class: regional`, `preview_urls: false`, health through kernel.                                 |
-| not started | `terraform-envelope-kms` | Wrapping key in ap-southeast-2, key policy, live AWS `KmsPort`. After `api-au-skeleton`.                          |
+| Status      | Chunk                    | What                                                                                                                                                                                     |
+| ----------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| done        | `monorepo-skeleton`      | Workspace, gateway `/health`, checkers, CI Stages 1–3. Spec `2026-09-17-monorepo-skeleton`.                                                                                              |
+| done        | `terraform-au-cell`      | Cloudflare + AU AWS foundations. No tenant data. Spec `2026-09-18-terraform-au-cell`.                                                                                                    |
+| done        | `packages-db`            | Privileged bootstrap, wrapped Drizzle runner, transaction-local `set_config`, RLS. Spec `2026-09-18-packages-db`.                                                                        |
+| done        | `packages-crypto`        | AES-256-GCM, KMS wrap, blind indexes. Synthetic data only. Spec `2026-09-18-packages-crypto`.                                                                                            |
+| done        | `kernel-runtime`         | `defineModule`, request context, DI, outbox. Keeps `healthPayload`. Spec `2026-09-19-kernel-runtime`.                                                                                    |
+| done        | `packages-residency`     | Cell config; global Workers cannot import personal-data modules. Spec `2026-09-20-packages-residency`.                                                                                   |
+| done        | `packages-ui`            | shadcn copied into the repo + tokens (D16). No product screens. Spec `2026-09-25-packages-ui`.                                                                                           |
+| done        | `audit-log`              | Tamper-evident append. First events when identity writes. Spec `2026-09-25-audit-log`.                                                                                                   |
+| done        | `api-au-skeleton`        | Regional Worker, class regional, preview_urls false, health through kernel. Spec `2026-09-26-api-au-skeleton`.                                                                           |
+| not started | `terraform-envelope-kms` | Wrapping key in ap-southeast-2, key policy, live AWS `KmsPort`. After `api-au-skeleton`.                                                                                                 |
+| not started | `api-au-hostname`        | Set enable_regional_hostnames, apply, attach the api route on au.api.<zone>, and verify the running Worker. Retires the api-au-skeleton preview exception. After terraform-envelope-kms. |
 
 Kernel ships `defineModule`, request context, and the organisation-scoped outbox. Observability is the logger only (no product analytics SDK — D17).
 
@@ -217,7 +218,7 @@ From architecture §26. Do not invent answers in a spec.
 
 ## Next spec
 
-The next approved chunk on this list is **`api-au-skeleton`**, unless the human picks another remaining Phase 0 row.
+The next approved chunk on this list is **`terraform-envelope-kms`**, unless the human picks another remaining Phase 0 row. `api-au-hostname` is catalogued after it.
 
 ---
 

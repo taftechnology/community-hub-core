@@ -34,20 +34,24 @@ mock_provider "cloudflare" {
   }
 }
 
+variables {
+  region_key = "au"
+}
+
 run "staging_happy" {
   command = plan
 
   variables {
-    aws_region               = "ap-southeast-2"
-    aws_account_id           = "123456789012"
-    cloudflare_account_id    = "00000000000000000000000000000000"
-    environment              = "staging"
-    cert_verification_mode   = "disabled"
-    deletion_protection      = false
-    backup_retention_days    = 0
-    zone_id                  = "00000000000000000000000000000000"
-    zone_name                = "communityhub-staging.net"
-    enable_hyperdrive        = false
+    aws_region                = "ap-southeast-2"
+    aws_account_id            = "123456789012"
+    cloudflare_account_id     = "00000000000000000000000000000000"
+    environment               = "staging"
+    cert_verification_mode    = "disabled"
+    deletion_protection       = false
+    backup_retention_days     = 0
+    zone_id                   = "00000000000000000000000000000000"
+    zone_name                 = "communityhub-staging.net"
+    enable_hyperdrive         = false
     enable_regional_hostnames = false
   }
 
@@ -70,22 +74,27 @@ run "staging_happy" {
     condition     = length(regexall("(?m)^\\s*cert_verification_mode\\s*=\\s*\"disabled\"", file("${path.module}/env/staging.tfvars"))) > 0
     error_message = "env/staging.tfvars must set cert_verification_mode = \"disabled\""
   }
+
+  assert {
+    condition     = can(regex("(?m)^\\s*region_key\\s*=\\s*\"au\"", file("${path.module}/env/staging.tfvars")))
+    error_message = "env/staging.tfvars must set region_key = \"au\""
+  }
 }
 
 run "prod_tfvars" {
   command = plan
 
   variables {
-    aws_region               = "ap-southeast-2"
-    aws_account_id           = "123456789012"
-    cloudflare_account_id    = "00000000000000000000000000000000"
-    environment              = "prod"
-    cert_verification_mode   = "verify_full"
-    deletion_protection      = true
-    backup_retention_days    = 7
-    zone_id                  = "00000000000000000000000000000000"
-    zone_name                = "communityhub.one"
-    enable_hyperdrive        = false
+    aws_region                = "ap-southeast-2"
+    aws_account_id            = "123456789012"
+    cloudflare_account_id     = "00000000000000000000000000000000"
+    environment               = "prod"
+    cert_verification_mode    = "verify_full"
+    deletion_protection       = true
+    backup_retention_days     = 7
+    zone_id                   = "00000000000000000000000000000000"
+    zone_name                 = "communityhub.one"
+    enable_hyperdrive         = false
     enable_regional_hostnames = false
   }
 
@@ -103,21 +112,26 @@ run "prod_tfvars" {
     condition     = length(regexall("(?m)^\\s*cert_verification_mode\\s*=\\s*\"verify_full\"", file("${path.module}/env/prod.tfvars"))) > 0
     error_message = "env/prod.tfvars must set cert_verification_mode = \"verify_full\""
   }
+
+  assert {
+    condition     = can(regex("(?m)^\\s*region_key\\s*=\\s*\"au\"", file("${path.module}/env/prod.tfvars")))
+    error_message = "env/prod.tfvars must set region_key = \"au\""
+  }
 }
 
 run "prod_disabled_tls_fails" {
   command = plan
 
   variables {
-    aws_region               = "ap-southeast-2"
-    aws_account_id           = "123456789012"
-    cloudflare_account_id    = "00000000000000000000000000000000"
-    environment              = "prod"
-    cert_verification_mode   = "disabled"
-    deletion_protection      = true
-    backup_retention_days    = 7
-    zone_id                  = "00000000000000000000000000000000"
-    zone_name                = "communityhub.one"
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    cloudflare_account_id  = "00000000000000000000000000000000"
+    environment            = "prod"
+    cert_verification_mode = "disabled"
+    deletion_protection    = true
+    backup_retention_days  = 7
+    zone_id                = "00000000000000000000000000000000"
+    zone_name              = "communityhub.one"
   }
 
   expect_failures = [
@@ -130,14 +144,35 @@ run "wrong_region_fails" {
   command = plan
 
   variables {
-    aws_region               = "us-east-1"
-    aws_account_id           = "123456789012"
-    cloudflare_account_id    = "00000000000000000000000000000000"
-    environment              = "staging"
-    cert_verification_mode   = "disabled"
-    zone_id                  = "00000000000000000000000000000000"
-    zone_name                = "communityhub-staging.net"
+    aws_region             = "us-east-1"
+    aws_account_id         = "123456789012"
+    cloudflare_account_id  = "00000000000000000000000000000000"
+    environment            = "staging"
+    cert_verification_mode = "disabled"
+    zone_id                = "00000000000000000000000000000000"
+    zone_name              = "communityhub-staging.net"
   }
 
   expect_failures = [var.aws_region]
+}
+
+run "wrong_region_key_fails" {
+  command = plan
+
+  variables {
+    aws_region                = "ap-southeast-2"
+    aws_account_id            = "123456789012"
+    cloudflare_account_id     = "00000000000000000000000000000000"
+    environment               = "staging"
+    cert_verification_mode    = "disabled"
+    deletion_protection       = false
+    backup_retention_days     = 0
+    zone_id                   = "00000000000000000000000000000000"
+    zone_name                 = "communityhub-staging.net"
+    enable_hyperdrive         = false
+    enable_regional_hostnames = false
+    region_key                = "ee"
+  }
+
+  expect_failures = [var.region_key]
 }

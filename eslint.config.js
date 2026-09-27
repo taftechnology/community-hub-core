@@ -92,6 +92,22 @@ export default tseslint.config(
     },
   },
   {
+    files: ["**/apps/api/**/*.{js,ts}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@community-hub/kernel/module",
+              message: "api must not import @community-hub/kernel/module.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: ["**/packages/ui/scripts/**/*.mjs"],
     languageOptions: {
       globals: {

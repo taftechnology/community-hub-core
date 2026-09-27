@@ -9,6 +9,7 @@
     { "path": "./packages/crypto" },
     { "path": "./packages/residency" },
     { "path": "./apps/gateway" },
+    { "path": "./apps/api" },
     { "path": "./tooling/checks/worker-config" }
   ]
 }

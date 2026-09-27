@@ -107,6 +107,7 @@ module "regional_hostname" {
   count  = var.enable_regional_hostnames ? 1 : 0
   source = "../../modules/cf-regional-hostname"
 
-  zone_id  = var.zone_id
-  hostname = "au.api.${var.zone_name}"
+  zone_id    = var.zone_id
+  hostname   = "au.api.${var.zone_name}"
+  region_key = var.region_key
 }

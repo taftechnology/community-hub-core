@@ -27,6 +27,8 @@ const mustFail = [
   "dynamic-concat",
   "entry-outside-src",
   "entry-js",
+  "missing-region-key",
+  "region-key-ee",
 ] as const;
 
 const mustPass = [

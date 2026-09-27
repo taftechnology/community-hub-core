@@ -72,6 +72,16 @@ variable "enable_regional_hostnames" {
   default     = false
 }
 
+variable "region_key" {
+  type        = string
+  description = "Cloudflare Regional Services region_key for au.api.<zone>. No default."
+
+  validation {
+    condition     = var.region_key == "au"
+    error_message = "region_key must be au."
+  }
+}
+
 variable "hyperdrive_origin_password" {
   type        = string
   sensitive   = true
