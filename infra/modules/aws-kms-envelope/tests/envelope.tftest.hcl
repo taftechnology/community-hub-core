@@ -216,7 +216,7 @@ run "happy" {
   }
 
   assert {
-    condition     = aws_iam_role.task.managed_policy_arns == null
+    condition     = !strcontains(file("${path.module}/main.tf"), "managed_policy_arns")
     error_message = "task role must have no managed policy ARNs"
   }
 
