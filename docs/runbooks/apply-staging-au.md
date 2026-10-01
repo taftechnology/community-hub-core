@@ -72,8 +72,6 @@ It does not create a broker task, an ECR repository, or a Workers VPC service. D
 
 The broker tunnel token rotates the same way as the connector token, and it is a different secret (`<name>/kms-broker-tunnel-token`). Revoking the connector token does not rotate the broker token.
 
-The AU cell first-apply step in this runbook already says a plan diff on `aws_kms_key.storage`'s policy means the live policy differs from the default — stop and report. Do not replace that sentence with a weaker one.
-
 Do not apply prod from this runbook.
 
 ## Feature flags
