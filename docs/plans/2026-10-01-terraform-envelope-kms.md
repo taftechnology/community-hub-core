@@ -31,6 +31,7 @@ Status: approved (2026-10-01, Abdus Salam)
 - Session scratch (`.superpowers/`, `*-report.md`) is never committed.
 - The last commit updates `docs/roadmap.md`: `terraform-envelope-kms` **done**, next `kms-broker-service`, Phase 0 `10 / 14`. Insert `kms-broker-service`, then `kms-worker-adapter`, then `kms-mrk-replica` after the done row and before `api-au-hostname`.
 - Deviation (2026-10-01): the `aws_iam_role_policy` ban narrows to the task role; the execution policy is an `aws_iam_role_policy`, avoiding the deprecated `inline_policy`.
+- Deviation (2026-10-01): the storage key Sid follows the AWS default, `Enable IAM User Permissions`, so applying it to a key with the default policy produces no change.
 
 **Size:** Envelope module, tunnel module, storage-policy edit, root wiring, checker, ADR, and runbook are about 900 lines excluding lockfiles and fixtures. The broker server, image, and task definition are `docs/specs/2026-10-01-kms-broker-service.md`, a separate spec, plan, and branch. This plan implements only `docs/specs/2026-09-30-terraform-envelope-kms.md`.
 
@@ -647,7 +648,7 @@ After the tunnel-token section, add a "Envelope key and broker tunnel" section:
 - If the first apply fails with an invalid principal, the key was created before `aws_iam_role.task`. The module sets `depends_on`. Do not remove it to make a plan look simpler.
 - It does not create a broker task, an ECR repository, or a Workers VPC service. Do not push an image from this runbook.
 - The broker tunnel token rotates the same way as the connector token, and it is a different secret (`<name>/kms-broker-tunnel-token`). Revoking the connector token does not rotate the broker token.
-- If the live storage key's policy is anything other than the single account-root `kms:*` statement, stop. Do not overwrite it.
+- The AU cell first-apply step in `docs/runbooks/apply-staging-au.md` already says a plan diff on `aws_kms_key.storage`'s policy means the live policy differs from the default — stop and report. Do not replace that sentence with a weaker one.
 - Do not apply prod from this runbook.
 
 - [ ] **Step 4: Update `docs/roadmap.md`**

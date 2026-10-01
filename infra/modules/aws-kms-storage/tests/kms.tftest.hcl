@@ -25,6 +25,11 @@ run "staging_happy" {
   }
 
   assert {
+    condition     = jsondecode(aws_kms_key.storage.policy).Statement[0].Sid == "Enable IAM User Permissions"
+    error_message = "storage key policy Sid must be the AWS default Enable IAM User Permissions"
+  }
+
+  assert {
     condition     = jsondecode(aws_kms_key.storage.policy).Statement[0].Action == "kms:*"
     error_message = "storage key policy must grant kms:* to the account root"
   }
@@ -32,6 +37,11 @@ run "staging_happy" {
   assert {
     condition     = jsondecode(aws_kms_key.storage.policy).Statement[0].Principal.AWS == "arn:aws:iam::123456789012:root"
     error_message = "storage key policy principal must be the account root ARN"
+  }
+
+  assert {
+    condition     = jsondecode(aws_kms_key.storage.policy).Statement[0].Resource == "*"
+    error_message = "storage key policy resource must be *"
   }
 
   assert {
