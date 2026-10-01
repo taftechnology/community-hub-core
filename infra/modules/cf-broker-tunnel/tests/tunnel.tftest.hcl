@@ -27,10 +27,21 @@ run "happy" {
 
   assert {
     condition = (
-      cloudflare_zero_trust_tunnel_cloudflared_config.this.config.ingress[0].service == "http://127.0.0.1:8080"
-      && cloudflare_zero_trust_tunnel_cloudflared_config.this.config.ingress[1].service == "http_status:404"
+      length(cloudflare_zero_trust_tunnel_cloudflared_config.this.config.ingress) == 1
+      && cloudflare_zero_trust_tunnel_cloudflared_config.this.config.ingress[0].service == "http://127.0.0.1:8080"
+      && cloudflare_zero_trust_tunnel_cloudflared_config.this.config.ingress[0].hostname == null
     )
-    error_message = "ingress must route to loopback 8080 then http_status:404, in that order"
+    error_message = "ingress must be a single catch-all to http://127.0.0.1:8080 with a null hostname"
+  }
+
+  assert {
+    condition = (
+      !strcontains(file("${path.module}/main.tf"), "hostname")
+      && !strcontains(file("${path.module}/main.tf"), "cloudflare_record")
+      && !strcontains(file("${path.module}/main.tf"), "cloudflare_dns_record")
+      && !strcontains(file("${path.module}/main.tf"), "cfargotunnel.com")
+    )
+    error_message = "main.tf must not declare a hostname, a DNS record, or a cfargotunnel.com route"
   }
 
   assert {

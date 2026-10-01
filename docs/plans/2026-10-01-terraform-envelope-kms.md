@@ -32,6 +32,7 @@ Status: approved (2026-10-01, Abdus Salam)
 - The last commit updates `docs/roadmap.md`: `terraform-envelope-kms` **done**, next `kms-broker-service`, Phase 0 `10 / 14`. Insert `kms-broker-service`, then `kms-worker-adapter`, then `kms-mrk-replica` after the done row and before `api-au-hostname`.
 - Deviation (2026-10-01): the `aws_iam_role_policy` ban narrows to the task role; the execution policy is an `aws_iam_role_policy`, avoiding the deprecated `inline_policy`.
 - Deviation (2026-10-01): the storage key Sid follows the AWS default, `Enable IAM User Permissions`, so applying it to a key with the default policy produces no change.
+- Deviation (2026-10-01): the broker tunnel has a single catch-all rule to `http://127.0.0.1:8080`. The optional 404 rule is dropped because cloudflared requires the catch-all last and there is no hostname to put first.
 
 **Size:** Envelope module, tunnel module, storage-policy edit, root wiring, checker, ADR, and runbook are about 900 lines excluding lockfiles and fixtures. The broker server, image, and task definition are `docs/specs/2026-10-01-kms-broker-service.md`, a separate spec, plan, and branch. This plan implements only `docs/specs/2026-09-30-terraform-envelope-kms.md`.
 
@@ -737,7 +738,7 @@ Expected: exit 0 for every directory. `probe_create_grant` and `probe_fails` are
 | Task role with no identity policy; execution role has no `kms:` | T2 |
 | Broker secret, AWS-managed key, distinct name | T2, T5 |
 | Storage policy explicit and not narrowed; task role absent from it | T3, T5 |
-| Second tunnel, loopback origin, catch-all 404, distinct from Postgres | T4, T5 |
+| Second tunnel, loopback origin, a single catch-all to loopback, with no public route, distinct from Postgres | T4, T5 |
 | `depends_on` the task role; string ARN kept; test reads the source | T2 |
 | Endpoint ingress source is the broker security group | T2 |
 | ADR 0008, architecture §5 §12.2 §22, runbook, roadmap `10 / 14` | T6 |

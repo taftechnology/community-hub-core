@@ -13,9 +13,6 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "this" {
       {
         service = "http://127.0.0.1:8080"
       },
-      {
-        service = "http_status:404"
-      },
     ]
   }
 }
