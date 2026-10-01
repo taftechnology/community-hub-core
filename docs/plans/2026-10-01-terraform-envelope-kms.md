@@ -8,7 +8,7 @@
 
 **Tech Stack:** Terraform `~> 1.11`, hashicorp/aws `~> 6.0`, cloudflare/cloudflare `~> 5.13`, tflint AWS ruleset `0.48.0`, the existing `terraform-invariants` checker.
 
-**Spec:** `docs/specs/2026-09-30-terraform-envelope-kms.md` (approved 2026-10-01, Abdus Salam)
+**Spec:** `docs/specs/2026-09-30-terraform-envelope-kms.md` (narrowed to this infrastructure chunk; pending re-approval)
 
 Status: draft
 
@@ -29,9 +29,9 @@ Status: draft
 - `bypass_policy_lockout_safety_check = false` is set on the envelope key.
 - Broker tunnel secret uses the AWS-managed Secrets Manager key. No `kms_key_id`.
 - Session scratch (`.superpowers/`, `*-report.md`) is never committed.
-- Do not mark `docs/roadmap.md` done. The broker half finishes the chunk.
+- The last commit updates `docs/roadmap.md`: `terraform-envelope-kms` **done**, next `kms-broker-service`, Phase 0 `10 / 14`. Insert `kms-broker-service`, then `kms-worker-adapter`, then `kms-mrk-replica` after the done row and before `api-au-hostname`.
 
-**Size:** Envelope module, tunnel module, storage-policy edit, root wiring, checker, ADR, and runbook are about 900 lines excluding lockfiles and fixtures. The broker server, image, and task definition are another chunk of similar size. Together they are well past ~800. This plan stops at the seam in the spec.
+**Size:** Envelope module, tunnel module, storage-policy edit, root wiring, checker, ADR, and runbook are about 900 lines excluding lockfiles and fixtures. The broker server, image, and task definition are `docs/specs/2026-10-01-kms-broker-service.md`, a separate spec, plan, and branch. This plan implements only `docs/specs/2026-09-30-terraform-envelope-kms.md`.
 
 **Rollback:** Revert the PR. Nothing in this plan is applied. No data to restore.
 
@@ -161,7 +161,8 @@ Assert:
 - `aws_vpc_endpoint.kms.vpc_endpoint_type == "Interface"`
 - `aws_vpc_endpoint.kms.private_dns_enabled == true`
 - `aws_security_group.broker.ingress` is empty
-- endpoint ingress is TCP 443 and its `cidr_blocks` is empty
+- endpoint ingress is TCP 443, its `cidr_blocks` is empty, and `ingress[0].security_groups` equals `[aws_security_group.broker.id]`. Also assert `file("${path.module}/main.tf")` contains `security_groups = [aws_security_group.broker.id]`, because a shared mock security-group id would make the planned list match even if the source referenced the wrong group
+- `file("${path.module}/main.tf")` contains `depends_on = [aws_iam_role.task]` on `aws_kms_key.envelope`
 - `jsondecode(aws_kms_key.envelope.policy).Statement` has length 5 and `Sid` values `Admin`, `GenerateDataKeyOrg`, `GenerateDataKeyIdentity`, `DecryptOrg`, `DecryptIdentity` in that order
 - admin `Action` equals the 16-name list in the spec, including `kms:PutKeyPolicy`, and does not include `kms:CreateGrant`, `kms:Encrypt`, `kms:Decrypt`, or `kms:GenerateDataKey`
 - each cryptographic statement's `Action` is a one-element list: `kms:GenerateDataKey` or `kms:Decrypt` matching its `Sid`
@@ -360,7 +361,7 @@ resource "terraform_data" "envelope_key_policy" {
 
 `var.policy_probe_action == null` is required so a duplicate of an allowed action still fails: list equality would also fail for a duplicate, and the null check fails even before the lists are compared. Keep both. The precondition does not mention `aws_vpc_endpoint.kms.id`.
 
-`aws_kms_key.envelope` uses `policy = jsonencode({ Version = "2012-10-17", Statement = local.policy_statements })`, `deletion_window_in_days = 30`, `bypass_policy_lockout_safety_check = false`, rotation from the variable, region from the variable, and `lifecycle { prevent_destroy = true }`.
+`aws_kms_key.envelope` uses `policy = jsonencode({ Version = "2012-10-17", Statement = local.policy_statements })`, `deletion_window_in_days = 30`, `bypass_policy_lockout_safety_check = false`, rotation from the variable, region from the variable, `lifecycle { prevent_destroy = true }`, and `depends_on = [aws_iam_role.task]`. Keep the string ARN. The `depends_on` is the apply order. KMS rejects a principal that does not exist, and the AWS provider's IAM retry does not cover a role that has not been created at all.
 
 Alias name `alias/${var.name}-envelope`.
 
@@ -584,7 +585,7 @@ Refs: docs/plans/2026-10-01-terraform-envelope-kms.md task 5
 - Create: `docs/adr/0008-kms-broker-in-the-cell.md`
 - Modify: `architecture.md` (§5 diagram, §12.2, §22)
 - Modify: `docs/runbooks/apply-staging-au.md`
-- Do not modify `docs/roadmap.md`
+- Modify: `docs/roadmap.md`
 
 **Interfaces:**
 
@@ -641,13 +642,31 @@ Do not change the D8 table cell except that ADR 0008 amends its operational shap
 
 After the tunnel-token section, add a "Envelope key and broker tunnel" section:
 
-- The AU apply creates the envelope key (`prevent_destroy`), the KMS interface endpoint (about US$7–8 per month from this apply), the broker security group, the task role, and the broker tunnel plus its secret.
+- The AU apply creates the envelope key (`prevent_destroy`, `depends_on` the task role), the KMS interface endpoint (about US$7–8 per month from this apply), the broker security group, the task role, and the broker tunnel plus its secret.
+- If the first apply fails with an invalid principal, the key was created before `aws_iam_role.task`. The module sets `depends_on`. Do not remove it to make a plan look simpler.
 - It does not create a broker task, an ECR repository, or a Workers VPC service. Do not push an image from this runbook.
 - The broker tunnel token rotates the same way as the connector token, and it is a different secret (`<name>/kms-broker-tunnel-token`). Revoking the connector token does not rotate the broker token.
 - If the live storage key's policy is anything other than the single account-root `kms:*` statement, stop. Do not overwrite it.
 - Do not apply prod from this runbook.
 
-- [ ] **Step 4: Commit** docs only.
+- [ ] **Step 4: Update `docs/roadmap.md`**
+
+Snapshot: last shipped `terraform-envelope-kms`, next `kms-broker-service`, Phase 0 `10 / 14` done.
+
+Row `terraform-envelope-kms` → **done**. Text: wrapping key, key policy, KMS endpoint, broker tunnel. Spec `2026-09-30-terraform-envelope-kms`.
+
+Insert `kms-broker-service` and `kms-worker-adapter` between the done envelope row and the existing `api-au-hostname` row. Insert `kms-mrk-replica` after `api-au-hostname`. Resulting order:
+
+| not started | `kms-broker-service` | Broker process, image, ECS task, Workers VPC service on the broker tunnel. Spec `2026-10-01-kms-broker-service`. |
+| not started | `kms-worker-adapter` | Worker `KmsPort` against `kms-port-v1.json`. VPC binding only on `apps/api`. |
+| not started | `api-au-hostname` | Unchanged. Already in the table. |
+| not started | `kms-mrk-replica` | Multi-Region replica of the envelope key in `ap-southeast-4`. |
+
+The next-spec paragraph names `kms-broker-service`.
+
+Phase 0 was 11 rows with 9 done. This commit finishes one row and adds three. That is 14 rows, 10 done.
+
+- [ ] **Step 5: Commit** docs and the roadmap together. This is the last commit on the branch.
 
 ```
 docs(kms): record the in-cell broker decision
@@ -701,7 +720,7 @@ Expected: exit 0 for every directory. `probe_create_grant` and `probe_fails` are
 
 `pnpm exec wrangler deploy --dry-run` in `apps/gateway` and in `apps/api`, with the no-`zod` check the workflow already runs. This plan does not add a `docker build`.
 
-- [ ] **Step 5: Confirm `docs/roadmap.md` is unchanged** in `git status`.
+- [ ] **Step 5: Confirm `docs/roadmap.md` in `git status` shows the T6 commit already on the branch**, with `terraform-envelope-kms` done and next chunk `kms-broker-service`. T7 does not edit it again.
 
 ---
 
@@ -717,8 +736,10 @@ Expected: exit 0 for every directory. `probe_create_grant` and `probe_fails` are
 | Broker secret, AWS-managed key, distinct name | T2, T5 |
 | Storage policy explicit and not narrowed; task role absent from it | T3, T5 |
 | Second tunnel, loopback origin, catch-all 404, distinct from Postgres | T4, T5 |
-| ADR 0008, architecture §5 §12.2 §22, runbook | T6 |
-| Broker process, image, CI `docker build`, ECS task, Workers VPC service, roadmap row **done** | Following spec. Not this plan. |
+| `depends_on` the task role; string ARN kept; test reads the source | T2 |
+| Endpoint ingress source is the broker security group | T2 |
+| ADR 0008, architecture §5 §12.2 §22, runbook, roadmap `10 / 14` | T6 |
+| Broker process, image, CI `docker build`, ECS task, Workers VPC service | `docs/specs/2026-10-01-kms-broker-service.md`. Not this plan. |
 
 ## Placeholder scan
 
