@@ -6,6 +6,12 @@ mock_provider "aws" {
       id = "vpce-mock"
     }
   }
+
+  mock_resource "aws_iam_role" {
+    defaults = {
+      managed_policy_arns = null
+    }
+  }
 }
 
 run "happy" {
@@ -25,6 +31,14 @@ run "happy" {
     target = aws_security_group.broker
     values = {
       id = "sg-broker"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = aws_iam_role.execution
+    values = {
+      id = "role-execution"
     }
     override_during = plan
   }
@@ -197,17 +211,39 @@ run "happy" {
   }
 
   assert {
-    condition     = !strcontains(file("${path.module}/main.tf"), "aws_iam_role_policy")
-    error_message = "module must not declare aws_iam_role_policy"
+    condition     = length(aws_iam_role.task.inline_policy) == 0
+    error_message = "task role must have no inline policy"
+  }
+
+  assert {
+    condition     = aws_iam_role.task.managed_policy_arns == null
+    error_message = "task role must have no managed policy ARNs"
+  }
+
+  assert {
+    condition     = !strcontains(file("${path.module}/main.tf"), "role = aws_iam_role.task")
+    error_message = "module must not attach a policy to the task role"
+  }
+
+  assert {
+    condition     = !strcontains(file("${path.module}/main.tf"), "aws_iam_role_policy_attachment")
+    error_message = "module must not declare aws_iam_role_policy_attachment"
+  }
+
+  assert {
+    condition     = aws_iam_role_policy.execution.role == aws_iam_role.execution.id
+    error_message = "execution policy must attach to the execution role"
   }
 
   assert {
     condition = (
-      strcontains(one(aws_iam_role.execution.inline_policy).policy, "kms-broker-tunnel-token") &&
-      strcontains(one(aws_iam_role.execution.inline_policy).policy, "secretsmanager:GetSecretValue") &&
-      !strcontains(one(aws_iam_role.execution.inline_policy).policy, "kms:")
+      strcontains(aws_iam_role_policy.execution.policy, "kms-broker-tunnel-token") &&
+      strcontains(aws_iam_role_policy.execution.policy, "secretsmanager:GetSecretValue") &&
+      strcontains(aws_iam_role_policy.execution.policy, "logs:PutLogEvents") &&
+      strcontains(aws_iam_role_policy.execution.policy, "/community-hub/ch-staging/kms-broker") &&
+      !strcontains(aws_iam_role_policy.execution.policy, "kms:")
     )
-    error_message = "execution role may read the broker tunnel secret and must not call kms"
+    error_message = "execution role may read the broker tunnel secret and write broker logs, and must not call kms"
   }
 
   assert {

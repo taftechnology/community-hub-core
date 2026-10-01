@@ -30,6 +30,7 @@ Status: approved (2026-10-01, Abdus Salam)
 - Broker tunnel secret uses the AWS-managed Secrets Manager key. No `kms_key_id`.
 - Session scratch (`.superpowers/`, `*-report.md`) is never committed.
 - The last commit updates `docs/roadmap.md`: `terraform-envelope-kms` **done**, next `kms-broker-service`, Phase 0 `10 / 14`. Insert `kms-broker-service`, then `kms-worker-adapter`, then `kms-mrk-replica` after the done row and before `api-au-hostname`.
+- Deviation (2026-10-01): the `aws_iam_role_policy` ban narrows to the task role; the execution policy is an `aws_iam_role_policy`, avoiding the deprecated `inline_policy`.
 
 **Size:** Envelope module, tunnel module, storage-policy edit, root wiring, checker, ADR, and runbook are about 900 lines excluding lockfiles and fixtures. The broker server, image, and task definition are `docs/specs/2026-10-01-kms-broker-service.md`, a separate spec, plan, and branch. This plan implements only `docs/specs/2026-09-30-terraform-envelope-kms.md`.
 

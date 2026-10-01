@@ -283,25 +283,26 @@ resource "aws_iam_role" "execution" {
       Action    = "sts:AssumeRole"
     }]
   })
+}
 
-  inline_policy {
-    name = "kms-broker-execution"
-    policy = jsonencode({
-      Version = "2012-10-17"
-      Statement = [
-        {
-          Sid      = "GetBrokerTunnelToken"
-          Effect   = "Allow"
-          Action   = ["secretsmanager:GetSecretValue"]
-          Resource = ["${local.secret_arn}*"]
-        },
-        {
-          Sid      = "WriteBrokerLogs"
-          Effect   = "Allow"
-          Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
-          Resource = ["${local.log_arn}:*"]
-        },
-      ]
-    })
-  }
+resource "aws_iam_role_policy" "execution" {
+  name = "kms-broker-execution"
+  role = aws_iam_role.execution.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "GetBrokerTunnelToken"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = ["${local.secret_arn}*"]
+      },
+      {
+        Sid      = "WriteBrokerLogs"
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = ["${local.log_arn}:*"]
+      },
+    ]
+  })
 }
