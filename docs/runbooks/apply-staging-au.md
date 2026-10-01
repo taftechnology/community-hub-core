@@ -62,6 +62,20 @@ Top-tier secret. It sits in Secrets Manager and in Terraform state (KMS-encrypte
 
 **Unexpected connector:** alert when a connector registers against this tunnel that is not the ECS service. That is the staging impersonation path in ADR 0003.
 
+## Envelope key and broker tunnel
+
+The AU apply creates the envelope key (`prevent_destroy`, `depends_on` the task role), the KMS interface endpoint (about US$7–8 per month from this apply), the broker security group, the task role, and the broker tunnel plus its secret.
+
+If the first apply fails with an invalid principal, the key was created before `aws_iam_role.task`. The module sets `depends_on`. Do not remove it to make a plan look simpler.
+
+It does not create a broker task, an ECR repository, or a Workers VPC service. Do not push an image from this runbook.
+
+The broker tunnel token rotates the same way as the connector token, and it is a different secret (`<name>/kms-broker-tunnel-token`). Revoking the connector token does not rotate the broker token.
+
+The AU cell first-apply step in this runbook already says a plan diff on `aws_kms_key.storage`'s policy means the live policy differs from the default — stop and report. Do not replace that sentence with a weaker one.
+
+Do not apply prod from this runbook.
+
 ## Feature flags
 
 | Flag                        | First apply | Later                                    |
