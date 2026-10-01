@@ -68,8 +68,8 @@ Architecture: monorepo, CI, Terraform, kernel, residency, db with RLS, crypto, o
 | done        | `audit-log`              | Tamper-evident append. First events when identity writes. Spec `2026-09-25-audit-log`.                                                                                                   |
 | done        | `api-au-skeleton`        | Regional Worker, class regional, preview_urls false, health through kernel. Spec `2026-09-26-api-au-skeleton`.                                                                           |
 | done        | `terraform-envelope-kms` | Wrapping key, key policy, KMS endpoint, broker tunnel. Spec `2026-09-30-terraform-envelope-kms`.                                                                                         |
-| not started | `kms-broker-service`   | Broker process, image, ECS task, Workers VPC service on the broker tunnel. Spec `2026-10-01-kms-broker-service`.                                                                         |
-| not started | `kms-worker-adapter`   | Worker `KmsPort` against `kms-port-v1.json`. VPC binding only on `apps/api`.                                                                                                             |
+| not started | `kms-broker-service`     | Broker process, image, ECS task, Workers VPC service on the broker tunnel. Spec `2026-10-01-kms-broker-service`.                                                                         |
+| not started | `kms-worker-adapter`     | Worker `KmsPort` against `kms-port-v1.json`. VPC binding only on `apps/api`.                                                                                                             |
 | not started | `api-au-hostname`        | Set enable_regional_hostnames, apply, attach the api route on au.api.<zone>, and verify the running Worker. Retires the api-au-skeleton preview exception. After terraform-envelope-kms. |
 | not started | `kms-mrk-replica`        | Multi-Region replica of the envelope key in `ap-southeast-4`.                                                                                                                            |
 

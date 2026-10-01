@@ -43,17 +43,17 @@ Status: approved (2026-10-01, Abdus Salam)
 
 ## File map
 
-| Path | Role |
-| --- | --- |
-| `tooling/checks/terraform-invariants/` | `prevent_destroy` on `aws_kms_key.envelope` |
-| `infra/modules/aws-kms-envelope/` | Key, policy, guard, endpoint, broker security group, task role, tunnel secret, execution role |
-| `infra/modules/aws-kms-storage/` | Explicit default key policy |
-| `infra/modules/cf-broker-tunnel/` | Second tunnel and its ingress |
-| `infra/regions/au/` | Wire the modules. Postgres tunnel unchanged |
-| `docs/adr/0008-kms-broker-in-the-cell.md` | Decision record |
-| `architecture.md` | Diagram and §12.2 / §22 |
-| `docs/runbooks/apply-staging-au.md` | Key, endpoint, tunnel. No image push |
-| `.github/workflows/ci.yml` | Matrix entries for the two new modules |
+| Path                                      | Role                                                                                          |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `tooling/checks/terraform-invariants/`    | `prevent_destroy` on `aws_kms_key.envelope`                                                   |
+| `infra/modules/aws-kms-envelope/`         | Key, policy, guard, endpoint, broker security group, task role, tunnel secret, execution role |
+| `infra/modules/aws-kms-storage/`          | Explicit default key policy                                                                   |
+| `infra/modules/cf-broker-tunnel/`         | Second tunnel and its ingress                                                                 |
+| `infra/regions/au/`                       | Wire the modules. Postgres tunnel unchanged                                                   |
+| `docs/adr/0008-kms-broker-in-the-cell.md` | Decision record                                                                               |
+| `architecture.md`                         | Diagram and §12.2 / §22                                                                       |
+| `docs/runbooks/apply-staging-au.md`       | Key, endpoint, tunnel. No image push                                                          |
+| `.github/workflows/ci.yml`                | Matrix entries for the two new modules                                                        |
 
 ---
 
@@ -730,20 +730,20 @@ Expected: exit 0 for every directory. `probe_create_grant` and `probe_fails` are
 
 ## Spec coverage
 
-| Spec item | Task |
-| --- | --- |
-| Envelope key, alias, rotation, deletion window, lockout check, `prevent_destroy` | T1, T2 |
-| Five statements, exact admin actions, four single-action crypto statements, `Null`, `ForAllValues:StringEquals`, `aws:SourceVpce` | T2 |
-| Precondition, not a `check` block; probe cannot apply; sixth statement fails the plan | T2, T5 |
-| Interface endpoint, private DNS, public subnet, endpoint SG admits 443 only from the broker SG | T2 |
-| Task role with no identity policy; execution role has no `kms:` | T2 |
-| Broker secret, AWS-managed key, distinct name | T2, T5 |
-| Storage policy explicit and not narrowed; task role absent from it | T3, T5 |
-| Second tunnel, loopback origin, a single catch-all to loopback, with no public route, distinct from Postgres | T4, T5 |
-| `depends_on` the task role; string ARN kept; test reads the source | T2 |
-| Endpoint ingress source is the broker security group | T2 |
-| ADR 0008, architecture §5 §12.2 §22, runbook, roadmap `10 / 14` | T6 |
-| Broker process, image, CI `docker build`, ECS task, Workers VPC service | `docs/specs/2026-10-01-kms-broker-service.md`. Not this plan. |
+| Spec item                                                                                                                         | Task                                                          |
+| --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Envelope key, alias, rotation, deletion window, lockout check, `prevent_destroy`                                                  | T1, T2                                                        |
+| Five statements, exact admin actions, four single-action crypto statements, `Null`, `ForAllValues:StringEquals`, `aws:SourceVpce` | T2                                                            |
+| Precondition, not a `check` block; probe cannot apply; sixth statement fails the plan                                             | T2, T5                                                        |
+| Interface endpoint, private DNS, public subnet, endpoint SG admits 443 only from the broker SG                                    | T2                                                            |
+| Task role with no identity policy; execution role has no `kms:`                                                                   | T2                                                            |
+| Broker secret, AWS-managed key, distinct name                                                                                     | T2, T5                                                        |
+| Storage policy explicit and not narrowed; task role absent from it                                                                | T3, T5                                                        |
+| Second tunnel, loopback origin, a single catch-all to loopback, with no public route, distinct from Postgres                      | T4, T5                                                        |
+| `depends_on` the task role; string ARN kept; test reads the source                                                                | T2                                                            |
+| Endpoint ingress source is the broker security group                                                                              | T2                                                            |
+| ADR 0008, architecture §5 §12.2 §22, runbook, roadmap `10 / 14`                                                                   | T6                                                            |
+| Broker process, image, CI `docker build`, ECS task, Workers VPC service                                                           | `docs/specs/2026-10-01-kms-broker-service.md`. Not this plan. |
 
 ## Placeholder scan
 
