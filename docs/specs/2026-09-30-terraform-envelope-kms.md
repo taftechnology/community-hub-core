@@ -1,7 +1,7 @@
 # Spec: envelope wrapping key and AU KMS broker
 
 Slug: `terraform-envelope-kms`
-Status: draft
+Status: approved (2026-10-01, Abdus Salam)
 Supersedes: —
 Architecture refs: §5, §7.3 rule 5, §12.2, §20, §22, §23.2; D8; ADR 0002; ADR 0005; AGENTS.md §1 (1, 7, 10), §3, §6, §8, §12
 Branch: `feat/2026-09-30-terraform-envelope-kms`, from `origin/main`. This spec is drafted on that branch. Implementation starts after this spec and its plan are both approved.
@@ -36,6 +36,8 @@ Organisation and identity roots are specified as AWS `GenerateDataKey` / `Decryp
 This chunk is the first of two. AGENTS §3: the broker service and the Worker adapter are different modules, and together they pass the size split. The fixture below is the seam.
 
 The plan counts changed lines, excluding fixtures and lockfiles. If that estimate is well past ~800, the plan splits before any task starts. The seam is infrastructure first (key, policy, endpoint, tunnel, and the storage-key policy), then the broker service, image, and protocol package. That decision is made in the plan, not during implementation.
+
+`docs/plans/2026-10-01-terraform-envelope-kms.md` estimates the combined diff well past ~800 lines and takes that seam. It implements the infrastructure half only. The broker service, image, and protocol package are a following spec. This half does not mark the roadmap row done.
 
 ## Behaviour
 
@@ -83,7 +85,7 @@ Five statements. No wildcards in any action list.
 
 - `StringEquals` on `aws:SourceVpce`, value the KMS interface endpoint id.
 - `StringEquals` on `kms:EncryptionContext:key_kind`, value `org` or `identity` for that statement.
-- `ForAllValues:kms:EncryptionContextKeys` equal to `key_kind`, `org_id`, `key_version` on an org statement, and `key_kind`, `region`, `key_version` on an identity statement.
+- `ForAllValues:StringEquals` on `kms:EncryptionContextKeys`, equal to `key_kind`, `org_id`, `key_version` on an org statement, and `key_kind`, `region`, `key_version` on an identity statement.
 - `Null` = `false` (key must be present) for each required context key.
 - `Null` = `true` (key must be absent) for the other scope key: `region` on org, `org_id` on identity.
 
@@ -91,7 +93,7 @@ Five statements. No wildcards in any action list.
 
 No statement grants `kms:CreateGrant`, `kms:Encrypt`, `kms:ReEncrypt`, `kms:ReEncryptFrom`, `kms:ReEncryptTo`, `kms:GenerateDataKeyWithoutPlaintext`, `kms:GenerateDataKeyPair`, or `kms:GenerateDataKeyPairWithoutPlaintext`. `GenerateDataKey` and `Decrypt` appear only on the four cryptographic statements.
 
-A `terraform_data` precondition reads that `jsonencode` local and fails the plan unless the admin action list is exactly the set above and each cryptographic statement contains exactly its one action. A `check` block only warns, so it is not this guard. There is no variable that turns the precondition off.
+A `terraform_data` precondition reads that statement local, not the encoded string, so it still works when the endpoint id is unknown. It fails the plan unless all of these hold: there are exactly five statements; their `Sid`s are `Admin`, `GenerateDataKeyOrg`, `GenerateDataKeyIdentity`, `DecryptOrg`, and `DecryptIdentity`; the admin action list is exactly the set above; each cryptographic statement's action list is exactly its one action. A sixth statement, including one that grants `kms:Encrypt`, fails the plan. A `check` block only warns, so it is not this guard. There is no variable that turns the precondition off.
 
 `policy_probe_action` defaults to null and is unset in both tfvars files. When it is set, that action is appended to the admin list inside the same local the precondition reads. Any set value, including one committed in tfvars, fails the plan. The test run sets `kms:CreateGrant` and expects that precondition to fail. The probe cannot apply.
 
@@ -232,7 +234,7 @@ Happy path, tasks disabled: no task definition, no ECS service, no Workers VPC s
 Happy path, tasks enabled, image `example@sha256:` plus 64 hex chars:
 
 - Key region `ap-southeast-2`, rotation on, deletion window 30, `bypass_policy_lockout_safety_check` false.
-- Decoded policy: admin actions equal the set above; `kms:PutKeyPolicy` is in that set; the forbidden actions appear in no statement; `GenerateDataKey` and `Decrypt` appear only on the four cryptographic statements; each of those has `aws:SourceVpce`, `StringEquals` on `key_kind`, `ForAllValues:kms:EncryptionContextKeys`, `Null` false for each required key, and `Null` true for the forbidden scope key.
+- Decoded policy: exactly five statements, `Sid`s `Admin`, `GenerateDataKeyOrg`, `GenerateDataKeyIdentity`, `DecryptOrg`, `DecryptIdentity`; admin actions equal the set above; `kms:PutKeyPolicy` is in that set; the forbidden actions appear in no statement; `GenerateDataKey` and `Decrypt` appear only on the four cryptographic statements; each of those has `aws:SourceVpce`, `StringEquals` on `key_kind`, `ForAllValues:StringEquals` on `kms:EncryptionContextKeys`, `Null` false for each required key, and `Null` true for the forbidden scope key.
 - If the endpoint id makes `policy` unknown at plan, `mock_resource` the endpoint so the id is a known string and assert that string as the `SourceVpce` value. Do not switch the policy to `data.aws_iam_policy_document`.
 - Broker security group `ingress = []`. No `aws_lb`.
 - `desired_count` 2. Image contains `@sha256:`.
@@ -265,7 +267,7 @@ Must-fail fixture: `aws_kms_key.envelope` without `prevent_destroy`. The storage
 | --- | --- |
 | A Workers secret holds a credential that unwraps every organisation key | Broker task role. No AWS key in Worker secrets. ADR 0008. |
 | Copied task-role credentials call KMS from a laptop | `aws:SourceVpce` plus the interface endpoint. Egress 443 stays open for `cloudflared`; the policy is the control. |
-| `CreateGrant` or `Encrypt` on the admin statement bypasses the crypto statements | Precondition fails the plan unless the admin list is exactly the allowed set. The probe run proves that precondition. A tfvars value cannot apply an extra action. |
+| `CreateGrant` or `Encrypt` on the admin statement, or a sixth statement, bypasses the crypto statements | Precondition fails the plan unless there are exactly five statements with the five `Sid`s and the admin list is exactly the allowed set. The probe run proves that precondition. A tfvars value cannot apply an extra action. |
 | Empty encryption context satisfies `ForAllValues` | `Null` conditions on every crypto statement. Broker test rejects `{}` before KMS. |
 | Account root rewrites the key policy | Named trust boundary in ADR 0008. `PutKeyPolicy` is explicit. `bypass_policy_lockout_safety_check` stays false, so the lockout safety check stays enabled. CloudTrail records the change. |
 | Envelope key and storage key share a principal or a policy | Separate keys, aliases, and policies. Task role absent from the storage policy. Connector role absent from the envelope policy. |
@@ -286,7 +288,8 @@ Must-fail fixture: `aws_kms_key.envelope` without `prevent_destroy`. The storage
 
 - **Same PR, ADR 0008.** Context: D8 wraps keys with in-region KMS, and §7.3 rule 5 forbids putting the unwrap credential in a Worker secret. Decision: the regional Worker calls an in-VPC broker; the broker task role is the only cryptographic principal; calls must arrive through the KMS interface endpoint. One sentence on the path: loopback, then the tunnel, then Cloudflare, to the regional Worker — the same path and the same AU-only argument as Postgres (`terraform-au-cell`, §7.3). Alternatives rejected: a long-lived IAM access key as a Workers secret; IAM Roles Anywhere (the private key would still be a Workers secret). Consequences: about US$7–8 per month for one endpoint in one zone; two tasks in one public subnet; loss of that zone takes unwrap with it; no unwrap cache in this chunk; Melbourne replica is `kms-mrk-replica`. Trust boundary: an account administrator can `PutKeyPolicy` and grant themselves `Decrypt`; CloudTrail records it; `bypass_policy_lockout_safety_check` stays false. Plaintext: zeroing the SDK buffer is best-effort; the base64 response body lives until garbage collection.
 - **Same PR, architecture.** §5 diagram: `API --> KMS` becomes API to the broker to KMS. §12.2: the Worker reaches KMS through the broker, not with a Workers secret. §22's Multi-Region sentence stays, with a pointer that the replica is a later row and this key is single-region. D8's decision text stays; ADR 0008 amends the operational shape.
-- **Same PR, runbook.** `docs/runbooks/apply-staging-au.md` gains: the first apply leaves `enable_kms_broker_tasks` false (key, endpoint, tunnel, ECR; the endpoint cost starts here); build `apps/kms-broker`, push to that ECR repository, set `kms_broker_image` to that `@sha256:` digest, then apply with the flag true (tasks and the Workers VPC service). Rotate the broker tunnel token the way the connector token rotates. Do not apply prod from this runbook.
+- **Infrastructure PR, runbook.** `docs/runbooks/apply-staging-au.md` gains: the AU apply creates the envelope key, the KMS endpoint (the monthly cost starts here), and the broker tunnel and its secret. No broker task and no image yet. Rotate that tunnel token the way the connector token rotates. Do not apply prod from this runbook.
+- **Broker half, runbook.** Build `apps/kms-broker`, push to the cell ECR repository, set `kms_broker_image` to that `@sha256:` digest, then apply with `enable_kms_broker_tasks = true` (tasks and the Workers VPC service). That half is the following spec.
 - **`kms-worker-adapter`:** `@community-hub/kms-aws` implements `KmsPort` against the fixture. Generic failures only. VPC binding on `apps/api` alone, checker plus must-fail fixture. `regionalOnlyPackages` `toEqual` updated there. Fail closed when the broker is down. No cache.
 - **`kms-mrk-replica`:** Multi-Region replica of this key in `ap-southeast-4`. Not this chunk.
 - **`api-au-hostname`:** unchanged, still after the adapter.
