@@ -11,6 +11,20 @@ mock_provider "aws" {
       id = "sg-mock"
     }
   }
+
+  mock_resource "aws_vpc_endpoint" {
+    defaults = {
+      id = "vpce-mock"
+    }
+  }
+
+  mock_resource "aws_iam_role" {
+    defaults = {
+      arn                 = "arn:aws:iam::123456789012:role/mock"
+      id                  = "mock-role"
+      managed_policy_arns = null
+    }
+  }
 }
 
 mock_provider "cloudflare" {
@@ -79,6 +93,98 @@ run "staging_happy" {
     condition     = can(regex("(?m)^\\s*region_key\\s*=\\s*\"au\"", file("${path.module}/env/staging.tfvars")))
     error_message = "env/staging.tfvars must set region_key = \"au\""
   }
+
+  assert {
+    condition     = module.broker_tunnel.tunnel_name == "ch-staging-au-kms"
+    error_message = "broker tunnel name must be ch-staging-au-kms"
+  }
+
+  assert {
+    condition     = module.broker_tunnel.tunnel_name != "ch-staging-au"
+    error_message = "broker tunnel must not reuse the Postgres tunnel name"
+  }
+
+  assert {
+    condition     = module.envelope.tunnel_secret_name == "ch-staging/kms-broker-tunnel-token"
+    error_message = "broker tunnel secret name must be ch-staging/kms-broker-tunnel-token"
+  }
+
+  assert {
+    condition     = !strcontains(file("${path.module}/../../modules/aws-kms-storage/main.tf"), "kms-broker-task")
+    error_message = "storage key policy must not reference the kms-broker task role"
+  }
+
+  assert {
+    condition = (
+      module.envelope.task_role_name == "ch-staging-kms-broker-task" &&
+      strcontains(file("${path.module}/../../modules/aws-kms-envelope/main.tf"), "\"aws:SourceVpce\"                 = aws_vpc_endpoint.kms.id") &&
+      strcontains(file("${path.module}/../../modules/aws-kms-envelope/main.tf"), "kms:GenerateDataKey")
+    )
+    error_message = "envelope key policy must bind the broker task role, GenerateDataKey, and the VPC endpoint id"
+  }
+
+  override_resource {
+    target = module.envelope.aws_vpc_endpoint.kms
+    values = {
+      id = "vpce-mock"
+    }
+    override_during = plan
+  }
+
+  assert {
+    condition     = module.envelope.endpoint_id == "vpce-mock"
+    error_message = "envelope key policy must reference the mocked VPC endpoint id only"
+  }
+
+  assert {
+    condition     = !strcontains(file("${path.module}/../../modules/aws-ecs-tunnel/main.tf"), "kms-broker-tunnel-token")
+    error_message = "connector execution policy must not read the broker tunnel secret"
+  }
+
+  assert {
+    condition = (
+      !strcontains(file("${path.module}/../../modules/aws-kms-envelope/main.tf"), "/cloudflare-tunnel-token") &&
+      strcontains(file("${path.module}/../../modules/aws-kms-envelope/main.tf"), "Sid      = \"GetBrokerTunnelToken\"") &&
+      !strcontains(file("${path.module}/../../modules/aws-kms-envelope/main.tf"), "name = \"kms-broker-execution\"\n  role = aws_iam_role.execution.id\n  policy = jsonencode({\n    Version = \"2012-10-17\"\n    Statement = [\n      {\n        Sid      = \"GetBrokerTunnelToken\"\n        Effect   = \"Allow\"\n        Action   = [\"kms:")
+    )
+    error_message = "broker execution policy must not read the Postgres tunnel secret or call kms"
+  }
+
+  assert {
+    condition     = !strcontains(file("${path.module}/env/staging.tfvars"), "policy_probe_action")
+    error_message = "env/staging.tfvars must not set policy_probe_action"
+  }
+
+  assert {
+    condition     = !strcontains(file("${path.module}/env/prod.tfvars"), "policy_probe_action")
+    error_message = "env/prod.tfvars must not set policy_probe_action"
+  }
+
+  assert {
+    condition     = strcontains(file("${path.module}/main.tf"), "tunnel_id              = module.tunnel.tunnel_id")
+    error_message = "Workers VPC service must still use the Postgres tunnel id"
+  }
+}
+
+run "probe_fails" {
+  command = plan
+
+  variables {
+    aws_region                = "ap-southeast-2"
+    aws_account_id            = "123456789012"
+    cloudflare_account_id     = "00000000000000000000000000000000"
+    environment               = "staging"
+    cert_verification_mode    = "disabled"
+    deletion_protection       = false
+    backup_retention_days     = 0
+    zone_id                   = "00000000000000000000000000000000"
+    zone_name                 = "communityhub-staging.net"
+    enable_hyperdrive         = false
+    enable_regional_hostnames = false
+    policy_probe_action       = "kms:CreateGrant"
+  }
+
+  expect_failures = [var.policy_probe_action]
 }
 
 run "prod_tfvars" {
