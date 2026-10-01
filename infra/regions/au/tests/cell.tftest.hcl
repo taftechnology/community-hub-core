@@ -166,7 +166,7 @@ run "staging_happy" {
     condition = (
       length([
         for statement in jsondecode(output.broker_execution_policy).Statement : statement
-        if statement.Action == ["secretsmanager:GetSecretValue"] && strcontains(jsonencode(statement.Resource), "kms-broker-tunnel-token")
+        if statement.Action == ["secretsmanager:GetSecretValue"] && statement.Resource == ["arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging/kms-broker-tunnel-token*"]
       ]) == 1 &&
       alltrue([
         for statement in jsondecode(output.broker_execution_policy).Statement :
@@ -184,7 +184,7 @@ run "staging_happy" {
   assert {
     condition = anytrue([
       for statement in jsondecode(output.connector_execution_policy).Statement :
-      strcontains(jsonencode(statement.Resource), "cloudflare-tunnel-token")
+      statement.Resource == ["arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging/cloudflare-tunnel-token*"]
     ])
     error_message = "connector execution policy must read the Postgres tunnel secret"
   }
