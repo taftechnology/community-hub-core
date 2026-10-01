@@ -44,3 +44,23 @@ output "broker_tunnel_token" {
   value       = module.broker_tunnel.tunnel_token
   sensitive   = true
 }
+
+output "envelope_key_policy" {
+  description = "Envelope KMS key policy document."
+  value       = module.envelope.key_policy
+}
+
+output "storage_key_policy" {
+  description = "Storage KMS key policy document."
+  value       = module.kms.key_policy
+}
+
+output "broker_execution_policy" {
+  description = "Broker execution role policy document."
+  value       = module.envelope.execution_policy
+}
+
+output "connector_execution_policy" {
+  description = "Connector execution role policy document."
+  value       = module.ecs.execution_policy
+}

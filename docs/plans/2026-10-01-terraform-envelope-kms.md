@@ -33,6 +33,7 @@ Status: approved (2026-10-01, Abdus Salam)
 - Deviation (2026-10-01): the `aws_iam_role_policy` ban narrows to the task role; the execution policy is an `aws_iam_role_policy`, avoiding the deprecated `inline_policy`.
 - Deviation (2026-10-01): the storage key Sid follows the AWS default, `Enable IAM User Permissions`, so applying it to a key with the default policy produces no change.
 - Deviation (2026-10-01): the broker tunnel has a single catch-all rule to `http://127.0.0.1:8080`. The optional 404 rule is dropped because cloudflared requires the catch-all last and there is no hostname to put first.
+- Deviation (2026-10-01): Terraform 1.11 can't `expect_failures` on a resource inside a child module, or read child resource attributes from a root test. The precondition proof stays in the envelope module test, cross-module assertions read new root outputs, and the root no longer exposes `policy_probe_action`.
 
 **Size:** Envelope module, tunnel module, storage-policy edit, root wiring, checker, ADR, and runbook are about 900 lines excluding lockfiles and fixtures. The broker server, image, and task definition are `docs/specs/2026-10-01-kms-broker-service.md`, a separate spec, plan, and branch. This plan implements only `docs/specs/2026-09-30-terraform-envelope-kms.md`.
 

@@ -18,3 +18,8 @@ output "secret_arn" {
   value       = aws_secretsmanager_secret.tunnel.arn
   sensitive   = true
 }
+
+output "execution_policy" {
+  description = "Connector execution role policy document."
+  value       = aws_iam_role_policy.execution.policy
+}

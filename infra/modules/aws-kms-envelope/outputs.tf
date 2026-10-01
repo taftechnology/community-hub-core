@@ -42,3 +42,13 @@ output "tunnel_secret_name" {
   description = "Secrets Manager name of the broker tunnel token."
   value       = aws_secretsmanager_secret.broker_tunnel.name
 }
+
+output "key_policy" {
+  description = "Envelope KMS key policy document."
+  value       = aws_kms_key.envelope.policy
+}
+
+output "execution_policy" {
+  description = "Broker execution role policy document."
+  value       = aws_iam_role_policy.execution.policy
+}

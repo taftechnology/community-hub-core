@@ -12,3 +12,8 @@ output "alias_name" {
   description = "Alias of the storage KMS key."
   value       = aws_kms_alias.storage.name
 }
+
+output "key_policy" {
+  description = "Storage KMS key policy document."
+  value       = aws_kms_key.storage.policy
+}

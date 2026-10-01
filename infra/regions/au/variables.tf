@@ -89,15 +89,3 @@ variable "hyperdrive_origin_password" {
   nullable    = true
   description = "Application-role password. Required only when enable_hyperdrive is true."
 }
-
-variable "policy_probe_action" {
-  type        = string
-  default     = null
-  nullable    = true
-  description = "Test-only probe action injected into the envelope key admin statement."
-
-  validation {
-    condition     = var.policy_probe_action != "kms:CreateGrant"
-    error_message = "envelope key policy must be exactly five statements with the allowed actions."
-  }
-}

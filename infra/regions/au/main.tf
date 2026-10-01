@@ -89,7 +89,6 @@ module "envelope" {
   vpc_id              = module.network.vpc_id
   public_subnet_id    = module.network.public_subnet_id
   broker_tunnel_token = module.broker_tunnel.tunnel_token
-  policy_probe_action = var.policy_probe_action
 }
 
 module "ecs" {

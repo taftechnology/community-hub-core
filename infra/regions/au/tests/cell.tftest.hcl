@@ -1,4 +1,6 @@
 mock_provider "aws" {
+  override_during = plan
+
   mock_resource "aws_db_instance" {
     defaults = {
       address = "ch-staging-postgres.xxxxx.ap-southeast-2.rds.amazonaws.com"
@@ -110,17 +112,41 @@ run "staging_happy" {
   }
 
   assert {
-    condition     = !strcontains(file("${path.module}/../../modules/aws-kms-storage/main.tf"), "kms-broker-task")
+    condition = (
+      length(jsondecode(output.storage_key_policy).Statement) == 1 &&
+      jsondecode(output.storage_key_policy).Statement[0].Sid == "Enable IAM User Permissions" &&
+      jsondecode(output.storage_key_policy).Statement[0].Principal.AWS == "arn:aws:iam::123456789012:root" &&
+      jsondecode(output.storage_key_policy).Statement[0].Action == "kms:*" &&
+      jsondecode(output.storage_key_policy).Statement[0].Resource == "*"
+    )
+    error_message = "storage key policy must be the single account-root kms:* statement"
+  }
+
+  assert {
+    condition     = !strcontains(output.storage_key_policy, "kms-broker-task")
     error_message = "storage key policy must not reference the kms-broker task role"
   }
 
   assert {
     condition = (
-      module.envelope.task_role_name == "ch-staging-kms-broker-task" &&
-      strcontains(file("${path.module}/../../modules/aws-kms-envelope/main.tf"), "\"aws:SourceVpce\"                 = aws_vpc_endpoint.kms.id") &&
-      strcontains(file("${path.module}/../../modules/aws-kms-envelope/main.tf"), "kms:GenerateDataKey")
+      length(jsondecode(output.envelope_key_policy).Statement) == 5 &&
+      length([
+        for statement in jsondecode(output.envelope_key_policy).Statement : statement
+        if statement.Sid != "Admin"
+      ]) == 4 &&
+      alltrue([
+        for statement in jsondecode(output.envelope_key_policy).Statement :
+        statement.Principal.AWS == "arn:aws:iam::123456789012:role/ch-staging-kms-broker-task" &&
+        statement.Condition.StringEquals["aws:SourceVpce"] == "vpce-mock"
+        if statement.Sid != "Admin"
+      ])
     )
-    error_message = "envelope key policy must bind the broker task role, GenerateDataKey, and the VPC endpoint id"
+    error_message = "envelope key policy must bind each cryptographic statement to the broker task role and the VPC endpoint"
+  }
+
+  assert {
+    condition     = !strcontains(output.envelope_key_policy, "connector-execution")
+    error_message = "envelope key policy must not reference the connector execution role"
   }
 
   override_resource {
@@ -137,17 +163,35 @@ run "staging_happy" {
   }
 
   assert {
-    condition     = !strcontains(file("${path.module}/../../modules/aws-ecs-tunnel/main.tf"), "kms-broker-tunnel-token")
-    error_message = "connector execution policy must not read the broker tunnel secret"
+    condition = (
+      length([
+        for statement in jsondecode(output.broker_execution_policy).Statement : statement
+        if statement.Action == ["secretsmanager:GetSecretValue"] && strcontains(jsonencode(statement.Resource), "kms-broker-tunnel-token")
+      ]) == 1 &&
+      alltrue([
+        for statement in jsondecode(output.broker_execution_policy).Statement :
+        alltrue([for action in statement.Action : !strcontains(action, "kms:")])
+      ])
+    )
+    error_message = "broker execution policy must read the broker tunnel secret and must not call kms"
   }
 
   assert {
-    condition = (
-      !strcontains(file("${path.module}/../../modules/aws-kms-envelope/main.tf"), "/cloudflare-tunnel-token") &&
-      strcontains(file("${path.module}/../../modules/aws-kms-envelope/main.tf"), "Sid      = \"GetBrokerTunnelToken\"") &&
-      !strcontains(file("${path.module}/../../modules/aws-kms-envelope/main.tf"), "name = \"kms-broker-execution\"\n  role = aws_iam_role.execution.id\n  policy = jsonencode({\n    Version = \"2012-10-17\"\n    Statement = [\n      {\n        Sid      = \"GetBrokerTunnelToken\"\n        Effect   = \"Allow\"\n        Action   = [\"kms:")
-    )
-    error_message = "broker execution policy must not read the Postgres tunnel secret or call kms"
+    condition     = !strcontains(output.broker_execution_policy, "/cloudflare-tunnel-token")
+    error_message = "broker execution policy must not read the Postgres tunnel secret"
+  }
+
+  assert {
+    condition = anytrue([
+      for statement in jsondecode(output.connector_execution_policy).Statement :
+      strcontains(jsonencode(statement.Resource), "cloudflare-tunnel-token")
+    ])
+    error_message = "connector execution policy must read the Postgres tunnel secret"
+  }
+
+  assert {
+    condition     = !strcontains(output.connector_execution_policy, "kms-broker-tunnel-token")
+    error_message = "connector execution policy must not read the broker tunnel secret"
   }
 
   assert {
@@ -164,27 +208,6 @@ run "staging_happy" {
     condition     = strcontains(file("${path.module}/main.tf"), "tunnel_id              = module.tunnel.tunnel_id")
     error_message = "Workers VPC service must still use the Postgres tunnel id"
   }
-}
-
-run "probe_fails" {
-  command = plan
-
-  variables {
-    aws_region                = "ap-southeast-2"
-    aws_account_id            = "123456789012"
-    cloudflare_account_id     = "00000000000000000000000000000000"
-    environment               = "staging"
-    cert_verification_mode    = "disabled"
-    deletion_protection       = false
-    backup_retention_days     = 0
-    zone_id                   = "00000000000000000000000000000000"
-    zone_name                 = "communityhub-staging.net"
-    enable_hyperdrive         = false
-    enable_regional_hostnames = false
-    policy_probe_action       = "kms:CreateGrant"
-  }
-
-  expect_failures = [var.policy_probe_action]
 }
 
 run "prod_tfvars" {
