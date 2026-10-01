@@ -9,8 +9,8 @@ resource "aws_kms_key" "storage" {
     Id      = "key-default-1"
     Statement = [
       {
-        Sid       = "Enable IAM User Permissions"
-        Effect    = "Allow"
+        Sid    = "Enable IAM User Permissions"
+        Effect = "Allow"
         Principal = {
           AWS = "arn:aws:iam::${var.aws_account_id}:root"
         }
