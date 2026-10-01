@@ -50,8 +50,9 @@ module "network" {
 module "kms" {
   source = "../../modules/aws-kms-storage"
 
-  aws_region = var.aws_region
-  name       = local.name
+  aws_region     = var.aws_region
+  aws_account_id = var.aws_account_id
+  name           = local.name
 }
 
 module "rds" {

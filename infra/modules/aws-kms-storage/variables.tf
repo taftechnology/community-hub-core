@@ -8,6 +8,11 @@ variable "aws_region" {
   }
 }
 
+variable "aws_account_id" {
+  type        = string
+  description = "AWS account ID for the storage key policy root principal."
+}
+
 variable "name" {
   type        = string
   description = "Name prefix for the storage KMS key alias."
