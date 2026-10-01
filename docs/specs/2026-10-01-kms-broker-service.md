@@ -99,7 +99,7 @@ When KMS is unreachable, the broker returns 502 `kms_failed`. It does not try an
 
 ### Workers VPC service
 
-Created only when `enable_kms_broker_tasks` is true. It uses the broker tunnel id and not the Postgres tunnel id. Terraform owns the service (ADR 0002). If `cloudflare_connectivity_directory_service` cannot express an HTTP service through that tunnel, stop and report. Do not point it at a VPC address. When the flag is false, the AU root output for the service id is null.
+Created only when `enable_kms_broker_tasks` is true. It uses the broker tunnel id and not the Postgres tunnel id. Terraform owns the service (ADR 0002). If `cloudflare_connectivity_directory_service` cannot express an HTTP service through that tunnel, stop and report. Do not point it at a VPC address. The tunnel this service attaches to inherits one ingress rule: a catch-all to `http://127.0.0.1:8080` with no hostname. A running connector is the first proof of that shape; if cloudflared rejects it, stop and report. When the flag is false, the AU root output for the service id is null.
 
 ### Availability
 
