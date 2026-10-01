@@ -1,10 +1,10 @@
 # Spec: envelope wrapping key
 
 Slug: `terraform-envelope-kms`
-Status: draft
+Status: approved (2026-10-01, Abdus Salam)
 Supersedes: —
 Architecture refs: §5, §7.3 rule 5, §12.2, §20, §22, §23.2; D8; ADR 0002; ADR 0005; AGENTS.md §1 (1, 7, 10), §3, §6, §8, §12
-Branch: `feat/2026-09-30-terraform-envelope-kms`, from `origin/main`. This spec is drafted on that branch. Implementation starts after this spec and its plan are both approved.
+Branch: `feat/2026-09-30-terraform-envelope-kms`, from `origin/main`.
 
 ## Problem
 

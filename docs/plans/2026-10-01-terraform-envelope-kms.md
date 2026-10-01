@@ -8,9 +8,9 @@
 
 **Tech Stack:** Terraform `~> 1.11`, hashicorp/aws `~> 6.0`, cloudflare/cloudflare `~> 5.13`, tflint AWS ruleset `0.48.0`, the existing `terraform-invariants` checker.
 
-**Spec:** `docs/specs/2026-09-30-terraform-envelope-kms.md` (narrowed to this infrastructure chunk; pending re-approval)
+**Spec:** `docs/specs/2026-09-30-terraform-envelope-kms.md`
 
-Status: draft
+Status: approved (2026-10-01, Abdus Salam)
 
 **Branch:** `feat/2026-09-30-terraform-envelope-kms` · one PR · 7 tasks, one commit each
 
