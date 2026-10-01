@@ -243,6 +243,28 @@ function validateBootstrapFile(
   return violations;
 }
 
+function validateEnvelopeKeyFile(
+  filePath: string,
+  root: string,
+  hcl: string,
+): TerraformInvariantViolation[] {
+  const relFile = path.relative(root, filePath);
+  const violations: TerraformInvariantViolation[] = [];
+
+  for (const resource of findResources(hcl)) {
+    if (resource.type === "aws_kms_key" && resource.name === "envelope") {
+      if (!/prevent_destroy\s*=\s*true\b/.test(resource.body)) {
+        violations.push({
+          file: relFile,
+          message: "envelope KMS key must set lifecycle.prevent_destroy = true",
+        });
+      }
+    }
+  }
+
+  return violations;
+}
+
 function validateConnectorFile(
   filePath: string,
   root: string,
@@ -300,6 +322,9 @@ export function check(root: string = process.cwd()): CheckResult {
     const hcl = stripHclComments(fs.readFileSync(filePath, "utf8"));
     if (isUnder(filePath, resolvedRoot, path.join(INFRA_DIR, "bootstrap"))) {
       violations.push(...validateBootstrapFile(filePath, resolvedRoot, hcl));
+    }
+    if (isUnder(filePath, resolvedRoot, path.join(INFRA_DIR, "modules", "aws-kms-envelope"))) {
+      violations.push(...validateEnvelopeKeyFile(filePath, resolvedRoot, hcl));
     }
     violations.push(...validateConnectorFile(filePath, resolvedRoot, hcl));
   }
