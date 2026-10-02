@@ -42,6 +42,8 @@ This chunk never applies. A human runs these steps later, with AWS and Cloudflar
 
    `enable_hyperdrive = false` and `enable_regional_hostnames = false` on this first apply. Cloudflare tests the Hyperdrive origin with a real connection; the tunnel and RDS are not ready to be that origin yet.
 
+   A plan diff on `aws_kms_key.storage`'s policy means the live policy differs from the AWS default. Stop and report. Do not overwrite it.
+
 4. **Application role** (when `packages-db` exists): create the non-`BYPASSRLS` role via SQL. Not Terraform.
 
 5. **Re-apply Hyperdrive** with `enable_hyperdrive = true` and `hyperdrive_origin_password` set (sensitive). Do not log or echo it.
@@ -59,6 +61,18 @@ Top-tier secret. It sits in Secrets Manager and in Terraform state (KMS-encrypte
 **Rotation:** create a new tunnel (or rotate the token in Zero Trust), write the new token to Secrets Manager, force a new ECS deployment, confirm the expected connector is `HEALTHY`, then revoke the old token.
 
 **Unexpected connector:** alert when a connector registers against this tunnel that is not the ECS service. That is the staging impersonation path in ADR 0003.
+
+## Envelope key and broker tunnel
+
+The AU apply creates the envelope key (`prevent_destroy`, `depends_on` the task role), the KMS interface endpoint (about US$7–8 per month from this apply), the broker security group, the task role, and the broker tunnel plus its secret.
+
+If the first apply fails with an invalid principal, the key was created before `aws_iam_role.task`. The module sets `depends_on`. Do not remove it to make a plan look simpler.
+
+It does not create a broker task, an ECR repository, or a Workers VPC service. Do not push an image from this runbook.
+
+The broker tunnel token rotates the same way as the connector token, and it is a different secret (`<name>/kms-broker-tunnel-token`). Revoking the connector token does not rotate the broker token.
+
+Do not apply prod from this runbook.
 
 ## Feature flags
 

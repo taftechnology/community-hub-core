@@ -13,6 +13,7 @@ const mustFail = [
   "commented-region",
   "missing-prevent-destroy",
   "connector-ingress-rule",
+  "missing-envelope-prevent-destroy",
 ] as const;
 
 const mustPass = ["valid"] as const;

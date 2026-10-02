@@ -50,8 +50,9 @@ module "network" {
 module "kms" {
   source = "../../modules/aws-kms-storage"
 
-  aws_region = var.aws_region
-  name       = local.name
+  aws_region     = var.aws_region
+  aws_account_id = var.aws_account_id
+  name           = local.name
 }
 
 module "rds" {
@@ -70,6 +71,24 @@ module "tunnel" {
 
   account_id = var.cloudflare_account_id
   name       = "${local.name}-au"
+}
+
+module "broker_tunnel" {
+  source = "../../modules/cf-broker-tunnel"
+
+  account_id = var.cloudflare_account_id
+  name       = "${local.name}-au-kms"
+}
+
+module "envelope" {
+  source = "../../modules/aws-kms-envelope"
+
+  aws_region          = var.aws_region
+  aws_account_id      = var.aws_account_id
+  name                = local.name
+  vpc_id              = module.network.vpc_id
+  public_subnet_id    = module.network.public_subnet_id
+  broker_tunnel_token = module.broker_tunnel.tunnel_token
 }
 
 module "ecs" {

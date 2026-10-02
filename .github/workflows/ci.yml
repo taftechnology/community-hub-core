@@ -108,9 +108,11 @@ jobs:
           - infra/regions/au
           - infra/modules/aws-network
           - infra/modules/aws-kms-storage
+          - infra/modules/aws-kms-envelope
           - infra/modules/aws-rds
           - infra/modules/aws-ecs-tunnel
           - infra/modules/cf-tunnel
+          - infra/modules/cf-broker-tunnel
           - infra/modules/cf-vpc-service
           - infra/modules/cf-hyperdrive
           - infra/modules/cf-regional-hostname
