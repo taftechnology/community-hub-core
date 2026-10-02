@@ -25,7 +25,7 @@ Status: draft
 - Do not apply Terraform, push an image, deploy `apps/api`, or call a live broker.
 - Session scratch (`.superpowers/`, `*-report.md`) is never committed.
 - The last commit updates `docs/roadmap.md`: `kms-worker-adapter` **done**, next `api-au-hostname`, Phase 0 `12 / 14`. Do not insert rows.
-- Implementer and reviewer cross Grok and Composer. A second fresh-context review of the final diff is required before merge. This chunk touches encryption and residency.
+- Each task is a fresh implementer. The human reviews each commit before the next task starts. Implementer and reviewer cross Grok and Composer. A second fresh-context review of the final diff is required before merge. This chunk touches encryption and residency.
 - The PR body says the running-preview check is deferred to `api-au-hostname`. That chunk replaces the sentinel, deploys `apps/api`, performs the unwrap, and makes `service_id` `REPLACE_AFTER_APPLY` fail this checker.
 
 **Rollback:** Revert the PR. No migration, no Terraform, no image. The sentinel binding is unused until `api-au-hostname`.
@@ -49,7 +49,7 @@ Status: draft
 
 **Interfaces:**
 
-- Consumes: `KmsPort` and `KmsContext` from `@community-hub/crypto` (`import type` only). `packages/kms-broker/contract/kms-port-v1.json` is read by the drift test, not by the client.
+- Consumes: `KmsPort` and `KmsContext` from `@community-hub/crypto` (`import type` only). The drift test calls `readContract()` from `@community-hub/kms-broker`. The client does not.
 - Produces:
   - `KMS_LOGICAL_KEY_ID = "envelope"`
   - `GENERATE_DATA_KEY_PATH = "/v1/generate-data-key"`
@@ -59,11 +59,15 @@ Status: draft
   - `generateDataKey` returns `{ plaintext: Uint8Array; blob: Uint8Array }`.
   - `decrypt` takes `blob: Uint8Array` and returns `Uint8Array`.
 
-The JSON fields `plaintext` and `blob` are base64 strings. After they round-trip, decode them to `Uint8Array`. That is the `KmsPort` shape. Use `btoa` / `atob`, not `Buffer`. `apps/api` has `nodejs_als`, not `node:buffer`.
+The JSON fields `plaintext` and `blob` are base64 strings. After they round-trip, decode them to `Uint8Array`. That is the `KmsPort` shape. Encode and decode with `btoa` / `atob`.
+
+`tsconfig.json` follows `packages/crypto`: `"lib": ["ES2022"]` and `"types": ["@cloudflare/workers-types"]`, and it excludes `src/**/*.test.ts`. `tsc --build` typechecks `src/` against Workers types only. A `Buffer` in `src/` fails that build. `apps/api` has `nodejs_als` and no `node:buffer`.
+
+`tsconfig.test.json` typechecks the tests, including the contract test, with `"types": ["@cloudflare/workers-types", "node"]`. DevDependencies: `@cloudflare/workers-types` at the same range as `@community-hub/crypto`, and `@types/node`. `@community-hub/kms-broker` is a devDependency so the drift test can call `readContract()`. Production dependencies stay `@community-hub/crypto` only.
 
 - [ ] **Step 1: Write the failing tests**
 
-`drift.test.ts` reads the contract with `readFileSync` and `import.meta.url` (the file is outside this package: `../../../packages/kms-broker/contract/kms-port-v1.json`). Assert the three constants equal `logicalKeyId`, `routes.generateDataKey` (`method` `POST`, `path`), and `routes.decrypt`.
+`drift.test.ts` imports `readContract` from `@community-hub/kms-broker` and asserts the three constants equal `logicalKeyId`, `routes.generateDataKey` (`method` `POST`, `path`), and `routes.decrypt`. It does not read the JSON file by a relative path. `src/index.ts` does not import `readContract`.
 
 `client.test.ts` uses a fake `fetch`. Assert all of the following. Every thrown error has `message === "kms_failed"` and `cause === undefined`.
 
@@ -87,7 +91,7 @@ Expected: FAIL, package or exports missing.
 
 - [ ] **Step 3: Implement**
 
-Copy `packages/kms-broker`'s `package.json` scripts, `tsconfig.json`, `tsconfig.test.json`, `vitest.config.ts`, and `eslint.config.js`. Dependency: `@community-hub/crypto` workspace. No AWS SDK. No broker app.
+Copy `packages/kms-broker`'s `package.json` scripts, `vitest.config.ts`, and `eslint.config.js`. Copy `packages/crypto`'s `tsconfig.json` for `src/`. Write `tsconfig.test.json` as above, with `node` added to `types`. Dependency: `@community-hub/crypto` workspace. DevDependencies include `@community-hub/kms-broker`, `@cloudflare/workers-types`, and `@types/node`. No AWS SDK. No broker app. The app package arrives in task 2.
 
 `createKmsBrokerClient` builds `KmsPort`. Both methods `POST` JSON. Pass `{ signal: AbortSignal.timeout(deadlineMs) }` to `fetch`. On throw, non-2xx, non-object JSON, a missing or non-string `plaintext`, a `plaintext` that fails the base64 round-trip, or (generate only) a missing, empty, non-string, or non-round-tripping `blob`: `throw new Error("kms_failed")`. Return the decoded bytes. Do not read plaintext length. Do not zero. Do not log.
 
@@ -164,7 +168,7 @@ await new Promise<void>((resolve) => {
 
 Do not call `start()`. Do not bind port 8080. Close the server in `afterEach`.
 
-The injected `fetch` parses the URL the client used, asserts `origin` is `http://127.0.0.1:8080`, and forwards `pathname` plus the body to `http://127.0.0.1:<ephemeral port>`. Record `cache-control` from the upstream response.
+The injected `fetch` parses the URL the client used and asserts `origin` is `http://127.0.0.1:8080`. It asserts the client sent `content-type: application/json`. It forwards `method`, that `content-type`, and the body to `http://127.0.0.1:<ephemeral port>`. The broker returns 400 when `content-type` is not `application/json`. Record `cache-control` from the upstream response.
 
 Assert:
 
@@ -185,8 +189,8 @@ git add apps/kms-broker/package.json packages/kms-aws pnpm-lock.yaml
 git commit -m "$(cat <<'EOF'
 test(kms): round-trip the port against the broker server
 
-The server listens on port 0. The client URL stays the broker's listen
-address, and the test checks the path and body rather than routing.
+The server listens on port 0. The test forwards method, content-type,
+and body, and checks the path rather than routing.
 
 Refs: docs/plans/2026-10-01-kms-worker-adapter.md task 2
 EOF
@@ -235,7 +239,9 @@ Also collect the top-level object and every object under `env`. On each:
 - fail when `vpc_networks` is a non-empty array, or is present and not an array
 - collect `vpc_services` entries
 
-`apps/api` must have exactly one collected entry. Its only keys are `binding` and `service_id`, `binding` is `KMS_BROKER`, and `service_id` is a non-empty string. Any other key, including `remote`, fails. Any other app with a collected entry fails.
+`apps/api` must have exactly one collected entry, counted across the top level and every `env` block. Its only keys are `binding` and `service_id`, `binding` is `KMS_BROKER`, and `service_id` is a non-empty string. Any other key, including `remote`, fails. Any other app with a collected entry fails.
+
+`apps/api` has no `env` block today, so that count is the right rule. Do not relax it in this chunk. `api-au-hostname` already edits this checker to retire the sentinel. Wrangler environments do not inherit bindings, so when that chunk adds `env.staging` it declares `KMS_BROKER` again on that object. The spec's Out-of-band tells that chunk to relax this rule to: one `KMS_BROKER` per object that declares `vpc_services`, and the top level must declare it.
 
 Must-fail fixtures, each otherwise a valid `apps/api` binding plus the one fault:
 
@@ -329,13 +335,13 @@ Copy `tooling/checks/residency-cell/fixtures/import-crypto` to `fixtures/import-
 - `packages/residency/src/catalog.json` `regionalOnlyPackages` is `["@community-hub/db", "@community-hub/crypto", "@community-hub/kms-aws"]`
 - add `packages/kms-aws/package.json` with `{ "name": "@community-hub/kms-aws" }`
 
-Add `"import-kms-aws"` to the `mustFail` array in `selftest.ts`. Do not edit the other fixtures' catalogs.
+Add `"import-kms-aws"` to the `mustFail` array in `selftest.ts`. Add a dedicated test for that fixture, beside the `missing-catalog` test. It asserts `ok === false` and that some violation message is `global-no-pii Worker must not import regional-only package "@community-hub/kms-aws"`. The generic loop only checks that a violation exists. This assertion is what stops the fixture passing for some other fault. Do not edit the other fixtures' catalogs.
 
 - [ ] **Step 2: Run the tests**
 
 Run: `pnpm --filter @community-hub/residency test && pnpm --filter @community-hub/check-residency-cell test`
 
-Expected: FAIL on the catalog equality, and FAIL `import-kms-aws` until the real catalog lists the package. The fixture reads its own catalog, so its failure is `ok === false` once the fixture catalog lists the package. The residency package test fails until `catalog.json` changes.
+Expected: `@community-hub/residency` FAIL. The test expects the three-package list and `catalog.json` is still `["@community-hub/db", "@community-hub/crypto"]`. `@community-hub/check-residency-cell` PASS. `import-kms-aws` already fails because its own catalog lists `@community-hub/kms-aws`.
 
 - [ ] **Step 3: Update the catalog**
 
@@ -345,7 +351,7 @@ Append `@community-hub/kms-aws` to `packages/residency/src/catalog.json`.
 
 Run: `pnpm --filter @community-hub/residency test && pnpm --filter @community-hub/check-residency-cell test`
 
-Expected: PASS. `import-kms-aws` fails the check (`ok === false`). Existing must-pass fixtures still pass.
+Expected: PASS. `import-kms-aws` still fails with the message that names `@community-hub/kms-aws`. Existing must-pass fixtures still pass.
 
 - [ ] **Step 5: Commit**
 
@@ -450,6 +456,7 @@ EOF
 
 ## Self-review
 
-- Spec coverage: client and drift (task 1), contract test on port 0 (task 2), binding, `remote`, `wrangler.toml`, `cf1:network` deep scan, env blocks, AGENTS §10 (task 3), `regionalOnlyPackages` and fixture (task 4), architecture, runbook, roadmap `12 / 14` (task 5). Live unwrap and sentinel rejection stay in `api-au-hostname`.
+- Spec coverage: client and drift via `readContract()` (task 1), contract test on port 0 forwarding method, content-type, and body (task 2), binding, `remote`, `wrangler.toml`, `cf1:network` deep scan, env blocks, AGENTS §10 (task 3), `regionalOnlyPackages` and a fixture whose violation names `@community-hub/kms-aws` (task 4), architecture, runbook, roadmap `12 / 14` (task 5). Live unwrap, sentinel rejection, and the per-object `KMS_BROKER` count stay in `api-au-hostname`.
+- `src/` typechecks with Workers types. Tests add Node types. A `Buffer` in `src/` fails `tsc --build`.
 - No new table, migration, entitlement, or product route.
 - `KmsPort` blob is `Uint8Array` after the JSON string round-trips. Task 1 states that. Crypto is not edited.
