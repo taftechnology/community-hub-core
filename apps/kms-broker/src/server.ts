@@ -160,14 +160,15 @@ export function createServer(deps: CreateServerDeps): {
 
     try {
       if (isGenerate) {
-        const result = await Promise.race([
-          deps.kms.generateDataKey(
-            { keyId: deps.envelopeKeyArn, context },
-            { abortSignal: controller.signal },
-          ),
-          abortPromise,
-        ]);
+        const kmsPromise = deps.kms.generateDataKey(
+          { keyId: deps.envelopeKeyArn, context },
+          { abortSignal: controller.signal },
+        );
+        attachLateGenerateZero(controller.signal, kmsPromise);
+        const result = await Promise.race([kmsPromise, abortPromise]);
+        rejectIfAborted(controller.signal, result);
         if (result.plaintext.byteLength !== 32) {
+          zeroGenerateMaterial(result);
           logLine(logFields("failed"));
           sendError(res, contract.error.statusFailed, errorBody);
           return;
@@ -201,13 +202,13 @@ export function createServer(deps: CreateServerDeps): {
         return;
       }
 
-      const plaintext = await Promise.race([
-        deps.kms.decrypt(
-          { keyId: deps.envelopeKeyArn, blob, context },
-          { abortSignal: controller.signal },
-        ),
-        abortPromise,
-      ]);
+      const kmsPromise = deps.kms.decrypt(
+        { keyId: deps.envelopeKeyArn, blob, context },
+        { abortSignal: controller.signal },
+      );
+      attachLateDecryptZero(controller.signal, kmsPromise);
+      const plaintext = await Promise.race([kmsPromise, abortPromise]);
+      rejectIfAborted(controller.signal, { plaintext });
       if (plaintext.byteLength !== 32) {
         zeroBytes(plaintext);
         logLine(logFields("failed"));
@@ -288,4 +289,48 @@ function extractKeyKind(parsed: unknown): string | undefined {
 
 function zeroBytes(value: Uint8Array): void {
   value.fill(0);
+}
+
+function zeroGenerateMaterial(material: { plaintext: Uint8Array; blob: Uint8Array }): void {
+  zeroBytes(material.plaintext);
+  zeroBytes(material.blob);
+}
+
+function rejectIfAborted(
+  signal: AbortSignal,
+  material: { plaintext: Uint8Array; blob?: Uint8Array },
+): void {
+  if (!signal.aborted) {
+    return;
+  }
+  zeroBytes(material.plaintext);
+  if (material.blob !== undefined) {
+    zeroBytes(material.blob);
+  }
+  throw new Error("aborted");
+}
+
+function attachLateGenerateZero(
+  signal: AbortSignal,
+  promise: Promise<{ plaintext: Uint8Array; blob: Uint8Array }>,
+): void {
+  void promise.then(
+    (result) => {
+      if (signal.aborted) {
+        zeroGenerateMaterial(result);
+      }
+    },
+    () => {},
+  );
+}
+
+function attachLateDecryptZero(signal: AbortSignal, promise: Promise<Uint8Array>): void {
+  void promise.then(
+    (plaintext) => {
+      if (signal.aborted) {
+        zeroBytes(plaintext);
+      }
+    },
+    () => {},
+  );
 }

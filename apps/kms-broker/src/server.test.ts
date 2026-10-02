@@ -20,6 +20,10 @@ type StoredEntry = {
   context: Record<string, string>;
 };
 
+type KmsContextLike =
+  | { key_kind: "org"; org_id: string; key_version: string }
+  | { key_kind: "identity"; region: string; key_version: string };
+
 function contextKey(context: Record<string, string>): string {
   return JSON.stringify(context);
 }
@@ -202,6 +206,7 @@ describe("createServer", () => {
         }),
       });
       expect(orgRes.status).toBe(200);
+      expect(orgRes.headers.get("cache-control")).toBe(CACHE_CONTROL);
       const orgBody = (await orgRes.json()) as { plaintext: string; blob: string };
       expect(Buffer.from(orgBody.plaintext, "base64")).toHaveLength(32);
       expect(orgBody.blob.length).toBeGreaterThan(0);
@@ -217,10 +222,20 @@ describe("createServer", () => {
       expect(idRes.status).toBe(200);
 
       expect(calls.generate).toHaveLength(2);
-      for (const call of calls.generate) {
-        const input = (call as { input: { keyId: string } }).input;
-        expect(input.keyId).toBe(ENVELOPE_ARN);
-      }
+      const orgCall = calls.generate[0] as { input: { keyId: string; context: KmsContextLike } };
+      const idCall = calls.generate[1] as { input: { keyId: string; context: KmsContextLike } };
+      expect(orgCall.input.keyId).toBe(ENVELOPE_ARN);
+      expect(orgCall.input.context).toEqual({
+        key_kind: "org",
+        org_id: "org-abc",
+        key_version: "v1",
+      });
+      expect(idCall.input.keyId).toBe(ENVELOPE_ARN);
+      expect(idCall.input.context).toEqual({
+        key_kind: "identity",
+        region: "au",
+        key_version: "v2",
+      });
     });
   });
 
@@ -249,6 +264,7 @@ describe("createServer", () => {
       expect(ok.status).toBe(200);
       expect((await ok.json()).plaintext).toBe(plaintext);
       expect(calls.decrypt).toHaveLength(1);
+      expect((calls.decrypt[0] as { input: { keyId: string } }).input.keyId).toBe(ENVELOPE_ARN);
 
       const badCtx = await brokerFetch(`${baseUrl}/v1/decrypt`, {
         method: "POST",
@@ -452,10 +468,62 @@ describe("createServer", () => {
           }),
         });
         expect(res.status).toBe(200);
+        expect(res.headers.get("cache-control")).toBe(CACHE_CONTROL);
         expect(logs).toHaveLength(1);
-        expect(Object.keys(logs[0] as object).sort()).toEqual(["key_kind", "operation", "outcome"]);
+        const line = logs[0] as Record<string, string>;
+        expect(Object.keys(line).sort()).toEqual(["key_kind", "operation", "outcome"]);
+        expect(line).toEqual({
+          operation: "generate_data_key",
+          key_kind: "org",
+          outcome: "ok",
+        });
+        expect(JSON.stringify(line)).not.toContain("org-log");
       },
     );
+  });
+
+  it("returns 502 and zeroes material when KMS settles after the deadline", async () => {
+    let latePlaintext: Uint8Array | undefined;
+    let lateBlob: Uint8Array | undefined;
+    const kms: BrokerKms = {
+      generateDataKey(_input, opts) {
+        return new Promise((resolve) => {
+          setTimeout(() => {
+            latePlaintext = new Uint8Array(32).fill(0xab);
+            lateBlob = new Uint8Array(16).fill(0xcd);
+            resolve({ plaintext: latePlaintext, blob: lateBlob! });
+          }, 30);
+          opts.abortSignal.addEventListener(
+            "abort",
+            () => {
+              /* wait for late resolve */
+            },
+            { once: true },
+          );
+        });
+      },
+      decrypt() {
+        return new Promise(() => {});
+      },
+    };
+
+    await withBroker({ kms, deadlineMs: 5 }, async (baseUrl) => {
+      const res = await brokerFetch(`${baseUrl}/v1/generate-data-key`, {
+        method: "POST",
+        headers: jsonHeaders(),
+        body: JSON.stringify({
+          keyId: "envelope",
+          context: { key_kind: "org", org_id: "org-late", key_version: "v1" },
+        }),
+      });
+      expect(res.status).toBe(502);
+      expect(await res.text()).toBe(ERROR_BODY);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(latePlaintext).toBeDefined();
+      expect(lateBlob).toBeDefined();
+      expect(latePlaintext!.every((byte) => byte === 0)).toBe(true);
+      expect(lateBlob!.every((byte) => byte === 0)).toBe(true);
+    });
   });
 
   it("aborts a hanging KMS call when deadlineMs is 1", async () => {
