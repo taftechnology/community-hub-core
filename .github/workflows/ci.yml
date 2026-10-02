@@ -96,6 +96,14 @@ jobs:
       - name: Test
         run: pnpm test
 
+  broker-image:
+    name: broker-image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: docker build -f apps/kms-broker/Dockerfile --label org.opencontainers.image.revision=${{ github.sha }} .
+
   terraform:
     name: terraform
     runs-on: ubuntu-latest
