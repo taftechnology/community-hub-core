@@ -117,7 +117,7 @@ export function createServer(deps: CreateServerDeps): {
     const keyKind = extractKeyKind(parsed);
     const logFields = (outcome: string): Record<string, string> => {
       const line: Record<string, string> = { operation, outcome };
-      if (keyKind !== undefined) {
+      if (keyKind === "org" || keyKind === "identity") {
         line.key_kind = keyKind;
       }
       return line;

@@ -62,6 +62,8 @@ export function createAwsBrokerKms(client: KmsSendClient): BrokerKms {
       const plaintext = response.Plaintext;
       const blob = response.CiphertextBlob;
       if (!plaintext || !blob) {
+        zeroBytes(plaintext);
+        zeroBytes(blob);
         throw new Error("kms response incomplete");
       }
       rejectIfAbortedAfterSend(opts.abortSignal, plaintext, blob);

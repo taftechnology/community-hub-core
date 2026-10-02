@@ -301,6 +301,34 @@ describe("createServer", () => {
     });
   });
 
+  it("rejects generate when key_kind is an ARN without logging it or calling KMS", async () => {
+    const arnKeyKind = "arn:aws:kms:ap-southeast-2:123456789012:key/abc";
+    const logs: string[] = [];
+    const { kms, calls } = createFakeKms();
+    await withBroker(
+      {
+        kms,
+        log: (line) => logs.push(JSON.stringify(line)),
+      },
+      async (baseUrl) => {
+        const res = await brokerFetch(`${baseUrl}/v1/generate-data-key`, {
+          method: "POST",
+          headers: jsonHeaders(),
+          body: JSON.stringify({
+            keyId: "envelope",
+            context: { key_kind: arnKeyKind, org_id: "org-valid", key_version: "v1" },
+          }),
+        });
+        expect(res.status).toBe(400);
+        expect(await res.text()).toBe(ERROR_BODY);
+        expect(calls.generate).toHaveLength(0);
+        const logText = logs.join("\n");
+        expect(logText).not.toContain(arnKeyKind);
+        expect(logText).not.toContain("key/abc");
+      },
+    );
+  });
+
   it("rejects invalid requests with 400 and does not call KMS", async () => {
     const { kms, calls } = createFakeKms();
     const rejectBodies = [

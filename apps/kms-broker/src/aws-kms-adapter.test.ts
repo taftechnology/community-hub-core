@@ -84,6 +84,21 @@ describe("createAwsBrokerKms", () => {
     });
   });
 
+  it("zeroes Plaintext when CiphertextBlob is missing and throws", async () => {
+    const sdkPlaintext = new Uint8Array(32).fill(5);
+    const kms = createAwsBrokerKms({
+      send: async () => ({ Plaintext: sdkPlaintext }),
+    });
+
+    await expect(
+      kms.generateDataKey(
+        { keyId: KEY_ID, context: { key_kind: "org", org_id: "org-inc", key_version: "v1" } },
+        { abortSignal: new AbortController().signal },
+      ),
+    ).rejects.toThrow("kms response incomplete");
+    expect(sdkPlaintext.every((byte) => byte === 0)).toBe(true);
+  });
+
   it("zeroes SDK buffers and throws when abortSignal is already aborted on fulfill", async () => {
     const sdkPlaintext = new Uint8Array(32).fill(9);
     const sdkBlob = new Uint8Array(12).fill(8);
