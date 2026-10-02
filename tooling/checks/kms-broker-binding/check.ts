@@ -52,16 +52,27 @@ function stripJsoncComments(input: string): string {
   return out;
 }
 
-function parseWranglerConfig(appDir: string): unknown {
-  const jsoncPath = path.join(appDir, "wrangler.jsonc");
-  const jsonPath = path.join(appDir, "wrangler.json");
-  const filePath = fs.existsSync(jsoncPath) ? jsoncPath : fs.existsSync(jsonPath) ? jsonPath : null;
-  if (!filePath) {
-    return null;
-  }
+export const MULTIPLE_WRANGLER_CONFIG_MESSAGE =
+  "app may contain only one of wrangler.jsonc, wrangler.json, and wrangler.toml";
+
+function parseWranglerConfigFile(filePath: string): unknown {
   const raw = fs.readFileSync(filePath, "utf8");
   const text = filePath.endsWith(".jsonc") ? stripJsoncComments(raw) : raw;
   return JSON.parse(text) as unknown;
+}
+
+function singleWranglerConfigPath(appDir: string): string | null {
+  const jsoncPath = path.join(appDir, "wrangler.jsonc");
+  const jsonPath = path.join(appDir, "wrangler.json");
+  const hasJsonc = fs.existsSync(jsoncPath);
+  const hasJson = fs.existsSync(jsonPath);
+  if (hasJson) {
+    return jsonPath;
+  }
+  if (hasJsonc) {
+    return jsoncPath;
+  }
+  return null;
 }
 
 function walkStrings(value: unknown, onString: (s: string) => void): void {
@@ -134,7 +145,22 @@ export function check(root?: string): CheckResult {
     const appDir = path.join(appsDir, appName);
     const appKey = `apps/${appName}`;
 
+    const jsoncPath = path.join(appDir, "wrangler.jsonc");
+    const jsonPath = path.join(appDir, "wrangler.json");
     const tomlPath = path.join(appDir, "wrangler.toml");
+    const configKindCount =
+      Number(fs.existsSync(jsoncPath)) +
+      Number(fs.existsSync(jsonPath)) +
+      Number(fs.existsSync(tomlPath));
+
+    if (configKindCount > 1) {
+      violations.push({
+        app: appKey,
+        message: MULTIPLE_WRANGLER_CONFIG_MESSAGE,
+      });
+      continue;
+    }
+
     if (fs.existsSync(tomlPath)) {
       violations.push({
         app: appKey,
@@ -143,10 +169,12 @@ export function check(root?: string): CheckResult {
       continue;
     }
 
-    const config = parseWranglerConfig(appDir);
-    if (config === null) {
+    const configFilePath = singleWranglerConfigPath(appDir);
+    if (configFilePath === null) {
       continue;
     }
+
+    const config = parseWranglerConfigFile(configFilePath);
     if (typeof config !== "object" || config === null || Array.isArray(config)) {
       violations.push({ app: appKey, message: "wrangler config must be a JSON object" });
       continue;
