@@ -21,7 +21,8 @@ Zeroing the SDK plaintext buffer is best-effort. The base64 string in the JSON r
 
 - About US$7–8 per month for one interface endpoint in one availability zone. The cost starts when this infrastructure is applied, before a broker task exists.
 - Two broker tasks will share the one public subnet. Loss of that availability zone takes unwrap with it. This ADR does not add a subnet.
-- This plan does not deploy the broker process. Until that following spec, nothing assumes the task role.
+- Both containers in the broker task receive the task role credentials. `cloudflared` is trusted code inside the D8 boundary. Its image is `docker.io/cloudflare/cloudflared` pinned by digest. An unpinned tag or a foreign repository is not acceptable. An ECR pull-through cache is later work.
+- Workers VPC is in beta. Features and APIs may change before general availability. The unwrap path uses an HTTP service to `127.0.0.1:8080`. If the first apply rejects that shape, stop and report.
 - The envelope key is single-region. The Melbourne replica is the later row `kms-mrk-replica`.
 - An account administrator can `kms:PutKeyPolicy` and grant themselves `Decrypt`. CloudTrail records that change. `bypass_policy_lockout_safety_check` stays false.
 

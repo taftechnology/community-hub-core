@@ -18,13 +18,13 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 
 ## Where we are
 
-|              |                          |
-| ------------ | ------------------------ |
-| Phase        | 0 — Foundations          |
-| Last shipped | `terraform-envelope-kms` |
-| Next chunk   | `kms-broker-service`     |
-| Phase 0      | 10 / 14 done             |
-| Later phases | not started              |
+|              |                      |
+| ------------ | -------------------- |
+| Phase        | 0 — Foundations      |
+| Last shipped | `kms-broker-service` |
+| Next chunk   | `kms-worker-adapter` |
+| Phase 0      | 11 / 14 done         |
+| Later phases | not started          |
 
 Update the snapshot and the row in the **same PR**, last commit on the chunk branch, before the PR opens. Do not defer to a follow-up chore after merge. Do not put implementer reports here ([AGENTS.md](../AGENTS.md) §5).
 
@@ -68,7 +68,7 @@ Architecture: monorepo, CI, Terraform, kernel, residency, db with RLS, crypto, o
 | done        | `audit-log`              | Tamper-evident append. First events when identity writes. Spec `2026-09-25-audit-log`.                                                                                                   |
 | done        | `api-au-skeleton`        | Regional Worker, class regional, preview_urls false, health through kernel. Spec `2026-09-26-api-au-skeleton`.                                                                           |
 | done        | `terraform-envelope-kms` | Wrapping key, key policy, KMS endpoint, broker tunnel. Spec `2026-09-30-terraform-envelope-kms`.                                                                                         |
-| not started | `kms-broker-service`     | Broker process, image, ECS task, Workers VPC service on the broker tunnel. Spec `2026-10-01-kms-broker-service`.                                                                         |
+| done        | `kms-broker-service`     | Broker process, image, ECS task, Workers VPC service on the broker tunnel. Spec `2026-10-01-kms-broker-service`.                                                                         |
 | not started | `kms-worker-adapter`     | Worker `KmsPort` against `kms-port-v1.json`. VPC binding only on `apps/api`.                                                                                                             |
 | not started | `api-au-hostname`        | Set enable_regional_hostnames, apply, attach the api route on au.api.<zone>, and verify the running Worker. Retires the api-au-skeleton preview exception. After terraform-envelope-kms. |
 | not started | `kms-mrk-replica`        | Multi-Region replica of the envelope key in `ap-southeast-4`.                                                                                                                            |
@@ -221,7 +221,7 @@ From architecture §26. Do not invent answers in a spec.
 
 ## Next spec
 
-The next approved chunk on this list is **`kms-broker-service`**, unless the human picks another remaining Phase 0 row.
+The next approved chunk on this list is **`kms-worker-adapter`**, unless the human picks another remaining Phase 0 row.
 
 ---
 
