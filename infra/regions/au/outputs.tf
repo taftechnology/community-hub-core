@@ -64,3 +64,8 @@ output "connector_execution_policy" {
   description = "Connector execution role policy document."
   value       = module.ecs.execution_policy
 }
+
+output "broker_vpc_service_id" {
+  description = "Workers VPC service ID for the broker. Null when tasks are disabled."
+  value       = var.enable_kms_broker_tasks ? module.broker_vpc_service[0].service_id : null
+}

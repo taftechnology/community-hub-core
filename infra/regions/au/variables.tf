@@ -72,6 +72,19 @@ variable "enable_regional_hostnames" {
   default     = false
 }
 
+variable "enable_kms_broker_tasks" {
+  type        = bool
+  description = "When false, only the broker ECR repository is created. The task, ECS service, and Workers VPC service stay out of the plan."
+  default     = false
+}
+
+variable "kms_broker_image" {
+  type        = string
+  description = "Broker image digest in this cell's ECR repository. Required only when enable_kms_broker_tasks is true."
+  default     = null
+  nullable    = true
+}
+
 variable "region_key" {
   type        = string
   description = "Cloudflare Regional Services region_key for au.api.<zone>. No default."
