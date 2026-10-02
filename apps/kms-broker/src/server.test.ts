@@ -402,6 +402,58 @@ describe("createServer", () => {
     });
   });
 
+  it("stays healthy after the client disconnects mid-body", async () => {
+    const { kms, calls } = createFakeKms();
+    await withBroker({ kms }, async () => {
+      const [host, port] = contract.listen.split(":");
+      await new Promise<void>((resolve) => {
+        const req = httpRequest(
+          {
+            host,
+            port: Number(port),
+            method: "POST",
+            path: "/v1/generate-data-key",
+            headers: {
+              connection: "close",
+              "content-type": "application/json",
+              "content-length": "100",
+            },
+          },
+          () => {
+            resolve();
+          },
+        );
+        req.on("error", () => resolve());
+        req.write('{"keyId":"envelope"');
+        req.destroy();
+      });
+      expect(calls.generate).toHaveLength(0);
+
+      const health = await new Promise<{ statusCode?: number }>((resolve, reject) => {
+        const req = httpRequest(
+          {
+            host,
+            port: Number(port),
+            method: "GET",
+            path: "/health",
+            headers: { connection: "close" },
+          },
+          (response) => {
+            const result: { statusCode?: number } = {};
+            if (response.statusCode !== undefined) {
+              result.statusCode = response.statusCode;
+            }
+            response.resume();
+            response.on("end", () => resolve(result));
+          },
+        );
+        req.on("error", reject);
+        req.end();
+      });
+      expect(health.statusCode).toBe(200);
+    });
+  });
+
   it("stops chunked bodies at 65536 bytes", async () => {
     const { kms, calls } = createFakeKms();
     await withBroker({ kms }, async () => {

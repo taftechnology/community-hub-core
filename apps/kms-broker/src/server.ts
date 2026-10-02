@@ -47,7 +47,17 @@ export function createServer(deps: CreateServerDeps): {
   const maxBodyBytes = contract.limits.maxBodyBytes;
 
   const server = createHttpServer((req, res) => {
-    void handleRequest(req, res);
+    handleRequest(req, res).catch(() => {
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      try {
+        sendError(res, contract.error.statusRejected, errorBody);
+      } catch {
+        res.destroy();
+      }
+    });
   });
 
   async function handleRequest(
@@ -99,9 +109,26 @@ export function createServer(deps: CreateServerDeps): {
     }
 
     const bodyResult = await readBody(req, maxBodyBytes);
+    if (bodyResult === "aborted") {
+      logLine({ operation, outcome: "rejected" });
+      try {
+        sendError(res, contract.error.statusRejected, errorBody);
+      } catch {
+        /* socket already closed */
+      }
+      return;
+    }
     if (bodyResult === "too_large") {
       logLine({ operation, outcome: "rejected" });
       sendError(res, contract.error.statusRejected, errorBody);
+      const destroyBody = (): void => {
+        req.destroy();
+      };
+      if (res.writableFinished) {
+        destroyBody();
+      } else {
+        res.once("finish", destroyBody);
+      }
       return;
     }
 
@@ -175,8 +202,16 @@ export function createServer(deps: CreateServerDeps): {
           sendError(res, contract.error.statusFailed, errorBody);
           return;
         }
-        const plaintextEncoded = Buffer.from(result.plaintext.slice()).toString("base64");
-        const blobEncoded = Buffer.from(result.blob.slice()).toString("base64");
+        const plaintextEncoded = Buffer.from(
+          result.plaintext.buffer,
+          result.plaintext.byteOffset,
+          result.plaintext.byteLength,
+        ).toString("base64");
+        const blobEncoded = Buffer.from(
+          result.blob.buffer,
+          result.blob.byteOffset,
+          result.blob.byteLength,
+        ).toString("base64");
         zeroBytes(result.plaintext);
         zeroBytes(result.blob);
         const payload = JSON.stringify({
@@ -217,7 +252,11 @@ export function createServer(deps: CreateServerDeps): {
         sendError(res, contract.error.statusFailed, errorBody);
         return;
       }
-      const plaintextEncoded = Buffer.from(plaintext.slice()).toString("base64");
+      const plaintextEncoded = Buffer.from(
+        plaintext.buffer,
+        plaintext.byteOffset,
+        plaintext.byteLength,
+      ).toString("base64");
       zeroBytes(plaintext);
       logLine(logFields("ok"));
       res.statusCode = 200;
@@ -262,17 +301,21 @@ function sendError(res: import("node:http").ServerResponse, status: number, body
 async function readBody(
   req: import("node:http").IncomingMessage,
   maxBytes: number,
-): Promise<Buffer | "too_large"> {
+): Promise<Buffer | "too_large" | "aborted"> {
   const chunks: Buffer[] = [];
   let total = 0;
-  for await (const chunk of req) {
-    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    total += buf.length;
-    if (total > maxBytes) {
-      req.resume();
-      return "too_large";
+  req.on("error", () => {});
+  try {
+    for await (const chunk of req) {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += buf.length;
+      if (total > maxBytes) {
+        return "too_large";
+      }
+      chunks.push(buf);
     }
-    chunks.push(buf);
+  } catch {
+    return "aborted";
   }
   return Buffer.concat(chunks);
 }
