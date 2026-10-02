@@ -406,51 +406,64 @@ describe("createServer", () => {
     const { kms, calls } = createFakeKms();
     await withBroker({ kms }, async () => {
       const [host, port] = contract.listen.split(":");
-      await new Promise<void>((resolve) => {
-        const req = httpRequest(
-          {
-            host,
-            port: Number(port),
-            method: "POST",
-            path: "/v1/generate-data-key",
-            headers: {
-              connection: "close",
-              "content-type": "application/json",
-              "content-length": "100",
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown): void => {
+        unhandled.push(reason);
+      };
+      process.on("unhandledRejection", onUnhandled);
+      try {
+        await new Promise<void>((resolve) => {
+          const req = httpRequest(
+            {
+              host,
+              port: Number(port),
+              method: "POST",
+              path: "/v1/generate-data-key",
+              headers: {
+                connection: "close",
+                "content-type": "application/json",
+                "content-length": "100",
+              },
             },
-          },
-          () => {
+            () => {
+              resolve();
+            },
+          );
+          req.on("error", () => resolve());
+          req.write('{"keyId":"envelope"');
+          setTimeout(() => {
+            req.destroy();
             resolve();
-          },
-        );
-        req.on("error", () => resolve());
-        req.write('{"keyId":"envelope"');
-        req.destroy();
-      });
-      expect(calls.generate).toHaveLength(0);
+          }, 50);
+        });
 
-      const health = await new Promise<{ statusCode?: number }>((resolve, reject) => {
-        const req = httpRequest(
-          {
-            host,
-            port: Number(port),
-            method: "GET",
-            path: "/health",
-            headers: { connection: "close" },
-          },
-          (response) => {
-            const result: { statusCode?: number } = {};
-            if (response.statusCode !== undefined) {
-              result.statusCode = response.statusCode;
-            }
-            response.resume();
-            response.on("end", () => resolve(result));
-          },
-        );
-        req.on("error", reject);
-        req.end();
-      });
-      expect(health.statusCode).toBe(200);
+        const health = await new Promise<{ statusCode?: number }>((resolve, reject) => {
+          const req = httpRequest(
+            {
+              host,
+              port: Number(port),
+              method: "GET",
+              path: "/health",
+              headers: { connection: "close" },
+            },
+            (response) => {
+              const result: { statusCode?: number } = {};
+              if (response.statusCode !== undefined) {
+                result.statusCode = response.statusCode;
+              }
+              response.resume();
+              response.on("end", () => resolve(result));
+            },
+          );
+          req.on("error", reject);
+          req.end();
+        });
+        expect(unhandled).toHaveLength(0);
+        expect(health.statusCode).toBe(200);
+        expect(calls.generate).toHaveLength(0);
+      } finally {
+        process.off("unhandledRejection", onUnhandled);
+      }
     });
   });
 
