@@ -1,7 +1,7 @@
 # Spec: KMS worker adapter
 
 Slug: `kms-worker-adapter`
-Status: draft
+Status: approved (2026-10-01, Abdus Salam)
 Supersedes: —
 Architecture refs: §7.3 rule 5, §12.2, §20; D8; ADR 0008; AGENTS.md §1 (1, 7, 10), §6, §8, §10
 Branch: `feat/2026-10-01-kms-worker-adapter`, from `origin/main`. This spec is drafted on that branch. Implementation starts after this spec and its plan are both approved.

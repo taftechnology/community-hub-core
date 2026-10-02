@@ -10,7 +10,7 @@
 
 **Spec:** `docs/specs/2026-10-01-kms-worker-adapter.md`
 
-Status: draft
+Status: approved (2026-10-01, Abdus Salam)
 
 **Branch:** `feat/2026-10-01-kms-worker-adapter` · one PR · 5 tasks, one commit each
 
