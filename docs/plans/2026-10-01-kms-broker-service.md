@@ -10,7 +10,7 @@
 
 **Spec:** `docs/specs/2026-10-01-kms-broker-service.md`
 
-Status: draft
+Status: approved (2026-10-01, Abdus Salam)
 
 **Branch:** `feat/2026-10-01-kms-broker-service` · one PR · 7 tasks, one commit each
 
