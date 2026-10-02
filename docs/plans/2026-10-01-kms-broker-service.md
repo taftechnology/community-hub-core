@@ -10,7 +10,7 @@
 
 **Spec:** `docs/specs/2026-10-01-kms-broker-service.md`
 
-Status: approved (2026-10-01, Abdus Salam)
+Status: draft
 
 **Branch:** `feat/2026-10-01-kms-broker-service` · one PR · 7 tasks, one commit each
 
@@ -32,6 +32,8 @@ Status: approved (2026-10-01, Abdus Salam)
 - Session scratch (`.superpowers/`, `*-report.md`) is never committed.
 - The last commit updates `docs/roadmap.md`: `kms-broker-service` **done**, next `kms-worker-adapter`, Phase 0 `11 / 14`. Do not insert rows.
 - Implementer and reviewer cross Grok and Composer. A second fresh-context review of the final diff is required before merge. This chunk touches encryption and residency.
+- Do not set `inject-workspace-packages` in `pnpm-workspace.yaml`. pnpm 10.26.0 refuses `deploy` without it, so the image uses `pnpm --filter @community-hub/kms-broker-app deploy --legacy --prod /out`.
+- `readContract` reads `contract/kms-port-v1.json` with `readFileSync` and `import.meta.url`. Do not import that JSON from TypeScript. `rootDir: ./src` and `composite: true` reject a JSON file outside `src`.
 
 **Rollback:** Set `enable_kms_broker_tasks = false` and apply. That removes the task, the ECS service, the pull policy, and the VPC service. Do not set `force_delete` on the ECR repository. Once a person has pushed an image, destroying the repository fails until that person deletes the images. Reverting the PR drops the repository from config and does not, by itself, delete it. No tenant data.
 
@@ -159,7 +161,13 @@ Expected: PASS for `happy`, `probe_create_grant`, `wrong_region`, `rotation_off`
 - Consumes: the JSON fixture in the spec's Protocol section, including `limits.maxBodyBytes` of `65536`
 - Produces: `readContract(): Contract` and `checkContext(context: unknown): KmsContext`. `KmsContext` is `{ key_kind: "org"; org_id: string; key_version: string } | { key_kind: "identity"; region: string; key_version: string }`. `checkContext` throws `ContextRejected` on every rejection. No AWS SDK import. Package name `@community-hub/kms-broker`. Do not add it to `packages/residency/src/catalog.json`.
 
-`package.json` `files` includes `dist` and `contract`. `src/index.ts` imports `../contract/kms-port-v1.json` with `{ type: "json" }`, so `dist/index.js` resolves `../contract/kms-port-v1.json` at the package root. The test imports `@community-hub/kms-broker` after `tsc --build` and calls `readContract()`. It does not import the JSON from `src/`.
+`package.json` `files` includes `dist` and `contract`. `readContract` uses a hand-written `Contract` type and reads the file at runtime:
+
+```ts
+JSON.parse(readFileSync(new URL("../contract/kms-port-v1.json", import.meta.url), "utf8"))
+```
+
+That path resolves from `src/` under Vitest and from `dist/` in the image. Do not `import` the JSON. Package tsconfig follows `packages/crypto`: `rootDir: ./src`, `include: ["src/**/*.ts"]`, and `composite: true` from `tsconfig.base.json`. A JSON import from outside `src` is TS6059 and TS6307, and the base config does not set `resolveJsonModule`. The test imports `@community-hub/kms-broker` after `tsc --build` and calls `readContract()`. It does not import the JSON from `src/`.
 
 - [ ] **Step 1: Write failing tests** for empty `{}`, missing `key_version`, both scope keys, neither scope key, an extra key, a bad `key_kind`, a non-object, and the two happy contexts. Assert `readContract().limits.maxBodyBytes === 65536` and the two route paths. The `readContract` assertion imports the built package.
 
@@ -247,7 +255,7 @@ new KMSClient({
 **Interfaces:**
 
 - Consumes: the server from T3, `tsconfig.base.json`, and the repo lockfile
-- Produces: a two-stage image. Both stages use the same `node:24-slim@sha256:` digest. The runtime stage contains `/out` from `pnpm deploy --prod` and runs as `USER node`. No checker.
+- Produces: a two-stage image. Both stages use the same `node:24-slim@sha256:` digest. The runtime stage contains `/out` from `pnpm --filter @community-hub/kms-broker-app deploy --legacy --prod /out` and runs as `USER node`. No checker.
 
 - [ ] **Step 1: Resolve the digest and write the Dockerfile**
 
@@ -268,16 +276,19 @@ node_modules
 .superpowers
 ```
 
+`node:24-slim` still bundles corepack. `corepack enable` installs the pnpm version from the repo's `packageManager` field (`pnpm@10.26.0`). Do not `npm install -g pnpm`.
+
 Build stage:
 
 ```dockerfile
+RUN corepack enable
 RUN pnpm fetch
 RUN pnpm install --offline --frozen-lockfile --filter @community-hub/kms-broker-app...
 RUN pnpm --filter @community-hub/kms-broker-app... build
-RUN pnpm deploy --filter @community-hub/kms-broker-app --prod /out
+RUN pnpm --filter @community-hub/kms-broker-app deploy --legacy --prod /out
 ```
 
-`pnpm deploy` includes `contract/kms-port-v1.json` because T2 listed it in `files`. Runtime stage: `COPY --from=build /out /app`, `USER node`, `CMD` runs the deployed `main.js`. Do not use `npm install`. Vitest, tsc, and eslint are not in the runtime stage.
+`--legacy` is required because pnpm 10 refuses `deploy` unless `inject-workspace-packages=true`, and this repo does not set that. Do not add the setting to `pnpm-workspace.yaml`. The deploy includes `contract/kms-port-v1.json` because T2 listed it in `files`. Runtime stage: `COPY --from=build /out /app`, `USER node`, `CMD` runs the deployed `main.js`. Do not use `npm install`. Vitest, tsc, and eslint are not in the runtime stage.
 
 Review rule, not a test: a tag-only `FROM` fails review.
 
