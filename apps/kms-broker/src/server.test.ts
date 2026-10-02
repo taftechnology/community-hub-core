@@ -45,7 +45,11 @@ function createFakeKms(options?: {
   generateError?: Error;
   decryptError?: Error;
   hang?: boolean;
-}): { kms: BrokerKms; calls: { generate: unknown[]; decrypt: unknown[] }; entries: Map<string, StoredEntry> } {
+}): {
+  kms: BrokerKms;
+  calls: { generate: unknown[]; decrypt: unknown[] };
+  entries: Map<string, StoredEntry>;
+} {
   const calls = { generate: [] as unknown[], decrypt: [] as unknown[] };
   const entries = new Map<string, StoredEntry>();
 
@@ -374,46 +378,48 @@ describe("createServer", () => {
     const { kms, calls } = createFakeKms();
     await withBroker({ kms }, async () => {
       const [host, port] = contract.listen.split(":");
-      const res = await new Promise<{ statusCode?: number; body: string; headers: Record<string, string> }>(
-        (resolve, reject) => {
-          const req = httpRequest(
-            {
-              host,
-              port: Number(port),
-              method: "POST",
-              path: "/v1/generate-data-key",
-              headers: {
-                connection: "close",
-                "content-type": "application/json",
-                "transfer-encoding": "chunked",
-              },
+      const res = await new Promise<{
+        statusCode?: number;
+        body: string;
+        headers: Record<string, string>;
+      }>((resolve, reject) => {
+        const req = httpRequest(
+          {
+            host,
+            port: Number(port),
+            method: "POST",
+            path: "/v1/generate-data-key",
+            headers: {
+              connection: "close",
+              "content-type": "application/json",
+              "transfer-encoding": "chunked",
             },
-            (response) => {
-              const chunks: Buffer[] = [];
-              response.on("data", (chunk) => chunks.push(chunk as Buffer));
-              response.on("end", () => {
-                const result: {
-                  statusCode?: number;
-                  body: string;
-                  headers: Record<string, string>;
-                } = {
-                  body: Buffer.concat(chunks).toString("utf8"),
-                  headers: response.headers as Record<string, string>,
-                };
-                if (response.statusCode !== undefined) {
-                  result.statusCode = response.statusCode;
-                }
-                resolve(result);
-              });
-            },
-          );
-          req.on("error", reject);
-          const chunk = "a".repeat(65537);
-          req.write(`${chunk.length.toString(16)}\r\n${chunk}\r\n`);
-          req.write("0\r\n\r\n");
-          req.end();
-        },
-      );
+          },
+          (response) => {
+            const chunks: Buffer[] = [];
+            response.on("data", (chunk) => chunks.push(chunk as Buffer));
+            response.on("end", () => {
+              const result: {
+                statusCode?: number;
+                body: string;
+                headers: Record<string, string>;
+              } = {
+                body: Buffer.concat(chunks).toString("utf8"),
+                headers: response.headers as Record<string, string>,
+              };
+              if (response.statusCode !== undefined) {
+                result.statusCode = response.statusCode;
+              }
+              resolve(result);
+            });
+          },
+        );
+        req.on("error", reject);
+        const chunk = "a".repeat(65537);
+        req.write(`${chunk.length.toString(16)}\r\n${chunk}\r\n`);
+        req.write("0\r\n\r\n");
+        req.end();
+      });
       expect(res.statusCode).toBe(400);
       expect(res.body).toBe(ERROR_BODY);
       expect(res.headers["cache-control"]).toBe(CACHE_CONTROL);

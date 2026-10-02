@@ -29,9 +29,13 @@ describe("createAwsBrokerKms", () => {
 
     expect(commands).toHaveLength(2);
     const orgCmd = commands[0];
+    if (!(orgCmd instanceof GenerateDataKeyCommand)) {
+      throw new Error("expected GenerateDataKeyCommand");
+    }
     const idCmd = commands[1];
-    expect(orgCmd).toBeInstanceOf(GenerateDataKeyCommand);
-    expect(idCmd).toBeInstanceOf(GenerateDataKeyCommand);
+    if (!(idCmd instanceof GenerateDataKeyCommand)) {
+      throw new Error("expected GenerateDataKeyCommand");
+    }
     expect(orgCmd.input.KeyId).toBe(KEY_ID);
     expect(orgCmd.input.KeySpec).toBe("AES_256");
     expect(orgCmd.input.EncryptionContext).toEqual({
@@ -69,7 +73,9 @@ describe("createAwsBrokerKms", () => {
 
     expect(commands).toHaveLength(1);
     const cmd = commands[0];
-    expect(cmd).toBeInstanceOf(DecryptCommand);
+    if (!(cmd instanceof DecryptCommand)) {
+      throw new Error("expected DecryptCommand");
+    }
     expect(cmd.input.KeyId).toBe(KEY_ID);
     expect(cmd.input.EncryptionContext).toEqual({
       key_kind: "org",

@@ -41,18 +41,18 @@ Status: approved (2026-10-01, Abdus Salam)
 
 ## File map
 
-| Path | Role |
-| --- | --- |
+| Path                                        | Role                                                         |
+| ------------------------------------------- | ------------------------------------------------------------ |
 | `infra/modules/aws-kms-envelope/outputs.tf` | `tunnel_secret_arn`, `execution_role_name`, `log_group_name` |
-| `packages/kms-broker/` | Fixture and context check |
-| `apps/kms-broker/` | HTTP server, SDK call, Dockerfile |
-| `infra/modules/aws-kms-broker/` | ECR repository, cluster, task, service, pull policy |
-| `infra/modules/cf-broker-vpc-service/` | HTTP VPC service to `127.0.0.1:8080` |
-| `infra/regions/au/` | Flag, wiring, service-id output |
-| `docs/adr/0008-kms-broker-in-the-cell.md` | Sidecar trust and Workers VPC beta |
-| `architecture.md` | §12.2: the process exists; the Worker still does not call it |
-| `docs/runbooks/apply-staging-au.md` | Build, stamp, push, then the flag |
-| `.github/workflows/ci.yml` | Docker build job and two Terraform matrix rows |
+| `packages/kms-broker/`                      | Fixture and context check                                    |
+| `apps/kms-broker/`                          | HTTP server, SDK call, Dockerfile                            |
+| `infra/modules/aws-kms-broker/`             | ECR repository, cluster, task, service, pull policy          |
+| `infra/modules/cf-broker-vpc-service/`      | HTTP VPC service to `127.0.0.1:8080`                         |
+| `infra/regions/au/`                         | Flag, wiring, service-id output                              |
+| `docs/adr/0008-kms-broker-in-the-cell.md`   | Sidecar trust and Workers VPC beta                           |
+| `architecture.md`                           | §12.2: the process exists; the Worker still does not call it |
+| `docs/runbooks/apply-staging-au.md`         | Build, stamp, push, then the flag                            |
+| `.github/workflows/ci.yml`                  | Docker build job and two Terraform matrix rows               |
 
 ---
 
@@ -164,7 +164,7 @@ Expected: PASS for `happy`, `probe_create_grant`, `wrong_region`, `rotation_off`
 `package.json` `files` includes `dist` and `contract`. `readContract` uses a hand-written `Contract` type and reads the file at runtime:
 
 ```ts
-JSON.parse(readFileSync(new URL("../contract/kms-port-v1.json", import.meta.url), "utf8"))
+JSON.parse(readFileSync(new URL("../contract/kms-port-v1.json", import.meta.url), "utf8"));
 ```
 
 That path resolves from `src/` under Vitest and from `dist/` in the image. Do not `import` the JSON. A JSON import from outside `src` is TS6059 and TS6307, and `tsconfig.base.json` does not set `resolveJsonModule`. Keep `rootDir: ./src`, `include: ["src/**/*.ts"]`, and `composite: true` the way `packages/crypto` sets them. Do not copy crypto's `"types": ["@cloudflare/workers-types"]`. That set has no `node:fs` types, so `readFileSync` would fail typecheck. `packages/kms-broker` uses `"types": ["node"]` and `@types/node` as a devDependency, as `packages/db` does. The test imports `@community-hub/kms-broker` after `tsc --build` and calls `readContract()`. It does not import the JSON from `src/`.
@@ -296,13 +296,13 @@ Review rule, not a test: a tag-only `FROM` fails review.
 - [ ] **Step 2: Add the CI job** `broker-image` after `test` and before `terraform`:
 
 ```yaml
-  broker-image:
-    name: broker-image
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build
-        run: docker build -f apps/kms-broker/Dockerfile --label org.opencontainers.image.revision=${{ github.sha }} .
+broker-image:
+  name: broker-image
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@v4
+    - name: Build
+      run: docker build -f apps/kms-broker/Dockerfile --label org.opencontainers.image.revision=${{ github.sha }} .
 ```
 
 No `docker push`. No registry login. No AWS credentials.
@@ -518,14 +518,14 @@ docker build -f apps/kms-broker/Dockerfile --label org.opencontainers.image.revi
 
 ## Spec coverage
 
-| Spec requirement | Task |
-| --- | --- |
-| Three envelope outputs, five runs still pass | T1 |
-| Fixture, context check, no AWS SDK, not in `regionalOnlyPackages` | T2 |
-| HTTP behaviour, 404, body limit, timeout, startup ARN, logs | T3 |
-| Dockerfile review rule, prod-only non-root runtime, CI build, no push | T4 |
-| ECR, task, validations, pull policy, flag off | T5 |
-| HTTP VPC service, AU root, cell tests | T6 |
-| ADR, architecture, runbook, roadmap `11 / 14` | T7 |
-| Checker for `vpc_networks` / `cf1:network` | Out. `kms-worker-adapter` |
-| Pull-through cache | Out. Later work |
+| Spec requirement                                                      | Task                      |
+| --------------------------------------------------------------------- | ------------------------- |
+| Three envelope outputs, five runs still pass                          | T1                        |
+| Fixture, context check, no AWS SDK, not in `regionalOnlyPackages`     | T2                        |
+| HTTP behaviour, 404, body limit, timeout, startup ARN, logs           | T3                        |
+| Dockerfile review rule, prod-only non-root runtime, CI build, no push | T4                        |
+| ECR, task, validations, pull policy, flag off                         | T5                        |
+| HTTP VPC service, AU root, cell tests                                 | T6                        |
+| ADR, architecture, runbook, roadmap `11 / 14`                         | T7                        |
+| Checker for `vpc_networks` / `cf1:network`                            | Out. `kms-worker-adapter` |
+| Pull-through cache                                                    | Out. Later work           |

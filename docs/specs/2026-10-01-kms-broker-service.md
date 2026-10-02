@@ -216,22 +216,22 @@ The task definition references the existing secret by ARN. The image digest, the
 
 ## Risks
 
-| Risk | Mitigation |
-| --- | --- |
-| The task is added to the connector, so the empty connector role gains KMS | Separate cluster and service. Connector module untouched. The task uses the envelope role. |
-| `cloudflared` holds the unwrap credential | Named in ADR 0008. The image is only `docker.io/cloudflare/cloudflared` pinned by digest. A foreign repository fails validation. |
-| Anonymous Docker Hub pulls from Fargate are rate-limited | Accepted here, as with the connector's default. A pull-through cache is later work and is not built in this chunk. |
-| A digest-pinned image from another registry gets the unwrap role | `kms_broker_image` is a whole-string match of this cell's ECR repository URL, lowercase hex, nothing after the digest. |
-| The base image or the lockfile drifts on a rebuild | `FROM` is digest-pinned and install is `--frozen-lockfile`, enforced at review. CI builds the Dockerfile and does not check the pin. |
-| A pushed digest cannot be tied to source | Runbook builds a clean checkout of the merged commit and sets `org.opencontainers.image.revision`. |
-| Plaintext crosses the VPC | Sidecar on `127.0.0.1`. The security group already has `ingress = []`. |
-| Error bodies or logs carry the key ARN or context | Fixed error body. Three log fields. Tests use a distinctive ARN and `org_id`. |
-| Zeroing is treated as erasure | Best-effort on the SDK buffer only. ADR 0008 already says the base64 body lives until garbage collection. |
-| First apply cannot pull an image from an empty repository | The flag-off apply creates the repository and no task. Runbook: push, then enable. CI builds without pushing. |
-| Workers VPC is in beta and may reject loopback | Accepted. ADR 0008 names it. If the first apply rejects the shape, stop and report. Do not point the service at a VPC address. |
-| A `vpc_networks` binding bypasses the one-host, one-port limit | Out of this chunk. `kms-worker-adapter` fails that binding. See Out-of-band. |
-| One public subnet | `desired_count` 2 covers a dead task. AZ loss stays as ADR 0008 left it. |
-| The tunnel registers before the broker listens | Both containers essential. `cloudflared` waits until the broker is `HEALTHY`. |
+| Risk                                                                      | Mitigation                                                                                                                           |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| The task is added to the connector, so the empty connector role gains KMS | Separate cluster and service. Connector module untouched. The task uses the envelope role.                                           |
+| `cloudflared` holds the unwrap credential                                 | Named in ADR 0008. The image is only `docker.io/cloudflare/cloudflared` pinned by digest. A foreign repository fails validation.     |
+| Anonymous Docker Hub pulls from Fargate are rate-limited                  | Accepted here, as with the connector's default. A pull-through cache is later work and is not built in this chunk.                   |
+| A digest-pinned image from another registry gets the unwrap role          | `kms_broker_image` is a whole-string match of this cell's ECR repository URL, lowercase hex, nothing after the digest.               |
+| The base image or the lockfile drifts on a rebuild                        | `FROM` is digest-pinned and install is `--frozen-lockfile`, enforced at review. CI builds the Dockerfile and does not check the pin. |
+| A pushed digest cannot be tied to source                                  | Runbook builds a clean checkout of the merged commit and sets `org.opencontainers.image.revision`.                                   |
+| Plaintext crosses the VPC                                                 | Sidecar on `127.0.0.1`. The security group already has `ingress = []`.                                                               |
+| Error bodies or logs carry the key ARN or context                         | Fixed error body. Three log fields. Tests use a distinctive ARN and `org_id`.                                                        |
+| Zeroing is treated as erasure                                             | Best-effort on the SDK buffer only. ADR 0008 already says the base64 body lives until garbage collection.                            |
+| First apply cannot pull an image from an empty repository                 | The flag-off apply creates the repository and no task. Runbook: push, then enable. CI builds without pushing.                        |
+| Workers VPC is in beta and may reject loopback                            | Accepted. ADR 0008 names it. If the first apply rejects the shape, stop and report. Do not point the service at a VPC address.       |
+| A `vpc_networks` binding bypasses the one-host, one-port limit            | Out of this chunk. `kms-worker-adapter` fails that binding. See Out-of-band.                                                         |
+| One public subnet                                                         | `desired_count` 2 covers a dead task. AZ loss stays as ADR 0008 left it.                                                             |
+| The tunnel registers before the broker listens                            | Both containers essential. `cloudflared` waits until the broker is `HEALTHY`.                                                        |
 
 ## Out-of-band
 

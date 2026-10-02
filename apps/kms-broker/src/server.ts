@@ -67,8 +67,10 @@ export function createServer(deps: CreateServerDeps): {
     }
 
     const isGenerate =
-      method === contract.routes.generateDataKey.method && url === contract.routes.generateDataKey.path;
-    const isDecrypt = method === contract.routes.decrypt.method && url === contract.routes.decrypt.path;
+      method === contract.routes.generateDataKey.method &&
+      url === contract.routes.generateDataKey.path;
+    const isDecrypt =
+      method === contract.routes.decrypt.method && url === contract.routes.decrypt.path;
 
     if (!isGenerate && !isDecrypt) {
       logLine({ operation: "unknown", outcome: "rejected" });
