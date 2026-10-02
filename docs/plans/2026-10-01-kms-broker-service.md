@@ -10,7 +10,7 @@
 
 **Spec:** `docs/specs/2026-10-01-kms-broker-service.md`
 
-Status: draft
+Status: approved (2026-10-01, Abdus Salam)
 
 **Branch:** `feat/2026-10-01-kms-broker-service` · one PR · 7 tasks, one commit each
 
@@ -23,17 +23,17 @@ Status: draft
 - `kms_broker_image` is a whole-string match, lowercase hex, prefix built from `aws_account_id` and `name`. Must-fail tests live in the broker task module. A root test cannot `expect_failures` on a child resource.
 - `kms_broker_cloudflared_image` matches `^docker\.io/cloudflare/cloudflared@sha256:[0-9a-f]{64}$`. Pull it from Docker Hub. Do not add a pull-through cache, a Docker Hub credential, `ecr:BatchImportUpstreamImage`, or `ecr:CreateRepository`.
 - Pull policy actions, only when the flag is true: `ecr:GetAuthorizationToken` on `*`; `ecr:BatchCheckLayerAvailability`, `ecr:GetDownloadUrlForLayer`, and `ecr:BatchGetImage` on the broker repository. No push action on the task role or any execution policy.
-- KMS client `maxAttempts` is 1. The server aborts the call after 3000 ms.
+- KMS client `maxAttempts` is 1. The server passes `abortSignal` to the call and aborts it after 3000 ms. `Promise.race` alone is not the deadline.
 - `ENVELOPE_KEY_ARN` must match `^arn:aws:kms:ap-southeast-2:[0-9]{12}:key/.+$` or the process exits non-zero before listen.
 - Unknown methods and paths return 404 `{"error":"kms_failed"}` and `cache-control: no-store`. No KMS call.
-- `FROM` digest pin and `pnpm install --frozen-lockfile` are a review rule. Do not add a CI checker for them.
+- `FROM` digest pin and `pnpm install --offline --frozen-lockfile` are a review rule. Do not add a CI checker for them. The runtime stage has production dependencies only and runs as `USER node`.
 - `terraform init -backend=false -lockfile=readonly`. No live `plan`. No apply. No ECR push. No registry login in CI.
-- Lock new modules with `terraform providers lock -platform=linux_amd64 -platform=darwin_arm64`.
+- Lock new modules with `terraform providers lock -platform=linux_amd64 -platform=darwin_arm64`. Pin aws to `6.65.0` and cloudflare to `5.25.0`, the AU root lock. Do not take a newer version that `~>` would allow.
 - Session scratch (`.superpowers/`, `*-report.md`) is never committed.
 - The last commit updates `docs/roadmap.md`: `kms-broker-service` **done**, next `kms-worker-adapter`, Phase 0 `11 / 14`. Do not insert rows.
 - Implementer and reviewer cross Grok and Composer. A second fresh-context review of the final diff is required before merge. This chunk touches encryption and residency.
 
-**Rollback:** Revert the PR. The flag defaults to false, so a revert removes the task and the VPC service from the next plan. The ECR repository is empty until a person pushes. No tenant data.
+**Rollback:** Set `enable_kms_broker_tasks = false` and apply. That removes the task, the ECS service, the pull policy, and the VPC service. Do not set `force_delete` on the ECR repository. Once a person has pushed an image, destroying the repository fails until that person deletes the images. Reverting the PR drops the repository from config and does not, by itself, delete it. No tenant data.
 
 ---
 
@@ -152,13 +152,16 @@ Expected: PASS for `happy`, `probe_create_grant`, `wrong_region`, `rotation_off`
 - Create: `packages/kms-broker/src/context.ts`, `packages/kms-broker/src/index.ts`
 - Create: `packages/kms-broker/src/context.test.ts`
 - Modify: root `tsconfig.json` references if this repo lists project references
+- Modify: `pnpm-lock.yaml`
 
 **Interfaces:**
 
 - Consumes: the JSON fixture in the spec's Protocol section, including `limits.maxBodyBytes` of `65536`
 - Produces: `readContract(): Contract` and `checkContext(context: unknown): KmsContext`. `KmsContext` is `{ key_kind: "org"; org_id: string; key_version: string } | { key_kind: "identity"; region: string; key_version: string }`. `checkContext` throws `ContextRejected` on every rejection. No AWS SDK import. Package name `@community-hub/kms-broker`. Do not add it to `packages/residency/src/catalog.json`.
 
-- [ ] **Step 1: Write failing tests** for empty `{}`, missing `key_version`, both scope keys, neither scope key, an extra key, a bad `key_kind`, a non-object, and the two happy contexts. Assert `readContract().limits.maxBodyBytes === 65536` and the two route paths.
+`package.json` `files` includes `dist` and `contract`. `src/index.ts` imports `../contract/kms-port-v1.json` with `{ type: "json" }`, so `dist/index.js` resolves `../contract/kms-port-v1.json` at the package root. The test imports `@community-hub/kms-broker` after `tsc --build` and calls `readContract()`. It does not import the JSON from `src/`.
+
+- [ ] **Step 1: Write failing tests** for empty `{}`, missing `key_version`, both scope keys, neither scope key, an extra key, a bad `key_kind`, a non-object, and the two happy contexts. Assert `readContract().limits.maxBodyBytes === 65536` and the two route paths. The `readContract` assertion imports the built package.
 
 - [ ] **Step 2: Run** `pnpm --filter @community-hub/kms-broker test`. Expected: FAIL.
 
@@ -166,7 +169,7 @@ Expected: PASS for `happy`, `probe_create_grant`, `wrong_region`, `rotation_off`
 
 - [ ] **Step 4: Re-run the filter test.** Expected: PASS.
 
-- [ ] **Step 5: Commit** only `packages/kms-broker/**` and a root reference if one was required.
+- [ ] **Step 5: Commit** `packages/kms-broker/**`, `pnpm-lock.yaml`, and a root reference if one was required.
 
 ### T3 — HTTP server
 
@@ -176,12 +179,28 @@ Expected: PASS for `happy`, `probe_create_grant`, `wrong_region`, `rotation_off`
 
 - Create: `apps/kms-broker/package.json`, `tsconfig.json`, `tsconfig.test.json`, `vitest.config.ts`, `eslint.config.js`
 - Create: `apps/kms-broker/src/server.ts`, `apps/kms-broker/src/main.ts`, `apps/kms-broker/src/server.test.ts`
-- Dependency: `@community-hub/kms-broker` workspace, `@aws-sdk/client-kms`
+- Modify: `pnpm-lock.yaml`
+- Dependency: `@community-hub/kms-broker` workspace, `@aws-sdk/client-kms`. Do not depend on `@community-hub/crypto`.
 
 **Interfaces:**
 
 - Consumes: `readContract`, `checkContext` from `@community-hub/kms-broker`
-- Produces: `createServer(deps)` listening only if `start` is called, and `assertEnvelopeKeyArn(value: string): string`. `deps.kms.generateDataKey` and `deps.kms.decrypt` are the fake in tests. `deps.now` is not required. The deadline is 3000 ms inside `createServer`.
+- Produces: `createServer(deps)` listening only if `start` is called, and `assertEnvelopeKeyArn(value: string): string`. `deps.kms` is a `BrokerKms` defined in `server.ts`. It is not `KmsPort`. Do not import `@community-hub/crypto`. `@community-hub/no-kms-port-outside-crypto` flags `.generateDataKey` and `.decrypt` on a value whose type name is `KmsPort`, and `no-restricted-disable` forbids a disable comment.
+
+```ts
+type BrokerKms = {
+  generateDataKey(
+    input: { keyId: string; context: KmsContext },
+    opts: { abortSignal: AbortSignal },
+  ): Promise<{ plaintext: Uint8Array; blob: Uint8Array }>;
+  decrypt(
+    input: { keyId: string; blob: Uint8Array; context: KmsContext },
+    opts: { abortSignal: AbortSignal },
+  ): Promise<Uint8Array>;
+};
+```
+
+`createServer` takes `deadlineMs` and defaults it to `3000`. A test asserts that default without sleeping.
 
 `assertEnvelopeKeyArn` accepts only `^arn:aws:kms:ap-southeast-2:[0-9]{12}:key/.+$`. `main.ts` calls it on `process.env.ENVELOPE_KEY_ARN` and `process.exit(1)` before `listen` when it throws.
 
@@ -194,10 +213,9 @@ Expected: PASS for `happy`, `probe_create_grant`, `wrong_region`, `rotation_off`
 - `GET /health` is 200, empty, no KMS call.
 - Every response sets `cache-control: no-store`.
 - One log line per request. Keys are exactly `operation`, `key_kind`, `outcome`. Omit `key_kind` when the body did not parse.
-- Race the SDK call against a 3000 ms abort. `maxAttempts` on the real client is 1. A fake that never resolves returns 502 and the test ends.
-- After copying bytes out, fill the SDK `Uint8Array` with zeroes. Best-effort.
+- Pass `abortSignal` into `deps.kms`. `main.ts` forwards it: `client.send(command, { abortSignal })`. `maxAttempts` on the real client is 1. A `Promise.race` that leaves the SDK call running is not the deadline. After copying bytes out, fill the SDK `Uint8Array` with zeroes. Best-effort. A late response must not arrive after the abort with plaintext still live.
 
-- [ ] **Step 1: Write the failing tests named in the spec's Broker list**, including 404 for `GET /v1/decrypt`, `PUT /v1/generate-data-key`, and `/anything`; the chunked oversized body; the never-resolving fake (expect 502, and the test's own timeout under 4000 ms); and `assertEnvelopeKeyArn` for missing and for `arn:aws:kms:us-east-1:123456789012:key/abc`.
+- [ ] **Step 1: Write the failing tests named in the spec's Broker list**, including 404 for `GET /v1/decrypt`, `PUT /v1/generate-data-key`, and `/anything`; the chunked oversized body; and `assertEnvelopeKeyArn` for missing and for `arn:aws:kms:us-east-1:123456789012:key/abc`. One test asserts `deadlineMs` defaults to `3000` and does not sleep. The never-resolving fake is called with `deadlineMs: 1` (or fake timers). It returns 502, the passed `abortSignal` is aborted, and the test does not wait 3000 ms.
 
 - [ ] **Step 2: Run** `pnpm --filter @community-hub/kms-broker-app test` (package name `@community-hub/kms-broker-app` so it does not collide with the library). Expected: FAIL.
 
@@ -210,11 +228,11 @@ new KMSClient({
 });
 ```
 
-The 3000 ms deadline wraps the call even when the fake ignores SDK config.
+`main.ts` builds an `AbortSignal` from `deadlineMs` and passes it to `client.send`. The server does not import the SDK.
 
-- [ ] **Step 4: Re-run the app tests.** Expected: PASS.
+- [ ] **Step 4: Re-run the app tests.** Expected: PASS. `pnpm lint` on the app is clean, with no `KmsPort` import and no eslint-disable.
 
-- [ ] **Step 5: Commit** only `apps/kms-broker/**` except the Dockerfile, which is T4.
+- [ ] **Step 5: Commit** `apps/kms-broker/**` except the Dockerfile and `.dockerignore` (T4), plus `pnpm-lock.yaml`.
 
 ### T4 — Image build
 
@@ -223,12 +241,13 @@ The 3000 ms deadline wraps the call even when the fake ignores SDK config.
 **Files:**
 
 - Create: `apps/kms-broker/Dockerfile`
+- Create: `.dockerignore` (the build context is the repo root)
 - Modify: `.github/workflows/ci.yml`
 
 **Interfaces:**
 
-- Consumes: the server from T3 and the repo lockfile
-- Produces: a Dockerfile whose `FROM` is `node:24-slim@sha256:` plus 64 lowercase hex characters, install `pnpm install --frozen-lockfile`, and a CI job that builds it. No checker.
+- Consumes: the server from T3, `tsconfig.base.json`, and the repo lockfile
+- Produces: a two-stage image. Both stages use the same `node:24-slim@sha256:` digest. The runtime stage contains `/out` from `pnpm deploy --prod` and runs as `USER node`. No checker.
 
 - [ ] **Step 1: Resolve the digest and write the Dockerfile**
 
@@ -236,7 +255,29 @@ The 3000 ms deadline wraps the call even when the fake ignores SDK config.
 docker buildx imagetools inspect node:24-slim --format '{{json .Manifest}}'
 ```
 
-Use the manifest digest in `FROM`. Install with `pnpm install --frozen-lockfile`. Do not use `npm install`. Copy the workspace files the app needs (`package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `packages/kms-broker`, `apps/kms-broker`). The image `CMD` is `node` on the built `main.js`.
+Use that digest in both `FROM` lines. Workspace packages export `dist/` from `tsc --build`, as `packages/crypto/package.json` does. Copy the whole build context and let `.dockerignore` drop what must not enter it. A partial copy fights `pnpm-workspace.yaml` globs (`packages/*`, `apps/*`, `tooling/checks/*`) because the lockfile lists every importer.
+
+`.dockerignore`:
+
+```
+node_modules
+.git
+.terraform
+*.tfstate
+.dev.vars
+.superpowers
+```
+
+Build stage:
+
+```dockerfile
+RUN pnpm fetch
+RUN pnpm install --offline --frozen-lockfile --filter @community-hub/kms-broker-app...
+RUN pnpm --filter @community-hub/kms-broker-app... build
+RUN pnpm deploy --filter @community-hub/kms-broker-app --prod /out
+```
+
+`pnpm deploy` includes `contract/kms-port-v1.json` because T2 listed it in `files`. Runtime stage: `COPY --from=build /out /app`, `USER node`, `CMD` runs the deployed `main.js`. Do not use `npm install`. Vitest, tsc, and eslint are not in the runtime stage.
 
 Review rule, not a test: a tag-only `FROM` fails review.
 
@@ -262,7 +303,7 @@ docker build -f apps/kms-broker/Dockerfile --label org.opencontainers.image.revi
 
 Expected: exit 0. Do not push.
 
-- [ ] **Step 4: Commit** the Dockerfile and `ci.yml` only.
+- [ ] **Step 4: Commit** the Dockerfile, `.dockerignore`, and `ci.yml` only.
 
 ### T5 — Repository, task, and pull policy
 
@@ -317,17 +358,25 @@ Repository: `image_tag_mutability = "IMMUTABLE"`, `scan_on_push = true`. No repo
 
 - [ ] **Step 1: Write `tests/broker.tftest.hcl`**
 
-`run "flag_off"`: repository present, `image_tag_mutability` is `IMMUTABLE`, scan on push is true, no `aws_ecs_task_definition`, no `aws_ecs_service`, no `aws_iam_role_policy`.
+`run "flag_off"`: repository present, `image_tag_mutability` is `IMMUTABLE`, scan on push is true, no `aws_ecs_cluster`, no `aws_ecs_task_definition`, no `aws_ecs_service`, no `aws_iam_role_policy`. `force_delete` is absent.
 
-`run "flag_on"`: image `123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/kms-broker@sha256:` plus 64 lowercase hex `a`s. Assert `desired_count` 2, both `essential`, the dependsOn condition, the health-check command, `secrets.valueFrom` equals the variable ARN, log group equals the variable, pull-policy actions are the four named, and the policy text does not contain the four push actions.
+`run "flag_on"`: image `123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/kms-broker@sha256:` plus 64 lowercase hex `a`s. Assert `desired_count` 2, both `essential`, the dependsOn condition, the health-check command, `secrets.valueFrom` equals the variable ARN, log group equals the variable, `aws_ecs_service` depends on the pull policy, pull-policy actions are the four named, and the policy text does not contain the four push actions.
 
-`run "foreign_broker_image"` with `expect_failures = [var.kms_broker_image]`: a `public.ecr.aws` digest, a `us-east-1` ECR digest, a tag, uppercase hex, and a trailing suffix. Split these into one run each if Terraform 1.11 only reports one variable failure per run.
+`run "flag_on_null_image"`: `enable_tasks` true and `kms_broker_image` null. `expect_failures = [aws_ecs_task_definition.broker]`. That resource is in this module, so a module test may expect the failure. This is the proof of the precondition.
+
+One run, one image value. Five runs, each `expect_failures = [var.kms_broker_image]`:
+
+- `foreign_public_ecr` — a `public.ecr.aws` digest
+- `foreign_other_region` — a `us-east-1` ECR digest
+- `image_tag` — a tag, no digest
+- `uppercase_hex` — the cell prefix with uppercase hex
+- `trailing_suffix` — a valid digest with characters after it
 
 `run "foreign_cloudflared"` with `expect_failures = [var.kms_broker_cloudflared_image]`: `docker.io/anyone/cloudflared@sha256:` plus 64 hex `b`s.
 
 - [ ] **Step 2: Run** `terraform -chdir=infra/modules/aws-kms-broker test`. Expected: FAIL.
 
-- [ ] **Step 3: Implement** the module. `count` the task, service, and pull policy on `var.enable_tasks`. The repository has no count.
+- [ ] **Step 3: Implement** the module. `count` the cluster, task, service, and pull policy on `var.enable_tasks`. The repository has no count and no `force_delete`. `aws_ecs_service` depends on the pull policy, the same shape as `aws_ecs_service.connector` depending on its execution policy. `versions.tf` requires `hashicorp/aws` `6.65.0`. The lock file's aws version is `6.65.0`.
 
 - [ ] **Step 4: Re-run the module test.** Expected: PASS.
 
@@ -370,13 +419,13 @@ resource "cloudflare_connectivity_directory_service" "broker" {
 
 Cell tests, mocked providers, `command = plan`:
 
-- Flag false: no broker task definition, no broker ECS service, no broker VPC service, no pull policy. `output.broker_vpc_service_id` is null. The ECR repository is in the plan. `kms_broker_image` is not required.
+- Flag false: no broker cluster, no broker task definition, no broker ECS service, no broker VPC service, no pull policy. `output.broker_vpc_service_id` is null. The ECR repository is in the plan. `kms_broker_image` is not required.
 - Flag true: service `type` `http`, `http_port` 8080, `https_port` null, `tls_settings` null, `host.ipv4` `127.0.0.1`, no hostname, `host.network.tunnel_id` equals `module.broker_tunnel.tunnel_id` and not `module.tunnel.tunnel_id`.
 - Do not `expect_failures` on `module.broker`. Image failures stay in T5.
 
 - [ ] **Step 1: Write the module test and the two cell runs.** Expected: FAIL.
 
-- [ ] **Step 2: Implement.** Do not edit `cf-vpc-service` or `aws-ecs-tunnel`.
+- [ ] **Step 2: Implement.** Do not edit `cf-vpc-service` or `aws-ecs-tunnel`. `versions.tf` requires `cloudflare/cloudflare` `5.25.0`. The lock file's cloudflare version is `5.25.0`. Flag false also asserts there is no broker cluster.
 
 - [ ] **Step 3: Run**
 
@@ -462,7 +511,7 @@ docker build -f apps/kms-broker/Dockerfile --label org.opencontainers.image.revi
 | Three envelope outputs, five runs still pass | T1 |
 | Fixture, context check, no AWS SDK, not in `regionalOnlyPackages` | T2 |
 | HTTP behaviour, 404, body limit, timeout, startup ARN, logs | T3 |
-| Dockerfile review rule, CI build, no push | T4 |
+| Dockerfile review rule, prod-only non-root runtime, CI build, no push | T4 |
 | ECR, task, validations, pull policy, flag off | T5 |
 | HTTP VPC service, AU root, cell tests | T6 |
 | ADR, architecture, runbook, roadmap `11 / 14` | T7 |

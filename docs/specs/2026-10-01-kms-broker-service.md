@@ -1,7 +1,7 @@
 # Spec: KMS broker service
 
 Slug: `kms-broker-service`
-Status: draft
+Status: approved (2026-10-01, Abdus Salam)
 Supersedes: —
 Architecture refs: §5, §7.3 rule 5, §12.2, §20, §22; D8; ADR 0008; AGENTS.md §1 (1, 7, 10), §3, §6, §8
 Branch: `feat/2026-10-01-kms-broker-service`, from `origin/main`. This spec is drafted on that branch. Its plan is written after this spec is approved. Implementation starts after both are approved.
@@ -74,7 +74,7 @@ Both containers log to `log_group_name` from the envelope module, which is `/com
 
 The image is Node 24, the same major as `engines` (`>=24`) and CI (`node-version: 24`). Node 22 also has the `fetch` the health check uses. The image stays on 24 so the process that holds the unwrap credential is not a second runtime.
 
-The Dockerfile pins that base by digest: `FROM node:24-slim@sha256:` and 64 lowercase hex characters, and the install is `pnpm install --frozen-lockfile` against this repo's lockfile. A tag-only `FROM` fails review. That pin is a review rule, not a CI checker. AGENTS.md §10 adds a check only with a must-fail fixture, and this chunk does not add that checker. CI's `docker build` proves the Dockerfile builds. It does not prove the `FROM` line is digest-pinned.
+The Dockerfile pins that base by digest: `FROM node:24-slim@sha256:` and 64 lowercase hex characters, and the install is `pnpm install --frozen-lockfile` against this repo's lockfile. A tag-only `FROM` fails review. The runtime stage has production dependencies only and runs as non-root (`USER node`). That pin is a review rule, not a CI checker. AGENTS.md §10 adds a check only with a must-fail fixture, and this chunk does not add that checker. CI's `docker build` proves the Dockerfile builds. It does not prove the `FROM` line is digest-pinned.
 
 The repository `${name}/kms-broker` has `image_tag_mutability = "IMMUTABLE"` and `scan_on_push = true`.
 
