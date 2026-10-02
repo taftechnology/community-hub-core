@@ -4,7 +4,7 @@ Slug: `kms-worker-adapter`
 Status: draft
 Supersedes: —
 Architecture refs: §7.3 rule 5, §12.2, §20; D8; ADR 0008; AGENTS.md §1 (1, 7, 10), §6, §8, §10
-Branch: `feat/2026-10-01-kms-worker-adapter`, from `origin/main`. This spec is drafted on that branch. Its plan is written after this spec is approved. Implementation starts after both are approved.
+Branch: `feat/2026-10-01-kms-worker-adapter`, from `origin/main`. This spec is drafted on that branch. Implementation starts after this spec and its plan are both approved.
 
 Follows: `docs/specs/2026-10-01-kms-broker-service.md`. That chunk runs the broker in the cell when `enable_kms_broker_tasks` is true and registers an HTTP Workers VPC service to `127.0.0.1:8080` on the broker tunnel. This chunk is the client. It does not apply the cell, push an image, or replace the service id.
 
@@ -46,7 +46,7 @@ Callers in later chunks pass `"envelope"`. Any other `keyId` is sent as given. T
 
 ### Calls
 
-The package takes a `fetch` function. `generateDataKey` and `decrypt` `POST` JSON through it: `content-type: application/json`, the caller's `keyId`, and the caller's context. `decrypt` also sends `blob` as base64. The request URL is `http://127.0.0.1:8080` plus the path from the constants. That is the address the VPC service registers. The contract test injects a `fetch` that reads that path and forwards the request to the ephemeral port. The client does not take a port argument.
+The package takes a `fetch` function. `generateDataKey` and `decrypt` `POST` JSON through it: `content-type: application/json`, the caller's `keyId`, and the caller's context. `decrypt` also sends `blob` as base64. The request URL is `http://127.0.0.1:8080` plus the path from the constants. A VPC service binding connects to the host and port registered on the service. The host in the `fetch` URL only fills the `Host` header, and its port is ignored. The URL is kept identical to the broker's listen address so the broker sees a familiar request. The contract test injects a `fetch` that reads that path and forwards the body to the ephemeral port. It proves the path and the body. It does not prove routing. Routing is proved by the live call in `api-au-hostname`. The client does not take a port argument.
 
 The Worker's deadline is 5000 ms. The broker's is 3000 ms, so a broker 502 arrives first. The signal passed to `fetch` is that deadline. A test that needs the timeout uses a short deadline and a `fetch` that never resolves. It does not sleep 5000 ms.
 
@@ -78,20 +78,22 @@ Fake-`fetch` tests cover connection failure, the short deadline, and a non-2xx. 
 ]
 ```
 
-Wrangler 4.134 `deploy --dry-run` accepts any `service_id` string, including this sentinel and an all-zero UUID. The sentinel is all caps so it cannot be mistaken for an assigned id. This chunk's checker allows it.
+Wrangler 4.134 `deploy --dry-run` accepts any `service_id` string, including this sentinel and an all-zero UUID. The sentinel is all caps so it cannot be mistaken for an assigned id. This chunk's checker allows that `service_id`.
+
+The entry has exactly the keys `binding` and `service_id`. `remote` is absent. Wrangler's `vpc_services` example sets `"remote": true`, which makes `wrangler dev` use the real resource. A laptop running `apps/api` could then reach the cell broker and unwrap real organisation keys. That breaks §1 rule 9. If local development ever needs the broker, that is a later spec.
 
 ### Checker
 
-`kms-broker-binding` discovers Worker apps the same way `worker-config` does: an immediate child of `apps/` with `wrangler.jsonc` or `wrangler.json`. It parses that file. Named environments do not inherit bindings, so the same rules apply to the top-level object and to every object under `env`.
+`kms-broker-binding` discovers Worker apps the same way `worker-config` does: an immediate child of `apps/`. Every Worker today uses `wrangler.jsonc`. An app folder that contains `wrangler.toml` fails, even if a JSON config is also present, because a TOML file would be invisible to this check and to `worker-config`. Otherwise it parses `wrangler.jsonc` or `wrangler.json`. Named environments do not inherit bindings, so the same rules apply to the top-level object and to every object under `env`.
 
 It fails when:
 
 - any of those objects has a `vpc_networks` entry
-- any of those objects has a binding whose `binding`, `type`, or `network_id` is `cf1:network`
+- the parsed config, walked in full, contains the string `cf1:network`
 - any Worker other than `apps/api` has a `vpc_services` entry
-- `apps/api` does not have exactly one `vpc_services` entry, named `KMS_BROKER`
+- `apps/api` does not have exactly one `vpc_services` entry, named `KMS_BROKER`, whose only keys are `binding` and `service_id`
 
-Must-fail fixtures cover each rule, including one where the bad binding exists only under `env`. The checker's self-test points it at those fixture trees. `check:boundaries` points it at the repo, which does not contain those fixtures. AGENTS.md §10 lists `kms-broker-binding` next to the other Stage 1 checkers in the same pull request.
+`remote` on that entry fails because it is a key other than those two. Must-fail fixtures cover each rule, including one where the bad binding exists only under `env`, one where `KMS_BROKER` sets `remote`, and one app folder whose only config is `wrangler.toml`. The checker's self-test points it at those fixture trees. `check:boundaries` points it at the repo, which does not contain those fixtures. AGENTS.md §10 lists `kms-broker-binding` next to the other Stage 1 checkers in the same pull request.
 
 The broker tunnel id is a Terraform output and is not in this repo. The checker does not compare tunnel ids.
 
@@ -121,16 +123,18 @@ No new HTTP route on `apps/api`. No product event.
 
 ## Risks
 
-| Risk | Mitigation |
-| --- | --- |
+| Risk                                                                                          | Mitigation                                                                                                                                                         |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | A 200 with a bad blob is stored as the organisation's wrapped root and can never be unwrapped | The adapter rejects a non-JSON body, a missing `plaintext`, a missing or empty `blob`, and base64 that does not round-trip, all as `kms_failed`, before returning. |
-| A fetch error or the broker body is attached as `cause` and leaks into logs | `new Error("kms_failed")` with `cause` left `undefined`. A test asserts that. |
-| The Worker aborts before the broker's 502 | Worker deadline 5000 ms, broker deadline 3000 ms. |
-| `REPLACE_AFTER_APPLY` is deployed and mistaken for a real service | It is not a UUID. `api-au-hostname` makes the checker reject that sentinel once a real id is in the file. |
-| A `vpc_networks` or `cf1:network` binding reaches every address behind a tunnel | The checker rejects both, at the top level and under `env.*`. |
-| Another Worker holds `vpc_services` | The checker allows that array only on `apps/api`, and only the one `KMS_BROKER` entry. |
-| A global Worker imports the client | `regionalOnlyPackages` plus a must-fail `residency-cell` fixture. |
-| The contract test fights the broker tests for port 8080 | It calls `server.listen(0, "127.0.0.1")` and does not call `start()`. |
+| A fetch error or the broker body is attached as `cause` and leaks into logs                   | `new Error("kms_failed")` with `cause` left `undefined`. A test asserts that.                                                                                      |
+| The Worker aborts before the broker's 502                                                     | Worker deadline 5000 ms, broker deadline 3000 ms.                                                                                                                  |
+| `REPLACE_AFTER_APPLY` is deployed and mistaken for a real service                             | It is not a UUID. `api-au-hostname` makes the checker reject that sentinel once a real id is in the file.                                                          |
+| `remote: true` lets `wrangler dev` unwrap real organisation keys from a laptop                | The `KMS_BROKER` entry has only `binding` and `service_id`. A must-fail fixture sets `remote`.                                                                     |
+| A `vpc_networks` or `cf1:network` binding reaches every address behind a tunnel               | The checker rejects every `vpc_networks` entry, and any `cf1:network` string in the parsed config, at the top level and under `env.*`.                             |
+| A Worker configured with `wrangler.toml` hides a network binding from the check               | Any `apps/*` folder that contains `wrangler.toml` fails.                                                                                                           |
+| Another Worker holds `vpc_services`                                                           | The checker allows that array only on `apps/api`, and only the one `KMS_BROKER` entry.                                                                             |
+| A global Worker imports the client                                                            | `regionalOnlyPackages` plus a must-fail `residency-cell` fixture.                                                                                                  |
+| The contract test fights the broker tests for port 8080                                       | It calls `server.listen(0, "127.0.0.1")` and does not call `start()`.                                                                                              |
 
 ## Out-of-band
 
