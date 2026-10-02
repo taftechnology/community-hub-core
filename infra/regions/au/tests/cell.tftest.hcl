@@ -305,3 +305,128 @@ run "wrong_region_key_fails" {
 
   expect_failures = [var.region_key]
 }
+
+run "broker_flag_off" {
+  command = plan
+
+  variables {
+    aws_region                = "ap-southeast-2"
+    aws_account_id            = "123456789012"
+    cloudflare_account_id     = "00000000000000000000000000000000"
+    environment               = "staging"
+    cert_verification_mode    = "disabled"
+    deletion_protection       = false
+    backup_retention_days     = 0
+    zone_id                   = "00000000000000000000000000000000"
+    zone_name                 = "communityhub-staging.net"
+    enable_hyperdrive         = false
+    enable_regional_hostnames = false
+    enable_kms_broker_tasks   = false
+  }
+
+  assert {
+    condition     = var.enable_kms_broker_tasks == false
+    error_message = "flag off must leave broker tasks disabled"
+  }
+
+  assert {
+    condition     = strcontains(file("${path.module}/main.tf"), "enable_tasks             = var.enable_kms_broker_tasks")
+    error_message = "broker tasks must follow enable_kms_broker_tasks"
+  }
+
+  assert {
+    condition     = length(module.broker_vpc_service) == 0
+    error_message = "flag off must not create a broker VPC service"
+  }
+
+  assert {
+    condition     = output.broker_vpc_service_id == null
+    error_message = "broker VPC service id must be null when tasks are disabled"
+  }
+
+  assert {
+    condition     = module.kms_broker.repository_name == "ch-staging/kms-broker"
+    error_message = "ECR repository must still be planned when tasks are disabled"
+  }
+
+  assert {
+    condition     = var.kms_broker_image == null
+    error_message = "kms_broker_image is not required when tasks are disabled"
+  }
+}
+
+run "broker_flag_on" {
+  command = plan
+
+  variables {
+    aws_region                = "ap-southeast-2"
+    aws_account_id            = "123456789012"
+    cloudflare_account_id     = "00000000000000000000000000000000"
+    environment               = "staging"
+    cert_verification_mode    = "disabled"
+    deletion_protection       = false
+    backup_retention_days     = 0
+    zone_id                   = "00000000000000000000000000000000"
+    zone_name                 = "communityhub-staging.net"
+    enable_hyperdrive         = false
+    enable_regional_hostnames = false
+    enable_kms_broker_tasks   = true
+    kms_broker_image          = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/kms-broker@sha256:${join("", [for _ in range(64) : "a"])}"
+  }
+
+  override_resource {
+    target = module.broker_tunnel.cloudflare_zero_trust_tunnel_cloudflared.this
+    values = {
+      id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = module.tunnel.cloudflare_zero_trust_tunnel_cloudflared.this
+    values = {
+      id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    }
+    override_during = plan
+  }
+
+  assert {
+    condition     = module.broker_vpc_service[0].type == "http"
+    error_message = "broker VPC service must be http"
+  }
+
+  assert {
+    condition     = module.broker_vpc_service[0].http_port == 8080
+    error_message = "broker VPC service must listen on 8080"
+  }
+
+  assert {
+    condition     = module.broker_vpc_service[0].https_port == null
+    error_message = "broker VPC service https_port must be null"
+  }
+
+  assert {
+    condition     = module.broker_vpc_service[0].tls_settings == null
+    error_message = "broker VPC service tls_settings must be absent"
+  }
+
+  assert {
+    condition     = module.broker_vpc_service[0].host_ipv4 == "127.0.0.1"
+    error_message = "broker VPC service host must be loopback"
+  }
+
+  assert {
+    condition     = module.broker_vpc_service[0].host_hostname == null
+    error_message = "broker VPC service must not set a hostname"
+  }
+
+  assert {
+    condition     = module.broker_vpc_service[0].tunnel_id == module.broker_tunnel.tunnel_id
+    error_message = "broker VPC service must use the broker tunnel id"
+  }
+
+  assert {
+    condition     = module.broker_vpc_service[0].tunnel_id != module.tunnel.tunnel_id
+    error_message = "broker VPC service must not use the Postgres tunnel id"
+  }
+}

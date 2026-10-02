@@ -1,0 +1,10 @@
+**/node_modules
+**/.terraform
+**/*.tfstate*
+**/.dev.vars*
+**/.env*
+**/.wrangler
+**/dist
+**/*.tsbuildinfo
+.git
+.superpowers

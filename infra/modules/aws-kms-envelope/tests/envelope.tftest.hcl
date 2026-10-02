@@ -43,6 +43,14 @@ run "happy" {
     override_during = plan
   }
 
+  override_resource {
+    target = aws_secretsmanager_secret.broker_tunnel
+    values = {
+      arn = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging/kms-broker-tunnel-token-AbCdEf"
+    }
+    override_during = plan
+  }
+
   assert {
     condition     = aws_kms_key.envelope.region == "ap-southeast-2"
     error_message = "envelope KMS key region argument must be ap-southeast-2"
@@ -249,6 +257,21 @@ run "happy" {
   assert {
     condition     = aws_secretsmanager_secret.broker_tunnel.kms_key_id == null
     error_message = "broker tunnel secret must use the AWS-managed key"
+  }
+
+  assert {
+    condition     = output.tunnel_secret_arn == "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging/kms-broker-tunnel-token-AbCdEf"
+    error_message = "tunnel_secret_arn must be the secret's ARN, suffix included"
+  }
+
+  assert {
+    condition     = output.execution_role_name == "ch-staging-kms-broker-execution"
+    error_message = "execution_role_name must be the role name, not the ARN"
+  }
+
+  assert {
+    condition     = output.log_group_name == "/community-hub/ch-staging/kms-broker"
+    error_message = "log_group_name must be the envelope log group"
   }
 }
 

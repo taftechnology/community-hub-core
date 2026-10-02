@@ -112,6 +112,33 @@ module "vpc_service" {
   cert_verification_mode = var.cert_verification_mode
 }
 
+module "kms_broker" {
+  source = "../../modules/aws-kms-broker"
+
+  aws_region               = var.aws_region
+  aws_account_id           = var.aws_account_id
+  name                     = local.name
+  public_subnet_id         = module.network.public_subnet_id
+  tunnel_secret_arn        = module.envelope.tunnel_secret_arn
+  execution_role_name      = module.envelope.execution_role_name
+  execution_role_arn       = module.envelope.execution_role_arn
+  log_group_name           = module.envelope.log_group_name
+  task_role_arn            = module.envelope.task_role_arn
+  broker_security_group_id = module.envelope.broker_security_group_id
+  envelope_key_arn         = module.envelope.key_arn
+  enable_tasks             = var.enable_kms_broker_tasks
+  kms_broker_image         = var.kms_broker_image
+}
+
+module "broker_vpc_service" {
+  count  = var.enable_kms_broker_tasks ? 1 : 0
+  source = "../../modules/cf-broker-vpc-service"
+
+  account_id = var.cloudflare_account_id
+  name       = local.name
+  tunnel_id  = module.broker_tunnel.tunnel_id
+}
+
 module "hyperdrive" {
   source = "../../modules/cf-hyperdrive"
 
