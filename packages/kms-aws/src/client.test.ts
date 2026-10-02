@@ -121,7 +121,7 @@ describe("createKmsBrokerClient", () => {
     );
   });
 
-  it("throws kms_failed when plaintext base64 does not round-trip", async () => {
+  it("throws kms_failed when plaintext is invalid base64", async () => {
     const fetchImpl: KmsFetch = async () =>
       jsonResponse(200, { plaintext: "!!!not-valid-base64!!!", blob: "YQ==" });
     await expectKmsFailed(createKmsBrokerClient(fetchImpl).generateDataKey("k", orgContext));
@@ -130,18 +130,43 @@ describe("createKmsBrokerClient", () => {
     );
   });
 
-  it("throws kms_failed on generate when blob is missing, empty, not a string, or non-round-tripping", async () => {
+  it("throws kms_failed when plaintext decodes but re-encode differs (padding mismatch)", async () => {
+    const fetchGenerate: KmsFetch = async () =>
+      jsonResponse(200, { plaintext: "YQ", blob: "YQ==" });
+    const fetchDecrypt: KmsFetch = async () => jsonResponse(200, { plaintext: "YQ" });
+    await expectKmsFailed(createKmsBrokerClient(fetchGenerate).generateDataKey("k", orgContext));
+    await expectKmsFailed(
+      createKmsBrokerClient(fetchDecrypt).decrypt("k", new Uint8Array([1]), orgContext),
+    );
+  });
+
+  it("throws kms_failed on generate when blob is missing, empty, not a string, invalid, or non-round-tripping", async () => {
     const okPlaintext = toBase64(new Uint8Array(32));
     const cases = [
       { plaintext: okPlaintext },
       { plaintext: okPlaintext, blob: 1 },
       { plaintext: okPlaintext, blob: "" },
       { plaintext: okPlaintext, blob: "!!!" },
+      { plaintext: okPlaintext, blob: "YQ" },
     ];
     for (const body of cases) {
       const fetchImpl: KmsFetch = async () => jsonResponse(200, body);
       await expectKmsFailed(createKmsBrokerClient(fetchImpl).generateDataKey("k", orgContext));
     }
+  });
+
+  it("returns empty plaintext bytes when broker sends plaintext as empty string", async () => {
+    const fetchGenerate: KmsFetch = async () =>
+      jsonResponse(200, { plaintext: "", blob: toBase64(new Uint8Array([1])) });
+    const fetchDecrypt: KmsFetch = async () => jsonResponse(200, { plaintext: "" });
+    const generated = await createKmsBrokerClient(fetchGenerate).generateDataKey("k", orgContext);
+    expect(generated.plaintext).toEqual(new Uint8Array(0));
+    const decrypted = await createKmsBrokerClient(fetchDecrypt).decrypt(
+      "k",
+      new Uint8Array([1]),
+      orgContext,
+    );
+    expect(decrypted).toEqual(new Uint8Array(0));
   });
 
   it("aborts a hanging fetch within deadlineMs", async () => {

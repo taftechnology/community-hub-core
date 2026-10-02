@@ -33,9 +33,12 @@ function base64ToBytes(base64: string): Uint8Array | null {
   }
 }
 
-function base64RoundTrips(value: string): boolean {
-  if (typeof value !== "string" || value.length === 0) {
+function base64RoundTrips(value: string, allowEmpty = false): boolean {
+  if (typeof value !== "string") {
     return false;
+  }
+  if (value.length === 0) {
+    return allowEmpty;
   }
   const bytes = base64ToBytes(value);
   if (bytes === null) {
@@ -78,8 +81,11 @@ async function postBroker(
 
 function readPlaintext(record: Record<string, unknown>): Uint8Array {
   const plaintext = record.plaintext;
-  if (typeof plaintext !== "string" || !base64RoundTrips(plaintext)) {
+  if (typeof plaintext !== "string" || !base64RoundTrips(plaintext, true)) {
     throwKmsFailed();
+  }
+  if (plaintext.length === 0) {
+    return new Uint8Array(0);
   }
   return base64ToBytes(plaintext)!;
 }
