@@ -52,3 +52,18 @@ output "execution_policy" {
   description = "Broker execution role policy document."
   value       = aws_iam_role_policy.execution.policy
 }
+
+output "tunnel_secret_arn" {
+  description = "Full ARN of the broker tunnel token, including the Secrets Manager suffix."
+  value       = aws_secretsmanager_secret.broker_tunnel.arn
+}
+
+output "execution_role_name" {
+  description = "Name of the broker execution role. aws_iam_role_policy.role takes this, not the ARN."
+  value       = aws_iam_role.execution.name
+}
+
+output "log_group_name" {
+  description = "Broker log group name."
+  value       = local.log_group_name
+}
