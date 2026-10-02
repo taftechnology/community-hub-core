@@ -1,0 +1,11 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-03-10",
+  "compatibility_flags": [
+    "nodejs_als"
+  ],
+  "workers_dev": false,
+  "preview_urls": false
+}
