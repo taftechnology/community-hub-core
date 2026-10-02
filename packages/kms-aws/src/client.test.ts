@@ -77,9 +77,11 @@ describe("createKmsBrokerClient", () => {
     const argBlob = new Uint8Array([1, 2, 3, 4]);
     const plaintext = new Uint8Array(32).fill(9);
     let seenUrl = "";
+    let seenInit: RequestInit | undefined;
     let seenBody: unknown;
     const recordingFetch: KmsFetch = async (input, init) => {
       seenUrl = typeof input === "string" ? input : input.toString();
+      seenInit = init;
       seenBody = JSON.parse(String(init?.body));
       return jsonResponse(200, { plaintext: toBase64(plaintext) });
     };
@@ -88,6 +90,9 @@ describe("createKmsBrokerClient", () => {
     const result = await client.decrypt("decrypt-key", argBlob, identityContext);
 
     expect(seenUrl).toBe(`${BROKER_ORIGIN}${DECRYPT_PATH}`);
+    expect(seenInit?.method).toBe("POST");
+    const headers = new Headers(seenInit?.headers);
+    expect(headers.get("content-type")).toBe("application/json");
     expect(seenBody).toEqual({
       keyId: "decrypt-key",
       context: identityContext,
@@ -104,8 +109,23 @@ describe("createKmsBrokerClient", () => {
     await expectKmsFailed(client.decrypt("k", new Uint8Array([1]), orgContext));
   });
 
+  it("throws kms_failed when a 200 JSON body is not a plain object", async () => {
+    for (const body of [null, 123, "x", []]) {
+      const fetchImpl: KmsFetch = async () =>
+        new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      await expectKmsFailed(createKmsBrokerClient(fetchImpl).generateDataKey("k", orgContext));
+      await expectKmsFailed(
+        createKmsBrokerClient(fetchImpl).decrypt("k", new Uint8Array([1]), orgContext),
+      );
+    }
+  });
+
   it("throws kms_failed when plaintext is missing", async () => {
-    const fetchGenerate: KmsFetch = async () => jsonResponse(200, { blob: toBase64(new Uint8Array(1)) });
+    const fetchGenerate: KmsFetch = async () =>
+      jsonResponse(200, { blob: toBase64(new Uint8Array(1)) });
     const fetchDecrypt: KmsFetch = async () => jsonResponse(200, {});
     await expectKmsFailed(createKmsBrokerClient(fetchGenerate).generateDataKey("k", orgContext));
     await expectKmsFailed(
