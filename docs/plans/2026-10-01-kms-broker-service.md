@@ -167,7 +167,7 @@ Expected: PASS for `happy`, `probe_create_grant`, `wrong_region`, `rotation_off`
 JSON.parse(readFileSync(new URL("../contract/kms-port-v1.json", import.meta.url), "utf8"))
 ```
 
-That path resolves from `src/` under Vitest and from `dist/` in the image. Do not `import` the JSON. Package tsconfig follows `packages/crypto`: `rootDir: ./src`, `include: ["src/**/*.ts"]`, and `composite: true` from `tsconfig.base.json`. A JSON import from outside `src` is TS6059 and TS6307, and the base config does not set `resolveJsonModule`. The test imports `@community-hub/kms-broker` after `tsc --build` and calls `readContract()`. It does not import the JSON from `src/`.
+That path resolves from `src/` under Vitest and from `dist/` in the image. Do not `import` the JSON. A JSON import from outside `src` is TS6059 and TS6307, and `tsconfig.base.json` does not set `resolveJsonModule`. Keep `rootDir: ./src`, `include: ["src/**/*.ts"]`, and `composite: true` the way `packages/crypto` sets them. Do not copy crypto's `"types": ["@cloudflare/workers-types"]`. That set has no `node:fs` types, so `readFileSync` would fail typecheck. `packages/kms-broker` uses `"types": ["node"]` and `@types/node` as a devDependency, as `packages/db` does. The test imports `@community-hub/kms-broker` after `tsc --build` and calls `readContract()`. It does not import the JSON from `src/`.
 
 - [ ] **Step 1: Write failing tests** for empty `{}`, missing `key_version`, both scope keys, neither scope key, an extra key, a bad `key_kind`, a non-object, and the two happy contexts. Assert `readContract().limits.maxBodyBytes === 65536` and the two route paths. The `readContract` assertion imports the built package.
 
@@ -188,7 +188,8 @@ That path resolves from `src/` under Vitest and from `dist/` in the image. Do no
 - Create: `apps/kms-broker/package.json`, `tsconfig.json`, `tsconfig.test.json`, `vitest.config.ts`, `eslint.config.js`
 - Create: `apps/kms-broker/src/server.ts`, `apps/kms-broker/src/main.ts`, `apps/kms-broker/src/server.test.ts`
 - Modify: `pnpm-lock.yaml`
-- Dependency: `@community-hub/kms-broker` workspace, `@aws-sdk/client-kms`. Do not depend on `@community-hub/crypto`.
+- Dependency: `@community-hub/kms-broker` workspace, `@aws-sdk/client-kms`, `@types/node` as a devDependency. Do not depend on `@community-hub/crypto`.
+- `package.json` `files` is `["dist"]`. `tsconfig.json` uses `"types": ["node"]`, the same Node types as `packages/kms-broker`, because the server imports `node:http`. Keep `rootDir: ./src` and `composite: true`.
 
 **Interfaces:**
 
@@ -288,7 +289,7 @@ RUN pnpm --filter @community-hub/kms-broker-app... build
 RUN pnpm --filter @community-hub/kms-broker-app deploy --legacy --prod /out
 ```
 
-`--legacy` is required because pnpm 10 refuses `deploy` unless `inject-workspace-packages=true`, and this repo does not set that. Do not add the setting to `pnpm-workspace.yaml`. The deploy includes `contract/kms-port-v1.json` because T2 listed it in `files`. Runtime stage: `COPY --from=build /out /app`, `USER node`, `CMD` runs the deployed `main.js`. Do not use `npm install`. Vitest, tsc, and eslint are not in the runtime stage.
+`--legacy` is required because pnpm 10 refuses `deploy` unless `inject-workspace-packages=true`, and this repo does not set that. Do not add the setting to `pnpm-workspace.yaml`. The library's `files` list ships `dist` and `contract/kms-port-v1.json`. The app's `files: ["dist"]` from T3 keeps `src/` and the tests out of `/out`. Runtime stage: `COPY --from=build /out /app`, `USER node`, `CMD` runs the deployed `main.js`. Do not use `npm install`. Vitest, tsc, and eslint are not in the runtime stage.
 
 Review rule, not a test: a tag-only `FROM` fails review.
 
