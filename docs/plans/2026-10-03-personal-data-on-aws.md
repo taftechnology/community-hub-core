@@ -10,7 +10,7 @@
 
 **Spec:** `docs/specs/2026-10-03-personal-data-on-aws.md`
 
-Status: draft
+Status: approved (2026-10-03, Abdus Salam)
 
 **Branch:** `docs/2026-10-03-personal-data-on-aws` · one PR · 7 tasks, one commit each
 
@@ -271,7 +271,7 @@ Run a case-insensitive search for:
 
 `Regional Services`, `Hyperdrive`, `exec-au`, `workers.dev`, `Durable Object`, `Cloudflare Access`, `control-plane`, `control plane`, `R2`, `Worker`, `gateway`, `broker`, `tunnel`, `KV`, `D1`, `Queues`, `Workflows`, `Cron`, `wrangler`, `exec`, `webhooks-au`, `api-au`, `Hono`
 
-A hit is the Cloudflare product or the old hostname. SQS, EventBridge, S3, and the regional service are the new design and are not hits. "Every queue has encryption" is not a hit.
+A hit is the Cloudflare product or the old hostname. SQS, EventBridge, S3, and the regional service are the new design and are not hits. "Every queue has encryption" is not a hit. "API Gateway", "execution role", and the decision IDs D1 and D10 to D17 are not hits.
 
 Each hit is deleted, or is one clause that says it was superseded by ADR 0009. An open mechanism may name the old path only in that clause, then state the question, the leaning, and the owning chunk. Any other hit that tells the reader to build the old path fails the task. Fix a leftover in sections 1 to 18 in this same commit, and name that section in the message.
 
@@ -333,7 +333,7 @@ Do not change §1 rules that the spec says are unchanged, other than their numbe
 
 Case-insensitive: `Regional Services`, `Hyperdrive`, `exec-au`, `workers.dev`, `Durable Object`, `Cloudflare Access`, `control-plane`, `control plane`, `R2`, `Worker`, `gateway`, `broker`, `tunnel`, `KV`, `D1`, `Queues`, `Workflows`, `Cron`, `wrangler`, `exec`, `webhooks-au`, `api-au`, `Hono`.
 
-A hit is the Cloudflare product or the old hostname. A mention that cleanup has not yet removed a check is allowed. Each other hit is deleted, or is one clause that says it was superseded by ADR 0009. `rg` exiting 1 is a pass only after you have read that the file still states rule 1.
+A hit is the Cloudflare product or the old hostname. "API Gateway", "execution role", and the decision IDs D1 and D10 to D17 are not hits. A mention that cleanup has not yet removed a check is allowed. Each other hit is deleted, or is one clause that says it was superseded by ADR 0009. `rg` exiting 1 is a pass only after you have read that the file still states rule 1.
 
 - [ ] **Step 3: Format and commit**
 
