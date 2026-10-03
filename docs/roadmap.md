@@ -18,13 +18,13 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 
 ## Where we are
 
-|              |                      |
-| ------------ | -------------------- |
-| Phase        | 0 — Foundations      |
-| Last shipped | `kms-worker-adapter` |
-| Next chunk   | `api-au-hostname`    |
-| Phase 0      | 12 / 14 done         |
-| Later phases | not started          |
+|              |                                                                   |
+| ------------ | ----------------------------------------------------------------- |
+| Phase        | 0 — Foundations                                                   |
+| Last shipped | `kms-worker-adapter`                                              |
+| Next chunk   | cleanup                                                           |
+| Phase 0      | 19 rows: 12 done, 1 superseded (`api-au-hostname`), 6 not started |
+| Later phases | not started                                                       |
 
 Update the snapshot and the row in the **same PR**, last commit on the chunk branch, before the PR opens. Do not defer to a follow-up chore after merge. Do not put implementer reports here ([AGENTS.md](../AGENTS.md) §5).
 
@@ -32,11 +32,12 @@ Update the snapshot and the row in the **same PR**, last commit on the chunk bra
 
 ## How to read this
 
-| Status          | Meaning                    |
-| --------------- | -------------------------- |
-| **done**        | On `main`. Do not re-spec. |
-| **in progress** | Spec approved or PR open.  |
-| **not started** | No approved spec yet.      |
+| Status          | Meaning                                                         |
+| --------------- | --------------------------------------------------------------- |
+| **done**        | On `main`. Do not re-spec.                                      |
+| **in progress** | Spec approved or PR open.                                       |
+| **not started** | No approved spec yet.                                           |
+| **superseded**  | The row stays. ADR 0009 replaced that runtime. Do not build it. |
 
 Phase 0–1 rows are **chunks** (one spec → plan → branch → PR). Phase 2–7 rows are **journeys**; specs are cut when we enter that phase.
 
@@ -54,24 +55,31 @@ Chunks that change a documented decision without belonging to a phase. They do n
 
 ## Phase 0 — Foundations
 
-Architecture: monorepo, CI, Terraform, kernel, residency, db with RLS, crypto, observability, audit, `packages/ui`.
+Architecture: monorepo, CI, Terraform for AWS in `ap-southeast-2`, kernel, db with RLS, crypto, observability, audit, `packages/ui`.
 
-| Status      | Chunk                    | What                                                                                                                                                                                     |
-| ----------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| done        | `monorepo-skeleton`      | Workspace, gateway `/health`, checkers, CI Stages 1–3. Spec `2026-09-17-monorepo-skeleton`.                                                                                              |
-| done        | `terraform-au-cell`      | Cloudflare + AU AWS foundations. No tenant data. Spec `2026-09-18-terraform-au-cell`.                                                                                                    |
-| done        | `packages-db`            | Privileged bootstrap, wrapped Drizzle runner, transaction-local `set_config`, RLS. Spec `2026-09-18-packages-db`.                                                                        |
-| done        | `packages-crypto`        | AES-256-GCM, KMS wrap, blind indexes. Synthetic data only. Spec `2026-09-18-packages-crypto`.                                                                                            |
-| done        | `kernel-runtime`         | `defineModule`, request context, DI, outbox. Keeps `healthPayload`. Spec `2026-09-19-kernel-runtime`.                                                                                    |
-| done        | `packages-residency`     | Cell config; global Workers cannot import personal-data modules. Spec `2026-09-20-packages-residency`.                                                                                   |
-| done        | `packages-ui`            | shadcn copied into the repo + tokens (D16). No product screens. Spec `2026-09-25-packages-ui`.                                                                                           |
-| done        | `audit-log`              | Tamper-evident append. First events when identity writes. Spec `2026-09-25-audit-log`.                                                                                                   |
-| done        | `api-au-skeleton`        | Regional Worker, class regional, preview_urls false, health through kernel. Spec `2026-09-26-api-au-skeleton`.                                                                           |
-| done        | `terraform-envelope-kms` | Wrapping key, key policy, KMS endpoint, broker tunnel. Spec `2026-09-30-terraform-envelope-kms`.                                                                                         |
-| done        | `kms-broker-service`     | Broker process, image, ECS task, Workers VPC service on the broker tunnel. Spec `2026-10-01-kms-broker-service`.                                                                         |
-| done        | `kms-worker-adapter`     | Worker `KmsPort` against `kms-port-v1.json`. VPC binding only on `apps/api`. Spec `2026-10-01-kms-worker-adapter`.                                                                       |
-| not started | `api-au-hostname`        | Set enable_regional_hostnames, apply, attach the api route on au.api.<zone>, and verify the running Worker. Retires the api-au-skeleton preview exception. After terraform-envelope-kms. |
-| not started | `kms-mrk-replica`        | Multi-Region replica of the envelope key in `ap-southeast-4`.                                                                                                                            |
+| Status      | Chunk                    | What                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ----------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| done        | `monorepo-skeleton`      | Workspace, gateway `/health`, checkers, CI Stages 1–3. Spec `2026-09-17-monorepo-skeleton`.                                                                                                                                                                                                                                                                                                                                                                                        |
+| done        | `terraform-au-cell`      | Cloudflare + AU AWS foundations. No tenant data. Spec `2026-09-18-terraform-au-cell`. Superseded for the runtime by ADR 0009.                                                                                                                                                                                                                                                                                                                                                      |
+| done        | `packages-db`            | Privileged bootstrap, wrapped Drizzle runner, transaction-local `set_config`, RLS. Spec `2026-09-18-packages-db`.                                                                                                                                                                                                                                                                                                                                                                  |
+| done        | `packages-crypto`        | AES-256-GCM, KMS wrap, blind indexes. Synthetic data only. Spec `2026-09-18-packages-crypto`.                                                                                                                                                                                                                                                                                                                                                                                      |
+| done        | `kernel-runtime`         | `defineModule`, request context, DI, outbox. Keeps `healthPayload`. Spec `2026-09-19-kernel-runtime`.                                                                                                                                                                                                                                                                                                                                                                              |
+| done        | `packages-residency`     | Cell config; global Workers cannot import personal-data modules. Spec `2026-09-20-packages-residency`. Superseded for the runtime by ADR 0009.                                                                                                                                                                                                                                                                                                                                     |
+| done        | `packages-ui`            | shadcn copied into the repo + tokens (D16). No product screens. Spec `2026-09-25-packages-ui`.                                                                                                                                                                                                                                                                                                                                                                                     |
+| done        | `audit-log`              | Tamper-evident append. First events when identity writes. Spec `2026-09-25-audit-log`.                                                                                                                                                                                                                                                                                                                                                                                             |
+| done        | `api-au-skeleton`        | Regional Worker, class regional, preview_urls false, health through kernel. Spec `2026-09-26-api-au-skeleton`. Superseded for the runtime by ADR 0009.                                                                                                                                                                                                                                                                                                                             |
+| done        | `terraform-envelope-kms` | Wrapping key, key policy, KMS endpoint, broker tunnel. Spec `2026-09-30-terraform-envelope-kms`. Superseded for the runtime by ADR 0009.                                                                                                                                                                                                                                                                                                                                           |
+| done        | `kms-broker-service`     | Broker process, image, ECS task, Workers VPC service on the broker tunnel. Spec `2026-10-01-kms-broker-service`. Superseded for the runtime by ADR 0009.                                                                                                                                                                                                                                                                                                                           |
+| done        | `kms-worker-adapter`     | Worker `KmsPort` against `kms-port-v1.json`. VPC binding only on `apps/api`. Spec `2026-10-01-kms-worker-adapter`. Superseded for the runtime by ADR 0009.                                                                                                                                                                                                                                                                                                                         |
+| superseded  | `api-au-hostname`        | Set enable_regional_hostnames, apply, attach the api route on au.api.<zone>, and verify the running Worker. Not deleted. Superseded for the runtime by ADR 0009.                                                                                                                                                                                                                                                                                                                   |
+| not started | cleanup                  | Gateway app, Cloudflare and broker Terraform, Worker checks, and `packages/residency` go. `apps/api` stays. Its Wrangler files, Worker class file, and `KMS_BROKER` go, and its tests leave the Workers pool. `aws-kms-adapter.ts`, `context.ts`, and their tests move to `apps/api/src/kms/`. `@aws-sdk/client-kms` is added so those tests still run. The HTTP server, `main.ts`, the Dockerfile, `kms-port-v1`, `@community-hub/kms-aws`, and `kms-broker-binding` are deleted. |
+| not started | foundations              | Tags and the two budgets, the second public subnet, the database changes, the secrets and their key, the task role and the execution role, and the multi-Region envelope key with its test. No apply of that key before the test is merged.                                                                                                                                                                                                                                        |
+| not started | ingress                  | Route 53, the API certificate, Cloud Map `SRV`, the VPC link on two private subnets, the HTTP API `$default` stage, and the ECS service module.                                                                                                                                                                                                                                                                                                                                    |
+| not started | regional service         | `apps/api` in place. ARM, one process, the `KmsPort` reshape, the ported server tests, and TLS `verify-full`.                                                                                                                                                                                                                                                                                                                                                                      |
+| not started | first staging apply      | Health, a database round trip, a KMS round trip, Cloud Map, and the VPC link reaching a task in a public subnet. One staging run with the KMS endpoint flag on before any production apply.                                                                                                                                                                                                                                                                                        |
+| not started | `kms-mrk-replica`        | A replica of the envelope key in `ap-southeast-4`, not a database backup. After the first staging apply. The Region is opt-in and disabled until a person enables it.                                                                                                                                                                                                                                                                                                              |
+
+SQS, EventBridge, file storage, and the admin static-file distribution are not rows here. Each waits for the first chunk that uses it.
 
 Kernel ships `defineModule`, request context, and the organisation-scoped outbox. Observability is the logger only (no product analytics SDK — D17).
 
@@ -83,17 +91,17 @@ Shipped with the skeleton (not separate chunks): `@community-hub/kernel` `health
 
 Vertical slices. Nav items appear in the frozen order (see [Admin navigation](#admin-navigation-frozen)) and stay **hidden** until entitled.
 
-| Status      | Chunk                  | What                                                                                              |
-| ----------- | ---------------------- | ------------------------------------------------------------------------------------------------- |
-| not started | `admin-shell`          | `apps/admin` with the sidebar sequence. Dashboard only; everything else hidden.                   |
-| not started | `tenancy-implicit-org` | Organisation + community. Control-plane directory: IDs, slugs, region — never names.              |
-| not started | `identity-otp`         | Regional identity, OTP, passkeys path as designed. No email on gateway.                           |
-| not started | `people-households`    | Person, Household, GuardianLink, `is_minor`. Tags + activity log land here.                       |
-| not started | `access-roles`         | Settings → Users & Roles.                                                                         |
-| not started | `entitlements-plans`   | Control-plane plans and allocations; community toggles; nav hide/show.                            |
-| not started | `stripe-billing`       | Our subscriptions. Webhooks on `webhooks-au`; work on `exec`. Not GivingJar.                      |
-| not started | `ops-console`          | Cloudflare Access. Tenant reads proxy to `api-au`. No decrypt, log, or buffer of personal fields. |
-| not started | `usage-facts`          | `core/usage` skeleton (community × feature × day). Facts grow as modules ship.                    |
+| Status      | Chunk                  | What                                                                                                                                                                              |
+| ----------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| not started | `admin-shell`          | `apps/admin` with the sidebar sequence. Dashboard only; everything else hidden. Static files from S3 and CloudFront, with no personal data. Data calls go to the Sydney hostname. |
+| not started | `tenancy-implicit-org` | Organisation and community rows in the `platform` schema. IDs, slugs, and region. Not a separate control plane.                                                                   |
+| not started | `identity-otp`         | The regional service. OTP and passkeys as designed. No email on a gateway.                                                                                                        |
+| not started | `people-households`    | Person, Household, GuardianLink, `is_minor`. Tags + activity log land here.                                                                                                       |
+| not started | `access-roles`         | Settings → Users & Roles.                                                                                                                                                         |
+| not started | `entitlements-plans`   | Plans and allocations in the `platform` schema. Not a D1 control plane. Community toggles; nav hide/show. How a request sees them is Q14.                                         |
+| not started | `stripe-billing`       | Our subscriptions. Webhooks on the Sydney hostname. The regional service does the work. Not `exec`. Not GivingJar.                                                                |
+| not started | `ops-console`          | Routes on the regional service. Passkeys. The `platform` role has no `app` privileges. No Cloudflare Access.                                                                      |
+| not started | `usage-facts`          | `core/usage` skeleton (community × feature × day). Facts grow as modules ship.                                                                                                    |
 
 Phase 1 does **not** fill Enquires, Engagement, Family Records, Membership, Records, Certifications, Volunteers, Forms, Communication, Mobile App, Website & CMS, Donations, or E-commerce.
 
@@ -115,7 +123,7 @@ Journeys, not a full backlog. Cut specs when this phase starts. Fill nav in this
 | not started | Bulletins                    | Engagement → Bulletins                    | CRUD, PDF as in Laravel if still required                                                                             |
 | not started | Events                       | Engagement → Events                       | Free and **paid** RSVP, ticket types, capacity, booking detail, external ticketing URL. Staging **RSVP** gate         |
 | not started | Forms + Enquires             | Forms; Enquires                           | Builder, classification on fields, public submit, enquiry inbox. Staging **form submit** gate                         |
-| not started | Broadcast Messages           | Communication                             | Email to entitled audiences; IDs in, send from `exec`. No personal data in jobs                                       |
+| not started | Broadcast Messages           | Communication                             | Email to entitled audiences; IDs in the message, send from the regional service. No personal data in the job          |
 | not started | Content                      | Website & CMS: Blog, Gallery, Team, Media | Public Content API + collections (articles, gallery, team). Our Schools / Our Places as content, not new modules      |
 | not started | Website host contract freeze | — (agreement with Jellycube)              | Freeze `dataSources`, `islands`, notifications, role mapping with Jellycube while collection schemas are written (Q2) |
 | not started | Mobile home CMS + Parish Hub | Mobile App                                | Cards, nav, ministries, sacraments, mass times. App Registry. **`parish-hub-au` only**. Legacy compatibility router   |
@@ -146,7 +154,7 @@ After this phase, donate + form submit + RSVP can be proven on staging APIs even
 | ----------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | not started | Jellycube host adapter            | `dataSources` over the Phase 2 collections (events, notices, bulletins, service times), OIDC + `mapRoles`, lifecycle, theme tokens, **Edit in Community Hub** links |
 | not started | Host islands                      | `forms.embed`, `giving.donate`, `engagement.rsvp` in `packages/web-components`. Turnstile, WCAG 2.2 AA. Staging form submit, donate and RSVP gates                  |
-| not started | Freshness notification            | `website.source.changed.v1` from the outbox via `jobs-au`, signed, IDs only; Jellycube re-renders the affected routes                                               |
+| not started | Freshness notification            | `website.source.changed.v1` from the outbox, sent by the regional service, signed, IDs only; Jellycube re-renders the affected routes                               |
 | not started | Embedded editor + parish template | Website & CMS opens the Jellycube editor in the admin; sites provisioned from the `faith-church` template into Jellycube-managed Git. Needs Q13                     |
 
 If Jellycube collections are not ready, ship the thin in-core renderer on the **same data sources** (Q2). Islands and the notification are the same either way.
@@ -173,14 +181,14 @@ First success: **one live Australian parish**.
 
 ## Phase 6 — Growth
 
-| Status      | Journey                | Must include                             |
-| ----------- | ---------------------- | ---------------------------------------- |
-| not started | Further directory apps | Mosques, sports clubs, other store names |
-| not started | White-label apps       | Additional branded mobile apps           |
-| not started | Organisation features  | Dioceses, leagues                        |
-| not started | SSO / SCIM             | Enterprise identity                      |
-| not started | Partner apps           | Workers for Platforms                    |
-| not started | Vertical packs         | Mosques and sports clubs                 |
+| Status      | Journey                | Must include                                                                                    |
+| ----------- | ---------------------- | ----------------------------------------------------------------------------------------------- |
+| not started | Further directory apps | Mosques, sports clubs, other store names                                                        |
+| not started | White-label apps       | Additional branded mobile apps                                                                  |
+| not started | Organisation features  | Dioceses, leagues                                                                               |
+| not started | SSO / SCIM             | Enterprise identity                                                                             |
+| not started | Partner apps           | Open (Q16). The leaning is that partners host their own code. No hosted runtime in this design. |
+| not started | Vertical packs         | Mosques and sports clubs                                                                        |
 
 ---
 
@@ -207,21 +215,21 @@ Inventory: `/Users/iamabdus/ai-coding-2/Community-Hub` against architecture §9 
 
 From architecture §26. Do not invent answers in a spec.
 
-| #   | Blocks                                                             |
-| --- | ------------------------------------------------------------------ |
-| Q1  | Recurring giving, refunds, GivingJar onboard                       |
-| Q2  | Phase 4 Jellycube vs thin renderer; contract freeze row in Phase 2 |
-| Q13 | Phase 4 Jellycube hosting zone with Regional Services = Australia  |
-| Q3  | Identity library (Phase 1 `identity-otp`)                          |
-| Q8  | Plan contents and pricing (entitlements)                           |
-| Q9  | EmailProvider (Settings → Email Settings)                          |
-| Q12 | Feature-flag vendor                                                |
+| #   | Blocks                                                                                                                         |
+| --- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Q1  | Recurring giving, refunds, GivingJar onboard                                                                                   |
+| Q2  | Phase 4 Jellycube vs thin renderer; contract freeze row in Phase 2                                                             |
+| Q13 | Closed for forms, donations, and RSVPs: they post to the Sydney hostname. Which account serves Jellycube sites is not decided. |
+| Q3  | Identity library (Phase 1 `identity-otp`)                                                                                      |
+| Q8  | Plan contents and pricing (entitlements)                                                                                       |
+| Q9  | EmailProvider (Settings → Email Settings)                                                                                      |
+| Q12 | Closed. Feature flags are `platform` tables. There is no vendor.                                                               |
 
 ---
 
 ## Next spec
 
-The next approved chunk on this list is **`api-au-hostname`**, unless the human picks another remaining Phase 0 row.
+The next approved chunk on this list is **cleanup**, unless the human picks another remaining Phase 0 row.
 
 ---
 
