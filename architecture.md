@@ -30,7 +30,7 @@ This document is the source of truth for how the platform is structured and why.
 15. [Website builder: Jellycube](#15-website-builder-jellycube)
 16. [Third-party apps and integrations](#16-third-party-apps-and-integrations)
 17. [API design](#17-api-design)
-18. [Events, jobs and workflows](#18-events-jobs-and-workflows)
+18. [Events and jobs](#18-events-and-jobs)
 19. [Observability and audit](#19-observability-and-audit) — [product usage](#193-product-usage-intelligence)
 20. [Security controls](#20-security-controls)
 21. [Compliance](#21-compliance)
@@ -580,15 +580,15 @@ Mapping from the Laravel application's module toggles to core modules.
 
 ### 10.1 Concepts
 
-| Concept              | Meaning                                                                                        | Stored in                                                                                                                       |
-| -------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| **Plan**             | Package a customer subscribes to (e.g. Starter, Growth, Enterprise)                            | Control plane D1                                                                                                                |
-| **Add-on**           | Separately purchasable capability (e-commerce, SMS pack, website, mobile listing, branded app) | Control plane D1                                                                                                                |
-| **Entitlement**      | A feature key or limit the organisation is allowed to use                                      | Derived; snapshot in KV                                                                                                         |
-| **Allocation**       | Which communities in an organisation receive an entitlement                                    | Control plane D1                                                                                                                |
-| **Community toggle** | Community admin switching an entitled feature on or off                                        | Regional database                                                                                                               |
-| **Override**         | Contracted exception for an enterprise deal, with expiry                                       | Control plane D1                                                                                                                |
-| **Feature flag**     | Code rollout control, independent of billing                                                   | Feature-flag service (vendor TBD, Q12). Targeting on organisation, community, plan and region only — never personal identifiers |
+| Concept              | Meaning                                                                                        | Stored in                                                                                                             |
+| -------------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| **Plan**             | Package a customer subscribes to (e.g. Starter, Growth, Enterprise)                            | `platform` schema                                                                                                     |
+| **Add-on**           | Separately purchasable capability (e-commerce, SMS pack, website, mobile listing, branded app) | `platform` schema                                                                                                     |
+| **Entitlement**      | A feature key or limit the organisation is allowed to use                                      | `platform` schema                                                                                                     |
+| **Allocation**       | Which communities in an organisation receive an entitlement                                    | Open. See Q14. The previous store was superseded by ADR 0009.                                                         |
+| **Community toggle** | Community admin switching an entitled feature on or off                                        | Database row                                                                                                          |
+| **Override**         | Contracted exception for an enterprise deal, with expiry                                       | Open. See Q14. The previous store was superseded by ADR 0009.                                                         |
+| **Feature flag**     | Code rollout control, independent of billing                                                   | `platform` schema. There is no vendor. Q12 is closed. Targeting stays organisation, community, plan, and region only. |
 
 ### 10.2 Example catalogue
 
@@ -634,28 +634,26 @@ Pricing and final plan contents are a product decision; the model supports any c
 A feature is available only when every step passes:
 
 ```
-1. Feature flag kill switch   (flags service)    → is the code enabled at all?
-2. Entitlement                (KV snapshot)      → did the organisation pay for it?
-3. Allocation                 (KV snapshot)      → is it allocated to this community?
-4. Community toggle           (regional DB)      → has the community switched it on?
-5. Permission                 (packages/policy)  → may this actor perform this action?
+1. Feature flag kill switch   → is the code enabled at all?
+2. Entitlement                → did the organisation pay for it?
+3. Allocation                 → is it allocated to this community?
+4. Community toggle           → has the community switched it on?
+5. Permission                 → may this actor perform this action?
 ```
 
-Checks run in API middleware, in the admin UI (hide or show an upgrade prompt), in jobs, and in event subscribers. A disabled module's subscribers do not run.
+Checks run in the API, in the admin UI (hide or show an upgrade prompt), in jobs, and in event subscribers. A disabled module's subscribers do not run.
+
+The snapshot path and the separate flags service were superseded by ADR 0009. How a request sees a plan, an entitlement, an allocation, or an override is open (Q14). Leaning: the request reads them from the `platform` schema, with a short in-process cache, and the Stripe webhook recomputes them in one transaction. No snapshot and no propagation step. Decided by the `entitlements-plans` chunk, which must state how stale a cached entitlement may be. The leaning is not a decision.
 
 ### 10.4 Propagation
 
-```
-Stripe Billing webhook → webhooks-au (parse in-region; drop emails and names)
-  → control-plane { customerId, subscriptionId, status }
-  → recompute entitlements (D1)
-  → Queue → write KV snapshot  ent:{orgId}            (orgs, allocations, limits)
-          → publish tenancy.entitlements.changed.v1  (regional jobs react, e.g. provision add-on)
-```
+The Stripe webhook is handled by the regional service on the Sydney hostname. The snapshot path and the exact-counter object were superseded by ADR 0009.
 
-- KV is eventually consistent; changes may take up to about a minute to be visible everywhere. That is acceptable for upgrades and downgrades.
-- **Hard usage limits** (SMS credits, member caps) are counted in a per-organisation Durable Object so they are exact. The object stores **counters only** — not names, emails or member lists — which is why a Durable Object is allowed here despite [§7.3](#73-residency-rules-specific-to-cloudflare) rule 7.
-- **Downgrades hide, never delete.** Data of a disabled module remains until retention or an erasure request removes it.
+Entitlement visibility is open (Q14). Leaning: the request reads plans, entitlements, allocations, and overrides from the `platform` schema, with a short in-process cache, and the Stripe webhook recomputes them in one transaction. No snapshot and no propagation step. Decided by `entitlements-plans`, which must state how stale a cached entitlement may be. The leaning is not a decision.
+
+Hard usage limits (SMS credits and member caps) are open (Q15). Leaning: a counter row in Postgres per organisation and limit, updated in the same transaction as the action, with a condition that refuses to go over the limit. Counts only, no personal data. Decided by the first chunk that enforces a limit, which must say which schema the counters live in and why. The leaning is not a decision.
+
+**Downgrades hide, never delete.** Data of a disabled module remains until retention or an erasure request removes it.
 
 ---
 
@@ -664,11 +662,11 @@ Stripe Billing webhook → webhooks-au (parse in-region; drop emails and names)
 ### 11.1 Identity
 
 - Users are stored in the **regional** database, in the `identity` schema, which is region-scoped rather than organisation-scoped ([§6.3](#63-isolation-in-the-database)). A user belongs to a region and may hold memberships in several communities and organisations within it. Identity rows hold authentication data only; profile data lives on the organisation-scoped `people` row.
-- **`identity.users.email` is `confidential-blind`.** The display value is encrypted. OTP start looks up a region-scoped blind index (HMAC of the normalised address with the region's identity key), never a clear-text column and never on a global Worker. Identity HTTP is regional: OIDC on `auth.au.communityhub.one`, mobile OTP on `{api}/v1/auth/...`. Both hostnames are `api-au` under Regional Services = Australia ([§12.2.1](#1221-encryption-versus-queryability)).
+- **`identity.users.email` is `confidential-blind`.** The display value is encrypted. OTP start looks up a region-scoped blind index (HMAC of the normalised address with the region's identity key), never a clear-text column. Identity HTTP is the regional service: OIDC and mobile OTP are on the Sydney hostname ([§12.2.1](#1221-encryption-versus-queryability)). The previous global lookup path was superseded by ADR 0009.
 - **Sign-in methods:** email one-time code, passkeys; staff can be required to use passkeys or TOTP. Enterprise organisations can connect SAML/OIDC SSO and SCIM (later phase).
 - **Sessions:** short-lived access tokens + rotating refresh tokens. Mobile stores them in `expo-secure-store`.
-- **Core is an OIDC provider** for Jellycube and approved add-ons, issued from the regional hostname `auth.au.communityhub.one`, which is registered with Regional Services = Australia. There is **one issuer per region**; relying parties discover the issuer from the community they are bound to. Tokens carry `org`, `community` and role claims scoped to the relying party.
-- **Region discovery never involves an email address.** A global Worker that received an email in order to route it — even to hash it — would be processing personal data outside the region. Region comes from context that is not personal data: the mobile app already knows the community and its `api` base from the App Registry, admins arrive on a regional hostname, and the global landing page offers a country or community choice and then redirects. With a single region today, everything goes to `au`.
+- **Core is an OIDC provider** for Jellycube and approved add-ons, issued from the Sydney hostname. There is **one issuer**; relying parties discover the issuer from the community they are bound to. Tokens carry `org`, `community` and role claims scoped to the relying party. The previous hostname registration was superseded by ADR 0009.
+- **Region discovery never involves an email address.** The previous global lookup path was superseded by ADR 0009. Region comes from context that is not personal data: the mobile app already knows the community and its API base from the App Registry, and admins arrive on the Sydney hostname. With a single region today, everything goes to `au`.
 - A user may hold memberships in several communities in the same region. **Which of those memberships a given store app can show is an App Registry question** ([§13.2](#132-listing-rules-enforced)), not an identity one.
 - **App store review accounts** are server-side, per mobile app, limited to a demo community, and audited.
 
@@ -696,9 +694,11 @@ Support staff cannot see tenant data by default. Access requires:
 3. A time-boxed grant (default 4 hours, scoped to named modules).
 4. Every read is audited and visible to the tenant in their audit log.
 
-The ops console is a **global UI** (Cloudflare Access, no Regional Services guarantee). Directory, plans, App Registry, usage aggregates and Stripe ids are served from control-plane and contain no personal data. **An approved support read is proxied to `api-au`.** The global Worker must not decrypt, log or buffer tenant fields; it forwards the request under the grant and returns the regional response. That is the same split as Stripe Billing: personal data is processed only on a regional hostname.
+Operators sign in on the regional identity service. Every `platform_*` role requires a passkey. Email one-time codes cannot start or recover a platform session. Each operator registers at least two passkeys. Recovery of a lost passkey needs two `platform_security` people and writes an audit row. There is no country filter and no masking.
 
-A break-glass procedure exists for security incidents, requires two platform security staff, and notifies the tenant after the fact.
+`platform_support` has no tenant data by default. A granted read uses the `app` role with the tenant scope set, so row-level security applies. The `platform` role has no privileges on the `app` schema. The previous separate console and its proxy were superseded by ADR 0009.
+
+Break-glass needs two `platform_security` people, and the tenant is told afterwards.
 
 ---
 
@@ -737,21 +737,21 @@ AWS KMS (Sydney)  ── wraps ──►  Organisation key
                                                     └─ encrypts  adult confidential fields, blind-index keys
 ```
 
-- **Application-layer encryption** with WebCrypto AES-256-GCM in the Worker before data reaches Postgres. Database operators, Hyperdrive and backups see ciphertext.
-- **Unwrapped keys** are held in isolate memory for a short time only; never written to KV, Durable Object storage, logs or queues.
+- **Application-layer encryption** in the service before data reaches Postgres. Database operators and backups see ciphertext.
+- **Unwrapped keys** are not logged. A short-lived in-memory cache of unwrapped organisation keys is an open item for the service chunk, not a decision. The previous stores for key material were superseded by ADR 0009.
 - **Search** uses HMAC-SHA-256 blind indexes. Adult `people.*` indexes are community-scoped. `identity.users.email` uses the region's identity key. A minor's `confidential-blind` indexes use the household key, so they die with household-key destruction.
 - **Deletion by key destruction:** erasing a household destroys its household key, making restricted copies (including backups and restricted files) unreadable. **The payment ledger is not encrypted with the household key.** DGR and tax-retention rows stay readable; the donor person link may become unlinkable.
-- **Transport:** TLS 1.3 at the edge; TLS with certificate verification between Tunnel and Postgres; storage encrypted at rest (RDS and S3 with KMS).
+- **Transport:** minimum TLS 1.2 at the API. The hop from API Gateway to the task is plain HTTP inside the VPC. TLS to Postgres is `verify-full` against the RDS certificate bundle. Storage is encrypted at rest (RDS and S3 with KMS). The tunnel path was superseded by ADR 0009.
 - **Key rotation:** KMS keys rotate annually; organisation and community keys can be rotated online by re-wrapping.
 - **Field envelope (`0x01`):** `version || key_id (16) || iv (12) || ciphertext || tag (16)`. GCM AAD is `version || key_id` plus length-prefixed bound fields (tag first). Field AAD binds `community_id`, not `org_id` (a community move rewrites `org_id` without re-encrypt). Labels are stable (`people.email`), not SQL names. Each wrapped root is HKDF-split into `chub/v1/enc`, `chub/v1/bidx`, and `chub/v1/wrap`. NIST 2³² encryptions per key; rotation is the remedy. See [ADR 0005](docs/adr/0005-field-encryption-envelope.md).
 
-The regional Worker does not call KMS and does not hold an AWS credential. `@community-hub/kms-aws` implements `KmsPort` by calling the in-cell broker. `apps/api` holds the `KMS_BROKER` binding and does not call it. The live unwrap is `api-au-hostname`. See ADR 0008.
+The task role calls `kms:GenerateDataKey` and `kms:Decrypt`. The in-cell HTTP broker was superseded by ADR 0009. ADR 0008 is not edited.
 
 #### 12.2.1 Encryption versus queryability
 
 > **Rule:** a field the database must filter, sort or aggregate cannot be encrypted. Choose one of: a blind index (equality only), a derived value stored in the clear, or a different classification. Decide this when the schema is written, not when the report is built.
 
-Application-layer encryption means the database sees ciphertext, so `SUM`, `GROUP BY`, `ORDER BY` and `BETWEEN` are impossible, and decrypting every row inside a Worker to compute a total breaks both CPU limits and cost. How this resolves for the fields that matter:
+Application-layer encryption means the database sees ciphertext, so `SUM`, `GROUP BY`, `ORDER BY` and `BETWEEN` are impossible, and decrypting every row inside the service to compute a total does not scale. How this resolves for the fields that matter:
 
 | Field                                                      | Classification                   | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | ---------------------------------------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -763,7 +763,7 @@ Application-layer encryption means the database sees ciphertext, so `SUM`, `GROU
 | `volunteers.wwcc_number`, `blue_card_number`               | `restricted` (encrypted)         | Government identifiers, looked up by equality at most                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `volunteers.wwcc_expiry`                                   | `confidential-queryable` (clear) | Expiry reports sort and range-filter on it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `people.email`, `people.phone`                             | `confidential-blind`             | Blind index for lookup and duplicate detection; display value encrypted. **If `is_minor` is true, these columns (and any other `confidential` / `confidential-blind` field on that person) are encrypted with the household key**, not the community confidential key. A guardian's phone is stored on the guardian's person row, not copied onto the child. **Trade-off:** a minor cannot be looked up or de-duplicated by email or phone outside their household — importers and merge tools match minors with household-scoped indexes only |
-| `identity.users.email`                                     | `confidential-blind`             | OTP and account lookup need equality match. Region-scoped blind index; ciphertext stored; processed only on `api-au` (`auth.{region}` and `{api}/v1/auth/...`) ([§11.1](#111-identity))                                                                                                                                                                                                                                                                                                                                                        |
+| `identity.users.email`                                     | `confidential-blind`             | OTP and account lookup need equality match. Region-scoped blind index; ciphertext stored; processed only on the regional service ([§11.1](#111-identity))                                                                                                                                                                                                                                                                                                                                                                                      |
 
 **Reporting reads rollups, not the ledger.** `reporting` maintains incrementally updated aggregates (per campaign, per fund, per day, per community), updated by the event subscriber that records a payment. Dashboards never scan `donations`, which is also the right decision for performance and cost.
 
@@ -785,7 +785,7 @@ These are invariants. A feature that violates one is not shipped.
 ### 12.4 Retention and privacy requests
 
 - Each data type has a retention rule defined per jurisdiction in `core/privacy` (e.g. donation records kept for tax purposes; unsuccessful volunteer applications deleted after a set period).
-- A Workflow runs retention daily per community, using the `exec` hostname for data access.
+- Retention is a scheduled job in the regional service. Schedules are EventBridge. The previous scheduled-workflow path was superseded by ADR 0009.
 - Access, correction, export and erasure requests are tracked with deadlines, evidence and audit events.
 - Legal holds suspend retention for specified records.
 
@@ -797,7 +797,7 @@ There is **one Expo codebase** (`apps/mobile`) and **many store apps**. Launch i
 
 ### 13.1 Model
 
-Control plane (global, no personal data):
+`platform` schema (no personal data). The previous global control-plane store was superseded by ADR 0009.
 
 ```
 mobile_apps     id, key, name, bundle_ids, store_accounts, branding, push_app_id,
@@ -851,14 +851,14 @@ App build contains APP_KEY (e.g. parish-hub-au)
       → [{ id, slug, name, type, logo, region: 'au', api: 'https://au.api.communityhub.one' }]
 3. Guest:
    GET {api}/v1/c/{slug}/public/{events|bulletins|notices|service-times|campaigns|articles}
-      → public content, edge-cached
+      → public content from the Sydney API
 4. Member:
    POST {api}/v1/auth/email-otp/start   → POST {api}/v1/auth/email-otp/verify
    GET  {api}/v1/c/{slug}/me/{profile|household|donations|rsvps|certificate-requests}
    GET  {api}/v1/c/{slug}/app-home      → welcome text, quick access cards, posts
 ```
 
-- Auth is regional (the `api` URL on the listing). The global app-discovery endpoints return directory metadata only — no personal data.
+- Auth and discovery are the Sydney service. There is no separate global tier. Directory metadata contains no personal data.
 - Home screen cards are driven by entitlements plus community configuration and the app's vertical pack, replacing today's `mobile-app/settings` payload.
 - Location for "near me" is sent as coarse coordinates and not stored.
 
@@ -883,10 +883,10 @@ During migration the App Registry returns `site_url = https://{slug}.communityhu
 
 ### 14.1 Two money flows
 
-| Flow                                                         | Payer → payee                | System                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| ------------------------------------------------------------ | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Platform subscription                                        | Organisation → Community Hub | Stripe Billing **facts** (customer id, subscription id, status, price) live on `control-plane`. **Every Stripe API call whose request or response may contain a name, email or address is made from `exec-au`.** Control-plane never calls Stripe. Creating a customer, a Checkout or Billing Portal session, or reading a Customer object happens in-region; exec returns `{ customerId, subscriptionId, status, url }` only. Inbound webhooks follow the same split (`webhooks.au.communityhub.one/billing/stripe` → control-plane ids/status) |
-| Community payments (donations, memberships, tickets, orders) | Member → community           | `PaymentProvider` port, GivingJar adapter                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Flow                                                         | Payer → payee                | System                                                                                                                                                                                                                                                               |
+| ------------------------------------------------------------ | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Platform subscription                                        | Organisation → Community Hub | The regional service is the Stripe client. Webhooks arrive on the Sydney hostname. Stripe ids and status are `platform` rows. There is no separate service to strip a payload for. Personal data is still not logged. The previous split was superseded by ADR 0009. |
+| Community payments (donations, memberships, tickets, orders) | Member → community           | `PaymentProvider` port, GivingJar adapter                                                                                                                                                                                                                            |
 
 ### 14.2 Port
 
@@ -920,33 +920,13 @@ payment_events  org_id, payment_id, provider_event_id (unique), type, payload_ha
 
 ### 14.4 Webhook handling
 
-```
-POST webhooks.au.communityhub.one/payments/givingjar
-  → verifyWebhook (HMAC, timestamp tolerance)
-  → insert payment_events (unique provider_event_id → idempotent)
-  → Queue message { orgId, communityId, paymentEventId }
-  → jobs-au → exec-au: load ledger row scoped to org/community, apply state transition,
-    publish giving.donation.succeeded.v1
-
-POST webhooks.au.communityhub.one/billing/stripe
-  → verify Stripe signature in-region
-  → extract customerId, subscriptionId, status (drop email, name and address)
-  → forward those ids to control-plane to recompute entitlements
-
-create / update Customer, Checkout, Billing Portal
-  (whether initiated by an admin on api-au or by control-plane through jobs-au)
-  → exec-au is the Stripe client. The control-plane path sends ids only;
-    exec-au loads the billing contact from the regional database.
-    The admin/ops path decrypts the contact on api-au and calls exec-au.
-  → request and response may contain email/name; exec strips them
-  → returns { customerId, subscriptionId, status, url } to control-plane
-```
+GivingJar and Stripe webhooks arrive on the Sydney hostname. The regional service verifies the signature, writes the ledger or the Stripe ids, and does the work. There is no second hostname and no second service. Personal data is not logged. How a Stripe webhook's entitlement change becomes visible is Q14, and that leaning is not a decision. The previous webhook path was superseded by ADR 0009.
 
 ### 14.5 Rules
 
 - Hosted checkout only; card data never reaches core (PCI DSS SAQ-A scope).
 - GivingJar is hosted in Australia; a data processing agreement covers donor data.
-- **Control-plane never calls Stripe.** `customers.retrieve` returns email, so even an id-only fetch would process personal data on a global Worker. exec-au is the Stripe client; it strips personal fields before anything is stored globally.
+- The regional service is the Stripe client. A customer call can return a name, email, or address. Personal data is not logged. The previous split, which kept that call off a global tier, was superseded by ADR 0009. There is no global tier to strip a payload for.
 - Each community has a `payment_provider` setting. A community can move to a new provider for new payments while existing recurring payments continue on the old provider until migrated.
 - Idempotency keys are required on all payment-creating API calls.
 
@@ -1045,9 +1025,9 @@ Iframes of the member portal are allowed only as a last resort for a feature tha
 
 - Collections return `public` class data only, projected by core. Children never appear. Jellycube is never trusted to filter.
 - Jellycube stores website chrome (pages, layout, bindings) and editor identity, plus a cache of `public` collection data. It does not store member, donor, form-response or children's data.
-- Jellycube attributes editor actions to the OIDC `sub`, never an email: its draft state lives in Durable Objects, which have no Australian jurisdiction ([§7.3](#73-residency-rules-specific-to-cloudflare) rule 7).
+- Jellycube attributes editor actions to the OIDC `sub`. Personal data is not sent to Jellycube. ADR 0009 replaces the sentence in ADR 0006 about editor identity. ADR 0006 is not edited.
 - `website.source.changed.v1` carries `{ hostRef, communityId, source, ids, contentVersion }` only.
-- Form posts, donate starts and RSVPs go to regional core hostnames. Jellycube custom hostnames for Australian communities use Regional Services = Australia because those requests pass through Jellycube Workers on the way to core (Q13).
+- A form, a donation, or an RSVP posts from the browser to the Sydney hostname. It does not pass through Jellycube. The previous path through Jellycube was superseded by ADR 0009.
 - Jellycube is recorded as a subprocessor for editor identity data.
 
 ### 15.5 Host website pack
@@ -1100,14 +1080,14 @@ Inspector fields are host-defined and chosen from lists (which form, which campa
 
 ```
 core commit (event published, notice approved, campaign edited)
-  → outbox → jobs-au → signed POST to Jellycube
+  → outbox → the regional service → signed POST to Jellycube
       website.source.changed.v1 { hostRef, communityId, source: 'engagement.events', ids, contentVersion }
   → Jellycube looks up the routes bound to that source for that site
   → debounce (about 30 s) → fetch the changed items once → re-render those routes only
   → atomic swap of the changed files
 ```
 
-- The notification is public-content IDs only, so it may be sent from `jobs-au` ([§7.3](#73-residency-rules-specific-to-cloudflare) rule 2 is not engaged). It is idempotent on `contentVersion`.
+- The notification is public-content IDs only, sent by the regional service. It is idempotent on `contentVersion`. The previous jobs hostname was superseded by ADR 0009.
 - Live values (campaign totals, remaining tickets) are islands and never cause a re-render.
 - If core is unavailable, the last published pages keep serving and re-renders retry ([§22](#22-reliability-backup-and-disaster-recovery)).
 
@@ -1123,44 +1103,37 @@ Accounting (Xero, MYOB), email marketing (Mailchimp), calendar feeds and similar
 
 - OAuth 2.0 apps with granular scopes; tenants approve scopes per community.
 - **Scopes touching restricted data require a separate explicit approval** and are unavailable to partner apps by default.
-- Signed webhooks delivered through Queues with retries and a dead-letter queue.
-- Partner code that runs on our platform uses **Workers for Platforms**:
-  - one user Worker per partner app in a dispatch namespace,
-  - custom CPU and subrequest limits per invocation,
-  - no database or storage bindings — only a scoped API client,
-  - an **outbound Worker** that enforces an egress allow-list and audits outbound calls.
+- Signed webhooks go through SQS, encrypted, with a retention period, and with retries and a dead-letter queue.
+- Where partner code runs is open (Q16), and it is a product decision for the owner. Leaning: partner code does not run on our platform. Partners use the API, OAuth scopes, and signed webhooks, and they host their own code. Decided in the partner-apps phase. This design does not include a hosted runtime. The previous hosted runtime was superseded by ADR 0009. The leaning is not a decision.
 
 ---
 
 ## 17. API design
 
-| Topic                 | Standard                                                                                                                                                              |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Base URLs             | `https://au.api.communityhub.one/v1/...`; community portal hostnames serve the same routes                                                                            |
-| Versioning            | URL major version (`/v1`). Breaking changes require `/v2` and a published deprecation window of at least 12 months for mobile-facing routes                           |
-| Resource paths        | `/v1/c/{communitySlug}/public/...` (guest), `/v1/c/{communitySlug}/me/...` (member), `/v1/c/{communitySlug}/admin/...` (staff), `/v1/orgs/{orgId}/...` (organisation) |
-| Schemas               | Zod in `packages/contracts`; OpenAPI generated and published                                                                                                          |
-| Success envelope      | `{ "data": ..., "meta": { ... } }`                                                                                                                                    |
-| Errors                | RFC 9457 `application/problem+json` with stable `type` URIs and a `traceId`                                                                                           |
-| Pagination            | Cursor based: `?cursor=...&limit=...`, `meta.nextCursor`                                                                                                              |
-| Idempotency           | `Idempotency-Key` header required on payment and bulk-send endpoints                                                                                                  |
-| Rate limits           | Per IP and per user at the edge; per organisation quotas in the API                                                                                                   |
-| Personal data in URLs | Forbidden (no emails, names or phone numbers in paths or query strings)                                                                                               |
-| Caching               | Only `public` routes are cacheable; responses with any non-public field send `Cache-Control: private, no-store`                                                       |
+| Topic                 | Standard                                                                                                                                                                                          |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Base URLs             | `https://au.api.communityhub.one/v1/...`; community portal hostnames serve the same routes                                                                                                        |
+| Versioning            | URL major version (`/v1`). Breaking changes require `/v2` and a published deprecation window of at least 12 months for mobile-facing routes                                                       |
+| Resource paths        | `/v1/c/{communitySlug}/public/...` (guest), `/v1/c/{communitySlug}/me/...` (member), `/v1/c/{communitySlug}/admin/...` (staff), `/v1/orgs/{orgId}/...` (organisation)                             |
+| Schemas               | Zod in `packages/contracts`; OpenAPI generated and published                                                                                                                                      |
+| Success envelope      | `{ "data": ..., "meta": { ... } }`                                                                                                                                                                |
+| Errors                | RFC 9457 `application/problem+json` with stable `type` URIs and a `traceId`                                                                                                                       |
+| Pagination            | Cursor based: `?cursor=...&limit=...`, `meta.nextCursor`                                                                                                                                          |
+| Idempotency           | `Idempotency-Key` header required on payment and bulk-send endpoints                                                                                                                              |
+| Rate limits           | Shared stage cap of 50 requests per second, burst 100. Write routes, including public forms and webhooks, 10 per second and burst 20. Per-client limits are in the service. No client IP in logs. |
+| Personal data in URLs | Forbidden (no emails, names or phone numbers in paths or query strings)                                                                                                                           |
+| Caching               | Only `public` routes are cacheable; responses with any non-public field send `Cache-Control: private, no-store`                                                                                   |
 
 ---
 
-## 18. Events, jobs and workflows
+## 18. Events and jobs
 
 - **Event naming:** `<module>.<entity>.<verb>.v<n>`, e.g. `people.person.merged.v1`.
-- **Outbox:** events are written to an `outbox` table in the same transaction as the change. After commit the Worker enqueues them (`ctx.waitUntil`); a Cron sweeper publishes anything left behind.
-- **Payloads:** IDs, versions and non-personal attributes only. Subscribers that need personal data hand the work to `exec`; they do not fetch the data and process it themselves ([§7.3](#73-residency-rules-specific-to-cloudflare), rule 2).
-- **`exec` returns statuses, not data.** Every `exec` endpoint is a complete unit of work — "send these receipts", "expire these checks", "apply this payment event" — and answers with `{ processed, failed, skipped }` plus IDs. Reviewers reject any `exec` route that returns a name, address, amount or file.
+- **Outbox:** events are written to an `outbox` table in the same transaction as the change. After commit the service publishes them to SQS.
+- **Payloads:** a message carries IDs and the job loads what it needs. A personal field in a message is named in that feature's spec. This is a convention, not a non-negotiable. The previous split of work across two hostnames was superseded by ADR 0009.
 - **Consumers are idempotent**, keyed by event ID.
-- **Queues** use dead-letter queues and alerting on backlog age.
-- **Workflows** are used for multi-step, long-running processes: recurring giving reconciliation, consent reminders, volunteer check expiry, privacy requests, retention, tenant import, tenant offboarding.
-- **Scheduled communications** are Workflows with a sleep until send time. The step re-checks consent and entitlements and calls `exec` to compose and send; the workflow itself only records how many were sent.
-- **Cron Triggers** run unregionalised, so a cron handler resolves the due work as IDs and dispatches to `exec` immediately.
+- Every queue and dead-letter queue has encryption and a retention period, and alerting on backlog age.
+- Long-running work (recurring giving reconciliation, consent reminders, volunteer check expiry, privacy requests, retention, tenant import, tenant offboarding) is a resumable job in the regional service. Schedules are EventBridge. The job re-checks consent and entitlements before it sends. The previous scheduled-workflow path was superseded by ADR 0009.
 
 ---
 
