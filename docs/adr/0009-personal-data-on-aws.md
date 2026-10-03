@@ -11,6 +11,8 @@
 
 The architecture kept personal data in Australia with Cloudflare Regional Services on every regional hostname. The account does not have Regional Services. It is an Enterprise add-on, priced by contract, and the DNS form has no Region option. Without it, a Worker runs in whichever data centre the visitor reaches. The documented limits are that Regional Services does not cover outbound subrequests, Queue consumers, Cron Triggers, or `workers.dev`, and log-location control is US or EU only. Staging has never been applied. ADR 0003, the staging TLS-verification exception for Workers VPC and Hyperdrive, is superseded, and ADR 0002's Cloudflare ownership is superseded in part. Neither file is edited.
 
+AWS is the runtime for four reasons. The running cost is lower. There are fewer moving parts. The design does not depend on Workers VPC while that product is in beta. The promise that personal data stays in Australia is kept at no extra cost.
+
 ## Decision
 
 Community Hub core runs entirely in AWS Sydney (`ap-southeast-2`). Nothing of ours runs on Cloudflare Workers. There is no global tier until a second region exists. One ECS Fargate service, ARM, serves the API, sign-in, webhooks, background jobs, and the ops console. Ingress is a regional HTTP API with a VPC link to Cloud Map, `SRV` records, a `$default` stage, and a VPC link created on two private subnets from the first apply. DNS is Route 53. Turnstile is the only remaining Cloudflare product, and Terraform does not manage it. The envelope key is a multi-Region primary key. The task role calls KMS. The broker is removed. The database is RDS PostgreSQL `db.t4g.micro`, single-AZ, with the production protections in the spec. Passwords are in Secrets Manager, write-only, and the master user is bootstrap only.
@@ -86,9 +88,19 @@ This decision leaves four mechanisms open. Each leaning is a starting point. It 
 - **Partner code.** Where a partner's code runs. This is a product decision for the owner. Leaning: partner code does not run on our platform. Partners use the API, OAuth scopes, and signed webhooks, and they host their own code. Decided in the partner-apps phase. This design does not include a hosted runtime for partner code.
 - **Usage aggregates for the ops console.** Where the ops console reads daily usage counts. The `platform` role still has no privileges on the `app` schema. Leaning: a scheduled job in the regional service reads each organisation's daily usage counts under that organisation's tenant scope and writes totals to a `platform` table. The copy is an allow-list of count columns. Decided by the `usage-facts` and `ops-console` chunks.
 
+## Accepted risks
+
+- The hop from API Gateway to the task is plain HTTP inside the VPC. A certificate API Gateway would verify on the task needs a private CA, which costs more than the rest of this design. The hop does not cross the public internet.
+- There is no WAF. The stage throttle is 50 requests per second, burst 100, and write routes are 10 and 20. Those caps are shared by every caller. They cap cost. They do not isolate one parish from another.
+- The task role is the only cryptographic principal, and it is broader than the broker's was. A compromised task can decrypt what the process can decrypt. The key policy still requires the encryption context.
+- The database class is burstable. Sustained load past the baseline can be charged extra.
+- The database is single-AZ. A failure is a restore of up to about five minutes of transactions, with a four-hour target. That holds until the first paying parish or an availability commitment.
+
 ## Alternatives rejected
 
 - Buying Regional Services. No public price. The product does not cover outbound calls, queues, cron, or `workers.dev`. No quote is being sought.
+- Staying on Workers without Regional Services. A Worker would run in whichever data centre the visitor reaches.
+- An all-Cloudflare stack on Workers and D1. D1 has no Australian jurisdiction and no row-level security. The owner declined it on 2026-10-03.
 - Keeping a split: personal data on AWS, and Workers that hold no personal data on Cloudflare. The owner closed this on 2026-10-03.
 - An Application Load Balancer in front of the API. The HTTP API is enough until WAF or a request longer than 30 seconds is required.
 - Keeping the KMS broker. A Worker cannot hold an AWS credential; that reason is gone. ADR 0008's endpoint price of about USD 7–8 is not reused. The checked price is USD 0.013 an hour in each zone.
