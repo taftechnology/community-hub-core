@@ -55,7 +55,7 @@ Chunks that change a documented decision without belonging to a phase. They do n
 
 ## Phase 0 — Foundations
 
-Architecture: monorepo, CI, Terraform, kernel, residency, db with RLS, crypto, observability, audit, `packages/ui`.
+Architecture: monorepo, CI, Terraform for AWS in `ap-southeast-2`, kernel, db with RLS, crypto, observability, audit, `packages/ui`.
 
 | Status      | Chunk                    | What                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ----------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
