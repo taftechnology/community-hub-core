@@ -1,7 +1,7 @@
 # Spec: Personal data is processed in AWS Sydney
 
 Slug: `personal-data-on-aws`
-Status: draft
+Status: approved (2026-10-03, Abdus Salam)
 Supersedes: the Cloudflare Workers runtime for personal data, as decided in `docs/specs/2026-09-26-api-au-skeleton.md`, the Cloudflare data path in `docs/specs/2026-09-18-terraform-au-cell.md`, `docs/specs/2026-10-01-kms-broker-service.md`, and `docs/specs/2026-10-01-kms-worker-adapter.md`. Those files are not edited. The paused branch `feat/2026-10-02-api-au-hostname` is superseded and is not merged, continued, or deleted.
 Architecture refs: §5, §7, §11.4, §15, §22, §26 Q13; D1, D2, D5, D8, D9; ADR 0001, ADR 0002, ADR 0006, ADR 0008
 Branch: `docs/2026-10-03-personal-data-on-aws`, created from `origin/main`. Not stacked on another open PR.
