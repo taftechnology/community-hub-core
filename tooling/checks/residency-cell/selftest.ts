@@ -14,6 +14,7 @@ const mustFail = [
   "unknown-root",
   "import-db",
   "import-crypto",
+  "import-kms-aws",
   "import-type-crypto",
   "import-deep-db",
   "import-relative-crypto",
@@ -75,6 +76,18 @@ describe("residency-cell check fixtures", () => {
       message: "missing catalog.json",
     });
     expect(result.notice).toBeUndefined();
+  });
+
+  it('fails a global Worker that imports "@community-hub/kms-aws"', () => {
+    const result = check(path.join(fixturesDir, "import-kms-aws"));
+    expect(result.ok).toBe(false);
+    expect(
+      result.violations.some(
+        (violation) =>
+          violation.message ===
+          'global-no-pii Worker must not import regional-only package "@community-hub/kms-aws"',
+      ),
+    ).toBe(true);
   });
 
   it("passes the live repository", () => {

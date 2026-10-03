@@ -5,6 +5,7 @@ import { check as checkResidencyPayload } from "./residency-payload/check.js";
 import { check as checkSchemaRls } from "./schema-rls/check.js";
 import { check as checkSqlSessionBan } from "./sql-session-ban/check.js";
 import { check as checkTerraformInvariants } from "./terraform-invariants/check.js";
+import { check as checkKmsBrokerBinding } from "./kms-broker-binding/check.js";
 import { check as checkWorkerConfig } from "./worker-config/check.js";
 
 let failed = false;
@@ -17,6 +18,16 @@ if (!workerResult.ok) {
   failed = true;
 } else {
   console.log("worker-config: ok");
+}
+
+const kmsBrokerBindingResult = checkKmsBrokerBinding();
+if (!kmsBrokerBindingResult.ok) {
+  for (const v of kmsBrokerBindingResult.violations) {
+    console.error(`${v.app}: ${v.message}`);
+  }
+  failed = true;
+} else {
+  console.log("kms-broker-binding: ok");
 }
 
 const schemaResult = checkSchemaRls();

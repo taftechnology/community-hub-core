@@ -1,0 +1,10 @@
+{
+  "name": "api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-03-10",
+  "vpc_networks": [
+    {
+      "network_id": "cf1:network"
+    }
+  ]
+}
