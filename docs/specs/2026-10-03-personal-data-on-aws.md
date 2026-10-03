@@ -502,6 +502,18 @@ Cloud Map is the least proven hop. The first staging apply proves discovery, hea
 
 Single-AZ database. A failure is a restore of up to about five minutes of transactions, with a four-hour target. That is accepted until the first paying parish or an availability commitment.
 
+## Open mechanisms
+
+These four are open. Each leaning is a starting point for a later chunk. It is not a decision, and this spec does not adopt it.
+
+**Entitlement visibility.** How a request sees a plan, an entitlement, an allocation, or an override now that the KV snapshot is gone. Leaning: the request reads them from the `platform` schema, with a short in-process cache, and the Stripe webhook recomputes them in one transaction. No snapshot and no propagation step. Decided by the `entitlements-plans` chunk, which must state how stale a cached entitlement may be.
+
+**Hard usage limits.** Where an exact counter lives now that Durable Objects are gone. SMS credits and member caps are the cases. Leaning: a counter row in Postgres per organisation and limit, updated in the same transaction as the action, with a condition that refuses to go over the limit. Counts only, no personal data. Decided by the first chunk that enforces a limit. That chunk must say which schema the counters live in, and why.
+
+**Partner code.** Where a partner's code runs. This is a product decision for the owner. Leaning: partner code does not run on our platform. Partners use the API, OAuth scopes, and signed webhooks, and they host their own code. Decided in the partner-apps phase. This design does not include a hosted runtime for partner code.
+
+**Usage aggregates for the ops console.** Where the ops console reads daily usage counts now that there is no control plane to copy them to. The `platform` role still has no privileges on the `app` schema. Leaning: a scheduled job in the regional service reads each organisation's daily usage counts under that organisation's tenant scope and writes totals to a `platform` table. The copy is an allow-list of count columns. Decided by the `usage-facts` and `ops-console` chunks.
+
 ## Out-of-band
 
 A privacy lawyer, before the first real parish. This spec does not decide:
