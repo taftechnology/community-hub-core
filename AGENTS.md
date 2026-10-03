@@ -2,12 +2,12 @@
 
 Applies to **every contributor: AI agents and humans**. If you are an agent, read this file before your first action in a session.
 
-|                        |                                                                                                                                                                                                                                                                                                                                                               |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Companion document** | [`architecture.md`](architecture.md) — what we are building and why. This file is _how_ we build it.                                                                                                                                                                                                                                                          |
-| **Precedence**         | `architecture.md` decisions (D1…) > this file > personal preference. If you must break a rule here, say so in the PR and why.                                                                                                                                                                                                                                 |
-| **Repository state**   | Phase 0: 19 rows, 12 done, 1 superseded (`api-au-hostname`), 6 not started. Next is cleanup. `packages/kernel`, `packages/observability`, `packages/db`, `tooling/checks`, and CI Stages 1–3 are on `main`. Until cleanup, `apps/gateway` and the edge shell of `apps/api` are still on `main`. That layout was superseded by ADR 0009 and is not the design. |
-| **Tooling**            | [Superpowers](https://github.com/obra/superpowers) is required for agent sessions: `/plugin install superpowers@claude-plugins-official`                                                                                                                                                                                                                      |
+|                        |                                                                                                                                                                                                                                                                                                                                                                             |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Companion document** | [`architecture.md`](architecture.md) — what we are building and why. This file is _how_ we build it.                                                                                                                                                                                                                                                                        |
+| **Precedence**         | `architecture.md` decisions (D1…) > this file > personal preference. If you must break a rule here, say so in the PR and why.                                                                                                                                                                                                                                               |
+| **Repository state**   | Phase 0: 19 rows, 12 done, 1 superseded (`api-au-hostname`), 6 not started. Next is cleanup. `packages/kernel`, `packages/observability`, `packages/db`, `tooling/checks`, and CI Stages 1–3 are on `main`. Until cleanup, `apps/gateway` and the Wrangler files of `apps/api` are still on `main`. Workers were superseded by ADR 0009, and that layout is not the design. |
+| **Tooling**            | [Superpowers](https://github.com/obra/superpowers) is required for agent sessions: `/plugin install superpowers@claude-plugins-official`                                                                                                                                                                                                                                    |
 
 ---
 
@@ -236,7 +236,7 @@ Architecture-specific rules that reviewers check on every diff. Most map to a CI
 
 **Residency**
 
-- Personal data stays in Australia by running in `ap-southeast-2`, with rule 1's exceptions. The previous edge-runtime rules were superseded by ADR 0009.
+- Personal data stays in Australia by running in `ap-southeast-2`, with rule 1's exceptions. The Workers runtime rules were superseded by ADR 0009.
 - A queue message carries IDs and the job loads what it needs. That is a convention, not a non-negotiable. A personal field in a message is named in that feature's spec. Every queue and dead-letter queue has encryption and a retention period.
 - A new outbound call carrying personal data (Stripe, EmailProvider, SMS, push, other provider) originates from the regional service.
 - A new inbound webhook whose payload may contain personal data arrives on the Sydney hostname. There is no global tier to strip the payload for.
@@ -278,7 +278,7 @@ Architecture-specific rules that reviewers check on every diff. Most map to a CI
 - **Expand → migrate → contract**, always. A migration must be backward compatible with the deployed service.
 - Destructive DDL (`DROP`, `NOT NULL` on existing data, type narrowing) goes in a **later PR** than the code that stopped using the column.
 - Every migration is reversible or has a written recovery note in the plan.
-- Long backfills are resumable jobs in the regional service, in batches — never inside a migration. They are not the previous scheduled-workflow product. That path was superseded by ADR 0009.
+- Long backfills are resumable jobs in the regional service, in batches — never inside a migration. They are not Cloudflare Workflows. That product was superseded by ADR 0009.
 - Migrations run before deployment. A migration that requires downtime needs human scheduling.
 
 ---
@@ -363,14 +363,14 @@ A CI check is added only when it has a real input **and** a must-fail fixture �
 
 **Stage 2 — Tests (every push)**
 
-- `pnpm test` — unit tests for `packages/kernel` and `packages/observability`; checker self-tests including `@community-hub/check-event-names` (must-fail fixtures must still fail). The test pool for `apps/gateway` goes in the cleanup row, and `apps/api` leaves that pool in the same row. CI still runs the current pool until then.
+- `pnpm test` — unit tests for `packages/kernel` and `packages/observability`; checker self-tests including `@community-hub/check-event-names` (must-fail fixtures must still fail). The Workers test pool for `apps/gateway` goes in the cleanup row, and `apps/api` leaves that pool in the same row. CI still runs the Workers test pool until then.
 - axe runs in `@community-hub/ui` (Button plus a missing-name fixture)
 
 Omitted until first real input plus a must-fail fixture: tenant-isolation suite, residency integration suite, contract tests.
 
 **Stage 3 — Build and preview (every PR)**
 
-- Between cleanup and the service chunk, Stage 3 builds `@community-hub/api` and does not call the edge deploy tool or require an edge token. The service chunk replaces that build with the ARM image build. Until cleanup merges, CI still runs the current preview job. Verification of the service is the staging hostname.
+- Between cleanup and the service chunk, Stage 3 builds `@community-hub/api` and does not call Wrangler or require a Cloudflare token. The service chunk replaces that build with the ARM image build. Until cleanup merges, CI still runs the Wrangler preview. Verification of the service is the staging hostname.
 - OpenAPI diff comments apply only once those artefacts exist in the repo. Live Terraform `plan` comments wait on CI identities (AWS OIDC).
 
 **Stage 4 — Deploy**
