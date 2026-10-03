@@ -3,12 +3,13 @@
 - Status: accepted
 - Date: 2026-10-03
 - Spec: `docs/specs/2026-10-03-personal-data-on-aws.md`
-- Supersedes: ADR 0001, ADR 0008
+- Supersedes: ADR 0001, ADR 0003, and ADR 0008. ADR 0003 is the staging TLS-verification exception for Workers VPC and Hyperdrive. Those files are not edited.
+- Supersedes in part: the Cloudflare ownership in ADR 0002 (Regional Services, Tunnel, Hyperdrive, and Workers VPC). ADR 0002 is not edited. Architecture §23.2 already says this.
 - Amends: the form path in ADR 0006, by statement. ADR 0006 is not edited.
 
 ## Context
 
-The architecture kept personal data in Australia with Cloudflare Regional Services on every regional hostname. The account does not have Regional Services. It is an Enterprise add-on, priced by contract, and the DNS form has no Region option. Without it, a Worker runs in whichever data centre the visitor reaches. The documented limits are that Regional Services does not cover outbound subrequests, Queue consumers, Cron Triggers, or `workers.dev`, and log-location control is US or EU only. Staging has never been applied.
+The architecture kept personal data in Australia with Cloudflare Regional Services on every regional hostname. The account does not have Regional Services. It is an Enterprise add-on, priced by contract, and the DNS form has no Region option. Without it, a Worker runs in whichever data centre the visitor reaches. The documented limits are that Regional Services does not cover outbound subrequests, Queue consumers, Cron Triggers, or `workers.dev`, and log-location control is US or EU only. Staging has never been applied. ADR 0003, the staging TLS-verification exception for Workers VPC and Hyperdrive, is superseded, and ADR 0002's Cloudflare ownership is superseded in part. Neither file is edited.
 
 ## Decision
 
