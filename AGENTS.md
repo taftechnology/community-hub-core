@@ -2,29 +2,27 @@
 
 Applies to **every contributor: AI agents and humans**. If you are an agent, read this file before your first action in a session.
 
-|                        |                                                                                                                                                                           |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Companion document** | [`architecture.md`](architecture.md) — what we are building and why. This file is _how_ we build it.                                                                      |
-| **Precedence**         | `architecture.md` decisions (D1…) > this file > personal preference. If you must break a rule here, say so in the PR and why.                                             |
-| **Repository state**   | Phase 0 on `main`: pnpm workspace, `apps/gateway`, `packages/kernel`, `packages/observability`, `packages/db`, `tooling/checks`, CI Stages 1–3. The commands in §8 exist. |
-| **Tooling**            | [Superpowers](https://github.com/obra/superpowers) is required for agent sessions: `/plugin install superpowers@claude-plugins-official`                                  |
+|                        |                                                                                                                                                                                                                                                                                                                                                               |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Companion document** | [`architecture.md`](architecture.md) — what we are building and why. This file is _how_ we build it.                                                                                                                                                                                                                                                          |
+| **Precedence**         | `architecture.md` decisions (D1…) > this file > personal preference. If you must break a rule here, say so in the PR and why.                                                                                                                                                                                                                                 |
+| **Repository state**   | Phase 0: 19 rows, 12 done, 1 superseded (`api-au-hostname`), 6 not started. Next is cleanup. `packages/kernel`, `packages/observability`, `packages/db`, `tooling/checks`, and CI Stages 1–3 are on `main`. Until cleanup, `apps/gateway` and the edge shell of `apps/api` are still on `main`. That layout was superseded by ADR 0009 and is not the design. |
+| **Tooling**            | [Superpowers](https://github.com/obra/superpowers) is required for agent sessions: `/plugin install superpowers@claude-plugins-official`                                                                                                                                                                                                                      |
 
 ---
 
-## 1. The ten non-negotiables
+## 1. The eight non-negotiables
 
 Everything else in this file is process. These are correctness. A change that breaks one of them is reverted, not discussed.
 
-1. **No personal data outside Australia.** Global Workers (`gateway`, `control-plane`, `ops-console`), KV, D1 and feature flags hold IDs, slugs, counts and config — never names, emails, addresses, amounts or files. The ops console is a global UI: tenant reads proxy to `api-au` under a support grant; it must not decrypt, log or buffer those fields (architecture §7.3, §11.4).
-2. **`jobs` never handles personal data, including in a response.** `exec` does the whole unit of work and returns `{processed, failed, skipped}` plus IDs (§7.3 rule 2, §18).
-3. **Every `app`-schema table has `org_id`, RLS and `FORCE ROW LEVEL SECURITY`.** Tenant scope is set per transaction with `set_config(..., true)`, never session-level `SET`. Identity and platform schemas are region-scoped and have **no** `org_id` (§6.3).
-4. **A field that SQL must filter, sort or aggregate is not encrypted.** Use a blind index, a derived clear column, or reclassify (§12.2.1).
-5. **Minors' data is restricted by default.** When `is_minor` is true, that person's `confidential*` columns are held under the household key. Children never appear in public content, directories or data sources (§12.1, §12.3).
-6. **Durable Objects never hold personal data** — no Australian jurisdiction exists (§7.3 rule 7).
-7. **No personal data in URLs, logs, traces, analytics or AI calls.** Ever (§12.3, §17, §19.1).
-8. **No third-party analytics SDK or session replay on any surface** (D17).
-9. **Nothing touches production data outside production.** No prod dumps in dev, staging, tests, fixtures or an agent's context (§23.1).
-10. **Secrets never enter the repo, a prompt, a log or a commit.** If one leaks, stop and escalate immediately (this file, §14).
+1. **Personal data is stored and processed in Australia.** The service, the database, the keys that wrap personal data, and the logs are in `ap-southeast-2`. Backups are in `ap-southeast-2` only. Any future copy of personal data stays in Australia. It leaves Australia only when a tenant's own signed-in user opens it, wherever they are; when a support operator reads it under a grant or break-glass; or when it is sent to a named subprocessor, and only the fields that function needs (architecture §7.3, [ADR 0009](docs/adr/0009-personal-data-on-aws.md)).
+2. **Every `app`-schema table has `org_id`, RLS and `FORCE ROW LEVEL SECURITY`.** Tenant scope is set per transaction with `set_config(..., true)`, never session-level `SET`. Identity and platform schemas are region-scoped and have **no** `org_id` (§6.3).
+3. **A field that SQL must filter, sort or aggregate is not encrypted.** Use a blind index, a derived clear column, or reclassify (§12.2.1).
+4. **Minors' data is restricted by default.** When `is_minor` is true, that person's `confidential*` columns are held under the household key. Children never appear in public content, directories or data sources (§12.1, §12.3).
+5. **No personal data in URLs, logs, traces, analytics or AI calls.** Ever (§12.3, §17, §19.1).
+6. **No third-party analytics SDK or session replay on any surface** (D17).
+7. **Nothing touches production data outside production.** No prod dumps in dev, staging, tests, fixtures or an agent's context (§23.1).
+8. **Secrets never enter the repo, a prompt, a log or a commit.** If one leaks, stop and escalate immediately (this file, §14).
 
 CI enforces what it can. The rest is on the reviewer.
 
@@ -238,10 +236,10 @@ Architecture-specific rules that reviewers check on every diff. Most map to a CI
 
 **Residency**
 
-- New Worker: `workers_dev = false`; `preview_urls` must be set explicitly (never rely on Wrangler's default). `preview_urls = true` only when `worker.meta.json` declares `"class": "global-no-pii"`; otherwise `preview_urls = false`. Omit neither field; `worker.meta.json` with a valid class is required. Regional hostname registered with Regional Services if it touches personal data. A global Worker (including ops console) that would need personal data is the wrong Worker — proxy to `api-au` instead.
-- New queue/workflow/cron path: IDs in, status out, `exec` does the work.
-- New outbound call carrying personal data (Stripe, EmailProvider, SMS, push, other provider): it originates from `exec`, not from a global Worker or a job. Control-plane never calls Stripe; `customers.retrieve` returns email.
-- New inbound webhook whose payload may contain personal data: regional hostname (`webhooks-au`). Parse in-region; persist ids/status only before anything global sees it.
+- Personal data stays in Australia by running in `ap-southeast-2`, with rule 1's exceptions. The previous edge-runtime rules were superseded by ADR 0009.
+- A queue message carries IDs and the job loads what it needs. That is a convention, not a non-negotiable. A personal field in a message is named in that feature's spec. Every queue and dead-letter queue has encryption and a retention period.
+- A new outbound call carrying personal data (Stripe, EmailProvider, SMS, push, other provider) originates from the regional service.
+- A new inbound webhook whose payload may contain personal data arrives on the Sydney hostname. There is no global tier to strip the payload for.
 
 **Modules**
 
@@ -255,7 +253,7 @@ Architecture-specific rules that reviewers check on every diff. Most map to a CI
 - Default to an **external collection**: a Zod schema in `packages/contracts` and a public-only projection on the module's Public Content API. Parishes design the list and detail pages in Jellycube; core does not ship list markup.
 - Add a **host island** (`packages/web-components`) only for a write (form, donate, RSVP, join) or a live value (campaign total). The spec names the write or value.
 - Add a **host block pack** (`packages/website-blocks`) only when the spec explains why a collection binding cannot express it.
-- Projections are allow-lists of `public`-class columns, never "row minus hidden fields". Every collection has a must-fail test with a `restricted` field and a minor fixture. Children never appear (§1 rule 5).
+- Projections are allow-lists of `public`-class columns, never "row minus hidden fields". Every collection has a must-fail test with a `restricted` field and a minor fixture. Children never appear (§1 rule 4).
 - Nothing core ships is added to a site project's `package.json`.
 - `website.source.changed.v1` carries IDs, the source key and a content version only. Deep links to "Edit in Community Hub" carry opaque IDs only.
 - Islands POST only to regional core hostnames, carry no card fields (PCI SAQ-A), use Turnstile on public writes, and meet WCAG 2.2 AA.
@@ -277,10 +275,10 @@ Architecture-specific rules that reviewers check on every diff. Most map to a CI
 
 ## 7. Database migrations
 
-- **Expand → migrate → contract**, always. A migration must be backward compatible with the currently deployed Worker.
+- **Expand → migrate → contract**, always. A migration must be backward compatible with the deployed service.
 - Destructive DDL (`DROP`, `NOT NULL` on existing data, type narrowing) goes in a **later PR** than the code that stopped using the column.
 - Every migration is reversible or has a written recovery note in the plan.
-- Long backfills run as Workflows through `exec`, in batches, resumable — never inside a migration.
+- Long backfills are resumable jobs in the regional service, in batches — never inside a migration. They are not the previous scheduled-workflow product. That path was superseded by ADR 0009.
 - Migrations run before deployment. A migration that requires downtime needs human scheduling.
 
 ---
@@ -304,7 +302,7 @@ pnpm lint && pnpm typecheck && pnpm test --filter <touched-packages> && pnpm che
 - [ ] All plan tasks done or consciously dropped with a note
 - [ ] Full CI green (§10)
 - [ ] Tenant-isolation and residency suites green
-- [ ] Spec's behaviour verified against a running preview, not just tests
+- [ ] Spec's behaviour verified on the staging hostname, not just tests
 - [ ] `architecture.md` updated in the same PR if the chunk changed a documented decision, plus an ADR in `docs/adr/` for anything at decision level
 - [ ] `docs/roadmap.md` updated in the **same PR**, last commit on this branch: this chunk **done**, snapshot (last shipped / next chunk / counts) current. Not a follow-up chore after merge.
 - [ ] Reviewer agent sign-off recorded in the PR; second independent review for sensitive chunks (§2)
@@ -356,7 +354,7 @@ Never stage `docs/plans/*-report.md`, `.superpowers/`, or other session scratch.
 **Stage 1 — Static (fast, every push)**
 
 - format, lint, typecheck
-- `check:boundaries` — worker-config, kms-broker-binding, schema-rls, residency-payload, terraform-invariants, sql-session-ban, event-names, residency-cell, check-tokens (each checker has must-fail fixtures exercised in Stage 2). Encrypted columns: ESLint `@community-hub/no-encrypted-column-query`, `@community-hub/no-event-payload`, `@community-hub/no-kms-port-outside-crypto`, `@community-hub/no-restricted-disable`, `@community-hub/no-ts-ignore`, and `@community-hub/no-crypto-testing-import`; fixture-tested via `pnpm test` on `@community-hub/check-encrypted-column`, not `run.ts`.
+- `check:boundaries` — schema-rls, terraform-invariants, sql-session-ban, event-names, check-tokens (each checker has must-fail fixtures exercised in Stage 2). `worker-config`, `kms-broker-binding`, `residency-payload`, and `residency-cell` are removed by the cleanup row. CI still runs them until that row merges. Encrypted columns: ESLint `@community-hub/no-encrypted-column-query`, `@community-hub/no-event-payload`, `@community-hub/no-kms-port-outside-crypto`, `@community-hub/no-restricted-disable`, `@community-hub/no-ts-ignore`, and `@community-hub/no-crypto-testing-import`; fixture-tested via `pnpm test` on `@community-hub/check-encrypted-column`, not `run.ts`.
 - secret scanning, dependency audit (fail on high/critical)
 - traceability (pull requests only): branch matches `<type>/<YYYY-MM-DD>-<slug>`; PR body links one spec and one plan with the same slug, both `approved`, or `No spec:` on `chore/` / `fix/` branches
 - **offline Terraform** (every root and every module under `infra/`): `terraform init -backend=false -lockfile=readonly`, `fmt -check`, `validate`, `tflint --init && tflint`, `terraform test`. Missing Terraform or a failed `init` fails the job. No live `plan`. No cloud provider secrets. `GITHUB_TOKEN` is passed so `tflint --init` does not hit unauthenticated GitHub rate limits.
@@ -365,19 +363,19 @@ A CI check is added only when it has a real input **and** a must-fail fixture �
 
 **Stage 2 — Tests (every push)**
 
-- `pnpm test` — unit tests for `packages/kernel` and `packages/observability`; `@cloudflare/vitest-pool-workers` for `apps/gateway`; checker self-tests including `@community-hub/check-event-names` (must-fail fixtures must still fail)
+- `pnpm test` — unit tests for `packages/kernel` and `packages/observability`; checker self-tests including `@community-hub/check-event-names` (must-fail fixtures must still fail). The test pool for `apps/gateway` goes in the cleanup row, and `apps/api` leaves that pool in the same row. CI still runs the current pool until then.
 - axe runs in `@community-hub/ui` (Button plus a missing-name fixture)
 
 Omitted until first real input plus a must-fail fixture: tenant-isolation suite, residency integration suite, contract tests.
 
 **Stage 3 — Build and preview (every PR)**
 
-- `wrangler deploy --dry-run` for `apps/gateway`; on pull requests, `wrangler versions upload` and a PR comment with the `*.workers.dev` preview URL (only because gateway is `global-no-pii` with `preview_urls: true`). Regional Workers are not previewed on `workers.dev` — verify them on `staging-au` or a Regional Services custom hostname when those apps exist.
-- OpenAPI diff comments apply only once those artefacts exist in the repo. Live Terraform `plan` comments wait on CI identities (AWS OIDC, Cloudflare token).
+- Between cleanup and the service chunk, Stage 3 builds `@community-hub/api` and does not call the edge deploy tool or require an edge token. The service chunk replaces that build with the ARM image build. Until cleanup merges, CI still runs the current preview job. Verification of the service is the staging hostname.
+- OpenAPI diff comments apply only once those artefacts exist in the repo. Live Terraform `plan` comments wait on CI identities (AWS OIDC).
 
 **Stage 4 — Deploy**
 
-- merge to `main` → migrations → deploy `staging-au` → smoke tests + critical-journey e2e (sign-in, donate, RSVP, check-in, consent)
+- merge to `main` → migrations → deploy the container to `staging-au` → smoke tests + critical-journey e2e (sign-in, donate, RSVP, check-in, consent)
 - production is a **human-triggered** promotion of that exact build: migrations → gradual deployment → automatic rollback on error-rate alert
 - Terraform apply on `infra/` changes requires human approval
 - nightly on `main`: full e2e, restore drill check, dependency and licence report
@@ -393,11 +391,11 @@ Beyond "does it work":
 - [ ] Does the diff match the approved plan, or did scope creep in?
 - [ ] Session scratch: no implementer reports, task briefs, or `.superpowers/` in the commit.
 - [ ] Tenancy: could any query return another organisation's row?
-- [ ] Residency: does any personal data reach a global Worker (including ops console), queue, KV, log, or offshore service? Did a global Worker call Stripe or parse a billing/email payload?
+- [ ] Residency: does any personal data leave the regional service, SQS, or the logs for an offshore call, other than rule 1's three cases? Stripe calls come from the regional service.
 - [ ] Children: any new path where a minor's data could become public, searchable, or reach a third party? Are a minor's `confidential*` fields household-keyed, with household-scoped indexes only?
-- [ ] Money: are amounts integer minor units, idempotency keys present, ledger tenant-scoped? Stripe Billing traffic on `exec` / `webhooks-au` only?
+- [ ] Money: are amounts integer minor units, idempotency keys present, ledger tenant-scoped? Stripe Billing traffic comes from the regional service, and webhooks arrive on the Sydney hostname.
 - [ ] Encryption: right classification, right key, and nothing encrypted that SQL must query?
-- [ ] Entitlements and permissions checked in API, UI **and** jobs?
+- [ ] Entitlements and permissions checked in the API, the UI, and jobs? Jobs are work the regional service runs.
 - [ ] Public website: is a new surface a collection (not an island or block without a stated reason)? Is the projection a `public`-only allow-list, with a must-fail minor test?
 - [ ] Failure modes: what happens on provider timeout, replayed webhook, partial batch?
 - [ ] Tests actually fail without the fix (spot-check by reverting the source change)?
@@ -480,9 +478,9 @@ Root docs           → architecture.md / AGENTS.md still go through a branch + 
 Never               → commit or merge to main except by merging a PR
                     → merge your own work · personal data outside AU · prod data anywhere else
                     → encrypted column in a WHERE/ORDER BY/aggregate · secrets in the repo
-                    → a Durable Object holding personal data · analytics SDK on any surface
+                    → analytics SDK on any surface
                     → a non-public field or a minor in a website collection
-                    → control-plane calling Stripe · ops console reading tenant rows itself
+                    → the platform role holding privileges on app
                     → implementer reports in docs/plans/ or in a commit
 
 Stuck twice         → stop and report
