@@ -101,7 +101,7 @@ DNSSEC is an open item, after both zones are answering. Route 53 charges nothing
 
 The envelope key is created as a multi-Region primary key. AWS does not allow a single-Region key to be converted later, and the Melbourne replica depends on that property ([Multi-Region keys in AWS KMS](https://docs.aws.amazon.com/kms/latest/developerguide/multi-region-keys-overview.html)). Checked `infra/modules/aws-kms-envelope/main.tf` on 2026-10-03: `aws_kms_key.envelope` does not set `multi_region`, so the key would be single-Region. The foundations chunk sets `multi_region = true` and adds a Terraform test that the attribute is true. That change is merged before any apply of the key.
 
-The broker is removed. The service's task role calls `kms:GenerateDataKey` and `kms:Decrypt`. The key policy keeps today's encryption-context conditions. The in-process `KmsPort` checks that context before the call, and carries over what the broker enforced: `KeyId` on `Decrypt` as well as `GenerateDataKey`, `maxAttempts` 1, a 3000 ms abort, zeroing of returned bytes, one generic error with no ARN or context, three log fields only, and the key ARN validated at startup. Those behaviours are in `apps/kms-broker` today.
+The broker's HTTP server is removed. The service's task role calls `kms:GenerateDataKey` and `kms:Decrypt`. The key policy keeps today's encryption-context conditions. The in-process `KmsPort` is the reviewed logic in `apps/kms-broker/src/aws-kms-adapter.ts` and `packages/kms-broker/src/context.ts`, not a later rewrite. That is `KeyId` on `Decrypt` as well as `GenerateDataKey`, `maxAttempts` 1, a 3000 ms abort, zeroing of returned bytes, one generic error with no ARN or context, three log fields only, and the key ARN validated at startup. Cleanup moves those two files and their tests to `apps/api/src/kms/`, which is where the service chunk builds the port. The only change to the adapter in that chunk is its import of the deleted server's `BrokerKms` type, which becomes the `KmsPort` type already in `packages/crypto`.
 
 The KMS interface endpoint is on in production. A validation fails when the environment is prod and the flag is false. Staging defaults the flag off, because the task can reach `kms.ap-southeast-2.amazonaws.com` on its public address. A staging key with the flag off cannot require `aws:SourceVpce`. Staging is run at least once with the flag on before the first production apply, so the production key-policy shape is proven end to end. Both shapes stay exactly the expected statements and the allowed actions only, with `aws:SourceVpce` present if and only if the flag is on.
 
@@ -227,16 +227,16 @@ Checked on 2026-10-03. No `package.json` outside `packages/residency` depends on
 
 This chunk's `architecture.md` edit stops telling anyone to enable a region by editing `catalog.json`. The region check it describes is Terraform and `terraform-invariants`. The package may still be on disk until the cleanup row, and the architecture does not describe it as part of the design.
 
-| Piece                                                                                                                                                                                                       | Disposition                                                                                                                                                                   |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/residency` and `residency-cell`                                                                                                                                                                   | Remove in the cleanup row. No application consumer. Region enforcement stays in Terraform and `terraform-invariants`.                                                         |
-| `residency-payload`                                                                                                                                                                                         | Remove in the cleanup row. The IDs-only practice stays a convention, under Jobs and files.                                                                                    |
-| `worker.meta.json` on both apps, `worker-config`, and the gateway app                                                                                                                                       | Remove in the cleanup row. `apps/api` stays. Cleanup removes its Wrangler files, its Worker class file, and the `KMS_BROKER` binding. The service chunk converts it in place. |
-| ADR 0001                                                                                                                                                                                                    | Superseded by ADR 0009. Not edited.                                                                                                                                           |
-| Architecture §22 "No out-of-country failover"                                                                                                                                                               | Reworded in this chunk. A request Sydney cannot serve fails. It is not served from another country. A grant, a travelling user, and a subprocessor call are not failover.     |
-| `eslint.config.js` crypto import ban                                                                                                                                                                        | Reworded, in the cleanup row, from `apps/gateway` to the platform and ops modules.                                                                                            |
-| `cf-regional-hostname` and the other Cloudflare modules, the broker modules, `apps/kms-broker`, the `kms-port-v1` contract, `@community-hub/kms-aws`, `kms-broker-binding`, and the `kms-aws` catalog entry | Remove in the cleanup row. One row, not left as dead code.                                                                                                                    |
-| ADR 0008                                                                                                                                                                                                    | Superseded by ADR 0009. Not edited.                                                                                                                                           |
+| Piece                                                                                                                                                                                                                   | Disposition                                                                                                                                                                   |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/residency` and `residency-cell`                                                                                                                                                                               | Remove in the cleanup row. No application consumer. Region enforcement stays in Terraform and `terraform-invariants`.                                                         |
+| `residency-payload`                                                                                                                                                                                                     | Remove in the cleanup row. The IDs-only practice stays a convention, under Jobs and files.                                                                                    |
+| `worker.meta.json` on both apps, `worker-config`, and the gateway app                                                                                                                                                   | Remove in the cleanup row. `apps/api` stays. Cleanup removes its Wrangler files, its Worker class file, and the `KMS_BROKER` binding. The service chunk converts it in place. |
+| ADR 0001                                                                                                                                                                                                                | Superseded by ADR 0009. Not edited.                                                                                                                                           |
+| Architecture §22 "No out-of-country failover"                                                                                                                                                                           | Reworded in this chunk. A request Sydney cannot serve fails. It is not served from another country. A grant, a travelling user, and a subprocessor call are not failover.     |
+| `eslint.config.js` crypto import ban                                                                                                                                                                                    | Reworded, in the cleanup row, from `apps/gateway` to the platform and ops modules.                                                                                            |
+| `cf-regional-hostname` and the other Cloudflare modules, the broker HTTP server, `main.ts`, the Dockerfile, the `kms-port-v1` contract, `@community-hub/kms-aws`, `kms-broker-binding`, and the `kms-aws` catalog entry | Remove in the cleanup row. `aws-kms-adapter.ts`, `context.ts`, and their tests move to `apps/api/src/kms/` first. They are not deleted.                                       |
+| ADR 0008                                                                                                                                                                                                                | Superseded by ADR 0009. Not edited.                                                                                                                                           |
 
 ### Subprocessors
 
@@ -257,7 +257,7 @@ Optional later adapters (Xero, MYOB, Mailchimp) stay off by default, as architec
 
 ## Cost
 
-Lowest long-term cost is the priority. ADR 0009 carries this section. Prices are USD, from the public offer files on 2026-10-03, for a 730-hour month. A month with two environments up is the sum of those modes, minus the state key if it would be counted twice.
+Lowest long-term cost is the priority. ADR 0009 carries this section. Prices are USD, from the public offer files on 2026-10-03, for a 730-hour month. `infra/bootstrap` creates one state bucket and one state key per environment (`ch-tfstate-staging-au` and `ch-tfstate-prod-au`). Two environments are the plain sum.
 
 ### Unit prices
 
@@ -275,7 +275,15 @@ Lowest long-term cost is the priority. ADR 0009 carries this section. Prices are
 
 One minimum task, on demand: 0.25 × 0.03885 × 730 = USD 7.09 of vCPU, and 0.5 × 0.00426 × 730 = USD 1.55 of memory, USD 8.64 together. Fargate Spot is not in the offer file. AWS describes the discount as up to 70 percent and does not publish a rate. The staging totals below use the on-demand price, so they are a ceiling. The Spot discount is an estimate that can only lower that line.
 
-Keys in one environment: the state key, the storage key, the envelope primary, and the secrets key. Four versions, USD 4.00. The Melbourne replica is a fifth version, only in mode 5. Secrets while the database exists: three role secrets, the RDS-managed master, and Turnstile. Five secrets, USD 2.00. With the database deleted the master secret goes and four remain, USD 1.60. DNS while ingress exists: the public zone and the private zone Cloud Map creates, USD 1.00.
+Keys in one environment: the state key, the storage key, the envelope primary, and the secrets key. Four keys, USD 4.00 before any rotation. The Melbourne replica is a fifth key, only in mode 5. Secrets while the database exists: three role secrets, the RDS-managed master, and Turnstile. Five secrets, USD 2.00. With the database deleted the master secret goes and four remain, USD 1.60. DNS while ingress exists: the public zone and the private zone Cloud Map creates, USD 1.00.
+
+All four keys rotate. The state key sets `enable_key_rotation` true in `infra/bootstrap/main.tf`. The storage and envelope modules reject `enable_key_rotation = false`. The secrets key, which does not exist yet, gets the same validation in the foundations chunk. Rotation stays on the default annual period. The [KMS pricing page](https://aws.amazon.com/kms/pricing/) charges USD 1 a month for the key, then USD 1 a month more for the first rotation and USD 1 a month more for the second. The increase stops at the second rotation. Later rotations are not billed. Each replica is priced as its own key, so the Melbourne replica follows the same steps once it exists.
+
+| When                                                          | One environment, four keys | Production with the replica, five keys |
+| ------------------------------------------------------------- | -------------------------- | -------------------------------------- |
+| Before the first rotation, which is what the tables below use | 4 × 1 = USD 4.00           | 5 × 1 = USD 5.00                       |
+| After one year                                                | 4 × 2 = USD 8.00           | 5 × 2 = USD 10.00                      |
+| After two years, and after that                               | 4 × 3 = USD 12.00          | 5 × 3 = USD 15.00                      |
 
 ### Monthly totals
 
@@ -325,7 +333,7 @@ USD 40.40 is 12 percent over the USD 36 estimate, inside 15 percent. The line th
 | KMS endpoint, one zone            | 0.013 × 730 | 9.49  |
 | Total                             |             | 62.28 |
 
-USD 62.28 is 7 percent under the USD 67 estimate, inside 15 percent.
+USD 62.28 is 7 percent under the USD 67 estimate, inside 15 percent. Production at launch with staging parked is 62.28 + 6.60 = USD 68.88, before requests, logs, and GST. Each environment already includes its own state key.
 
 **5. Production once a parish depends on it.** Database and KMS endpoint in two zones, plus the Melbourne replica of the envelope key.
 
@@ -340,15 +348,50 @@ USD 62.28 is 7 percent under the USD 67 estimate, inside 15 percent.
 
 USD 94.51 is 5 percent under the USD 99 estimate, inside 15 percent.
 
-### Not in the totals
+### Requests, logs, and GST
 
-GST. Data transfer, including the endpoint's USD 0.01 a GB. Request growth: HTTP API requests, KMS requests beyond the 20,000 a month included with the offer, Cloud Map API calls, Route 53 queries, and log ingestion. Per-use providers: GivingJar, Stripe, Twilio, OneSignal, Apple, Google, Turnstile beyond the secret's storage, and the email provider. The `.net` registration at USD 17.00 a year. ECR storage, which is USD 0.10 a GB-month and depends on an image size this spec does not know; a 1 GB image would be USD 0.10. Backup storage inside the provisioned database size, which RDS includes. Fargate's included 20 GB of ephemeral disk.
+The five totals above leave these out. The production budgets use an estimate so the alert sits on a realistic month. The volumes are assumptions, not measurements. Nothing is deployed, so there is no traffic to count. The prices are checked.
+
+A launch month, mode 4, before a parish depends on it:
+
+| Line                                           | Arithmetic           | USD   |
+| ---------------------------------------------- | -------------------- | ----- |
+| HTTP API, 200,000 requests                     | 0.2 × 1.29           | 0.26  |
+| Cloud Map, one `DiscoverInstances` per request | 0.2 × 1.00           | 0.20  |
+| KMS requests, inside the 20,000 included       | 0                    | 0.00  |
+| Logs, 1 GB ingested and stored                 | 1 × 0.67 + 1 × 0.033 | 0.70  |
+| Requests and logs                              |                      | 1.16  |
+| Mode 4 plus that estimate                      | 62.28 + 1.16         | 63.44 |
+| GST at 10 percent                              | 63.44 × 0.10         | 6.34  |
+| Realistic month                                | 63.44 + 6.34         | 69.78 |
+
+The Cloud Map call rate was not found. One call per HTTP request is the assumption behind the USD 0.20. Log ingestion is `APS2-DataProcessing-Bytes` at USD 0.67 a GB for custom logs in the standard class, and storage is `APS2-TimedStorage-ByteHrs` at USD 0.033 a GB-month. The 5 GB log allowance on new accounts is not used here, so the figure still holds after that allowance ends.
+
+A month with four tasks left running, instead of two, adds 2 × (8.64 + 3.65) = USD 24.58 before GST. The realistic bill becomes (63.44 + 24.58) × 1.10 = USD 96.82. That is the overrun the launch budget has to notice.
+
+Once a parish depends on it, mode 5, the same method at a still-small volume:
+
+| Line                                   | Arithmetic                         | USD    |
+| -------------------------------------- | ---------------------------------- | ------ |
+| HTTP API, 1,000,000 requests           | 1 × 1.29                           | 1.29   |
+| Cloud Map, one call per request        | 1 × 1.00                           | 1.00   |
+| KMS, 100,000 requests, no unwrap cache | (100,000 − 20,000) / 10,000 × 0.03 | 0.24   |
+| Logs, 3 GB ingested and stored         | 3 × 0.67 + 3 × 0.033               | 2.11   |
+| Requests and logs                      |                                    | 4.64   |
+| Mode 5 plus that estimate              | 94.51 + 4.64                       | 99.15  |
+| GST at 10 percent                      | 99.15 × 1.10                       | 109.07 |
+
+Four tasks left running for that month: (99.15 + 24.58) × 1.10 = USD 136.10.
+
+After two years the key line is USD 8.00 higher in one environment and USD 10.00 higher once the replica exists. With GST that is USD 8.80 and USD 11.00. A launch month is then about USD 78.58, and a two-zone month about USD 120.07. The budgets below clear those figures. They still fire for the four-task month.
+
+Still not in these figures: data transfer, including the endpoint's USD 0.01 a GB. Route 53 queries beyond aliases, which are not charged. Per-use providers: GivingJar, Stripe, Twilio, OneSignal, Apple, Google, Turnstile beyond the secret's storage, and the email provider. The `.net` registration at USD 17.00 a year. ECR storage, USD 0.10 a GB-month; a 1 GB image is USD 0.10. Backup storage inside the provisioned database size. Fargate's included 20 GB of ephemeral disk.
 
 ### Cost rules
 
 - Staging defaults are the cheap ones, as in Where the system runs. Production defaults are mode 4.
 - Every resource is tagged with `environment` and `project`, so the bill separates staging from production.
-- The foundations chunk creates one AWS Budget per environment, with an email alert at 80 percent. Staging's budget is USD 50, so the alert is at USD 40, just under mode 3's ceiling. Production's budget is USD 80, so the alert is at USD 64, just over mode 4. The chunk that moves production to two zones raises that budget to USD 120, alert at USD 96, before the change. The alert address is a human prerequisite. The budget's own charge is not in the offer files checked here; the foundations chunk confirms it and, if there is a charge, names it.
+- The foundations chunk creates one AWS Budget per environment, with an email alert at 80 percent. Staging's budget is USD 50, so the alert is at USD 40. That is just under mode 3's ceiling of USD 40.40, so it fires only if staging is left running all month. Production's budget is USD 110, so the alert is at USD 88. That is above the realistic launch month of USD 69.78 and above the same month after two key rotations, about USD 78.58, and below the four-task overrun of USD 96.82. The chunk that moves production to two zones raises that budget to USD 165 before the change, so the alert is at USD 132. That is above the realistic two-zone month of USD 109.07 and above that month after two key rotations, about USD 120.07, and below the four-task overrun of USD 136.10. The alert address is a human prerequisite. The budget's own charge is not in the offer files checked here; the foundations chunk confirms it and, if there is a charge, names it.
 - From now on, a chunk that adds a resource billed by the hour or the month names it and its monthly cost in that chunk's spec. No NAT gateway, no load balancer, and no extra interface endpoint appears without that.
 - Savings Plans and a reserved database stay an open item until the sizes are stable.
 
@@ -364,7 +407,7 @@ Superseded, not started, and not deleted from the record:
 
 New and reordered rows, not started:
 
-1. Cleanup. The gateway app, the broker app and its packages, Cloudflare and broker Terraform modules, and the Worker-only checks (`worker-config`, `kms-broker-binding`, `residency-cell`, `residency-payload`, `packages/residency`). `apps/api` is not deleted. Cleanup removes its Wrangler files, its Worker class file, and the `KMS_BROKER` binding, and moves its tests off the Workers pool, because that pool reads `wrangler.jsonc`.
+1. Cleanup. The gateway app, Cloudflare and broker Terraform modules, and the Worker-only checks (`worker-config`, `kms-broker-binding`, `residency-cell`, `residency-payload`, `packages/residency`). `apps/api` is not deleted. Cleanup removes its Wrangler files, its Worker class file, and the `KMS_BROKER` binding, and moves its tests off the Workers pool, because that pool reads `wrangler.jsonc`. On the broker, cleanup deletes the HTTP server, `server.test.ts`, `main.ts`, the Dockerfile, `contract/kms-port-v1.json`, `@community-hub/kms-aws`, and `kms-broker-binding`. It first moves `apps/kms-broker/src/aws-kms-adapter.ts`, `packages/kms-broker/src/context.ts`, and their tests to `apps/api/src/kms/`. The service chunk uses those files. It does not rewrite them.
 2. Foundations. Only what the later rows need before the first apply, and still small enough to be one chunk: tags and the two budgets, the second public subnet, the database changes, the secrets and their key, the task role and the execution role, and the multi-Region envelope key with its policy for that role and its test. No apply of the key before that test is merged.
 3. Ingress. Route 53 and the API certificate, Cloud Map with `SRV` records, the VPC link on two private subnets, the HTTP API with a `$default` stage, and the ECS service module. Split out of foundations because the two together are about twelve tasks.
 4. The regional service. Converts `apps/api` in place. ARM, one process, the `KmsPort` carry-over, TLS `verify-full`. It does not create a second app.
