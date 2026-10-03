@@ -241,6 +241,10 @@ Architecture-specific rules that reviewers check on every diff. Most map to a CI
 - A new outbound call carrying personal data (Stripe, EmailProvider, SMS, push, other provider) originates from the regional service.
 - A new inbound webhook whose payload may contain personal data arrives on the Sydney hostname. There is no global tier to strip the payload for.
 
+**Cost**
+
+- A chunk that adds a resource billed by the hour or the month names it and its monthly cost in its spec. No NAT gateway, load balancer, or extra interface endpoint appears without that.
+
 **Modules**
 
 - Cross-module access only through `public/`; prefer events.
@@ -394,6 +398,7 @@ Beyond "does it work":
 - [ ] Residency: does any personal data leave the regional service, SQS, or the logs for an offshore call, other than rule 1's three cases? Stripe calls come from the regional service.
 - [ ] Children: any new path where a minor's data could become public, searchable, or reach a third party? Are a minor's `confidential*` fields household-keyed, with household-scoped indexes only?
 - [ ] Money: are amounts integer minor units, idempotency keys present, ledger tenant-scoped? Stripe Billing traffic comes from the regional service, and webhooks arrive on the Sydney hostname.
+- [ ] Cost: a chunk that adds a resource billed by the hour or the month names it and its monthly cost in its spec. No NAT gateway, load balancer, or extra interface endpoint appears without that.
 - [ ] Encryption: right classification, right key, and nothing encrypted that SQL must query?
 - [ ] Entitlements and permissions checked in the API, the UI, and jobs? Jobs are work the regional service runs.
 - [ ] Public website: is a new surface a collection (not an island or block without a stated reason)? Is the projection a `public`-only allow-list, with a must-fail minor test?
@@ -413,7 +418,7 @@ Stop, do not improvise, and ask the human:
 - The spec or plan turns out to be wrong or ambiguous mid-implementation
 - The change needs a new subprocessor, a legal opinion, or a privacy/ADR decision
 - Anything touching production data, secrets, billing, or a live customer's tenant
-- Cost or lock-in decisions (a new vendor, a new Cloudflare product, a new paid service)
+- Cost or lock-in decisions (a new AWS service or vendor, a new paid service)
 - Two consecutive failed attempts at the same problem — report what you learned instead of a third guess
 - Something looks like a security issue, however small
 
