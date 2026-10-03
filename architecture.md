@@ -19,7 +19,7 @@ This document is the source of truth for how the platform is structured and why.
 4. [Key decisions](#4-key-decisions)
 5. [System context](#5-system-context)
 6. [Tenancy model](#6-tenancy-model)
-7. [Regional cell architecture on Cloudflare](#7-regional-cell-architecture-on-cloudflare)
+7. [The Sydney runtime](#7-the-sydney-runtime)
 8. [Codebase structure](#8-codebase-structure) — [client surfaces](#85-client-surfaces)
 9. [Module catalogue](#9-module-catalogue)
 10. [Plans, entitlements, add-ons and feature flags](#10-plans-entitlements-add-ons-and-feature-flags)
@@ -72,7 +72,7 @@ Community Hub is an enterprise-grade, multi-tenant SaaS for communities — chur
 | Repository                            | What it is                                                                                                                                                                     | What happens to it                                                                                                                                                                                                                                                                |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Community-Hub`                       | Laravel 12 + Inertia/React + MySQL, installed separately for each client (WordPress-style). 44 models, module toggles stored as JSON in `website_settings`.                    | Features are rebuilt as modules in core. Client data is imported per tenant ([§24](#24-migrating-from-self-hosted-laravel)). Self-hosting concerns (system update, backups, per-client SMTP, URL scanner) are removed. Website templates and the visual editor move to Jellycube. |
-| `Community-Hub-Website-Control-Panel` | Laravel registry of communities (`site_url`, `api_url`, location, type) consumed by the mobile app                                                                             | Replaced by the **control plane** and **App Registry**                                                                                                                                                                                                                            |
+| `Community-Hub-Website-Control-Panel` | Laravel registry of communities (`site_url`, `api_url`, location, type) consumed by the mobile app                                                                             | Replaced by directory rows in the `platform` schema, and by the App Registry in that same schema. Not a separate service. The previous control-plane service was superseded by ADR 0009. The mobile app talks to the Sydney API.                                                  |
 | `Community-Hub-Mobile-App`            | Expo SDK 54 "Parish Hub" app. Lists communities, then calls each community's own server. Guest mode. Login is a Laravel email check plus Supabase OTP; push through OneSignal. | Moves into the monorepo as `apps/mobile`. Talks to one regional API. Supabase auth is removed.                                                                                                                                                                                    |
 
 **Known issues that must not be carried over**
@@ -90,40 +90,40 @@ Community Hub is an enterprise-grade, multi-tenant SaaS for communities — chur
 
 These are rules, not aspirations. Each is enforced by review, lint rules or tests.
 
-1. **Modular monolith first.** One codebase, strict module boundaries, deployed as a small number of Workers. Extract a service only when there is a measured reason.
+1. **Modular monolith first.** One codebase, strict module boundaries, deployed as one Fargate service. Extract a service only when there is a measured reason.
 2. **Tenant isolation is enforced by the database**, not just by application code. Organisation-scoped (`app`) tables carry `org_id`; Postgres row-level security (RLS) rejects cross-organisation access. Identity and platform tables are region-scoped and have no `org_id` ([§6.3](#63-isolation-in-the-database)).
-3. **Data stays in its region.** Personal data is stored and processed only in the tenant's region. Global components hold no personal data.
+3. **Personal data stays in Australia.** It is stored and processed in Australia, with the three cases in [ADR 0009](docs/adr/0009-personal-data-on-aws.md). There is no global tier until a second region exists.
 4. **Privacy by default.** The most protective setting is the default, particularly for children. Features opt into data access; they never opt out of protection.
 5. **Entitlements are separate from feature flags.** "What a customer paid for" and "what code is rolled out" are different systems.
 6. **Integrations go through ports.** Payments, website, email, SMS, push and mobile distribution are interfaces with adapters. Core never imports a vendor SDK directly.
 7. **Contracts are versioned.** APIs, events and add-on interfaces have explicit versions and deprecation windows.
 8. **Everything important is audited.** Reads of restricted data, permission changes, exports and support access all produce audit events.
 9. **Infrastructure is code.** No console-only configuration in staging or production.
-10. **Configuration adds regions, not code.** A new region is a new cell configuration, not a fork.
+10. **Configuration adds regions, not code.** A new region is Terraform plus `terraform-invariants`, not a fork and not an edit to `catalog.json`. The only resources allowed outside `ap-southeast-2` are the four exceptions in ADR 0009. None of them holds personal data.
 
 ---
 
 ## 4. Key decisions
 
-| #   | Decision                                                                                                                                                                                                                                                                                     | Rationale                                                                                                                                                                                                                                                                                                                 | Status                                                           |
-| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| D1  | Build on **Cloudflare** (Workers, Durable Objects, Queues, Workflows, KV, D1, R2, Hyperdrive, Workers VPC, Workers for Platforms)                                                                                                                                                            | Business requirement; global edge, strong security products, one platform shared with Jellycube                                                                                                                                                                                                                           | Accepted                                                         |
-| D2  | **System of record is PostgreSQL in the tenant's country**, reached through Hyperdrive and Workers VPC                                                                                                                                                                                       | Cloudflare storage cannot currently guarantee Australian or Canadian storage ([§28](#28-appendix-verified-platform-facts)). Postgres also gives RLS and mature tooling.                                                                                                                                                   | Accepted                                                         |
-| D3  | **Australia first**; `ca`, `eu`, `us` cells are configuration stubs                                                                                                                                                                                                                          | Current customers are Australian                                                                                                                                                                                                                                                                                          | Accepted                                                         |
-| D4  | **Organisation is the hard tenant boundary; community is a unit inside it.** Every current customer gets an implicit organisation with one community.                                                                                                                                        | Future dioceses and leagues need shared billing, SSO and reporting across communities                                                                                                                                                                                                                                     | Accepted                                                         |
-| D5  | **TypeScript end to end**: Hono on Workers, Drizzle ORM, Zod contracts, React Router v7 admin, Expo mobile                                                                                                                                                                                   | One language across API, web, mobile and SDKs; first-class on Workers                                                                                                                                                                                                                                                     | Accepted                                                         |
-| D6  | **Website builder is Jellycube**, integrated through the SDK's host adapter                                                                                                                                                                                                                  | Jellycube is a separate product used by other platforms                                                                                                                                                                                                                                                                   | Accepted                                                         |
-| D7  | **Payments through GivingJar** behind a `PaymentProvider` port; platform subscriptions billed directly with Stripe Billing                                                                                                                                                                   | Keeps processor switchable; separates tenant revenue from our revenue                                                                                                                                                                                                                                                     | Accepted                                                         |
-| D8  | **Field-level encryption in the application** with keys wrapped by in-region AWS KMS                                                                                                                                                                                                         | Protects restricted data from database access, backups and operators; enables deletion by key destruction                                                                                                                                                                                                                 | Accepted — Worker calls an in-cell broker; ADR 0008.             |
-| D9  | **Own identity service on Workers** (email OTP, passkeys, OIDC provider) storing users in the regional database                                                                                                                                                                              | Replaces split Laravel + Supabase login; core must be the OIDC issuer for Jellycube and add-ons                                                                                                                                                                                                                           | Accepted — library choice in [§26](#26-open-questions-and-risks) |
-| D10 | **Each store app has its own community list.** SaaS admins assign communities to an app through the App Registry; the app never infers “all churches” or “all of Australia”                                                                                                                  | Parish Hub (AU churches), a future mosque app, a sports app, and a Canadian parish app are different store listings with different names. A community appears in an app only when it is listed there ([§13](#13-mobile-apps-and-the-app-registry))                                                                        | Accepted                                                         |
-| D11 | **Real-time features do not use Durable Objects for personal data.** Live screens poll a regional endpoint                                                                                                                                                                                   | Durable Objects have no Australian jurisdiction and `oc` is only a hint, so an object may run and persist outside Australia                                                                                                                                                                                               | Accepted                                                         |
-| D12 | **A field that must be filtered, sorted or aggregated in SQL is not encrypted.** Encrypted fields support equality matching through blind indexes only                                                                                                                                       | Application-layer encryption makes `SUM`, `GROUP BY` and range queries impossible; decrypting rows in a Worker does not scale                                                                                                                                                                                             | Accepted                                                         |
-| D13 | **Transactional email goes through an `EmailProvider` port.** The adapter is chosen later; it must process mail in the tenant's region or be an explicit APP 8 subprocessor                                                                                                                  | Same switchability as payments. Cloudflare Email Service has no confirmed Australian processing guarantee and is a different product from Email Security's Australia region                                                                                                                                               | Accepted — provider in [§26](#26-open-questions-and-risks) Q9    |
-| D14 | **A client cuts over as one unit:** system of record, admin, mobile and public website in the same window                                                                                                                                                                                    | Today's Laravel site is the same app and database as the platform. Events, notices, donations and forms are read and written in-process. A leftover "website-only" install cannot stay live ([§24](#24-migrating-from-self-hosted-laravel))                                                                               | Accepted                                                         |
-| D15 | **Jellycube stays generic.** Community Hub exposes public-site features through the SDK as **external collections** (data), **host islands** (writes and live values) and, by exception, **host block packs** — never as finished list widgets built into Jellycube or into the site project | Jellycube is a Jamstack builder for any host and publishes static Astro (or similar). Parishes design lists and detail pages themselves; lists stay static HTML for SEO; forms and donate post to core at request time ([§15.5](#155-host-website-pack), [ADR 0006](docs/adr/0006-website-collections-islands-blocks.md)) | Accepted — amended by ADR 0006                                   |
-| D16 | **Do not invent a component library.** Web UI is **shadcn/ui** (Base UI primitives, Tailwind) copied into `packages/ui`. Mobile uses the same tokens via **React Native Reusables**. Token source is JSON in `packages/tokens` ([ADR 0007](docs/adr/0007-token-source-is-json.md)).          | Building primitives from scratch is slow and inconsistent. shadcn is owned source, accessible and themable. Polaris React is deprecated; MUI/Ant lock a third-party look; a universal compiler (Tamagui) fights React Router and Astro islands ([§8.5](#85-client-surfaces))                                              | Accepted — amended by ADR 0007                                   |
-| D17 | **Product usage is first-party and community-grained.** No third-party analytics SDK, no session replay, no user-level funnels in an offshore tool                                                                                                                                           | Mixpanel/Amplitude/GA/PostHog Cloud would process personal data outside Australia and collide with children's screens. Domain events already exist; roll them up ([§19.3](#193-product-usage-intelligence))                                                                                                               | Accepted                                                         |
+| #   | Decision                                                                                                                                                                                                                                                                                     | Rationale                                                                                                                                                                                                                                                                                                                 | Status                                                        |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| D1  | Core runs on **AWS in `ap-southeast-2`**. Jellycube stays a separate product.                                                                                                                                                                                                                | The previous edge runtime was superseded by [ADR 0009](docs/adr/0009-personal-data-on-aws.md).                                                                                                                                                                                                                            | Changed by ADR 0009                                           |
+| D2  | **System of record is PostgreSQL in `ap-southeast-2`**, reached from the ECS task's security group. The Hyperdrive and tunnel path was superseded by ADR 0009.                                                                                                                               | Postgres gives RLS and mature tooling. The task connects inside the VPC. [ADR 0009](docs/adr/0009-personal-data-on-aws.md).                                                                                                                                                                                               | Changed by ADR 0009                                           |
+| D3  | **Australia first**; `ca`, `eu`, `us` cells are configuration stubs                                                                                                                                                                                                                          | Current customers are Australian                                                                                                                                                                                                                                                                                          | Accepted                                                      |
+| D4  | **Organisation is the hard tenant boundary; community is a unit inside it.** Every current customer gets an implicit organisation with one community.                                                                                                                                        | Future dioceses and leagues need shared billing, SSO and reporting across communities                                                                                                                                                                                                                                     | Accepted                                                      |
+| D5  | **TypeScript end to end**: Drizzle ORM and Zod contracts stay. The runtime is a Node process on Fargate. The HTTP framework is decided in the service chunk's spec. React Router v7 admin and Expo mobile stay.                                                                              | One language across API, web, mobile and SDKs. [ADR 0009](docs/adr/0009-personal-data-on-aws.md).                                                                                                                                                                                                                         | Changed by ADR 0009                                           |
+| D6  | **Website builder is Jellycube**, integrated through the SDK's host adapter                                                                                                                                                                                                                  | Jellycube is a separate product used by other platforms                                                                                                                                                                                                                                                                   | Accepted                                                      |
+| D7  | **Payments through GivingJar** behind a `PaymentProvider` port; platform subscriptions billed directly with Stripe Billing                                                                                                                                                                   | Keeps processor switchable; separates tenant revenue from our revenue                                                                                                                                                                                                                                                     | Accepted                                                      |
+| D8  | **Field-level encryption in the application.** The task role calls `kms:GenerateDataKey` and `kms:Decrypt`. The in-cell HTTP broker was superseded by ADR 0009.                                                                                                                              | Protects restricted data from database access, backups and operators; enables deletion by key destruction. ADR 0008 is not edited.                                                                                                                                                                                        | Changed by ADR 0009                                           |
+| D9  | **Own identity service on the regional service** (email OTP, passkeys, OIDC provider) storing users in the regional database. Every `platform_*` role requires a passkey. Email one-time codes cannot start a platform session.                                                              | Replaces split Laravel + Supabase login; core must be the OIDC issuer for Jellycube and add-ons. The library remains Q3. [ADR 0009](docs/adr/0009-personal-data-on-aws.md).                                                                                                                                               | Changed by ADR 0009                                           |
+| D10 | **Each store app has its own community list.** SaaS admins assign communities to an app through the App Registry; the app never infers “all churches” or “all of Australia”                                                                                                                  | Parish Hub (AU churches), a future mosque app, a sports app, and a Canadian parish app are different store listings with different names. A community appears in an app only when it is listed there ([§13](#13-mobile-apps-and-the-app-registry))                                                                        | Accepted                                                      |
+| D11 | **Live screens poll.** The real-time object path was superseded by ADR 0009.                                                                                                                                                                                                                 | The HTTP API has no WebSocket, and its integration timeout is 30 seconds.                                                                                                                                                                                                                                                 | Changed by ADR 0009                                           |
+| D12 | **A field that must be filtered, sorted or aggregated in SQL is not encrypted.** Encrypted fields support equality matching through blind indexes only                                                                                                                                       | Application-layer encryption makes `SUM`, `GROUP BY` and range queries impossible; decrypting every row inside the service does not scale                                                                                                                                                                                 | Changed by ADR 0009                                           |
+| D13 | **Transactional email goes through an `EmailProvider` port.** The adapter is chosen later; it must process mail in the tenant's region or be an explicit APP 8 subprocessor                                                                                                                  | Same switchability as payments. Cloudflare Email Service has no confirmed Australian processing guarantee and is a different product from Email Security's Australia region                                                                                                                                               | Accepted — provider in [§26](#26-open-questions-and-risks) Q9 |
+| D14 | **A client cuts over as one unit:** system of record, admin, mobile and public website in the same window                                                                                                                                                                                    | Today's Laravel site is the same app and database as the platform. Events, notices, donations and forms are read and written in-process. A leftover "website-only" install cannot stay live ([§24](#24-migrating-from-self-hosted-laravel))                                                                               | Accepted                                                      |
+| D15 | **Jellycube stays generic.** Community Hub exposes public-site features through the SDK as **external collections** (data), **host islands** (writes and live values) and, by exception, **host block packs** — never as finished list widgets built into Jellycube or into the site project | Jellycube is a Jamstack builder for any host and publishes static Astro (or similar). Parishes design lists and detail pages themselves; lists stay static HTML for SEO; forms and donate post to core at request time ([§15.5](#155-host-website-pack), [ADR 0006](docs/adr/0006-website-collections-islands-blocks.md)) | Accepted — amended by ADR 0006                                |
+| D16 | **Do not invent a component library.** Web UI is **shadcn/ui** (Base UI primitives, Tailwind) copied into `packages/ui`. Mobile uses the same tokens via **React Native Reusables**. Token source is JSON in `packages/tokens` ([ADR 0007](docs/adr/0007-token-source-is-json.md)).          | Building primitives from scratch is slow and inconsistent. shadcn is owned source, accessible and themable. Polaris React is deprecated; MUI/Ant lock a third-party look; a universal compiler (Tamagui) fights React Router and Astro islands ([§8.5](#85-client-surfaces))                                              | Accepted — amended by ADR 0007                                |
+| D17 | **Product usage is first-party and community-grained.** No third-party analytics SDK, no session replay, no user-level funnels in an offshore tool                                                                                                                                           | Mixpanel/Amplitude/GA/PostHog Cloud would process personal data outside Australia and collide with children's screens. Domain events already exist; roll them up ([§19.3](#193-product-usage-intelligence))                                                                                                               | Accepted                                                      |
 
 ---
 
@@ -132,56 +132,43 @@ These are rules, not aspirations. Each is enforced by review, lint rules or test
 ```mermaid
 flowchart LR
   subgraph Users
-    M[Members & guests<br/>mobile app]
+    M[Members and guests<br/>mobile app]
     A[Community staff<br/>admin web]
     V[Website visitors]
-    S[SaaS operators<br/>ops console]
+    S[SaaS operators<br/>ops routes]
   end
 
-  subgraph Global["Global (no personal data)"]
-    GW[gateway Worker]
-    CP[control-plane Worker<br/>D1 + KV]
-    AR[App Registry]
+  subgraph Sydney["ap-southeast-2"]
+    DNS[Route 53]
+    APIGW[HTTP API]
+    SVC[One Fargate service]
+    PG[(Postgres)]
+    KMS[(KMS)]
+    FILES[(S3 files)]
   end
 
-  subgraph AU["AU cell (Regional Services = Australia)"]
-    API[api-au Worker]
-    JOBS[jobs-au / exec-au]
-    WH[webhooks-au]
-    RT[realtime-au<br/>DOs, non-personal]
-    BR[kms-broker<br/>ECS Sydney]
-    PG[(Postgres<br/>AWS Sydney)]
-    KMS[(AWS KMS<br/>Sydney)]
-    S3[(Restricted files<br/>S3 Sydney)]
-  end
-
-  JC[Jellycube<br/>website builder]
-  GJ[GivingJar<br/>payments, AU]
-  STRIPE[Stripe Billing<br/>platform plans]
+  JC[Jellycube<br/>separate product]
+  GJ[GivingJar]
+  STRIPE[Stripe Billing]
   PUSH[OneSignal]
-  EMAIL[EmailProvider<br/>adapter TBD]
+  EMAIL[EmailProvider<br/>not chosen]
 
-  M --> AR --> API
-  A --> API
-  S --> CP
-  S -->|support grant, tenant reads| API
-  V --> JC -->|collections, islands| API
-  API --> PG
-  API --> BR
-  BR --> KMS
-  API --> S3
-  API --> RT
-  API --> JOBS
-  API -->|PaymentProvider| GJ
-  GJ -->|webhooks| WH
-  STRIPE -->|billing webhook| WH
-  WH --> JOBS
-  WH -->|ids/status only| CP
-  CP -->|ids only| JOBS
-  JOBS -->|via exec-au| STRIPE
-  JOBS -->|via exec-au| PUSH
-  JOBS -->|via exec-au| EMAIL
+  M --> DNS --> APIGW --> SVC
+  A --> DNS
+  S --> DNS
+  V --> JC
+  JC -->|public collections| SVC
+  V -->|forms, donate, RSVP| SVC
+  SVC --> PG
+  SVC --> KMS
+  SVC --> FILES
+  SVC -->|PaymentProvider| GJ
+  SVC --> STRIPE
+  SVC --> PUSH
+  SVC --> EMAIL
 ```
+
+Clients call the Sydney hostname. There is one service. Route 53 holds the public zones. There is no separate global tier.
 
 ---
 
@@ -234,7 +221,7 @@ create policy org_isolation on <table>
 ```
 
 - The application connects as a role **without** `BYPASSRLS`.
-- Organisation-scoped requests open a transaction and run `SELECT set_config('app.org_id', $1, true)` and the same for `app.community_id` (bound parameters). Session-level `SET` / `set_config(..., false)` is forbidden because Hyperdrive pools connections per transaction. **Identity-schema work uses the identity role and does not set `app.org_id`. Platform-schema work uses the platform role and does not set `app.org_id`.**
+- Organisation-scoped requests open a transaction and run `SELECT set_config('app.org_id', $1, true)` and the same for `app.community_id` (bound parameters). Session-level `SET` / `set_config(..., false)` is forbidden. **Identity-schema work uses the identity role and does not set `app.org_id`. Platform-schema work uses the platform role and does not set `app.org_id`.**
 - `community_id` scoping is enforced by `packages/db` query helpers and verified by tests. It is a soft boundary because organisation-level staff may legitimately query across communities.
 
 **Not every table is organisation-scoped.** There are three categories, and each table declares which it is:
@@ -257,117 +244,76 @@ A community can leave an organisation (a parish changing diocese, a club leaving
 
 ---
 
-## 7. Regional cell architecture on Cloudflare
+## 7. The Sydney runtime
 
-### 7.1 Global versus regional
+### 7.1 One service in Sydney
 
-```
-┌──────────────────────────── GLOBAL — must never hold personal data ─────────────────────────────┐
-│ gateway Worker        login discovery, marketing redirects, legacy hostname routing              │
-│ control-plane Worker  organisations/communities directory, plans, add-ons, App Registry          │
-│ D1 (control plane)    ids, slugs, region, plan, listing status, Stripe customer id               │
-│ KV                    hostname → {orgId, communityId, region}; entitlement snapshots; app config │
-│ Feature flags         vendor TBD (Q12); targeting org / community / plan / region only           │
-│ Stripe Billing facts  customer id, subscription id, status, price — no emails                    │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+One ECS Fargate service, ARM, in `ap-southeast-2`, serves the API, sign-in, webhooks, background jobs, and the ops console. Clients call the Sydney hostname. Route 53 holds the public zones. There is no separate global tier.
 
-┌──────────────── AU CELL — Regional Services = Australia on every regional hostname ──────────────┐
-│ WAF · API Shield · Bot Management · Turnstile · rate limiting                                     │
-│                                                                                                   │
-│ au.api.communityhub.one   → api-au      Hono app loading all modules                              │
-│                              ├─ RPC → realtime-au   Durable Objects (non-personal coordination)   │
-│                              ├─ Queue → jobs-au     consumers, Workflows, Cron (IDs only)          │
-│                              └─ fetch → exec-au     internal regional hostname for personal data   │
-│ auth.au.communityhub.one     → api-au       identity / OIDC issuer                                │
-│ webhooks.au.communityhub.one → webhooks-au  GivingJar, Stripe Billing and add-on inbound webhooks │
-│ {slug}.communityhub.one      → api-au       member portal + legacy mobile compatibility routes    │
-│                                                                                                   │
-│ Hyperdrive (query caching OFF) → Workers VPC → Cloudflare Tunnel → PostgreSQL, AWS ap-southeast-2 │
-│ AWS KMS ap-southeast-2 (key wrapping) · S3 ap-southeast-2 (restricted files)                      │
-│ R2 (public media only, served through CDN)                                                        │
-│ Logpush → S3 ap-southeast-2                                                                       │
-└───────────────────────────────────────────────────────────────────────────────────────────────────┘
-```
+Ingress is a regional HTTP API. Its integration is a VPC link to Cloud Map, with `SRV` records and a `$default` stage. The VPC link is created on two private subnets from the first apply. There is no load balancer. The hop from API Gateway to the task is plain HTTP inside the VPC.
+
+Admin static files come from S3 through CloudFront and hold no personal data. Every data call goes to the Sydney hostname. Turnstile stays a bot check on public forms. It does not sit in front of traffic.
+
+The previous global-versus-regional layout was superseded by [ADR 0009](docs/adr/0009-personal-data-on-aws.md).
 
 ### 7.2 What runs where
 
-| Need                                                               | Product                                           | Rules                                                                                                                                                                                                                                                        |
-| ------------------------------------------------------------------ | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| API and business logic                                             | Workers (per cell), joined by service binding RPC | `workers_dev = false` everywhere; `preview_urls` set explicitly in Wrangler — `true` only on `global-no-pii` Workers (see [ADR 0001](docs/adr/0001-preview-urls-on-global-workers.md) and each app's `worker.meta.json`); `false` on every `regional` Worker |
-| Admin web app                                                      | Workers Static Assets + React Router v7           | Served from a regional hostname                                                                                                                                                                                                                              |
-| Customer domains                                                   | Cloudflare for SaaS custom hostnames              | Each hostname registered with Regional Services for its cell                                                                                                                                                                                                 |
-| System of record                                                   | Hyperdrive + Workers VPC → PostgreSQL             | Caching disabled on any configuration that reads personal data                                                                                                                                                                                               |
-| Live screens (check-in board, attendance, event dashboards)        | `api-au` + Postgres, polled by the client         | **No Durable Objects for personal data** — see [§7.6](#76-real-time-without-durable-objects)                                                                                                                                                                 |
-| Background work                                                    | Queues, Workflows, Cron Triggers                  | Payloads and step results contain IDs and statuses only                                                                                                                                                                                                      |
-| Public media (logos, event images, public galleries)               | R2                                                | Never children's photos or restricted documents                                                                                                                                                                                                              |
-| Restricted files (children's photos, WWCC documents, certificates) | S3 in the cell's AWS region                       | Private bucket, short-lived presigned URLs, SSE-KMS plus application encryption                                                                                                                                                                              |
-| Global lookups                                                     | D1 (control plane), KV                            | No personal data. Values are IDs, slugs, config                                                                                                                                                                                                              |
-| Feature flags                                                      | Service TBD (Q12)                                 | Rollout only. Targeting is organisation, community, plan and region — never personal identifiers                                                                                                                                                             |
-| Third-party add-on code                                            | Workers for Platforms                             | See [§16](#16-third-party-apps-and-integrations)                                                                                                                                                                                                             |
-| Transactional email                                                | `EmailProvider` port (adapter TBD)                | Composed and sent from `exec-au`. Tenant sending domains with SPF/DKIM/DMARC. Provider must keep personal-data mail in-region, or be listed as an APP 8 subprocessor with a minimal payload (see Q9)                                                         |
-| SMS                                                                | Twilio (Australian sender IDs)                    | Behind `SmsProvider` port                                                                                                                                                                                                                                    |
-| Staff access to ops tools                                          | Cloudflare Access                                 | Hardware-key MFA. The ops console is a **global UI**. It must not read tenant records itself; those requests go to `api-au` under a support grant ([§11.4](#114-platform-support-access))                                                                    |
+| Need                                          | Where                                              | Rules                                                                   |
+| --------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------- |
+| API, sign-in, webhooks, jobs, ops             | One Fargate service                                | ARM. One process. `apps/api`, converted in place.                       |
+| Admin static files                            | S3 and CloudFront                                  | No personal data. Data calls go to the Sydney hostname.                 |
+| System of record                              | RDS PostgreSQL in `ap-southeast-2`                 | The task security group is the only source allowed to connect.          |
+| Live screens                                  | The service, polled by the client                  | The HTTP API has no WebSocket. The integration timeout is 30 seconds.   |
+| Background work                               | SQS and EventBridge, when the first job needs them | A message carries IDs. The job loads what it needs.                     |
+| Files                                         | S3 in `ap-southeast-2`                             | Restricted files use short-lived URLs and do not go through CloudFront. |
+| Directory, plans, entitlements, feature flags | `platform` schema                                  | Not a separate service.                                                 |
+| Transactional email                           | `EmailProvider` port                               | Sent by the regional service. The provider is not chosen (Q9).          |
+| SMS                                           | Twilio, Australian sender IDs                      | Behind the `SmsProvider` port.                                          |
+| Ops                                           | Routes on this service, own hostname               | Passkeys. The `platform` role has no privileges on `app`.               |
 
-### 7.3 Residency rules specific to Cloudflare
+### 7.3 Residency
 
-These follow from documented platform behaviour ([§28](#28-appendix-verified-platform-facts)):
+Personal data is stored and processed in Australia. The service, the database, the keys that wrap personal data, and the logs are in `ap-southeast-2`. Backups are in `ap-southeast-2` only. Any future copy of personal data stays in Australia. The Melbourne row is a replica of the envelope key, not a database backup.
 
-1. **Regional Services covers HTTP requests to custom domains only.** It does not cover `*.workers.dev`, Queue consumers, Cron Triggers or a Worker's outbound subrequests.
-   - `workers.dev` is disabled on every Worker (`workers_dev = false`). [Preview URLs](https://developers.cloudflare.com/workers/versions-and-deployments/preview-urls/) are hosted only on `*.workers.dev`, so `preview_urls = true` is allowed only on Workers whose class is `global-no-pii` (declared in `worker.meta.json` beside the app). Regional Workers use `preview_urls = false` and are verified on `staging-au` or a Regional Services custom hostname — never on `workers.dev`. See [ADR 0001](docs/adr/0001-preview-urls-on-global-workers.md).
-   - Queue messages and Workflow payloads carry IDs only.
-   - When work involves personal data it happens at the cell's `exec` hostname, which runs under Regional Services.
-2. **`jobs-au` never handles personal data — including in the response it gets back.** `exec-au` performs the _whole_ unit of work and returns counts, statuses and IDs only. A job that receives a member's name in an HTTP response has processed personal data in an unregionalised Worker, which is the same breach as reading it from the database there. In practice:
-   - **Queue consumers** dispatch `{orgId, communityId, jobType, ids}` to `exec` and record the returned status.
-   - **Cron handlers** do no work themselves; they call `exec` immediately.
-   - **Workflow steps** call `exec` and return a status. Step return values are persisted by the platform, so they must never contain personal data.
-   - **Outbound sends** (email, SMS, push) that contain personal data are composed and sent from `exec`, never from `jobs`.
-3. **The identity service is regional.** `auth.au.communityhub.one` is an Australian Regional Services hostname, because it reads the regional `identity` schema and handles email addresses and one-time codes. There is one issuer per region; no global endpoint ever receives an email address, including for region discovery ([§11.1](#111-identity)).
-4. **Hyperdrive can cache query results.** Caching is disabled for configurations used with personal data.
-5. **Worker code and secrets are distributed globally.** No personal data or tenant keys in code, variables or secrets. Tenant key material lives in regional KMS.
-6. **Workers Logs, KV, Workers AI, AI Gateway and Vectorize are not regionalised.** Logs are scrubbed of personal data ([§19](#19-observability-and-audit)); KV holds no personal data; AI features never receive restricted data. Feature-flag targeting attributes are limited to organisation ID, community ID, plan and region — never emails or other personal identifiers.
-7. **Durable Objects have no Australian jurisdiction at all.** `oc` is a location hint, not a guarantee, so an object may run outside Australia even before storage is considered; in-memory state is discarded on hibernation, which means anything that must survive is written to Durable Object storage or a WebSocket attachment and persisted wherever the object lives. Australian cells therefore use Durable Objects only for data that is not personal data.
+Personal data leaves Australia only when a tenant's own signed-in user opens it, wherever they are; when a support operator reads it under a grant or break-glass; or when it is sent to a named subprocessor, and only the fields that function needs.
+
+The region check allows four resources outside `ap-southeast-2`. None holds personal data: the CloudFront viewer certificate in `us-east-1`, the global services CloudFront, Route 53, and IAM, the DNSSEC signing key in `us-east-1` when that open item is done, and the Melbourne replica of the envelope key in `ap-southeast-4`.
+
+The eight non-negotiables are in `AGENTS.md`. The seven residency rules that were specific to the previous edge platform were superseded by [ADR 0009](docs/adr/0009-personal-data-on-aws.md).
 
 ### 7.4 Request lifecycle
 
 ```mermaid
 sequenceDiagram
   participant C as Client
-  participant E as Cloudflare edge (AU)
-  participant W as api-au Worker
-  participant K as KV
-  participant H as Hyperdrive
-  participant P as Postgres (Sydney)
+  participant G as API Gateway
+  participant S as Fargate task
+  participant P as Postgres Sydney
 
-  C->>E: HTTPS stmarys.communityhub.one/v1/...
-  E->>W: WAF, API Shield, rate limit passed
-  W->>K: hostname → org, community, region (cached in isolate)
-  W->>W: authenticate session, load entitlements snapshot
-  W->>W: authorise (entitlement → community toggle → permission)
-  W->>H: BEGIN; set_config('app.org_id' / 'app.community_id', $1, true)
-  H->>P: query (RLS enforced)
-  P-->>W: rows (restricted fields encrypted)
-  W->>W: decrypt only fields the actor may read; write audit event
-  W-->>C: response
+  C->>G: HTTPS on the Sydney hostname
+  G->>S: plain HTTP inside the VPC
+  S->>S: authenticate, then check entitlement, toggle, and permission
+  S->>P: BEGIN; set_config app.org_id and app.community_id, true
+  P-->>S: rows, restricted fields still encrypted
+  S->>S: decrypt only fields the actor may read; write the audit event
+  S-->>C: response
 ```
 
-This sequence is an organisation-scoped API request. Identity OTP and platform-schema tenancy work do not set `app.org_id` ([§6.3](#63-isolation-in-the-database)).
+This sequence is an organisation-scoped API request. Identity work and `platform`-schema work do not set `app.org_id` ([§6.3](#63-isolation-in-the-database)).
 
 ### 7.5 Adding a region later
 
-1. Provision `infra/regions/<region>/` (Postgres, KMS, S3, Tunnel connectors).
-2. Add the wrangler environment for each regional Worker.
-3. Add the region to `packages/residency/src/catalog.json` with `enabled: true`, provision `infra/regions/<id>/`, and pass `residency-cell` (catalog `awsRegion` matches that root's tfvars and backends). Control-plane enablement is a later chunk.
-4. Register regional hostnames with the matching Regional Services region; for EU/US, use R2 and Durable Object jurisdictions.
-5. Run the cross-tenant and residency test suites against the new cell.
+A later region is Terraform plus `terraform-invariants`. Do not enable a region by editing `catalog.json`. The four exceptions in §7.3 are the only resources allowed outside `ap-southeast-2`, and none holds personal data. A module that creates one of them does not reuse the `aws_region == "ap-southeast-2"` validation for that resource. Anything else outside `ap-southeast-2` fails the check.
 
-### 7.6 Real-time without Durable Objects
+A second region will need a small directory, built then. This document does not design it.
 
-Check-in, live attendance and event dashboards are the features that would naturally use a Durable Object, and they are exactly the features that handle children's names and pickup codes. They do not use one.
+### 7.6 Live screens poll
+
+Check-in, live attendance, and event dashboards poll. The HTTP API has no WebSocket, and its integration timeout is 30 seconds. The previous real-time object path was superseded by [ADR 0009](docs/adr/0009-personal-data-on-aws.md). Q10 is closed.
 
 - **State lives in Postgres.** Each check-in session row carries a monotonic `rev` that increases on every change.
-- **Clients poll** `GET /v1/c/{slug}/checkin/sessions/{id}?since={rev}` every 2–5 seconds against `api-au`. A site has tens of devices, not thousands, so this is inexpensive and fully in-region.
-- **The check-in device works offline**, queueing scans locally and reconciling on reconnect, which matters more in a church hall than sub-second updates do.
-- **If fan-out is ever needed**, a Durable Object may hold `{sessionId, rev}` and nothing else, acting purely as a "something changed, refetch" signal. Even opaque identifiers leaving Australia is a decision recorded in an ADR and approved by the privacy owner — never a default.
+- **Clients poll** `GET /v1/c/{slug}/checkin/sessions/{id}?since={rev}` every 2–5 seconds against the Sydney hostname. A site has tens of devices, not thousands.
+- **The check-in device works offline**, queueing scans locally and reconciling on reconnect.
 
 ---
 
@@ -379,17 +325,10 @@ pnpm workspaces + Turborepo.
 
 ```
 community-hub/
-├── apps/                     # each Worker app: wrangler.jsonc + worker.meta.json (class: global-no-pii | regional)
-│   ├── gateway/              # global: login discovery, redirects, legacy hostname routing
-│   ├── control-plane/        # global: orgs/communities directory, plans, add-ons, App Registry, Stripe Billing facts
-│   ├── api/                  # regional: HTTP API, loads modules/*; compatibility router for legacy mobile routes
-│   ├── jobs/                 # regional: queue consumers, Workflows, Cron
-│   ├── exec/                 # regional: internal hostname for personal-data work started by jobs
-│   ├── realtime/             # regional: Durable Objects — non-personal coordination only, unused at launch (§7.6)
-│   ├── webhooks/             # regional: GivingJar, Stripe Billing and add-on inbound webhooks
-│   ├── admin/                # tenant admin web (React Router v7)
-│   ├── portal/               # member portal (React Router v7), served on {slug}.communityhub.one
-│   ├── ops-console/          # SaaS operators; global UI behind Cloudflare Access; tenant reads via api-au
+├── apps/
+│   ├── api/                  # the service, converted in place: API, sign-in, webhooks, jobs, ops routes
+│   ├── admin/                # tenant admin web (React Router v7); static files from S3 and CloudFront
+│   ├── portal/               # member portal (React Router v7), on {slug}.communityhub.one
 │   └── mobile/               # Expo app; one codebase, many store apps via APP_KEY
 │
 ├── modules/
@@ -433,8 +372,7 @@ community-hub/
 │
 ├── packages/
 │   ├── kernel/               # module manifest, request context, DI, outbox, errors
-│   ├── residency/            # per-cell configuration and guards
-│   ├── db/                   # Drizzle + Hyperdrive, transaction wrapper, RLS helpers, migrations runner
+│   ├── db/                   # Drizzle, transaction wrapper, RLS helpers, migrations runner
 │   ├── crypto/               # WebCrypto AES-256-GCM, KMS key wrapping, blind indexes
 │   ├── entitlements/         # snapshot reader, entitled(), limit()
 │   ├── policy/               # permission evaluation
@@ -452,19 +390,21 @@ community-hub/
 │
 ├── tooling/
 │   ├── eslint-plugin-community-hub/  # `@community-hub/no-encrypted-column-query`, `@community-hub/no-event-payload`, `@community-hub/no-kms-port-outside-crypto`, `@community-hub/no-restricted-disable`, `@community-hub/no-ts-ignore`, `@community-hub/no-crypto-testing-import`
-│   └── checks/               # CI boundary checkers (worker-config, schema-rls, residency-payload, terraform-invariants, sql-session-ban, event-names, traceability), each with must-fail fixtures; encrypted-column/ holds ESLint fixtures
+│   └── checks/               # CI boundary checkers (schema-rls, terraform-invariants, sql-session-ban, event-names, traceability). The edge-runtime checkers leave in the cleanup row.
 │
 ├── infra/
 │   ├── modules/              # shared Terraform modules; each has tests/ and is in the CI matrix
 │   ├── bootstrap/            # state bucket + KMS; local state then migrated into the bucket
 │   ├── global/               # dedicated staging zone (not communityhub.one). Prod zone is tfvars-only.
 │   └── regions/
-│       └── au/               # one cell = one root: AWS + AU Cloudflare (Tunnel, Hyperdrive, Workers VPC)
+│       └── au/               # one root: AWS in ap-southeast-2
 │
 └── docs/
     ├── adr/                  # architecture decision records
     └── runbooks/             # incidents, breach assessment, restores, key rotation
 ```
+
+Until the cleanup row, `apps/gateway` and the edge shell of `apps/api` are still on disk. That layout was superseded by ADR 0009 and is not this design. `packages/residency` is not part of this design. The cleanup row removes it.
 
 ### 8.2 Module anatomy
 
@@ -474,7 +414,7 @@ modules/features/giving/
 ├── domain/                   # entities, value objects, rules — no framework imports
 ├── application/              # commands and queries (use cases)
 ├── infrastructure/           # repositories (Drizzle), adapters to ports
-├── http/                     # Hono routes, request/response schemas
+├── http/                     # HTTP routes. The framework is decided in the service chunk's spec.
 ├── public/                   # the only surface other modules may import
 ├── events/                   # published event schemas (versioned)
 ├── db/
@@ -513,10 +453,10 @@ export default defineModule({
 
 - A module imports another module only through its `public/` folder. Prefer events for side effects.
 - A module never reads or writes another module's tables.
-- `domain/` has no imports from Hono, Drizzle, Cloudflare bindings or adapters.
+- `domain/` has no imports from the HTTP framework, Drizzle, or adapters. The service chunk's spec names the framework.
 - Adapters depend on ports; modules never import adapters.
-- Global apps (`gateway`, later `control-plane`, `ops-console`) cannot import packages the residency catalog marks `regionalOnlyPackages` (`@community-hub/db` and `@community-hub/crypto` today), including `import type`, deep specifiers, relative paths, transitive `workspace:` dependencies, and non-literal `import()`. Enforcement is `residency-cell` keyed off `worker.meta.json` `class: global-no-pii`, plus ESLint `no-restricted-imports` on `apps/gateway` as a fast path. Worker class vocabulary stays in `worker.meta.json` / `worker-config` (ADR 0001).
-- Also still: kernel must not import `@community-hub/db`; checkers worker-config, schema-rls, event-names, sql-session-ban, residency-payload, residency-cell. dependency-cruiser omitted until it has a real input and a must-fail fixture.
+- The platform and ops modules must not import `@community-hub/crypto`, including `import type`. The granted-read module is the only exception. Enforcement moves in the cleanup row. The previous global-app rule was superseded by [ADR 0009](docs/adr/0009-personal-data-on-aws.md).
+- Kernel must not import `@community-hub/db`. Checkers that belong to the previous edge runtime leave in the cleanup row. `schema-rls`, `event-names`, and `sql-session-ban` stay. dependency-cruiser stays omitted until it has a real input and a must-fail fixture.
 
 ### 8.4 Conventions
 
@@ -536,13 +476,13 @@ This is the **UI architecture**: which apps exist, what they share, and which do
 
 #### Surfaces
 
-| Surface       | Where                                                                                                                                                                                                                                      | Audience                         | Appearance                                                                                                                              |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Tenant admin  | `apps/admin` (React Router v7, regional hostname)                                                                                                                                                                                          | Community and organisation staff | `packages/ui`                                                                                                                           |
-| Member portal | `apps/portal` on `{slug}.communityhub.one` (with `api-au`)                                                                                                                                                                                 | Members and guardians            | `packages/ui`; member-scoped chrome, not the staff shell                                                                                |
-| Ops console   | `apps/ops-console` (global UI, Cloudflare Access). Directory, plans, usage aggregates and Stripe **ids** go to control-plane. **Tenant record reads proxy through `api-au` under a support grant** ([§11.4](#114-platform-support-access)) | SaaS operators                   | `packages/ui`; ops chrome. Tenant data stays hidden until support access is granted                                                     |
-| Mobile        | `apps/mobile` (Expo, many store apps)                                                                                                                                                                                                      | Members and guests               | `packages/ui` tokens plus native primitives. Theming per `APP_KEY`, not a fork of screens ([§13](#13-mobile-apps-and-the-app-registry)) |
-| Public site   | Jellycube, bound to core **external collections**; host islands from `packages/web-components`                                                                                                                                             | Visitors                         | Designed in Jellycube. Host tokens from core. Islands use the same CSS variables ([§15.5](#155-host-website-pack))                      |
+| Surface       | Where                                                                                                                                                                                                  | Audience                         | Appearance                                                                                                                              |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Tenant admin  | `apps/admin` (React Router v7). Static files from S3 and CloudFront, no personal data. Data calls go to the Sydney hostname.                                                                           | Community and organisation staff | `packages/ui`                                                                                                                           |
+| Member portal | `apps/portal` on `{slug}.communityhub.one`. Data calls go to the Sydney hostname.                                                                                                                      | Members and guardians            | `packages/ui`; member-scoped chrome, not the staff shell                                                                                |
+| Ops console   | Routes on the regional service, on their own hostname, with passkeys. Directory and plans are `platform` tables. Not a separate app. Tenant reads use a grant ([§11.4](#114-platform-support-access)). | SaaS operators                   | `packages/ui`; ops chrome. Tenant data stays hidden until support access is granted                                                     |
+| Mobile        | `apps/mobile` (Expo, many store apps)                                                                                                                                                                  | Members and guests               | `packages/ui` tokens plus native primitives. Theming per `APP_KEY`, not a fork of screens ([§13](#13-mobile-apps-and-the-app-registry)) |
+| Public site   | Jellycube, bound to core **external collections**; host islands from `packages/web-components`                                                                                                         | Visitors                         | Designed in Jellycube. Host tokens from core. Islands use the same CSS variables ([§15.5](#155-host-website-pack))                      |
 
 There is one design language for products we ship. The public site may look like the parish; it must not invent a second Community Hub component set.
 
@@ -550,16 +490,16 @@ There is one design language for products we ship. The public site may look like
 
 **Adopt an existing kit. Do not design buttons, dialogs, tables or form controls from scratch.**
 
-| Layer          | Choice                                                                                                                       | Why                                                                                                                                                                                              |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Web primitives | **shadcn/ui**, Base UI primitives (the 2026 default), Tailwind                                                               | Accessible overlays and forms without owning ARIA. Source is copied into the repo, so we are not theming a black-box `node_modules` library. Works with React Router v7 on Workers Static Assets |
-| Web catalogue  | `packages/ui` is the only shadcn registry in the monorepo                                                                    | Apps do not `npx shadcn add` into `apps/admin`. Features import `@community-hub/ui` only                                                                                                         |
-| Tokens         | Source is `packages/tokens` JSON (`--ch-*` properties); web consumes generated theme variables; elevation is not shipped yet | White-label and vertical overlays change tokens, not components. Feature screens do not hard-code raw values. First app import order and Vite note below                                         |
-| Mobile         | **React Native Reusables** + NativeWind, mapped to the **same token names**                                                  | Closest shadcn equivalent on Expo. Native primitives (not Radix/Base UI). gluestack-ui v5 is native-only now; do not use it on the web                                                           |
-| Public islands | `packages/web-components` styled with the shared `--ch-*` variables                                                          | A static Jellycube page must not pull the admin React app. Parish look comes from Jellycube theme tokens ([§15.5](#155-host-website-pack))                                                       |
-| Icons          | Lucide, one set                                                                                                              | Do not mix icon packs                                                                                                                                                                            |
-| Forms          | shadcn Form + React Hook Form + Zod from `packages/contracts`                                                                | One validation story from API to UI                                                                                                                                                              |
-| Data tables    | TanStack Table composed in `packages/ui`, not a second table kit                                                             | People, donations, events, volunteers                                                                                                                                                            |
+| Layer          | Choice                                                                                                                       | Why                                                                                                                                                                                                                |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Web primitives | **shadcn/ui**, Base UI primitives (the 2026 default), Tailwind                                                               | Accessible overlays and forms without owning ARIA. Source is copied into the repo, so we are not theming a black-box `node_modules` library. Works with React Router v7. Admin static files are S3 and CloudFront. |
+| Web catalogue  | `packages/ui` is the only shadcn registry in the monorepo                                                                    | Apps do not `npx shadcn add` into `apps/admin`. Features import `@community-hub/ui` only                                                                                                                           |
+| Tokens         | Source is `packages/tokens` JSON (`--ch-*` properties); web consumes generated theme variables; elevation is not shipped yet | White-label and vertical overlays change tokens, not components. Feature screens do not hard-code raw values. First app import order and Vite note below                                                           |
+| Mobile         | **React Native Reusables** + NativeWind, mapped to the **same token names**                                                  | Closest shadcn equivalent on Expo. Native primitives (not Radix/Base UI). gluestack-ui v5 is native-only now; do not use it on the web                                                                             |
+| Public islands | `packages/web-components` styled with the shared `--ch-*` variables                                                          | A static Jellycube page must not pull the admin React app. Parish look comes from Jellycube theme tokens ([§15.5](#155-host-website-pack))                                                                         |
+| Icons          | Lucide, one set                                                                                                              | Do not mix icon packs                                                                                                                                                                                              |
+| Forms          | shadcn Form + React Hook Form + Zod from `packages/contracts`                                                                | One validation story from API to UI                                                                                                                                                                                |
+| Data tables    | TanStack Table composed in `packages/ui`, not a second table kit                                                             | People, donations, events, volunteers                                                                                                                                                                              |
 
 First-app stylesheets import in this order:
 
@@ -586,7 +526,7 @@ A feature screen composes these. It does not restyle a `Button` per module.
 **Enforcement**
 
 - Components are accessible by default. **WCAG 2.2 AA is a merge gate** for admin, portal, ops, mobile, and host islands ([§21](#21-compliance)).
-- Dependency rules: `apps/admin`, `apps/ops-console` and the portal import UI only from `@community-hub/ui`. `apps/mobile` imports only from `@community-hub/ui-native` (Reusables, same tokens). No second component library.
+- Dependency rules: `apps/admin`, the ops routes, and the portal import UI only from `@community-hub/ui`. `apps/mobile` imports only from `@community-hub/ui-native` (Reusables, same tokens). No second component library.
 - Vertical packs supply **labels and a small token overlay** (for example the heading on service times). They do not ship a second component library.
 - White-label store apps may override tokens and store listing art. They reuse the same screens.
 - The public site may look like the parish; it must not invent a second Community Hub component set.
@@ -603,7 +543,7 @@ These are already decided elsewhere. A screen that contradicts them is a bug.
 4. **Generic screens, vertical labels.** Routes, component names and copy keys stay generic (`service_times`, not `mass_times`). The vertical pack provides the string the user sees ([§8.4](#84-conventions)).
 5. **No personal data in URLs.** Lists and search use the session and opaque ids ([§17](#17-api-design)).
 6. **Children's and restricted screens.** No third-party analytics SDK or session replay on any surface (D17). First-party usage beacons are dropped here ([§12.3](#123-children-product-rules), [§19.3](#193-product-usage-intelligence)).
-7. **Live boards poll** a regional endpoint. Durable Objects are not used for personal UI ([§7.6](#76-real-time-without-durable-objects)).
+7. **Live boards poll** the Sydney hostname. The previous real-time object path was superseded by ADR 0009 ([§7.6](#76-live-screens-poll)).
 8. **Public lists are static HTML** rendered by Jellycube from core collections. Forms, RSVP and donate are host islands that POST to core ([§15.5](#155-host-website-pack)).
 9. **Mobile community switcher** shows only memberships that are live on **this** `APP_KEY`. Admin and portal switch among communities the actor can access, not store listings ([§13.2](#132-listing-rules-enforced)).
 
