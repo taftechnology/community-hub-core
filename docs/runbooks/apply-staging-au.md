@@ -68,15 +68,15 @@ The AU apply creates the envelope key (`prevent_destroy`, `depends_on` the task 
 
 If the first apply fails with an invalid principal, the key was created before `aws_iam_role.task`. The module sets `depends_on`. Do not remove it to make a plan look simpler.
 
-The flag-off apply creates the ECR repository `${name}/kms-broker` and no task. From a clean checkout of the merged commit, follow this order (still without doing it in this chunk):
+The flag-off apply creates the ECR repository `${name}/kms-broker` and no task. From a clean checkout of the merged commit:
 
-1. Push the broker image.
+1. Build `apps/kms-broker` with `org.opencontainers.image.revision` set to that SHA, push it to that repository, and set `kms_broker_image` to the `@sha256:` digest. `cloudflared` stays on the Docker Hub digest.
 2. Set `enable_kms_broker_tasks`.
-3. Apply.
+3. Apply. If that apply rejects the loopback service, stop and report. The service is HTTP to `127.0.0.1:8080`, not the tunnel's catch-all ingress.
 4. Replace `REPLACE_AFTER_APPLY` in `apps/api` with the Workers VPC service id.
 5. Deploy `apps/api`.
 
-The live unwrap is `api-au-hostname`, not a step this runbook performs. If that apply rejects the loopback service, stop and report. Do not apply prod from this runbook.
+The live unwrap is `api-au-hostname`. Do not apply prod from this runbook.
 
 The broker tunnel token rotates the same way as the connector token, and it is a different secret (`<name>/kms-broker-tunnel-token`). Revoking the connector token does not rotate the broker token.
 
