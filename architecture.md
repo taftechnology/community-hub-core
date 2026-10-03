@@ -805,7 +805,7 @@ AWS KMS (Sydney)  ── wraps ──►  Organisation key
 - **Key rotation:** KMS keys rotate annually; organisation and community keys can be rotated online by re-wrapping.
 - **Field envelope (`0x01`):** `version || key_id (16) || iv (12) || ciphertext || tag (16)`. GCM AAD is `version || key_id` plus length-prefixed bound fields (tag first). Field AAD binds `community_id`, not `org_id` (a community move rewrites `org_id` without re-encrypt). Labels are stable (`people.email`), not SQL names. Each wrapped root is HKDF-split into `chub/v1/enc`, `chub/v1/bidx`, and `chub/v1/wrap`. NIST 2³² encryptions per key; rotation is the remedy. See [ADR 0005](docs/adr/0005-field-encryption-envelope.md).
 
-The regional Worker does not call KMS and does not hold an AWS credential. It will call the in-cell broker over the broker tunnel. The broker task role calls `GenerateDataKey` and `Decrypt`. See ADR 0008. The cell runs the broker task when `enable_kms_broker_tasks` is true. The regional Worker still does not call it. That call is `kms-worker-adapter`.
+The regional Worker does not call KMS and does not hold an AWS credential. `@community-hub/kms-aws` implements `KmsPort` by calling the in-cell broker. `apps/api` holds the `KMS_BROKER` binding and does not call it. The live unwrap is `api-au-hostname`. See ADR 0008.
 
 #### 12.2.1 Encryption versus queryability
 
