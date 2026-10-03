@@ -114,7 +114,7 @@ Do not apply prod from this runbook.
 
 These are the staging rules for the Sydney runtime. They are not steps of the old apply.
 
-Parking staging sets the task count to zero and deletes the staging database. A stopped database still bills for storage, and AWS starts it again after 7 days, so a stop is not parking. A VPC link with no traffic for 60 days becomes `INACTIVE`. Unparking waits until that link is `AVAILABLE`, then creates the database again and starts one task.
+Parking staging sets the task count to zero and deletes the staging database. A stopped database still bills for storage, and AWS starts it again after 7 days, so a stop is not parking. A VPC link with no traffic for 60 days becomes `INACTIVE`. Unparking waits until that link is `AVAILABLE`, then creates the database again. Before the task starts, run the bootstrap, then the migrations, then the role-password procedure, in that order.
 
 ## Change a database role
 
