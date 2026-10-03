@@ -1,6 +1,21 @@
 # Runbook: apply staging-au
 
-This chunk never applies. A human runs these steps later, with AWS and Cloudflare credentials, against **staging only**. Never apply prod from this runbook.
+This chunk never applies. The steps under **Apply order** are the previous design. Do not run them. A later chunk rewrites this runbook before anyone applies staging.
+
+## Human prerequisites
+
+These come before any apply. They are not steps of the old apply below.
+
+1. Every apply uses an IAM Identity Center administrator profile, never the root user.
+2. A budget alert address, for both environments. The address is chosen by the owner. This runbook does not invent one.
+3. Register `communityhub-staging.net` in Route 53 at USD 17 a year. Restoration is USD 74. Terraform uses the hosted zone that registration creates. It does not create a second zone.
+4. For `communityhub.one`, confirm the registrar is not Cloudflare Registrar, change the name servers to the zone Terraform creates, and confirm the new name servers answer before the old zone is removed.
+5. Do not apply the envelope key until `multi_region` is true on that key and the Terraform test is in the module.
+6. Before the Melbourne replica chunk, enable `ap-southeast-4`. It is disabled in this account. The replica chunk does not enable it.
+
+## Do not apply the steps below
+
+The current apply order, the connector image, the tunnel token, the broker tunnel, and the feature-flag table are the previous design (a Cloudflare zone, Regional Services, a tunnel, Hyperdrive, a connector, and a broker). They must not be applied. They stay here so a reader can see what was withdrawn. ADR 0009 superseded them. They are not safe to run.
 
 ## Preconditions
 
@@ -94,3 +109,17 @@ Do not apply prod from this runbook.
 - Apply `environment = "prod"` from this runbook.
 - `terraform destroy` bootstrap after state has been migrated.
 - Print `tunnel_token` or `hyperdrive_origin_password` in CI, logs, or a plan comment.
+
+## Park and unpark
+
+These are the staging rules for the Sydney runtime. They are not steps of the old apply.
+
+Parking staging sets the task count to zero and deletes the staging database. A stopped database still bills for storage, and AWS starts it again after 7 days, so a stop is not parking. A VPC link with no traffic for 60 days becomes `INACTIVE`. Unparking waits until that link is `AVAILABLE`, then creates the database again and starts one task.
+
+## Change a database role
+
+When a role's password changes, an operator runs `ALTER ROLE` for that role. The password comes from the secret's current version. This procedure does not record the password, the secret ARN, or a connection string. The master user is used only for bootstrap and for `ALTER ROLE`. There is no rotation function.
+
+## Restore drill
+
+Quarterly, and only against staging. Restore the staging database to a new instance from point-in-time recovery. Record the time taken against the 4-hour target. Then delete the restored instance, because it bills by the hour. This drill does not restore production. Reading `SHOW max_connections` belongs to the first staging apply, not to this drill.
