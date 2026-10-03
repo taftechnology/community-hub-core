@@ -10,7 +10,11 @@ describe("catalog.json", () => {
       expect(cell.cloudflareRegionalServices.length).toBeGreaterThan(0);
       expect(cell.awsRegion.length).toBeGreaterThan(0);
     }
-    expect(catalog.regionalOnlyPackages).toEqual(["@community-hub/db", "@community-hub/crypto"]);
+    expect(catalog.regionalOnlyPackages).toEqual([
+      "@community-hub/db",
+      "@community-hub/crypto",
+      "@community-hub/kms-aws",
+    ]);
     expect(regionalOnlyPackages).toEqual(catalog.regionalOnlyPackages);
   });
 

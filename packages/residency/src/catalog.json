@@ -21,5 +21,5 @@
       "awsRegion": "us-east-1"
     }
   },
-  "regionalOnlyPackages": ["@community-hub/db", "@community-hub/crypto"]
+  "regionalOnlyPackages": ["@community-hub/db", "@community-hub/crypto", "@community-hub/kms-aws"]
 }
