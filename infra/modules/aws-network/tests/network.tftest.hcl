@@ -26,6 +26,42 @@ run "staging_happy" {
     override_during = plan
   }
 
+  override_resource {
+    target = aws_route_table.public
+    values = {
+      id = "rtb-public-mock"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = aws_subnet.public_b
+    values = {
+      id = "subnet-public-b-mock"
+    }
+    override_during = plan
+  }
+
+  assert {
+    condition     = aws_subnet.public_b.cidr_block == "10.64.3.0/24"
+    error_message = "second public subnet CIDR must be 10.64.3.0/24"
+  }
+
+  assert {
+    condition     = aws_subnet.public_b.availability_zone == "ap-southeast-2b"
+    error_message = "second public subnet must be in ap-southeast-2b"
+  }
+
+  assert {
+    condition     = aws_route_table_association.public_b.subnet_id == "subnet-public-b-mock"
+    error_message = "public_b route table association must use the public_b subnet"
+  }
+
+  assert {
+    condition     = aws_route_table_association.public_b.route_table_id == "rtb-public-mock"
+    error_message = "public_b route table association must use the public route table"
+  }
+
   assert {
     condition     = aws_vpc.this.region == "ap-southeast-2"
     error_message = "VPC region argument must be ap-southeast-2"

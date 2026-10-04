@@ -25,7 +25,7 @@ variable "environment" {
 
 variable "deletion_protection" {
   type        = bool
-  description = "Must be true in prod. RDS also keys off environment."
+  description = "Must be true in prod. The RDS instance uses this variable; the prod check rejects a prod plan that turns it off."
   default     = false
 }
 

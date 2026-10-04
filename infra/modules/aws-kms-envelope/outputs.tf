@@ -14,7 +14,7 @@ output "alias_name" {
 }
 
 output "task_role_arn" {
-  description = "ARN of the task role. The key policy is the only grant."
+  description = "ARN of the task role. The key policy grants cryptographic actions; task_secrets grants secret read."
   value       = aws_iam_role.task.arn
 }
 

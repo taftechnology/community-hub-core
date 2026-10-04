@@ -259,7 +259,7 @@ run "happy" {
       strcontains(aws_iam_role_policy.execution.policy, "/community-hub/ch-staging/service") &&
       !strcontains(aws_iam_role_policy.execution.policy, "kms:")
     )
-    error_message = "execution role may write service logs and must not call kms"
+    error_message = "service execution log policy may write service logs and must not call kms"
   }
 
   assert {

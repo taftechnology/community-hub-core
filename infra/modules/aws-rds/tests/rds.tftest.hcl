@@ -207,6 +207,25 @@ run "prod_backup_off_fails" {
   expect_failures = [terraform_data.prod_protection]
 }
 
+run "prod_retention_off_fails" {
+  command = plan
+
+  variables {
+    aws_region             = "ap-southeast-2"
+    name                   = "ch-prod"
+    environment            = "prod"
+    project                = "community-hub"
+    subnet_ids             = ["subnet-aaaa", "subnet-bbbb"]
+    vpc_security_group_ids = ["sg-rds"]
+    kms_key_arn            = "arn:aws:kms:ap-southeast-2:123456789012:key/mock"
+    alert_email            = "alerts@example.com"
+    deletion_protection    = true
+    backup_retention_days  = 0
+  }
+
+  expect_failures = [terraform_data.prod_protection]
+}
+
 run "public_rds_fails" {
   command = plan
 

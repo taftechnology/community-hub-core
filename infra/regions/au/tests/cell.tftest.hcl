@@ -89,7 +89,7 @@ run "staging_happy" {
       for statement in jsondecode(output.broker_execution_policy).Statement :
       alltrue([for action in statement.Action : !strcontains(action, "kms:")])
     ])
-    error_message = "broker execution policy must not call kms"
+    error_message = "service execution log policy must not call kms"
   }
 
   assert {
@@ -172,6 +172,11 @@ run "prod_tfvars" {
   assert {
     condition     = length(regexall("(?m)^\\s*environment\\s*=\\s*\"prod\"", file("${path.module}/env/prod.tfvars"))) > 0
     error_message = "env/prod.tfvars must set environment = \"prod\""
+  }
+
+  assert {
+    condition     = length(regexall("(?m)^\\s*enable_kms_endpoint\\s*=\\s*true", file("${path.module}/env/prod.tfvars"))) > 0
+    error_message = "env/prod.tfvars must set enable_kms_endpoint = true"
   }
 }
 

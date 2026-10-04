@@ -40,6 +40,11 @@ run "enabled" {
   }
 
   assert {
+    condition     = one(aws_budgets_budget.environment[0].notification).notification_type == "ACTUAL"
+    error_message = "budget notification type must be ACTUAL"
+  }
+
+  assert {
     condition     = contains(one(aws_budgets_budget.environment[0].notification).subscriber_email_addresses, "alerts@example.com")
     error_message = "budget subscriber must be the alert email"
   }
