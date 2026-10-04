@@ -62,6 +62,10 @@ module "rds" {
   subnet_ids             = module.network.private_subnet_ids
   vpc_security_group_ids = [module.network.rds_security_group_id]
   kms_key_arn            = module.kms.key_arn
+  deletion_protection    = var.deletion_protection
+  backup_retention_days  = var.backup_retention_days
+  multi_az               = false
+  alert_email            = var.alert_email
 }
 
 module "envelope" {

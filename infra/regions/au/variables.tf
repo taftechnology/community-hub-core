@@ -40,3 +40,8 @@ variable "enable_kms_endpoint" {
   description = "Create the KMS interface endpoint. Staging defaults off."
   default     = false
 }
+
+variable "alert_email" {
+  type        = string
+  description = "Email for budget and RDS alarm SNS subscriptions."
+}

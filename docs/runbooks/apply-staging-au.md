@@ -12,6 +12,7 @@ These come before any apply. They are not steps of the old apply below.
 4. For `communityhub.one`, confirm the registrar is not Cloudflare Registrar, change the name servers to the zone Terraform creates, and confirm the new name servers answer before the old zone is removed.
 5. Do not apply the envelope key until `multi_region` is true on that key and the Terraform test is in the module.
 6. Before the Melbourne replica chunk, enable `ap-southeast-4`. It is disabled in this account. The replica chunk does not enable it.
+7. After apply, confirm the RDS alarm SNS email subscription. Until that confirmation, alarms are visible in the console only and email does not arrive.
 
 ## Do not apply the steps below
 

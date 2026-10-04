@@ -38,6 +38,7 @@ run "staging_happy" {
     environment           = "staging"
     deletion_protection   = false
     backup_retention_days = 0
+    alert_email           = "alerts@example.com"
   }
 
   assert {
@@ -112,6 +113,7 @@ run "staging_endpoint_on" {
     deletion_protection   = false
     backup_retention_days = 0
     enable_kms_endpoint   = true
+    alert_email           = "alerts@example.com"
   }
 
   override_resource {
@@ -147,6 +149,7 @@ run "prod_tfvars" {
     deletion_protection   = true
     backup_retention_days = 7
     enable_kms_endpoint   = true
+    alert_email           = "alerts@example.com"
   }
 
   assert {
@@ -165,6 +168,7 @@ run "prod_endpoint_off_fails" {
     enable_kms_endpoint   = false
     deletion_protection   = true
     backup_retention_days = 7
+    alert_email           = "alerts@example.com"
   }
 
   expect_failures = [
@@ -180,6 +184,7 @@ run "wrong_region_fails" {
     aws_region     = "us-east-1"
     aws_account_id = "123456789012"
     environment    = "staging"
+    alert_email    = "alerts@example.com"
   }
 
   expect_failures = [var.aws_region]
