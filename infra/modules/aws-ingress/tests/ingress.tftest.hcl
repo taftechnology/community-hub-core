@@ -46,6 +46,22 @@ run "staging_unset" {
     override_during = plan
   }
 
+  override_resource {
+    target = aws_apigatewayv2_api.tenant
+    values = {
+      id = "api-tenant"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = aws_apigatewayv2_api.ops
+    values = {
+      id = "api-ops"
+    }
+    override_during = plan
+  }
+
   assert {
     condition     = length(aws_apigatewayv2_vpc_link.this.subnet_ids) == 2 && contains(aws_apigatewayv2_vpc_link.this.security_group_ids, "sg-vpc-link")
     error_message = "VPC link uses both private subnets and its own security group"
@@ -73,6 +89,55 @@ run "staging_unset" {
       length(regexall("(?m)^\\s*dynamic\\s+\"(ingress|egress)\"", file("${path.module}/main.tf"))) == 0
     )
     error_message = "the VPC link security group must not set inline or dynamic ingress or egress"
+  }
+
+  assert {
+    condition     = aws_apigatewayv2_api.tenant.id == "api-tenant" && aws_apigatewayv2_api.ops.id == "api-ops" && aws_apigatewayv2_api.tenant.disable_execute_api_endpoint == true && aws_apigatewayv2_api.ops.disable_execute_api_endpoint == true
+    error_message = "tenant and ops are two APIs and both disable execute-api"
+  }
+
+  assert {
+    condition = (
+      aws_apigatewayv2_integration.tenant.integration_uri == "arn:aws:servicediscovery:ap-southeast-2:123456789012:service/srv-mock" &&
+      aws_apigatewayv2_integration.ops.integration_uri == "arn:aws:servicediscovery:ap-southeast-2:123456789012:service/srv-mock" &&
+      aws_apigatewayv2_integration.tenant.connection_id == "vpclink-mock" &&
+      aws_apigatewayv2_integration.ops.connection_id == "vpclink-mock" &&
+      aws_apigatewayv2_integration.tenant.request_parameters["overwrite:header.x-community-hub-hostname"] == "$context.domainName" &&
+      aws_apigatewayv2_integration.tenant.request_parameters["overwrite:header.x-community-hub-client-ip"] == "$context.identity.sourceIp" &&
+      aws_apigatewayv2_integration.tenant.request_parameters["overwrite:header.x-community-hub-request-id"] == "$context.requestId" &&
+      aws_apigatewayv2_integration.ops.request_parameters["overwrite:header.x-community-hub-hostname"] == "$context.domainName"
+    )
+    error_message = "both integrations target Cloud Map through the VPC link and overwrite the three trusted headers"
+  }
+
+  assert {
+    condition = (
+      aws_apigatewayv2_stage.tenant.name == "$default" &&
+      aws_apigatewayv2_stage.ops.name == "$default" &&
+      aws_apigatewayv2_stage.tenant.default_route_settings[0].throttling_rate_limit == 50 &&
+      aws_apigatewayv2_stage.tenant.default_route_settings[0].throttling_burst_limit == 100 &&
+      aws_apigatewayv2_stage.ops.default_route_settings[0].throttling_rate_limit == 10 &&
+      aws_apigatewayv2_stage.ops.default_route_settings[0].throttling_burst_limit == 20 &&
+      length(aws_apigatewayv2_stage.ops.route_settings) == 0 &&
+      toset([for key, route in aws_apigatewayv2_route.tenant_write : route.route_key]) == toset(keys(output.tenant_write_throttle)) &&
+      length(output.tenant_write_throttle) == 8 &&
+      alltrue([for key, throttle in output.tenant_write_throttle : throttle.rate == 10 && throttle.burst == 20])
+    )
+    error_message = "the eight write route keys are locked on the routes, 10 and 20 come from the output, and ops has no write route"
+  }
+
+  assert {
+    condition = (
+      aws_cloudwatch_log_group.api_access.retention_in_days == 14 &&
+      aws_cloudwatch_log_group.ops_access.retention_in_days == 14 &&
+      strcontains(aws_apigatewayv2_stage.tenant.access_log_settings[0].format, "$context.integrationErrorMessage") &&
+      strcontains(aws_apigatewayv2_stage.tenant.access_log_settings[0].format, "$context.integration.status") &&
+      strcontains(aws_apigatewayv2_stage.tenant.access_log_settings[0].format, "$context.domainName") &&
+      !strcontains(aws_apigatewayv2_stage.tenant.access_log_settings[0].format, "requestQueryString") &&
+      !strcontains(aws_apigatewayv2_stage.ops.access_log_settings[0].format, "sourceIp") &&
+      !strcontains(aws_apigatewayv2_stage.tenant.access_log_settings[0].format, "sourceIp")
+    )
+    error_message = "access logs keep the parent fields plus integration error, integration status, and domain name, and omit the query string and client IP"
   }
 
   assert {
@@ -214,4 +279,59 @@ run "one_subnet_fails" {
   }
 
   expect_failures = [var.private_subnet_ids]
+}
+
+run "named_stage_without_overwrite_fails" {
+  command = plan
+
+  variables {
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
+    stage_name             = "v1"
+    overwrite_request_path = false
+  }
+
+  expect_failures = [var.stage_name]
+}
+
+run "execute_api_on_fails" {
+  command = plan
+
+  variables {
+    aws_region                   = "ap-southeast-2"
+    aws_account_id               = "123456789012"
+    name                         = "ch-staging"
+    environment                  = "staging"
+    project                      = "community-hub"
+    vpc_id                       = "vpc-example"
+    private_subnet_ids           = ["subnet-a", "subnet-b"]
+    task_security_group_id       = "sg-task"
+    disable_execute_api_endpoint = false
+  }
+
+  expect_failures = [var.disable_execute_api_endpoint]
+}
+
+run "access_log_retention_zero_fails" {
+  command = plan
+
+  variables {
+    aws_region                = "ap-southeast-2"
+    aws_account_id            = "123456789012"
+    name                      = "ch-staging"
+    environment               = "staging"
+    project                   = "community-hub"
+    vpc_id                    = "vpc-example"
+    private_subnet_ids        = ["subnet-a", "subnet-b"]
+    task_security_group_id    = "sg-task"
+    access_log_retention_days = 0
+  }
+
+  expect_failures = [var.access_log_retention_days]
 }

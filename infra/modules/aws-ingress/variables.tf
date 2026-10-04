@@ -55,6 +55,41 @@ variable "cloud_map_record_type" {
   }
 }
 
+variable "stage_name" {
+  type    = string
+  default = "$default"
+
+  validation {
+    condition     = var.stage_name == "$default" || var.overwrite_request_path
+    error_message = "a named stage must overwrite the request path."
+  }
+}
+
+variable "overwrite_request_path" {
+  type    = bool
+  default = false
+}
+
+variable "disable_execute_api_endpoint" {
+  type    = bool
+  default = true
+
+  validation {
+    condition     = var.disable_execute_api_endpoint
+    error_message = "execute-api stays disabled."
+  }
+}
+
+variable "access_log_retention_days" {
+  type    = number
+  default = 14
+
+  validation {
+    condition     = var.access_log_retention_days > 0
+    error_message = "access log retention must be greater than zero."
+  }
+}
+
 # tflint-ignore: terraform_unused_declarations
 variable "service_image" {
   type    = string
