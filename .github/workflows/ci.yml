@@ -111,6 +111,7 @@ jobs:
           - infra/modules/aws-db-secrets
           - infra/modules/aws-budgets
           - infra/modules/aws-rds
+          - infra/modules/aws-ingress
     steps:
       - uses: actions/checkout@v4
 
