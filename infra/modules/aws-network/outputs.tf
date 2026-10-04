@@ -19,7 +19,7 @@ output "private_subnet_ids" {
 }
 
 output "task_security_group_id" {
-  description = "Security group for service tasks (ingress empty)."
+  description = "Security group for service tasks."
   value       = aws_security_group.task.id
 }
 

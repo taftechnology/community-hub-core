@@ -113,7 +113,7 @@ resource "aws_route_table_association" "private" {
 resource "aws_security_group" "task" {
   region      = var.aws_region
   name        = "${var.name}-task"
-  description = "Service task. No inbound. Egress to public AWS APIs and to RDS."
+  description = "Service task. Inbound TCP 8080 from the VPC link. Egress to public AWS APIs and to RDS."
   vpc_id      = aws_vpc.this.id
 
   tags = {
