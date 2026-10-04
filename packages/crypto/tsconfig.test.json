@@ -1,7 +1,9 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "./dist/tsbuild-test",
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
     "declarationMap": false,
     "rootDir": ".",
     "lib": ["ES2022"],
