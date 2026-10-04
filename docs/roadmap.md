@@ -21,9 +21,9 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 |              |                                                                   |
 | ------------ | ----------------------------------------------------------------- |
 | Phase        | 0 — Foundations                                                   |
-| Last shipped | `cleanup`                                                         |
-| Next chunk   | foundations                                                       |
-| Phase 0      | 19 rows: 13 done, 1 superseded (`api-au-hostname`), 5 not started |
+| Last shipped | `foundations`                                                     |
+| Next chunk   | `ingress`                                                         |
+| Phase 0      | 19 rows: 14 done, 1 superseded (`api-au-hostname`), 4 not started |
 | Later phases | not started                                                       |
 
 Update the snapshot and the row in the **same PR**, last commit on the chunk branch, before the PR opens. Do not defer to a follow-up chore after merge. Do not put implementer reports here ([AGENTS.md](../AGENTS.md) §5).
@@ -73,7 +73,7 @@ Architecture: monorepo, CI, Terraform for AWS in `ap-southeast-2`, kernel, db wi
 | done        | `kms-worker-adapter`     | Worker `KmsPort` against `kms-port-v1.json`. VPC binding only on `apps/api`. Spec `2026-10-01-kms-worker-adapter`. Superseded for the runtime by ADR 0009.                                                                                                                                                                                                                                                                                                                         |
 | superseded  | `api-au-hostname`        | Set enable_regional_hostnames, apply, attach the api route on au.api.<zone>, and verify the running Worker. Not deleted. Superseded for the runtime by ADR 0009.                                                                                                                                                                                                                                                                                                                   |
 | done        | cleanup                  | Gateway app, Cloudflare and broker Terraform, Worker checks, and `packages/residency` go. `apps/api` stays. Its Wrangler files, Worker class file, and `KMS_BROKER` go, and its tests leave the Workers pool. `aws-kms-adapter.ts`, `context.ts`, and their tests move to `apps/api/src/kms/`. `@aws-sdk/client-kms` is added so those tests still run. The HTTP server, `main.ts`, the Dockerfile, `kms-port-v1`, `@community-hub/kms-aws`, and `kms-broker-binding` are deleted. |
-| not started | foundations              | Tags and the two budgets, the second public subnet, the database changes, the secrets and their key, the task role and the execution role, and the multi-Region envelope key with its test. No apply of that key before the test is merged.                                                                                                                                                                                                                                        |
+| done        | foundations              | Task group, multi-Region envelope key, database alarms, secrets key, tags, and budgets behind `enable_budgets`.                                                                                                                                                                                                                                                                                                                                                                    |
 | not started | ingress                  | Route 53, the API certificate, Cloud Map `SRV`, the VPC link on two private subnets, the HTTP API `$default` stage, and the ECS service module.                                                                                                                                                                                                                                                                                                                                    |
 | not started | regional service         | `apps/api` in place. ARM, one process, the `KmsPort` reshape, the ported server tests, and TLS `verify-full`.                                                                                                                                                                                                                                                                                                                                                                      |
 | not started | first staging apply      | Health, a database round trip, a KMS round trip, Cloud Map, and the VPC link reaching a task in a public subnet. One staging run with the KMS endpoint flag on before any production apply.                                                                                                                                                                                                                                                                                        |
@@ -229,7 +229,7 @@ From architecture §26. Do not invent answers in a spec.
 
 ## Next spec
 
-The next approved chunk on this list is **foundations**, unless the human picks another remaining Phase 0 row.
+The next approved chunk on this list is **ingress**, unless the human picks another remaining Phase 0 row.
 
 ---
 

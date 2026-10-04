@@ -108,6 +108,8 @@ jobs:
           - infra/modules/aws-network
           - infra/modules/aws-kms-storage
           - infra/modules/aws-kms-envelope
+          - infra/modules/aws-db-secrets
+          - infra/modules/aws-budgets
           - infra/modules/aws-rds
     steps:
       - uses: actions/checkout@v4

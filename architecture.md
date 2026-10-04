@@ -99,7 +99,7 @@ These are rules, not aspirations. Each is enforced by review, lint rules or test
 7. **Contracts are versioned.** APIs, events and add-on interfaces have explicit versions and deprecation windows.
 8. **Everything important is audited.** Reads of restricted data, permission changes, exports and support access all produce audit events.
 9. **Infrastructure is code.** No console-only configuration in staging or production.
-10. **Configuration adds regions, not code.** A new region is Terraform plus `terraform-invariants`, not a fork and not an edit to `catalog.json`. The only resources allowed outside `ap-southeast-2` are the four exceptions in ADR 0009. None of them holds personal data.
+10. **Configuration adds regions, not code.** A new region is Terraform plus `terraform-invariants`, not a fork and not an edit to `catalog.json`. The only resources allowed outside `ap-southeast-2` are the five exceptions in [ADR 0009](docs/adr/0009-personal-data-on-aws.md) and [ADR 0010](docs/adr/0010-aws-budgets-exception.md). None of them holds personal data.
 
 ---
 
@@ -277,7 +277,7 @@ Personal data is stored and processed in Australia. The service, the database, t
 
 Personal data leaves Australia only when a tenant's own signed-in user opens it, wherever they are; when a support operator reads it under a grant or break-glass; or when it is sent to a named subprocessor, and only the fields that function needs.
 
-The region check allows four resources outside `ap-southeast-2`. None holds personal data: the CloudFront viewer certificate in `us-east-1`, the global services CloudFront, Route 53, and IAM, the DNSSEC signing key in `us-east-1` when that open item is done, and the Melbourne replica of the envelope key in `ap-southeast-4`.
+The region check allows five resources outside `ap-southeast-2`. None holds personal data: the CloudFront viewer certificate in `us-east-1`, the global services CloudFront, Route 53, and IAM, the DNSSEC signing key in `us-east-1` when that open item is done, the Melbourne replica of the envelope key in `ap-southeast-4`, and AWS Budgets ([ADR 0010](docs/adr/0010-aws-budgets-exception.md)).
 
 The eight non-negotiables are in `AGENTS.md`. The seven residency rules that were specific to the previous edge platform were superseded by [ADR 0009](docs/adr/0009-personal-data-on-aws.md).
 
@@ -303,7 +303,7 @@ This sequence is an organisation-scoped API request. Identity work and `platform
 
 ### 7.5 Adding a region later
 
-A later region is Terraform plus `terraform-invariants`. Do not enable a region by editing `catalog.json`. The four exceptions in §7.3 are the only resources allowed outside `ap-southeast-2`, and none holds personal data. A module that creates one of them does not reuse the `aws_region == "ap-southeast-2"` validation for that resource. Anything else outside `ap-southeast-2` fails the check.
+A later region is Terraform plus `terraform-invariants`. Do not enable a region by editing `catalog.json`. The five exceptions in §7.3 are the only resources allowed outside `ap-southeast-2`, and none holds personal data. A module that creates one of them does not reuse the `aws_region == "ap-southeast-2"` validation for that resource. Anything else outside `ap-southeast-2` fails the check.
 
 A second region will need a small directory, built then. This document does not design it.
 

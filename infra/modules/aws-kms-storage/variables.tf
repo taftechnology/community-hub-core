@@ -18,6 +18,14 @@ variable "name" {
   description = "Name prefix for the storage KMS key alias."
 }
 
+variable "environment" {
+  type = string
+}
+
+variable "project" {
+  type = string
+}
+
 variable "enable_key_rotation" {
   type        = bool
   description = "Customer-managed storage keys must rotate. Tests may set false to prove validation."

@@ -7,11 +7,21 @@ run "staging_happy" {
     aws_region     = "ap-southeast-2"
     aws_account_id = "123456789012"
     name           = "ch-staging"
+    environment    = "staging"
+    project        = "community-hub"
   }
 
   assert {
     condition     = aws_kms_key.storage.region == "ap-southeast-2"
     error_message = "storage KMS key region argument must be ap-southeast-2"
+  }
+
+  assert {
+    condition = (
+      aws_kms_key.storage.tags["environment"] == "staging" &&
+      aws_kms_key.storage.tags["project"] == "community-hub"
+    )
+    error_message = "storage key tags must be environment=staging and project=community-hub"
   }
 
   assert {
@@ -45,7 +55,7 @@ run "staging_happy" {
   }
 
   assert {
-    condition     = !strcontains(aws_kms_key.storage.policy, "kms-broker-task")
+    condition     = !strcontains(aws_kms_key.storage.policy, "ch-staging-task")
     error_message = "storage key policy must not name the envelope task role"
   }
 }
@@ -57,6 +67,8 @@ run "rotation_off_fails" {
     aws_region          = "ap-southeast-2"
     aws_account_id      = "123456789012"
     name                = "ch-staging"
+    environment         = "staging"
+    project             = "community-hub"
     enable_key_rotation = false
   }
 
@@ -70,6 +82,8 @@ run "wrong_region_fails" {
     aws_region     = "us-east-1"
     aws_account_id = "123456789012"
     name           = "ch-staging"
+    environment    = "staging"
+    project        = "community-hub"
   }
 
   expect_failures = [var.aws_region]

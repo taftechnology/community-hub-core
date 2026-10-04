@@ -38,6 +38,7 @@ run "staging_happy" {
     environment           = "staging"
     deletion_protection   = false
     backup_retention_days = 0
+    alert_email           = "alerts@example.com"
   }
 
   assert {
@@ -57,8 +58,8 @@ run "staging_happy" {
   }
 
   assert {
-    condition     = !strcontains(output.storage_key_policy, "kms-broker-task")
-    error_message = "storage key policy must not reference the kms-broker task role"
+    condition     = !strcontains(output.storage_key_policy, "ch-staging-task")
+    error_message = "storage key policy must not reference the envelope task role"
   }
 
   assert {
@@ -70,38 +71,25 @@ run "staging_happy" {
       ]) == 4 &&
       alltrue([
         for statement in jsondecode(output.envelope_key_policy).Statement :
-        statement.Principal.AWS == "arn:aws:iam::123456789012:role/ch-staging-kms-broker-task" &&
-        statement.Condition.StringEquals["aws:SourceVpce"] == "vpce-mock"
+        statement.Principal.AWS == "arn:aws:iam::123456789012:role/ch-staging-task"
         if statement.Sid != "Admin"
-      ])
+      ]) &&
+      !strcontains(output.envelope_key_policy, "aws:SourceVpce")
     )
-    error_message = "envelope key policy must bind each cryptographic statement to the broker task role and the VPC endpoint"
+    error_message = "default staging plan must bind four cryptographic statements to the task role and must not contain aws:SourceVpce"
   }
 
   assert {
-    condition     = !strcontains(output.envelope_key_policy, "connector-execution")
-    error_message = "envelope key policy must not reference the connector execution role"
-  }
-
-  override_resource {
-    target = module.envelope.aws_vpc_endpoint.kms
-    values = {
-      id = "vpce-mock"
-    }
-    override_during = plan
-  }
-
-  assert {
-    condition     = module.envelope.endpoint_id == "vpce-mock"
-    error_message = "envelope key policy must reference the mocked VPC endpoint id only"
+    condition     = module.envelope.endpoint_id == null
+    error_message = "endpoint_id must be null when the KMS endpoint is off"
   }
 
   assert {
     condition = alltrue([
-      for statement in jsondecode(output.broker_execution_policy).Statement :
+      for statement in jsondecode(output.execution_policy).Statement :
       alltrue([for action in statement.Action : !strcontains(action, "kms:")])
     ])
-    error_message = "broker execution policy must not call kms"
+    error_message = "service execution log policy must not call kms"
   }
 
   assert {
@@ -112,6 +100,59 @@ run "staging_happy" {
   assert {
     condition     = !strcontains(file("${path.module}/env/prod.tfvars"), "policy_probe_action")
     error_message = "env/prod.tfvars must not set policy_probe_action"
+  }
+
+  assert {
+    condition     = var.enable_budgets == false
+    error_message = "enable_budgets must default to false when unset"
+  }
+}
+
+run "budgets_on" {
+  command = plan
+
+  variables {
+    aws_region     = "ap-southeast-2"
+    aws_account_id = "123456789012"
+    environment    = "staging"
+    enable_budgets = true
+    alert_email    = "alerts@example.com"
+  }
+}
+
+run "staging_endpoint_on" {
+  command = plan
+
+  variables {
+    aws_region            = "ap-southeast-2"
+    aws_account_id        = "123456789012"
+    environment           = "staging"
+    deletion_protection   = false
+    backup_retention_days = 0
+    enable_kms_endpoint   = true
+    alert_email           = "alerts@example.com"
+  }
+
+  override_resource {
+    target = module.envelope.aws_vpc_endpoint.kms[0]
+    values = {
+      id = "vpce-mock"
+    }
+    override_during = plan
+  }
+
+  assert {
+    condition     = module.envelope.endpoint_id == "vpce-mock"
+    error_message = "envelope endpoint id must be the mocked VPC endpoint id"
+  }
+
+  assert {
+    condition = alltrue([
+      for statement in jsondecode(output.envelope_key_policy).Statement :
+      statement.Condition.StringEquals["aws:SourceVpce"] == "vpce-mock"
+      if statement.Sid != "Admin"
+    ])
+    error_message = "cryptographic statements must bind aws:SourceVpce to the VPC endpoint"
   }
 }
 
@@ -124,12 +165,38 @@ run "prod_tfvars" {
     environment           = "prod"
     deletion_protection   = true
     backup_retention_days = 7
+    enable_kms_endpoint   = true
+    alert_email           = "alerts@example.com"
   }
 
   assert {
     condition     = length(regexall("(?m)^\\s*environment\\s*=\\s*\"prod\"", file("${path.module}/env/prod.tfvars"))) > 0
     error_message = "env/prod.tfvars must set environment = \"prod\""
   }
+
+  assert {
+    condition     = length(regexall("(?m)^\\s*enable_kms_endpoint\\s*=\\s*true", file("${path.module}/env/prod.tfvars"))) > 0
+    error_message = "env/prod.tfvars must set enable_kms_endpoint = true"
+  }
+}
+
+run "prod_endpoint_off_fails" {
+  command = plan
+
+  variables {
+    aws_region            = "ap-southeast-2"
+    aws_account_id        = "123456789012"
+    environment           = "prod"
+    enable_kms_endpoint   = false
+    deletion_protection   = true
+    backup_retention_days = 7
+    alert_email           = "alerts@example.com"
+  }
+
+  expect_failures = [
+    check.prod_kms_endpoint,
+    terraform_data.prod_kms_endpoint,
+  ]
 }
 
 run "wrong_region_fails" {
@@ -139,6 +206,7 @@ run "wrong_region_fails" {
     aws_region     = "us-east-1"
     aws_account_id = "123456789012"
     environment    = "staging"
+    alert_email    = "alerts@example.com"
   }
 
   expect_failures = [var.aws_region]

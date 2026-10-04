@@ -19,6 +19,11 @@ resource "aws_kms_key" "storage" {
       },
     ]
   })
+
+  tags = {
+    environment = var.environment
+    project     = var.project
+  }
 }
 
 resource "aws_kms_alias" "storage" {

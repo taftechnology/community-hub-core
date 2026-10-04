@@ -16,6 +16,11 @@ resource "aws_kms_key" "state" {
   lifecycle {
     prevent_destroy = true
   }
+
+  tags = {
+    environment = var.environment
+    project     = "community-hub"
+  }
 }
 
 resource "aws_kms_alias" "state" {
@@ -30,6 +35,11 @@ resource "aws_s3_bucket" "state" {
 
   lifecycle {
     prevent_destroy = true
+  }
+
+  tags = {
+    environment = var.environment
+    project     = "community-hub"
   }
 }
 

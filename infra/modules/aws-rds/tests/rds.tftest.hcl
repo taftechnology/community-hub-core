@@ -1,4 +1,10 @@
-mock_provider "aws" {}
+mock_provider "aws" {
+  mock_resource "aws_sns_topic" {
+    defaults = {
+      arn = "arn:aws:sns:ap-southeast-2:123456789012:mock-postgres-alarms"
+    }
+  }
+}
 
 run "staging_happy" {
   command = plan
@@ -7,14 +13,34 @@ run "staging_happy" {
     aws_region             = "ap-southeast-2"
     name                   = "ch-staging"
     environment            = "staging"
+    project                = "community-hub"
     subnet_ids             = ["subnet-aaaa", "subnet-bbbb"]
     vpc_security_group_ids = ["sg-rds"]
     kms_key_arn            = "arn:aws:kms:ap-southeast-2:123456789012:key/mock"
+    alert_email            = "alerts@example.com"
+    deletion_protection    = false
+    backup_retention_days  = 0
+  }
+
+  override_resource {
+    target = aws_sns_topic.alarms
+    values = {
+      arn = "arn:aws:sns:ap-southeast-2:123456789012:mock-postgres-alarms"
+    }
+    override_during = plan
   }
 
   assert {
     condition     = aws_db_instance.this.region == "ap-southeast-2"
     error_message = "RDS region argument must be ap-southeast-2"
+  }
+
+  assert {
+    condition = (
+      aws_db_instance.this.tags["environment"] == "staging" &&
+      aws_db_instance.this.tags["project"] == "community-hub"
+    )
+    error_message = "RDS instance tags must be environment=staging and project=community-hub"
   }
 
   assert {
@@ -46,6 +72,88 @@ run "staging_happy" {
     condition     = aws_db_instance.this.backup_retention_period == 0
     error_message = "staging RDS backup retention is off"
   }
+
+  assert {
+    condition     = aws_db_instance.this.instance_class == "db.t4g.micro"
+    error_message = "RDS instance class default must be db.t4g.micro"
+  }
+
+  assert {
+    condition     = aws_db_instance.this.multi_az == false
+    error_message = "staging RDS must not be Multi-AZ"
+  }
+
+  assert {
+    condition     = aws_db_instance.this.max_allocated_storage == 100
+    error_message = "RDS max allocated storage must be 100 GiB"
+  }
+
+  assert {
+    condition     = aws_db_instance.this.backup_window == "17:00-18:00"
+    error_message = "RDS backup window must be 17:00-18:00"
+  }
+
+  assert {
+    condition     = aws_db_instance.this.maintenance_window == "tue:15:00-tue:16:00"
+    error_message = "RDS maintenance window must be tue:15:00-tue:16:00"
+  }
+
+  assert {
+    condition     = aws_sns_topic.alarms.kms_master_key_id == null
+    error_message = "alarm SNS topic must not use a KMS key"
+  }
+
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.cpu_credit_balance.metric_name == "CPUCreditBalance" &&
+      aws_cloudwatch_metric_alarm.cpu_credit_balance.comparison_operator == "LessThanThreshold" &&
+      aws_cloudwatch_metric_alarm.cpu_credit_balance.threshold == 24 &&
+      aws_cloudwatch_metric_alarm.cpu_credit_balance.period == 300 &&
+      aws_cloudwatch_metric_alarm.cpu_credit_balance.evaluation_periods == 3 &&
+      aws_cloudwatch_metric_alarm.cpu_credit_balance.datapoints_to_alarm == 3 &&
+      aws_cloudwatch_metric_alarm.cpu_credit_balance.alarm_actions == toset([aws_sns_topic.alarms.arn])
+    )
+    error_message = "CPUCreditBalance alarm thresholds and SNS action must match spec"
+  }
+
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.freeable_memory.metric_name == "FreeableMemory" &&
+      aws_cloudwatch_metric_alarm.freeable_memory.comparison_operator == "LessThanThreshold" &&
+      aws_cloudwatch_metric_alarm.freeable_memory.threshold == 104857600 &&
+      aws_cloudwatch_metric_alarm.freeable_memory.period == 300 &&
+      aws_cloudwatch_metric_alarm.freeable_memory.evaluation_periods == 3 &&
+      aws_cloudwatch_metric_alarm.freeable_memory.datapoints_to_alarm == 3 &&
+      aws_cloudwatch_metric_alarm.freeable_memory.alarm_actions == toset([aws_sns_topic.alarms.arn])
+    )
+    error_message = "FreeableMemory alarm thresholds and SNS action must match spec"
+  }
+
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.free_storage_space.metric_name == "FreeStorageSpace" &&
+      aws_cloudwatch_metric_alarm.free_storage_space.comparison_operator == "LessThanThreshold" &&
+      aws_cloudwatch_metric_alarm.free_storage_space.threshold == 2147483648 &&
+      aws_cloudwatch_metric_alarm.free_storage_space.period == 300 &&
+      aws_cloudwatch_metric_alarm.free_storage_space.evaluation_periods == 3 &&
+      aws_cloudwatch_metric_alarm.free_storage_space.datapoints_to_alarm == 3 &&
+      aws_cloudwatch_metric_alarm.free_storage_space.alarm_actions == toset([aws_sns_topic.alarms.arn])
+    )
+    error_message = "FreeStorageSpace alarm thresholds and SNS action must match spec"
+  }
+
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.database_connections.metric_name == "DatabaseConnections" &&
+      aws_cloudwatch_metric_alarm.database_connections.comparison_operator == "GreaterThanThreshold" &&
+      aws_cloudwatch_metric_alarm.database_connections.threshold == 30 &&
+      aws_cloudwatch_metric_alarm.database_connections.period == 300 &&
+      aws_cloudwatch_metric_alarm.database_connections.evaluation_periods == 3 &&
+      aws_cloudwatch_metric_alarm.database_connections.datapoints_to_alarm == 3 &&
+      aws_cloudwatch_metric_alarm.database_connections.alarm_actions == toset([aws_sns_topic.alarms.arn])
+    )
+    error_message = "DatabaseConnections alarm thresholds and SNS action must match spec"
+  }
 }
 
 run "prod_protection" {
@@ -55,9 +163,13 @@ run "prod_protection" {
     aws_region             = "ap-southeast-2"
     name                   = "ch-prod"
     environment            = "prod"
+    project                = "community-hub"
     subnet_ids             = ["subnet-aaaa", "subnet-bbbb"]
     vpc_security_group_ids = ["sg-rds"]
     kms_key_arn            = "arn:aws:kms:ap-southeast-2:123456789012:key/mock"
+    alert_email            = "alerts@example.com"
+    deletion_protection    = true
+    backup_retention_days  = 7
   }
 
   assert {
@@ -76,6 +188,44 @@ run "prod_protection" {
   }
 }
 
+run "prod_backup_off_fails" {
+  command = plan
+
+  variables {
+    aws_region             = "ap-southeast-2"
+    name                   = "ch-prod"
+    environment            = "prod"
+    project                = "community-hub"
+    subnet_ids             = ["subnet-aaaa", "subnet-bbbb"]
+    vpc_security_group_ids = ["sg-rds"]
+    kms_key_arn            = "arn:aws:kms:ap-southeast-2:123456789012:key/mock"
+    alert_email            = "alerts@example.com"
+    deletion_protection    = false
+    backup_retention_days  = 7
+  }
+
+  expect_failures = [terraform_data.prod_protection]
+}
+
+run "prod_retention_off_fails" {
+  command = plan
+
+  variables {
+    aws_region             = "ap-southeast-2"
+    name                   = "ch-prod"
+    environment            = "prod"
+    project                = "community-hub"
+    subnet_ids             = ["subnet-aaaa", "subnet-bbbb"]
+    vpc_security_group_ids = ["sg-rds"]
+    kms_key_arn            = "arn:aws:kms:ap-southeast-2:123456789012:key/mock"
+    alert_email            = "alerts@example.com"
+    deletion_protection    = true
+    backup_retention_days  = 0
+  }
+
+  expect_failures = [terraform_data.prod_protection]
+}
+
 run "public_rds_fails" {
   command = plan
 
@@ -83,9 +233,13 @@ run "public_rds_fails" {
     aws_region             = "ap-southeast-2"
     name                   = "ch-staging"
     environment            = "staging"
+    project                = "community-hub"
     subnet_ids             = ["subnet-aaaa", "subnet-bbbb"]
     vpc_security_group_ids = ["sg-rds"]
     kms_key_arn            = "arn:aws:kms:ap-southeast-2:123456789012:key/mock"
+    alert_email            = "alerts@example.com"
+    deletion_protection    = false
+    backup_retention_days  = 0
     publicly_accessible    = true
   }
 
@@ -99,9 +253,13 @@ run "wrong_region_fails" {
     aws_region             = "us-east-1"
     name                   = "ch-staging"
     environment            = "staging"
+    project                = "community-hub"
     subnet_ids             = ["subnet-aaaa", "subnet-bbbb"]
     vpc_security_group_ids = ["sg-rds"]
     kms_key_arn            = "arn:aws:kms:ap-southeast-2:123456789012:key/mock"
+    alert_email            = "alerts@example.com"
+    deletion_protection    = false
+    backup_retention_days  = 0
   }
 
   expect_failures = [var.aws_region]

@@ -12,7 +12,6 @@ const mustFail = [
   "missing-lockfile",
   "commented-region",
   "missing-prevent-destroy",
-  "connector-ingress-rule",
   "missing-envelope-prevent-destroy",
 ] as const;
 

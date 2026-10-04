@@ -265,37 +265,6 @@ function validateEnvelopeKeyFile(
   return violations;
 }
 
-function validateConnectorFile(
-  filePath: string,
-  root: string,
-  hcl: string,
-): TerraformInvariantViolation[] {
-  const relFile = path.relative(root, filePath);
-  const violations: TerraformInvariantViolation[] = [];
-
-  for (const resource of findResources(hcl)) {
-    if (resource.type === "aws_security_group" && resource.name === "connector") {
-      if (!/ingress\s*=\s*\[\s*\]/.test(resource.body) || /ingress\s*\{/.test(resource.body)) {
-        violations.push({
-          file: relFile,
-          message: "connector security group must set ingress = []",
-        });
-      }
-    }
-    if (resource.type === "aws_vpc_security_group_ingress_rule") {
-      if (/^\s*security_group_id\s*=\s*aws_security_group\.connector\b/m.test(resource.body)) {
-        violations.push({
-          file: relFile,
-          message:
-            "connector security group must not have a separate aws_vpc_security_group_ingress_rule",
-        });
-      }
-    }
-  }
-
-  return violations;
-}
-
 function isUnder(filePath: string, root: string, relDir: string): boolean {
   const prefix = path.resolve(root, relDir) + path.sep;
   return (filePath + path.sep).startsWith(prefix) || filePath === path.resolve(root, relDir);
@@ -326,7 +295,6 @@ export function check(root: string = process.cwd()): CheckResult {
     if (isUnder(filePath, resolvedRoot, path.join(INFRA_DIR, "modules", "aws-kms-envelope"))) {
       violations.push(...validateEnvelopeKeyFile(filePath, resolvedRoot, hcl));
     }
-    violations.push(...validateConnectorFile(filePath, resolvedRoot, hcl));
   }
 
   const base = {

@@ -15,12 +15,16 @@ variable "name" {
 
 variable "environment" {
   type        = string
-  description = "staging or prod. Prod turns on deletion protection, backups, and Multi-AZ."
+  description = "staging or prod. Prod preconditions require deletion protection and backups."
 
   validation {
     condition     = contains(["staging", "prod"], var.environment)
     error_message = "environment must be staging or prod."
   }
+}
+
+variable "project" {
+  type = string
 }
 
 variable "subnet_ids" {
@@ -53,7 +57,28 @@ variable "parameter_group_family" {
 variable "instance_class" {
   type        = string
   description = "RDS instance class."
-  default     = "db.t4g.medium"
+  default     = "db.t4g.micro"
+}
+
+variable "multi_az" {
+  type        = bool
+  description = "Whether the instance runs Multi-AZ."
+  default     = false
+}
+
+variable "deletion_protection" {
+  type        = bool
+  description = "RDS deletion protection flag passed from the cell root."
+}
+
+variable "backup_retention_days" {
+  type        = number
+  description = "Backup retention in days passed from the cell root."
+}
+
+variable "alert_email" {
+  type        = string
+  description = "Email address for RDS alarm SNS subscription."
 }
 
 variable "publicly_accessible" {

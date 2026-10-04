@@ -25,7 +25,7 @@ variable "environment" {
 
 variable "deletion_protection" {
   type        = bool
-  description = "Must be true in prod. RDS also keys off environment."
+  description = "Must be true in prod. The RDS instance uses this variable; the prod check rejects a prod plan that turns it off."
   default     = false
 }
 
@@ -33,4 +33,21 @@ variable "backup_retention_days" {
   type        = number
   description = "Must be >= 7 in prod."
   default     = 0
+}
+
+variable "enable_kms_endpoint" {
+  type        = bool
+  description = "Create the KMS interface endpoint. Staging defaults off."
+  default     = false
+}
+
+variable "alert_email" {
+  type        = string
+  description = "Email for budget and RDS alarm SNS subscriptions."
+}
+
+variable "enable_budgets" {
+  type        = bool
+  description = "Create the per-environment budget. Off until the cost-allocation tag is active."
+  default     = false
 }

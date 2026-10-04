@@ -28,6 +28,14 @@ run "staging_happy" {
   }
 
   assert {
+    condition = (
+      aws_s3_bucket.state.tags["environment"] == "staging" &&
+      aws_s3_bucket.state.tags["project"] == "community-hub"
+    )
+    error_message = "state bucket tags must be environment=staging and project=community-hub"
+  }
+
+  assert {
     condition     = aws_kms_key.state.region == "ap-southeast-2"
     error_message = "KMS key region argument must be ap-southeast-2"
   }
