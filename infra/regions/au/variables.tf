@@ -34,3 +34,9 @@ variable "backup_retention_days" {
   description = "Must be >= 7 in prod."
   default     = 0
 }
+
+variable "enable_kms_endpoint" {
+  type        = bool
+  description = "Create the KMS interface endpoint. Staging defaults off."
+  default     = false
+}

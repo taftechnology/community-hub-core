@@ -45,7 +45,7 @@ run "staging_happy" {
   }
 
   assert {
-    condition     = !strcontains(aws_kms_key.storage.policy, "kms-broker-task")
+    condition     = !strcontains(aws_kms_key.storage.policy, "ch-staging-task")
     error_message = "storage key policy must not name the envelope task role"
   }
 }

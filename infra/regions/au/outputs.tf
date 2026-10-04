@@ -9,7 +9,7 @@ output "envelope_key_arn" {
 }
 
 output "kms_endpoint_id" {
-  description = "ID of the KMS interface VPC endpoint for the broker."
+  description = "ID of the KMS interface VPC endpoint. Null when the endpoint is off."
   value       = module.envelope.endpoint_id
 }
 

@@ -14,27 +14,22 @@ output "alias_name" {
 }
 
 output "task_role_arn" {
-  description = "ARN of the broker task role. The key policy is the only grant."
+  description = "ARN of the task role. The key policy is the only grant."
   value       = aws_iam_role.task.arn
 }
 
 output "task_role_name" {
-  description = "Name of the broker task role."
+  description = "Name of the task role."
   value       = aws_iam_role.task.name
 }
 
-output "broker_security_group_id" {
-  description = "Broker task security group. No inbound."
-  value       = aws_security_group.broker.id
-}
-
 output "endpoint_id" {
-  description = "ID of the KMS interface endpoint."
-  value       = aws_vpc_endpoint.kms.id
+  description = "ID of the KMS interface endpoint. Null when the endpoint is off."
+  value       = one(aws_vpc_endpoint.kms[*].id)
 }
 
 output "execution_role_arn" {
-  description = "ARN of the broker execution role."
+  description = "ARN of the execution role."
   value       = aws_iam_role.execution.arn
 }
 
@@ -44,16 +39,16 @@ output "key_policy" {
 }
 
 output "execution_policy" {
-  description = "Broker execution role policy document."
+  description = "Execution role policy document."
   value       = aws_iam_role_policy.execution.policy
 }
 
 output "execution_role_name" {
-  description = "Name of the broker execution role. aws_iam_role_policy.role takes this, not the ARN."
+  description = "Name of the execution role. aws_iam_role_policy.role takes this, not the ARN."
   value       = aws_iam_role.execution.name
 }
 
 output "log_group_name" {
-  description = "Broker log group name."
+  description = "Service log group name."
   value       = local.log_group_name
 }

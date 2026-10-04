@@ -15,17 +15,28 @@ variable "aws_account_id" {
 
 variable "name" {
   type        = string
-  description = "Name prefix for the envelope key, broker role, secret, and log group."
+  description = "Name prefix for the envelope key, task role, and log group."
 }
 
 variable "vpc_id" {
   type        = string
-  description = "VPC that contains the KMS interface endpoint and the broker security group."
+  description = "VPC that contains the KMS interface endpoint."
 }
 
 variable "public_subnet_id" {
   type        = string
   description = "Public subnet for the KMS interface endpoint."
+}
+
+variable "enable_kms_endpoint" {
+  type        = bool
+  description = "Create the KMS interface endpoint. Staging defaults off."
+  default     = false
+}
+
+variable "task_security_group_id" {
+  type        = string
+  description = "Task security group allowed into the KMS endpoint on 443."
 }
 
 variable "enable_key_rotation" {
@@ -41,7 +52,7 @@ variable "enable_key_rotation" {
 
 variable "log_retention_days" {
   type        = number
-  description = "CloudWatch log retention for the broker log group. 0 is forbidden."
+  description = "CloudWatch log retention for the service log group. 0 is forbidden."
   default     = 14
 
   validation {
