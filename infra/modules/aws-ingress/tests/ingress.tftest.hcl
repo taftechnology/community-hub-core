@@ -43,12 +43,12 @@ run "staging_unset" {
   command = plan
 
   variables {
-    aws_region     = "ap-southeast-2"
-    aws_account_id = "123456789012"
-    name           = "ch-staging"
-    environment    = "staging"
-    project        = "community-hub"
-    zone_name = "communityhub-staging.net"
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
+    zone_name              = "communityhub-staging.net"
     vpc_id                 = "vpc-example"
     private_subnet_ids     = ["subnet-a", "subnet-b"]
     task_security_group_id = "sg-task"
@@ -149,9 +149,15 @@ run "staging_unset" {
       length(aws_apigatewayv2_stage.ops.route_settings) == 0 &&
       toset([for key, route in aws_apigatewayv2_route.tenant_write : route.route_key]) == toset(keys(output.tenant_write_throttle)) &&
       length(output.tenant_write_throttle) == 8 &&
-      alltrue([for key, throttle in output.tenant_write_throttle : throttle.rate == 10 && throttle.burst == 20])
+      alltrue([for key, throttle in output.tenant_write_throttle : throttle.rate == 10 && throttle.burst == 20]) &&
+      length([for setting in aws_apigatewayv2_stage.tenant.route_settings : setting.route_key]) == 8 &&
+      toset([for setting in aws_apigatewayv2_stage.tenant.route_settings : setting.route_key]) == toset(keys(output.tenant_write_throttle)) &&
+      alltrue([
+        for setting in aws_apigatewayv2_stage.tenant.route_settings :
+        setting.throttling_rate_limit == 10 && setting.throttling_burst_limit == 20
+      ])
     )
-    error_message = "the eight write route keys are locked on the routes, 10 and 20 come from the output, and ops has no write route"
+    error_message = "the stage write caps are the eight keys at 10 and 20, the output matches, and ops has no write route"
   }
 
   assert {
@@ -213,16 +219,16 @@ run "image_tag_fails" {
   command = plan
 
   variables {
-    aws_region     = "ap-southeast-2"
-    aws_account_id = "123456789012"
-    name           = "ch-staging"
-    environment    = "staging"
-    project        = "community-hub"
-    zone_name = "communityhub-staging.net"
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
+    zone_name              = "communityhub-staging.net"
     vpc_id                 = "vpc-example"
     private_subnet_ids     = ["subnet-a", "subnet-b"]
     task_security_group_id = "sg-task"
-    service_image  = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service:latest"
+    service_image          = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service:latest"
   }
 
   expect_failures = [var.service_image]
@@ -232,16 +238,16 @@ run "foreign_registry_fails" {
   command = plan
 
   variables {
-    aws_region     = "ap-southeast-2"
-    aws_account_id = "123456789012"
-    name           = "ch-staging"
-    environment    = "staging"
-    project        = "community-hub"
-    zone_name = "communityhub-staging.net"
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
+    zone_name              = "communityhub-staging.net"
     vpc_id                 = "vpc-example"
     private_subnet_ids     = ["subnet-a", "subnet-b"]
     task_security_group_id = "sg-task"
-    service_image  = "public.ecr.aws/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    service_image          = "public.ecr.aws/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
   }
 
   expect_failures = [var.service_image]
@@ -251,16 +257,16 @@ run "other_region_fails" {
   command = plan
 
   variables {
-    aws_region     = "ap-southeast-2"
-    aws_account_id = "123456789012"
-    name           = "ch-staging"
-    environment    = "staging"
-    project        = "community-hub"
-    zone_name = "communityhub-staging.net"
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
+    zone_name              = "communityhub-staging.net"
     vpc_id                 = "vpc-example"
     private_subnet_ids     = ["subnet-a", "subnet-b"]
     task_security_group_id = "sg-task"
-    service_image  = "123456789012.dkr.ecr.us-east-1.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    service_image          = "123456789012.dkr.ecr.us-east-1.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
   }
 
   expect_failures = [var.service_image]
@@ -270,16 +276,16 @@ run "uppercase_digest_fails" {
   command = plan
 
   variables {
-    aws_region     = "ap-southeast-2"
-    aws_account_id = "123456789012"
-    name           = "ch-staging"
-    environment    = "staging"
-    project        = "community-hub"
-    zone_name = "communityhub-staging.net"
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
+    zone_name              = "communityhub-staging.net"
     vpc_id                 = "vpc-example"
     private_subnet_ids     = ["subnet-a", "subnet-b"]
     task_security_group_id = "sg-task"
-    service_image  = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef"
+    service_image          = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef"
   }
 
   expect_failures = [var.service_image]
@@ -289,16 +295,16 @@ run "trailing_suffix_fails" {
   command = plan
 
   variables {
-    aws_region     = "ap-southeast-2"
-    aws_account_id = "123456789012"
-    name           = "ch-staging"
-    environment    = "staging"
-    project        = "community-hub"
-    zone_name = "communityhub-staging.net"
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
+    zone_name              = "communityhub-staging.net"
     vpc_id                 = "vpc-example"
     private_subnet_ids     = ["subnet-a", "subnet-b"]
     task_security_group_id = "sg-task"
-    service_image  = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef-extra"
+    service_image          = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef-extra"
   }
 
   expect_failures = [var.service_image]
@@ -308,12 +314,12 @@ run "record_type_a_fails" {
   command = plan
 
   variables {
-    aws_region            = "ap-southeast-2"
-    aws_account_id        = "123456789012"
-    name                  = "ch-staging"
-    environment           = "staging"
-    project               = "community-hub"
-    zone_name = "communityhub-staging.net"
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
+    zone_name              = "communityhub-staging.net"
     vpc_id                 = "vpc-example"
     private_subnet_ids     = ["subnet-a", "subnet-b"]
     task_security_group_id = "sg-task"
@@ -332,7 +338,7 @@ run "one_subnet_fails" {
     name                   = "ch-staging"
     environment            = "staging"
     project                = "community-hub"
-    zone_name = "communityhub-staging.net"
+    zone_name              = "communityhub-staging.net"
     vpc_id                 = "vpc-example"
     private_subnet_ids     = ["subnet-a"]
     task_security_group_id = "sg-task"
@@ -350,7 +356,7 @@ run "named_stage_without_overwrite_fails" {
     name                   = "ch-staging"
     environment            = "staging"
     project                = "community-hub"
-    zone_name = "communityhub-staging.net"
+    zone_name              = "communityhub-staging.net"
     vpc_id                 = "vpc-example"
     private_subnet_ids     = ["subnet-a", "subnet-b"]
     task_security_group_id = "sg-task"
@@ -370,7 +376,7 @@ run "execute_api_on_fails" {
     name                         = "ch-staging"
     environment                  = "staging"
     project                      = "community-hub"
-    zone_name = "communityhub-staging.net"
+    zone_name                    = "communityhub-staging.net"
     vpc_id                       = "vpc-example"
     private_subnet_ids           = ["subnet-a", "subnet-b"]
     task_security_group_id       = "sg-task"
@@ -389,7 +395,7 @@ run "access_log_retention_zero_fails" {
     name                      = "ch-staging"
     environment               = "staging"
     project                   = "community-hub"
-    zone_name = "communityhub-staging.net"
+    zone_name                 = "communityhub-staging.net"
     vpc_id                    = "vpc-example"
     private_subnet_ids        = ["subnet-a", "subnet-b"]
     task_security_group_id    = "sg-task"
@@ -583,6 +589,31 @@ run "staging_image_set" {
       jsondecode(aws_ecs_task_definition.this[0].container_definitions)[0].healthCheck.command == ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
     )
     error_message = "environment, secret names, PGDATABASE, and the health command match the contract table"
+  }
+
+  assert {
+    condition = (
+      jsondecode(aws_ecs_task_definition.this[0].container_definitions)[0].user == "node" &&
+      jsondecode(aws_ecs_task_definition.this[0].container_definitions)[0].readonlyRootFilesystem == true &&
+      jsondecode(aws_ecs_task_definition.this[0].container_definitions)[0].stopTimeout == 30 &&
+      length([
+        for mount in jsondecode(aws_ecs_task_definition.this[0].container_definitions)[0].mountPoints :
+        mount if mount.containerPath == "/tmp"
+      ]) == 1 &&
+      jsondecode(aws_ecs_task_definition.this[0].container_definitions)[0].logConfiguration.options["awslogs-group"] == "/community-hub/ch-staging/service" &&
+      jsondecode(aws_ecs_task_definition.this[0].container_definitions)[0].logConfiguration.options["awslogs-stream-prefix"] == "service"
+    )
+    error_message = "the container runs as node, writes only /tmp, stops in 30 seconds, and logs to the service group"
+  }
+
+  assert {
+    condition     = aws_ecs_service.this[0].network_configuration[0].assign_public_ip == true
+    error_message = "the service assigns a public IP"
+  }
+
+  assert {
+    condition     = toset(aws_ecs_cluster_capacity_providers.this[0].capacity_providers) == toset(["FARGATE", "FARGATE_SPOT"])
+    error_message = "the cluster associates FARGATE and FARGATE_SPOT exactly"
   }
 
   assert {

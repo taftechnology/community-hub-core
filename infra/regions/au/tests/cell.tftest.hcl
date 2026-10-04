@@ -160,9 +160,9 @@ run "budgets_on" {
   command = plan
 
   variables {
-    aws_region     = "ap-southeast-2"
-    aws_account_id = "123456789012"
-    environment    = "staging"
+    aws_region         = "ap-southeast-2"
+    aws_account_id     = "123456789012"
+    environment        = "staging"
     enable_budgets     = true
     alert_email        = "alerts@example.com"
     staging_zone_id    = "ZSTAGING"
@@ -266,8 +266,8 @@ run "wrong_region_fails" {
   command = plan
 
   variables {
-    aws_region     = "us-east-1"
-    aws_account_id = "123456789012"
+    aws_region         = "us-east-1"
+    aws_account_id     = "123456789012"
     environment        = "staging"
     alert_email        = "alerts@example.com"
     staging_zone_id    = "ZSTAGING"
