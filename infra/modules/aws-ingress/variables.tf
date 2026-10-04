@@ -32,6 +32,19 @@ variable "vpc_id" {
   type = string
 }
 
+variable "private_subnet_ids" {
+  type = list(string)
+
+  validation {
+    condition     = length(var.private_subnet_ids) == 2
+    error_message = "the VPC link is created with both private subnets."
+  }
+}
+
+variable "task_security_group_id" {
+  type = string
+}
+
 variable "cloud_map_record_type" {
   type    = string
   default = "SRV"

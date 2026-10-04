@@ -24,8 +24,55 @@ run "staging_unset" {
     name           = "ch-staging"
     environment    = "staging"
     project        = "community-hub"
-    vpc_id         = "vpc-example"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
     service_image  = null
+  }
+
+  override_resource {
+    target = aws_security_group.vpc_link
+    values = {
+      id = "sg-vpc-link"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = aws_apigatewayv2_vpc_link.this
+    values = {
+      id = "vpclink-mock"
+    }
+    override_during = plan
+  }
+
+  assert {
+    condition     = length(aws_apigatewayv2_vpc_link.this.subnet_ids) == 2 && contains(aws_apigatewayv2_vpc_link.this.security_group_ids, "sg-vpc-link")
+    error_message = "VPC link uses both private subnets and its own security group"
+  }
+
+  assert {
+    condition = (
+      aws_vpc_security_group_egress_rule.vpc_link_task.ip_protocol == "tcp" &&
+      aws_vpc_security_group_egress_rule.vpc_link_task.from_port == 8080 &&
+      aws_vpc_security_group_egress_rule.vpc_link_task.to_port == 8080 &&
+      aws_vpc_security_group_egress_rule.vpc_link_task.referenced_security_group_id == "sg-task"
+    )
+    error_message = "VPC link egress is TCP 8080 to the task group only"
+  }
+
+  assert {
+    condition     = length(aws_vpc_security_group_ingress_rule.task_api) == 0
+    error_message = "image unset plans no task-group inbound rule"
+  }
+
+  assert {
+    condition = (
+      length(regexall("(?m)^resource \"aws_security_group\" \"vpc_link\"", file("${path.module}/main.tf"))) == 1 &&
+      length(regexall("(?m)^\\s*(ingress|egress)\\s*(=|\\{)", file("${path.module}/main.tf"))) == 0 &&
+      length(regexall("(?m)^\\s*dynamic\\s+\"(ingress|egress)\"", file("${path.module}/main.tf"))) == 0
+    )
+    error_message = "the VPC link security group must not set inline or dynamic ingress or egress"
   }
 
   assert {
@@ -53,7 +100,9 @@ run "image_tag_fails" {
     name           = "ch-staging"
     environment    = "staging"
     project        = "community-hub"
-    vpc_id         = "vpc-example"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
     service_image  = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service:latest"
   }
 
@@ -69,7 +118,9 @@ run "foreign_registry_fails" {
     name           = "ch-staging"
     environment    = "staging"
     project        = "community-hub"
-    vpc_id         = "vpc-example"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
     service_image  = "public.ecr.aws/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
   }
 
@@ -85,7 +136,9 @@ run "other_region_fails" {
     name           = "ch-staging"
     environment    = "staging"
     project        = "community-hub"
-    vpc_id         = "vpc-example"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
     service_image  = "123456789012.dkr.ecr.us-east-1.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
   }
 
@@ -101,7 +154,9 @@ run "uppercase_digest_fails" {
     name           = "ch-staging"
     environment    = "staging"
     project        = "community-hub"
-    vpc_id         = "vpc-example"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
     service_image  = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef"
   }
 
@@ -117,7 +172,9 @@ run "trailing_suffix_fails" {
     name           = "ch-staging"
     environment    = "staging"
     project        = "community-hub"
-    vpc_id         = "vpc-example"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
     service_image  = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef-extra"
   }
 
@@ -133,9 +190,28 @@ run "record_type_a_fails" {
     name                  = "ch-staging"
     environment           = "staging"
     project               = "community-hub"
-    vpc_id                = "vpc-example"
-    cloud_map_record_type = "A"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
+    cloud_map_record_type  = "A"
   }
 
   expect_failures = [var.cloud_map_record_type]
+}
+
+run "one_subnet_fails" {
+  command = plan
+
+  variables {
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a"]
+    task_security_group_id = "sg-task"
+  }
+
+  expect_failures = [var.private_subnet_ids]
 }
