@@ -29,86 +29,20 @@ mock_provider "aws" {
   }
 }
 
-mock_provider "cloudflare" {
-  mock_resource "cloudflare_zero_trust_tunnel_cloudflared" {
-    defaults = {
-      id = "00000000-0000-0000-0000-000000000001"
-    }
-  }
-
-  mock_data "cloudflare_zero_trust_tunnel_cloudflared_token" {
-    defaults = {
-      token = "mock-tunnel-token"
-    }
-  }
-
-  mock_resource "cloudflare_connectivity_directory_service" {
-    defaults = {
-      id         = "svc-mock"
-      service_id = "svc-mock"
-    }
-  }
-}
-
-variables {
-  region_key = "au"
-}
-
 run "staging_happy" {
   command = plan
 
   variables {
-    aws_region                = "ap-southeast-2"
-    aws_account_id            = "123456789012"
-    cloudflare_account_id     = "00000000000000000000000000000000"
-    environment               = "staging"
-    cert_verification_mode    = "disabled"
-    deletion_protection       = false
-    backup_retention_days     = 0
-    zone_id                   = "00000000000000000000000000000000"
-    zone_name                 = "communityhub-staging.net"
-    enable_hyperdrive         = false
-    enable_regional_hostnames = false
-  }
-
-  assert {
-    condition     = var.cert_verification_mode == "disabled"
-    error_message = "staging TLS verification may be disabled"
-  }
-
-  assert {
-    condition     = var.enable_hyperdrive == false
-    error_message = "first apply must leave Hyperdrive disabled"
+    aws_region            = "ap-southeast-2"
+    aws_account_id        = "123456789012"
+    environment           = "staging"
+    deletion_protection   = false
+    backup_retention_days = 0
   }
 
   assert {
     condition     = length(regexall("(?m)^\\s*environment\\s*=\\s*\"staging\"", file("${path.module}/env/staging.tfvars"))) > 0
     error_message = "env/staging.tfvars must set environment = \"staging\""
-  }
-
-  assert {
-    condition     = length(regexall("(?m)^\\s*cert_verification_mode\\s*=\\s*\"disabled\"", file("${path.module}/env/staging.tfvars"))) > 0
-    error_message = "env/staging.tfvars must set cert_verification_mode = \"disabled\""
-  }
-
-  assert {
-    condition     = can(regex("(?m)^\\s*region_key\\s*=\\s*\"au\"", file("${path.module}/env/staging.tfvars")))
-    error_message = "env/staging.tfvars must set region_key = \"au\""
-  }
-
-  assert {
-    condition     = module.broker_tunnel.tunnel_name == "ch-staging-au-kms"
-    error_message = "broker tunnel name must be ch-staging-au-kms"
-  }
-
-  assert {
-    condition     = module.broker_tunnel.tunnel_name != "ch-staging-au"
-    error_message = "broker tunnel must not reuse the Postgres tunnel name"
-  }
-
-  assert {
-    condition     = module.envelope.tunnel_secret_name == "ch-staging/kms-broker-tunnel-token"
-    error_message = "broker tunnel secret name must be ch-staging/kms-broker-tunnel-token"
   }
 
   assert {
@@ -163,35 +97,11 @@ run "staging_happy" {
   }
 
   assert {
-    condition = (
-      length([
-        for statement in jsondecode(output.broker_execution_policy).Statement : statement
-        if statement.Action == ["secretsmanager:GetSecretValue"] && statement.Resource == ["arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging/kms-broker-tunnel-token*"]
-      ]) == 1 &&
-      alltrue([
-        for statement in jsondecode(output.broker_execution_policy).Statement :
-        alltrue([for action in statement.Action : !strcontains(action, "kms:")])
-      ])
-    )
-    error_message = "broker execution policy must read the broker tunnel secret and must not call kms"
-  }
-
-  assert {
-    condition     = !strcontains(output.broker_execution_policy, "/cloudflare-tunnel-token")
-    error_message = "broker execution policy must not read the Postgres tunnel secret"
-  }
-
-  assert {
-    condition = anytrue([
-      for statement in jsondecode(output.connector_execution_policy).Statement :
-      statement.Resource == ["arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging/cloudflare-tunnel-token*"]
+    condition = alltrue([
+      for statement in jsondecode(output.broker_execution_policy).Statement :
+      alltrue([for action in statement.Action : !strcontains(action, "kms:")])
     ])
-    error_message = "connector execution policy must read the Postgres tunnel secret"
-  }
-
-  assert {
-    condition     = !strcontains(output.connector_execution_policy, "kms-broker-tunnel-token")
-    error_message = "connector execution policy must not read the broker tunnel secret"
+    error_message = "broker execution policy must not call kms"
   }
 
   assert {
@@ -203,230 +113,33 @@ run "staging_happy" {
     condition     = !strcontains(file("${path.module}/env/prod.tfvars"), "policy_probe_action")
     error_message = "env/prod.tfvars must not set policy_probe_action"
   }
-
-  assert {
-    condition     = strcontains(file("${path.module}/main.tf"), "tunnel_id              = module.tunnel.tunnel_id")
-    error_message = "Workers VPC service must still use the Postgres tunnel id"
-  }
 }
 
 run "prod_tfvars" {
   command = plan
 
   variables {
-    aws_region                = "ap-southeast-2"
-    aws_account_id            = "123456789012"
-    cloudflare_account_id     = "00000000000000000000000000000000"
-    environment               = "prod"
-    cert_verification_mode    = "verify_full"
-    deletion_protection       = true
-    backup_retention_days     = 7
-    zone_id                   = "00000000000000000000000000000000"
-    zone_name                 = "communityhub.one"
-    enable_hyperdrive         = false
-    enable_regional_hostnames = false
-  }
-
-  assert {
-    condition     = var.cert_verification_mode == "verify_full"
-    error_message = "prod must use verify_full"
+    aws_region            = "ap-southeast-2"
+    aws_account_id        = "123456789012"
+    environment           = "prod"
+    deletion_protection   = true
+    backup_retention_days = 7
   }
 
   assert {
     condition     = length(regexall("(?m)^\\s*environment\\s*=\\s*\"prod\"", file("${path.module}/env/prod.tfvars"))) > 0
     error_message = "env/prod.tfvars must set environment = \"prod\""
   }
-
-  assert {
-    condition     = length(regexall("(?m)^\\s*cert_verification_mode\\s*=\\s*\"verify_full\"", file("${path.module}/env/prod.tfvars"))) > 0
-    error_message = "env/prod.tfvars must set cert_verification_mode = \"verify_full\""
-  }
-
-  assert {
-    condition     = can(regex("(?m)^\\s*region_key\\s*=\\s*\"au\"", file("${path.module}/env/prod.tfvars")))
-    error_message = "env/prod.tfvars must set region_key = \"au\""
-  }
-}
-
-run "prod_disabled_tls_fails" {
-  command = plan
-
-  variables {
-    aws_region             = "ap-southeast-2"
-    aws_account_id         = "123456789012"
-    cloudflare_account_id  = "00000000000000000000000000000000"
-    environment            = "prod"
-    cert_verification_mode = "disabled"
-    deletion_protection    = true
-    backup_retention_days  = 7
-    zone_id                = "00000000000000000000000000000000"
-    zone_name              = "communityhub.one"
-  }
-
-  expect_failures = [
-    check.prod_tls,
-    terraform_data.prod_tls,
-  ]
 }
 
 run "wrong_region_fails" {
   command = plan
 
   variables {
-    aws_region             = "us-east-1"
-    aws_account_id         = "123456789012"
-    cloudflare_account_id  = "00000000000000000000000000000000"
-    environment            = "staging"
-    cert_verification_mode = "disabled"
-    zone_id                = "00000000000000000000000000000000"
-    zone_name              = "communityhub-staging.net"
+    aws_region     = "us-east-1"
+    aws_account_id = "123456789012"
+    environment    = "staging"
   }
 
   expect_failures = [var.aws_region]
-}
-
-run "wrong_region_key_fails" {
-  command = plan
-
-  variables {
-    aws_region                = "ap-southeast-2"
-    aws_account_id            = "123456789012"
-    cloudflare_account_id     = "00000000000000000000000000000000"
-    environment               = "staging"
-    cert_verification_mode    = "disabled"
-    deletion_protection       = false
-    backup_retention_days     = 0
-    zone_id                   = "00000000000000000000000000000000"
-    zone_name                 = "communityhub-staging.net"
-    enable_hyperdrive         = false
-    enable_regional_hostnames = false
-    region_key                = "ee"
-  }
-
-  expect_failures = [var.region_key]
-}
-
-run "broker_flag_off" {
-  command = plan
-
-  variables {
-    aws_region                = "ap-southeast-2"
-    aws_account_id            = "123456789012"
-    cloudflare_account_id     = "00000000000000000000000000000000"
-    environment               = "staging"
-    cert_verification_mode    = "disabled"
-    deletion_protection       = false
-    backup_retention_days     = 0
-    zone_id                   = "00000000000000000000000000000000"
-    zone_name                 = "communityhub-staging.net"
-    enable_hyperdrive         = false
-    enable_regional_hostnames = false
-    enable_kms_broker_tasks   = false
-  }
-
-  assert {
-    condition     = var.enable_kms_broker_tasks == false
-    error_message = "flag off must leave broker tasks disabled"
-  }
-
-  assert {
-    condition     = strcontains(file("${path.module}/main.tf"), "enable_tasks             = var.enable_kms_broker_tasks")
-    error_message = "broker tasks must follow enable_kms_broker_tasks"
-  }
-
-  assert {
-    condition     = length(module.broker_vpc_service) == 0
-    error_message = "flag off must not create a broker VPC service"
-  }
-
-  assert {
-    condition     = output.broker_vpc_service_id == null
-    error_message = "broker VPC service id must be null when tasks are disabled"
-  }
-
-  assert {
-    condition     = module.kms_broker.repository_name == "ch-staging/kms-broker"
-    error_message = "ECR repository must still be planned when tasks are disabled"
-  }
-
-  assert {
-    condition     = var.kms_broker_image == null
-    error_message = "kms_broker_image is not required when tasks are disabled"
-  }
-}
-
-run "broker_flag_on" {
-  command = plan
-
-  variables {
-    aws_region                = "ap-southeast-2"
-    aws_account_id            = "123456789012"
-    cloudflare_account_id     = "00000000000000000000000000000000"
-    environment               = "staging"
-    cert_verification_mode    = "disabled"
-    deletion_protection       = false
-    backup_retention_days     = 0
-    zone_id                   = "00000000000000000000000000000000"
-    zone_name                 = "communityhub-staging.net"
-    enable_hyperdrive         = false
-    enable_regional_hostnames = false
-    enable_kms_broker_tasks   = true
-    kms_broker_image          = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/kms-broker@sha256:${join("", [for _ in range(64) : "a"])}"
-  }
-
-  override_resource {
-    target = module.broker_tunnel.cloudflare_zero_trust_tunnel_cloudflared.this
-    values = {
-      id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
-    }
-    override_during = plan
-  }
-
-  override_resource {
-    target = module.tunnel.cloudflare_zero_trust_tunnel_cloudflared.this
-    values = {
-      id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-    }
-    override_during = plan
-  }
-
-  assert {
-    condition     = module.broker_vpc_service[0].type == "http"
-    error_message = "broker VPC service must be http"
-  }
-
-  assert {
-    condition     = module.broker_vpc_service[0].http_port == 8080
-    error_message = "broker VPC service must listen on 8080"
-  }
-
-  assert {
-    condition     = module.broker_vpc_service[0].https_port == null
-    error_message = "broker VPC service https_port must be null"
-  }
-
-  assert {
-    condition     = module.broker_vpc_service[0].tls_settings == null
-    error_message = "broker VPC service tls_settings must be absent"
-  }
-
-  assert {
-    condition     = module.broker_vpc_service[0].host_ipv4 == "127.0.0.1"
-    error_message = "broker VPC service host must be loopback"
-  }
-
-  assert {
-    condition     = module.broker_vpc_service[0].host_hostname == null
-    error_message = "broker VPC service must not set a hostname"
-  }
-
-  assert {
-    condition     = module.broker_vpc_service[0].tunnel_id == module.broker_tunnel.tunnel_id
-    error_message = "broker VPC service must use the broker tunnel id"
-  }
-
-  assert {
-    condition     = module.broker_vpc_service[0].tunnel_id != module.tunnel.tunnel_id
-    error_message = "broker VPC service must not use the Postgres tunnel id"
-  }
 }

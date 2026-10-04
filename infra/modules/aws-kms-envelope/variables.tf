@@ -28,12 +28,6 @@ variable "public_subnet_id" {
   description = "Public subnet for the KMS interface endpoint."
 }
 
-variable "broker_tunnel_token" {
-  type        = string
-  sensitive   = true
-  description = "Cloudflare Tunnel token for the KMS broker. Stored in Secrets Manager."
-}
-
 variable "enable_key_rotation" {
   type        = bool
   description = "Customer-managed envelope keys must rotate. Tests may set false to prove validation."

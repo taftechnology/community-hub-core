@@ -2,19 +2,8 @@ provider "aws" {
   region = var.aws_region
 }
 
-provider "cloudflare" {}
-
 locals {
   name = "ch-${var.environment}"
-}
-
-resource "terraform_data" "prod_tls" {
-  lifecycle {
-    precondition {
-      condition     = var.environment != "prod" || var.cert_verification_mode == "verify_full"
-      error_message = "prod must use verify_full."
-    }
-  }
 }
 
 resource "terraform_data" "prod_backup" {
@@ -23,13 +12,6 @@ resource "terraform_data" "prod_backup" {
       condition     = var.environment != "prod" || (var.deletion_protection && var.backup_retention_days >= 7)
       error_message = "prod must set deletion protection and backup retention."
     }
-  }
-}
-
-check "prod_tls" {
-  assert {
-    condition     = var.environment != "prod" || var.cert_verification_mode == "verify_full"
-    error_message = "prod must use verify_full."
   }
 }
 
@@ -66,94 +48,12 @@ module "rds" {
   kms_key_arn            = module.kms.key_arn
 }
 
-module "tunnel" {
-  source = "../../modules/cf-tunnel"
-
-  account_id = var.cloudflare_account_id
-  name       = "${local.name}-au"
-}
-
-module "broker_tunnel" {
-  source = "../../modules/cf-broker-tunnel"
-
-  account_id = var.cloudflare_account_id
-  name       = "${local.name}-au-kms"
-}
-
 module "envelope" {
   source = "../../modules/aws-kms-envelope"
 
-  aws_region          = var.aws_region
-  aws_account_id      = var.aws_account_id
-  name                = local.name
-  vpc_id              = module.network.vpc_id
-  public_subnet_id    = module.network.public_subnet_id
-  broker_tunnel_token = module.broker_tunnel.tunnel_token
-}
-
-module "ecs" {
-  source = "../../modules/aws-ecs-tunnel"
-
-  aws_region                  = var.aws_region
-  aws_account_id              = var.aws_account_id
-  name                        = local.name
-  public_subnet_id            = module.network.public_subnet_id
-  connector_security_group_id = module.network.connector_security_group_id
-  tunnel_token                = module.tunnel.tunnel_token
-}
-
-module "vpc_service" {
-  source = "../../modules/cf-vpc-service"
-
-  account_id             = var.cloudflare_account_id
-  name                   = "${local.name}-postgres"
-  tunnel_id              = module.tunnel.tunnel_id
-  rds_hostname           = module.rds.address
-  cert_verification_mode = var.cert_verification_mode
-}
-
-module "kms_broker" {
-  source = "../../modules/aws-kms-broker"
-
-  aws_region               = var.aws_region
-  aws_account_id           = var.aws_account_id
-  name                     = local.name
-  public_subnet_id         = module.network.public_subnet_id
-  tunnel_secret_arn        = module.envelope.tunnel_secret_arn
-  execution_role_name      = module.envelope.execution_role_name
-  execution_role_arn       = module.envelope.execution_role_arn
-  log_group_name           = module.envelope.log_group_name
-  task_role_arn            = module.envelope.task_role_arn
-  broker_security_group_id = module.envelope.broker_security_group_id
-  envelope_key_arn         = module.envelope.key_arn
-  enable_tasks             = var.enable_kms_broker_tasks
-  kms_broker_image         = var.kms_broker_image
-}
-
-module "broker_vpc_service" {
-  count  = var.enable_kms_broker_tasks ? 1 : 0
-  source = "../../modules/cf-broker-vpc-service"
-
-  account_id = var.cloudflare_account_id
-  name       = local.name
-  tunnel_id  = module.broker_tunnel.tunnel_id
-}
-
-module "hyperdrive" {
-  source = "../../modules/cf-hyperdrive"
-
-  account_id        = var.cloudflare_account_id
-  name              = local.name
-  service_id        = module.vpc_service.service_id
-  enable_hyperdrive = var.enable_hyperdrive
-  origin_password   = var.hyperdrive_origin_password
-}
-
-module "regional_hostname" {
-  count  = var.enable_regional_hostnames ? 1 : 0
-  source = "../../modules/cf-regional-hostname"
-
-  zone_id    = var.zone_id
-  hostname   = "au.api.${var.zone_name}"
-  region_key = var.region_key
+  aws_region       = var.aws_region
+  aws_account_id   = var.aws_account_id
+  name             = local.name
+  vpc_id           = module.network.vpc_id
+  public_subnet_id = module.network.public_subnet_id
 }

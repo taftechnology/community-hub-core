@@ -129,9 +129,7 @@ locals {
     },
   ]
 
-  secret_name    = "${var.name}/kms-broker-tunnel-token"
   log_group_name = "/community-hub/${var.name}/kms-broker"
-  secret_arn     = "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:${local.secret_name}"
   log_arn        = "arn:aws:logs:${var.aws_region}:${var.aws_account_id}:log-group:${local.log_group_name}"
 }
 
@@ -255,18 +253,6 @@ resource "aws_vpc_endpoint" "kms" {
   security_group_ids  = [aws_security_group.endpoint.id]
 }
 
-resource "aws_secretsmanager_secret" "broker_tunnel" {
-  region      = var.aws_region
-  name        = local.secret_name
-  description = "Cloudflare Tunnel token for the KMS broker (${var.name})"
-}
-
-resource "aws_secretsmanager_secret_version" "broker_tunnel" {
-  region        = var.aws_region
-  secret_id     = aws_secretsmanager_secret.broker_tunnel.id
-  secret_string = var.broker_tunnel_token
-}
-
 resource "aws_cloudwatch_log_group" "broker" {
   region            = var.aws_region
   name              = local.log_group_name
@@ -291,12 +277,6 @@ resource "aws_iam_role_policy" "execution" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      {
-        Sid      = "GetBrokerTunnelToken"
-        Effect   = "Allow"
-        Action   = ["secretsmanager:GetSecretValue"]
-        Resource = ["${local.secret_arn}*"]
-      },
       {
         Sid      = "WriteBrokerLogs"
         Effect   = "Allow"

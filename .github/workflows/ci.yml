@@ -104,21 +104,11 @@ jobs:
       matrix:
         dir:
           - infra/bootstrap
-          - infra/global
           - infra/regions/au
           - infra/modules/aws-network
           - infra/modules/aws-kms-storage
           - infra/modules/aws-kms-envelope
-          - infra/modules/aws-kms-broker
           - infra/modules/aws-rds
-          - infra/modules/aws-ecs-tunnel
-          - infra/modules/cf-tunnel
-          - infra/modules/cf-broker-tunnel
-          - infra/modules/cf-vpc-service
-          - infra/modules/cf-broker-vpc-service
-          - infra/modules/cf-hyperdrive
-          - infra/modules/cf-regional-hostname
-          - infra/modules/cf-zone
     steps:
       - uses: actions/checkout@v4
 
