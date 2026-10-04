@@ -129,7 +129,11 @@ variable "access_log_retention_days" {
   }
 }
 
-# tflint-ignore: terraform_unused_declarations
+variable "desired_count" {
+  type    = number
+  default = 0
+}
+
 variable "service_image" {
   type    = string
   default = null

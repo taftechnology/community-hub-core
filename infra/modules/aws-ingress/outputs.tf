@@ -14,6 +14,11 @@ output "ops_hostname" {
   value = local.ops_hostname
 }
 
+output "ecs_service_desired_count" {
+  description = "Desired count when the image is set, otherwise 0."
+  value       = var.service_image == null ? 0 : var.desired_count
+}
+
 output "repository_url" {
   description = "ECR repository URL for the service image."
   value       = aws_ecr_repository.service.repository_url

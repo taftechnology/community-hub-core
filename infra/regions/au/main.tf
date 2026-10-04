@@ -38,6 +38,22 @@ check "prod_kms_endpoint" {
   }
 }
 
+resource "terraform_data" "staging_zone" {
+  lifecycle {
+    precondition {
+      condition     = var.environment != "staging" || var.staging_zone_id != null
+      error_message = "staging must pass the registered communityhub-staging.net zone id."
+    }
+  }
+}
+
+check "staging_zone" {
+  assert {
+    condition     = var.environment != "staging" || var.staging_zone_id != null
+    error_message = "staging must pass the registered communityhub-staging.net zone id."
+  }
+}
+
 module "network" {
   source = "../../modules/aws-network"
 
@@ -111,4 +127,22 @@ module "envelope" {
     module.db_secrets.platform_secret_arn,
   ]
   db_secrets_key_arn = module.db_secrets.key_arn
+}
+
+module "ingress" {
+  source = "../../modules/aws-ingress"
+
+  aws_region             = var.aws_region
+  aws_account_id         = var.aws_account_id
+  name                   = local.name
+  environment            = var.environment
+  project                = "community-hub"
+  vpc_id                 = module.network.vpc_id
+  private_subnet_ids     = module.network.private_subnet_ids
+  task_security_group_id = module.network.task_security_group_id
+  zone_name              = var.environment == "prod" ? "communityhub.one" : "communityhub-staging.net"
+  create_public_zone     = var.create_public_zone
+  attach_public_dns      = var.attach_public_dns
+  public_zone_id         = var.create_public_zone ? null : var.staging_zone_id
+  desired_count          = var.desired_count
 }

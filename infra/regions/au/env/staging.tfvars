@@ -3,3 +3,7 @@ aws_account_id        = "123456789012"
 environment           = "staging"
 deletion_protection   = false
 backup_retention_days = 0
+create_public_zone    = false
+attach_public_dns     = true
+desired_count         = 0
+turnstile_secret_arn  = null
