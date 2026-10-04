@@ -73,10 +73,8 @@ const mustFail: { file: string; ruleId: string; count: number }[] = [
   { file: "fail/event-nested-string.ts", ruleId: PAYLOAD, count: 1 },
   { file: "fail/event-invalid-name.ts", ruleId: PAYLOAD, count: 1 },
   { file: "fail/event-imported-banned.ts", ruleId: PAYLOAD, count: 1 },
-  { file: "fail/apps/gateway/src/import-db.ts", ruleId: RESTRICTED, count: 1 },
-  { file: "fail/apps/gateway/src/import-type-db.ts", ruleId: RESTRICTED, count: 1 },
-  { file: "fail/apps/gateway/src/import-crypto.ts", ruleId: RESTRICTED, count: 1 },
-  { file: "fail/apps/gateway/src/import-type-crypto.ts", ruleId: RESTRICTED, count: 1 },
+  { file: "fail/modules/core/tenancy/src/import-crypto.ts", ruleId: RESTRICTED, count: 1 },
+  { file: "fail/modules/core/tenancy/src/import-type-crypto.ts", ruleId: RESTRICTED, count: 1 },
 ];
 
 const mustPass = [
@@ -144,23 +142,16 @@ beforeAll(() => {
         },
       },
       {
-        files: ["**/apps/gateway/**"],
+        files: ["**/modules/core/tenancy/**"],
         rules: {
           "no-restricted-imports": [
             "error",
             {
               paths: [
                 {
-                  name: "@community-hub/db",
-                  message: "gateway must not import @community-hub/db (including import type).",
-                },
-                {
-                  name: "@community-hub/kernel/module",
-                  message: "gateway must not import @community-hub/kernel/module.",
-                },
-                {
                   name: "@community-hub/crypto",
-                  message: "gateway must not import @community-hub/crypto (including import type).",
+                  message:
+                    "tenancy must not import @community-hub/crypto (including import type).",
                 },
               ],
             },

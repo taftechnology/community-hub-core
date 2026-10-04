@@ -1,9 +1,0 @@
-{
-  "cells": {
-    "au": { "enabled": false, "cloudflareRegionalServices": "au", "awsRegion": "ap-southeast-2" },
-    "ca": { "enabled": false, "cloudflareRegionalServices": "ca", "awsRegion": "ca-central-1" },
-    "eu": { "enabled": false, "cloudflareRegionalServices": "ee", "awsRegion": "eu-central-1" },
-    "us": { "enabled": false, "cloudflareRegionalServices": "us", "awsRegion": "us-east-1" }
-  },
-  "regionalOnlyPackages": ["@community-hub/db", "@community-hub/crypto"]
-}

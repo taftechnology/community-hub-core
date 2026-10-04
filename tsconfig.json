@@ -9,10 +9,6 @@
     { "path": "./packages/crypto" },
     { "path": "./packages/kms-broker" },
     { "path": "./packages/kms-aws" },
-    { "path": "./packages/residency" },
-    { "path": "./apps/gateway" },
-    { "path": "./apps/api" },
-    { "path": "./tooling/checks/worker-config" },
-    { "path": "./tooling/checks/kms-broker-binding" }
+    { "path": "./apps/api" }
   ]
 }
