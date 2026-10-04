@@ -4,8 +4,13 @@ output "vpc_id" {
 }
 
 output "public_subnet_id" {
-  description = "Public subnet for the tunnel connector."
+  description = "Primary public subnet."
   value       = aws_subnet.public.id
+}
+
+output "public_subnet_ids" {
+  description = "Public subnets (two AZs)."
+  value       = [aws_subnet.public.id, aws_subnet.public_b.id]
 }
 
 output "private_subnet_ids" {
@@ -13,12 +18,12 @@ output "private_subnet_ids" {
   value       = aws_subnet.private[*].id
 }
 
-output "connector_security_group_id" {
-  description = "Security group for the tunnel connector (ingress empty)."
-  value       = aws_security_group.connector.id
+output "task_security_group_id" {
+  description = "Security group for service tasks (ingress empty)."
+  value       = aws_security_group.task.id
 }
 
 output "rds_security_group_id" {
-  description = "Security group for RDS (ingress 5432 from connector only)."
+  description = "Security group for RDS (ingress 5432 from task only)."
   value       = aws_security_group.rds.id
 }

@@ -78,11 +78,6 @@ run "staging_happy" {
     error_message = "envelope key policy must bind each cryptographic statement to the broker task role and the VPC endpoint"
   }
 
-  assert {
-    condition     = !strcontains(output.envelope_key_policy, "connector-execution")
-    error_message = "envelope key policy must not reference the connector execution role"
-  }
-
   override_resource {
     target = module.envelope.aws_vpc_endpoint.kms
     values = {

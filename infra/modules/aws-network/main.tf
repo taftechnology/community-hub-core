@@ -35,6 +35,18 @@ resource "aws_subnet" "public" {
   }
 }
 
+resource "aws_subnet" "public_b" {
+  region                  = var.aws_region
+  vpc_id                  = aws_vpc.this.id
+  cidr_block              = cidrsubnet(var.vpc_cidr, 8, 3)
+  availability_zone       = var.availability_zones[1]
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "${var.name}-public-${var.availability_zones[1]}"
+  }
+}
+
 resource "aws_subnet" "private" {
   count = 2
 
@@ -68,6 +80,12 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
+resource "aws_route_table_association" "public_b" {
+  region         = var.aws_region
+  subnet_id      = aws_subnet.public_b.id
+  route_table_id = aws_route_table.public.id
+}
+
 resource "aws_route_table" "private" {
   region = var.aws_region
   vpc_id = aws_vpc.this.id
@@ -85,29 +103,18 @@ resource "aws_route_table_association" "private" {
   route_table_id = aws_route_table.private.id
 }
 
-resource "aws_security_group" "connector" {
+resource "aws_security_group" "task" {
   region      = var.aws_region
-  name        = "${var.name}-connector"
-  description = "Cloudflare tunnel connector. No inbound. Egress to Cloudflare and RDS only."
+  name        = "${var.name}-task"
+  description = "Service task. No inbound. Egress to public AWS APIs and to RDS."
   vpc_id      = aws_vpc.this.id
   ingress     = []
 
   egress = [
     {
-      description      = "HTTPS to Cloudflare"
+      description      = "HTTPS to public AWS APIs"
       from_port        = 443
       to_port          = 443
-      protocol         = "tcp"
-      cidr_blocks      = ["0.0.0.0/0"]
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      security_groups  = []
-      self             = false
-    },
-    {
-      description      = "Cloudflare QUIC / tunnel"
-      from_port        = 7844
-      to_port          = 7844
       protocol         = "tcp"
       cidr_blocks      = ["0.0.0.0/0"]
       ipv6_cidr_blocks = []
@@ -121,15 +128,15 @@ resource "aws_security_group" "connector" {
 resource "aws_security_group" "rds" {
   region      = var.aws_region
   name        = "${var.name}-rds"
-  description = "Postgres. Inbound 5432 from the connector only."
+  description = "Postgres. Inbound 5432 from the task only."
   vpc_id      = aws_vpc.this.id
   ingress     = []
   egress      = []
 }
 
-resource "aws_vpc_security_group_egress_rule" "connector_rds" {
+resource "aws_vpc_security_group_egress_rule" "task_rds" {
   region                       = var.aws_region
-  security_group_id            = aws_security_group.connector.id
+  security_group_id            = aws_security_group.task.id
   referenced_security_group_id = aws_security_group.rds.id
   from_port                    = 5432
   to_port                      = 5432
@@ -140,9 +147,9 @@ resource "aws_vpc_security_group_egress_rule" "connector_rds" {
 resource "aws_vpc_security_group_ingress_rule" "rds_postgres" {
   region                       = var.aws_region
   security_group_id            = aws_security_group.rds.id
-  referenced_security_group_id = aws_security_group.connector.id
+  referenced_security_group_id = aws_security_group.task.id
   from_port                    = 5432
   to_port                      = 5432
   ip_protocol                  = "tcp"
-  description                  = "Postgres from connector"
+  description                  = "Postgres from the task"
 }
