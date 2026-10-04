@@ -1,7 +1,7 @@
 # Spec: Foundations before the first apply
 
 Slug: foundations
-Status: draft
+Status: approved (2026-10-03, Abdus Salam)
 Architecture refs: §7.3, §8.1, ADR 0009. Implements the foundations row named in `docs/specs/2026-10-03-personal-data-on-aws.md`. That spec is not edited.
 
 ## Problem
@@ -17,12 +17,12 @@ Staging has never been applied. There is no state bucket. A first apply of this 
 Seven tasks, in this order. Each leaves CI green. Each updates the AU root's call site. There is no final task that wires the root.
 
 1. Network. The second public subnet. One task security group replaces the connector. RDS ingress on 5432 comes only from that group, and the group has outbound 5432 to the RDS group. Outbound 443 to the internet stays, because staging calls KMS on the task's public address while the endpoint is off. Port 7844 goes. The connector name goes. The `terraform-invariants` connector rule and its `connector-ingress-rule` fixture are retired in this commit. The network test re-points the RDS assertion and covers both public subnets. The cell assertion that the envelope key policy must not contain `connector-execution` is retired.
-2. Envelope. `multi_region = true`, with a test, in this commit, and no apply of the key before this commit is merged. The task role becomes `${name}-task` and the execution role becomes `${name}-execution`. The key policy names the new task-role ARN in the same commit. The broker log group becomes `/community-hub/${name}/service` and keeps the retention validation (`log_retention_days > 0`). The endpoint and its security group exist only when the flag is on. Production rejects the flag off. Staging defaults it off. `aws:SourceVpce` is present on the cryptographic statements if and only if the flag is on. When the endpoint exists, it accepts 443 only from the task group. The two storage-key assertions that reject the string `kms-broker-task` are re-pointed at `ch-staging-task`. Both tests set `name = "ch-staging"`, so that string is the role ARN's name.
+2. Envelope. `multi_region = true`, with a test, in this commit, and no apply of the key before this commit is merged. The task role becomes `${name}-task` and the execution role becomes `${name}-execution`. The key policy names the new task-role ARN in the same commit. The broker log group becomes `/community-hub/${name}/service` and keeps the retention validation (`log_retention_days > 0`). The endpoint and its security group exist only when the flag is on. Staging defaults the flag off. The AU root rejects production with the flag off, the same way `prod_backup` guards the database. The envelope module does not gain an `environment` variable. `aws:SourceVpce` is present on the cryptographic statements if and only if the flag is on. When the endpoint exists, it accepts 443 only from the task group. The two storage-key assertions that reject the string `kms-broker-task` are re-pointed at `ch-staging-task`. Both tests set `name = "ch-staging"`, so that string is the role ARN's name.
 3. Database. Class and Multi-AZ are variables. The class default becomes `db.t4g.micro`. Multi-AZ defaults to false and is no longer derived from `environment == "prod"`. The root's `deletion_protection` and `backup_retention_days` are passed into the module and used. Production cannot turn off backups of at least 7 days, deletion protection, storage-key encryption, forced TLS, or the private address. The storage ceiling and the two windows take the values the approved spec fixes. The four alarms are in this task.
 4. Secrets. A secrets key and the `app`, `identity`, and `platform` passwords. `hashicorp/random` at `~> 3.7`. The task role and the execution role may read those three secrets.
-5. Tags. `environment` and `project` on every resource, including bootstrap and the storage key.
-6. Budgets. One budget per environment, behind `enable_budgets`, default false. A plan-only test runs with the flag on.
-7. Roadmap. Foundations done. Next is ingress.
+5. Tags. Each module takes `environment` and `project` and sets them on the taggable resources it creates, including bootstrap and the storage key. Provider `default_tags` are not the mechanism.
+6. Budgets. One budget per environment, behind `enable_budgets`, default false. A plan-only test runs with the flag on. The same commit adds ADR 0010 and the architecture §7.3 line.
+7. Roadmap and the `AGENTS.md` repository-state row. Foundations done, next is ingress, 14 done, 1 superseded, 4 not started.
 
 The service's task role, execution role, and log group stay in `aws-kms-envelope`. That is deliberate. The ingress chunk reads them from there.
 
@@ -39,7 +39,8 @@ This chunk is one chunk on purpose. It touches more than two modules and it will
 - Turnstile's secret. A person creates it later. It is not one of the three role secrets.
 - A rotation Lambda for the role passwords. Automatic rotation stays an open item.
 - Rewriting the withdrawn apply order in `docs/runbooks/apply-staging-au.md`. This chunk adds prerequisites only.
-- Editing `docs/specs/2026-10-03-personal-data-on-aws.md` or its plan.
+- Editing `docs/specs/2026-10-03-personal-data-on-aws.md`, its plan, or a merged ADR. ADR 0009 is not edited. AWS Budgets is added by ADR 0010.
+- An unfiltered account-wide budget. One amount cannot be both the USD 50 staging line and the USD 110 production line. The gap is named under Risks.
 
 ## Behaviour
 
@@ -66,7 +67,7 @@ Role names:
 
 The key policy's task-role ARN uses `${name}-task`. The cryptographic statements stay the four that exist today (`GenerateDataKey` and `Decrypt`, each for `org` and `identity`), with the same encryption-context conditions. `aws:SourceVpce` is included only when the endpoint flag is on. When the flag is off, those statements do not reference `aws_vpc_endpoint.kms`, because that resource does not exist.
 
-`enable_kms_endpoint` defaults to false. A validation fails when `environment` is `prod` and the flag is false. Staging tfvars leave it false. The endpoint and `aws_security_group.endpoint` are created only when the flag is on. The endpoint's ingress is TCP 443 from the task group and nothing else. `aws_security_group.broker` is deleted, including its 443 and 7844 egress.
+`enable_kms_endpoint` defaults to false. The envelope module does not take `environment`. The AU root holds the production check, beside `prod_backup`: when `environment` is `prod`, `enable_kms_endpoint` must be true. Staging tfvars leave the flag false. Prod tfvars set it true. The endpoint and `aws_security_group.endpoint` are created only when the flag is on. The endpoint's ingress is TCP 443 from the task group and nothing else. `aws_security_group.broker` is deleted, including its 443 and 7844 egress.
 
 The execution role may write to the service log group (`logs:CreateLogStream`, `logs:PutLogEvents`) and must not contain `kms:`. The task role is the only principal on the cryptographic statements.
 
@@ -91,14 +92,22 @@ The four alarms are standard-resolution metric alarms on `AWS/RDS` for this inst
 | --- | --- | --- | --- |
 | CPU credits | `CPUCreditBalance` less than 24 | 24 credits | `t4g.micro` earns 12 credits an hour and can accrue 288. Below 24 the balance is under two hours of earn, which is the tank nearly empty. |
 | Free memory | `FreeableMemory` less than 104857600 | 100 MiB | The class is 1 GiB before RDS reserves memory. |
-| Free storage | `FreeStorageSpace` less than 2147483648 | 2 GiB | Ten percent of the 20 GiB start, and the last 2 GiB at any size up to the 100 GiB ceiling. |
+| Free storage | `FreeStorageSpace` less than 2147483648 | 2 GiB | RDS autoscales this volume from 20 GiB toward 100 GiB, growing it when free space falls to about 10 percent of what is allocated and adding about 10 GiB each step. Up to the ceiling, 10 percent is at most 10 GiB, so a 10 GiB alarm would be on through ordinary growth. 2 GiB fires when autoscaling has not kept free space up. |
 | Connections | `DatabaseConnections` greater than 30 | 30 | Half of the 60 `max_connections` floor. Production steady state in the approved table is 26, so it stays under the line. A rolling deploy of 50 crosses it, and that is not two weeks of ordinary use. |
 
-An alarm with no action notifies nobody. The four alarms share one SNS topic in `ap-southeast-2`, and each alarm's action is that topic. The topic has an email subscription to `alert_email`. Terraform cannot confirm that subscription. Until a person confirms it, the alarm is visible in the console and the email does not arrive. `alert_email` is required and has no default. The same variable is the budget notification address.
+An alarm with no action notifies nobody. The four alarms share one SNS topic in `ap-southeast-2`, and each alarm's action is that topic. The topic is not encrypted. CloudWatch cannot publish to a topic that uses the AWS-managed SNS key (`alias/aws/sns`). A customer-managed key would be another USD 1 a month per environment, which the approved cost tables do not include. The message is alarm state: the metric, the threshold, and the instance identifier. It is not tenant data. The topic has an email subscription to `alert_email`. Terraform cannot confirm that subscription. Until a person confirms it, the alarm is visible in the console and the email does not arrive. `alert_email` is required and has no default. The same variable is the budget notification address.
 
 ### Secrets
 
-New module `infra/modules/aws-db-secrets`. Its key is a customer-managed key in `ap-southeast-2`, not the envelope key and not the storage key. `enable_key_rotation` cannot be false. Decrypt is allowed only through `secretsmanager.ap-southeast-2.amazonaws.com`, and only when the encryption context secret ARN is one of the three role secrets.
+New module `infra/modules/aws-db-secrets`. Its key is a customer-managed key in `ap-southeast-2`, not the envelope key and not the storage key. `enable_key_rotation` cannot be false.
+
+The key policy cannot list the three secret ARNs exactly. The secrets need the key to exist, and a Secrets Manager ARN ends in a six-character suffix that exists only after the secret is created. An inline policy that interpolates those ARNs cannot be planned. The policy uses `StringLike` on `kms:EncryptionContext:SecretARN`, one value per secret, with the suffix written as `-??????`. The names are fixed, so the wildcard is only that suffix:
+
+- `arn:aws:secretsmanager:ap-southeast-2:<account>:secret:${name}-app-??????`
+- `arn:aws:secretsmanager:ap-southeast-2:<account>:secret:${name}-identity-??????`
+- `arn:aws:secretsmanager:ap-southeast-2:<account>:secret:${name}-platform-??????`
+
+Decrypt is also limited to `secretsmanager.ap-southeast-2.amazonaws.com`. A separate key-policy resource applied after the secrets is not used. The role policies, which are not the key policy, may reference the real secret ARNs. Those references do not cycle, because the key policy does not.
 
 `hashicorp/random` `~> 3.7` generates each password with ephemeral `random_password`. Each secret version uses `secret_string_wo`. `secret_string_wo_version` is what triggers a new write. A later apply does not rewrite a secret while that version stays unchanged. State holds ARNs, not passwords.
 
@@ -108,17 +117,19 @@ The execution role and the task role, which stay in `aws-kms-envelope`, each gai
 
 ### Tags
 
-Every resource in bootstrap, network, storage, envelope, RDS, and the secrets module carries `environment` (`staging` or `prod`) and `project` (`community-hub`). The budgets module does not exist yet. Its resources carry the same two tags in the budgets commit. Bootstrap has not been applied. The backend file names `ch-tfstate-staging-au`, and that bucket does not exist. Tagging bootstrap is a code change. The first bootstrap apply, later and by a person, creates the bucket already tagged. It is not an in-place change of a live bucket.
+Each module takes `environment` and `project` and merges them onto every taggable resource it creates. The roots pass `environment` from the root variable and `project` as `community-hub`. Provider `default_tags` are not used. A standalone module test would not see tags set only on a root, and the tests below assert the tags inside the module. Resources with no `tags` argument are out of the rule: security group rules, route-table associations, and the same kind of attachment. The budgets module does not exist yet. Its taggable resources get the same two variables in the budgets commit. Bootstrap has not been applied. The backend file names `ch-tfstate-staging-au`, and that bucket does not exist. Tagging bootstrap is a code change. The first bootstrap apply, later and by a person, creates the bucket already tagged. It is not an in-place change of a live bucket.
 
 ### Budgets
 
 New module `infra/modules/aws-budgets`. One cost budget per environment. Staging's limit is USD 50. Production's limit is USD 110. The notification is email at 80 percent of actual spend, so the lines are USD 40 and USD 88. No budget action and no budget report.
 
-Both environment tfvars use the account ID `123456789012`, and the approved spec speaks of one account. Each budget filters on the user tag `environment` with that environment's value. AWS will not filter on a user tag until the tag is activated. After a billed resource carries the tag, the key can take up to 24 hours to appear on the cost-allocation tags page, and up to 24 hours more to become active. A filtered budget in the first apply would fail.
+Staging and production are one AWS account. The approved spec says the `environment` and `project` tags exist so the bill separates staging from production. Separate accounts would already separate the bill, and that sentence would not be needed. The shared placeholder account ID in the tfvars is not the evidence.
+
+Each budget filters on the user tag `environment` with that environment's value. AWS will not filter on a user tag until the tag is activated. After a billed resource carries the tag, the key can take up to 24 hours to appear on the cost-allocation tags page, and up to 24 hours more to become active. A filtered budget in the first apply would fail. The filter also misses untagged spend and tax. The production alert line in the approved spec was set against GST-inclusive months. This filter does not see GST. That gap is accepted under Risks. There is no third, unfiltered budget.
 
 `enable_budgets` defaults to false. The first apply of the AU root does not create the budget. A person activates `environment` in Billing, then a later apply sets the flag true. The module's Terraform test includes a plan-only run with `enable_budgets = true` that asserts the limit, the 80 percent email notification, and the `environment` tag filter. The default-off run asserts that no budget is planned.
 
-AWS Budgets is a global billing API. Its endpoint is `https://budgets.amazonaws.com`, and AWS routes that endpoint to `us-east-1`. The budget holds the amount and `alert_email`. It does not hold tenant data. Architecture §7.3 and the exception list in ADR 0009 gain a line for it, in the same commit as the module. The budgets module does not use the `aws_region == "ap-southeast-2"` validation on that API. The Sydney resources keep theirs. ADR 0009 is amended in place for this list. It does not get a new ADR.
+AWS Budgets is a global billing API. Its endpoint is `https://budgets.amazonaws.com`, and AWS routes that endpoint to `us-east-1`. The budget holds the amount and `alert_email`. It does not hold tenant data. The budgets commit adds `docs/adr/0010-aws-budgets-exception.md`, which amends ADR 0009's exception list, and edits architecture §7.3 in that same commit. ADR 0009 is not edited. Its list says "and no others", and a merged ADR is not revised in place. The budgets module does not use the `aws_region == "ap-southeast-2"` validation on that API. The Sydney resources keep theirs.
 
 ### CI
 
@@ -150,6 +161,7 @@ No route and no event. The names ingress will read from `aws-kms-envelope`:
 - Execution role `${name}-execution`
 - Log group `/community-hub/${name}/service`
 - Task security group id from `aws-network`'s `task_security_group_id`
+- The three secret ARNs, `${name}-app`, `${name}-identity`, and `${name}-platform`, from `aws-db-secrets`. The ingress chunk's task definition injects them.
 
 ## Cost
 
@@ -164,7 +176,7 @@ Prices checked on 2026-10-03. USD, before GST.
 | Four standard alarms, this account | 0.00 while the account stays within 10 standard alarm metrics | The same page's free tier includes 10 standard alarm metrics. |
 | SNS email at this volume | 0.00 | Email delivery is priced per 100,000. These alarms do not approach that. |
 
-The approved staging full month is USD 40.40 with the endpoint off, and it does not include alarms. Adding the list price makes USD 40.80. The staging budget stays USD 50, so the alert stays at USD 40. Both 40.40 and 40.80 are above 40, so the alert still fires only if staging is left running all month. This chunk does not change the budget amounts. Production's USD 0.40 list price does not move the USD 88 alert relative to the launch month.
+The approved staging full month is USD 40.40 with the endpoint off, and it does not include alarms. Adding the list price makes USD 40.80. The staging budget stays USD 50, so the alert stays at USD 40. Both 40.40 and 40.80 are above 40. This chunk does not change the budget amounts. Production's USD 0.40 list price does not move the USD 88 alert relative to the launch month. Those comparisons are the approved spec's. A tag filter does not measure them: it drops untagged spend and GST.
 
 The KMS endpoint, when someone turns it on, stays about USD 9.49 a month for one zone. Staging defaults it off. This chunk does not add a NAT gateway, a load balancer, or a second interface endpoint.
 
@@ -172,7 +184,7 @@ The KMS endpoint, when someone turns it on, stays about USD 9.49 a month for one
 
 A first apply before task 2 is merged would create a single-Region envelope key. AWS does not convert that key later. The test lands in the same commit as `multi_region = true`, and the runbook already forbids the apply until both are merged.
 
-A filtered budget applied before the `environment` tag is active fails. The flag defaults off so the first apply does not create it.
+A filtered budget applied before the `environment` tag is active fails. The flag defaults off so the first apply does not create it. Until a person activates the tag and applies again, the account has no budget alert. The filter, once on, still excludes untagged spend and tax, so it is not the GST-inclusive month the production line was set against. No unfiltered backstop is added. One account-wide amount cannot stand for both the USD 50 line and the USD 110 line.
 
 The task role can call KMS and can read the three database secrets. Both are scoped. A compromised task can still decrypt what the process can decrypt. That is the accepted trade in ADR 0009.
 
@@ -195,8 +207,8 @@ Terraform tests only. No package test changes.
 
 - Network: both public subnets assign public addresses. RDS ingress on 5432 references only the task group. The task group has outbound 443 and outbound 5432 to the RDS group, and no 7844.
 - Invariants: the connector fixture is gone, and the checker no longer looks for a resource named `connector`.
-- Envelope: `multi_region` is true. Role names and the log group use the names above. Flag on includes `aws:SourceVpce` and creates the endpoint. Flag off includes neither the condition nor the endpoint. Prod with the flag off fails. The execution policy writes logs and does not contain `kms:`. Storage-key tests reject `ch-staging-task`.
-- RDS: prod cannot turn the protections off. Staging can set Multi-AZ false, deletion protection false, and backup retention 0. The class default is `db.t4g.micro`. The ceiling is 100 and the windows match the table. Each alarm has the threshold in the table and an SNS action.
-- Secrets: rotation cannot be false. The key policy names Secrets Manager in `ap-southeast-2` and the three secret ARNs. A plan does not show a password.
+- Envelope: `multi_region` is true. Role names and the log group use the names above. Flag on includes `aws:SourceVpce` and creates the endpoint. Flag off includes neither the condition nor the endpoint. The execution policy writes logs and does not contain `kms:`. Storage-key tests reject `ch-staging-task`. The AU root test fails prod when the endpoint flag is false. The envelope module has no such test, because it has no `environment` variable.
+- RDS: prod cannot turn the protections off. Staging can set Multi-AZ false, deletion protection false, and backup retention 0. The class default is `db.t4g.micro`. The ceiling is 100 and the windows match the table. Each alarm has the threshold in the table and an SNS action. The topic has no `kms_master_key_id`.
+- Secrets: rotation cannot be false. The key policy uses `StringLike` and the three `-??????` patterns, and it names Secrets Manager in `ap-southeast-2`. A plan does not show a password.
 - Budgets: the default run plans no budget. The run with `enable_budgets = true` plans the limit, the 80 percent email, and the `environment` tag filter.
-- Tags: a resource in each module carries `environment` and `project`.
+- Tags: a module test passes `environment` and `project` and sees them on a taggable resource. It does not depend on a root provider.
