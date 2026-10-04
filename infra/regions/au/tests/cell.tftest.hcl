@@ -86,7 +86,7 @@ run "staging_happy" {
 
   assert {
     condition = alltrue([
-      for statement in jsondecode(output.broker_execution_policy).Statement :
+      for statement in jsondecode(output.execution_policy).Statement :
       alltrue([for action in statement.Action : !strcontains(action, "kms:")])
     ])
     error_message = "service execution log policy must not call kms"

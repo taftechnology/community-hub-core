@@ -23,7 +23,7 @@ output "storage_key_policy" {
   value       = module.kms.key_policy
 }
 
-output "broker_execution_policy" {
-  description = "Broker execution role policy document."
+output "execution_policy" {
+  description = "Service execution role policy document."
   value       = module.envelope.execution_policy
 }

@@ -253,7 +253,7 @@ resource "aws_vpc_endpoint" "kms" {
   }
 }
 
-resource "aws_cloudwatch_log_group" "broker" {
+resource "aws_cloudwatch_log_group" "service" {
   region            = var.aws_region
   name              = local.log_group_name
   retention_in_days = var.log_retention_days
@@ -288,7 +288,7 @@ resource "aws_iam_role_policy" "execution" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "WriteBrokerLogs"
+        Sid      = "WriteServiceLogs"
         Effect   = "Allow"
         Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
         Resource = ["${local.log_arn}:*"]
