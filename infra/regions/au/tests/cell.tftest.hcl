@@ -101,6 +101,23 @@ run "staging_happy" {
     condition     = !strcontains(file("${path.module}/env/prod.tfvars"), "policy_probe_action")
     error_message = "env/prod.tfvars must not set policy_probe_action"
   }
+
+  assert {
+    condition     = var.enable_budgets == false
+    error_message = "enable_budgets must default to false when unset"
+  }
+}
+
+run "budgets_on" {
+  command = plan
+
+  variables {
+    aws_region     = "ap-southeast-2"
+    aws_account_id = "123456789012"
+    environment    = "staging"
+    enable_budgets = true
+    alert_email    = "alerts@example.com"
+  }
 }
 
 run "staging_endpoint_on" {

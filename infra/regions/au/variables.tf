@@ -45,3 +45,9 @@ variable "alert_email" {
   type        = string
   description = "Email for budget and RDS alarm SNS subscriptions."
 }
+
+variable "enable_budgets" {
+  type        = bool
+  description = "Create the per-environment budget. Off until the cost-allocation tag is active."
+  default     = false
+}

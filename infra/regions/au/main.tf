@@ -83,6 +83,16 @@ module "db_secrets" {
   project        = "community-hub"
 }
 
+module "budgets" {
+  source = "../../modules/aws-budgets"
+
+  enable_budgets = var.enable_budgets
+  environment    = var.environment
+  project        = "community-hub"
+  name           = local.name
+  alert_email    = var.alert_email
+}
+
 module "envelope" {
   source = "../../modules/aws-kms-envelope"
 
