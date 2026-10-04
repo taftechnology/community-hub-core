@@ -1,3 +1,5 @@
+import type { webcrypto } from "node:crypto";
+
 import { encodeAad, type WrapAad } from "./aad.js";
 import {
   encodeGcmAad,
@@ -18,9 +20,9 @@ function unwrapFailed(): never {
 }
 
 export async function generateAndWrap(
-  parentWrapKey: CryptoKey,
+  parentWrapKey: webcrypto.CryptoKey,
   aad: WrapAad,
-): Promise<{ blob: Uint8Array; childHkdfKey: CryptoKey }> {
+): Promise<{ blob: Uint8Array; childHkdfKey: webcrypto.CryptoKey }> {
   if (aad.childKeyId.byteLength !== KEY_ID_LENGTH) {
     throw new Error("key id must be 16 bytes");
   }
@@ -43,9 +45,9 @@ export async function generateAndWrap(
 
 export async function unwrapKey(
   blob: Uint8Array,
-  parentWrapKey: CryptoKey,
+  parentWrapKey: webcrypto.CryptoKey,
   aad: WrapAad,
-): Promise<CryptoKey> {
+): Promise<webcrypto.CryptoKey> {
   const parsed = parseEnvelope(blob);
   if (parsed.version !== ENVELOPE_VERSION) {
     unwrapFailed();

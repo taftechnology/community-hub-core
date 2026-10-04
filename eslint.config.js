@@ -25,7 +25,6 @@ export default tseslint.config(
       "**/*.test-d.ts",
       "**/src/testing.ts",
       "**/vitest.config.ts",
-      "**/vitest.worker.config.ts",
       "**/global-setup.ts",
       "**/migrate-test.ts",
       "**/schema-test.ts",
@@ -68,23 +67,15 @@ export default tseslint.config(
     },
   },
   {
-    files: ["**/apps/gateway/**/*.{js,ts}"],
+    files: ["**/modules/core/tenancy/**/*.{js,ts}"],
     rules: {
       "no-restricted-imports": [
         "error",
         {
           paths: [
             {
-              name: "@community-hub/db",
-              message: "gateway must not import @community-hub/db (including import type).",
-            },
-            {
-              name: "@community-hub/kernel/module",
-              message: "gateway must not import @community-hub/kernel/module.",
-            },
-            {
               name: "@community-hub/crypto",
-              message: "gateway must not import @community-hub/crypto (including import type).",
+              message: "tenancy must not import @community-hub/crypto (including import type).",
             },
           ],
         },
@@ -125,7 +116,6 @@ export default tseslint.config(
       "**/migrate-test.ts",
       "**/schema-test.ts",
       "**/vitest.config.ts",
-      "**/vitest.worker.config.ts",
       "**/drizzle.config.ts",
       "**/drizzle-test.config.ts",
     ],

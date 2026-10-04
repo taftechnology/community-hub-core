@@ -23,7 +23,6 @@ run "happy" {
     name                = "ch-staging"
     vpc_id              = "vpc-mock"
     public_subnet_id    = "subnet-mock"
-    broker_tunnel_token = "token-mock"
     policy_probe_action = null
   }
 
@@ -39,14 +38,6 @@ run "happy" {
     target = aws_iam_role.execution
     values = {
       id = "role-execution"
-    }
-    override_during = plan
-  }
-
-  override_resource {
-    target = aws_secretsmanager_secret.broker_tunnel
-    values = {
-      arn = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging/kms-broker-tunnel-token-AbCdEf"
     }
     override_during = plan
   }
@@ -245,23 +236,11 @@ run "happy" {
 
   assert {
     condition = (
-      strcontains(aws_iam_role_policy.execution.policy, "kms-broker-tunnel-token") &&
-      strcontains(aws_iam_role_policy.execution.policy, "secretsmanager:GetSecretValue") &&
       strcontains(aws_iam_role_policy.execution.policy, "logs:PutLogEvents") &&
       strcontains(aws_iam_role_policy.execution.policy, "/community-hub/ch-staging/kms-broker") &&
       !strcontains(aws_iam_role_policy.execution.policy, "kms:")
     )
-    error_message = "execution role may read the broker tunnel secret and write broker logs, and must not call kms"
-  }
-
-  assert {
-    condition     = aws_secretsmanager_secret.broker_tunnel.kms_key_id == null
-    error_message = "broker tunnel secret must use the AWS-managed key"
-  }
-
-  assert {
-    condition     = output.tunnel_secret_arn == "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging/kms-broker-tunnel-token-AbCdEf"
-    error_message = "tunnel_secret_arn must be the secret's ARN, suffix included"
+    error_message = "execution role may write broker logs and must not call kms"
   }
 
   assert {
@@ -284,7 +263,6 @@ run "probe_create_grant" {
     name                = "ch-staging"
     vpc_id              = "vpc-mock"
     public_subnet_id    = "subnet-mock"
-    broker_tunnel_token = "token-mock"
     policy_probe_action = "kms:CreateGrant"
   }
 
@@ -300,7 +278,6 @@ run "wrong_region" {
     name                = "ch-staging"
     vpc_id              = "vpc-mock"
     public_subnet_id    = "subnet-mock"
-    broker_tunnel_token = "token-mock"
   }
 
   expect_failures = [var.aws_region]
@@ -315,7 +292,6 @@ run "rotation_off" {
     name                = "ch-staging"
     vpc_id              = "vpc-mock"
     public_subnet_id    = "subnet-mock"
-    broker_tunnel_token = "token-mock"
     enable_key_rotation = false
   }
 
@@ -331,7 +307,6 @@ run "log_retention_zero" {
     name                = "ch-staging"
     vpc_id              = "vpc-mock"
     public_subnet_id    = "subnet-mock"
-    broker_tunnel_token = "token-mock"
     log_retention_days  = 0
   }
 

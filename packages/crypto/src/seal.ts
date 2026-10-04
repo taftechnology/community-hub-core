@@ -1,3 +1,5 @@
+import type { webcrypto } from "node:crypto";
+
 import {
   buildEnvelope,
   encodeGcmAad,
@@ -7,7 +9,7 @@ import {
 } from "./envelope.js";
 
 export async function aes256GcmEncrypt(
-  key: CryptoKey,
+  key: webcrypto.CryptoKey,
   iv: Uint8Array,
   plaintext: Uint8Array,
   additionalData: Uint8Array,
@@ -22,7 +24,7 @@ export async function aes256GcmEncrypt(
 }
 
 export async function aes256GcmDecrypt(
-  key: CryptoKey,
+  key: webcrypto.CryptoKey,
   iv: Uint8Array,
   ciphertextAndTag: Uint8Array,
   additionalData: Uint8Array,
@@ -41,7 +43,7 @@ export async function aes256GcmDecrypt(
 }
 
 export async function sealWith(opts: {
-  key: CryptoKey;
+  key: webcrypto.CryptoKey;
   plaintext: Uint8Array;
   keyId: Uint8Array;
   iv: Uint8Array;

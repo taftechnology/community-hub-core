@@ -38,11 +38,6 @@ output "execution_role_arn" {
   value       = aws_iam_role.execution.arn
 }
 
-output "tunnel_secret_name" {
-  description = "Secrets Manager name of the broker tunnel token."
-  value       = aws_secretsmanager_secret.broker_tunnel.name
-}
-
 output "key_policy" {
   description = "Envelope KMS key policy document."
   value       = aws_kms_key.envelope.policy
@@ -51,11 +46,6 @@ output "key_policy" {
 output "execution_policy" {
   description = "Broker execution role policy document."
   value       = aws_iam_role_policy.execution.policy
-}
-
-output "tunnel_secret_arn" {
-  description = "Full ARN of the broker tunnel token, including the Secrets Manager suffix."
-  value       = aws_secretsmanager_secret.broker_tunnel.arn
 }
 
 output "execution_role_name" {

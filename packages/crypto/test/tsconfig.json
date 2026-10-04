@@ -2,8 +2,9 @@
   "extends": "../../../tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
+    "composite": false,
     "lib": ["ES2022"],
-    "types": ["@cloudflare/workers-types"]
+    "types": ["node"]
   },
-  "include": ["vectors/**/*.ts", "workerd-entry.ts"]
+  "include": ["vectors/**/*.ts"]
 }

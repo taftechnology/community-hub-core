@@ -96,14 +96,6 @@ jobs:
       - name: Test
         run: pnpm test
 
-  broker-image:
-    name: broker-image
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build
-        run: docker build -f apps/kms-broker/Dockerfile --label org.opencontainers.image.revision=${{ github.sha }} .
-
   terraform:
     name: terraform
     runs-on: ubuntu-latest
@@ -112,21 +104,11 @@ jobs:
       matrix:
         dir:
           - infra/bootstrap
-          - infra/global
           - infra/regions/au
           - infra/modules/aws-network
           - infra/modules/aws-kms-storage
           - infra/modules/aws-kms-envelope
-          - infra/modules/aws-kms-broker
           - infra/modules/aws-rds
-          - infra/modules/aws-ecs-tunnel
-          - infra/modules/cf-tunnel
-          - infra/modules/cf-broker-tunnel
-          - infra/modules/cf-vpc-service
-          - infra/modules/cf-broker-vpc-service
-          - infra/modules/cf-hyperdrive
-          - infra/modules/cf-regional-hostname
-          - infra/modules/cf-zone
     steps:
       - uses: actions/checkout@v4
 
@@ -168,69 +150,4 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build workspace packages
-        run: pnpm --filter @community-hub/gateway... --filter @community-hub/api... build
-
-      - name: Wrangler deploy dry-run (gateway)
-        working-directory: apps/gateway
-        run: |
-          dir=$(mktemp -d)
-          trap 'rm -rf "$dir"' EXIT
-          pnpm exec wrangler deploy --dry-run --outdir "$dir"
-          pnpm --dir ../.. exec tsx tooling/checks/bundle-no-zod/cli.ts "$dir"
-
-      - name: Wrangler deploy dry-run (api)
-        working-directory: apps/api
-        run: |
-          dir=$(mktemp -d)
-          trap 'rm -rf "$dir"' EXIT
-          pnpm exec wrangler deploy --dry-run --outdir "$dir"
-          pnpm --dir ../.. exec tsx tooling/checks/bundle-no-zod/cli.ts "$dir"
-
-      - name: Require Cloudflare credentials
-        if: github.event_name == 'pull_request'
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-            echo "CLOUDFLARE_API_TOKEN repository secret is required for preview upload"
-            exit 1
-          fi
-          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "CLOUDFLARE_ACCOUNT_ID repository secret is required for preview upload"
-            exit 1
-          fi
-
-      - name: Upload Worker version
-        if: github.event_name == 'pull_request'
-        id: upload
-        working-directory: apps/gateway
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          set -o pipefail
-          pnpm exec wrangler versions upload \
-            --tag "pr-${{ github.event.pull_request.number }}" \
-            --message "PR #${{ github.event.pull_request.number }} ${{ github.sha }}" \
-            2>&1 | tee wrangler-upload.log
-          PREVIEW_URL="$(grep -Eo 'https://[a-zA-Z0-9.-]+\.workers\.dev' wrangler-upload.log | head -1)"
-          if [ -z "$PREVIEW_URL" ]; then
-            echo "Could not find a *.workers.dev preview URL in wrangler output"
-            exit 1
-          fi
-          echo "preview_url=$PREVIEW_URL" >> "$GITHUB_OUTPUT"
-
-      - name: Comment preview URL on PR
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const previewUrl = `${{ steps.upload.outputs.preview_url }}`;
-            const body = `## Gateway preview\n\nPreview URL: ${previewUrl}\n\nUploaded from commit ${context.sha.slice(0, 7)}.`;
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body,
-            });
+        run: pnpm --filter @community-hub/api... build

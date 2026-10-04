@@ -1,3 +1,5 @@
+import type { webcrypto } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 
@@ -30,7 +32,10 @@ function fieldAad(): CommunityFieldAad {
   };
 }
 
-async function assertCanEncryptWithBoth(a: CryptoKey, b: CryptoKey): Promise<void> {
+async function assertCanEncryptWithBoth(
+  a: webcrypto.CryptoKey,
+  b: webcrypto.CryptoKey,
+): Promise<void> {
   const { enc: encA } = await deriveKeys(a);
   const { enc: encB } = await deriveKeys(b);
   const plaintext = utf8("kms-root-field");
@@ -48,7 +53,7 @@ function expectNoPersonalData(err: unknown, ...identifiers: string[]): void {
   }
 }
 
-async function expectDeriveBitsRejected(key: CryptoKey): Promise<void> {
+async function expectDeriveBitsRejected(key: webcrypto.CryptoKey): Promise<void> {
   await expect(
     crypto.subtle.deriveBits(
       {

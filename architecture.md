@@ -390,12 +390,11 @@ community-hub/
 │
 ├── tooling/
 │   ├── eslint-plugin-community-hub/  # `@community-hub/no-encrypted-column-query`, `@community-hub/no-event-payload`, `@community-hub/no-kms-port-outside-crypto`, `@community-hub/no-restricted-disable`, `@community-hub/no-ts-ignore`, `@community-hub/no-crypto-testing-import`
-│   └── checks/               # CI boundary checkers (schema-rls, terraform-invariants, sql-session-ban, event-names, traceability). The edge-runtime checkers leave in the cleanup row.
+│   └── checks/               # CI boundary checkers (schema-rls, terraform-invariants, sql-session-ban, event-names, check-tokens)
 │
 ├── infra/
 │   ├── modules/              # shared Terraform modules; each has tests/ and is in the CI matrix
 │   ├── bootstrap/            # state bucket + KMS; local state then migrated into the bucket
-│   ├── global/               # dedicated staging zone (not communityhub.one). Prod zone is tfvars-only.
 │   └── regions/
 │       └── au/               # one root: AWS in ap-southeast-2
 │
@@ -404,7 +403,7 @@ community-hub/
     └── runbooks/             # incidents, breach assessment, restores, key rotation
 ```
 
-Until the cleanup row, `apps/gateway` and the Wrangler files of `apps/api` are still on disk. Workers were superseded by ADR 0009, and that layout is not this design. `packages/residency` is not part of this design. The cleanup row removes it.
+`apps/gateway`, the Wrangler files, and `packages/residency` are gone. Workers were superseded by ADR 0009, and that layout is not this design.
 
 ### 8.2 Module anatomy
 
@@ -455,8 +454,8 @@ export default defineModule({
 - A module never reads or writes another module's tables.
 - `domain/` has no imports from the HTTP framework, Drizzle, or adapters. The service chunk's spec names the framework.
 - Adapters depend on ports; modules never import adapters.
-- The platform and ops modules must not import `@community-hub/crypto`, including `import type`. The granted-read module is the only exception. Enforcement moves in the cleanup row. The previous global-app rule was superseded by [ADR 0009](docs/adr/0009-personal-data-on-aws.md).
-- Kernel must not import `@community-hub/db`. Checkers that belong to the previous edge runtime leave in the cleanup row. `schema-rls`, `event-names`, and `sql-session-ban` stay. dependency-cruiser stays omitted until it has a real input and a must-fail fixture.
+- The platform module `modules/core/tenancy` must not import `@community-hub/crypto`, including `import type`. There is no ops module yet. Ops routes are on `apps/api`, which calls KMS, so this ban does not cover `apps/api`. The granted-read exception is added by the chunk that creates that module. The previous global-app rule was superseded by [ADR 0009](docs/adr/0009-personal-data-on-aws.md).
+- Kernel must not import `@community-hub/db`. `schema-rls`, `event-names`, and `sql-session-ban` stay. dependency-cruiser stays omitted until it has a real input and a must-fail fixture.
 
 ### 8.4 Conventions
 
@@ -1297,16 +1296,16 @@ Production data is never copied to non-production environments.
 
 ### 23.3 Testing strategy
 
-| Layer              | Tooling                                                         | Focus                                                                                                                                      |
-| ------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| Domain             | Vitest                                                          | Rules, state transitions, age and consent logic                                                                                            |
-| Module integration | Vitest on Node, plus Postgres                                   | Routes, repositories, RLS behaviour. After cleanup, tests run on the Node runner. The Workers test pool was superseded by ADR 0009.        |
-| `packages-db` CI   | Docker Postgres behind **PgBouncer in transaction mode**        | Must-fail fixture: a session-level `SET app.org_id` bleeds into the next checkout. The first staging apply is the live proof.              |
-| Tenant isolation   | Dedicated suite                                                 | Every endpoint called with a token from another organisation and community must fail                                                       |
-| Residency          | Dedicated suite                                                 | The payload check is removed in the cleanup row. A message carries IDs, and a personal field in a message is named in that feature's spec. |
-| Contracts          | Schema and consumer tests                                       | Mobile API, Jellycube host adapter (collection schemas, public-only projections with a must-fail minor fixture), PaymentProvider adapters  |
-| End to end         | Playwright (admin), Maestro or Detox (mobile)                   | Critical journeys: sign-in, donate, RSVP, check-in, consent                                                                                |
-| Accessibility      | axe (or equivalent) in Playwright; native a11y checks on mobile | WCAG 2.2 AA on admin, portal, ops and host islands ([§8.5](#85-client-surfaces))                                                           |
+| Layer              | Tooling                                                         | Focus                                                                                                                                     |
+| ------------------ | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Domain             | Vitest                                                          | Rules, state transitions, age and consent logic                                                                                           |
+| Module integration | Vitest on Node, plus Postgres                                   | Routes, repositories, RLS behaviour. Tests run on the Node runner. The Workers test pool was superseded by ADR 0009.                      |
+| `packages-db` CI   | Docker Postgres behind **PgBouncer in transaction mode**        | Must-fail fixture: a session-level `SET app.org_id` bleeds into the next checkout. The first staging apply is the live proof.             |
+| Tenant isolation   | Dedicated suite                                                 | Every endpoint called with a token from another organisation and community must fail                                                      |
+| Residency          | Dedicated suite                                                 | A message carries IDs, a personal field in a message is named in that feature's spec, and the payload check was removed.                  |
+| Contracts          | Schema and consumer tests                                       | Mobile API, Jellycube host adapter (collection schemas, public-only projections with a must-fail minor fixture), PaymentProvider adapters |
+| End to end         | Playwright (admin), Maestro or Detox (mobile)                   | Critical journeys: sign-in, donate, RSVP, check-in, consent                                                                               |
+| Accessibility      | axe (or equivalent) in Playwright; native a11y checks on mobile | WCAG 2.2 AA on admin, portal, ops and host islands ([§8.5](#85-client-surfaces))                                                          |
 
 ---
 

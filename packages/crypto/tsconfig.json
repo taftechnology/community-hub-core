@@ -4,7 +4,7 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "lib": ["ES2022"],
-    "types": ["@cloudflare/workers-types"]
+    "types": ["node"]
   },
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts", "src/testing.ts"]

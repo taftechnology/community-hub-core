@@ -1,3 +1,5 @@
+import type { webcrypto } from "node:crypto";
+
 import { importHkdfKey } from "./hkdf.js";
 import type { KmsContext, KmsPort } from "./kms-port.js";
 
@@ -15,7 +17,7 @@ export async function generateKmsRoot(
   port: KmsPort,
   keyId: string,
   context: KmsContext,
-): Promise<{ blob: Uint8Array; hkdfKey: CryptoKey }> {
+): Promise<{ blob: Uint8Array; hkdfKey: webcrypto.CryptoKey }> {
   const { plaintext, blob } = await port.generateDataKey(keyId, context);
   try {
     assertRootLength(plaintext);
@@ -31,7 +33,7 @@ export async function unwrapKmsRoot(
   keyId: string,
   blob: Uint8Array,
   context: KmsContext,
-): Promise<CryptoKey> {
+): Promise<webcrypto.CryptoKey> {
   const plaintext = await port.decrypt(keyId, blob, context);
   try {
     assertRootLength(plaintext);

@@ -1,3 +1,5 @@
+import type { webcrypto } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 
 import { blindIndex, type BlindIndex } from "./blind-index.js";
@@ -16,7 +18,7 @@ function hmacMessage(purpose: string, normalised: Uint8Array): Uint8Array {
   return out;
 }
 
-async function importHmacKey(raw: Uint8Array): Promise<CryptoKey> {
+async function importHmacKey(raw: Uint8Array): Promise<webcrypto.CryptoKey> {
   return crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
 }
 

@@ -1,6 +1,6 @@
 # schema-rls checker
 
-Stage 1 check for non-negotiable 3: every `app`-schema table must define `org_id`, row-level security, and `FORCE ROW LEVEL SECURITY`.
+Stage 1 check for non-negotiable 2: every `app`-schema table must define `org_id`, row-level security, and `FORCE ROW LEVEL SECURITY`.
 
 ## Input contract
 

@@ -1,13 +1,7 @@
-import { defineWorkersConfig } from "@cloudflare/vitest-pool-workers/config";
+import { defineConfig } from "vitest/config";
 
-export default defineWorkersConfig({
+export default defineConfig({
   test: {
-    poolOptions: {
-      workers: {
-        // The pool must not open a remote proxy for `KMS_BROKER`.
-        remoteBindings: false,
-        wrangler: { configPath: "./wrangler.jsonc" },
-      },
-    },
+    include: ["src/**/*.test.ts"],
   },
 });

@@ -1,3 +1,5 @@
+import type { webcrypto } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 
 import { encodeAad, type CommunityFieldAad, type WrapAad } from "./aad.js";
@@ -33,7 +35,7 @@ function fieldAad(): CommunityFieldAad {
   };
 }
 
-async function importAesKey(raw: Uint8Array): Promise<CryptoKey> {
+async function importAesKey(raw: Uint8Array): Promise<webcrypto.CryptoKey> {
   return crypto.subtle.importKey("raw", raw, { name: "AES-GCM", length: 256 }, false, [
     "encrypt",
     "decrypt",
@@ -56,7 +58,7 @@ function expectNoSecrets(err: unknown, plaintext: Uint8Array, key: Uint8Array): 
   expect(message.toLowerCase()).not.toContain(toHex(key));
 }
 
-async function expectDeriveBitsRejected(key: CryptoKey): Promise<void> {
+async function expectDeriveBitsRejected(key: webcrypto.CryptoKey): Promise<void> {
   await expect(
     crypto.subtle.deriveBits(
       {
@@ -71,7 +73,7 @@ async function expectDeriveBitsRejected(key: CryptoKey): Promise<void> {
   ).rejects.toThrow();
 }
 
-async function assertCanEncryptField(hkdfKey: CryptoKey): Promise<void> {
+async function assertCanEncryptField(hkdfKey: webcrypto.CryptoKey): Promise<void> {
   const { enc } = await deriveKeys(hkdfKey);
   const plaintext = utf8("wrap-child-field");
   const keyId = fromHex("018f00000000000000000000000000aa");

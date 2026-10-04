@@ -1,3 +1,5 @@
+import type { webcrypto } from "node:crypto";
+
 import { encodeAad, type CommunityFieldAad, type IdentityFieldAad } from "./aad.js";
 import {
   encodeGcmAad,
@@ -15,7 +17,7 @@ function decryptFailed(): never {
 }
 
 export async function encrypt(
-  encKey: CryptoKey,
+  encKey: webcrypto.CryptoKey,
   plaintext: Uint8Array,
   keyId: Uint8Array,
   aad: CommunityFieldAad | IdentityFieldAad,
@@ -37,7 +39,7 @@ export async function encrypt(
 
 export async function decrypt(
   blob: Ciphertext,
-  resolveEncKey: (keyId: Uint8Array) => CryptoKey | Promise<CryptoKey>,
+  resolveEncKey: (keyId: Uint8Array) => webcrypto.CryptoKey | Promise<webcrypto.CryptoKey>,
   aad: CommunityFieldAad | IdentityFieldAad,
 ): Promise<Uint8Array> {
   const parsed = parseEnvelope(blob);

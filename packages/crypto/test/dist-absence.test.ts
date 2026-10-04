@@ -19,5 +19,6 @@ describe("production packaging", () => {
     expect(existsSync(distDir)).toBe(true);
     expect(existsSync(join(distDir, "testing.js"))).toBe(false);
     expect(existsSync(join(distDir, "testing.d.ts"))).toBe(false);
+    expect(existsSync(join(distDir, "tsbuild-test"))).toBe(false);
   });
 });
