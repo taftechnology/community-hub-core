@@ -55,6 +55,45 @@ variable "cloud_map_record_type" {
   }
 }
 
+variable "zone_name" {
+  type = string
+}
+
+variable "create_public_zone" {
+  type    = bool
+  default = false
+
+  validation {
+    condition     = !(var.create_public_zone && var.public_zone_id != null)
+    error_message = "Do not pass a zone id when create_public_zone is true."
+  }
+}
+
+variable "attach_public_dns" {
+  type    = bool
+  default = false
+
+  validation {
+    condition     = !var.attach_public_dns || var.public_zone_id != null || var.create_public_zone
+    error_message = "attach_public_dns requires a zone id or create_public_zone."
+  }
+}
+
+variable "public_zone_id" {
+  type    = string
+  default = null
+}
+
+variable "minimum_tls_version" {
+  type    = string
+  default = "TLS_1_2"
+
+  validation {
+    condition     = var.minimum_tls_version == "TLS_1_2"
+    error_message = "minimum TLS version is 1.2."
+  }
+}
+
 variable "stage_name" {
   type    = string
   default = "$default"

@@ -13,6 +13,30 @@ mock_provider "aws" {
       arn = "arn:aws:servicediscovery:ap-southeast-2:123456789012:service/srv-mock"
     }
   }
+
+  mock_resource "aws_acm_certificate" {
+    defaults = {
+      arn = "arn:aws:acm:ap-southeast-2:123456789012:certificate/mock"
+      domain_validation_options = [
+        {
+          domain_name           = "au.api.example"
+          resource_record_name  = "_x.au.api.example."
+          resource_record_type  = "CNAME"
+          resource_record_value = "_x.acm-validations.aws."
+        },
+      ]
+    }
+  }
+
+  mock_resource "aws_apigatewayv2_domain_name" {
+    defaults = {
+      id = "domain-mock"
+      domain_name_configuration = {
+        target_domain_name = "d-mock.execute-api.ap-southeast-2.amazonaws.com"
+        hosted_zone_id     = "ZMOCK"
+      }
+    }
+  }
 }
 
 run "staging_unset" {
@@ -24,10 +48,14 @@ run "staging_unset" {
     name           = "ch-staging"
     environment    = "staging"
     project        = "community-hub"
+    zone_name = "communityhub-staging.net"
     vpc_id                 = "vpc-example"
     private_subnet_ids     = ["subnet-a", "subnet-b"]
     task_security_group_id = "sg-task"
-    service_image  = null
+    service_image          = null
+    attach_public_dns      = true
+    create_public_zone     = false
+    public_zone_id         = "ZSTAGING"
   }
 
   override_resource {
@@ -141,6 +169,26 @@ run "staging_unset" {
   }
 
   assert {
+    condition = (
+      output.api_hostname == "au.api.communityhub-staging.net" &&
+      output.auth_hostname == "auth.au.communityhub-staging.net" &&
+      output.webhooks_hostname == "webhooks.au.communityhub-staging.net" &&
+      output.ops_hostname == "ops.au.communityhub-staging.net" &&
+      length(aws_acm_certificate.this) == 1 &&
+      length(aws_route53_record.caa) == 1 &&
+      one(aws_route53_record.caa[0].records) == "0 issue \"amazon.com\"" &&
+      length(aws_route53_record.alias) == 4 &&
+      length(aws_apigatewayv2_domain_name.hostname) == 4 &&
+      length(aws_route53_zone.public) == 0 &&
+      aws_apigatewayv2_api_mapping.hostname[output.ops_hostname].api_id == "api-ops" &&
+      aws_apigatewayv2_api_mapping.hostname[output.api_hostname].api_id == "api-tenant" &&
+      aws_apigatewayv2_api_mapping.hostname[output.auth_hostname].api_id == "api-tenant" &&
+      aws_apigatewayv2_api_mapping.hostname[output.webhooks_hostname].api_id == "api-tenant"
+    )
+    error_message = "staging attaches one certificate, the Amazon CAA record, and four aliases; ops.au maps to the ops API and the other three map to the tenant API"
+  }
+
+  assert {
     condition     = aws_service_discovery_service.this.dns_config[0].dns_records[0].type == "SRV" && length(aws_service_discovery_service.this.health_check_custom_config) == 1
     error_message = "Cloud Map publishes SRV and sets the ECS custom-health block"
   }
@@ -165,6 +213,7 @@ run "image_tag_fails" {
     name           = "ch-staging"
     environment    = "staging"
     project        = "community-hub"
+    zone_name = "communityhub-staging.net"
     vpc_id                 = "vpc-example"
     private_subnet_ids     = ["subnet-a", "subnet-b"]
     task_security_group_id = "sg-task"
@@ -183,6 +232,7 @@ run "foreign_registry_fails" {
     name           = "ch-staging"
     environment    = "staging"
     project        = "community-hub"
+    zone_name = "communityhub-staging.net"
     vpc_id                 = "vpc-example"
     private_subnet_ids     = ["subnet-a", "subnet-b"]
     task_security_group_id = "sg-task"
@@ -201,6 +251,7 @@ run "other_region_fails" {
     name           = "ch-staging"
     environment    = "staging"
     project        = "community-hub"
+    zone_name = "communityhub-staging.net"
     vpc_id                 = "vpc-example"
     private_subnet_ids     = ["subnet-a", "subnet-b"]
     task_security_group_id = "sg-task"
@@ -219,6 +270,7 @@ run "uppercase_digest_fails" {
     name           = "ch-staging"
     environment    = "staging"
     project        = "community-hub"
+    zone_name = "communityhub-staging.net"
     vpc_id                 = "vpc-example"
     private_subnet_ids     = ["subnet-a", "subnet-b"]
     task_security_group_id = "sg-task"
@@ -237,6 +289,7 @@ run "trailing_suffix_fails" {
     name           = "ch-staging"
     environment    = "staging"
     project        = "community-hub"
+    zone_name = "communityhub-staging.net"
     vpc_id                 = "vpc-example"
     private_subnet_ids     = ["subnet-a", "subnet-b"]
     task_security_group_id = "sg-task"
@@ -255,6 +308,7 @@ run "record_type_a_fails" {
     name                  = "ch-staging"
     environment           = "staging"
     project               = "community-hub"
+    zone_name = "communityhub-staging.net"
     vpc_id                 = "vpc-example"
     private_subnet_ids     = ["subnet-a", "subnet-b"]
     task_security_group_id = "sg-task"
@@ -273,6 +327,7 @@ run "one_subnet_fails" {
     name                   = "ch-staging"
     environment            = "staging"
     project                = "community-hub"
+    zone_name = "communityhub-staging.net"
     vpc_id                 = "vpc-example"
     private_subnet_ids     = ["subnet-a"]
     task_security_group_id = "sg-task"
@@ -290,6 +345,7 @@ run "named_stage_without_overwrite_fails" {
     name                   = "ch-staging"
     environment            = "staging"
     project                = "community-hub"
+    zone_name = "communityhub-staging.net"
     vpc_id                 = "vpc-example"
     private_subnet_ids     = ["subnet-a", "subnet-b"]
     task_security_group_id = "sg-task"
@@ -309,6 +365,7 @@ run "execute_api_on_fails" {
     name                         = "ch-staging"
     environment                  = "staging"
     project                      = "community-hub"
+    zone_name = "communityhub-staging.net"
     vpc_id                       = "vpc-example"
     private_subnet_ids           = ["subnet-a", "subnet-b"]
     task_security_group_id       = "sg-task"
@@ -327,6 +384,7 @@ run "access_log_retention_zero_fails" {
     name                      = "ch-staging"
     environment               = "staging"
     project                   = "community-hub"
+    zone_name = "communityhub-staging.net"
     vpc_id                    = "vpc-example"
     private_subnet_ids        = ["subnet-a", "subnet-b"]
     task_security_group_id    = "sg-task"
@@ -334,4 +392,97 @@ run "access_log_retention_zero_fails" {
   }
 
   expect_failures = [var.access_log_retention_days]
+}
+
+run "production_zone_only" {
+  command = plan
+
+  variables {
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-prod"
+    environment            = "prod"
+    project                = "community-hub"
+    zone_name              = "communityhub.one"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
+    create_public_zone     = true
+    attach_public_dns      = false
+    public_zone_id         = null
+  }
+
+  assert {
+    condition = (
+      length(aws_route53_zone.public) == 1 &&
+      length(aws_acm_certificate.this) == 0 &&
+      length(aws_acm_certificate_validation.this) == 0 &&
+      length(aws_apigatewayv2_domain_name.hostname) == 0 &&
+      length(aws_apigatewayv2_api_mapping.hostname) == 0 &&
+      length(aws_route53_record.caa) == 0 &&
+      output.api_hostname == "au.api.communityhub.one"
+    )
+    error_message = "production creates the zone only and still sets the four hostnames"
+  }
+}
+
+run "tls_below_1_2_fails" {
+  command = plan
+
+  variables {
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
+    zone_name              = "communityhub-staging.net"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
+    minimum_tls_version    = "TLS_1_0"
+  }
+
+  expect_failures = [var.minimum_tls_version]
+}
+
+run "attach_without_zone_fails" {
+  command = plan
+
+  variables {
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
+    zone_name              = "communityhub-staging.net"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
+    attach_public_dns      = true
+    create_public_zone     = false
+    public_zone_id         = null
+  }
+
+  expect_failures = [var.attach_public_dns]
+}
+
+run "zone_id_with_create_fails" {
+  command = plan
+
+  variables {
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
+    zone_name              = "communityhub-staging.net"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
+    create_public_zone     = true
+    public_zone_id         = "ZSTAGING"
+    attach_public_dns      = false
+  }
+
+  expect_failures = [var.create_public_zone]
 }

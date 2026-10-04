@@ -1,3 +1,19 @@
+output "api_hostname" {
+  value = local.api_hostname
+}
+
+output "auth_hostname" {
+  value = local.auth_hostname
+}
+
+output "webhooks_hostname" {
+  value = local.webhooks_hostname
+}
+
+output "ops_hostname" {
+  value = local.ops_hostname
+}
+
 output "repository_url" {
   description = "ECR repository URL for the service image."
   value       = aws_ecr_repository.service.repository_url

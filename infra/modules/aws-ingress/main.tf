@@ -118,6 +118,18 @@ resource "aws_ecr_lifecycle_policy" "service" {
 }
 
 locals {
+  api_hostname      = "au.api.${var.zone_name}"
+  auth_hostname     = "auth.au.${var.zone_name}"
+  webhooks_hostname = "webhooks.au.${var.zone_name}"
+  ops_hostname      = "ops.au.${var.zone_name}"
+  public_zone_id    = var.create_public_zone ? aws_route53_zone.public[0].zone_id : var.public_zone_id
+  hostname_to_api_id = var.attach_public_dns ? {
+    (local.api_hostname)      = aws_apigatewayv2_api.tenant.id
+    (local.auth_hostname)     = aws_apigatewayv2_api.tenant.id
+    (local.webhooks_hostname) = aws_apigatewayv2_api.tenant.id
+    (local.ops_hostname)      = aws_apigatewayv2_api.ops.id
+  } : {}
+
   tenant_write_rate  = 10
   tenant_write_burst = 20
   tenant_write_route_keys = flatten([
@@ -297,4 +309,105 @@ resource "aws_apigatewayv2_stage" "ops" {
     environment = var.environment
     project     = var.project
   }
+}
+
+resource "aws_route53_zone" "public" {
+  count = var.create_public_zone ? 1 : 0
+  name  = var.zone_name
+
+  tags = {
+    environment = var.environment
+    project     = var.project
+  }
+}
+
+resource "aws_acm_certificate" "this" {
+  count             = var.attach_public_dns ? 1 : 0
+  region            = var.aws_region
+  domain_name       = local.api_hostname
+  validation_method = "DNS"
+  subject_alternative_names = [
+    local.auth_hostname,
+    local.webhooks_hostname,
+    local.ops_hostname,
+  ]
+
+  tags = {
+    environment = var.environment
+    project     = var.project
+  }
+}
+
+resource "aws_route53_record" "validation" {
+  for_each = var.attach_public_dns ? {
+    for option in aws_acm_certificate.this[0].domain_validation_options : option.domain_name => {
+      name  = option.resource_record_name
+      type  = option.resource_record_type
+      value = option.resource_record_value
+    }
+  } : {}
+
+  zone_id = local.public_zone_id
+  name    = each.value.name
+  type    = each.value.type
+  ttl     = 60
+  records = [each.value.value]
+}
+
+resource "aws_acm_certificate_validation" "this" {
+  count                   = var.attach_public_dns ? 1 : 0
+  region                  = var.aws_region
+  certificate_arn         = aws_acm_certificate.this[0].arn
+  validation_record_fqdns = [for record in aws_route53_record.validation : record.fqdn]
+}
+
+resource "aws_apigatewayv2_domain_name" "hostname" {
+  for_each = local.hostname_to_api_id
+
+  region      = var.aws_region
+  domain_name = each.key
+
+  domain_name_configuration {
+    certificate_arn = aws_acm_certificate.this[0].arn
+    endpoint_type   = "REGIONAL"
+    security_policy = var.minimum_tls_version
+  }
+
+  tags = {
+    environment = var.environment
+    project     = var.project
+  }
+}
+
+resource "aws_apigatewayv2_api_mapping" "hostname" {
+  for_each = local.hostname_to_api_id
+
+  region      = var.aws_region
+  api_id      = each.value
+  domain_name = aws_apigatewayv2_domain_name.hostname[each.key].id
+  stage       = each.key == local.ops_hostname ? aws_apigatewayv2_stage.ops.name : aws_apigatewayv2_stage.tenant.name
+}
+
+resource "aws_route53_record" "alias" {
+  for_each = local.hostname_to_api_id
+
+  zone_id = local.public_zone_id
+  name    = each.key
+  type    = "A"
+
+  alias {
+    name                   = aws_apigatewayv2_domain_name.hostname[each.key].domain_name_configuration[0].target_domain_name
+    zone_id                = aws_apigatewayv2_domain_name.hostname[each.key].domain_name_configuration[0].hosted_zone_id
+    evaluate_target_health = false
+  }
+}
+
+resource "aws_route53_record" "caa" {
+  count = var.attach_public_dns ? 1 : 0
+
+  zone_id = local.public_zone_id
+  name    = var.zone_name
+  type    = "CAA"
+  ttl     = 300
+  records = ["0 issue \"amazon.com\""]
 }
