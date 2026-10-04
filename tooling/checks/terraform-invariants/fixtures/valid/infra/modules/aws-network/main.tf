@@ -1,23 +1,11 @@
 resource "aws_security_group" "connector" {
-  region  = "ap-southeast-2"
-  vpc_id  = "vpc-example"
-  ingress = []
-
-  egress = [
-    {
-      from_port   = 443
-      to_port     = 443
-      protocol    = "tcp"
-      cidr_blocks = ["0.0.0.0/0"]
-    },
-  ]
+  region = "ap-southeast-2"
+  vpc_id = "vpc-example"
 }
 
 resource "aws_security_group" "rds" {
-  region  = "ap-southeast-2"
-  vpc_id  = "vpc-example"
-  ingress = []
-  egress  = []
+  region = "ap-southeast-2"
+  vpc_id = "vpc-example"
 }
 
 resource "aws_vpc_security_group_ingress_rule" "rds_postgres" {

@@ -13,6 +13,11 @@ const mustFail = [
   "commented-region",
   "missing-prevent-destroy",
   "missing-envelope-prevent-destroy",
+  "inline-security-group-rules",
+  "inline-other-security-group",
+  "dynamic-security-group-rules",
+  "extra-network-security-group-rule",
+  "envelope-standalone-rule",
 ] as const;
 
 const mustPass = ["valid"] as const;

@@ -243,6 +243,103 @@ function validateBootstrapFile(
   return violations;
 }
 
+const ENVELOPE_MODULE = path.join(INFRA_DIR, "modules", "aws-kms-envelope");
+const NETWORK_MODULE = path.join(INFRA_DIR, "modules", "aws-network");
+
+const ALLOWED_NETWORK_RULES = new Set(["task_https", "task_rds", "rds_postgres"]);
+const NETWORK_RULE_TYPES = new Set([
+  "aws_vpc_security_group_ingress_rule",
+  "aws_vpc_security_group_egress_rule",
+  "aws_security_group_rule",
+]);
+
+function hasInlineRuleArgument(body: string): boolean {
+  return (
+    /^\s*(?:ingress|egress)\s*(?:=|\{)/m.test(body) ||
+    /^\s*dynamic\s+"(?:ingress|egress)"/m.test(body)
+  );
+}
+
+function isEnvelopeEndpoint(filePath: string, root: string, resource: HclResource): boolean {
+  return (
+    resource.type === "aws_security_group" &&
+    resource.name === "endpoint" &&
+    isUnder(filePath, root, ENVELOPE_MODULE)
+  );
+}
+
+function validateInlineSecurityGroups(
+  filePath: string,
+  root: string,
+  hcl: string,
+): TerraformInvariantViolation[] {
+  const relFile = path.relative(root, filePath);
+  const violations: TerraformInvariantViolation[] = [];
+
+  for (const resource of findResources(hcl)) {
+    if (resource.type !== "aws_security_group" || isEnvelopeEndpoint(filePath, root, resource)) {
+      continue;
+    }
+    if (hasInlineRuleArgument(resource.body)) {
+      violations.push({
+        file: relFile,
+        message: `aws_security_group.${resource.name} must not set inline ingress or egress`,
+      });
+    }
+  }
+
+  return violations;
+}
+
+function validateNetworkRuleSet(
+  filePath: string,
+  root: string,
+  hcl: string,
+): TerraformInvariantViolation[] {
+  if (!isUnder(filePath, root, NETWORK_MODULE)) {
+    return [];
+  }
+
+  const relFile = path.relative(root, filePath);
+  const violations: TerraformInvariantViolation[] = [];
+
+  for (const resource of findResources(hcl)) {
+    if (!NETWORK_RULE_TYPES.has(resource.type) || ALLOWED_NETWORK_RULES.has(resource.name)) {
+      continue;
+    }
+    violations.push({
+      file: relFile,
+      message: `${resource.type}.${resource.name} is not task_https, task_rds, or rds_postgres`,
+    });
+  }
+
+  return violations;
+}
+
+function validateEnvelopeStandaloneRules(
+  filePath: string,
+  root: string,
+  hcl: string,
+): TerraformInvariantViolation[] {
+  const relFile = path.relative(root, filePath);
+  const violations: TerraformInvariantViolation[] = [];
+
+  for (const resource of findResources(hcl)) {
+    if (
+      resource.type !== "aws_vpc_security_group_ingress_rule" &&
+      resource.type !== "aws_vpc_security_group_egress_rule"
+    ) {
+      continue;
+    }
+    violations.push({
+      file: relFile,
+      message: `envelope module must not declare ${resource.type}.${resource.name}`,
+    });
+  }
+
+  return violations;
+}
+
 function validateEnvelopeKeyFile(
   filePath: string,
   root: string,
@@ -292,8 +389,11 @@ export function check(root: string = process.cwd()): CheckResult {
     if (isUnder(filePath, resolvedRoot, path.join(INFRA_DIR, "bootstrap"))) {
       violations.push(...validateBootstrapFile(filePath, resolvedRoot, hcl));
     }
+    violations.push(...validateInlineSecurityGroups(filePath, resolvedRoot, hcl));
+    violations.push(...validateNetworkRuleSet(filePath, resolvedRoot, hcl));
     if (isUnder(filePath, resolvedRoot, path.join(INFRA_DIR, "modules", "aws-kms-envelope"))) {
       violations.push(...validateEnvelopeKeyFile(filePath, resolvedRoot, hcl));
+      violations.push(...validateEnvelopeStandaloneRules(filePath, resolvedRoot, hcl));
     }
   }
 

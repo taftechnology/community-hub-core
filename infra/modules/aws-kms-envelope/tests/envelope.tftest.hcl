@@ -344,6 +344,14 @@ run "endpoint_on" {
   }
 
   assert {
+    condition = (
+      length(regexall("resource[[:space:]]+\"aws_vpc_security_group_ingress_rule\"", file("${path.module}/main.tf"))) == 0 &&
+      length(regexall("resource[[:space:]]+\"aws_vpc_security_group_egress_rule\"", file("${path.module}/main.tf"))) == 0
+    )
+    error_message = "envelope module must not declare a standalone security group rule"
+  }
+
+  assert {
     condition = alltrue([
       for statement in jsondecode(aws_kms_key.envelope.policy).Statement :
       statement.Condition.StringEquals["aws:SourceVpce"] == "vpce-mock" &&
