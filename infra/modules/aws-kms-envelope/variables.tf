@@ -66,3 +66,13 @@ variable "policy_probe_action" {
   default     = null
   description = "Test-only action appended to the admin statement. Any non-null value fails the plan."
 }
+
+variable "db_secret_arns" {
+  type        = list(string)
+  description = "ARNs of the app, identity, and platform role password secrets."
+}
+
+variable "db_secrets_key_arn" {
+  type        = string
+  description = "ARN of the KMS key that encrypts the three role password secrets. The only kms:Decrypt resource on the role secret policies."
+}

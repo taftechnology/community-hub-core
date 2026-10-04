@@ -266,3 +266,47 @@ resource "aws_iam_role_policy" "execution" {
     ]
   })
 }
+
+resource "aws_iam_role_policy" "task_secrets" {
+  name = "task-secrets"
+  role = aws_iam_role.task.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "ReadDbSecrets"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = var.db_secret_arns
+      },
+      {
+        Sid      = "DecryptDbSecrets"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = var.db_secrets_key_arn
+      },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "execution_secrets" {
+  name = "execution-secrets"
+  role = aws_iam_role.execution.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "ReadDbSecrets"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = var.db_secret_arns
+      },
+      {
+        Sid      = "DecryptDbSecrets"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = var.db_secrets_key_arn
+      },
+    ]
+  })
+}

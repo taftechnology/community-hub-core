@@ -68,6 +68,16 @@ module "rds" {
   alert_email            = var.alert_email
 }
 
+module "db_secrets" {
+  source = "../../modules/aws-db-secrets"
+
+  aws_region     = var.aws_region
+  aws_account_id = var.aws_account_id
+  name           = local.name
+  environment    = var.environment
+  project        = "community-hub"
+}
+
 module "envelope" {
   source = "../../modules/aws-kms-envelope"
 
@@ -78,4 +88,10 @@ module "envelope" {
   public_subnet_id       = module.network.public_subnet_id
   enable_kms_endpoint    = var.enable_kms_endpoint
   task_security_group_id = module.network.task_security_group_id
+  db_secret_arns = [
+    module.db_secrets.app_secret_arn,
+    module.db_secrets.identity_secret_arn,
+    module.db_secrets.platform_secret_arn,
+  ]
+  db_secrets_key_arn = module.db_secrets.key_arn
 }

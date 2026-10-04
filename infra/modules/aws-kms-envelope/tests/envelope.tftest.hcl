@@ -25,6 +25,12 @@ run "happy" {
     public_subnet_id       = "subnet-mock"
     task_security_group_id = "sg-task"
     policy_probe_action    = null
+    db_secret_arns = [
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-app-AbCdEf",
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-identity-AbCdEf",
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-platform-AbCdEf",
+    ]
+    db_secrets_key_arn = "arn:aws:kms:ap-southeast-2:123456789012:key/mock-secrets"
   }
 
   override_resource {
@@ -197,8 +203,29 @@ run "happy" {
   }
 
   assert {
-    condition     = !strcontains(file("${path.module}/main.tf"), "role = aws_iam_role.task")
-    error_message = "module must not attach a policy to the task role"
+    condition = (
+      strcontains(aws_iam_role_policy.task_secrets.policy, "secretsmanager:GetSecretValue") &&
+      strcontains(aws_iam_role_policy.task_secrets.policy, "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-app-AbCdEf") &&
+      [
+        for statement in jsondecode(aws_iam_role_policy.task_secrets.policy).Statement :
+        statement.Resource
+        if contains(tolist(statement.Action), "kms:Decrypt")
+      ] == ["arn:aws:kms:ap-southeast-2:123456789012:key/mock-secrets"]
+    )
+    error_message = "task secrets policy must read the app secret and decrypt only the secrets key"
+  }
+
+  assert {
+    condition = (
+      strcontains(aws_iam_role_policy.execution_secrets.policy, "secretsmanager:GetSecretValue") &&
+      strcontains(aws_iam_role_policy.execution_secrets.policy, "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-app-AbCdEf") &&
+      [
+        for statement in jsondecode(aws_iam_role_policy.execution_secrets.policy).Statement :
+        statement.Resource
+        if contains(tolist(statement.Action), "kms:Decrypt")
+      ] == ["arn:aws:kms:ap-southeast-2:123456789012:key/mock-secrets"]
+    )
+    error_message = "execution secrets policy must read the app secret and decrypt only the secrets key"
   }
 
   assert {
@@ -252,6 +279,12 @@ run "endpoint_on" {
     public_subnet_id       = "subnet-mock"
     task_security_group_id = "sg-task"
     enable_kms_endpoint    = true
+    db_secret_arns = [
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-app-AbCdEf",
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-identity-AbCdEf",
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-platform-AbCdEf",
+    ]
+    db_secrets_key_arn = "arn:aws:kms:ap-southeast-2:123456789012:key/mock-secrets"
   }
 
   override_resource {
@@ -334,6 +367,12 @@ run "probe_create_grant" {
     public_subnet_id       = "subnet-mock"
     task_security_group_id = "sg-task"
     policy_probe_action    = "kms:CreateGrant"
+    db_secret_arns = [
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-app-AbCdEf",
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-identity-AbCdEf",
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-platform-AbCdEf",
+    ]
+    db_secrets_key_arn = "arn:aws:kms:ap-southeast-2:123456789012:key/mock-secrets"
   }
 
   expect_failures = [terraform_data.envelope_key_policy]
@@ -349,6 +388,12 @@ run "wrong_region" {
     vpc_id                 = "vpc-mock"
     public_subnet_id       = "subnet-mock"
     task_security_group_id = "sg-task"
+    db_secret_arns = [
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-app-AbCdEf",
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-identity-AbCdEf",
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-platform-AbCdEf",
+    ]
+    db_secrets_key_arn = "arn:aws:kms:ap-southeast-2:123456789012:key/mock-secrets"
   }
 
   expect_failures = [var.aws_region]
@@ -365,6 +410,12 @@ run "rotation_off" {
     public_subnet_id       = "subnet-mock"
     task_security_group_id = "sg-task"
     enable_key_rotation    = false
+    db_secret_arns = [
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-app-AbCdEf",
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-identity-AbCdEf",
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-platform-AbCdEf",
+    ]
+    db_secrets_key_arn = "arn:aws:kms:ap-southeast-2:123456789012:key/mock-secrets"
   }
 
   expect_failures = [var.enable_key_rotation]
@@ -381,6 +432,12 @@ run "log_retention_zero" {
     public_subnet_id       = "subnet-mock"
     task_security_group_id = "sg-task"
     log_retention_days     = 0
+    db_secret_arns = [
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-app-AbCdEf",
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-identity-AbCdEf",
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-platform-AbCdEf",
+    ]
+    db_secrets_key_arn = "arn:aws:kms:ap-southeast-2:123456789012:key/mock-secrets"
   }
 
   expect_failures = [var.log_retention_days]
