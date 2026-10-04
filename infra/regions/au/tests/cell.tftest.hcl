@@ -27,6 +27,30 @@ mock_provider "aws" {
       managed_policy_arns = null
     }
   }
+
+  mock_resource "aws_acm_certificate" {
+    defaults = {
+      arn = "arn:aws:acm:ap-southeast-2:123456789012:certificate/mock"
+      domain_validation_options = [
+        {
+          domain_name           = "au.api.example"
+          resource_record_name  = "_x.au.api.example."
+          resource_record_type  = "CNAME"
+          resource_record_value = "_x.acm-validations.aws."
+        },
+      ]
+    }
+  }
+
+  mock_resource "aws_apigatewayv2_domain_name" {
+    defaults = {
+      id = "domain-mock"
+      domain_name_configuration = {
+        target_domain_name = "d-mock.execute-api.ap-southeast-2.amazonaws.com"
+        hosted_zone_id     = "ZMOCK"
+      }
+    }
+  }
 }
 
 run "staging_happy" {
@@ -39,6 +63,25 @@ run "staging_happy" {
     deletion_protection   = false
     backup_retention_days = 0
     alert_email           = "alerts@example.com"
+    staging_zone_id       = "ZSTAGING"
+    create_public_zone    = false
+    attach_public_dns     = true
+  }
+
+  override_resource {
+    target = module.ingress.aws_apigatewayv2_api.tenant
+    values = {
+      id = "api-tenant"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = module.ingress.aws_apigatewayv2_api.ops
+    values = {
+      id = "api-ops"
+    }
+    override_during = plan
   }
 
   assert {
@@ -106,17 +149,25 @@ run "staging_happy" {
     condition     = var.enable_budgets == false
     error_message = "enable_budgets must default to false when unset"
   }
+
+  assert {
+    condition     = module.ingress.api_hostname == "au.api.communityhub-staging.net" && module.ingress.ecs_service_desired_count == 0
+    error_message = "staging root attaches the staging names and plans no ECS service"
+  }
 }
 
 run "budgets_on" {
   command = plan
 
   variables {
-    aws_region     = "ap-southeast-2"
-    aws_account_id = "123456789012"
-    environment    = "staging"
-    enable_budgets = true
-    alert_email    = "alerts@example.com"
+    aws_region         = "ap-southeast-2"
+    aws_account_id     = "123456789012"
+    environment        = "staging"
+    enable_budgets     = true
+    alert_email        = "alerts@example.com"
+    staging_zone_id    = "ZSTAGING"
+    create_public_zone = false
+    attach_public_dns  = true
   }
 }
 
@@ -131,6 +182,9 @@ run "staging_endpoint_on" {
     backup_retention_days = 0
     enable_kms_endpoint   = true
     alert_email           = "alerts@example.com"
+    staging_zone_id       = "ZSTAGING"
+    create_public_zone    = false
+    attach_public_dns     = true
   }
 
   override_resource {
@@ -167,6 +221,8 @@ run "prod_tfvars" {
     backup_retention_days = 7
     enable_kms_endpoint   = true
     alert_email           = "alerts@example.com"
+    create_public_zone    = true
+    attach_public_dns     = false
   }
 
   assert {
@@ -177,6 +233,11 @@ run "prod_tfvars" {
   assert {
     condition     = length(regexall("(?m)^\\s*enable_kms_endpoint\\s*=\\s*true", file("${path.module}/env/prod.tfvars"))) > 0
     error_message = "env/prod.tfvars must set enable_kms_endpoint = true"
+  }
+
+  assert {
+    condition     = module.ingress.api_hostname == "au.api.communityhub.one" && module.ingress.ecs_service_desired_count == 0
+    error_message = "production root creates hostnames for communityhub.one and plans no ECS service"
   }
 }
 
@@ -191,6 +252,8 @@ run "prod_endpoint_off_fails" {
     deletion_protection   = true
     backup_retention_days = 7
     alert_email           = "alerts@example.com"
+    create_public_zone    = true
+    attach_public_dns     = false
   }
 
   expect_failures = [
@@ -203,11 +266,81 @@ run "wrong_region_fails" {
   command = plan
 
   variables {
-    aws_region     = "us-east-1"
-    aws_account_id = "123456789012"
-    environment    = "staging"
-    alert_email    = "alerts@example.com"
+    aws_region         = "us-east-1"
+    aws_account_id     = "123456789012"
+    environment        = "staging"
+    alert_email        = "alerts@example.com"
+    staging_zone_id    = "ZSTAGING"
+    create_public_zone = false
+    attach_public_dns  = true
   }
 
   expect_failures = [var.aws_region]
+}
+
+run "staging_without_zone_id_fails" {
+  command = plan
+
+  variables {
+    aws_region            = "ap-southeast-2"
+    aws_account_id        = "123456789012"
+    environment           = "staging"
+    deletion_protection   = false
+    backup_retention_days = 0
+    alert_email           = "alerts@example.com"
+    staging_zone_id       = null
+    create_public_zone    = false
+    attach_public_dns     = false
+  }
+
+  expect_failures = [
+    check.staging_zone,
+    terraform_data.staging_zone,
+  ]
+}
+
+run "staging_image_set" {
+  command = plan
+
+  variables {
+    aws_region            = "ap-southeast-2"
+    aws_account_id        = "123456789012"
+    environment           = "staging"
+    deletion_protection   = false
+    backup_retention_days = 0
+    alert_email           = "alerts@example.com"
+    staging_zone_id       = "ZSTAGING"
+    create_public_zone    = false
+    attach_public_dns     = true
+    desired_count         = 0
+    service_image         = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+
+  assert {
+    condition     = module.ingress.ecs_service_desired_count == 0 && length(module.ingress.task_subnet_ids) == 1
+    error_message = "a set staging image plans desired count 0 and one task subnet"
+  }
+}
+
+run "prod_image_set" {
+  command = plan
+
+  variables {
+    aws_region            = "ap-southeast-2"
+    aws_account_id        = "123456789012"
+    environment           = "prod"
+    deletion_protection   = true
+    backup_retention_days = 7
+    enable_kms_endpoint   = true
+    alert_email           = "alerts@example.com"
+    create_public_zone    = true
+    attach_public_dns     = false
+    desired_count         = 0
+    service_image         = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-prod/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+
+  assert {
+    condition     = length(module.ingress.task_subnet_ids) == 2
+    error_message = "a set production image plans both public subnets"
+  }
 }

@@ -52,6 +52,7 @@ resource "aws_db_instance" "this" {
   kms_key_id                  = var.kms_key_arn
   publicly_accessible         = var.publicly_accessible
   manage_master_user_password = true
+  db_name                     = "communityhub"
   username                    = "postgres"
   ca_cert_identifier          = var.ca_cert_identifier
 

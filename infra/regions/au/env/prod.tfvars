@@ -4,3 +4,7 @@ environment           = "prod"
 deletion_protection   = true
 backup_retention_days = 7
 enable_kms_endpoint   = true
+create_public_zone    = true
+attach_public_dns     = false
+desired_count         = 0
+turnstile_secret_arn  = null

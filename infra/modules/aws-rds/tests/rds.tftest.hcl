@@ -44,6 +44,11 @@ run "staging_happy" {
   }
 
   assert {
+    condition     = aws_db_instance.this.db_name == "communityhub"
+    error_message = "RDS database name must be communityhub"
+  }
+
+  assert {
     condition     = aws_db_instance.this.publicly_accessible == false
     error_message = "RDS must not be publicly accessible"
   }

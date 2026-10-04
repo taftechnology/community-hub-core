@@ -104,6 +104,11 @@ run "staging_happy" {
     )
     error_message = "task group must allow outbound TCP 443 to the internet"
   }
+
+  assert {
+    condition     = aws_security_group.task.description == "Service task. Inbound TCP 8080 from the VPC link. Egress to public AWS APIs and to RDS."
+    error_message = "task group description must name inbound 8080 before the first apply"
+  }
 }
 
 run "wrong_region_fails" {

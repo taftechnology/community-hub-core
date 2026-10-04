@@ -46,6 +46,40 @@ variable "alert_email" {
   description = "Email for budget and RDS alarm SNS subscriptions."
 }
 
+variable "staging_zone_id" {
+  type        = string
+  description = "Hosted zone id for communityhub-staging.net. Required in staging. Passed at plan time, not committed in tfvars."
+  default     = null
+}
+
+variable "create_public_zone" {
+  type        = bool
+  description = "False in staging. True in production."
+}
+
+variable "attach_public_dns" {
+  type        = bool
+  description = "True in staging. False in production."
+}
+
+variable "desired_count" {
+  type        = number
+  description = "ECS desired count. Stays 0 until a person raises it."
+  default     = 0
+}
+
+variable "turnstile_secret_arn" {
+  type        = string
+  description = "Optional Turnstile secret. Null until that secret exists."
+  default     = null
+}
+
+variable "service_image" {
+  type        = string
+  description = "Service image digest. Null plans no task definition and no ECS service."
+  default     = null
+}
+
 variable "enable_budgets" {
   type        = bool
   description = "Create the per-environment budget. Off until the cost-allocation tag is active."

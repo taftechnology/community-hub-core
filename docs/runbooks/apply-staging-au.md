@@ -15,6 +15,10 @@ These come before any apply. They are not steps of the old apply below.
 7. After apply, confirm the RDS alarm SNS email subscription. Until that confirmation, alarms are visible in the console only and email does not arrive.
 8. Activate the `environment` cost-allocation tag after it appears. The tag can take up to 24 hours to appear and up to 24 hours more to activate.
 9. Apply again with `enable_budgets = true`.
+10. Pass `staging_zone_id` on the staging plan or apply command. Do not commit that id in `env/staging.tfvars`.
+11. Staging tfvars set `attach_public_dns = true` and `create_public_zone = false`. Production tfvars set `create_public_zone = true` and `attach_public_dns = false`.
+12. `desired_count` stays 0 until a person raises it. `turnstile_secret_arn` stays null until that secret exists.
+13. This chunk does not apply. The first staging apply is a later roadmap row.
 
 ## Do not apply the steps below
 

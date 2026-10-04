@@ -38,6 +38,22 @@ check "prod_kms_endpoint" {
   }
 }
 
+resource "terraform_data" "staging_zone" {
+  lifecycle {
+    precondition {
+      condition     = var.environment != "staging" || var.staging_zone_id != null
+      error_message = "staging must pass the registered communityhub-staging.net zone id."
+    }
+  }
+}
+
+check "staging_zone" {
+  assert {
+    condition     = var.environment != "staging" || var.staging_zone_id != null
+    error_message = "staging must pass the registered communityhub-staging.net zone id."
+  }
+}
+
 module "network" {
   source = "../../modules/aws-network"
 
@@ -111,4 +127,36 @@ module "envelope" {
     module.db_secrets.platform_secret_arn,
   ]
   db_secrets_key_arn = module.db_secrets.key_arn
+}
+
+module "ingress" {
+  source = "../../modules/aws-ingress"
+
+  aws_region             = var.aws_region
+  aws_account_id         = var.aws_account_id
+  name                   = local.name
+  environment            = var.environment
+  project                = "community-hub"
+  vpc_id                 = module.network.vpc_id
+  private_subnet_ids     = module.network.private_subnet_ids
+  task_security_group_id = module.network.task_security_group_id
+  zone_name              = var.environment == "prod" ? "communityhub.one" : "communityhub-staging.net"
+  create_public_zone     = var.create_public_zone
+  attach_public_dns      = var.attach_public_dns
+  public_zone_id         = var.create_public_zone ? null : var.staging_zone_id
+  desired_count          = var.desired_count
+  service_image          = var.service_image
+  turnstile_secret_arn   = var.turnstile_secret_arn
+  capacity_provider      = var.environment == "prod" ? "FARGATE" : "FARGATE_SPOT"
+  task_subnet_ids        = var.environment == "prod" ? module.network.public_subnet_ids : [module.network.public_subnet_id]
+  execution_role_arn     = module.envelope.execution_role_arn
+  execution_role_name    = module.envelope.execution_role_name
+  task_role_arn          = module.envelope.task_role_arn
+  log_group_name         = module.envelope.log_group_name
+  db_host                = module.rds.address
+  db_port                = module.rds.port
+  envelope_key_arn       = module.envelope.key_arn
+  app_secret_arn         = module.db_secrets.app_secret_arn
+  identity_secret_arn    = module.db_secrets.identity_secret_arn
+  platform_secret_arn    = module.db_secrets.platform_secret_arn
 }
