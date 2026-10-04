@@ -21,6 +21,8 @@ run "happy" {
     aws_region             = "ap-southeast-2"
     aws_account_id         = "123456789012"
     name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
     vpc_id                 = "vpc-mock"
     public_subnet_id       = "subnet-mock"
     task_security_group_id = "sg-task"
@@ -44,6 +46,14 @@ run "happy" {
   assert {
     condition     = aws_kms_key.envelope.region == "ap-southeast-2"
     error_message = "envelope KMS key region argument must be ap-southeast-2"
+  }
+
+  assert {
+    condition = (
+      aws_kms_key.envelope.tags["environment"] == "staging" &&
+      aws_kms_key.envelope.tags["project"] == "community-hub"
+    )
+    error_message = "envelope key tags must be environment=staging and project=community-hub"
   }
 
   assert {
@@ -275,6 +285,8 @@ run "endpoint_on" {
     aws_region             = "ap-southeast-2"
     aws_account_id         = "123456789012"
     name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
     vpc_id                 = "vpc-mock"
     public_subnet_id       = "subnet-mock"
     task_security_group_id = "sg-task"
@@ -363,6 +375,8 @@ run "probe_create_grant" {
     aws_region             = "ap-southeast-2"
     aws_account_id         = "123456789012"
     name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
     vpc_id                 = "vpc-mock"
     public_subnet_id       = "subnet-mock"
     task_security_group_id = "sg-task"
@@ -385,6 +399,8 @@ run "wrong_region" {
     aws_region             = "us-east-1"
     aws_account_id         = "123456789012"
     name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
     vpc_id                 = "vpc-mock"
     public_subnet_id       = "subnet-mock"
     task_security_group_id = "sg-task"
@@ -406,6 +422,8 @@ run "rotation_off" {
     aws_region             = "ap-southeast-2"
     aws_account_id         = "123456789012"
     name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
     vpc_id                 = "vpc-mock"
     public_subnet_id       = "subnet-mock"
     task_security_group_id = "sg-task"
@@ -428,6 +446,8 @@ run "log_retention_zero" {
     aws_region             = "ap-southeast-2"
     aws_account_id         = "123456789012"
     name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
     vpc_id                 = "vpc-mock"
     public_subnet_id       = "subnet-mock"
     task_security_group_id = "sg-task"

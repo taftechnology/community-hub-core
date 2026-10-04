@@ -13,6 +13,7 @@ run "staging_happy" {
     aws_region             = "ap-southeast-2"
     name                   = "ch-staging"
     environment            = "staging"
+    project                = "community-hub"
     subnet_ids             = ["subnet-aaaa", "subnet-bbbb"]
     vpc_security_group_ids = ["sg-rds"]
     kms_key_arn            = "arn:aws:kms:ap-southeast-2:123456789012:key/mock"
@@ -32,6 +33,14 @@ run "staging_happy" {
   assert {
     condition     = aws_db_instance.this.region == "ap-southeast-2"
     error_message = "RDS region argument must be ap-southeast-2"
+  }
+
+  assert {
+    condition = (
+      aws_db_instance.this.tags["environment"] == "staging" &&
+      aws_db_instance.this.tags["project"] == "community-hub"
+    )
+    error_message = "RDS instance tags must be environment=staging and project=community-hub"
   }
 
   assert {
@@ -154,6 +163,7 @@ run "prod_protection" {
     aws_region             = "ap-southeast-2"
     name                   = "ch-prod"
     environment            = "prod"
+    project                = "community-hub"
     subnet_ids             = ["subnet-aaaa", "subnet-bbbb"]
     vpc_security_group_ids = ["sg-rds"]
     kms_key_arn            = "arn:aws:kms:ap-southeast-2:123456789012:key/mock"
@@ -185,6 +195,7 @@ run "prod_backup_off_fails" {
     aws_region             = "ap-southeast-2"
     name                   = "ch-prod"
     environment            = "prod"
+    project                = "community-hub"
     subnet_ids             = ["subnet-aaaa", "subnet-bbbb"]
     vpc_security_group_ids = ["sg-rds"]
     kms_key_arn            = "arn:aws:kms:ap-southeast-2:123456789012:key/mock"
@@ -203,6 +214,7 @@ run "public_rds_fails" {
     aws_region             = "ap-southeast-2"
     name                   = "ch-staging"
     environment            = "staging"
+    project                = "community-hub"
     subnet_ids             = ["subnet-aaaa", "subnet-bbbb"]
     vpc_security_group_ids = ["sg-rds"]
     kms_key_arn            = "arn:aws:kms:ap-southeast-2:123456789012:key/mock"
@@ -222,6 +234,7 @@ run "wrong_region_fails" {
     aws_region             = "us-east-1"
     name                   = "ch-staging"
     environment            = "staging"
+    project                = "community-hub"
     subnet_ids             = ["subnet-aaaa", "subnet-bbbb"]
     vpc_security_group_ids = ["sg-rds"]
     kms_key_arn            = "arn:aws:kms:ap-southeast-2:123456789012:key/mock"

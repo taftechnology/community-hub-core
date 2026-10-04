@@ -23,6 +23,10 @@ variable "environment" {
   }
 }
 
+variable "project" {
+  type = string
+}
+
 variable "subnet_ids" {
   type        = list(string)
   description = "Private subnet IDs for the DB subnet group (two AZs)."

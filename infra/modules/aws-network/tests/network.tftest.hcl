@@ -4,8 +4,10 @@ run "staging_happy" {
   command = plan
 
   variables {
-    aws_region = "ap-southeast-2"
-    name       = "ch-staging"
+    aws_region  = "ap-southeast-2"
+    name        = "ch-staging"
+    environment = "staging"
+    project     = "community-hub"
   }
 
   override_resource {
@@ -27,6 +29,14 @@ run "staging_happy" {
   assert {
     condition     = aws_vpc.this.region == "ap-southeast-2"
     error_message = "VPC region argument must be ap-southeast-2"
+  }
+
+  assert {
+    condition = (
+      aws_vpc.this.tags["environment"] == "staging" &&
+      aws_vpc.this.tags["project"] == "community-hub"
+    )
+    error_message = "VPC tags must be environment=staging and project=community-hub"
   }
 
   assert {
@@ -67,8 +77,10 @@ run "wrong_region_fails" {
   command = plan
 
   variables {
-    aws_region = "us-east-1"
-    name       = "ch-staging"
+    aws_region  = "us-east-1"
+    name        = "ch-staging"
+    environment = "staging"
+    project     = "community-hub"
   }
 
   expect_failures = [var.aws_region]

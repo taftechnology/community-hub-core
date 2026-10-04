@@ -18,6 +18,14 @@ variable "name" {
   description = "Name prefix for the envelope key, task role, and log group."
 }
 
+variable "environment" {
+  type = string
+}
+
+variable "project" {
+  type = string
+}
+
 variable "vpc_id" {
   type        = string
   description = "VPC that contains the KMS interface endpoint."

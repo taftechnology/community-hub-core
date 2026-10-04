@@ -177,6 +177,11 @@ resource "aws_kms_key" "envelope" {
   lifecycle {
     prevent_destroy = true
   }
+
+  tags = {
+    environment = var.environment
+    project     = var.project
+  }
 }
 
 resource "aws_kms_alias" "envelope" {
@@ -195,6 +200,11 @@ resource "aws_iam_role" "task" {
       Action    = "sts:AssumeRole"
     }]
   })
+
+  tags = {
+    environment = var.environment
+    project     = var.project
+  }
 }
 
 resource "aws_security_group" "endpoint" {
@@ -219,6 +229,11 @@ resource "aws_security_group" "endpoint" {
       self             = false
     },
   ]
+
+  tags = {
+    environment = var.environment
+    project     = var.project
+  }
 }
 
 resource "aws_vpc_endpoint" "kms" {
@@ -231,12 +246,22 @@ resource "aws_vpc_endpoint" "kms" {
   subnet_ids          = [var.public_subnet_id]
   private_dns_enabled = true
   security_group_ids  = [aws_security_group.endpoint[0].id]
+
+  tags = {
+    environment = var.environment
+    project     = var.project
+  }
 }
 
 resource "aws_cloudwatch_log_group" "broker" {
   region            = var.aws_region
   name              = local.log_group_name
   retention_in_days = var.log_retention_days
+
+  tags = {
+    environment = var.environment
+    project     = var.project
+  }
 }
 
 resource "aws_iam_role" "execution" {
@@ -249,6 +274,11 @@ resource "aws_iam_role" "execution" {
       Action    = "sts:AssumeRole"
     }]
   })
+
+  tags = {
+    environment = var.environment
+    project     = var.project
+  }
 }
 
 resource "aws_iam_role_policy" "execution" {

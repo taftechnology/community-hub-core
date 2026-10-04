@@ -13,6 +13,11 @@ resource "aws_db_subnet_group" "this" {
   region     = var.aws_region
   name       = "${var.name}-postgres"
   subnet_ids = var.subnet_ids
+
+  tags = {
+    environment = var.environment
+    project     = var.project
+  }
 }
 
 resource "aws_db_parameter_group" "this" {
@@ -23,6 +28,11 @@ resource "aws_db_parameter_group" "this" {
   parameter {
     name  = "rds.force_ssl"
     value = "1"
+  }
+
+  tags = {
+    environment = var.environment
+    project     = var.project
   }
 }
 
@@ -55,14 +65,20 @@ resource "aws_db_instance" "this" {
   copy_tags_to_snapshot   = true
   apply_immediately       = var.environment != "prod"
 
-  tags = {
-    Name = "${var.name}-postgres"
-  }
+  tags = merge(
+    { environment = var.environment, project = var.project },
+    { Name = "${var.name}-postgres" },
+  )
 }
 
 resource "aws_sns_topic" "alarms" {
   region = var.aws_region
   name   = "${var.name}-postgres-alarms"
+
+  tags = {
+    environment = var.environment
+    project     = var.project
+  }
 }
 
 resource "aws_sns_topic_subscription" "alarms" {
@@ -88,6 +104,11 @@ resource "aws_cloudwatch_metric_alarm" "cpu_credit_balance" {
   dimensions = {
     DBInstanceIdentifier = aws_db_instance.this.identifier
   }
+
+  tags = {
+    environment = var.environment
+    project     = var.project
+  }
 }
 
 resource "aws_cloudwatch_metric_alarm" "freeable_memory" {
@@ -105,6 +126,11 @@ resource "aws_cloudwatch_metric_alarm" "freeable_memory" {
 
   dimensions = {
     DBInstanceIdentifier = aws_db_instance.this.identifier
+  }
+
+  tags = {
+    environment = var.environment
+    project     = var.project
   }
 }
 
@@ -124,6 +150,11 @@ resource "aws_cloudwatch_metric_alarm" "free_storage_space" {
   dimensions = {
     DBInstanceIdentifier = aws_db_instance.this.identifier
   }
+
+  tags = {
+    environment = var.environment
+    project     = var.project
+  }
 }
 
 resource "aws_cloudwatch_metric_alarm" "database_connections" {
@@ -141,5 +172,10 @@ resource "aws_cloudwatch_metric_alarm" "database_connections" {
 
   dimensions = {
     DBInstanceIdentifier = aws_db_instance.this.identifier
+  }
+
+  tags = {
+    environment = var.environment
+    project     = var.project
   }
 }

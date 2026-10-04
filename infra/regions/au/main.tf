@@ -41,8 +41,10 @@ check "prod_kms_endpoint" {
 module "network" {
   source = "../../modules/aws-network"
 
-  aws_region = var.aws_region
-  name       = local.name
+  aws_region  = var.aws_region
+  name        = local.name
+  environment = var.environment
+  project     = "community-hub"
 }
 
 module "kms" {
@@ -51,6 +53,8 @@ module "kms" {
   aws_region     = var.aws_region
   aws_account_id = var.aws_account_id
   name           = local.name
+  environment    = var.environment
+  project        = "community-hub"
 }
 
 module "rds" {
@@ -59,6 +63,7 @@ module "rds" {
   aws_region             = var.aws_region
   name                   = local.name
   environment            = var.environment
+  project                = "community-hub"
   subnet_ids             = module.network.private_subnet_ids
   vpc_security_group_ids = [module.network.rds_security_group_id]
   kms_key_arn            = module.kms.key_arn
@@ -84,6 +89,8 @@ module "envelope" {
   aws_region             = var.aws_region
   aws_account_id         = var.aws_account_id
   name                   = local.name
+  environment            = var.environment
+  project                = "community-hub"
   vpc_id                 = module.network.vpc_id
   public_subnet_id       = module.network.public_subnet_id
   enable_kms_endpoint    = var.enable_kms_endpoint

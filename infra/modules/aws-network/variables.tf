@@ -13,6 +13,14 @@ variable "name" {
   description = "Name prefix for VPC resources."
 }
 
+variable "environment" {
+  type = string
+}
+
+variable "project" {
+  type = string
+}
+
 variable "vpc_cidr" {
   type        = string
   description = "CIDR for the VPC."
