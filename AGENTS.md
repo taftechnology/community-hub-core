@@ -358,7 +358,7 @@ Never stage `docs/plans/*-report.md`, `.superpowers/`, or other session scratch.
 **Stage 1 — Static (fast, every push)**
 
 - format, lint, typecheck
-- `check:boundaries` — schema-rls, terraform-invariants, sql-session-ban, event-names, check-tokens (each checker has must-fail fixtures exercised in Stage 2). `worker-config`, `kms-broker-binding`, `residency-payload`, and `residency-cell` are removed by the cleanup row. CI still runs them until that row merges. Encrypted columns: ESLint `@community-hub/no-encrypted-column-query`, `@community-hub/no-event-payload`, `@community-hub/no-kms-port-outside-crypto`, `@community-hub/no-restricted-disable`, `@community-hub/no-ts-ignore`, and `@community-hub/no-crypto-testing-import`; fixture-tested via `pnpm test` on `@community-hub/check-encrypted-column`, not `run.ts`.
+- `check:boundaries` — schema-rls, terraform-invariants, sql-session-ban, event-names, check-tokens (each checker has must-fail fixtures exercised in Stage 2). Encrypted columns: ESLint `@community-hub/no-encrypted-column-query`, `@community-hub/no-event-payload`, `@community-hub/no-kms-port-outside-crypto`, `@community-hub/no-restricted-disable`, `@community-hub/no-ts-ignore`, and `@community-hub/no-crypto-testing-import`; fixture-tested via `pnpm test` on `@community-hub/check-encrypted-column`, not `run.ts`.
 - secret scanning, dependency audit (fail on high/critical)
 - traceability (pull requests only): branch matches `<type>/<YYYY-MM-DD>-<slug>`; PR body links one spec and one plan with the same slug, both `approved`, or `No spec:` on `chore/` / `fix/` branches
 - **offline Terraform** (every root and every module under `infra/`): `terraform init -backend=false -lockfile=readonly`, `fmt -check`, `validate`, `tflint --init && tflint`, `terraform test`. Missing Terraform or a failed `init` fails the job. No live `plan`. No cloud provider secrets. `GITHUB_TOKEN` is passed so `tflint --init` does not hit unauthenticated GitHub rate limits.
@@ -367,14 +367,14 @@ A CI check is added only when it has a real input **and** a must-fail fixture �
 
 **Stage 2 — Tests (every push)**
 
-- `pnpm test` — unit tests for `packages/kernel` and `packages/observability`; checker self-tests including `@community-hub/check-event-names` (must-fail fixtures must still fail). The Workers test pool for `apps/gateway` goes in the cleanup row, and `apps/api` leaves that pool in the same row. CI still runs the Workers test pool until then.
+- `pnpm test` — unit tests for `packages/kernel` and `packages/observability`; checker self-tests including `@community-hub/check-event-names` (must-fail fixtures must still fail). `apps/api` and `packages/crypto` run on the Node runner, and no package test script runs the Workers pool.
 - axe runs in `@community-hub/ui` (Button plus a missing-name fixture)
 
 Omitted until first real input plus a must-fail fixture: tenant-isolation suite, residency integration suite, contract tests.
 
 **Stage 3 — Build and preview (every PR)**
 
-- Between cleanup and the service chunk, Stage 3 builds `@community-hub/api` and does not call Wrangler or require a Cloudflare token. The service chunk replaces that build with the ARM image build. Until cleanup merges, CI still runs the Wrangler preview. Verification of the service is the staging hostname.
+- Stage 3 builds `@community-hub/api` and does not call Wrangler or require a Cloudflare token. The service chunk replaces that build with the ARM image build. Verification of the service is the staging hostname.
 - OpenAPI diff comments apply only once those artefacts exist in the repo. Live Terraform `plan` comments wait on CI identities (AWS OIDC).
 
 **Stage 4 — Deploy**
