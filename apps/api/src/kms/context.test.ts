@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { checkContext, ContextRejected, readContract } from "@community-hub/kms-broker";
+import { checkContext, ContextRejected } from "./context.js";
 
 describe("checkContext", () => {
   it("rejects an empty object", () => {
@@ -124,14 +124,5 @@ describe("checkContext", () => {
       region: "au",
       key_version: "v1",
     });
-  });
-});
-
-describe("readContract", () => {
-  it("reads the body limit and route paths from the built package", () => {
-    const contract = readContract();
-    expect(contract.limits.maxBodyBytes).toBe(65536);
-    expect(contract.routes.generateDataKey.path).toBe("/v1/generate-data-key");
-    expect(contract.routes.decrypt.path).toBe("/v1/decrypt");
   });
 });

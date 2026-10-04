@@ -5,19 +5,18 @@
   "type": "module",
   "scripts": {
     "lint": "eslint .",
-    "typecheck": "tsc --build",
+    "typecheck": "tsc --build && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run --config vitest.config.ts",
     "build": "tsc --build"
   },
   "dependencies": {
+    "@aws-sdk/client-kms": "^3.758.0",
     "@community-hub/kernel": "workspace:*",
     "@community-hub/observability": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.12.21",
-    "@cloudflare/workers-types": "^5.20260917.1",
+    "@types/node": "^22.13.10",
     "typescript": "^5.8.2",
-    "vitest": "^3.0.9",
-    "wrangler": "^4.134.0"
+    "vitest": "^3.0.9"
   }
 }

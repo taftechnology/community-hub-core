@@ -7,8 +7,6 @@
     { "path": "./packages/ui" },
     { "path": "./packages/db" },
     { "path": "./packages/crypto" },
-    { "path": "./packages/kms-broker" },
-    { "path": "./packages/kms-aws" },
     { "path": "./apps/api" }
   ]
 }

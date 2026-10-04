@@ -1,8 +1,7 @@
 import { DecryptCommand, GenerateDataKeyCommand } from "@aws-sdk/client-kms";
 
-import type { KmsContext } from "@community-hub/kms-broker";
-
-import type { BrokerKms } from "./server.js";
+import type { KmsContext } from "./context.js";
+import type { BrokerKms } from "./broker-kms.js";
 
 export function toEncryptionContext(context: KmsContext): Record<string, string> {
   if (context.key_kind === "org") {

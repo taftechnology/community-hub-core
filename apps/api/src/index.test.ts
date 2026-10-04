@@ -1,5 +1,6 @@
-import { SELF } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
+
+import handler from "./index.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -8,9 +9,11 @@ describe("api", () => {
     const inboundRequestId = "22222222-2222-4222-8222-222222222222";
     const logSpy = vi.spyOn(console, "log");
 
-    const response = await SELF.fetch("https://api.test/health", {
-      headers: { "x-request-id": inboundRequestId },
-    });
+    const response = await handler.fetch(
+      new Request("https://api.test/health", {
+        headers: { "x-request-id": inboundRequestId },
+      }),
+    );
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
