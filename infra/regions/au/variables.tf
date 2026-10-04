@@ -68,10 +68,15 @@ variable "desired_count" {
   default     = 0
 }
 
-# tflint-ignore: terraform_unused_declarations
 variable "turnstile_secret_arn" {
   type        = string
   description = "Optional Turnstile secret. Null until that secret exists."
+  default     = null
+}
+
+variable "service_image" {
+  type        = string
+  description = "Service image digest. Null plans no task definition and no ECS service."
   default     = null
 }
 

@@ -14,6 +14,11 @@ output "ops_hostname" {
   value = local.ops_hostname
 }
 
+output "task_subnet_ids" {
+  description = "Subnets the ECS service uses. Empty while the image is unset."
+  value       = var.task_subnet_ids
+}
+
 output "ecs_service_desired_count" {
   description = "Desired count when the image is set, otherwise 0."
   value       = var.service_image == null ? 0 : var.desired_count

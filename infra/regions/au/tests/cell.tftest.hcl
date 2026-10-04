@@ -298,3 +298,49 @@ run "staging_without_zone_id_fails" {
     terraform_data.staging_zone,
   ]
 }
+
+run "staging_image_set" {
+  command = plan
+
+  variables {
+    aws_region            = "ap-southeast-2"
+    aws_account_id        = "123456789012"
+    environment           = "staging"
+    deletion_protection   = false
+    backup_retention_days = 0
+    alert_email           = "alerts@example.com"
+    staging_zone_id       = "ZSTAGING"
+    create_public_zone    = false
+    attach_public_dns     = true
+    desired_count         = 0
+    service_image         = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+
+  assert {
+    condition     = module.ingress.ecs_service_desired_count == 0 && length(module.ingress.task_subnet_ids) == 1
+    error_message = "a set staging image plans desired count 0 and one task subnet"
+  }
+}
+
+run "prod_image_set" {
+  command = plan
+
+  variables {
+    aws_region            = "ap-southeast-2"
+    aws_account_id        = "123456789012"
+    environment           = "prod"
+    deletion_protection   = true
+    backup_retention_days = 7
+    enable_kms_endpoint   = true
+    alert_email           = "alerts@example.com"
+    create_public_zone    = true
+    attach_public_dns     = false
+    desired_count         = 0
+    service_image         = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-prod/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+
+  assert {
+    condition     = length(module.ingress.task_subnet_ids) == 2
+    error_message = "a set production image plans both public subnets"
+  }
+}

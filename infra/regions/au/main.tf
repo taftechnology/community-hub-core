@@ -145,4 +145,18 @@ module "ingress" {
   attach_public_dns      = var.attach_public_dns
   public_zone_id         = var.create_public_zone ? null : var.staging_zone_id
   desired_count          = var.desired_count
+  service_image          = var.service_image
+  turnstile_secret_arn   = var.turnstile_secret_arn
+  capacity_provider      = var.environment == "prod" ? "FARGATE" : "FARGATE_SPOT"
+  task_subnet_ids        = var.environment == "prod" ? module.network.public_subnet_ids : [module.network.public_subnet_id]
+  execution_role_arn     = module.envelope.execution_role_arn
+  execution_role_name    = module.envelope.execution_role_name
+  task_role_arn          = module.envelope.task_role_arn
+  log_group_name         = module.envelope.log_group_name
+  db_host                = module.rds.address
+  db_port                = module.rds.port
+  envelope_key_arn       = module.envelope.key_arn
+  app_secret_arn         = module.db_secrets.app_secret_arn
+  identity_secret_arn    = module.db_secrets.identity_secret_arn
+  platform_secret_arn    = module.db_secrets.platform_secret_arn
 }
