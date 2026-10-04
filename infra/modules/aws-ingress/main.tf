@@ -1,3 +1,37 @@
+resource "aws_service_discovery_private_dns_namespace" "this" {
+  region = var.aws_region
+  name   = "${var.name}.local"
+  vpc    = var.vpc_id
+
+  tags = {
+    environment = var.environment
+    project     = var.project
+  }
+}
+
+resource "aws_service_discovery_service" "this" {
+  region = var.aws_region
+  name   = "service"
+
+  dns_config {
+    namespace_id = aws_service_discovery_private_dns_namespace.this.id
+
+    dns_records {
+      ttl  = 10
+      type = var.cloud_map_record_type
+    }
+
+    routing_policy = "MULTIVALUE"
+  }
+
+  health_check_custom_config {}
+
+  tags = {
+    environment = var.environment
+    project     = var.project
+  }
+}
+
 resource "aws_ecr_repository" "service" {
   region               = var.aws_region
   name                 = "${var.name}/service"

@@ -28,6 +28,20 @@ variable "project" {
   type = string
 }
 
+variable "vpc_id" {
+  type = string
+}
+
+variable "cloud_map_record_type" {
+  type    = string
+  default = "SRV"
+
+  validation {
+    condition     = var.cloud_map_record_type == "SRV"
+    error_message = "Cloud Map record type must be SRV."
+  }
+}
+
 # tflint-ignore: terraform_unused_declarations
 variable "service_image" {
   type    = string

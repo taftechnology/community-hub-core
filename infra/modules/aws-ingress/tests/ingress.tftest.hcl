@@ -7,6 +7,12 @@ mock_provider "aws" {
       arn = "arn:aws:ecr:ap-southeast-2:123456789012:repository/ch-staging/service"
     }
   }
+
+  mock_resource "aws_service_discovery_service" {
+    defaults = {
+      arn = "arn:aws:servicediscovery:ap-southeast-2:123456789012:service/srv-mock"
+    }
+  }
 }
 
 run "staging_unset" {
@@ -18,7 +24,13 @@ run "staging_unset" {
     name           = "ch-staging"
     environment    = "staging"
     project        = "community-hub"
+    vpc_id         = "vpc-example"
     service_image  = null
+  }
+
+  assert {
+    condition     = aws_service_discovery_service.this.dns_config[0].dns_records[0].type == "SRV" && length(aws_service_discovery_service.this.health_check_custom_config) == 1
+    error_message = "Cloud Map publishes SRV and sets the ECS custom-health block"
   }
 
   assert {
@@ -41,6 +53,7 @@ run "image_tag_fails" {
     name           = "ch-staging"
     environment    = "staging"
     project        = "community-hub"
+    vpc_id         = "vpc-example"
     service_image  = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service:latest"
   }
 
@@ -56,6 +69,7 @@ run "foreign_registry_fails" {
     name           = "ch-staging"
     environment    = "staging"
     project        = "community-hub"
+    vpc_id         = "vpc-example"
     service_image  = "public.ecr.aws/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
   }
 
@@ -71,6 +85,7 @@ run "other_region_fails" {
     name           = "ch-staging"
     environment    = "staging"
     project        = "community-hub"
+    vpc_id         = "vpc-example"
     service_image  = "123456789012.dkr.ecr.us-east-1.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
   }
 
@@ -86,6 +101,7 @@ run "uppercase_digest_fails" {
     name           = "ch-staging"
     environment    = "staging"
     project        = "community-hub"
+    vpc_id         = "vpc-example"
     service_image  = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef"
   }
 
@@ -101,8 +117,25 @@ run "trailing_suffix_fails" {
     name           = "ch-staging"
     environment    = "staging"
     project        = "community-hub"
+    vpc_id         = "vpc-example"
     service_image  = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef-extra"
   }
 
   expect_failures = [var.service_image]
+}
+
+run "record_type_a_fails" {
+  command = plan
+
+  variables {
+    aws_region            = "ap-southeast-2"
+    aws_account_id        = "123456789012"
+    name                  = "ch-staging"
+    environment           = "staging"
+    project               = "community-hub"
+    vpc_id                = "vpc-example"
+    cloud_map_record_type = "A"
+  }
+
+  expect_failures = [var.cloud_map_record_type]
 }
