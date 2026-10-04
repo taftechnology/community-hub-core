@@ -96,15 +96,20 @@ run "staging_happy" {
   }
 
   assert {
-    condition = anytrue([
-      for rule in aws_security_group.task.egress :
-      rule.from_port == 443 && rule.to_port == 443 && contains(rule.cidr_blocks, "0.0.0.0/0")
-    ])
+    condition = (
+      aws_vpc_security_group_egress_rule.task_https.from_port == 443 &&
+      aws_vpc_security_group_egress_rule.task_https.to_port == 443 &&
+      aws_vpc_security_group_egress_rule.task_https.cidr_ipv4 == "0.0.0.0/0"
+    )
     error_message = "task group must allow outbound 443 to the internet"
   }
 
   assert {
-    condition     = !strcontains(jsonencode(aws_security_group.task.egress), "7844")
+    condition = (
+      aws_vpc_security_group_egress_rule.task_https.from_port != 7844 &&
+      aws_vpc_security_group_egress_rule.task_rds.from_port != 7844 &&
+      aws_vpc_security_group_ingress_rule.rds_postgres.from_port != 7844
+    )
     error_message = "task group must not allow port 7844"
   }
 }

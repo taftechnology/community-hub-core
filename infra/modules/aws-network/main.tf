@@ -115,21 +115,6 @@ resource "aws_security_group" "task" {
   name        = "${var.name}-task"
   description = "Service task. No inbound. Egress to public AWS APIs and to RDS."
   vpc_id      = aws_vpc.this.id
-  ingress     = []
-
-  egress = [
-    {
-      description      = "HTTPS to public AWS APIs"
-      from_port        = 443
-      to_port          = 443
-      protocol         = "tcp"
-      cidr_blocks      = ["0.0.0.0/0"]
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      security_groups  = []
-      self             = false
-    },
-  ]
 
   tags = {
     environment = var.environment
@@ -142,13 +127,21 @@ resource "aws_security_group" "rds" {
   name        = "${var.name}-rds"
   description = "Postgres. Inbound 5432 from the task only."
   vpc_id      = aws_vpc.this.id
-  ingress     = []
-  egress      = []
 
   tags = {
     environment = var.environment
     project     = var.project
   }
+}
+
+resource "aws_vpc_security_group_egress_rule" "task_https" {
+  region            = var.aws_region
+  security_group_id = aws_security_group.task.id
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+  description       = "HTTPS to public AWS APIs"
 }
 
 resource "aws_vpc_security_group_egress_rule" "task_rds" {
