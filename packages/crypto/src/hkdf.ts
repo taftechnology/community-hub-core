@@ -6,10 +6,7 @@ const INFO_ENC = new TextEncoder().encode("chub/v1/enc");
 const INFO_BIDX = new TextEncoder().encode("chub/v1/bidx");
 const INFO_WRAP = new TextEncoder().encode("chub/v1/wrap");
 
-function hkdfParams(
-  info: Uint8Array,
-  salt: Uint8Array = SALT_EMPTY,
-): webcrypto.HkdfParams {
+function hkdfParams(info: Uint8Array, salt: Uint8Array = SALT_EMPTY): webcrypto.HkdfParams {
   return {
     name: "HKDF",
     hash: HASH,

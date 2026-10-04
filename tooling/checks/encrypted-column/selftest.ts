@@ -150,8 +150,7 @@ beforeAll(() => {
               paths: [
                 {
                   name: "@community-hub/crypto",
-                  message:
-                    "tenancy must not import @community-hub/crypto (including import type).",
+                  message: "tenancy must not import @community-hub/crypto (including import type).",
                 },
               ],
             },
