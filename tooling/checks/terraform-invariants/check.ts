@@ -243,6 +243,59 @@ function validateBootstrapFile(
   return violations;
 }
 
+const INLINE_RULE_GROUPS = new Set(["task", "rds"]);
+
+function hasInlineRuleArgument(body: string): boolean {
+  return /^\s*(?:ingress|egress)\s*(?:=|\{)/m.test(body);
+}
+
+function validateTaskAndRdsSecurityGroups(
+  filePath: string,
+  root: string,
+  hcl: string,
+): TerraformInvariantViolation[] {
+  const relFile = path.relative(root, filePath);
+  const violations: TerraformInvariantViolation[] = [];
+
+  for (const resource of findResources(hcl)) {
+    if (resource.type !== "aws_security_group" || !INLINE_RULE_GROUPS.has(resource.name)) {
+      continue;
+    }
+    if (hasInlineRuleArgument(resource.body)) {
+      violations.push({
+        file: relFile,
+        message: `aws_security_group.${resource.name} must not set inline ingress or egress`,
+      });
+    }
+  }
+
+  return violations;
+}
+
+function validateEnvelopeStandaloneRules(
+  filePath: string,
+  root: string,
+  hcl: string,
+): TerraformInvariantViolation[] {
+  const relFile = path.relative(root, filePath);
+  const violations: TerraformInvariantViolation[] = [];
+
+  for (const resource of findResources(hcl)) {
+    if (
+      resource.type !== "aws_vpc_security_group_ingress_rule" &&
+      resource.type !== "aws_vpc_security_group_egress_rule"
+    ) {
+      continue;
+    }
+    violations.push({
+      file: relFile,
+      message: `envelope module must not declare ${resource.type}.${resource.name}`,
+    });
+  }
+
+  return violations;
+}
+
 function validateEnvelopeKeyFile(
   filePath: string,
   root: string,
@@ -292,8 +345,10 @@ export function check(root: string = process.cwd()): CheckResult {
     if (isUnder(filePath, resolvedRoot, path.join(INFRA_DIR, "bootstrap"))) {
       violations.push(...validateBootstrapFile(filePath, resolvedRoot, hcl));
     }
+    violations.push(...validateTaskAndRdsSecurityGroups(filePath, resolvedRoot, hcl));
     if (isUnder(filePath, resolvedRoot, path.join(INFRA_DIR, "modules", "aws-kms-envelope"))) {
       violations.push(...validateEnvelopeKeyFile(filePath, resolvedRoot, hcl));
+      violations.push(...validateEnvelopeStandaloneRules(filePath, resolvedRoot, hcl));
     }
   }
 

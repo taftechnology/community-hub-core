@@ -14,10 +14,8 @@ resource "aws_security_group" "connector" {
 }
 
 resource "aws_security_group" "rds" {
-  region  = "ap-southeast-2"
-  vpc_id  = "vpc-example"
-  ingress = []
-  egress  = []
+  region = "ap-southeast-2"
+  vpc_id = "vpc-example"
 }
 
 resource "aws_vpc_security_group_ingress_rule" "rds_postgres" {
