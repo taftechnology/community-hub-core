@@ -1,3 +1,5 @@
+import type { webcrypto } from "node:crypto";
+
 import { encodeLengthPrefixed } from "./aad.js";
 import { IV_LENGTH } from "./envelope.js";
 import type { KmsContext, KmsPort } from "./kms-port.js";
@@ -79,8 +81,8 @@ function encodeKmsAad(keyId: string, context: CanonicalKmsContext): Uint8Array {
 
 export function createLocalKmsPort(): KmsPort {
   const kekBytes = crypto.getRandomValues(new Uint8Array(32));
-  let kek: Promise<CryptoKey> | undefined;
-  const getKek = (): Promise<CryptoKey> => {
+  let kek: Promise<webcrypto.CryptoKey> | undefined;
+  const getKek = (): Promise<webcrypto.CryptoKey> => {
     kek ??= crypto.subtle
       .importKey("raw", kekBytes, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"])
       .then((key) => {
@@ -116,7 +118,7 @@ export function createLocalKmsPort(): KmsPort {
 }
 
 export async function sealWith(opts: {
-  key: CryptoKey;
+  key: webcrypto.CryptoKey;
   plaintext: Uint8Array;
   keyId: Uint8Array;
   iv: Uint8Array;

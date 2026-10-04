@@ -1,13 +1,11 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "noEmit": true,
-    "composite": false,
-    "declaration": false,
+    "outDir": "./dist/tsbuild-test",
     "declarationMap": false,
     "rootDir": ".",
     "lib": ["ES2022"],
-    "types": ["@cloudflare/workers-types"],
+    "types": ["node"],
     "paths": {
       "@community-hub/crypto/testing": ["./src/testing.ts"]
     }

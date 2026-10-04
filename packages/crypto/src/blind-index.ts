@@ -1,7 +1,9 @@
+import type { webcrypto } from "node:crypto";
+
 export type BlindIndex<P extends string> = Uint8Array & { readonly __blindIndex: P };
 
 export async function blindIndex<P extends string>(
-  bidxKey: CryptoKey,
+  bidxKey: webcrypto.CryptoKey,
   purpose: P,
   normalised: Uint8Array,
 ): Promise<BlindIndex<P>> {

@@ -115,21 +115,15 @@ importers:
 
   packages/crypto:
     devDependencies:
-      '@cloudflare/vitest-pool-workers':
-        specifier: ^0.12.21
-        version: 0.12.21(@cloudflare/workers-types@5.20260917.1)(@types/node@22.20.3)(@vitest/runner@3.2.7)(@vitest/snapshot@3.2.7)(vitest@3.2.7(@types/node@22.20.3)(jiti@2.7.0)(jsdom@30.1.1)(lightningcss@1.32.0)(tsx@4.23.13))
-      '@cloudflare/workers-types':
-        specifier: ^5.20260917.1
-        version: 5.20260917.1
+      '@types/node':
+        specifier: ^22.13.10
+        version: 22.20.3
       typescript:
         specifier: ^5.8.2
         version: 5.9.3
       vitest:
         specifier: ^3.0.9
         version: 3.2.7(@types/node@22.20.3)(jiti@2.7.0)(jsdom@30.1.1)(lightningcss@1.32.0)(tsx@4.23.13)
-      wrangler:
-        specifier: ^4.134.0
-        version: 4.134.0(@cloudflare/workers-types@5.20260917.1)(@types/node@22.20.3)
 
   packages/db:
     dependencies:

@@ -1,3 +1,5 @@
+import type { webcrypto } from "node:crypto";
+
 const HASH = "SHA-256";
 const SALT_EMPTY = new Uint8Array(0);
 const INFO_ENC = new TextEncoder().encode("chub/v1/enc");
@@ -7,7 +9,7 @@ const INFO_WRAP = new TextEncoder().encode("chub/v1/wrap");
 function hkdfParams(
   info: Uint8Array,
   salt: Uint8Array = SALT_EMPTY,
-): SubtleCryptoDeriveKeyAlgorithm {
+): webcrypto.HkdfParams {
   return {
     name: "HKDF",
     hash: HASH,
@@ -16,7 +18,7 @@ function hkdfParams(
   };
 }
 
-export async function importHkdfKey(ikm: Uint8Array): Promise<CryptoKey> {
+export async function importHkdfKey(ikm: Uint8Array): Promise<webcrypto.CryptoKey> {
   return crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveKey"]);
 }
 
@@ -33,14 +35,14 @@ export async function hkdfRaw(
 }
 
 export async function deriveKeys(
-  hkdfKey: CryptoKey,
-): Promise<{ enc: CryptoKey; bidx: CryptoKey; wrap: CryptoKey }> {
-  const hmacImport: SubtleCryptoImportKeyAlgorithm = {
+  hkdfKey: webcrypto.CryptoKey,
+): Promise<{ enc: webcrypto.CryptoKey; bidx: webcrypto.CryptoKey; wrap: webcrypto.CryptoKey }> {
+  const hmacImport: webcrypto.HmacImportParams = {
     name: "HMAC",
     hash: HASH,
     length: 256,
   };
-  const aesImport: SubtleCryptoImportKeyAlgorithm = { name: "AES-GCM", length: 256 };
+  const aesImport: webcrypto.AesDerivedKeyParams = { name: "AES-GCM", length: 256 };
   const [enc, bidx, wrap] = await Promise.all([
     crypto.subtle.deriveKey(hkdfParams(INFO_ENC), hkdfKey, aesImport, false, [
       "encrypt",

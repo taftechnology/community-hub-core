@@ -1,3 +1,5 @@
+import type { webcrypto } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 
 import { encodeAad } from "./aad.js";
@@ -19,7 +21,7 @@ function flip(bytes: Uint8Array, index: number): Uint8Array {
   return copy;
 }
 
-async function importAesKey(raw: Uint8Array): Promise<CryptoKey> {
+async function importAesKey(raw: Uint8Array): Promise<webcrypto.CryptoKey> {
   return crypto.subtle.importKey("raw", raw, { name: "AES-GCM", length: 256 }, false, [
     "encrypt",
     "decrypt",
