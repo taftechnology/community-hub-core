@@ -58,12 +58,12 @@ This chunk is one chunk on purpose. It touches more than two modules and it will
 
 Role names:
 
-| Resource | Name |
-| --- | --- |
-| `aws_iam_role.task` | `${name}-task` |
-| `aws_iam_role.execution` | `${name}-execution` |
-| Execution role policy | no longer `kms-broker-execution` |
-| Log group | `/community-hub/${name}/service` |
+| Resource                 | Name                             |
+| ------------------------ | -------------------------------- |
+| `aws_iam_role.task`      | `${name}-task`                   |
+| `aws_iam_role.execution` | `${name}-execution`              |
+| Execution role policy    | no longer `kms-broker-execution` |
+| Log group                | `/community-hub/${name}/service` |
 
 The key policy's task-role ARN uses `${name}-task`. The cryptographic statements stay the four that exist today (`GenerateDataKey` and `Decrypt`, each for `org` and `identity`), with the same encryption-context conditions. `aws:SourceVpce` is included only when the endpoint flag is on. When the flag is off, those statements do not reference `aws_vpc_endpoint.kms`, because that resource does not exist.
 
@@ -79,21 +79,21 @@ The RDS module gains `multi_az` (default false), `deletion_protection`, and `bac
 
 These values are fixed because the approved spec fixes them:
 
-| Setting | Value |
-| --- | --- |
-| `allocated_storage` | 20 |
-| `max_allocated_storage` | 100 |
-| Backup window | 17:00–18:00 UTC |
-| Maintenance window | Tue 15:00–16:00 UTC |
+| Setting                 | Value               |
+| ----------------------- | ------------------- |
+| `allocated_storage`     | 20                  |
+| `max_allocated_storage` | 100                 |
+| Backup window           | 17:00–18:00 UTC     |
+| Maintenance window      | Tue 15:00–16:00 UTC |
 
 The four alarms are standard-resolution metric alarms on `AWS/RDS` for this instance. Each lists one metric. No metric math, no Metrics Insights, no anomaly detection. Period 300 seconds, three datapoints out of three. They do not change the instance. Moving to `db.t4g.small` stays the operator decision in the approved spec: the alarm has held through ordinary use for two weeks.
 
-| Alarm | Metric | Threshold | Why this number |
-| --- | --- | --- | --- |
-| CPU credits | `CPUCreditBalance` less than 24 | 24 credits | `t4g.micro` earns 12 credits an hour and can accrue 288. Below 24 the balance is under two hours of earn, which is the tank nearly empty. |
-| Free memory | `FreeableMemory` less than 104857600 | 100 MiB | The class is 1 GiB before RDS reserves memory. |
-| Free storage | `FreeStorageSpace` less than 2147483648 | 2 GiB | RDS autoscales this volume from 20 GiB toward 100 GiB, growing it when free space falls to about 10 percent of what is allocated and adding about 10 GiB each step. Up to the ceiling, 10 percent is at most 10 GiB, so a 10 GiB alarm would be on through ordinary growth. 2 GiB fires when autoscaling has not kept free space up. |
-| Connections | `DatabaseConnections` greater than 30 | 30 | Half of the 60 `max_connections` floor. Production steady state in the approved table is 26, so it stays under the line. A rolling deploy of 50 crosses it, and that is not two weeks of ordinary use. |
+| Alarm        | Metric                                  | Threshold  | Why this number                                                                                                                                                                                                                                                                                                                      |
+| ------------ | --------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| CPU credits  | `CPUCreditBalance` less than 24         | 24 credits | `t4g.micro` earns 12 credits an hour and can accrue 288. Below 24 the balance is under two hours of earn, which is the tank nearly empty.                                                                                                                                                                                            |
+| Free memory  | `FreeableMemory` less than 104857600    | 100 MiB    | The class is 1 GiB before RDS reserves memory.                                                                                                                                                                                                                                                                                       |
+| Free storage | `FreeStorageSpace` less than 2147483648 | 2 GiB      | RDS autoscales this volume from 20 GiB toward 100 GiB, growing it when free space falls to about 10 percent of what is allocated and adding about 10 GiB each step. Up to the ceiling, 10 percent is at most 10 GiB, so a 10 GiB alarm would be on through ordinary growth. 2 GiB fires when autoscaling has not kept free space up. |
+| Connections  | `DatabaseConnections` greater than 30   | 30         | Half of the 60 `max_connections` floor. Production steady state in the approved table is 26, so it stays under the line. A rolling deploy of 50 crosses it, and that is not two weeks of ordinary use.                                                                                                                               |
 
 An alarm with no action notifies nobody. The four alarms share one SNS topic in `ap-southeast-2`, and each alarm's action is that topic. The topic is not encrypted. CloudWatch cannot publish to a topic that uses the AWS-managed SNS key (`alias/aws/sns`). A customer-managed key would be another USD 1 a month per environment, which the approved cost tables do not include. The message is alarm state: the metric, the threshold, and the instance identifier. It is not tenant data. The topic has an email subscription to `alert_email`. Terraform cannot confirm that subscription. Until a person confirms it, the alarm is visible in the console and the email does not arrive. `alert_email` is required and has no default. The same variable is the budget notification address.
 
@@ -167,14 +167,14 @@ No route and no event. The names ingress will read from `aws-kms-envelope`:
 
 Prices checked on 2026-10-03. USD, before GST.
 
-| Resource | Monthly cost | Source |
-| --- | --- | --- |
-| Secrets key, before any rotation | 1.00 | The KMS price already used for the other keys. The same rotation steps apply. |
-| Three role secrets | 1.20 | Secrets Manager, USD 0.40 each. The approved tables already count these inside the four-key and five-secret lines. |
-| Budget notifications, no actions and no reports | 0.00 | AWS Budgets pricing. Monitoring and notifications are free. Actions and reports are not used. |
-| Four standard alarms, list price | 0.40 per environment | CloudWatch pricing. USD 0.10 per standard-resolution alarm-metric. One metric each. |
-| Four standard alarms, this account | 0.00 while the account stays within 10 standard alarm metrics | The same page's free tier includes 10 standard alarm metrics. |
-| SNS email at this volume | 0.00 | Email delivery is priced per 100,000. These alarms do not approach that. |
+| Resource                                        | Monthly cost                                                  | Source                                                                                                             |
+| ----------------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Secrets key, before any rotation                | 1.00                                                          | The KMS price already used for the other keys. The same rotation steps apply.                                      |
+| Three role secrets                              | 1.20                                                          | Secrets Manager, USD 0.40 each. The approved tables already count these inside the four-key and five-secret lines. |
+| Budget notifications, no actions and no reports | 0.00                                                          | AWS Budgets pricing. Monitoring and notifications are free. Actions and reports are not used.                      |
+| Four standard alarms, list price                | 0.40 per environment                                          | CloudWatch pricing. USD 0.10 per standard-resolution alarm-metric. One metric each.                                |
+| Four standard alarms, this account              | 0.00 while the account stays within 10 standard alarm metrics | The same page's free tier includes 10 standard alarm metrics.                                                      |
+| SNS email at this volume                        | 0.00                                                          | Email delivery is priced per 100,000. These alarms do not approach that.                                           |
 
 The approved staging full month is USD 40.40 with the endpoint off, and it does not include alarms. Adding the list price makes USD 40.80. The staging budget stays USD 50, so the alert stays at USD 40. Both 40.40 and 40.80 are above 40. This chunk does not change the budget amounts. Production's USD 0.40 list price does not move the USD 88 alert relative to the launch month. Those comparisons are the approved spec's. A tag filter does not measure them: it drops untagged spend and GST.
 
