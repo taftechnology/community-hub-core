@@ -134,6 +134,136 @@ variable "desired_count" {
   default = 0
 }
 
+variable "cpu_architecture" {
+  type    = string
+  default = "ARM64"
+
+  validation {
+    condition     = var.cpu_architecture == "ARM64"
+    error_message = "cpu architecture must be ARM64."
+  }
+}
+
+variable "capacity_provider" {
+  type    = string
+  default = "FARGATE"
+
+  validation {
+    condition     = contains(["FARGATE", "FARGATE_SPOT"], var.capacity_provider) && !(var.environment == "prod" && var.capacity_provider == "FARGATE_SPOT")
+    error_message = "capacity provider is FARGATE or FARGATE_SPOT, and prod cannot use FARGATE_SPOT."
+  }
+}
+
+variable "task_subnet_ids" {
+  type    = list(string)
+  default = []
+
+  validation {
+    condition     = var.service_image == null || length(var.task_subnet_ids) > 0
+    error_message = "a set image needs at least one task subnet."
+  }
+}
+
+variable "execution_role_arn" {
+  type    = string
+  default = ""
+
+  validation {
+    condition     = var.service_image == null || var.execution_role_arn != ""
+    error_message = "a set image needs execution_role_arn."
+  }
+}
+
+variable "execution_role_name" {
+  type    = string
+  default = ""
+
+  validation {
+    condition     = var.service_image == null || var.execution_role_name != ""
+    error_message = "a set image needs execution_role_name."
+  }
+}
+
+variable "task_role_arn" {
+  type    = string
+  default = ""
+
+  validation {
+    condition     = var.service_image == null || var.task_role_arn != ""
+    error_message = "a set image needs task_role_arn."
+  }
+}
+
+variable "log_group_name" {
+  type    = string
+  default = ""
+
+  validation {
+    condition     = var.service_image == null || var.log_group_name != ""
+    error_message = "a set image needs log_group_name."
+  }
+}
+
+variable "db_host" {
+  type    = string
+  default = ""
+
+  validation {
+    condition     = var.service_image == null || var.db_host != ""
+    error_message = "a set image needs db_host."
+  }
+}
+
+variable "db_port" {
+  type    = number
+  default = 5432
+}
+
+variable "envelope_key_arn" {
+  type    = string
+  default = ""
+
+  validation {
+    condition     = var.service_image == null || var.envelope_key_arn != ""
+    error_message = "a set image needs envelope_key_arn."
+  }
+}
+
+variable "app_secret_arn" {
+  type    = string
+  default = ""
+
+  validation {
+    condition     = var.service_image == null || var.app_secret_arn != ""
+    error_message = "a set image needs app_secret_arn."
+  }
+}
+
+variable "identity_secret_arn" {
+  type    = string
+  default = ""
+
+  validation {
+    condition     = var.service_image == null || var.identity_secret_arn != ""
+    error_message = "a set image needs identity_secret_arn."
+  }
+}
+
+variable "platform_secret_arn" {
+  type    = string
+  default = ""
+
+  validation {
+    condition     = var.service_image == null || var.platform_secret_arn != ""
+    error_message = "a set image needs platform_secret_arn."
+  }
+}
+
+variable "turnstile_secret_arn" {
+  type    = string
+  default = null
+}
+
 variable "service_image" {
   type    = string
   default = null

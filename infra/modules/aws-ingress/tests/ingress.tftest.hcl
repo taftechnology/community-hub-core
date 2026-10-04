@@ -189,6 +189,11 @@ run "staging_unset" {
   }
 
   assert {
+    condition     = length(aws_ecs_cluster.this) == 0 && length(aws_ecs_task_definition.this) == 0 && length(aws_ecs_service.this) == 0 && length(aws_vpc_security_group_ingress_rule.task_api) == 0
+    error_message = "image unset plans no cluster, task definition, ECS service, or task-group inbound rule"
+  }
+
+  assert {
     condition     = aws_service_discovery_service.this.dns_config[0].dns_records[0].type == "SRV" && length(aws_service_discovery_service.this.health_check_custom_config) == 1
     error_message = "Cloud Map publishes SRV and sets the ECS custom-health block"
   }
@@ -424,6 +429,11 @@ run "production_zone_only" {
     )
     error_message = "production creates the zone only and still sets the four hostnames"
   }
+
+  assert {
+    condition     = length(aws_ecs_cluster.this) == 0 && length(aws_ecs_task_definition.this) == 0 && length(aws_ecs_service.this) == 0 && length(aws_vpc_security_group_ingress_rule.task_api) == 0
+    error_message = "image unset plans no cluster, task definition, ECS service, or task-group inbound rule"
+  }
 }
 
 run "tls_below_1_2_fails" {
@@ -485,4 +495,157 @@ run "zone_id_with_create_fails" {
   }
 
   expect_failures = [var.create_public_zone]
+}
+
+run "staging_image_set" {
+  command = plan
+
+  variables {
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
+    zone_name              = "communityhub-staging.net"
+    attach_public_dns      = true
+    create_public_zone     = false
+    public_zone_id         = "ZSTAGING"
+    service_image          = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    task_subnet_ids        = ["subnet-public"]
+    execution_role_arn     = "arn:aws:iam::123456789012:role/ch-staging-execution"
+    execution_role_name    = "ch-staging-execution"
+    task_role_arn          = "arn:aws:iam::123456789012:role/ch-staging-task"
+    log_group_name         = "/community-hub/ch-staging/service"
+    db_host                = "ch-staging-postgres.example.ap-southeast-2.rds.amazonaws.com"
+    db_port                = 5432
+    envelope_key_arn       = "arn:aws:kms:ap-southeast-2:123456789012:key/mock"
+    app_secret_arn         = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:app"
+    identity_secret_arn    = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:identity"
+    platform_secret_arn    = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:platform"
+    capacity_provider      = "FARGATE_SPOT"
+    desired_count          = 0
+  }
+
+  override_resource {
+    target = aws_security_group.vpc_link
+    values = {
+      id = "sg-vpc-link"
+    }
+    override_during = plan
+  }
+
+  assert {
+    condition = (
+      aws_ecs_task_definition.this[0].runtime_platform[0].cpu_architecture == "ARM64" &&
+      aws_ecs_task_definition.this[0].cpu == "256" &&
+      aws_ecs_task_definition.this[0].memory == "512" &&
+      aws_ecs_service.this[0].desired_count == 0 &&
+      aws_ecs_service.this[0].deployment_minimum_healthy_percent == 100 &&
+      aws_ecs_service.this[0].deployment_maximum_percent == 200 &&
+      aws_ecs_service.this[0].deployment_circuit_breaker[0].enable == true &&
+      aws_ecs_service.this[0].deployment_circuit_breaker[0].rollback == true &&
+      one(aws_ecs_cluster.this[0].setting).value == "disabled" &&
+      one(aws_ecs_service.this[0].capacity_provider_strategy).capacity_provider == "FARGATE_SPOT" &&
+      aws_ecs_task_definition.this[0].execution_role_arn == "arn:aws:iam::123456789012:role/ch-staging-execution" &&
+      aws_ecs_task_definition.this[0].task_role_arn == "arn:aws:iam::123456789012:role/ch-staging-task" &&
+      aws_ecs_service.this[0].service_registries[0].container_name == "service" &&
+      aws_ecs_service.this[0].service_registries[0].container_port == 8080
+    )
+    error_message = "the task is ARM64 at 0.25 vCPU and 0.5 GB, desired count 0, with the deployment cap and Container Insights off"
+  }
+
+  assert {
+    condition = (
+      jsondecode(aws_ecs_task_definition.this[0].container_definitions)[0].environment == [
+        { name = "PORT", value = "8080" },
+        { name = "AWS_REGION", value = "ap-southeast-2" },
+        { name = "NODE_ENV", value = "production" },
+        { name = "COMMUNITY_HUB_ENVIRONMENT", value = "staging" },
+        { name = "PGHOST", value = "ch-staging-postgres.example.ap-southeast-2.rds.amazonaws.com" },
+        { name = "PGPORT", value = "5432" },
+        { name = "PGDATABASE", value = "communityhub" },
+        { name = "PGUSER_APP", value = "app" },
+        { name = "PGUSER_IDENTITY", value = "identity" },
+        { name = "PGUSER_PLATFORM", value = "platform" },
+        { name = "ENVELOPE_KEY_ARN", value = "arn:aws:kms:ap-southeast-2:123456789012:key/mock" },
+        { name = "API_HOSTNAME", value = "au.api.communityhub-staging.net" },
+        { name = "AUTH_HOSTNAME", value = "auth.au.communityhub-staging.net" },
+        { name = "WEBHOOKS_HOSTNAME", value = "webhooks.au.communityhub-staging.net" },
+        { name = "OPS_HOSTNAME", value = "ops.au.communityhub-staging.net" },
+        { name = "APP_SECRET_ARN", value = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:app" },
+        { name = "IDENTITY_SECRET_ARN", value = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:identity" },
+        { name = "PLATFORM_SECRET_ARN", value = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:platform" },
+      ] &&
+      [for secret in jsondecode(aws_ecs_task_definition.this[0].container_definitions)[0].secrets : secret.name] == ["PGPASSWORD_APP", "PGPASSWORD_IDENTITY", "PGPASSWORD_PLATFORM"] &&
+      jsondecode(aws_ecs_task_definition.this[0].container_definitions)[0].healthCheck.command == ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    )
+    error_message = "environment, secret names, PGDATABASE, and the health command match the contract table"
+  }
+
+  assert {
+    condition = (
+      length(jsondecode(aws_iam_role_policy.pull[0].policy).Statement) == 2 &&
+      jsondecode(aws_iam_role_policy.pull[0].policy).Statement[0].Action == "ecr:GetAuthorizationToken" &&
+      toset(jsondecode(aws_iam_role_policy.pull[0].policy).Statement[1].Action) == toset([
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchGetImage",
+      ])
+    )
+    error_message = "the pull policy has exactly the four pull actions and no push action"
+  }
+
+  assert {
+    condition = (
+      aws_vpc_security_group_ingress_rule.task_api[0].from_port == 8080 &&
+      aws_vpc_security_group_ingress_rule.task_api[0].to_port == 8080 &&
+      aws_vpc_security_group_ingress_rule.task_api[0].ip_protocol == "tcp" &&
+      aws_vpc_security_group_ingress_rule.task_api[0].security_group_id == "sg-task" &&
+      aws_vpc_security_group_ingress_rule.task_api[0].referenced_security_group_id == "sg-vpc-link"
+    )
+    error_message = "task_api is TCP 8080 from the VPC link group onto the task group"
+  }
+}
+
+run "x86_64_fails" {
+  command = plan
+
+  variables {
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
+    zone_name              = "communityhub-staging.net"
+    cpu_architecture       = "X86_64"
+  }
+
+  expect_failures = [var.cpu_architecture]
+}
+
+run "spot_in_prod_fails" {
+  command = plan
+
+  variables {
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-prod"
+    environment            = "prod"
+    project                = "community-hub"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
+    zone_name              = "communityhub.one"
+    create_public_zone     = true
+    attach_public_dns      = false
+    capacity_provider      = "FARGATE_SPOT"
+  }
+
+  expect_failures = [var.capacity_provider]
 }

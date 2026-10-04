@@ -55,7 +55,7 @@ resource "aws_vpc_security_group_egress_rule" "vpc_link_task" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "task_api" {
-  count = 0
+  count = var.service_image == null ? 0 : 1
 
   region                       = var.aws_region
   security_group_id            = var.task_security_group_id
@@ -410,4 +410,190 @@ resource "aws_route53_record" "caa" {
   type    = "CAA"
   ttl     = 300
   records = ["0 issue \"amazon.com\""]
+}
+
+resource "aws_ecs_cluster" "this" {
+  count  = var.service_image == null ? 0 : 1
+  region = var.aws_region
+  name   = var.name
+
+  setting {
+    name  = "containerInsights"
+    value = "disabled"
+  }
+
+  tags = {
+    environment = var.environment
+    project     = var.project
+  }
+}
+
+resource "aws_ecs_task_definition" "this" {
+  count                    = var.service_image == null ? 0 : 1
+  region                   = var.aws_region
+  family                   = var.name
+  cpu                      = "256"
+  memory                   = "512"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  execution_role_arn       = var.execution_role_arn
+  task_role_arn            = var.task_role_arn
+
+  runtime_platform {
+    cpu_architecture        = var.cpu_architecture
+    operating_system_family = "LINUX"
+  }
+
+  container_definitions = jsonencode([
+    {
+      name      = "service"
+      image     = var.service_image
+      essential = true
+      user      = "node"
+      portMappings = [{
+        containerPort = 8080
+        protocol      = "tcp"
+        name          = "service"
+      }]
+      readonlyRootFilesystem = true
+      stopTimeout            = 30
+      mountPoints = [{
+        sourceVolume  = "tmp"
+        containerPath = "/tmp"
+        readOnly      = false
+      }]
+      environment = [
+        { name = "PORT", value = "8080" },
+        { name = "AWS_REGION", value = "ap-southeast-2" },
+        { name = "NODE_ENV", value = "production" },
+        { name = "COMMUNITY_HUB_ENVIRONMENT", value = var.environment },
+        { name = "PGHOST", value = var.db_host },
+        { name = "PGPORT", value = tostring(var.db_port) },
+        { name = "PGDATABASE", value = "communityhub" },
+        { name = "PGUSER_APP", value = "app" },
+        { name = "PGUSER_IDENTITY", value = "identity" },
+        { name = "PGUSER_PLATFORM", value = "platform" },
+        { name = "ENVELOPE_KEY_ARN", value = var.envelope_key_arn },
+        { name = "API_HOSTNAME", value = local.api_hostname },
+        { name = "AUTH_HOSTNAME", value = local.auth_hostname },
+        { name = "WEBHOOKS_HOSTNAME", value = local.webhooks_hostname },
+        { name = "OPS_HOSTNAME", value = local.ops_hostname },
+        { name = "APP_SECRET_ARN", value = var.app_secret_arn },
+        { name = "IDENTITY_SECRET_ARN", value = var.identity_secret_arn },
+        { name = "PLATFORM_SECRET_ARN", value = var.platform_secret_arn },
+      ]
+      secrets = concat(
+        [
+          { name = "PGPASSWORD_APP", valueFrom = var.app_secret_arn },
+          { name = "PGPASSWORD_IDENTITY", valueFrom = var.identity_secret_arn },
+          { name = "PGPASSWORD_PLATFORM", valueFrom = var.platform_secret_arn },
+        ],
+        var.turnstile_secret_arn == null ? [] : [{ name = "TURNSTILE_SECRET", valueFrom = var.turnstile_secret_arn }],
+      )
+      healthCheck = {
+        command     = ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 60
+      }
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = var.log_group_name
+          awslogs-region        = "ap-southeast-2"
+          awslogs-stream-prefix = "service"
+        }
+      }
+    }
+  ])
+
+  volume {
+    name = "tmp"
+  }
+
+  tags = {
+    environment = var.environment
+    project     = var.project
+  }
+}
+
+resource "aws_ecs_cluster_capacity_providers" "this" {
+  count        = var.service_image == null ? 0 : 1
+  region       = var.aws_region
+  cluster_name = aws_ecs_cluster.this[0].name
+
+  capacity_providers = ["FARGATE", "FARGATE_SPOT"]
+}
+
+resource "aws_ecs_service" "this" {
+  count                  = var.service_image == null ? 0 : 1
+  region                 = var.aws_region
+  name                   = var.name
+  cluster                = aws_ecs_cluster.this[0].id
+  task_definition        = aws_ecs_task_definition.this[0].arn
+  desired_count          = var.desired_count
+  enable_execute_command = false
+
+  depends_on = [
+    aws_ecs_cluster_capacity_providers.this,
+    aws_iam_role_policy.pull,
+    aws_vpc_security_group_ingress_rule.task_api,
+  ]
+
+  capacity_provider_strategy {
+    capacity_provider = var.capacity_provider
+    weight            = 1
+  }
+
+  deployment_minimum_healthy_percent = 100
+  deployment_maximum_percent         = 200
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
+  network_configuration {
+    subnets          = var.task_subnet_ids
+    security_groups  = [var.task_security_group_id]
+    assign_public_ip = true
+  }
+
+  service_registries {
+    registry_arn   = aws_service_discovery_service.this.arn
+    container_name = "service"
+    container_port = 8080
+  }
+
+  tags = {
+    environment = var.environment
+    project     = var.project
+  }
+}
+
+resource "aws_iam_role_policy" "pull" {
+  count = var.service_image == null ? 0 : 1
+  name  = "${var.name}-ecr-pull"
+  role  = var.execution_role_name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "ecr:GetAuthorizationToken"
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage",
+        ]
+        Resource = aws_ecr_repository.service.arn
+      },
+    ]
+  })
 }
