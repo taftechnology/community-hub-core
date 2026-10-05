@@ -39,6 +39,14 @@ export default {
       ImportExpression(node) {
         checkSource(node.source, context);
       },
+      ExportAllDeclaration(node) {
+        checkSource(node.source, context);
+      },
+      ExportNamedDeclaration(node) {
+        if (node.source) {
+          checkSource(node.source, context);
+        }
+      },
     };
   },
 };

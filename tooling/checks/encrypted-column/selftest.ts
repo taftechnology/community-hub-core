@@ -65,6 +65,8 @@ const mustFail: { file: string; ruleId: string; count: number }[] = [
   { file: "fail/packages/db/src/plaintext-alias.ts", ruleId: PLAINTEXT, count: 1 },
   { file: "fail/packages/db/src/plaintext-js.ts", ruleId: PLAINTEXT, count: 1 },
   { file: "fail/packages/db/src/plaintext-no-extension.ts", ruleId: PLAINTEXT, count: 1 },
+  { file: "fail/packages/db/src/plaintext-export-all.ts", ruleId: PLAINTEXT, count: 1 },
+  { file: "fail/packages/db/src/plaintext-export-named.ts", ruleId: PLAINTEXT, count: 1 },
   { file: "fail/packages/db/src/disable-comment.ts", ruleId: DISABLE, count: 1 },
   { file: "fail/packages/db/src/inline-config.ts", ruleId: DISABLE, count: 1 },
   { file: "fail/packages/db/src/ts-ignore.ts", ruleId: TS_IGNORE, count: 1 },
