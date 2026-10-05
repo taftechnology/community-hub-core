@@ -1,7 +1,7 @@
 # Spec: Regional service
 
 Slug: regional-service
-Status: draft
+Status: approved (2026-10-05, Abdus Salam)
 Architecture refs: §7, §7.3, §12, ADR 0009. Implements the `regional service` row in `docs/roadmap.md`. `docs/specs/2026-10-03-personal-data-on-aws.md`, `docs/specs/2026-10-04-ingress.md`, `docs/specs/2026-10-04-db-tls.md`, and ADR 0009 are not edited.
 
 ## Problem
@@ -64,7 +64,7 @@ A failed check exits 1 before the port is bound. Stdout is empty. Stderr is the 
 
 On SIGTERM the process may keep accepting for up to 5 seconds. It then stops accepting. A request that finishes before the force-close still receives its response. At 25 seconds after SIGTERM, every connection that is still open is destroyed. The process then exits 0, which is before the 30-second stop timeout. A connection that arrives after accepting has stopped receives no HTTP response. A test holds a request that never finishes and asserts the connection is destroyed and the process has exited before 30 seconds.
 
-The server sets `keepAliveTimeout` to 5000 milliseconds and `headersTimeout` to 10000 milliseconds. `headersTimeout` is longer than `keepAliveTimeout`, so an idle keep-alive socket is closed by the keep-alive timer. Five seconds of inactivity after a response destroys the socket. Ten seconds is the limit for the complete headers to arrive.
+The server sets `keepAliveTimeout` to 65000 milliseconds and `headersTimeout` to 66000 milliseconds. `headersTimeout` is longer than `keepAliveTimeout`, so an idle keep-alive socket is closed by the keep-alive timer. 5000 is Node's default. These values are set so the process outlasts the gateway's idle connections. The first staging apply's count of 5xx responses under steady light traffic is what confirms these values or changes them.
 
 ### Health and the gate
 
@@ -187,7 +187,7 @@ The image job also checks the ingress rows this process owns:
 | Listen         | With `PORT` `8080` the process accepts on `0.0.0.0:8080`                                                                                                                                            |
 | Health command | `node -e "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"` exits 0, invoked as `node` with no shell                                               |
 | SIGTERM        | Accepting stops within 5 seconds, an in-flight request that finishes still receives its response, a request that never finishes is destroyed at 25 seconds, and the process exits before 30 seconds |
-| Keep-alive     | `keepAliveTimeout` is 5000 and `headersTimeout` is 10000                                                                                                                                            |
+| Keep-alive     | `keepAliveTimeout` is 65000 and `headersTimeout` is 66000                                                                                                                                           |
 
 Those container checks set every required variable to a synthetic value, including an ARN whose account id is `123456789012`. They do not contact a database or KMS. Listen and `GET /health` still call no factory and no `send`.
 
@@ -254,7 +254,7 @@ Gate tests cover the four refusal reasons in order, loopback `GET /health` witho
 
 Adapter tests cover context rejected before `send`, a mismatched `keyId` before `send`, the 3000 ms default, a call aborted at the deadline, bytes zeroed when they settle after the deadline, `kms_failed` with no cause, and one log line whose outcome is `ok`, `rejected`, `failed`, or `timeout`. The ARN check accepts a Sydney UUID key id and an `mrk-` id, and rejects an alias and another region.
 
-Server tests cover startup `env` and `routes`, listen without a factory or a KMS `send`, and `GET /health` the same way. The certificate test fails when one byte of the bundle changes.
+Server tests cover startup `env` and `routes`, listen without a factory or a KMS `send`, and `GET /health` the same way. They assert `keepAliveTimeout` is 65000 and `headersTimeout` is 66000. The first staging apply's count of 5xx responses under steady light traffic is what confirms those values or changes them. The certificate test fails when one byte of the bundle changes.
 
 Probe tests cover each step code, the byte compare, zeroing, and the planted marker on a caught failure and an uncaught throw.
 
@@ -266,6 +266,6 @@ No legal sign-off. No new subprocessor. No ADR. `architecture.md` is not edited.
 
 This chunk touches encryption and residency. A second fresh-context review reads the final diff and has not seen the implementation. The review that writes this spec does not count. The PR records that pass.
 
-The last commit updates the catalogue. `regional service` is **done** and links this spec. The snapshot is 20 rows: 17 done, 1 superseded (`api-au-hostname`), 2 not started. Next chunk is `first staging apply`. The repository-state line in `AGENTS.md` matches. The `first staging apply` row gains these sentences: an alarm on `missing_hostname_header` from a non-loopback address is an open item for that row; the probe runs as the standalone task described here, with `desired_count` still 0; 5xx responses under steady light traffic are counted, not only during a deploy. The open-items section gains two lines. Whether startup should prove the database or KMS is decided by the first chunk that serves a route which needs either one. A cache of unwrapped organisation keys is decided by the first chunk that unwraps one. The password re-read item gains one sentence: that same chunk adds pooled checkout of `createAppSql`, `createIdentitySql`, and `createPlatformSql`.
+The last commit updates the catalogue. `regional service` is **done** and links this spec. The snapshot is 20 rows: 17 done, 1 superseded (`api-au-hostname`), 2 not started. Next chunk is `first staging apply`. The repository-state line in `AGENTS.md` matches. The `first staging apply` row gains these sentences: an alarm on `missing_hostname_header` from a non-loopback address is an open item for that row; the probe runs as the standalone task described here, with `desired_count` still 0; 5xx responses under steady light traffic are counted, not only during a deploy, and that count is what confirms the keep-alive timeouts of 65000 and 66000 or changes them. The open-items section gains two lines. Whether startup should prove the database or KMS is decided by the first chunk that serves a route which needs either one. A cache of unwrapped organisation keys is decided by the first chunk that unwraps one. The password re-read item gains one sentence: that same chunk adds pooled checkout of `createAppSql`, `createIdentitySql`, and `createPlatformSql`.
 
 No password, account id, or live hostname appears in this spec, the plan, the tests, or the logs. Tests that need an account id inside an ARN use `123456789012`.
