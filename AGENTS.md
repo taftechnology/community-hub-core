@@ -374,7 +374,7 @@ Omitted until first real input plus a must-fail fixture: tenant-isolation suite,
 
 **Stage 3 — Build and preview (every PR)**
 
-- Stage 3 builds `@community-hub/api` and does not call Wrangler or require a Cloudflare token. The service chunk replaces that build with the ARM image build. Verification of the service is the staging hostname.
+- Stage 3 builds this ARM image, does not push it, and does not call Wrangler or require a Cloudflare token. Verification of a running task stays the staging hostname.
 - OpenAPI diff comments apply only once those artefacts exist in the repo. Live Terraform `plan` comments wait on CI identities (AWS OIDC).
 
 **Stage 4 — Deploy**
