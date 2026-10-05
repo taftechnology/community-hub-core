@@ -49,6 +49,9 @@ importers:
       '@aws-sdk/client-kms':
         specifier: ^3.758.0
         version: 3.1145.0
+      '@community-hub/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
       '@community-hub/kernel':
         specifier: workspace:*
         version: link:../../packages/kernel

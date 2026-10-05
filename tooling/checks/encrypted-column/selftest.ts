@@ -60,6 +60,8 @@ const mustFail: { file: string; ruleId: string; count: number }[] = [
     count: 1,
   },
   { file: "fail/packages/db/src/kms-decrypt.ts", ruleId: KMS, count: 1 },
+  { file: "fail/apps/api/src/kms/leak.ts", ruleId: KMS, count: 1 },
+  { file: "fail/apps/api/src/probe.ts", ruleId: QUERY, count: 1 },
   { file: "fail/packages/db/src/kms-destructure.ts", ruleId: KMS, count: 1 },
   { file: "fail/packages/db/src/testing-import.ts", ruleId: TESTING, count: 1 },
   { file: "fail/packages/db/src/plaintext-alias.ts", ruleId: PLAINTEXT, count: 1 },
@@ -98,6 +100,7 @@ const mustPass = [
   "pass/packages/db/src/decrypt-insert.ts",
   "pass/packages/db/src/define-column.ts",
   "pass/packages/db/src/no-plaintext.ts",
+  "pass/apps/api/src/probe.ts",
   "pass/event-allowed.ts",
   "pass/event-imported-ids.ts",
 ] as const;

@@ -19,6 +19,10 @@ export default {
     if (isCryptoSource(context.filename)) {
       return {};
     }
+    const normalized = context.filename.replaceAll("\\", "/");
+    if (normalized.endsWith("/apps/api/src/probe.ts")) {
+      return {};
+    }
     const services = ESLintUtils.getParserServices(context);
     const checker = services.program.getTypeChecker();
 

@@ -1,137 +1,224 @@
 import { DecryptCommand, GenerateDataKeyCommand } from "@aws-sdk/client-kms";
-import { describe, expect, it } from "vitest";
+import type { KmsContext } from "@community-hub/crypto";
+import { describe, expect, it, vi } from "vitest";
 
-import { createAwsBrokerKms } from "./aws-kms-adapter.js";
+import { createAwsKmsPort, DEFAULT_DEADLINE_MS } from "./aws-kms-adapter.js";
+import { ContextRejected } from "./context.js";
 
-const KEY_ID = "arn:aws:kms:ap-southeast-2:123456789012:key/adapter-test";
+const KEY_ARN = "arn:aws:kms:ap-southeast-2:123456789012:key/11111111-1111-4111-8111-111111111111";
 
-describe("createAwsBrokerKms", () => {
-  it("sends GenerateDataKey with KeyId, KeySpec AES_256, and EncryptionContext for org and identity", async () => {
-    const commands: Array<GenerateDataKeyCommand | DecryptCommand> = [];
-    const kms = createAwsBrokerKms({
-      send: async (command) => {
-        commands.push(command);
-        return {
-          Plaintext: new Uint8Array(32).fill(1),
-          CiphertextBlob: new Uint8Array(16).fill(2),
-        };
-      },
-    });
+const org: KmsContext = { key_kind: "org", org_id: "org-1", key_version: "v1" };
 
-    await kms.generateDataKey(
-      { keyId: KEY_ID, context: { key_kind: "org", org_id: "org-1", key_version: "v1" } },
-      { abortSignal: new AbortController().signal },
-    );
-    await kms.generateDataKey(
-      { keyId: KEY_ID, context: { key_kind: "identity", region: "au", key_version: "v2" } },
-      { abortSignal: new AbortController().signal },
-    );
+type Log = {
+  operation: "generate_data_key" | "decrypt";
+  key_kind?: "org" | "identity";
+  outcome: "ok" | "rejected" | "failed" | "timeout";
+};
 
-    expect(commands).toHaveLength(2);
-    const orgCmd = commands[0];
-    if (!(orgCmd instanceof GenerateDataKeyCommand)) {
-      throw new Error("expected GenerateDataKeyCommand");
-    }
-    const idCmd = commands[1];
-    if (!(idCmd instanceof GenerateDataKeyCommand)) {
-      throw new Error("expected GenerateDataKeyCommand");
-    }
-    expect(orgCmd.input.KeyId).toBe(KEY_ID);
-    expect(orgCmd.input.KeySpec).toBe("AES_256");
-    expect(orgCmd.input.EncryptionContext).toEqual({
-      key_kind: "org",
-      org_id: "org-1",
-      key_version: "v1",
-    });
-    expect(idCmd.input.KeyId).toBe(KEY_ID);
-    expect(idCmd.input.KeySpec).toBe("AES_256");
-    expect(idCmd.input.EncryptionContext).toEqual({
-      key_kind: "identity",
-      region: "au",
-      key_version: "v2",
-    });
+async function rejection(run: () => Promise<unknown>): Promise<Error> {
+  try {
+    await run();
+  } catch (error) {
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(ContextRejected);
+    return error as Error;
+  }
+  throw new Error("expected kms_failed");
+}
+
+describe("createAwsKmsPort", () => {
+  it("exports a 3000 ms deadline and does not wait for it", () => {
+    expect(DEFAULT_DEADLINE_MS).toBe(3000);
   });
 
-  it("sends Decrypt with KeyId and EncryptionContext", async () => {
-    const commands: Array<GenerateDataKeyCommand | DecryptCommand> = [];
-    const kms = createAwsBrokerKms({
-      send: async (command) => {
-        commands.push(command);
-        return { Plaintext: new Uint8Array(32).fill(3) };
-      },
+  it("rejects a context before send and keeps key_kind when it is org", async () => {
+    const send = vi.fn();
+    const logs: Log[] = [];
+    const port = createAwsKmsPort({
+      client: { send },
+      keyArn: KEY_ARN,
+      info: (fields) => logs.push(fields),
     });
 
-    const blob = new Uint8Array(24).fill(4);
-    await kms.decrypt(
-      {
-        keyId: KEY_ID,
-        blob,
-        context: { key_kind: "org", org_id: "org-decrypt", key_version: "v3" },
-      },
-      { abortSignal: new AbortController().signal },
+    const error = await rejection(() =>
+      port.generateDataKey(KEY_ARN, { key_kind: "org" } as KmsContext),
     );
-
-    expect(commands).toHaveLength(1);
-    const cmd = commands[0];
-    if (!(cmd instanceof DecryptCommand)) {
-      throw new Error("expected DecryptCommand");
-    }
-    expect(cmd.input.KeyId).toBe(KEY_ID);
-    expect(cmd.input.EncryptionContext).toEqual({
-      key_kind: "org",
-      org_id: "org-decrypt",
-      key_version: "v3",
-    });
+    expect(error.message).toBe("kms_failed");
+    expect(error.cause).toBeUndefined();
+    expect(send).not.toHaveBeenCalled();
+    expect(logs).toEqual([{ operation: "generate_data_key", outcome: "rejected", key_kind: "org" }]);
   });
 
-  it("zeroes Plaintext when CiphertextBlob is missing and throws", async () => {
-    const sdkPlaintext = new Uint8Array(32).fill(5);
-    const kms = createAwsBrokerKms({
-      send: async () => ({ Plaintext: sdkPlaintext }),
+  it("rejects a key id other than the configured ARN without send", async () => {
+    const send = vi.fn();
+    const logs: Log[] = [];
+    const port = createAwsKmsPort({
+      client: { send },
+      keyArn: KEY_ARN,
+      info: (fields) => logs.push(fields),
     });
 
-    await expect(
-      kms.generateDataKey(
-        { keyId: KEY_ID, context: { key_kind: "org", org_id: "org-inc", key_version: "v1" } },
-        { abortSignal: new AbortController().signal },
-      ),
-    ).rejects.toThrow("kms response incomplete");
+    const error = await rejection(() => port.generateDataKey("other-key", org));
+    expect(error.message).toBe("kms_failed");
+    expect(error.cause).toBeUndefined();
+    expect(send).not.toHaveBeenCalled();
+    expect(logs).toEqual([{ operation: "generate_data_key", outcome: "rejected", key_kind: "org" }]);
+  });
+
+  it("omits key_kind when the context kind is unknown", async () => {
+    const send = vi.fn();
+    const logs: Log[] = [];
+    const port = createAwsKmsPort({
+      client: { send },
+      keyArn: KEY_ARN,
+      info: (fields) => logs.push(fields),
+    });
+
+    const error = await rejection(() =>
+      port.decrypt(KEY_ARN, new Uint8Array(), { key_kind: "nope" } as unknown as KmsContext),
+    );
+    expect(error.message).toBe("kms_failed");
+    expect(send).not.toHaveBeenCalled();
+    expect(logs).toEqual([{ operation: "decrypt", outcome: "rejected" }]);
+    expect(logs[0]).not.toHaveProperty("key_kind");
+  });
+
+  it("times out when the response arrives after abort and zeroes the SDK buffers", async () => {
+    const sdkPlaintext = new Uint8Array([1, 2, 3, 4]);
+    const sdkBlob = new Uint8Array([5, 6]);
+    const logs: Log[] = [];
+    const port = createAwsKmsPort({
+      client: {
+        send: (_command, sendOptions) =>
+          new Promise((resolve) => {
+            sendOptions?.abortSignal?.addEventListener("abort", () => {
+              resolve({ Plaintext: sdkPlaintext, CiphertextBlob: sdkBlob });
+            });
+          }),
+      },
+      keyArn: KEY_ARN,
+      deadlineMs: 5,
+      info: (fields) => logs.push(fields),
+    });
+
+    const error = await rejection(() => port.generateDataKey(KEY_ARN, org));
+    expect(error.message).toBe("kms_failed");
+    expect(error.cause).toBeUndefined();
     expect(sdkPlaintext.every((byte) => byte === 0)).toBe(true);
+    expect(sdkBlob.every((byte) => byte === 0)).toBe(true);
+    expect(logs).toEqual([{ operation: "generate_data_key", outcome: "timeout", key_kind: "org" }]);
   });
 
-  it("zeroes SDK buffers and throws when abortSignal is already aborted on fulfill", async () => {
-    const sdkPlaintext = new Uint8Array(32).fill(9);
-    const sdkBlob = new Uint8Array(12).fill(8);
-    const kms = createAwsBrokerKms({
-      send: async () => ({ Plaintext: sdkPlaintext, CiphertextBlob: sdkBlob }),
+  it("fails an incomplete response", async () => {
+    const sdkPlaintext = new Uint8Array(32).fill(5);
+    const logs: Log[] = [];
+    const port = createAwsKmsPort({
+      client: {
+        send: async () => ({ Plaintext: sdkPlaintext }),
+      },
+      keyArn: KEY_ARN,
+      info: (fields) => logs.push(fields),
     });
 
-    const controller = new AbortController();
-    controller.abort();
+    const error = await rejection(() => port.generateDataKey(KEY_ARN, org));
+    expect(error.message).toBe("kms_failed");
+    expect(sdkPlaintext.every((byte) => byte === 0)).toBe(true);
+    expect(logs).toEqual([{ operation: "generate_data_key", outcome: "failed", key_kind: "org" }]);
+  });
 
-    await expect(
-      kms.generateDataKey(
-        { keyId: KEY_ID, context: { key_kind: "org", org_id: "org-a", key_version: "v1" } },
-        { abortSignal: controller.signal },
-      ),
-    ).rejects.toThrow("aborted");
+  it("times out when send rejects because the abort signal fired", async () => {
+    const logs: Log[] = [];
+    const port = createAwsKmsPort({
+      client: {
+        send: (_command, sendOptions) =>
+          new Promise((_resolve, reject) => {
+            sendOptions?.abortSignal?.addEventListener("abort", () => {
+              reject(new Error("aborted"));
+            });
+          }),
+      },
+      keyArn: KEY_ARN,
+      deadlineMs: 5,
+      info: (fields) => logs.push(fields),
+    });
+
+    const error = await rejection(() => port.decrypt(KEY_ARN, new Uint8Array([1]), org));
+    expect(error.message).toBe("kms_failed");
+    expect(error.cause).toBeUndefined();
+    expect(logs).toEqual([{ operation: "decrypt", outcome: "timeout", key_kind: "org" }]);
+  });
+
+  it("returns copies, zeroes the SDK buffers, and logs ok", async () => {
+    const sdkPlaintext = new Uint8Array(32).fill(4);
+    const sdkBlob = new Uint8Array(8).fill(6);
+    const commands: Array<GenerateDataKeyCommand | DecryptCommand> = [];
+    const logs: Log[] = [];
+    const port = createAwsKmsPort({
+      client: {
+        send: async (command) => {
+          commands.push(command);
+          if (command instanceof DecryptCommand) {
+            return { Plaintext: sdkPlaintext };
+          }
+          return { Plaintext: sdkPlaintext, CiphertextBlob: sdkBlob };
+        },
+      },
+      keyArn: KEY_ARN,
+      info: (fields) => logs.push(fields),
+    });
+
+    const generated = await port.generateDataKey(KEY_ARN, org);
+    expect(generated.plaintext).toEqual(new Uint8Array(32).fill(4));
+    expect(generated.blob).toEqual(new Uint8Array(8).fill(6));
+    expect(generated.plaintext).not.toBe(sdkPlaintext);
     expect(sdkPlaintext.every((byte) => byte === 0)).toBe(true);
     expect(sdkBlob.every((byte) => byte === 0)).toBe(true);
 
     const decryptPlaintext = new Uint8Array(32).fill(7);
-    const decryptKms = createAwsBrokerKms({
-      send: async () => ({ Plaintext: decryptPlaintext }),
-    });
-    await expect(
-      decryptKms.decrypt(
-        {
-          keyId: KEY_ID,
-          blob: new Uint8Array(8),
-          context: { key_kind: "org", org_id: "org-b", key_version: "v1" },
+    const decryptPort = createAwsKmsPort({
+      client: {
+        send: async (command) => {
+          commands.push(command);
+        return { Plaintext: decryptPlaintext };
         },
-        { abortSignal: controller.signal },
-      ),
-    ).rejects.toThrow("aborted");
+      },
+      keyArn: KEY_ARN,
+      info: (fields) => logs.push(fields),
+    });
+    const opened = await decryptPort.decrypt(KEY_ARN, generated.blob, {
+      key_kind: "identity",
+      region: "ap-southeast-2",
+      key_version: "v2",
+    });
+    expect(opened).toEqual(new Uint8Array(32).fill(7));
     expect(decryptPlaintext.every((byte) => byte === 0)).toBe(true);
+
+    const generate = commands[0];
+    expect(generate).toBeInstanceOf(GenerateDataKeyCommand);
+    if (!(generate instanceof GenerateDataKeyCommand)) {
+      throw new Error("expected GenerateDataKeyCommand");
+    }
+    expect(generate.input.KeyId).toBe(KEY_ARN);
+    expect(generate.input.KeySpec).toBe("AES_256");
+    expect(generate.input.EncryptionContext).toEqual({
+      key_kind: "org",
+      org_id: "org-1",
+      key_version: "v1",
+    });
+    const decrypt = commands[1];
+    expect(decrypt).toBeInstanceOf(DecryptCommand);
+    if (!(decrypt instanceof DecryptCommand)) {
+      throw new Error("expected DecryptCommand");
+    }
+    expect(decrypt.input.KeyId).toBe(KEY_ARN);
+    expect(decrypt.input.EncryptionContext).toEqual({
+      key_kind: "identity",
+      region: "ap-southeast-2",
+      key_version: "v2",
+    });
+    expect(logs).toEqual([
+      { operation: "generate_data_key", outcome: "ok", key_kind: "org" },
+      { operation: "decrypt", outcome: "ok", key_kind: "identity" },
+    ]);
   });
 });

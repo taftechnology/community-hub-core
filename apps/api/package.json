@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-kms": "^3.758.0",
+    "@community-hub/crypto": "workspace:*",
     "@community-hub/kernel": "workspace:*",
     "@community-hub/observability": "workspace:*"
   },
