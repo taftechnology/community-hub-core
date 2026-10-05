@@ -10,7 +10,7 @@
 
 Spec: docs/specs/2026-10-05-regional-service.md
 
-Status: draft
+Status: approved (2026-10-05, Abdus Salam)
 
 **Branch:** `feat/2026-10-05-regional-service` · one PR · 9 tasks, one commit each
 
@@ -26,7 +26,7 @@ Status: draft
 - No migration wave. There is no expand, migrate, or contract step.
 - Session scratch (`.superpowers/`, `*-report.md`) is never committed.
 - This plan is past the ~800 changed-line guide. Nine tasks, about 2,400 changed lines. The reason: the gate, the adapter, the probe, and the image describe one process. An image that booted the current fetch handler would answer `GET /health` with no peer check and no hostname check. The probe's `env` failure is the CI proof that the image contains the command, and it is meaningless against a different layout. Do not split this plan. The PR body repeats this paragraph.
-- The human reviews each commit before the next task starts. This chunk touches encryption and residency. A second fresh-context review reads the final diff and has not seen the implementation. Leave that line open in the PR. Do not pin a model name. Do not write the second review yourself.
+- Implement every task in order. Do not stop for review between tasks. Commit each task as this plan specifies, then report when the plan is complete. This chunk touches encryption and residency. A second fresh-context review reads the final diff and has not seen the implementation. Leave that line open in the PR. Do not pin a model name. Do not write the second review yourself.
 - AGENTS.md §8's staging-hostname check does not apply. Nothing is deployed. `service_image` stays null and the image is not pushed. Say that in the PR body.
 - Traceability stays red until this plan is approved and the PR body links the spec and the plan. Do not weaken the check. Do not mark this plan approved yourself.
 - Every task runs this gate before its commit, with the filter named in that task: `pnpm lint && pnpm typecheck && pnpm test --filter <filter> && pnpm check:boundaries`. Task 9 runs the full CI sequence below, not only this gate.
@@ -397,10 +397,13 @@ About 400 changed lines.
 - Delete: `apps/api/src/kms/broker-kms.ts`
 - Modify: `apps/api/package.json`
 - Modify: `apps/api/tsconfig.json`
-- Modify: `tooling/eslint-plugin-community-hub/lib/ast.js`
+- Modify: `tooling/eslint-plugin-community-hub/rules/no-kms-port-outside-crypto.js`
 - Create: `tooling/checks/encrypted-column/fixtures/fail/apps/api/src/kms/leak.ts`
+- Create: `tooling/checks/encrypted-column/fixtures/fail/apps/api/src/probe.ts`
 - Create: `tooling/checks/encrypted-column/fixtures/pass/apps/api/src/probe.ts`
-- Modify: `tooling/checks/encrypted-column/selftest.ts` only if a fixture list is hardcoded. If the selftest walks the fixtures directory, do not edit it.
+- Modify: `tooling/checks/encrypted-column/selftest.ts`
+
+Do not modify `tooling/eslint-plugin-community-hub/lib/ast.js`.
 
 **Interfaces:**
 
@@ -439,12 +442,13 @@ Rewrite `apps/api/src/kms/aws-kms-adapter.test.ts` against `createAwsKmsPort`. C
 - `deadlineMs` defaults to 3000: a client that records `abortSignal` sees it already aborted after a fake timer advance of 3000 ms, or the test passes `deadlineMs: 5` and asserts the default by reading a test-only export `DEFAULT_DEADLINE_MS === 3000`. Do not wait 3000 ms.
 - A response that resolves after abort is outcome `timeout`, the returned plaintext bytes are not the caller's, and the source buffer is filled with 0.
 - An incomplete response is outcome `failed`.
+- When `send` rejects and the abort signal has already fired, the outcome is `timeout`, not `failed`. The fake client rejects when the signal aborts. `deadlineMs` is 5 so the test does not wait 3000 ms.
 - Success is outcome `ok`, and the SDK plaintext buffer is filled with 0 after the copy is returned.
 - One info call per operation. `operation` is `generate_data_key` or `decrypt`.
 
 Add `apps/api` dependency `@community-hub/crypto` and a tsconfig reference to `packages/crypto` in this task, or the import does not resolve. The failing test comes first; add the dependency in the same red step so the test file typechecks enough to fail on the missing export.
 
-The fail fixture `tooling/checks/encrypted-column/fixtures/fail/apps/api/src/kms/leak.ts` is the same call shape as `fixtures/fail/packages/db/src/kms-decrypt.ts`. The pass fixture `fixtures/pass/apps/api/src/probe.ts` calls `port.generateDataKey` and `port.decrypt`.
+The fail fixture `tooling/checks/encrypted-column/fixtures/fail/apps/api/src/kms/leak.ts` is the same call shape as `fixtures/fail/packages/db/src/kms-decrypt.ts`. The pass fixture `fixtures/pass/apps/api/src/probe.ts` calls `port.generateDataKey` and `port.decrypt`. The fail fixture `fixtures/fail/apps/api/src/probe.ts` is a copy of `fixtures/fail/sql-raw.ts`. Add both new fail files and the pass file to the `mustFail` and `mustPass` lists in `tooling/checks/encrypted-column/selftest.ts`. Do not change `isCryptoSource`.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -456,20 +460,20 @@ Expected: FAIL because `createAwsKmsPort` is not exported. `createAwsBrokerKms` 
 
 Delete `BrokerKms`. `createAwsKmsPort` runs `checkContext` first, then compares `keyId` to `options.keyArn` with `===`. Either failure logs `rejected` and throws `new Error("kms_failed")` with no second argument. Catch `ContextRejected` and do not attach it as `cause`.
 
-Pass `AbortSignal.timeout(options.deadlineMs ?? 3000)` to `send`. If `abortSignal.aborted` after `send` resolves, zero every buffer and throw `kms_failed` with outcome `timeout`. If `send` rejects or a required buffer is missing, zero what you hold and throw `kms_failed` with outcome `failed`. On success, copy the bytes, `fill(0)` the SDK buffers, and return the copies.
+Pass `AbortSignal.timeout(options.deadlineMs ?? 3000)` to `send`. If `abortSignal.aborted` after `send` resolves, or `send` rejects after the signal has fired, zero every buffer and throw `kms_failed` with outcome `timeout`. If `send` rejects while the signal has not fired, or a required buffer is missing, zero what you hold and throw `kms_failed` with outcome `failed`. On success, copy the bytes, `fill(0)` the SDK buffers, and return the copies.
 
-`isCryptoSource` in `tooling/eslint-plugin-community-hub/lib/ast.js` returns true when the normalized filename includes `/packages/crypto/src/` or ends with `/apps/api/src/probe.ts`.
+Do not change `isCryptoSource`. `no-encrypted-column-query` uses it in three places, and a probe exemption there would skip that rule too. In `tooling/eslint-plugin-community-hub/rules/no-kms-port-outside-crypto.js` only, return no listeners when the normalized filename ends with `/apps/api/src/probe.ts`, in addition to the existing `isCryptoSource` check. `fixtures/fail/apps/api/src/probe.ts` still reports `no-encrypted-column-query`.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `pnpm lint && pnpm typecheck && pnpm test --filter @community-hub/api && pnpm test --filter @community-hub/check-encrypted-column && pnpm check:boundaries`
 
-Expected: PASS. The new `apps/api/src/kms` fixture fails the rule. The probe fixture does not.
+Expected: PASS. The `apps/api/src/kms` fixture fails `no-kms-port-outside-crypto`. The pass probe fixture does not. The fail probe fixture reports `no-encrypted-column-query`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/api/src/kms/aws-kms-adapter.ts apps/api/src/kms/aws-kms-adapter.test.ts apps/api/src/kms/broker-kms.ts apps/api/package.json apps/api/tsconfig.json tooling/eslint-plugin-community-hub/lib/ast.js tooling/checks/encrypted-column/fixtures/fail/apps/api/src/kms/leak.ts tooling/checks/encrypted-column/fixtures/pass/apps/api/src/probe.ts
+git add apps/api/src/kms/aws-kms-adapter.ts apps/api/src/kms/aws-kms-adapter.test.ts apps/api/src/kms/broker-kms.ts apps/api/package.json apps/api/tsconfig.json tooling/eslint-plugin-community-hub/rules/no-kms-port-outside-crypto.js tooling/checks/encrypted-column/selftest.ts tooling/checks/encrypted-column/fixtures/fail/apps/api/src/kms/leak.ts tooling/checks/encrypted-column/fixtures/fail/apps/api/src/probe.ts tooling/checks/encrypted-column/fixtures/pass/apps/api/src/probe.ts
 git commit -m "$(cat <<'EOF'
 feat(api): reshape the KMS adapter onto KmsPort
 
@@ -498,12 +502,10 @@ About 260 changed lines.
 - Create: `apps/api/certs/rds-ap-southeast-2-bundle.pem`
 - Modify: `apps/api/src/index.ts`
 - Modify: `apps/api/src/index.test.ts`
-- Modify: `apps/api/package.json`
-- Modify: `apps/api/tsconfig.json`
 
 **Interfaces:**
 
-- Consumes: `createGate`, `assertRoutes`, and `GateRoute` from `./gate.js`. `createAwsKmsPort` is constructed only inside a function the listen path does not call. `createLogger` from `@community-hub/observability`.
+- Consumes: `createGate`, `assertRoutes`, and `GateRoute` from `./gate.js`. `createLogger` from `@community-hub/observability`. The server module does not import `@community-hub/db` or `./kms/aws-kms-adapter.js`.
 - Produces:
 
 ```ts
@@ -519,12 +521,15 @@ export function readServiceEnv(
   pem: string,
 ): { ok: true; env: ServiceEnv } | { ok: false };
 
+export type SignalSource = {
+  on(signal: "SIGTERM", listener: () => void): void;
+};
+
 export function startServer(options: {
   env: ServiceEnv;
-  pem: string;
   routes: readonly GateRoute[];
-  createKms: () => ReturnType<typeof createAwsKmsPort>;
-  factories: { direct: typeof createDirectSql };
+  signals?: SignalSource;
+  exit?: (code: number) => void;
   acceptForMs?: number;
   forceCloseMs?: number;
 }): import("node:http").Server;
@@ -534,7 +539,7 @@ export function startServer(options: {
 
 `readServiceEnv` returns `{ ok: false }` unless every required value is a non-empty string, `PORT` and `PGPORT` are integers from 1 to 65535, `AWS_REGION` is `ap-southeast-2`, `NODE_ENV` is `production` or `test`, `COMMUNITY_HUB_ENVIRONMENT` is `staging` or `prod`, the four lowercased hostnames are distinct, `ENVELOPE_KEY_ARN` matches `^arn:aws:kms:ap-southeast-2:[0-9]{12}:key/(mrk-[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$`, and `pem`'s SHA-256 equals `CERT_SHA256`.
 
-**Rule this must not break:** `startServer` does not call `factories.direct`, `createAppSql`, `createIdentitySql`, `createPlatformSql`, or the KMS client's `send`. `createKms` is not called from listen or `GET /health`. The entrypoint does not pass `acceptForMs`, `forceCloseMs`, or `deadlineMs`. Importing `index.ts` does not bind a port. The process listens only when the file is the entrypoint.
+**Rule this must not break:** `server.ts` does not import `@community-hub/db` or the KMS adapter. Listen and `GET /health` do not call a factory or `send`. The entrypoint does not pass `acceptForMs`, `forceCloseMs`, `signals`, or `exit`. Importing `index.ts` does not bind a port. The process listens only when the file is the entrypoint. The shutdown test does not send a real signal and does not call `process.exit`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -549,13 +554,13 @@ Expected digest: `d73890748b5a95551800df8a6f07c9c800e32ed34da7e6c9505918bf8ac239
 
 `env.test.ts` asserts `{ ok: false }` for a missing `PGHOST`, an alias ARN, an uppercase key id, a one-byte change to the PEM, and equal ops and api hostnames. A complete synthetic env with account `123456789012` and a `mrk-` id of 32 hex characters returns `{ ok: true }`.
 
-`server.test.ts` spies on `factories.direct` and on `client.send`. After `listen` and a loopback `GET /health` with no hostname header, both spies have zero calls, the body is `{ ok: true }`, `server.keepAliveTimeout` is 65000, and `server.headersTimeout` is 66000. The address is `0.0.0.0` and the port is the `PORT` value. Use a free port from 1 to 65535, not 0.
+`server.test.ts` mocks `@community-hub/db` and `./kms/aws-kms-adapter.js` before importing the server. After `listen` and a loopback `GET /health` with no hostname header, `createDirectSql`, `createAppSql`, `createIdentitySql`, `createPlatformSql`, and `createAwsKmsPort` have zero calls. The body is `{ ok: true }`, `server.keepAliveTimeout` is 65000, and `server.headersTimeout` is 66000. The address is `0.0.0.0` and the port is the `PORT` value. Use a free port from 1 to 65535, not 0.
 
-A second test passes `acceptForMs: 30` and `forceCloseMs: 80`. It registers a test route that never writes a response. After SIGTERM, a request accepted before the stop is destroyed, and `server.close` has settled before 500 ms. A request that finishes before the force-close still receives its response.
+The shutdown test passes `acceptForMs: 30`, `forceCloseMs: 80`, a `signals` object whose `on("SIGTERM", listener)` stores the listener, and `exit` that records the code. It does not call `process.kill` and it does not let the server call `process.exit`. Invoking the stored listener starts the drain. A request that finishes before the force-close still receives its response. A request the test route never finishes is destroyed, and `exit` is called with 0 before 500 ms.
 
 `index.test.ts` no longer imports a fetch default. It imports the module and asserts no port is open until `start` is called. Run `start` only from a `import.meta.url === pathToFileURL(process.argv[1]).href` check.
 
-Add `@community-hub/db` to dependencies and a tsconfig reference to `packages/db`. The server test passes `factories` and must not call them.
+Do not add `@community-hub/db` in this task. The probe task adds that dependency.
 
 Startup failure is exercised by calling the same function the entrypoint uses:
 
@@ -573,7 +578,7 @@ Expected: FAIL because `readServiceEnv` and `startServer` do not exist.
 
 - [ ] **Step 3: Write the minimal implementation**
 
-Implement `env.ts`, `server.ts`, and the entrypoint check in `index.ts`. Bind `server.listen(env.PORT, "0.0.0.0")`. Set the two timeout properties from the constants. Build each `Request` with method and headers and no body. On SIGTERM, `setTimeout` for `acceptForMs ?? ACCEPT_AFTER_SIGTERM_MS` then `server.close()`, and `setTimeout` for `forceCloseMs ?? FORCE_CLOSE_AFTER_SIGTERM_MS` then `server.closeAllConnections()` and exit 0. Do not call `createKms()` or `factories.direct` in `run` or `startServer`.
+Implement `env.ts`, `server.ts`, and the entrypoint check in `index.ts`. Bind `server.listen(env.PORT, "0.0.0.0")`. Set the two timeout properties from the constants. Build each `Request` with method and headers and no body. `signals` defaults to `process` and `exit` defaults to `(code) => process.exit(code)`. On the SIGTERM listener, wait `acceptForMs ?? ACCEPT_AFTER_SIGTERM_MS`, then `server.close()`. At `forceCloseMs ?? FORCE_CLOSE_AFTER_SIGTERM_MS`, call `server.closeAllConnections()` and `exit(0)`. Do not import the database factories or the KMS adapter from `server.ts`.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -584,7 +589,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/api/src/env.ts apps/api/src/env.test.ts apps/api/src/server.ts apps/api/src/server.test.ts apps/api/src/index.ts apps/api/src/index.test.ts apps/api/certs/rds-ap-southeast-2-bundle.pem apps/api/package.json apps/api/tsconfig.json
+git add apps/api/src/env.ts apps/api/src/env.test.ts apps/api/src/server.ts apps/api/src/server.test.ts apps/api/src/index.ts apps/api/src/index.test.ts apps/api/certs/rds-ap-southeast-2-bundle.pem
 git commit -m "$(cat <<'EOF'
 feat(api): listen after the environment check
 
@@ -606,6 +611,8 @@ About 320 changed lines.
 
 - Create: `apps/api/src/probe.ts`
 - Create: `apps/api/src/probe.test.ts`
+- Modify: `apps/api/package.json`
+- Modify: `apps/api/tsconfig.json`
 
 **Interfaces:**
 
@@ -643,7 +650,7 @@ The entrypoint at the bottom of `probe.ts` installs `uncaughtException` and `unh
 
 - [ ] **Step 1: Write the failing test**
 
-`probe.test.ts` uses a synthetic env and the real PEM. Stub `connect` and `kms`.
+Add `@community-hub/db` to `apps/api` dependencies and a tsconfig reference to `packages/db` before the probe test imports `createDirectSql`. The server module still does not import it. `probe.test.ts` uses a synthetic env and the real PEM. Stub `connect` and `kms`.
 
 - Missing `PGHOST` returns exit 1, stdout `fail\n`, stderr `env\n`, and `connect` is not called.
 - `connect` throws `Error("marker-db-secret")` for user `app`. Stderr is `db_app\n`. The marker is absent from both strings.
@@ -680,7 +687,7 @@ Expected: PASS. `probe.ts` is allowed to call `KmsPort`. The `apps/api/src/kms` 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/api/src/probe.ts apps/api/src/probe.test.ts
+git add apps/api/src/probe.ts apps/api/src/probe.test.ts apps/api/package.json apps/api/tsconfig.json
 git commit -m "$(cat <<'EOF'
 feat(api): add the standalone database and KMS probe
 
@@ -703,7 +710,7 @@ About 420 changed lines.
 - Create: `apps/api/tsconfig.emit.json`
 - Create: `apps/api/Dockerfile`
 - Create: `apps/api/src/image.test.ts`
-- Modify: `apps/api/package.json` if the image test needs a script. The test itself runs under Vitest only when `RUN_IMAGE_TESTS=1`.
+- Modify: `apps/api/package.json` if the image test needs a script. `build-preview` runs this test with `RUN_IMAGE_TESTS=1`. The default `pnpm test` job does not set that flag. The build-preview job does, so the contract checks run in CI.
 
 **Interfaces:**
 
@@ -734,7 +741,7 @@ Assert loopback `GET http://127.0.0.1:8080/health` returns 200 and `{ ok: true }
 
 Exec `node --input-type=module -e` inside the container to import `KEEP_ALIVE_TIMEOUT_MS` and `HEADERS_TIMEOUT_MS` from `/app/env.js` and exit 0 only when they are 65000 and 66000.
 
-Start a second container on the same image. Hold a connection open by requesting a path the server will not finish before 25 seconds. Send `docker kill --signal=TERM`. The container exits 0, and the elapsed time is greater than 20 seconds and less than 30 seconds. A request that completed before the force-close returned its response. This test uses the real timers. Do not pass `acceptForMs`.
+Start a second container on the same image. The production process serves only `GET /health`, so do not add a slow route. Hold the connection with a raw TCP socket that sends incomplete request headers and then writes nothing else. Send `docker kill --signal=TERM`. The container exits 0, and the elapsed time is greater than 20 seconds and less than 30 seconds. A request that completed before the force-close returned its response. This test uses the real timers. Do not pass `acceptForMs`.
 
 Run the probe with no environment:
 
@@ -744,7 +751,7 @@ docker run --rm --entrypoint node community-hub-api:local /app/probe.js
 
 Expected: exit 1, stdout `fail\n`, stderr `env\n`.
 
-`tsconfig.emit.json` sets `noEmit` false, `outDir` `dist`, `rootDir` `src`, excludes tests, and extends the app config's module settings. The Dockerfile compiles with `pnpm --filter @community-hub/api exec tsc -p tsconfig.emit.json` after `pnpm install --frozen-lockfile` and after building `@community-hub/kernel`, `@community-hub/observability`, `@community-hub/crypto`, and `@community-hub/db`. `pnpm --filter @community-hub/api deploy --prod /out` then receives the emitted `dist` files copied onto `/out` so `/out/index.js` and `/out/probe.js` exist, and the cert directory copied to `/out/certs`. The runtime stage copies `/out` to `/app` with `--chown=node:node`, creates `/tmp` owned by `node`, and declares `VOLUME ["/tmp"]`.
+`tsconfig.emit.json` sets `noEmit` false, `outDir` `dist`, `rootDir` `src`, excludes tests, and extends the app config's module settings. The Dockerfile compiles with `pnpm --filter @community-hub/api exec tsc -p tsconfig.emit.json` after `pnpm install --frozen-lockfile` and after building `@community-hub/kernel`, `@community-hub/observability`, `@community-hub/crypto`, and `@community-hub/db`. `pnpm --filter @community-hub/api deploy --prod --legacy /out` then receives the emitted `dist` files copied onto `/out` so `/out/index.js` and `/out/probe.js` exist, and the cert directory copied to `/out/certs`. Without `--legacy`, pnpm 10.26.0 fails with `ERR_PNPM_DEPLOY_NONINJECTED_WORKSPACE`. The runtime stage copies `/out` to `/app` with `--chown=node:node`, creates `/tmp` owned by `node`, and declares `VOLUME ["/tmp"]`.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -791,13 +798,13 @@ About 80 changed lines.
 **Interfaces:**
 
 - Consumes: `apps/api/Dockerfile` and `/app/probe.js` from task 7.
-- Produces: job `build-preview` runs on `ubuntu-24.04-arm`. It builds `--platform linux/arm64`, does not push, does not log in to a registry, and does not read AWS credentials. It then runs the probe with no contract environment and expects exit 1, stdout `fail`, and stderr `env`.
+- Produces: job `build-preview` runs on `ubuntu-24.04-arm`. It builds `--platform linux/arm64`, does not push, does not log in to a registry, and does not read AWS credentials. It sets up pnpm and Node, then runs `apps/api/src/image.test.ts` with `RUN_IMAGE_TESTS=1`. That run includes the probe with no contract environment, which expects exit 1, stdout `fail`, and stderr `env`.
 
 **Rule this must not break:** Stages 1 and 2 stay as they are. The job does not also run an emulation build. If `ubuntu-24.04-arm` cannot be queued, stop and report. Do not add the emulation fallback in this commit. Terraform is not edited. `service_image` is not set.
 
 - [ ] **Step 1: Write the failing check**
 
-Replace the `build-preview` job's `runs-on` and its last step. The job still checks out the repo and enables pnpm only if the Dockerfile needs the lockfile inside the build. The workflow itself does not need `pnpm install` when the Dockerfile installs. The steps are:
+Replace the `build-preview` job. A test that skips in CI is not a check. The job checks out, sets up pnpm and Node 24, installs, builds the image, then runs the image test with the flag set.
 
 ```yaml
 build-preview:
@@ -806,35 +813,43 @@ build-preview:
   steps:
     - uses: actions/checkout@v4
 
-    - name: Build the ARM image
-      run: docker build --platform linux/arm64 -f apps/api/Dockerfile -t community-hub-api:ci .
+    - uses: pnpm/action-setup@v4
 
-    - name: Probe with no environment
-      run: |
-        set +e
-        stdout=$(docker run --rm --entrypoint node community-hub-api:ci /app/probe.js 2>stderr.txt)
-        code=$?
-        set -e
-        test "$code" = "1"
-        test "$stdout" = "fail"
-        test "$(cat stderr.txt)" = "env"
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        cache: pnpm
+
+    - name: Enable corepack
+      run: corepack enable
+
+    - name: Install dependencies
+      run: pnpm install --frozen-lockfile
+
+    - name: Build the ARM image
+      run: docker build --platform linux/arm64 -f apps/api/Dockerfile -t community-hub-api:local .
+
+    - name: Image contract checks
+      env:
+        RUN_IMAGE_TESTS: "1"
+      run: pnpm --filter @community-hub/api test -- src/image.test.ts
 ```
 
-`docker run` writes stdout without a newline when the shell captures it if the program writes `fail\n`. Compare with `printf 'fail\n'` captured the same way, or use `test "$stdout" = $'fail'`. The program writes a trailing newline. Strip one trailing newline in the assertion so the word is `fail` and `env`, and fail if any other byte remains.
+`image.test.ts` builds `community-hub-api:local` only when `docker image inspect` fails, so this job does not build twice. It still runs every assertion, including the no-environment probe and the incomplete-header SIGTERM check. Those assertions do not skip.
 
 In `AGENTS.md` §10, replace the Stage 3 bullet with: Stage 3 builds this ARM image, does not push it, and does not call Wrangler or require a Cloudflare token. Verification of a running task stays the staging hostname.
 
 - [ ] **Step 2: Run the workflow file's commands locally**
 
-Run the `docker build` and the probe assertion from Step 1 on this machine.
+Run the `docker build` tagged `community-hub-api:local`, then `RUN_IMAGE_TESTS=1 pnpm --filter @community-hub/api test -- src/image.test.ts`.
 
-Expected: exit 1 from the probe, words `fail` and `env`, and no push command in the job. `git diff -- .github/workflows/ci.yml` contains no `docker push` and no `aws`.
+Expected: the image test exits 0. The probe assertion inside it sees exit 1, `fail`, and `env`. `git diff -- .github/workflows/ci.yml` contains no `docker push` and no `aws`.
 
 - [ ] **Step 3: Confirm the rest of the local gate**
 
 Run: `pnpm lint && pnpm typecheck && pnpm test --filter @community-hub/api && pnpm check:boundaries`
 
-Expected: PASS. `RUN_IMAGE_TESTS` is not required in this task's unit gate. The docker commands in Step 2 are the image proof.
+Expected: PASS. `RUN_IMAGE_TESTS` is set only for the image test command in Step 2. The default unit test command does not set it.
 
 - [ ] **Step 4: Commit**
 
@@ -898,11 +913,11 @@ pnpm typecheck
 pnpm check:boundaries
 pnpm audit --audit-level=high
 pnpm test
-docker build --platform linux/arm64 -f apps/api/Dockerfile -t community-hub-api:ci .
-docker run --rm --entrypoint node community-hub-api:ci /app/probe.js; test $? -eq 1
+docker build --platform linux/arm64 -f apps/api/Dockerfile -t community-hub-api:local .
+RUN_IMAGE_TESTS=1 pnpm --filter @community-hub/api test -- src/image.test.ts
 ```
 
-The probe stdout is `fail` and stderr is `env`. There is no `docker push`.
+The image test exits 0. Inside it, the probe stdout is `fail` and stderr is `env`. There is no `docker push`.
 
 For each directory in the terraform matrix (`infra/bootstrap`, `infra/regions/au`, `infra/modules/aws-network`, `infra/modules/aws-kms-storage`, `infra/modules/aws-kms-envelope`, `infra/modules/aws-db-secrets`, `infra/modules/aws-budgets`, `infra/modules/aws-rds`, `infra/modules/aws-ingress`):
 
