@@ -177,4 +177,5 @@ export const QUERY_RULE_IDS = [
   "@community-hub/no-restricted-disable",
   "@community-hub/no-ts-ignore",
   "@community-hub/no-crypto-testing-import",
+  "@community-hub/no-db-plaintext-import",
 ];

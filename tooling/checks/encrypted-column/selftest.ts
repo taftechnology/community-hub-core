@@ -14,6 +14,7 @@ const KMS = "@community-hub/no-kms-port-outside-crypto";
 const DISABLE = "@community-hub/no-restricted-disable";
 const TS_IGNORE = "@community-hub/no-ts-ignore";
 const TESTING = "@community-hub/no-crypto-testing-import";
+const PLAINTEXT = "@community-hub/no-db-plaintext-import";
 const PAYLOAD = "@community-hub/no-event-payload";
 const RESTRICTED = "no-restricted-imports";
 
@@ -61,6 +62,9 @@ const mustFail: { file: string; ruleId: string; count: number }[] = [
   { file: "fail/packages/db/src/kms-decrypt.ts", ruleId: KMS, count: 1 },
   { file: "fail/packages/db/src/kms-destructure.ts", ruleId: KMS, count: 1 },
   { file: "fail/packages/db/src/testing-import.ts", ruleId: TESTING, count: 1 },
+  { file: "fail/packages/db/src/plaintext-alias.ts", ruleId: PLAINTEXT, count: 1 },
+  { file: "fail/packages/db/src/plaintext-js.ts", ruleId: PLAINTEXT, count: 1 },
+  { file: "fail/packages/db/src/plaintext-no-extension.ts", ruleId: PLAINTEXT, count: 1 },
   { file: "fail/packages/db/src/disable-comment.ts", ruleId: DISABLE, count: 1 },
   { file: "fail/packages/db/src/inline-config.ts", ruleId: DISABLE, count: 1 },
   { file: "fail/packages/db/src/ts-ignore.ts", ruleId: TS_IGNORE, count: 1 },
@@ -90,6 +94,7 @@ const mustPass = [
   "pass/packages/crypto/src/hold-ciphertext.ts",
   "pass/packages/db/src/decrypt-insert.ts",
   "pass/packages/db/src/define-column.ts",
+  "pass/packages/db/src/no-plaintext.ts",
   "pass/event-allowed.ts",
   "pass/event-imported-ids.ts",
 ] as const;
@@ -122,6 +127,7 @@ beforeAll(() => {
           [DISABLE]: "error",
           [TS_IGNORE]: "error",
           [TESTING]: "error",
+          [PLAINTEXT]: "error",
           [PAYLOAD]: "error",
         },
       },
@@ -214,6 +220,7 @@ describe("encrypted-column ESLint fixtures", () => {
           hit.ruleId === DISABLE ||
           hit.ruleId === TS_IGNORE ||
           hit.ruleId === TESTING ||
+          hit.ruleId === PLAINTEXT ||
           hit.ruleId === PAYLOAD ||
           hit.ruleId === RESTRICTED,
       );

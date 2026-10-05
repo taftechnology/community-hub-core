@@ -1,4 +1,5 @@
 import noCryptoTestingImport from "./rules/no-crypto-testing-import.js";
+import noDbPlaintextImport from "./rules/no-db-plaintext-import.js";
 import noEncryptedColumnQuery from "./rules/no-encrypted-column-query.js";
 import noEventPayload from "./rules/no-event-payload.js";
 import noKmsPortOutsideCrypto from "./rules/no-kms-port-outside-crypto.js";
@@ -17,6 +18,7 @@ const plugin = {
     "no-restricted-disable": noRestrictedDisable,
     "no-ts-ignore": noTsIgnore,
     "no-crypto-testing-import": noCryptoTestingImport,
+    "no-db-plaintext-import": noDbPlaintextImport,
   },
 };
 

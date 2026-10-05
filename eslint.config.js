@@ -34,7 +34,9 @@ export default tseslint.config(
     ],
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        projectService: {
+          allowDefaultProject: ["packages/db/src/plaintext.ts"],
+        },
         tsconfigRootDir: import.meta.dirname,
       },
     },
@@ -48,6 +50,7 @@ export default tseslint.config(
       "@community-hub/no-restricted-disable": "error",
       "@community-hub/no-ts-ignore": "error",
       "@community-hub/no-crypto-testing-import": "error",
+      "@community-hub/no-db-plaintext-import": "error",
     },
   },
   {

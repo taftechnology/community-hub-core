@@ -17,6 +17,7 @@
     "test/migrate-test.ts",
     "test/schema-test.ts",
     "test/plaintext.integration.test.ts",
-    "test/tls.integration.test.ts"
+    "test/tls.integration.test.ts",
+    "test/plaintext-dist.test.ts"
   ]
 }
