@@ -6,12 +6,12 @@ export { withOrgTransaction } from "./tx.js";
 export type { AppTransaction, OrgTransaction } from "./tx.js";
 export { runBootstrap, setLoginPasswords } from "./bootstrap.js";
 export { blindIndexColumn, encryptedColumn, labelOf } from "./columns.js";
+export type { SqlTarget } from "./connections.js";
 export {
   createAppSql,
   createDirectSql,
   createIdentitySql,
   createPlatformSql,
-  createPooledSql,
 } from "./connections.js";
 export { newId } from "./ids.js";
 export { insertEncrypted } from "./insert-encrypted.js";

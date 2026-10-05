@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { assertRoleAttributes, runBootstrap } from "../src/bootstrap.js";
-import { createDirectSql, createPooledSql } from "../src/connections.js";
+import { createPlaintextAppSql, createPlaintextDirectSql } from "../src/plaintext.js";
 
 type Runtime = {
   directUrl: string;
@@ -63,7 +63,7 @@ function loadRuntime(): Runtime {
 describe("bootstrap", () => {
   it("is idempotent", async () => {
     const runtime = loadRuntime();
-    const sql = createDirectSql(runtime.directUrl);
+    const sql = createPlaintextDirectSql(runtime.directUrl);
     try {
       await runBootstrap(sql);
       await runBootstrap(sql);
@@ -74,7 +74,7 @@ describe("bootstrap", () => {
 
   it("creates four roles with migrator NOLOGIN and migrator-owned schema", async () => {
     const runtime = loadRuntime();
-    const sql = createDirectSql(runtime.directUrl);
+    const sql = createPlaintextDirectSql(runtime.directUrl);
     try {
       const roles = await sql<RoleAttrs[]>`
         select rolname, rolcanlogin, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb
@@ -98,7 +98,7 @@ describe("bootstrap", () => {
 
   it("resets BYPASSRLS on an existing app role", async () => {
     const runtime = loadRuntime();
-    const sql = createDirectSql(runtime.directUrl);
+    const sql = createPlaintextDirectSql(runtime.directUrl);
     try {
       await sql.unsafe("alter role app bypassrls");
       try {
@@ -125,7 +125,7 @@ describe("bootstrap", () => {
 
   it("fails closed when app still has BYPASSRLS", async () => {
     const runtime = loadRuntime();
-    const sql = createDirectSql(runtime.directUrl);
+    const sql = createPlaintextDirectSql(runtime.directUrl);
     try {
       await sql.unsafe("alter role app bypassrls");
       try {
@@ -141,7 +141,7 @@ describe("bootstrap", () => {
   it("denies CREATE TEMP TABLE to app, identity and platform", async () => {
     const runtime = loadRuntime();
     for (const role of ["app", "identity", "platform"] as const) {
-      const sql = createPooledSql(pooledUrl(runtime, role, "hub"));
+      const sql = createPlaintextAppSql(pooledUrl(runtime, role, "hub"));
       try {
         await expect(sql.unsafe("create temp table t (id int)")).rejects.toThrow(
           /permission denied to create temporary tables/i,
@@ -154,7 +154,7 @@ describe("bootstrap", () => {
 
   it("lets app authenticate through PgBouncer with the env plaintext", async () => {
     const runtime = loadRuntime();
-    const sql = createPooledSql(pooledUrl(runtime, "app", "hub"));
+    const sql = createPlaintextAppSql(pooledUrl(runtime, "app", "hub"));
     try {
       const [{ ok }] = await sql<{ ok: number }[]>`select 1 as ok`;
       expect(ok).toBe(1);

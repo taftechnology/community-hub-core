@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { withAppTransaction } from "../src/app-transaction.js";
-import { createAppSql, createIdentitySql } from "../src/connections.js";
+import { createPlaintextAppSql, createPlaintextDirectSql } from "../src/plaintext.js";
 import { newId } from "../src/ids.js";
 import { applyProductMigrations } from "../src/migrate.js";
 import { applyTestMigrations } from "./migrate-test.js";
@@ -24,7 +24,7 @@ function pooledAppUrl(runtime: Runtime, alias: "hub" | "hub_bleed" | "hub_reuse"
   return `postgres://app:${encodeURIComponent(runtime.passwords.app)}@127.0.0.1:6432/${alias}`;
 }
 
-async function backendPid(sql: ReturnType<typeof createAppSql>): Promise<number> {
+async function backendPid(sql: ReturnType<typeof createPlaintextAppSql>): Promise<number> {
   const rows = await sql<{ pid: number }[]>`select pg_backend_pid() as pid`;
   const pid = rows[0]?.pid;
   expect(pid).toEqual(expect.any(Number));
@@ -32,8 +32,8 @@ async function backendPid(sql: ReturnType<typeof createAppSql>): Promise<number>
 }
 
 async function assertSameBackend(
-  a: ReturnType<typeof createAppSql>,
-  b: ReturnType<typeof createAppSql>,
+  a: ReturnType<typeof createPlaintextAppSql>,
+  b: ReturnType<typeof createPlaintextAppSql>,
 ): Promise<void> {
   const pidA = await backendPid(a);
   const pidB = await backendPid(b);
@@ -43,15 +43,20 @@ async function assertSameBackend(
 describe.sequential("pooled tenant scope", () => {
   beforeAll(async () => {
     const runtime = loadRuntime();
-    await applyProductMigrations(runtime.directUrl);
+    const migration = createPlaintextDirectSql(runtime.directUrl);
+    try {
+      await applyProductMigrations(migration);
+    } finally {
+      await migration.end({ timeout: 1 });
+    }
     await applyTestMigrations({ mode: "test" }, runtime.directUrl);
   });
 
   it("bleeds a session-level set_config into the next client on hub_bleed", async () => {
     const runtime = loadRuntime();
     const url = pooledAppUrl(runtime, "hub_bleed");
-    const a = createAppSql(url);
-    const b = createAppSql(url);
+    const a = createPlaintextAppSql(url);
+    const b = createPlaintextAppSql(url);
     const orgId = newId();
     try {
       await assertSameBackend(a, b);
@@ -68,8 +73,8 @@ describe.sequential("pooled tenant scope", () => {
   it("does not leak withAppTransaction scope as a readable tenant id on hub_reuse", async () => {
     const runtime = loadRuntime();
     const url = pooledAppUrl(runtime, "hub_reuse");
-    const a = createAppSql(url);
-    const b = createAppSql(url);
+    const a = createPlaintextAppSql(url);
+    const b = createPlaintextAppSql(url);
     try {
       await assertSameBackend(a, b);
       await withAppTransaction(a, { orgId: newId(), communityId: newId() }, async (tx) => {
@@ -86,7 +91,7 @@ describe.sequential("pooled tenant scope", () => {
 
   it("keeps two organisations from seeing each other's app.synthetic rows", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime, "hub"));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime, "hub"));
     const orgA = newId();
     const orgB = newId();
     const idA = newId();
@@ -125,6 +130,5 @@ describe.sequential("pooled tenant scope", () => {
     expect(src).toMatch(/export function createIdentitySql/);
     expect(src).not.toMatch(/SET ROLE/i);
     expect(src).not.toMatch(/set_config\(\s*['"]app\.org_id['"]/);
-    expect(typeof createIdentitySql).toBe("function");
   });
 });

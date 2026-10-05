@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { createDirectSql } from "../src/connections.js";
+import { createPlaintextDirectSql } from "../src/plaintext.js";
 import { applyProductMigrations } from "../src/migrate.js";
 import { applyTestMigrations } from "./migrate-test.js";
 
@@ -28,10 +28,15 @@ describe("applyTestMigrations", () => {
 
   it("owns app.synthetic as migrator and FORCE RLS blocks the owner", async () => {
     const runtime = loadRuntime();
-    await applyProductMigrations(runtime.directUrl);
+    const migration = createPlaintextDirectSql(runtime.directUrl);
+    try {
+      await applyProductMigrations(migration);
+    } finally {
+      await migration.end({ timeout: 1 });
+    }
     await applyTestMigrations({ mode: "test" }, runtime.directUrl);
 
-    const sql = createDirectSql(runtime.directUrl);
+    const sql = createPlaintextDirectSql(runtime.directUrl);
     try {
       const [{ owner }] = await sql<{ owner: string }[]>`
         select r.rolname as owner
@@ -53,11 +58,21 @@ describe("applyTestMigrations", () => {
 
   it("does not write the synthetic migration into the product journal", async () => {
     const runtime = loadRuntime();
-    await applyProductMigrations(runtime.directUrl);
+    const migration = createPlaintextDirectSql(runtime.directUrl);
+    try {
+      await applyProductMigrations(migration);
+    } finally {
+      await migration.end({ timeout: 1 });
+    }
     await applyTestMigrations({ mode: "test" }, runtime.directUrl);
-    await applyProductMigrations(runtime.directUrl);
+    const again = createPlaintextDirectSql(runtime.directUrl);
+    try {
+      await applyProductMigrations(again);
+    } finally {
+      await again.end({ timeout: 1 });
+    }
 
-    const sql = createDirectSql(runtime.directUrl);
+    const sql = createPlaintextDirectSql(runtime.directUrl);
     try {
       const product = await sql<{ hash: string }[]>`
         select hash from migrator.__drizzle_migrations

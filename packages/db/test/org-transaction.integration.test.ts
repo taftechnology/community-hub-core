@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { withAppTransaction } from "../src/app-transaction.js";
-import { createAppSql } from "../src/connections.js";
+import { createPlaintextAppSql, createPlaintextDirectSql } from "../src/plaintext.js";
 import { newId } from "../src/ids.js";
 import { applyProductMigrations } from "../src/migrate.js";
 import { withOrgTransaction } from "../src/tx.js";
@@ -29,7 +29,7 @@ function pooledAppUrl(runtime: Runtime, alias: "hub" | "hub_reuse"): string {
   return `postgres://app:${encodeURIComponent(runtime.passwords.app)}@127.0.0.1:6432/${alias}`;
 }
 
-async function backendPid(sql: ReturnType<typeof createAppSql>): Promise<number> {
+async function backendPid(sql: ReturnType<typeof createPlaintextAppSql>): Promise<number> {
   const rows = await sql<{ pid: number }[]>`select pg_backend_pid() as pid`;
   const pid = rows[0]?.pid;
   expect(pid).toEqual(expect.any(Number));
@@ -37,8 +37,8 @@ async function backendPid(sql: ReturnType<typeof createAppSql>): Promise<number>
 }
 
 async function assertSameBackend(
-  a: ReturnType<typeof createAppSql>,
-  b: ReturnType<typeof createAppSql>,
+  a: ReturnType<typeof createPlaintextAppSql>,
+  b: ReturnType<typeof createPlaintextAppSql>,
 ): Promise<void> {
   const pidA = await backendPid(a);
   const pidB = await backendPid(b);
@@ -48,13 +48,18 @@ async function assertSameBackend(
 describe.sequential("withOrgTransaction", () => {
   beforeAll(async () => {
     const runtime = loadRuntime();
-    await applyProductMigrations(runtime.directUrl);
+    const migration = createPlaintextDirectSql(runtime.directUrl);
+    try {
+      await applyProductMigrations(migration);
+    } finally {
+      await migration.end({ timeout: 1 });
+    }
     await applyTestMigrations({ mode: "test" }, runtime.directUrl);
   });
 
   it("sets app.org_id and cannot read community-scoped tables", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime, "hub"));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime, "hub"));
     const orgId = newId();
     try {
       const orgRows = await withOrgTransaction(sql, orgId, async (tx) => {
@@ -75,8 +80,8 @@ describe.sequential("withOrgTransaction", () => {
   it("does not leak withAppTransaction community_id into withOrgTransaction on hub_reuse", async () => {
     const runtime = loadRuntime();
     const url = pooledAppUrl(runtime, "hub_reuse");
-    const a = createAppSql(url);
-    const b = createAppSql(url);
+    const a = createPlaintextAppSql(url);
+    const b = createPlaintextAppSql(url);
     try {
       await assertSameBackend(a, b);
       await withAppTransaction(a, { orgId: newId(), communityId: newId() }, async (tx) => {

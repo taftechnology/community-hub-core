@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { createDirectSql } from "../src/connections.js";
+import { createPlaintextDirectSql } from "../src/plaintext.js";
 import { applyMigrations, applyProductMigrations } from "../src/migrate.js";
 
 type Runtime = {
@@ -22,10 +22,20 @@ function loadRuntime(): Runtime {
 describe("applyProductMigrations", () => {
   it("applies the product journal and is a no-op on the second run", async () => {
     const runtime = loadRuntime();
-    await applyProductMigrations(runtime.productOnlyUrl);
-    await applyProductMigrations(runtime.productOnlyUrl);
+    const first = createPlaintextDirectSql(runtime.productOnlyUrl);
+    try {
+      await applyProductMigrations(first);
+    } finally {
+      await first.end({ timeout: 1 });
+    }
+    const second = createPlaintextDirectSql(runtime.productOnlyUrl);
+    try {
+      await applyProductMigrations(second);
+    } finally {
+      await second.end({ timeout: 1 });
+    }
 
-    const sql = createDirectSql(runtime.productOnlyUrl);
+    const sql = createPlaintextDirectSql(runtime.productOnlyUrl);
     try {
       const schemas = await sql<{ nspname: string; owner: string }[]>`
         select n.nspname, r.rolname as owner
@@ -59,7 +69,12 @@ describe("applyProductMigrations", () => {
 
   it("fails a changed hash before applying a newer sabotaged file", async () => {
     const runtime = loadRuntime();
-    await applyProductMigrations(runtime.directUrl);
+    const migration = createPlaintextDirectSql(runtime.directUrl);
+    try {
+      await applyProductMigrations(migration);
+    } finally {
+      await migration.end({ timeout: 1 });
+    }
 
     const folder = mkdtempSync(path.join(tmpdir(), "hub-db-migrate-"));
     try {
@@ -92,15 +107,20 @@ describe("applyProductMigrations", () => {
       });
       writeFileSync(journalPath, JSON.stringify(journal));
 
-      await expect(
-        applyMigrations({
-          url: runtime.directUrl,
-          folder,
-          table: "__drizzle_migrations",
-        }),
-      ).rejects.toThrow(/already-applied file .* hash/i);
+      const sabotage = createPlaintextDirectSql(runtime.directUrl);
+      try {
+        await expect(
+          applyMigrations({
+            sql: sabotage,
+            folder,
+            table: "__drizzle_migrations",
+          }),
+        ).rejects.toThrow(/already-applied file .* hash/i);
+      } finally {
+        await sabotage.end({ timeout: 1 });
+      }
 
-      const sql = createDirectSql(runtime.directUrl);
+      const sql = createPlaintextDirectSql(runtime.directUrl);
       try {
         const [{ rel }] = await sql<{ rel: string | null }[]>`
           select to_regclass('app.pwn')::text as rel

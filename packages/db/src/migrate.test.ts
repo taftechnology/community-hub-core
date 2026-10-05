@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readMigrationFiles } from "drizzle-orm/migrator";
+import type { Sql } from "postgres";
 import { describe, expect, it } from "vitest";
 
 import { applyMigrations, assertMigrationPreflight } from "./migrate.js";
@@ -62,7 +63,7 @@ describe("applyMigrations folder pairing", () => {
   it("rejects drizzle-test paired with the product journal table", async () => {
     await expect(
       applyMigrations({
-        url: "postgres://hub:unused@127.0.0.1:5432/hub",
+        sql: {} as Sql,
         folder: path.join(FIXTURES, "drizzle-test"),
         table: "__drizzle_migrations",
       }),

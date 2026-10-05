@@ -6,7 +6,7 @@ import { withChangeKey, withRequest } from "@community-hub/kernel";
 import { beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { createAppSql, createDirectSql } from "../src/connections.js";
+import { createPlaintextAppSql, createPlaintextDirectSql } from "../src/plaintext.js";
 import { newId } from "../src/ids.js";
 import { applyProductMigrations } from "../src/migrate.js";
 import { createOutbox } from "../src/outbox-adapter.js";
@@ -85,7 +85,12 @@ function publisher() {
 describe("app.outbox", () => {
   beforeAll(async () => {
     const runtime = loadRuntime();
-    await applyProductMigrations(runtime.directUrl);
+    const migration = createPlaintextDirectSql(runtime.directUrl);
+    try {
+      await applyProductMigrations(migration);
+    } finally {
+      await migration.end({ timeout: 1 });
+    }
     await applyTestMigrations({ mode: "test" }, runtime.directUrl);
   });
 
@@ -99,7 +104,7 @@ describe("app.outbox", () => {
 
   it("has primary key (org_id, id) and unique (org_id, event_name, idempotency_key)", async () => {
     const runtime = loadRuntime();
-    const sql = createDirectSql(runtime.directUrl);
+    const sql = createPlaintextDirectSql(runtime.directUrl);
     try {
       const rows = await sql<{ contype: string; def: string }[]>`
         select c.contype::text as contype, pg_get_constraintdef(c.oid) as def
@@ -120,7 +125,7 @@ describe("app.outbox", () => {
 
   it("forces row level security and the policy uses app.org_id only", async () => {
     const runtime = loadRuntime();
-    const sql = createDirectSql(runtime.directUrl);
+    const sql = createPlaintextDirectSql(runtime.directUrl);
     try {
       const [rel] = await sql<{ relrowsecurity: boolean; relforcerowsecurity: boolean }[]>`
         select c.relrowsecurity, c.relforcerowsecurity
@@ -160,7 +165,7 @@ describe("app.outbox", () => {
 
   it("locks the unique constraint name to the adapter ON CONFLICT identifier", async () => {
     const runtime = loadRuntime();
-    const sql = createDirectSql(runtime.directUrl);
+    const sql = createPlaintextDirectSql(runtime.directUrl);
     const expected = adapterConstraintName();
     try {
       const rows = await sql<{ conname: string }[]>`
@@ -179,7 +184,7 @@ describe("app.outbox", () => {
 
   it("refuses a cross-tenant insert and hides the row from another organisation", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     const orgA = newId();
     const orgB = newId();
     const { publish } = publisher();
@@ -219,7 +224,7 @@ describe("app.outbox", () => {
 
   it("returns the same id and keeps one row when the same event is published twice under one key", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     const orgId = newId();
     const { publish } = publisher();
     const recordId = newId();
@@ -251,7 +256,7 @@ describe("app.outbox", () => {
 
   it("inserts two rows when two events share a request key", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     const orgId = newId();
     const { publish } = publisher();
     const changeId = newId();
@@ -278,7 +283,7 @@ describe("app.outbox", () => {
 
   it("rolls back the outbox row together with the domain change", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     const orgId = newId();
     const domainId = newId();
     const { publish } = publisher();
@@ -313,7 +318,7 @@ describe("app.outbox", () => {
 
   it("commits the outbox row and the domain change together", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     const orgId = newId();
     const domainId = newId();
     const { publish } = publisher();
@@ -346,7 +351,7 @@ describe("app.outbox", () => {
 
   it("leaves no outbox row when the payload fails Zod parse", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     const orgId = newId();
     const { publish } = publisher();
     try {
