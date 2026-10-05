@@ -4,7 +4,13 @@ import { fileURLToPath } from "node:url";
 import type { KmsContext, KmsPort } from "@community-hub/crypto";
 import { describe, expect, it, vi } from "vitest";
 
-import { handleProbeCrash, runProbe, setProbeStepForTest, type ProbeDeps } from "./probe.js";
+import {
+  handleProbeCrash,
+  runProbe,
+  setProbeStepForTest,
+  startProbe,
+  type ProbeDeps,
+} from "./probe.js";
 
 const pem = readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), "../certs/rds-ap-southeast-2-bundle.pem"),
@@ -199,5 +205,80 @@ describe("runProbe", () => {
     expect(stdout).toBe("fail\n");
     expect(stderr).toBe("db_app\n");
     expect(`${stdout}${stderr}`).not.toContain("marker-uncaught");
+  });
+
+  it("writes only the result line when the entrypoint reports KMS", async () => {
+    const writes: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    const log = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      writes.push(`${args.map(String).join(" ")}\n`);
+    });
+    let exitCode: number | undefined;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("probe did not exit")), 1000);
+        startProbe({
+          readPem: () => pem,
+          source: source(),
+          connect: (() => okSql()) as unknown as ProbeDeps["connect"],
+          createClient: () => ({
+            async send() {
+              return {
+                Plaintext: new Uint8Array(32).fill(3),
+                CiphertextBlob: new Uint8Array([1, 2, 3]),
+              };
+            },
+          }),
+          stdout: (line) => {
+            process.stdout.write(line);
+          },
+          stderr: () => {},
+          exit: (code) => {
+            exitCode = code;
+            clearTimeout(timer);
+            resolve();
+          },
+        });
+      });
+    } finally {
+      log.mockRestore();
+      spy.mockRestore();
+    }
+    expect(exitCode).toBe(0);
+    expect(writes.join("")).toBe("pass\n");
+  });
+
+  it("prints env and exits 1 when the certificate file is missing", () => {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    let exitCode: number | undefined;
+    startProbe({
+      readPem: () => {
+        throw new Error("marker-missing-cert");
+      },
+      source: source(),
+      connect: (() => okSql()) as unknown as ProbeDeps["connect"],
+      createClient: () => ({
+        async send() {
+          return {};
+        },
+      }),
+      stdout: (line) => {
+        stdout.push(line);
+      },
+      stderr: (line) => {
+        stderr.push(line);
+      },
+      exit: (code) => {
+        exitCode = code;
+      },
+    });
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual(["fail\n"]);
+    expect(stderr).toEqual(["env\n"]);
+    expect(`${stdout.join("")}${stderr.join("")}`).not.toContain("marker-missing-cert");
   });
 });

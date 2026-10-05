@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -170,5 +171,98 @@ describe("startServer", () => {
     await vi.waitFor(() => expect(exitCode).toBe(0), { timeout: 500 });
     expect(Date.now() - started).toBeLessThan(500);
     expect(await hangSettled).toBe("rejected");
+  });
+
+  it("answers TRACE and still serves the next health check", async () => {
+    const env = envFor(39454);
+    const server = startServer({ env, routes: [health] });
+    servers.push(server);
+    await listening(server);
+
+    const raw = await new Promise<string>((resolve, reject) => {
+      const socket = net.connect(39454, "127.0.0.1");
+      let received = "";
+      socket.on("data", (chunk) => {
+        received += chunk.toString();
+        if (received.includes("\r\n\r\n")) {
+          socket.end();
+          resolve(received);
+        }
+      });
+      socket.on("error", reject);
+      socket.write("TRACE /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    });
+
+    const body = raw.split("\r\n\r\n")[1] ?? "";
+    expect(raw.startsWith("HTTP/1.1 ")).toBe(true);
+    expect(body).toBe("");
+    expect(raw).not.toContain("TypeError");
+    const response = await fetch("http://127.0.0.1:39454/health");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true });
+  });
+
+  it("keeps listening when a handler throws", async () => {
+    const env = envFor(39455);
+    const writes: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    const server = startServer({
+      env,
+      routes: [
+        health,
+        {
+          method: "GET",
+          pattern: "/boom",
+          surface: "tenant",
+          handle: () => {
+            throw new Error("marker-handler");
+          },
+        },
+      ],
+    });
+    servers.push(server);
+    await listening(server);
+
+    const boom = await fetch("http://127.0.0.1:39455/boom", {
+      headers: { "x-community-hub-hostname": "au.api.example.test" },
+    });
+    expect(boom.status).toBeGreaterThanOrEqual(400);
+    expect(await boom.text()).toBe("");
+    expect(writes.join("")).not.toContain("marker-handler");
+    const response = await fetch("http://127.0.0.1:39455/health");
+    expect(response.status).toBe(200);
+    spy.mockRestore();
+  });
+
+  it("exits after the accept window when nothing is connected", async () => {
+    const env = envFor(39456);
+    let exitCode: number | undefined;
+    let onTerm: (() => void) | undefined;
+    const server = startServer({
+      env,
+      routes: [health],
+      acceptForMs: 40,
+      forceCloseMs: 250,
+      signals: {
+        on(_signal, listener) {
+          onTerm = listener;
+        },
+      },
+      exit: (code) => {
+        exitCode = code;
+      },
+    });
+    servers.push(server);
+    await listening(server);
+
+    const marked = Date.now();
+    onTerm?.();
+    await vi.waitFor(() => expect(exitCode).toBe(0), { timeout: 400 });
+    const elapsed = Date.now() - marked;
+    expect(elapsed).toBeGreaterThanOrEqual(40);
+    expect(elapsed).toBeLessThan(150);
   });
 });

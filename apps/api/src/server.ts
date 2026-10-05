@@ -66,10 +66,17 @@ export function startServer(options: {
   });
   const server = createServer((req, res) => {
     void (async () => {
-      const remoteAddress = req.socket.remoteAddress ?? "";
-      const response = await gate({ request: requestFrom(req), remoteAddress });
-      if (!res.writableEnded) {
-        await writeResponse(res, response);
+      try {
+        const remoteAddress = req.socket.remoteAddress ?? "";
+        const response = await gate({ request: requestFrom(req), remoteAddress });
+        if (!res.writableEnded) {
+          await writeResponse(res, response);
+        }
+      } catch {
+        if (!res.writableEnded) {
+          res.writeHead(400, { "Content-Length": "0" });
+          res.end();
+        }
       }
     })();
   });
@@ -83,11 +90,12 @@ export function startServer(options: {
   const forceCloseMs = options.forceCloseMs ?? FORCE_CLOSE_AFTER_SIGTERM_MS;
   signals.on("SIGTERM", () => {
     setTimeout(() => {
-      server.close();
+      server.close(() => {
+        exit(0);
+      });
     }, acceptForMs);
     setTimeout(() => {
       server.closeAllConnections();
-      exit(0);
     }, forceCloseMs);
   });
 

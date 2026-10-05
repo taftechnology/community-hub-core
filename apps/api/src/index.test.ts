@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { listeningServer, run } from "./index.js";
+import { boot, listeningServer, run } from "./index.js";
 
 const pem = readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), "../certs/rds-ap-southeast-2-bundle.pem"),
@@ -98,6 +98,42 @@ describe("api entrypoint", () => {
     expect(code).toBe(1);
     expect(stderr).toEqual(["routes\n"]);
     expect(stderr.join("")).not.toContain("/other");
+    expect(listeningServer()).toBeUndefined();
+  });
+
+  it("prints env and exits 1 when the certificate file is missing", () => {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      stdout.push(String(chunk));
+      return true;
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      stderr.push(String(chunk));
+      return true;
+    });
+    let code: number | undefined;
+    boot({
+      readPem: () => {
+        throw new Error("marker-missing-cert");
+      },
+      source: source(),
+      routes: [
+        {
+          method: "GET",
+          pattern: "/health",
+          surface: "all",
+          handle: () => Response.json({ ok: true }),
+        },
+      ],
+      exit: (value) => {
+        code = value;
+      },
+    });
+    expect(code).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["env\n"]);
+    expect(stderr.join("")).not.toContain("marker-missing-cert");
     expect(listeningServer()).toBeUndefined();
   });
 });

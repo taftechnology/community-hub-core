@@ -149,6 +149,32 @@ describe.skipIf(process.env.RUN_IMAGE_TESTS !== "1")("regional service image", (
       const body = loopbackBody(first.id);
       expect(body.status, body.stderr).toBe(0);
       expect(body.stdout).toBe('200\n{"ok":true}');
+      const traced = await new Promise<string>((resolve, reject) => {
+        const socket = net.connect(first.port, "127.0.0.1");
+        let received = "";
+        const timer = setTimeout(() => {
+          socket.destroy();
+          reject(new Error("TRACE produced no response"));
+        }, 5_000);
+        socket.on("data", (chunk: Buffer) => {
+          received += chunk.toString();
+          if (received.includes("\r\n\r\n")) {
+            clearTimeout(timer);
+            socket.end();
+            resolve(received);
+          }
+        });
+        socket.on("error", (error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+        socket.write("TRACE /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+      });
+      expect(traced.startsWith("HTTP/1.1 ")).toBe(true);
+      expect(traced.split("\r\n\r\n")[1] ?? "").toBe("");
+      const afterTrace = loopbackBody(first.id);
+      expect(afterTrace.status, afterTrace.stderr).toBe(0);
+      expect(afterTrace.stdout).toBe('200\n{"ok":true}');
       const healthExec = spawnSync(
         "docker",
         [
@@ -176,6 +202,18 @@ describe.skipIf(process.env.RUN_IMAGE_TESTS !== "1")("regional service image", (
       expect(limits.status, limits.stderr).toBe(0);
     } finally {
       spawnSync("docker", ["rm", "-f", first.id]);
+    }
+
+    const idle = startContainer();
+    try {
+      await waitForHealth(idle.id);
+      const started = Date.now();
+      docker(["kill", "--signal=TERM", idle.id]);
+      const waited = spawnSync("docker", ["wait", idle.id], { encoding: "utf8" });
+      expect(waited.stdout.trim()).toBe("0");
+      expect(Date.now() - started).toBeLessThan(10_000);
+    } finally {
+      spawnSync("docker", ["rm", "-f", idle.id]);
     }
 
     const second = startContainer();

@@ -14,6 +14,26 @@ export function listeningServer(): Server | undefined {
   return current;
 }
 
+export function boot(options: {
+  readPem: () => string;
+  source: NodeJS.ProcessEnv;
+  routes: readonly GateRoute[];
+  exit: (code: number) => void;
+}): void {
+  let pem: string;
+  try {
+    pem = options.readPem();
+  } catch {
+    process.stderr.write("env\n");
+    options.exit(1);
+    return;
+  }
+  const code = run(options.source, pem, options.routes);
+  if (code !== 0) {
+    options.exit(code);
+  }
+}
+
 export function run(source: NodeJS.ProcessEnv, pem: string, routes: readonly GateRoute[]): number {
   const read = readServiceEnv(source, pem);
   if (!read.ok) {
@@ -43,9 +63,12 @@ const healthRoutes: readonly GateRoute[] = [
 
 const entry = process.argv[1];
 if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
-  const pem = readFileSync(IMAGE_CERT_PATH, "utf8");
-  const code = run(process.env, pem, healthRoutes);
-  if (code !== 0) {
-    process.exit(code);
-  }
+  boot({
+    readPem: () => readFileSync(IMAGE_CERT_PATH, "utf8"),
+    source: process.env,
+    routes: healthRoutes,
+    exit: (code) => {
+      process.exit(code);
+    },
+  });
 }

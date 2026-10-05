@@ -2,10 +2,13 @@ import { timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-import { KMSClient } from "@aws-sdk/client-kms";
+import {
+  KMSClient,
+  type DecryptCommand,
+  type GenerateDataKeyCommand,
+} from "@aws-sdk/client-kms";
 import type { KmsPort } from "@community-hub/crypto";
 import { createDirectSql } from "@community-hub/db";
-import { createLogger } from "@community-hub/observability";
 
 import { IMAGE_CERT_PATH, readServiceEnv, type ServiceEnv } from "./env.js";
 import { createAwsKmsPort } from "./kms/aws-kms-adapter.js";
@@ -149,20 +152,37 @@ function crash(): void {
   process.exit(1);
 }
 
-const entry = process.argv[1];
-if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
-  process.on("uncaughtException", crash);
-  process.on("unhandledRejection", crash);
-  const pem = readFileSync(IMAGE_CERT_PATH, "utf8");
-  const read = readServiceEnv(process.env, pem);
-  const logger = createLogger();
+type ProbeClient = {
+  send: (
+    command: GenerateDataKeyCommand | DecryptCommand,
+    sendOptions?: { abortSignal?: AbortSignal },
+  ) => Promise<{ Plaintext?: Uint8Array; CiphertextBlob?: Uint8Array }>;
+};
+
+export function startProbe(options: {
+  readPem: () => string;
+  source: NodeJS.ProcessEnv;
+  connect: typeof createDirectSql;
+  createClient: () => ProbeClient;
+  stdout: (line: string) => void;
+  stderr: (line: string) => void;
+  exit: (code: number) => void;
+}): void {
+  let pem: string;
+  try {
+    pem = options.readPem();
+  } catch {
+    options.stdout("fail\n");
+    options.stderr("env\n");
+    options.exit(1);
+    return;
+  }
+  const read = readServiceEnv(options.source, pem);
   const kms: KmsPort = read.ok
     ? createAwsKmsPort({
-        client: new KMSClient({ region: "ap-southeast-2", maxAttempts: 1 }),
+        client: options.createClient(),
         keyArn: read.env.ENVELOPE_KEY_ARN,
-        info: (fields) => {
-          logger.info("kms", fields);
-        },
+        info: () => {},
       })
     : {
         async generateDataKey() {
@@ -172,9 +192,31 @@ if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
           throw new Error("kms_failed");
         },
       };
-  void runProbe({ source: process.env, pem, connect: createDirectSql, kms }).then((result) => {
-    process.stdout.write(result.stdout);
-    process.stderr.write(result.stderr);
-    process.exit(result.exitCode);
+  void runProbe({ source: options.source, pem, connect: options.connect, kms }).then((result) => {
+    options.stdout(result.stdout);
+    options.stderr(result.stderr);
+    options.exit(result.exitCode);
+  });
+}
+
+const entry = process.argv[1];
+if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
+  process.on("uncaughtException", crash);
+  process.on("unhandledRejection", crash);
+  startProbe({
+    readPem: () => readFileSync(IMAGE_CERT_PATH, "utf8"),
+    source: process.env,
+    connect: createDirectSql,
+    createClient: () =>
+      new KMSClient({ region: "ap-southeast-2", maxAttempts: 1 }) as ProbeClient,
+    stdout: (line) => {
+      process.stdout.write(line);
+    },
+    stderr: (line) => {
+      process.stderr.write(line);
+    },
+    exit: (code) => {
+      process.exit(code);
+    },
   });
 }
