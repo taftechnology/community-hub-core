@@ -106,7 +106,7 @@ describe("startServer", () => {
     expect(REQUEST_TIMEOUT_MS).toBe(30000);
     expect(server.requestTimeout).toBe(REQUEST_TIMEOUT_MS);
     expect(server.keepAliveTimeout).toBe(65000);
-    expect(server.headersTimeout).toBe(66000);
+    expect(server.headersTimeout).toBe(30000);
     expect(server.address()).toMatchObject({ address: "0.0.0.0", port: 39451 });
 
     const response = await fetch("http://127.0.0.1:39451/health");

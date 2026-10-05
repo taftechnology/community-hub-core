@@ -6,7 +6,7 @@ import { createGate, type GateRoute } from "./gate.js";
 import type { ServiceEnv } from "./env.js";
 
 export const KEEP_ALIVE_TIMEOUT_MS = 65_000;
-export const HEADERS_TIMEOUT_MS = 66_000;
+export const HEADERS_TIMEOUT_MS = 30_000;
 export const REQUEST_TIMEOUT_MS = 30_000;
 export const ACCEPT_AFTER_SIGTERM_MS = 5_000;
 export const FORCE_CLOSE_AFTER_SIGTERM_MS = 25_000;

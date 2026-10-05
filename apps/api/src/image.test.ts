@@ -172,6 +172,57 @@ describe.skipIf(process.env.RUN_IMAGE_TESTS !== "1")("regional service image", (
     expect(app.files.filter((file) => file.endsWith(".pem"))).toEqual([
       "/certs/rds-ap-southeast-2-bundle.pem",
     ]);
+    const packages = spawnSync(
+      "docker",
+      [
+        "run",
+        "--rm",
+        "--entrypoint",
+        "node",
+        image,
+        "--input-type=module",
+        "-e",
+        [
+          'import { readdirSync, realpathSync, statSync } from "node:fs";',
+          'import { join } from "node:path";',
+          "const files = [];",
+          "const dirs = [];",
+          "const seen = new Set();",
+          "function walk(dir) {",
+          "  let real;",
+          "  try { real = realpathSync(dir); } catch { return; }",
+          "  if (seen.has(real)) return;",
+          "  seen.add(real);",
+          "  for (const name of readdirSync(real)) {",
+          '    if (name === "node_modules" || name === ".pnpm") continue;',
+          "    const path = join(real, name);",
+          "    let st;",
+          "    try { st = statSync(path); } catch { continue; }",
+          "    if (st.isDirectory()) { dirs.push(path); walk(path); }",
+          "    else files.push(path);",
+          "  }",
+          "}",
+          'const root = "/app/node_modules/@community-hub";',
+          "for (const name of readdirSync(root)) walk(join(root, name));",
+          "process.stdout.write(JSON.stringify({ files, dirs }));",
+        ].join(" "),
+      ],
+      { encoding: "utf8" },
+    );
+    expect(packages.status, packages.stderr).toBe(0);
+    const workspace = JSON.parse(packages.stdout) as { files: string[]; dirs: string[] };
+    expect(
+      workspace.files.filter((file) => file.endsWith(".ts") && !file.endsWith(".d.ts")),
+    ).toEqual([]);
+    expect(workspace.files.filter((file) => file.includes(".test."))).toEqual([]);
+    expect(
+      workspace.files.filter((file) => {
+        const base = file.split("/").pop() ?? "";
+        return base.startsWith("tsconfig") || base.startsWith("vitest.config");
+      }),
+    ).toEqual([]);
+    expect(workspace.dirs.filter((dir) => dir.endsWith("/test"))).toEqual([]);
+    expect(workspace.files.some((file) => file.endsWith("/sql/bootstrap.sql"))).toBe(true);
     expect(health.join(" ")).not.toContain("bash");
     const names = (config?.Env ?? []).map((entry) => entry.split("=")[0]);
     for (const forbidden of [
@@ -237,7 +288,7 @@ describe.skipIf(process.env.RUN_IMAGE_TESTS !== "1")("regional service image", (
           "node",
           "--input-type=module",
           "-e",
-          'import { KEEP_ALIVE_TIMEOUT_MS, HEADERS_TIMEOUT_MS } from "/app/server.js"; process.exit(KEEP_ALIVE_TIMEOUT_MS === 65000 && HEADERS_TIMEOUT_MS === 66000 ? 0 : 1);',
+          'import { KEEP_ALIVE_TIMEOUT_MS, HEADERS_TIMEOUT_MS } from "/app/server.js"; process.exit(KEEP_ALIVE_TIMEOUT_MS === 65000 && HEADERS_TIMEOUT_MS === 30000 ? 0 : 1);',
         ],
         { encoding: "utf8" },
       );
