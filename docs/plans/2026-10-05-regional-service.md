@@ -17,7 +17,7 @@ Status: approved (2026-10-05, Abdus Salam)
 ## Global Constraints
 
 - The spec is approved. Do not edit `docs/specs/2026-10-05-regional-service.md`, `docs/specs/2026-10-03-personal-data-on-aws.md`, `docs/specs/2026-10-04-ingress.md`, `docs/specs/2026-10-04-db-tls.md`, ADR 0009, or `infra/`. `service_image` stays null.
-- `keepAliveTimeout` is 65000. `headersTimeout` is 66000. The production entrypoint does not pass other values. 5000 is Node's default and is not the value. The first staging apply's steady-traffic 5xx count confirms these values or changes them. This plan does not change them.
+- `keepAliveTimeout` is 65000. `requestTimeout` and `headersTimeout` are 30000. `headersTimeout` equals `requestTimeout`, as Node requires. The production entrypoint does not pass other values. 5000 is Node's default and is not the value. The first staging apply's steady-traffic 5xx count confirms these values or changes them.
 - On SIGTERM the process may accept for up to 5000 ms, then stops accepting. At 25000 ms after SIGTERM every socket that is still open is destroyed. The process exits 0 before the 30000 ms stop timeout.
 - Listen and `GET /health` call no `createDirectSql`, `createAppSql`, `createIdentitySql`, `createPlatformSql`, and no KMS `send`. There is no pooled checkout.
 - The probe is `node /app/probe.js`. Stdout is the line `pass` or `fail`. Stderr on failure is one of `env`, `db_app`, `db_identity`, `db_platform`, `kms_generate`, `kms_decrypt`. Each line is the word plus one newline. Exit 0 or 1. Nothing else is printed.
@@ -512,7 +512,8 @@ About 260 changed lines.
 export const CERT_SHA256 = "d73890748b5a95551800df8a6f07c9c800e32ed34da7e6c9505918bf8ac2398b";
 export const IMAGE_CERT_PATH = "/app/certs/rds-ap-southeast-2-bundle.pem";
 export const KEEP_ALIVE_TIMEOUT_MS = 65_000;
-export const HEADERS_TIMEOUT_MS = 66_000;
+export const HEADERS_TIMEOUT_MS = 30_000;
+export const REQUEST_TIMEOUT_MS = 30_000;
 export const ACCEPT_AFTER_SIGTERM_MS = 5_000;
 export const FORCE_CLOSE_AFTER_SIGTERM_MS = 25_000;
 
@@ -554,7 +555,7 @@ Expected digest: `d73890748b5a95551800df8a6f07c9c800e32ed34da7e6c9505918bf8ac239
 
 `env.test.ts` asserts `{ ok: false }` for a missing `PGHOST`, an alias ARN, an uppercase key id, a one-byte change to the PEM, and equal ops and api hostnames. A complete synthetic env with account `123456789012` and a `mrk-` id of 32 hex characters returns `{ ok: true }`.
 
-`server.test.ts` mocks `@community-hub/db` and `./kms/aws-kms-adapter.js` before importing the server. After `listen` and a loopback `GET /health` with no hostname header, `createDirectSql`, `createAppSql`, `createIdentitySql`, `createPlatformSql`, and `createAwsKmsPort` have zero calls. The body is `{ ok: true }`, `server.keepAliveTimeout` is 65000, and `server.headersTimeout` is 66000. The address is `0.0.0.0` and the port is the `PORT` value. Use a free port from 1 to 65535, not 0.
+`server.test.ts` mocks `@community-hub/db` and `./kms/aws-kms-adapter.js` before importing the server. After `listen` and a loopback `GET /health` with no hostname header, `createDirectSql`, `createAppSql`, `createIdentitySql`, `createPlatformSql`, and `createAwsKmsPort` have zero calls. The body is `{ ok: true }`, `server.keepAliveTimeout` is 65000, and `server.requestTimeout` and `server.headersTimeout` are 30000. The address is `0.0.0.0` and the port is the `PORT` value. Use a free port from 1 to 65535, not 0.
 
 The shutdown test passes `acceptForMs: 30`, `forceCloseMs: 80`, a `signals` object whose `on("SIGTERM", listener)` stores the listener, and `exit` that records the code. It does not call `process.kill` and it does not let the server call `process.exit`. Invoking the stored listener starts the drain. A request that finishes before the force-close still receives its response. A request the test route never finishes is destroyed, and `exit` is called with 0 before 500 ms.
 
@@ -739,7 +740,7 @@ Run `docker run --rm --read-only --tmpfs /tmp --user node` with a synthetic envi
 
 Assert loopback `GET http://127.0.0.1:8080/health` returns 200 and `{ ok: true }`. Exec the health command as `docker exec <id> node -e "<the fetch script>"` and expect exit 0.
 
-Exec `node --input-type=module -e` inside the container to import `KEEP_ALIVE_TIMEOUT_MS` and `HEADERS_TIMEOUT_MS` from `/app/env.js` and exit 0 only when they are 65000 and 66000.
+Exec `node --input-type=module -e` inside the container to import `KEEP_ALIVE_TIMEOUT_MS` and `HEADERS_TIMEOUT_MS` from `/app/server.js` and exit 0 only when they are 65000 and 30000.
 
 Start a second container on the same image. The production process serves only `GET /health`, so do not add a slow route. Hold the connection with a raw TCP socket that sends incomplete request headers and then writes nothing else. Send `docker kill --signal=TERM`. The container exits 0, and the elapsed time is greater than 20 seconds and less than 30 seconds. A request that completed before the force-close returned its response. This test uses the real timers. Do not pass `acceptForMs`.
 
@@ -890,7 +891,7 @@ In `docs/roadmap.md`:
 
 - Snapshot: last shipped `regional service`. Next chunk `first staging apply`. Phase 0 is `20 rows: 17 done, 1 superseded (api-au-hostname), 2 not started`.
 - The `regional service` row becomes **done** and links `docs/specs/2026-10-05-regional-service.md`.
-- Append to the `first staging apply` cell: an alarm on `missing_hostname_header` from a non-loopback address is an open item for that row. The probe runs as a standalone task, container `service`, command `["node", "/app/probe.js"]`, a public subnet, the task security group, a public IP, with `desired_count` still 0 and ECS Exec off. 5xx responses under steady light traffic are counted, not only during a deploy, and that count is what confirms the keep-alive timeouts of 65000 and 66000 or changes them.
+- Append to the `first staging apply` cell: an alarm on `missing_hostname_header` from a non-loopback address is an open item for that row. The probe runs as a standalone task, container `service`, command `["node", "/app/probe.js"]`, a public subnet, the task security group, a public IP, with `desired_count` still 0 and ECS Exec off. 5xx responses under steady light traffic are counted, not only during a deploy, and that count is what confirms the keep-alive timeout of 65000 and the request timeout of 30000 or changes them.
 - Under `Open items`, add: whether startup should prove the database or KMS is decided by the first chunk that serves a route which needs either one. A cache of unwrapped organisation keys is decided by the first chunk that unwraps one.
 - Add one sentence to the existing password re-read item: that same chunk adds pooled checkout of `createAppSql`, `createIdentitySql`, and `createPlatformSql`.
 
