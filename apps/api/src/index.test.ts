@@ -1,31 +1,103 @@
-import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import handler from "./index.js";
+import { listeningServer, run } from "./index.js";
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const pem = readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), "../certs/rds-ap-southeast-2-bundle.pem"),
+  "utf8",
+);
 
-describe("api", () => {
-  it("GET /health mints request id instead of trusting inbound x-request-id", async () => {
-    const inboundRequestId = "22222222-2222-4222-8222-222222222222";
-    const logSpy = vi.spyOn(console, "log");
+const marker = "arn:aws:kms:ap-southeast-2:123456789012:alias/not-a-key";
 
-    const response = await handler.fetch(
-      new Request("https://api.test/health", {
-        headers: { "x-request-id": inboundRequestId },
-      }),
-    );
+function source(): NodeJS.ProcessEnv {
+  return {
+    PORT: "39453",
+    PGPORT: "5432",
+    AWS_REGION: "ap-southeast-2",
+    NODE_ENV: "test",
+    COMMUNITY_HUB_ENVIRONMENT: "staging",
+    API_HOSTNAME: "au.api.example.test",
+    AUTH_HOSTNAME: "auth.au.example.test",
+    WEBHOOKS_HOSTNAME: "webhooks.au.example.test",
+    OPS_HOSTNAME: "ops.au.example.test",
+    PGHOST: "db.internal",
+    PGDATABASE: "communityhub",
+    PGUSER_APP: "app",
+    PGUSER_IDENTITY: "identity",
+    PGUSER_PLATFORM: "platform",
+    PGPASSWORD_APP: "pw-app",
+    PGPASSWORD_IDENTITY: "pw-identity",
+    PGPASSWORD_PLATFORM: "pw-platform",
+    ENVELOPE_KEY_ARN: marker,
+    APP_SECRET_ARN: "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:app",
+    IDENTITY_SECRET_ARN: "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:identity",
+    PLATFORM_SECRET_ARN: "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:platform",
+  };
+}
 
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ok: true });
-    expect(logSpy).toHaveBeenCalledTimes(1);
+describe("api entrypoint", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    listeningServer()?.closeAllConnections();
+    listeningServer()?.close();
+  });
 
-    const logLine = String(logSpy.mock.calls[0]![0]);
-    const parsed = JSON.parse(logLine) as Record<string, unknown>;
-    expect(typeof parsed.requestId).toBe("string");
-    expect(parsed.requestId).toMatch(UUID);
-    expect(parsed.requestId).not.toBe(inboundRequestId);
-    expect(logLine).not.toContain(inboundRequestId);
+  it("does not listen when the module is imported", () => {
+    expect(listeningServer()).toBeUndefined();
+  });
 
-    logSpy.mockRestore();
+  it("writes env and does not listen when the envelope key is an alias", () => {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      stdout.push(String(chunk));
+      return true;
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      stderr.push(String(chunk));
+      return true;
+    });
+
+    const code = run(source(), pem, [
+      {
+        method: "GET",
+        pattern: "/health",
+        surface: "all",
+        handle: () => Response.json({ ok: true }),
+      },
+    ]);
+
+    expect(code).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr).toEqual(["env\n"]);
+    expect(stderr.join("")).not.toContain(marker);
+    expect(listeningServer()).toBeUndefined();
+  });
+
+  it("writes routes when the table is rejected", () => {
+    const stderr: string[] = [];
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      stderr.push(String(chunk));
+      return true;
+    });
+    const env = source();
+    env.ENVELOPE_KEY_ARN = `arn:aws:kms:ap-southeast-2:123456789012:key/mrk-${"ab".repeat(16)}`;
+
+    const code = run(env, pem, [
+      {
+        method: "GET",
+        pattern: "/other",
+        surface: "all",
+        handle: () => new Response(null, { status: 204 }),
+      },
+    ]);
+
+    expect(code).toBe(1);
+    expect(stderr).toEqual(["routes\n"]);
+    expect(stderr.join("")).not.toContain("/other");
+    expect(listeningServer()).toBeUndefined();
   });
 });
