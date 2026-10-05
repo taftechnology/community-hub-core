@@ -52,6 +52,9 @@ importers:
       '@community-hub/crypto':
         specifier: workspace:*
         version: link:../../packages/crypto
+      '@community-hub/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@community-hub/kernel':
         specifier: workspace:*
         version: link:../../packages/kernel

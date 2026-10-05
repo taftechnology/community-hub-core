@@ -12,6 +12,7 @@
   "exclude": ["src/**/*.test.ts"],
   "references": [
     { "path": "../../packages/crypto" },
+    { "path": "../../packages/db" },
     { "path": "../../packages/kernel" },
     { "path": "../../packages/observability" }
   ]
