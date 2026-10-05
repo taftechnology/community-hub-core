@@ -13,6 +13,14 @@ export type SqlTarget = {
 };
 
 function open(target: SqlTarget, max: number, prepare: boolean): Sql {
+  const given: unknown = target.servername;
+  if (given !== undefined && (typeof given !== "string" || given === "")) {
+    throw new Error("servername must be a non-empty string");
+  }
+  const ca: unknown = target.ca;
+  if (typeof ca !== "string" || !ca.includes("-----BEGIN CERTIFICATE-----")) {
+    throw new Error("ca must contain a certificate");
+  }
   let servername = target.servername;
   if (servername === undefined) {
     if (isIP(target.host) !== 0) {

@@ -309,8 +309,37 @@ describe("IP host", () => {
         database: "hub",
         user: "hub",
         password: "unused",
-        ca: "unused",
+        ca: "-----BEGIN CERTIFICATE-----\nunused\n",
       }),
     ).toThrow(/servername is required when host is an IP address/);
+  });
+});
+
+describe("factory arguments", () => {
+  const base = {
+    host: "db.tls.test",
+    port: 5432,
+    database: "hub",
+    user: "hub",
+    password: "unused",
+    ca: "-----BEGIN CERTIFICATE-----\nunused\n",
+  };
+
+  it("throws when servername is empty", () => {
+    expect(() => createDirectSql({ ...base, servername: "" })).toThrow(
+      /^servername must be a non-empty string$/,
+    );
+  });
+
+  it("throws when ca is empty", () => {
+    expect(() => createDirectSql({ ...base, ca: "", servername: "db.tls.test" })).toThrow(
+      /^ca must contain a certificate$/,
+    );
+  });
+
+  it("throws when ca is not a certificate", () => {
+    expect(() => createDirectSql({ ...base, ca: "not a pem", servername: "db.tls.test" })).toThrow(
+      /^ca must contain a certificate$/,
+    );
   });
 });

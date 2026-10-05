@@ -11,8 +11,20 @@ function isPlaintextSource(value) {
   );
 }
 
+function sourceText(node) {
+  if (node.type === "Literal") return node.value;
+  if (
+    node.type === "TemplateLiteral" &&
+    node.expressions.length === 0 &&
+    node.quasis.length === 1
+  ) {
+    return node.quasis[0].value.cooked;
+  }
+  return undefined;
+}
+
 function checkSource(node, context) {
-  if (node.type === "Literal" && isPlaintextSource(node.value)) {
+  if (isPlaintextSource(sourceText(node))) {
     context.report({ node, messageId: "plaintext" });
   }
 }
