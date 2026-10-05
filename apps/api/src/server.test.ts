@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { ServerResponse } from "node:http";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -200,6 +201,68 @@ describe("startServer", () => {
     const response = await fetch("http://127.0.0.1:39454/health");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
+  });
+
+  it("destroys the socket when headers were already sent", async () => {
+    const env = envFor(39457);
+    const server = startServer({
+      env,
+      routes: [
+        health,
+        {
+          method: "GET",
+          pattern: "/partial",
+          surface: "tenant",
+          handle: () => new Response("ok"),
+        },
+      ],
+    });
+    servers.push(server);
+    await listening(server);
+
+    const writes: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    const originalEnd = ServerResponse.prototype.end;
+    const originalWriteHead = ServerResponse.prototype.writeHead;
+    let thrown = false;
+    let writeHeads = 0;
+    ServerResponse.prototype.end = function end(this: ServerResponse, ...args: unknown[]) {
+      if (!thrown) {
+        thrown = true;
+        throw new Error("marker-end");
+      }
+      return Reflect.apply(originalEnd, this, args) as ServerResponse;
+    } as typeof ServerResponse.prototype.end;
+    ServerResponse.prototype.writeHead = function writeHead(
+      this: ServerResponse,
+      ...args: unknown[]
+    ) {
+      writeHeads += 1;
+      return Reflect.apply(originalWriteHead, this, args) as ServerResponse;
+    } as typeof ServerResponse.prototype.writeHead;
+
+    try {
+      const settled = await fetch("http://127.0.0.1:39457/partial", {
+        headers: { "x-community-hub-hostname": "au.api.example.test" },
+        signal: AbortSignal.timeout(1000),
+      }).then(
+        () => "resolved" as const,
+        () => "rejected" as const,
+      );
+      expect(settled).toBe("rejected");
+      expect(writeHeads).toBe(1);
+      expect(writes.join("")).not.toContain("marker-end");
+    } finally {
+      ServerResponse.prototype.end = originalEnd;
+      ServerResponse.prototype.writeHead = originalWriteHead;
+      spy.mockRestore();
+    }
+
+    const response = await fetch("http://127.0.0.1:39457/health");
+    expect(response.status).toBe(200);
   });
 
   it("keeps listening when a handler throws", async () => {

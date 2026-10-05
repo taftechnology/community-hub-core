@@ -73,7 +73,9 @@ export function startServer(options: {
           await writeResponse(res, response);
         }
       } catch {
-        if (!res.writableEnded) {
+        if (res.headersSent) {
+          res.socket?.destroy();
+        } else if (!res.writableEnded) {
           res.writeHead(400, { "Content-Length": "0" });
           res.end();
         }

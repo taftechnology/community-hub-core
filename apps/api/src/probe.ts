@@ -2,11 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-import {
-  KMSClient,
-  type DecryptCommand,
-  type GenerateDataKeyCommand,
-} from "@aws-sdk/client-kms";
+import { KMSClient, type DecryptCommand, type GenerateDataKeyCommand } from "@aws-sdk/client-kms";
 import type { KmsPort } from "@community-hub/crypto";
 import { createDirectSql } from "@community-hub/db";
 
@@ -207,8 +203,7 @@ if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
     readPem: () => readFileSync(IMAGE_CERT_PATH, "utf8"),
     source: process.env,
     connect: createDirectSql,
-    createClient: () =>
-      new KMSClient({ region: "ap-southeast-2", maxAttempts: 1 }) as ProbeClient,
+    createClient: () => new KMSClient({ region: "ap-southeast-2", maxAttempts: 1 }) as ProbeClient,
     stdout: (line) => {
       process.stdout.write(line);
     },

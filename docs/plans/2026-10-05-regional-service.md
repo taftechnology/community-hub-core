@@ -755,7 +755,7 @@ Expected: exit 1, stdout `fail\n`, stderr `env\n`.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `RUN_IMAGE_TESTS=1 pnpm --filter @community-hub/api test -- src/image.test.ts`
+Run: `RUN_IMAGE_TESTS=1 pnpm --filter @community-hub/api exec vitest run --config vitest.config.ts src/image.test.ts`
 
 Expected: FAIL because `apps/api/Dockerfile` does not exist.
 
@@ -765,7 +765,7 @@ Add `tsconfig.emit.json` and `apps/api/Dockerfile` as specified. Both `FROM` lin
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `pnpm lint && pnpm typecheck && pnpm test --filter @community-hub/api && RUN_IMAGE_TESTS=1 pnpm --filter @community-hub/api test -- src/image.test.ts && pnpm check:boundaries`
+Run: `pnpm lint && pnpm typecheck && pnpm test --filter @community-hub/api && RUN_IMAGE_TESTS=1 pnpm --filter @community-hub/api exec vitest run --config vitest.config.ts src/image.test.ts && pnpm check:boundaries`
 
 Expected: PASS. The SIGTERM container exits before 30 seconds. The no-environment probe prints `fail` and `env`.
 
@@ -832,7 +832,7 @@ build-preview:
     - name: Image contract checks
       env:
         RUN_IMAGE_TESTS: "1"
-      run: pnpm --filter @community-hub/api test -- src/image.test.ts
+      run: pnpm --filter @community-hub/api exec vitest run --config vitest.config.ts src/image.test.ts
 ```
 
 `image.test.ts` builds `community-hub-api:local` only when `docker image inspect` fails, so this job does not build twice. It still runs every assertion, including the no-environment probe and the incomplete-header SIGTERM check. Those assertions do not skip.
@@ -841,7 +841,7 @@ In `AGENTS.md` §10, replace the Stage 3 bullet with: Stage 3 builds this ARM im
 
 - [ ] **Step 2: Run the workflow file's commands locally**
 
-Run the `docker build` tagged `community-hub-api:local`, then `RUN_IMAGE_TESTS=1 pnpm --filter @community-hub/api test -- src/image.test.ts`.
+Run the `docker build` tagged `community-hub-api:local`, then `RUN_IMAGE_TESTS=1 pnpm --filter @community-hub/api exec vitest run --config vitest.config.ts src/image.test.ts`.
 
 Expected: the image test exits 0. The probe assertion inside it sees exit 1, `fail`, and `env`. `git diff -- .github/workflows/ci.yml` contains no `docker push` and no `aws`.
 
@@ -914,7 +914,7 @@ pnpm check:boundaries
 pnpm audit --audit-level=high
 pnpm test
 docker build --platform linux/arm64 -f apps/api/Dockerfile -t community-hub-api:local .
-RUN_IMAGE_TESTS=1 pnpm --filter @community-hub/api test -- src/image.test.ts
+RUN_IMAGE_TESTS=1 pnpm --filter @community-hub/api exec vitest run --config vitest.config.ts src/image.test.ts
 ```
 
 The image test exits 0. Inside it, the probe stdout is `fail` and stderr is `env`. There is no `docker push`.

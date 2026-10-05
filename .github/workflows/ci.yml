@@ -158,4 +158,4 @@ jobs:
       - name: Image contract checks
         env:
           RUN_IMAGE_TESTS: "1"
-        run: pnpm --filter @community-hub/api test -- src/image.test.ts
+        run: pnpm --filter @community-hub/api exec vitest run --config vitest.config.ts src/image.test.ts
