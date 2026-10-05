@@ -9,7 +9,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { withAppTransaction } from "../src/app-transaction.js";
 import { insertEncrypted } from "../src/insert-encrypted.js";
-import { createAppSql } from "../src/connections.js";
+import { createPlaintextAppSql, createPlaintextDirectSql } from "../src/plaintext.js";
 import { newId } from "../src/ids.js";
 import { applyProductMigrations } from "../src/migrate.js";
 import { applyTestMigrations } from "./migrate-test.js";
@@ -43,13 +43,18 @@ function uuidToBytes(uuid: string): Uint8Array {
 describe("encrypted columns through PgBouncer", () => {
   beforeAll(async () => {
     const runtime = loadRuntime();
-    await applyProductMigrations(runtime.directUrl);
+    const migration = createPlaintextDirectSql(runtime.directUrl);
+    try {
+      await applyProductMigrations(migration);
+    } finally {
+      await migration.end({ timeout: 1 });
+    }
     await applyTestMigrations({ mode: "test" }, runtime.directUrl);
   });
 
   it("round-trips ciphertext and finds the row by blind index", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     const orgId = newId();
     const communityId = newId();
     const id = newId();

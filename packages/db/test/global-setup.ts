@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runBootstrap, setLoginPasswords } from "../src/bootstrap.js";
-import { createDirectSql, createPooledSql } from "../src/connections.js";
+import { createPlaintextAppSql, createPlaintextDirectSql } from "../src/plaintext.js";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const COMPOSE = path.join(DIR, "docker-compose.yml");
@@ -21,7 +21,7 @@ function compose(args: string[]): void {
 async function waitForDirect(attempts = 60): Promise<void> {
   let last: unknown;
   for (let i = 0; i < attempts; i += 1) {
-    const sql = createDirectSql(DIRECT_URL);
+    const sql = createPlaintextDirectSql(DIRECT_URL);
     try {
       await sql`select 1`;
       await sql.end({ timeout: 1 });
@@ -39,7 +39,7 @@ async function waitForPgbouncer(appPassword: string, attempts = 60): Promise<voi
   const url = `postgres://app:${encodeURIComponent(appPassword)}@127.0.0.1:6432/hub`;
   let last: unknown;
   for (let i = 0; i < attempts; i += 1) {
-    const sql = createPooledSql(url);
+    const sql = createPlaintextAppSql(url);
     try {
       await sql`select 1`;
       await sql.end({ timeout: 1 });
@@ -65,7 +65,7 @@ export default async function setup(): Promise<() => void> {
       platform: randomBytes(24).toString("base64url"),
     };
 
-    const sql = createDirectSql(DIRECT_URL);
+    const sql = createPlaintextDirectSql(DIRECT_URL);
     try {
       await runBootstrap(sql);
       const { verifiers } = await setLoginPasswords(sql, passwords);

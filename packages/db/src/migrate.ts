@@ -6,7 +6,6 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import type { Sql } from "postgres";
 
 import { runBootstrap } from "./bootstrap.js";
-import { createDirectSql } from "./connections.js";
 
 /** Session advisory lock taken as the privileged login before bootstrap. */
 export const MIGRATION_LOCK_ID = 1_667_788_130;
@@ -54,12 +53,12 @@ export function assertMigrationPreflight(
 }
 
 /**
- * Direct Postgres URL only — never PgBouncer/Hyperdrive. The runner takes
- * an advisory lock, SET ROLE, and migrate() on one unpooled session.
+ * Direct connection only — never PgBouncer. The runner takes an advisory
+ * lock, SET ROLE, and migrate() on the Sql the caller opened.
  */
-export async function applyProductMigrations(url: string): Promise<void> {
+export async function applyProductMigrations(sql: Sql): Promise<void> {
   await applyMigrations({
-    url,
+    sql,
     folder: PRODUCT_FOLDER,
     table: PRODUCT_TABLE,
   });
@@ -67,7 +66,7 @@ export async function applyProductMigrations(url: string): Promise<void> {
 
 /** Not in package `exports`. Tests and `applyTestMigrations` pass a folder and table. */
 export async function applyMigrations(opts: {
-  url: string;
+  sql: Sql;
   folder: string;
   table: string;
 }): Promise<void> {
@@ -80,7 +79,7 @@ export async function applyMigrations(opts: {
   if (!JOURNAL_TABLE.test(opts.table)) {
     throw new Error(`unsupported migrations table ${opts.table}`);
   }
-  const sql = createDirectSql(opts.url);
+  const sql = opts.sql;
   try {
     await sql`select pg_advisory_lock(${MIGRATION_LOCK_ID})`;
     const lockRows = await sql<{ pid: number }[]>`select pg_backend_pid() as pid`;
@@ -92,9 +91,7 @@ export async function applyMigrations(opts: {
       select pg_backend_pid() as pid, current_user as usr
     `;
     if (Number(session[0]?.pid) !== lockPid) {
-      throw new Error(
-        "migration runner lost the session; pass a direct Postgres URL, not a pooler",
-      );
+      throw new Error("migration runner lost the session; pass a direct connection, not a pooler");
     }
     if (session[0]?.usr !== "migrator") {
       throw new Error("migration runner is not SET ROLE migrator");
@@ -108,7 +105,6 @@ export async function applyMigrations(opts: {
   } finally {
     await sql.unsafe("reset role").catch(() => undefined);
     await sql`select pg_advisory_unlock(${MIGRATION_LOCK_ID})`.catch(() => undefined);
-    await sql.end({ timeout: 1 });
   }
 }
 

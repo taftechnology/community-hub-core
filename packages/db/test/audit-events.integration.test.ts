@@ -8,7 +8,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { appendAuditEvent } from "../src/audit-append.js";
 import { auditEventHash } from "../src/audit-hash.js";
 import { verifyAuditChain } from "../src/audit-verify.js";
-import { createAppSql, createDirectSql } from "../src/connections.js";
+import { createPlaintextAppSql, createPlaintextDirectSql } from "../src/plaintext.js";
 import { newId } from "../src/ids.js";
 import { applyProductMigrations } from "../src/migrate.js";
 import { withOrgTransaction } from "../src/tx.js";
@@ -66,7 +66,12 @@ const APPEND_PURPOSE = defineAuditPurpose("audit.append.test");
 describe("app.audit_events", () => {
   beforeAll(async () => {
     const runtime = loadRuntime();
-    await applyProductMigrations(runtime.directUrl);
+    const migration = createPlaintextDirectSql(runtime.directUrl);
+    try {
+      await applyProductMigrations(migration);
+    } finally {
+      await migration.end({ timeout: 1 });
+    }
     await applyTestMigrations({ mode: "test" }, runtime.directUrl);
   });
 
@@ -86,7 +91,7 @@ describe("app.audit_events", () => {
 
   it("app.audit_event_hash throws when hash_version is not 1", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     try {
       await expect(
         sql`
@@ -113,7 +118,7 @@ describe("app.audit_events", () => {
 
   it("app.audit_event_hash of the frozen inputs returns the spec digest", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     try {
       const rows = await sql<{ digest: string }[]>`
         select encode(
@@ -142,7 +147,7 @@ describe("app.audit_events", () => {
 
   it("BEFORE INSERT trigger overwrites chain fields and keeps the chosen id", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     const orgId = newId();
     const foreignOrg = newId();
     const chosenId = newId();
@@ -232,7 +237,7 @@ describe("app.audit_events", () => {
 
   it("first row of a second organisation is also seq 1 with a zero prev_hash", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     const orgA = newId();
     const orgB = newId();
     const actorId = newId();
@@ -281,7 +286,7 @@ describe("app.audit_events", () => {
 
   it("UPDATE, DELETE, and TRUNCATE as app throw", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     const orgId = newId();
     const actorId = newId();
     const requestId = newId();
@@ -333,7 +338,7 @@ describe("app.audit_events", () => {
 
   it("rejects null target element and two-dimensional uuid[] with audit_events_target_ids", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     const orgId = newId();
     const actorId = newId();
     const requestId = newId();
@@ -389,7 +394,7 @@ describe("app.audit_events", () => {
 
   it("declared CHECK rejects null element and 2D uuid[] when the trigger is bypassed", async () => {
     const runtime = loadRuntime();
-    const sql = createDirectSql(runtime.directUrl);
+    const sql = createPlaintextDirectSql(runtime.directUrl);
     const orgId = newId();
     const actorId = newId();
     const requestId = newId();
@@ -445,7 +450,7 @@ describe("app.audit_events", () => {
 
   it("app.audit_event_hash raises on null target element and two-dimensional uuid[]", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     try {
       await expect(
         sql`
@@ -491,7 +496,7 @@ describe("app.audit_events", () => {
 
   it("rejects system with actor_id and user with null actor_id", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     const orgId = newId();
     const actorId = newId();
     const requestId = newId();
@@ -554,7 +559,7 @@ describe("app.audit_events", () => {
 describe("appendAuditEvent", () => {
   it("throws outside withRequest and leaves no row", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     const orgId = newId();
     const actorId = newId();
     try {
@@ -581,7 +586,7 @@ describe("appendAuditEvent", () => {
 
   it("rejects a non-UUID requestId", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     const orgId = newId();
     const actorId = newId();
     try {
@@ -605,7 +610,7 @@ describe("appendAuditEvent", () => {
 
   it("rolls back a companion synthetic write when the action is unregistered", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     const orgId = newId();
     const actorId = newId();
     const syntheticId = newId();
@@ -636,7 +641,7 @@ describe("appendAuditEvent", () => {
 
   it("rolls back a companion synthetic write when the purpose is unregistered", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     const orgId = newId();
     const actorId = newId();
     const syntheticId = newId();
@@ -667,7 +672,7 @@ describe("appendAuditEvent", () => {
 
   it("rejects system with actor id and user with null actor id before insert", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     const orgId = newId();
     const actorId = newId();
     try {
@@ -710,7 +715,7 @@ describe("appendAuditEvent", () => {
 
   it("rejects a null entry in targetIds before insert", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     const orgId = newId();
     const actorId = newId();
     try {
@@ -739,7 +744,7 @@ describe("appendAuditEvent", () => {
 
   it("refuses isolation other than read committed before insert", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     const orgId = newId();
     const actorId = newId();
     try {
@@ -769,7 +774,7 @@ describe("appendAuditEvent", () => {
 
   it("inserts two rows for two appends in one request with seq 1 and 2", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     const orgId = newId();
     const actorId = newId();
     const targetId = newId();
@@ -814,13 +819,18 @@ describe("appendAuditEvent", () => {
 describe("verifyAuditChain", () => {
   beforeAll(async () => {
     const runtime = loadRuntime();
-    await applyProductMigrations(runtime.directUrl);
+    const migration = createPlaintextDirectSql(runtime.directUrl);
+    try {
+      await applyProductMigrations(migration);
+    } finally {
+      await migration.end({ timeout: 1 });
+    }
     await applyTestMigrations({ mode: "test" }, runtime.directUrl);
   });
 
   it("resolves on an organisation with no rows", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     const orgId = newId();
     try {
       await expect(
@@ -835,7 +845,7 @@ describe("verifyAuditChain", () => {
 
   it("verifies a chain whose occurred_at has a non-zero microsecond part", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     const orgId = newId();
     const actorId = newId();
     try {
@@ -946,8 +956,8 @@ describe("verifyAuditChain", () => {
   it("retries after a forced seq collision on hub and verify accepts the chain", async () => {
     const runtime = loadRuntime();
     const hubUrl = pooledAppUrl(runtime);
-    const sql = createAppSql(hubUrl);
-    const poller = createAppSql(hubUrl);
+    const sql = createPlaintextAppSql(hubUrl);
+    const poller = createPlaintextAppSql(hubUrl);
     const orgId = newId();
     const actorId = newId();
 
@@ -1049,7 +1059,7 @@ describe("verifyAuditChain", () => {
 
   it("keeps org B from selecting org A's row and verifies org B after one append", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
     const orgA = newId();
     const orgB = newId();
     const actorId = newId();
@@ -1098,8 +1108,8 @@ describe("verifyAuditChain", () => {
 
   it("rejects after a privileged one-byte hash flip with audit.chain.broken and that seq", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
-    const direct = createDirectSql(runtime.directUrl);
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
+    const direct = createPlaintextDirectSql(runtime.directUrl);
     const orgId = newId();
     const actorId = newId();
     try {
@@ -1134,8 +1144,8 @@ describe("verifyAuditChain", () => {
 
   it("verifies one organisation on the direct connection when another organisation has rows", async () => {
     const runtime = loadRuntime();
-    const sql = createAppSql(pooledAppUrl(runtime));
-    const direct = createDirectSql(runtime.directUrl);
+    const sql = createPlaintextAppSql(pooledAppUrl(runtime));
+    const direct = createPlaintextDirectSql(runtime.directUrl);
     const orgA = newId();
     const orgB = newId();
     const actorId = newId();

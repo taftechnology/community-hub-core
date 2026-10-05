@@ -8,8 +8,14 @@
     "rootDir": ".",
     "types": ["node"],
     "paths": {
-      "@community-hub/crypto/testing": ["./src/testing.ts"]
+      "@community-hub/crypto/testing": ["./src/testing.ts"],
+      "@community-hub/db/plaintext": ["./src/plaintext.ts"]
     }
   },
-  "include": ["src/**/*.ts", "test/migrate-test.ts", "test/schema-test.ts"]
+  "include": [
+    "src/**/*.ts",
+    "test/migrate-test.ts",
+    "test/schema-test.ts",
+    "test/plaintext.integration.test.ts"
+  ]
 }
