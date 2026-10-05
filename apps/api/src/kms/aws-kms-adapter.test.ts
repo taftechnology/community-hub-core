@@ -46,7 +46,9 @@ describe("createAwsKmsPort", () => {
     expect(error.message).toBe("kms_failed");
     expect(error.cause).toBeUndefined();
     expect(send).not.toHaveBeenCalled();
-    expect(logs).toEqual([{ operation: "generate_data_key", outcome: "rejected", key_kind: "org" }]);
+    expect(logs).toEqual([
+      { operation: "generate_data_key", outcome: "rejected", key_kind: "org" },
+    ]);
   });
 
   it("rejects a key id other than the configured ARN without send", async () => {
@@ -62,7 +64,9 @@ describe("createAwsKmsPort", () => {
     expect(error.message).toBe("kms_failed");
     expect(error.cause).toBeUndefined();
     expect(send).not.toHaveBeenCalled();
-    expect(logs).toEqual([{ operation: "generate_data_key", outcome: "rejected", key_kind: "org" }]);
+    expect(logs).toEqual([
+      { operation: "generate_data_key", outcome: "rejected", key_kind: "org" },
+    ]);
   });
 
   it("omits key_kind when the context kind is unknown", async () => {
@@ -179,7 +183,7 @@ describe("createAwsKmsPort", () => {
       client: {
         send: async (command) => {
           commands.push(command);
-        return { Plaintext: decryptPlaintext };
+          return { Plaintext: decryptPlaintext };
         },
       },
       keyArn: KEY_ARN,

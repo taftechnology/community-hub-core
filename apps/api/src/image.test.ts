@@ -145,11 +145,11 @@ describe.skipIf(process.env.RUN_IMAGE_TESTS !== "1")("regional service image", (
 
     const first = startContainer();
     try {
-        await waitForHealth(first.id);
-        const body = loopbackBody(first.id);
-        expect(body.status, body.stderr).toBe(0);
-        expect(body.stdout).toBe('200\n{"ok":true}');
-        const healthExec = spawnSync(
+      await waitForHealth(first.id);
+      const body = loopbackBody(first.id);
+      expect(body.status, body.stderr).toBe(0);
+      expect(body.stdout).toBe('200\n{"ok":true}');
+      const healthExec = spawnSync(
         "docker",
         [
           "exec",
@@ -180,16 +180,16 @@ describe.skipIf(process.env.RUN_IMAGE_TESTS !== "1")("regional service image", (
 
     const second = startContainer();
     try {
-        await waitForHealth(second.id);
-        const held = await new Promise<net.Socket>((resolve, reject) => {
-          const socket = net.connect(second.port, "127.0.0.1");
-          socket.once("error", reject);
-          socket.once("connect", () => resolve(socket));
-        });
-        held.write("GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n");
-        const finished = loopbackBody(second.id);
-        expect(finished.status, finished.stderr).toBe(0);
-        expect(finished.stdout).toBe('200\n{"ok":true}');
+      await waitForHealth(second.id);
+      const held = await new Promise<net.Socket>((resolve, reject) => {
+        const socket = net.connect(second.port, "127.0.0.1");
+        socket.once("error", reject);
+        socket.once("connect", () => resolve(socket));
+      });
+      held.write("GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n");
+      const finished = loopbackBody(second.id);
+      expect(finished.status, finished.stderr).toBe(0);
+      expect(finished.stdout).toBe('200\n{"ok":true}');
 
       const started = Date.now();
       docker(["kill", "--signal=TERM", second.id]);
