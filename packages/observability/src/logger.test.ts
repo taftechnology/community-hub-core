@@ -34,6 +34,39 @@ describe("createLogger", () => {
     expect(logger.getDroppedFieldCount()).toBe(3);
   });
 
+  it("keeps a valid new field and drops a failing value", () => {
+    const lines: string[] = [];
+    const logger = createLogger({ write: (line) => lines.push(line) });
+    logger.info("request", {
+      gatewayRequestId: "abc/+=_-",
+      reason: "missing_hostname_header",
+      hostname: "au.api.example.test",
+      operation: "decrypt",
+      key_kind: "identity",
+      outcome: "rejected",
+    });
+    logger.info("request", {
+      gatewayRequestId: "has space",
+      reason: "nope" as "missing_hostname_header",
+      hostname: "NOT-LOWER",
+      operation: "sign" as "decrypt",
+      key_kind: "root" as "org",
+      outcome: "maybe" as "ok",
+    });
+    const first = JSON.parse(lines[0] ?? "{}") as Record<string, unknown>;
+    expect(first.gatewayRequestId).toBe("abc/+=_-");
+    expect(first.reason).toBe("missing_hostname_header");
+    expect(first.hostname).toBe("au.api.example.test");
+    expect(first.operation).toBe("decrypt");
+    expect(first.key_kind).toBe("identity");
+    expect(first.outcome).toBe("rejected");
+    const second = lines[1] ?? "";
+    expect(second).not.toContain("has space");
+    expect(second).not.toContain("NOT-LOWER");
+    expect(second).not.toContain("nope");
+    expect(logger.getDroppedFieldCount()).toBe(6);
+  });
+
   it("never throws on bad field input", () => {
     const logger = createLogger({ write: () => {} });
 

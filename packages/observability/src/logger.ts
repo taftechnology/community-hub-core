@@ -1,9 +1,27 @@
+export type LogReason =
+  | "missing_hostname_header"
+  | "unknown_hostname"
+  | "ops_route_on_other_hostname"
+  | "other_route_on_ops_hostname";
+
+export type LogOperation = "generate_data_key" | "decrypt";
+
+export type LogKeyKind = "org" | "identity";
+
+export type LogOutcome = "ok" | "rejected" | "failed" | "timeout";
+
 export type LogFields = {
   method?: string;
   path?: string;
   status?: number;
   duration?: number;
   requestId?: string;
+  gatewayRequestId?: string;
+  reason?: LogReason;
+  hostname?: string;
+  operation?: LogOperation;
+  key_kind?: LogKeyKind;
+  outcome?: LogOutcome;
 };
 
 type LogFieldKey = keyof LogFields;
@@ -26,7 +44,29 @@ const ALLOWED_LOG_KEYS: ReadonlySet<LogFieldKey> = new Set([
   "status",
   "duration",
   "requestId",
+  "gatewayRequestId",
+  "reason",
+  "hostname",
+  "operation",
+  "key_kind",
+  "outcome",
 ]);
+
+const GATEWAY_REQUEST_ID = /^[A-Za-z0-9+/=_-]{1,128}$/;
+const HOSTNAME = /^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/;
+const REASONS = new Set<LogReason>([
+  "missing_hostname_header",
+  "unknown_hostname",
+  "ops_route_on_other_hostname",
+  "other_route_on_ops_hostname",
+]);
+const OPERATIONS = new Set<LogOperation>(["generate_data_key", "decrypt"]);
+const KEY_KINDS = new Set<LogKeyKind>(["org", "identity"]);
+const OUTCOMES = new Set<LogOutcome>(["ok", "rejected", "failed", "timeout"]);
+
+function isOneOf<T extends string>(value: unknown, allowed: ReadonlySet<T>): value is T {
+  return typeof value === "string" && allowed.has(value as T);
+}
 
 /** Field names classified as personal data — never emitted (architecture §12). */
 const PERSONAL_DATA_KEYS = new Set(["name", "email"]);
@@ -71,6 +111,54 @@ function sanitizeFields(raw: unknown): { fields: LogFields; dropped: number } {
       case "requestId": {
         if (typeof value === "string") {
           fields[key] = value;
+        } else if (value !== undefined) {
+          dropped += 1;
+        }
+        break;
+      }
+      case "gatewayRequestId": {
+        if (typeof value === "string" && GATEWAY_REQUEST_ID.test(value)) {
+          fields.gatewayRequestId = value;
+        } else if (value !== undefined) {
+          dropped += 1;
+        }
+        break;
+      }
+      case "hostname": {
+        if (typeof value === "string" && value.length <= 253 && HOSTNAME.test(value)) {
+          fields.hostname = value;
+        } else if (value !== undefined) {
+          dropped += 1;
+        }
+        break;
+      }
+      case "reason": {
+        if (isOneOf(value, REASONS)) {
+          fields.reason = value;
+        } else if (value !== undefined) {
+          dropped += 1;
+        }
+        break;
+      }
+      case "operation": {
+        if (isOneOf(value, OPERATIONS)) {
+          fields.operation = value;
+        } else if (value !== undefined) {
+          dropped += 1;
+        }
+        break;
+      }
+      case "key_kind": {
+        if (isOneOf(value, KEY_KINDS)) {
+          fields.key_kind = value;
+        } else if (value !== undefined) {
+          dropped += 1;
+        }
+        break;
+      }
+      case "outcome": {
+        if (isOneOf(value, OUTCOMES)) {
+          fields.outcome = value;
         } else if (value !== undefined) {
           dropped += 1;
         }
