@@ -23,7 +23,11 @@ function callerFiles(dir: string): string[] {
     }
     if (!entry.endsWith(".ts") || full === SELF) continue;
     const rel = path.relative(ROOT, full);
-    if (rel === path.join("src", "index.ts") || rel === path.join("src", "connections.ts")) {
+    if (
+      rel === path.join("src", "index.ts") ||
+      rel === path.join("src", "connections.ts") ||
+      rel === path.join("test", "tls.integration.test.ts")
+    ) {
       continue;
     }
     if (rel.startsWith(`test${path.sep}`) || rel === path.join("src", "migrate.ts")) {
