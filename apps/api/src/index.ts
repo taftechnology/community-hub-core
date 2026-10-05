@@ -1,23 +1,30 @@
-import { createRequestHandler, healthRequest } from "@community-hub/kernel";
+import { healthRequest } from "@community-hub/kernel";
 import { createLogger } from "@community-hub/observability";
+
+import { createGate } from "./gate.js";
 
 const logger = createLogger();
 
-function pathFor(request: Request): string {
-  const pathname = new URL(request.url).pathname;
-  if (request.method === "GET" && pathname === "/health") {
-    return "/health";
-  }
-  return "unmatched";
-}
+const gate = createGate({
+  hostnames: {
+    api: "api.invalid",
+    auth: "auth.invalid",
+    webhooks: "webhooks.invalid",
+    ops: "ops.invalid",
+  },
+  routes: [
+    {
+      method: "GET",
+      pattern: "/health",
+      surface: "all",
+      handle: healthRequest,
+    },
+  ],
+  info: (message, fields) => {
+    logger.info(message, fields);
+  },
+});
 
 export default {
-  fetch: createRequestHandler(
-    {
-      info: (fields) => logger.info("request", fields),
-      pathFor,
-      acceptInboundRequestId: false,
-    },
-    healthRequest,
-  ),
+  fetch: (request: Request): Promise<Response> => gate({ request, remoteAddress: "127.0.0.1" }),
 };
