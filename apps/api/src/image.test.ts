@@ -130,6 +130,48 @@ describe.skipIf(process.env.RUN_IMAGE_TESTS !== "1")("regional service image", (
     expect(health[0]).toBe("CMD");
     expect(health[1]).toBe("node");
     expect(health.join(" ")).not.toContain("sh");
+    const listed = spawnSync(
+      "docker",
+      [
+        "run",
+        "--rm",
+        "--entrypoint",
+        "node",
+        image,
+        "--input-type=module",
+        "-e",
+        [
+          'import { readdirSync, statSync } from "node:fs";',
+          'import { join } from "node:path";',
+          "const files = [];",
+          "const dirs = [];",
+          "function walk(dir) {",
+          "  for (const name of readdirSync(dir)) {",
+          "    const path = join(dir, name);",
+          '    const rel = path.slice("/app".length);',
+          '    if (rel === "/node_modules" || rel.startsWith("/node_modules/")) continue;',
+          "    if (statSync(path).isDirectory()) { dirs.push(rel); walk(path); }",
+          "    else files.push(rel);",
+          "  }",
+          "}",
+          'walk("/app");',
+          "process.stdout.write(JSON.stringify({ files, dirs }));",
+        ].join(" "),
+      ],
+      { encoding: "utf8" },
+    );
+    expect(listed.status, listed.stderr).toBe(0);
+    const app = JSON.parse(listed.stdout) as { files: string[]; dirs: string[] };
+    expect(app.files.filter((file) => file.endsWith(".ts"))).toEqual([]);
+    expect([...app.files, ...app.dirs].some((entry) => entry.includes(".turbo"))).toBe(false);
+    expect(app.files).not.toContain("/Dockerfile");
+    expect(
+      app.files.filter((file) => file.includes("tsconfig") || file.includes("vitest.config")),
+    ).toEqual([]);
+    expect(app.dirs).not.toContain("/dist");
+    expect(app.files.filter((file) => file.endsWith(".pem"))).toEqual([
+      "/certs/rds-ap-southeast-2-bundle.pem",
+    ]);
     expect(health.join(" ")).not.toContain("bash");
     const names = (config?.Env ?? []).map((entry) => entry.split("=")[0]);
     for (const forbidden of [

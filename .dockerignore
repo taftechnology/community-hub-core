@@ -8,3 +8,4 @@
 **/*.tsbuildinfo
 .git
 .superpowers
+.turbo

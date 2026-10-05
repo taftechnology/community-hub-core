@@ -60,6 +60,8 @@ export async function runProbe(deps: ProbeDeps): Promise<{
   }
 
   const budget = deps.stepMs ?? STEP_MS;
+  let generated: { plaintext: Uint8Array; blob: Uint8Array } | undefined;
+  let opened: Uint8Array | undefined;
   try {
     currentStep = "db_app";
     await limit(budget, () =>
@@ -74,22 +76,25 @@ export async function runProbe(deps: ProbeDeps): Promise<{
       queryRole(deps, read.env, read.env.PGUSER_PLATFORM, read.env.PGPASSWORD_PLATFORM),
     );
     currentStep = "kms_generate";
-    const generated = await limit(budget, () =>
+    const produced = await limit(budget, () =>
       deps.kms.generateDataKey(read.env.ENVELOPE_KEY_ARN, PROBE_CONTEXT),
     );
+    generated = produced;
     currentStep = "kms_decrypt";
-    const opened = await limit(budget, () =>
-      deps.kms.decrypt(read.env.ENVELOPE_KEY_ARN, generated.blob, PROBE_CONTEXT),
+    opened = await limit(budget, () =>
+      deps.kms.decrypt(read.env.ENVELOPE_KEY_ARN, produced.blob, PROBE_CONTEXT),
     );
-    const sameLength = generated.plaintext.length === opened.length;
-    const matches = sameLength && timingSafeEqual(generated.plaintext, opened);
-    generated.plaintext.fill(0);
-    opened.fill(0);
+    const sameLength = produced.plaintext.length === opened.length;
+    const matches = sameLength && timingSafeEqual(produced.plaintext, opened);
     if (!matches) {
       return { exitCode: 1, stdout: "fail\n", stderr: "kms_decrypt\n" };
     }
   } catch {
     return { exitCode: 1, stdout: "fail\n", stderr: `${currentStep}\n` };
+  } finally {
+    generated?.plaintext.fill(0);
+    generated?.blob.fill(0);
+    opened?.fill(0);
   }
 
   return { exitCode: 0, stdout: "pass\n", stderr: "" };

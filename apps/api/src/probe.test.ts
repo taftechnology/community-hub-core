@@ -123,6 +123,30 @@ describe("runProbe", () => {
     expect(`${result.stdout}${result.stderr}`).not.toContain("marker-kms");
   });
 
+  it("zeroes the generated key when decrypt throws", async () => {
+    const plaintext = new Uint8Array([1, 2, 3, 4]);
+    const blob = new Uint8Array([5, 6, 7]);
+    const kms: KmsPort = {
+      async generateDataKey() {
+        return { plaintext, blob };
+      },
+      async decrypt() {
+        throw new Error("marker-decrypt");
+      },
+    };
+    const result = await runProbe({
+      source: source(),
+      pem,
+      connect: (() => okSql()) as unknown as ProbeDeps["connect"],
+      kms,
+      stepMs: 50,
+    });
+    expect(result.stdout).toBe("fail\n");
+    expect(result.stderr).toBe("kms_decrypt\n");
+    expect(`${result.stdout}${result.stderr}`).not.toContain("marker-decrypt");
+    expect([...plaintext, ...blob].every((byte) => byte === 0)).toBe(true);
+  });
+
   it("zeroes both copies when decrypt does not match", async () => {
     const plaintext = new Uint8Array([1, 2, 3, 4]);
     const opened = new Uint8Array([9]);

@@ -7,6 +7,7 @@ import type { ServiceEnv } from "./env.js";
 
 export const KEEP_ALIVE_TIMEOUT_MS = 65_000;
 export const HEADERS_TIMEOUT_MS = 66_000;
+export const REQUEST_TIMEOUT_MS = 30_000;
 export const ACCEPT_AFTER_SIGTERM_MS = 5_000;
 export const FORCE_CLOSE_AFTER_SIGTERM_MS = 25_000;
 
@@ -51,6 +52,7 @@ export function startServer(options: {
   exit?: (code: number) => void;
   acceptForMs?: number;
   forceCloseMs?: number;
+  requestTimeoutMs?: number;
 }): Server {
   const gate = createGate({
     hostnames: {
@@ -65,6 +67,17 @@ export function startServer(options: {
     },
   });
   const server = createServer((req, res) => {
+    if (!req.complete) {
+      const timer = setTimeout(() => {
+        if (!req.complete) {
+          req.socket?.destroy();
+        }
+      }, options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS);
+      timer.unref();
+      const clear = () => clearTimeout(timer);
+      req.on("end", clear);
+      req.on("close", clear);
+    }
     void (async () => {
       try {
         const remoteAddress = req.socket.remoteAddress ?? "";
@@ -82,6 +95,7 @@ export function startServer(options: {
       }
     })();
   });
+  server.requestTimeout = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
   server.keepAliveTimeout = KEEP_ALIVE_TIMEOUT_MS;
   server.headersTimeout = HEADERS_TIMEOUT_MS;
   server.listen(options.env.PORT, "0.0.0.0");

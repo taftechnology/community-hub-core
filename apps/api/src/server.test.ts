@@ -22,7 +22,7 @@ const kms = vi.hoisted(() => ({
 vi.mock("@community-hub/db", () => db);
 vi.mock("./kms/aws-kms-adapter.js", () => kms);
 
-import { startServer } from "./server.js";
+import { REQUEST_TIMEOUT_MS, startServer } from "./server.js";
 
 const pem = readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), "../certs/rds-ap-southeast-2-bundle.pem"),
@@ -103,6 +103,8 @@ describe("startServer", () => {
     servers.push(server);
     await listening(server);
 
+    expect(REQUEST_TIMEOUT_MS).toBe(30000);
+    expect(server.requestTimeout).toBe(REQUEST_TIMEOUT_MS);
     expect(server.keepAliveTimeout).toBe(65000);
     expect(server.headersTimeout).toBe(66000);
     expect(server.address()).toMatchObject({ address: "0.0.0.0", port: 39451 });
@@ -201,6 +203,28 @@ describe("startServer", () => {
     const response = await fetch("http://127.0.0.1:39454/health");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
+  });
+
+  it("closes a request that never sends its body", async () => {
+    const requestTimeoutMs = 200;
+    const env = envFor(39458);
+    const server = startServer({ env, routes: [health], requestTimeoutMs });
+    servers.push(server);
+    await listening(server);
+
+    const started = Date.now();
+    const closed = await new Promise<number>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("still-open")), requestTimeoutMs + 1000);
+      const socket = net.connect(39458, "127.0.0.1");
+      socket.on("data", () => {});
+      socket.on("close", () => {
+        clearTimeout(timer);
+        resolve(Date.now() - started);
+      });
+      socket.on("error", () => {});
+      socket.write("POST /health HTTP/1.1\r\nHost: parish.example\r\nContent-Length: 64\r\n\r\n");
+    });
+    expect(closed).toBeLessThan(requestTimeoutMs + 800);
   });
 
   it("destroys the socket when headers were already sent", async () => {

@@ -64,7 +64,7 @@ A failed check exits 1 before the port is bound. Stdout is empty. Stderr is the 
 
 On SIGTERM the process may keep accepting for up to 5 seconds. It then stops accepting. A request that finishes before the force-close still receives its response. At 25 seconds after SIGTERM, every connection that is still open is destroyed. The process then exits 0, which is before the 30-second stop timeout. A connection that arrives after accepting has stopped receives no HTTP response. A test holds a request that never finishes and asserts the connection is destroyed and the process has exited before 30 seconds.
 
-The server sets `keepAliveTimeout` to 65000 milliseconds and `headersTimeout` to 66000 milliseconds. `headersTimeout` is longer than `keepAliveTimeout`, so an idle keep-alive socket is closed by the keep-alive timer. 5000 is Node's default. These values are set so the process outlasts the gateway's idle connections. The first staging apply's count of 5xx responses under steady light traffic is what confirms these values or changes them.
+The server sets `keepAliveTimeout` to 65000 milliseconds and `headersTimeout` to 66000 milliseconds. `headersTimeout` is longer than `keepAliveTimeout`, so an idle keep-alive socket is closed by the keep-alive timer. 5000 is Node's default. These values are set so the process outlasts the gateway's idle connections. The server sets `requestTimeout` to 30000 milliseconds, the gateway's own limit, so a client that finishes its headers and never finishes its body cannot hold the connection for Node's 300000 millisecond default. The first staging apply's count of 5xx responses under steady light traffic is what confirms these values or changes them.
 
 ### Health and the gate
 
