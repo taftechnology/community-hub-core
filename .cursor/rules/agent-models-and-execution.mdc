@@ -1,0 +1,20 @@
+---
+description: Use only Grok or Composer, commit before review, and finish an approved plan without stopping
+alwaysApply: true
+---
+
+# Agent models and execution
+
+## Models
+
+Every agent and sub-agent uses only a Grok or Composer model. No other model family.
+
+When spawning a sub-agent, set its model to a Grok or Composer slug (for example `grok-4.7-high` or `composer-2.5-fast`). If the requested model is anything else, do not launch that sub-agent. Say which models are allowed.
+
+## Commit before review
+
+When work is ready for review — a task diff, a second review, or a pull request — commit it first. The review reads that commit. Do not ask for review of uncommitted changes.
+
+## Approved plan
+
+Once the plan is approved, implement every remaining task in order without stopping for review between tasks. Commit each task as the plan requires. When the last task is done, tell the user the plan is complete and what landed. Do not open the next chunk.
