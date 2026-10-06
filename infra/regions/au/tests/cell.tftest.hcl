@@ -5,6 +5,13 @@ mock_provider "aws" {
     defaults = {
       address = "ch-staging-postgres.xxxxx.ap-southeast-2.rds.amazonaws.com"
       port    = 5432
+      master_user_secret = [
+        {
+          secret_arn    = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:master"
+          secret_status = "active"
+          kms_key_id    = "alias/aws/secretsmanager"
+        },
+      ]
     }
   }
 
@@ -159,6 +166,11 @@ run "staging_happy" {
   assert {
     condition     = module.ingress.api_hostname == "au.api.communityhub-staging.net" && module.ingress.ecs_service_desired_count == 0
     error_message = "staging root attaches the staging names and plans no ECS service"
+  }
+
+  assert {
+    condition     = length(aws_ecs_task_definition.db_ops) == 0 && length(aws_iam_role.db_ops_execution) == 0
+    error_message = "an unset image plans no ops task"
   }
 }
 
@@ -322,9 +334,188 @@ run "staging_image_set" {
     service_image         = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
   }
 
+  override_resource {
+    target = module.db_secrets.aws_secretsmanager_secret.app
+    values = {
+      arn = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:app"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = module.db_secrets.aws_secretsmanager_secret.identity
+    values = {
+      arn = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:identity"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = module.db_secrets.aws_secretsmanager_secret.platform
+    values = {
+      arn = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:platform"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = module.db_secrets.aws_kms_key.secrets
+    values = {
+      arn = "arn:aws:kms:ap-southeast-2:123456789012:key/role-secrets"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = module.kms.aws_kms_key.storage
+    values = {
+      arn = "arn:aws:kms:ap-southeast-2:123456789012:key/storage"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = module.envelope.aws_kms_key.envelope
+    values = {
+      arn = "arn:aws:kms:ap-southeast-2:123456789012:key/envelope"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = aws_iam_role.db_ops_execution
+    values = {
+      id  = "role-db-ops-execution"
+      arn = "arn:aws:iam::123456789012:role/db-ops-execution"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = aws_iam_role.db_ops_task
+    values = {
+      id  = "role-db-ops-task"
+      arn = "arn:aws:iam::123456789012:role/db-ops-task"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = module.ingress.aws_ecr_repository.service
+    values = {
+      arn = "arn:aws:ecr:ap-southeast-2:123456789012:repository/ch-staging/service"
+    }
+    override_during = plan
+  }
+
   assert {
     condition     = module.ingress.ecs_service_desired_count == 0 && length(module.ingress.task_subnet_ids) == 1
     error_message = "a set staging image plans desired count 0 and one task subnet"
+  }
+
+  assert {
+    condition     = length(aws_ecs_task_definition.db_ops) == 1 && length(aws_iam_role.db_ops_execution) == 1 && length(aws_iam_role.db_ops_task) == 1
+    error_message = "a set image with the database on plans the ops task and both roles"
+  }
+
+  assert {
+    condition = (
+      aws_iam_role_policy.db_ops_execution[0].role == aws_iam_role.db_ops_execution[0].id &&
+      length(aws_iam_role.db_ops_task[0].inline_policy) == 0 &&
+      !strcontains(file("${path.module}/main.tf"), "managed_policy_arns")
+    )
+    error_message = "the ops execution policy attaches only to the execution role, and the task role has no policy"
+  }
+
+  assert {
+    condition = (
+      length([
+        for statement in jsondecode(aws_iam_role_policy.db_ops_execution[0].policy).Statement :
+        statement
+        if contains(tolist(statement.Action), "secretsmanager:GetSecretValue")
+      ]) == 1 &&
+      toset(one([
+        for statement in jsondecode(aws_iam_role_policy.db_ops_execution[0].policy).Statement :
+        statement.Resource
+        if contains(tolist(statement.Action), "secretsmanager:GetSecretValue")
+        ])) == toset([
+        module.rds[0].master_user_secret_arn,
+        module.db_secrets.app_secret_arn,
+        module.db_secrets.identity_secret_arn,
+        module.db_secrets.platform_secret_arn,
+      ]) &&
+      length([
+        for statement in jsondecode(aws_iam_role_policy.db_ops_execution[0].policy).Statement :
+        statement
+        if contains(tolist(statement.Action), "kms:Decrypt")
+      ]) == 1 &&
+      one([
+        for statement in jsondecode(aws_iam_role_policy.db_ops_execution[0].policy).Statement :
+        statement.Resource
+        if contains(tolist(statement.Action), "kms:Decrypt")
+      ]) == module.db_secrets.key_arn &&
+      !strcontains(aws_iam_role_policy.db_ops_execution[0].policy, module.kms.key_arn) &&
+      !strcontains(aws_iam_role_policy.db_ops_execution[0].policy, module.envelope.key_arn) &&
+      one([
+        for statement in jsondecode(aws_iam_role_policy.db_ops_execution[0].policy).Statement :
+        statement.Resource
+        if contains(tolist(statement.Action), "ecr:GetAuthorizationToken")
+      ]) == "*" &&
+      one([
+        for statement in jsondecode(aws_iam_role_policy.db_ops_execution[0].policy).Statement :
+        statement.Resource
+        if contains(tolist(statement.Action), "ecr:BatchGetImage")
+      ]) == module.ingress.repository_arn &&
+      one([
+        for statement in jsondecode(aws_iam_role_policy.db_ops_execution[0].policy).Statement :
+        statement
+        if contains(tolist(statement.Action), "logs:CreateLogStream")
+      ]).Action == ["logs:CreateLogStream", "logs:PutLogEvents"] &&
+      one([
+        for statement in jsondecode(aws_iam_role_policy.db_ops_execution[0].policy).Statement :
+        statement
+        if contains(tolist(statement.Action), "logs:CreateLogStream")
+      ]).Resource == ["arn:aws:logs:ap-southeast-2:123456789012:log-group:/community-hub/ch-staging/service:*"]
+    )
+    error_message = "the ops execution role reads the four secrets, decrypts only the role-secrets key, and pulls the one repository"
+  }
+
+  assert {
+    condition = (
+      aws_ecs_task_definition.db_ops[0].family == "ch-staging-db-ops" &&
+      aws_ecs_task_definition.db_ops[0].cpu == "256" &&
+      aws_ecs_task_definition.db_ops[0].memory == "512" &&
+      aws_ecs_task_definition.db_ops[0].runtime_platform[0].cpu_architecture == "ARM64" &&
+      jsondecode(aws_ecs_task_definition.db_ops[0].container_definitions)[0].command == ["node", "/app/db-bootstrap.js"] &&
+      jsondecode(aws_ecs_task_definition.db_ops[0].container_definitions)[0].image == var.service_image &&
+      jsondecode(aws_ecs_task_definition.db_ops[0].container_definitions)[0].user == "node" &&
+      jsondecode(aws_ecs_task_definition.db_ops[0].container_definitions)[0].readonlyRootFilesystem == true &&
+      length(try(jsondecode(aws_ecs_task_definition.db_ops[0].container_definitions)[0].portMappings, [])) == 0 &&
+      length([
+        for mount in jsondecode(aws_ecs_task_definition.db_ops[0].container_definitions)[0].mountPoints :
+        mount if mount.containerPath == "/tmp" && mount.readOnly == false
+      ]) == 1 &&
+      [for item in jsondecode(aws_ecs_task_definition.db_ops[0].container_definitions)[0].environment : item.name] == ["PGHOST", "PGPORT", "PGDATABASE", "PGUSER"] &&
+      alltrue([
+        for item in jsondecode(aws_ecs_task_definition.db_ops[0].container_definitions)[0].environment :
+        !strcontains(item.value, "arn:")
+      ]) &&
+      one([
+        for item in jsondecode(aws_ecs_task_definition.db_ops[0].container_definitions)[0].environment :
+        item.value if item.name == "PGUSER"
+      ]) == "postgres" &&
+      [for secret in jsondecode(aws_ecs_task_definition.db_ops[0].container_definitions)[0].secrets : secret.name] == ["PGPASSWORD_MASTER", "PGPASSWORD_APP", "PGPASSWORD_IDENTITY", "PGPASSWORD_PLATFORM"] &&
+      one([
+        for secret in jsondecode(aws_ecs_task_definition.db_ops[0].container_definitions)[0].secrets :
+        secret.valueFrom if secret.name == "PGPASSWORD_MASTER"
+      ]) == "${module.rds[0].master_user_secret_arn}:password::" &&
+      one([
+        for secret in jsondecode(aws_ecs_task_definition.db_ops[0].container_definitions)[0].secrets :
+        secret.valueFrom if secret.name == "PGPASSWORD_APP"
+      ]) == module.db_secrets.app_secret_arn &&
+      jsondecode(aws_ecs_task_definition.db_ops[0].container_definitions)[0].logConfiguration.options["awslogs-stream-prefix"] == "db-ops"
+    )
+    error_message = "the ops container runs db-bootstrap.js with passwords injected and no secret ARN in the environment"
   }
 }
 
@@ -349,6 +540,11 @@ run "prod_image_set" {
     condition     = length(module.ingress.task_subnet_ids) == 2
     error_message = "a set production image plans both public subnets"
   }
+
+  assert {
+    condition     = length(aws_ecs_task_definition.db_ops) == 1
+    error_message = "a set production image plans the ops task"
+  }
 }
 
 run "database_off" {
@@ -371,6 +567,11 @@ run "database_off" {
   assert {
     condition     = length(module.rds) == 0
     error_message = "parking removes the RDS module"
+  }
+
+  assert {
+    condition     = length(aws_ecs_task_definition.db_ops) == 0 && length(aws_iam_role.db_ops_execution) == 0
+    error_message = "a parked database plans no ops task"
   }
 
   assert {

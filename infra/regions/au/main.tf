@@ -3,7 +3,9 @@ provider "aws" {
 }
 
 locals {
-  name = "ch-${var.environment}"
+  name           = "ch-${var.environment}"
+  db_ops_count   = var.service_image != null && var.enable_database ? 1 : 0
+  db_ops_log_arn = "arn:aws:logs:${var.aws_region}:${var.aws_account_id}:log-group:${module.envelope.log_group_name}"
 }
 
 resource "terraform_data" "prod_backup" {
@@ -241,4 +243,152 @@ module "ingress" {
   app_secret_arn         = module.db_secrets.app_secret_arn
   identity_secret_arn    = module.db_secrets.identity_secret_arn
   platform_secret_arn    = module.db_secrets.platform_secret_arn
+}
+
+resource "aws_iam_role" "db_ops_execution" {
+  count = local.db_ops_count
+  name  = "${local.name}-db-ops-execution"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ecs-tasks.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+
+  tags = {
+    environment = var.environment
+    project     = "community-hub"
+  }
+}
+
+resource "aws_iam_role" "db_ops_task" {
+  count = local.db_ops_count
+  name  = "${local.name}-db-ops-task"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ecs-tasks.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+
+  tags = {
+    environment = var.environment
+    project     = "community-hub"
+  }
+}
+
+resource "aws_iam_role_policy" "db_ops_execution" {
+  count = local.db_ops_count
+  name  = "db-ops-execution"
+  role  = aws_iam_role.db_ops_execution[0].id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "ReadDbSecrets"
+        Effect = "Allow"
+        Action = ["secretsmanager:GetSecretValue"]
+        Resource = [
+          module.rds[0].master_user_secret_arn,
+          module.db_secrets.app_secret_arn,
+          module.db_secrets.identity_secret_arn,
+          module.db_secrets.platform_secret_arn,
+        ]
+      },
+      {
+        Sid      = "DecryptRoleSecrets"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = module.db_secrets.key_arn
+      },
+      {
+        Sid      = "PullAuth"
+        Effect   = "Allow"
+        Action   = ["ecr:GetAuthorizationToken"]
+        Resource = "*"
+      },
+      {
+        Sid    = "PullImage"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage",
+        ]
+        Resource = module.ingress.repository_arn
+      },
+      {
+        Sid      = "WriteServiceLogs"
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = ["${local.db_ops_log_arn}:*"]
+      },
+    ]
+  })
+}
+
+resource "aws_ecs_task_definition" "db_ops" {
+  count                    = local.db_ops_count
+  region                   = var.aws_region
+  family                   = "${local.name}-db-ops"
+  cpu                      = "256"
+  memory                   = "512"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  execution_role_arn       = aws_iam_role.db_ops_execution[0].arn
+  task_role_arn            = aws_iam_role.db_ops_task[0].arn
+
+  runtime_platform {
+    cpu_architecture        = "ARM64"
+    operating_system_family = "LINUX"
+  }
+
+  container_definitions = jsonencode([
+    {
+      name                   = "db-ops"
+      image                  = var.service_image
+      essential              = true
+      user                   = "node"
+      command                = ["node", "/app/db-bootstrap.js"]
+      readonlyRootFilesystem = true
+      mountPoints = [{
+        sourceVolume  = "tmp"
+        containerPath = "/tmp"
+        readOnly      = false
+      }]
+      environment = [
+        { name = "PGHOST", value = module.rds[0].address },
+        { name = "PGPORT", value = tostring(module.rds[0].port) },
+        { name = "PGDATABASE", value = "communityhub" },
+        { name = "PGUSER", value = "postgres" },
+      ]
+      secrets = [
+        { name = "PGPASSWORD_MASTER", valueFrom = "${module.rds[0].master_user_secret_arn}:password::" },
+        { name = "PGPASSWORD_APP", valueFrom = module.db_secrets.app_secret_arn },
+        { name = "PGPASSWORD_IDENTITY", valueFrom = module.db_secrets.identity_secret_arn },
+        { name = "PGPASSWORD_PLATFORM", valueFrom = module.db_secrets.platform_secret_arn },
+      ]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = module.envelope.log_group_name
+          awslogs-region        = "ap-southeast-2"
+          awslogs-stream-prefix = "db-ops"
+        }
+      }
+    }
+  ])
+
+  volume {
+    name = "tmp"
+  }
+
+  tags = {
+    environment = var.environment
+    project     = "community-hub"
+  }
 }

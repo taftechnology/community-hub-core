@@ -239,6 +239,22 @@ run "happy" {
   }
 
   assert {
+    condition = (
+      !strcontains(aws_iam_role_policy.execution_secrets.policy, "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:master") &&
+      toset(one([
+        for statement in jsondecode(aws_iam_role_policy.execution_secrets.policy).Statement :
+        statement.Resource
+        if contains(tolist(statement.Action), "secretsmanager:GetSecretValue")
+        ])) == toset([
+        "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-app-AbCdEf",
+        "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-identity-AbCdEf",
+        "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-platform-AbCdEf",
+      ])
+    )
+    error_message = "execution secrets must be the three role secrets and must not include the master secret"
+  }
+
+  assert {
     condition     = !strcontains(file("${path.module}/main.tf"), "aws_iam_role_policy_attachment")
     error_message = "module must not declare aws_iam_role_policy_attachment"
   }
