@@ -10,7 +10,7 @@
 
 Spec: docs/specs/2026-10-05-staging-base.md
 
-Status: draft
+Status: approved (2026-10-05, Abdus Salam)
 
 **Branch:** `feat/2026-10-05-staging-base` · one PR · 7 tasks, one commit each
 
