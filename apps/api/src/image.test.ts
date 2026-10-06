@@ -111,6 +111,37 @@ function loopbackBody(id: string): { status: number; stdout: string; stderr: str
 }
 
 describe.skipIf(process.env.RUN_IMAGE_TESTS !== "1")("regional service image", () => {
+  it("ships perl-base at least 5.36.0-7+deb12u4 and an empty apt list", () => {
+    ensureImage();
+    const perl = spawnSync(
+      "docker",
+      [
+        "run",
+        "--rm",
+        image,
+        "sh",
+        "-c",
+        "dpkg --compare-versions \"$(dpkg-query -W -f='${Version}' perl-base)\" ge 5.36.0-7+deb12u4",
+      ],
+      { encoding: "utf8" },
+    );
+    expect(perl.status, `${perl.stdout}${perl.stderr}`).toBe(0);
+    const lists = spawnSync(
+      "docker",
+      [
+        "run",
+        "--rm",
+        image,
+        "node",
+        "--input-type=module",
+        "-e",
+        'import { readdirSync } from "node:fs"; const names = readdirSync("/var/lib/apt/lists"); if (names.length !== 0) { process.stderr.write(names.join("\\n")); process.exit(1); }',
+      ],
+      { encoding: "utf8" },
+    );
+    expect(lists.status, lists.stderr).toBe(0);
+  }, 600_000);
+
   it("matches the ingress contract and drains an unfinished header on SIGTERM", async () => {
     ensureImage();
     const inspected = JSON.parse(docker(["inspect", image])) as Array<{
