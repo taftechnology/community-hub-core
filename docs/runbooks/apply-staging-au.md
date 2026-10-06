@@ -1,127 +1,116 @@
 # Runbook: apply staging-au
 
-This chunk never applies. The steps under **Apply order** are the previous design. Do not run them. A later chunk rewrites this runbook before anyone applies staging.
+The human applies. An agent does not. Production is not applied from this runbook.
+
+Any rebase onto origin/main happens before the first apply. After that apply there is no rebase, no amend, and no force-push. main is brought in with a merge commit. The pull request is merged with a merge commit, never squashed. The pull request body says this departs from AGENTS.md section 5, because a rebase would replace the SHAs recorded below.
 
 ## Human prerequisites
 
-These come before any apply. They are not steps of the old apply below.
+1. Every apply uses the ch-admin profile, an IAM Identity Center administrator, never the root user.
+2. communityhub-staging.net is registered and its hosted zone exists. The zone id lives only in the gitignored tfvars file. Do not commit it.
+3. Choose the alarm email. It goes in the same gitignored file. This runbook does not record it.
+4. infra/bootstrap is already applied. The state bucket and lock exist, and state is migrated to S3. Do not run the Bootstrap section again. A re-run fails with BucketAlreadyExists.
 
-1. Every apply uses an IAM Identity Center administrator profile, never the root user.
-2. A budget alert address, for both environments. The address is chosen by the owner. This runbook does not invent one.
-3. Register `communityhub-staging.net` in Route 53 at USD 17 a year. Restoration is USD 74. Terraform uses the hosted zone that registration creates. It does not create a second zone.
-4. For `communityhub.one`, confirm the registrar is not Cloudflare Registrar, change the name servers to the zone Terraform creates, and confirm the new name servers answer before the old zone is removed.
-5. Do not apply the envelope key until `multi_region` is true on that key and the Terraform test is in the module.
-6. Before the Melbourne replica chunk, enable `ap-southeast-4`. It is disabled in this account. The replica chunk does not enable it.
-7. After apply, confirm the RDS alarm SNS email subscription. Until that confirmation, alarms are visible in the console only and email does not arrive.
-8. Activate the `environment` cost-allocation tag after it appears. The tag can take up to 24 hours to appear and up to 24 hours more to activate.
-9. Apply again with `enable_budgets = true`.
-10. Pass `staging_zone_id` on the staging plan or apply command. Do not commit that id in `env/staging.tfvars`.
-11. Staging tfvars set `attach_public_dns = true` and `create_public_zone = false`. Production tfvars set `create_public_zone = true` and `attach_public_dns = false`.
-12. `desired_count` stays 0 until a person raises it. `turnstile_secret_arn` stays null until that secret exists.
-13. This chunk does not apply. The first staging apply is a later roadmap row.
+## Local tfvars
 
-## Do not apply the steps below
+Create infra/regions/au/env/staging.local.tfvars. It is gitignored. It holds aws_account_id, staging_zone_id, and alert_email. Pass it after env/staging.tfvars so it wins. The committed staging file keeps the synthetic account id 123456789012.
 
-The current apply order, the connector image, the tunnel token, the broker tunnel, and the feature-flag table are the previous design (a Cloudflare zone, Regional Services, a tunnel, Hyperdrive, a connector, and a broker). They must not be applied. They stay here so a reader can see what was withdrawn. ADR 0009 superseded them. They are not safe to run.
+## Before each apply
 
-## Preconditions
+1. git status is clean.
+2. git rev-parse HEAD equals the SHA named for that apply, and that SHA is on origin.
+3. terraform init uses -lockfile=readonly.
 
-- AWS account in `ap-southeast-2` and a Cloudflare account.
-- Dedicated staging zone registered (not `communityhub.one`). Confirm the zone plan can set Regional Services = Australia.
-- Terraform `~> 1.11` locally.
-- No production data anywhere near this account.
+## Bootstrap
 
-## Apply order
+This is a one-time step and it is already complete.
 
-1. **Bootstrap** with local state, then migrate into the bucket:
+infra/bootstrap declares backend "s3" {} and creates the bucket. The named SHA is the first-apply commit. From infra/bootstrap, write a gitignored backend_override.tf:
 
-   ```bash
-   cd infra/bootstrap
-   terraform init
-   terraform apply -var-file=env/staging.tfvars
-   terraform init -backend-config=backend/staging.hcl -migrate-state
-   ```
+    terraform { backend "local" {} }
 
-   The state bucket and KMS key have `prevent_destroy = true`. A `destroy` of bootstrap after migration deletes every root's state. Do not.
+Then:
 
-2. **Global staging zone**
+    terraform init -lockfile=readonly
+    terraform apply -var-file=env/staging.tfvars
 
-   ```bash
-   cd infra/global
-   terraform init -backend-config=backend/staging.hcl
-   terraform apply -var-file=env/staging.tfvars
-   ```
+Delete backend_override.tf. Then:
 
-   Pass the resulting `zone_id` into `infra/regions/au/env/staging.tfvars`.
+    terraform init -backend-config=backend/staging.hcl -lockfile=readonly -migrate-state
 
-3. **AU cell, flags off**
+terraform state list must show the state bucket and the state KMS key from the bucket. Only then delete the local terraform.tfstate and terraform.tfstate.backup. Confirm git status is clean. If apply returns BucketAlreadyExists, stop and report. Do not pick another bucket name.
 
-   ```bash
-   cd infra/regions/au
-   terraform init -backend-config=backend/staging.hcl
-   terraform apply -var-file=env/staging.tfvars
-   ```
+## First AU apply
 
-   `enable_hyperdrive = false` and `enable_regional_hostnames = false` on this first apply. Cloudflare tests the Hyperdrive origin with a real connection; the tunnel and RDS are not ready to be that origin yet.
+From infra/regions/au, on the commit this runbook names under "First apply". enable_database is still the default true. enable_budgets is still the default false. service_image is null. desired_count is 0. Run the before-each-apply checks. Then:
 
-   A plan diff on `aws_kms_key.storage`'s policy means the live policy differs from the AWS default. Stop and report. Do not overwrite it.
+    terraform init -backend-config=backend/staging.hcl -lockfile=readonly
+    terraform apply -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars
 
-4. **Application role** (when `packages-db` exists): create the non-`BYPASSRLS` role via SQL. Not Terraform.
+## After the first apply
 
-5. **Re-apply Hyperdrive** with `enable_hyperdrive = true` and `hyperdrive_origin_password` set (sensitive). Do not log or echo it.
+Activate the environment cost-allocation tag in Billing. The check is that the cost-allocation tags page shows environment as Active. A budget whose tag filter is not yet active is created and counts USD 0. It does not fail. If the tag is not Active, stop. Do not park.
 
-6. **Regional hostname** after the first regional Worker custom domain: Wrangler creates the DNS record. Then set `enable_regional_hostnames = true` and re-apply. Terraform must not create a competing DNS record.
+## Proofs
 
-## `cloudflared` image
+Recorded against the first-apply commit. Redact the account id, the hosted zone id, the alarm email, and any key ARN.
 
-The ECS task pins `cloudflared` **by digest**. Anonymous Docker Hub pulls from Fargate fail under rate limits. Prefer an **ECR pull-through cache** for `docker.io/cloudflare/cloudflared` and point `cloudflared_image` at that URI, still digest-pinned.
+1. SNS subscription confirmed.
+2. Custom domain while Cloud Map has no instances: HTTP status and integration error.
+3. Task group, RDS group, and VPC link group, compared with the declared set. With no image the task group has egress TCP 443 to 0.0.0.0/0 and egress TCP 5432 to the RDS group, and no inbound rule. The RDS group has inbound TCP 5432 from the task group only. The VPC link group has egress TCP 8080 to the task group and no inbound rule.
+4. Throttle. 300 requests in about one second to GET / on a tenant hostname. Record 429 and 503. Immediately, 300 requests to POST / on that hostname. Record 429 and 503. A 429 on POST / after the burst means one shared bucket. Record the tool, the counts, and the timestamps. No body, no query string, no personal data.
+5. describe-db-instances: region ap-southeast-2, StorageEncrypted true, KmsKeyId matches the storage key, PubliclyAccessible false, backup retention 0, ManageMasterUserPassword true. describe-db-parameters on that instance's parameter group: rds.force_ssl = 1. Write "matches". Do not write the key ARN.
+6. A second terraform plan shows no changes.
 
-## Tunnel token
+### First apply
 
-Top-tier secret. It sits in Secrets Manager and in Terraform state (KMS-encrypted in `ap-southeast-2`). Never a task environment variable.
+- ea4d796693969b5a84ec026237e95a0f5acc79b4: partial. Metric filter failed (log group not yet created) and the auth and webhooks custom domains failed (certificate not yet ISSUED); the following plan showed 12 add, 3 change, 1 destroy, including a Cloud Map replacement and a parameter-group diff. Fixed on main by PR #28 and merged into this branch.
+- 63bbf7c2891c898ce25f7d1bbee2dee3c95b20ff: completing apply. Apply complete: 13 added, 0 changed, 2 destroyed (Cloud Map service replaced to set failure_threshold 1; SNS subscription replaced because the placeholder address was corrected).
 
-**Rotation:** create a new tunnel (or rotate the token in Zero Trust), write the new token to Secrets Manager, force a new ECS deployment, confirm the expected connector is `HEALTHY`, then revoke the old token.
+### Evidence
 
-**Unexpected connector:** alert when a connector registers against this tunnel that is not the ECS service. That is the staging impersonation path in ADR 0003.
+Evidence (against 63bbf7c, 2026-10-06 UTC)
 
-## Envelope key and broker tunnel
+1. SNS email subscription: confirmed. A second subscription from the replaced placeholder address remains PendingConfirmation; AWS cannot delete a pending subscription and removes it automatically.
+2. Custom domain with no Cloud Map instances, 17:58:10Z: GET https://au.api.communityhub-staging.net/health returned HTTP 500. Access log: integrationStatus 500, integrationErrorMessage "No target endpoints found for integration arn:aws:servicediscovery:ap-southeast-2:<account>:service/<service-id>", routeKey $default.
+3. Security-group rules, live, compared with declared, exact match:
+   - ch-staging-rds inbound tcp 5432 from ch-staging-task
+   - ch-staging-task egress tcp 443 to 0.0.0.0/0
+   - ch-staging-task egress tcp 5432 to ch-staging-rds
+   - ch-staging-vpc-link egress tcp 8080 to ch-staging-task
+   - No other inbound or egress rules on the three groups.
+4. Throttle, curl 8.7.1 via xargs, no body, no query string, no personal data.
+   - Run A, 18:01:17Z to 18:01:21Z: 300 x GET / -> 3 x 429, 297 x 500; then 300 x POST / -> 196 x 429, 104 x 500. Shows write routes are throttled harder than the default route.
+   - Run B, 18:49:13Z to 18:49:16Z: 600 x GET / (300 concurrent) -> 242 x 429, 358 x 500; immediately 10 x POST / -> 10 x 500.
+   - Conclusion: the stage default route and the write routes do not share one bucket; each route has its own. Run A alone could not decide this, because the write route's own lower limit produces 429s either way.
+5. Database: availability zone ap-southeast-2b; StorageEncrypted true; KmsKeyId matches the storage key (ARN not recorded); PubliclyAccessible false; BackupRetentionPeriod 0; master password managed by RDS. rds.force_ssl = 1 (source system, the PostgreSQL 17 default, equal to the declared value); parameter group ch-staging-postgres in-sync.
+6. terraform plan after the completing apply: "No changes", exit code 0.
 
-The AU apply creates the envelope key (`prevent_destroy`, `depends_on` the task role), the KMS interface endpoint (about US$7–8 per month from this apply), the broker security group, the task role, and the broker tunnel plus its secret.
+Notes for first-running-task:
 
-If the first apply fails with an invalid principal, the key was created before `aws_iam_role.task`. The module sets `depends_on`. Do not remove it to make a plan look simpler.
+- An empty or unhealthy Cloud Map returns 500, not 503; 5xx counts during rolling deploys will include these.
+- Throttle buckets are per route.
 
-The flag-off apply creates the ECR repository `${name}/kms-broker` and no task. From a clean checkout of the merged commit:
+## Park
 
-1. Build `apps/kms-broker` with `org.opencontainers.image.revision` set to that SHA, push it to that repository, and set `kms_broker_image` to the `@sha256:` digest. `cloudflared` stays on the Docker Hub digest.
-2. Set `enable_kms_broker_tasks`.
-3. Apply. If that apply rejects the loopback service, stop and report. The service is HTTP to `127.0.0.1:8080`, not the tunnel's catch-all ingress.
-4. Replace `REPLACE_AFTER_APPLY` in `apps/api` with the Workers VPC service id.
-5. Deploy `apps/api`.
+Commit enable_database = false and enable_budgets = true in infra/regions/au/env/staging.tfvars first. That commit is the park SHA. Run the before-each-apply checks against it. Then, from infra/regions/au:
 
-The live unwrap is `api-au-hostname`. Do not apply prod from this runbook.
+    terraform init -backend-config=backend/staging.hcl -lockfile=readonly
+    terraform apply -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars
 
-The broker tunnel token rotates the same way as the connector token, and it is a different secret (`<name>/kms-broker-tunnel-token`). Revoking the connector token does not rotate the broker token.
+Record that SHA. Then terraform plan shows no changes. The plan still contains the topic, the subscription, the hostname alarm, and the staging budget. Record that the budget exists and that its tag filter is user:environment$staging.
 
-Do not apply prod from this runbook.
+A stopped database is still not parking. A VPC link with no traffic for 60 days becomes `INACTIVE`.
 
-## Feature flags
+Unpark is `first-running-task`: recreate the database, the ALTER ROLE procedure, and wait until the VPC link is AVAILABLE. This runbook does not unpark.
 
-| Flag                        | First apply | Later                                    |
-| --------------------------- | ----------- | ---------------------------------------- |
-| `enable_hyperdrive`         | `false`     | `true` after the application role exists |
-| `enable_regional_hostnames` | `false`     | `true` after Wrangler custom domain DNS  |
+### Park apply
 
-## Never
+Commit: e16695548da171acd8135293db7365d391bc7698
 
-- Apply `environment = "prod"` from this runbook.
-- `terraform destroy` bootstrap after state has been migrated.
-- Print `tunnel_token` or `hyperdrive_origin_password` in CI, logs, or a plan comment.
+### Park evidence
 
-## Park and unpark
-
-These are the staging rules for the Sydney runtime. They are not steps of the old apply.
-
-Parking staging sets the task count to zero and deletes the staging database. A stopped database still bills for storage, and AWS starts it again after 7 days, so a stop is not parking. A VPC link with no traffic for 60 days becomes `INACTIVE`. Unparking waits until that link is `AVAILABLE`, then creates the database again. Before the task starts, run the bootstrap, then the migrations, then the role-password procedure, in that order.
+Apply complete: 1 added, 0 changed, 8 destroyed. The follow-up plan showed no changes, exit 0. The SNS topic, email subscription, hostname alarm, and budget remain. Budget ch-staging-cost, limit USD 50, filter user:environment$staging. Staging now costs about USD 6.30/month while parked.
 
 ## Change a database role
 
@@ -129,4 +118,4 @@ When a role's password changes, an operator runs `ALTER ROLE` for that role. The
 
 ## Restore drill
 
-Quarterly, and only against staging. Restore the staging database to a new instance from point-in-time recovery. Record the time taken against the 4-hour target. Then delete the restored instance, because it bills by the hour. This drill does not restore production. Reading `SHOW max_connections` belongs to the first staging apply, not to this drill.
+Quarterly, and only against staging. Restore the staging database to a new instance from point-in-time recovery. Record the time taken against the 4-hour target. Then delete the restored instance, because it bills by the hour. This drill does not restore production. Reading `SHOW max_connections` belongs to `first-running-task`, not to this drill.

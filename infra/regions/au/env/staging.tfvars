@@ -7,3 +7,5 @@ create_public_zone    = false
 attach_public_dns     = true
 desired_count         = 0
 turnstile_secret_arn  = null
+enable_database       = false
+enable_budgets        = true

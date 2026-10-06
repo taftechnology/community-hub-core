@@ -54,6 +54,38 @@ check "staging_zone" {
   }
 }
 
+resource "terraform_data" "prod_database" {
+  lifecycle {
+    precondition {
+      condition     = var.environment != "prod" || var.enable_database
+      error_message = "prod must keep the database."
+    }
+  }
+}
+
+check "prod_database" {
+  assert {
+    condition     = var.environment != "prod" || var.enable_database
+    error_message = "prod must keep the database."
+  }
+}
+
+resource "terraform_data" "image_needs_database" {
+  lifecycle {
+    precondition {
+      condition     = var.enable_database || var.service_image == null
+      error_message = "a set image needs the database."
+    }
+  }
+}
+
+check "image_needs_database" {
+  assert {
+    condition     = var.enable_database || var.service_image == null
+    error_message = "a set image needs the database."
+  }
+}
+
 module "network" {
   source = "../../modules/aws-network"
 
@@ -74,6 +106,7 @@ module "kms" {
 }
 
 module "rds" {
+  count  = var.enable_database ? 1 : 0
   source = "../../modules/aws-rds"
 
   aws_region             = var.aws_region
@@ -86,7 +119,7 @@ module "rds" {
   deletion_protection    = var.deletion_protection
   backup_retention_days  = var.backup_retention_days
   multi_az               = false
-  alert_email            = var.alert_email
+  alarm_topic_arn        = aws_sns_topic.alarms.arn
 }
 
 module "db_secrets" {
@@ -129,6 +162,55 @@ module "envelope" {
   db_secrets_key_arn = module.db_secrets.key_arn
 }
 
+resource "aws_sns_topic" "alarms" {
+  region = var.aws_region
+  name   = "${local.name}-alarms"
+
+  tags = {
+    environment = var.environment
+    project     = "community-hub"
+  }
+}
+
+resource "aws_sns_topic_subscription" "alarms" {
+  region    = var.aws_region
+  topic_arn = aws_sns_topic.alarms.arn
+  protocol  = "email"
+  endpoint  = var.alert_email
+}
+
+resource "aws_cloudwatch_log_metric_filter" "missing_hostname_header" {
+  region         = var.aws_region
+  name           = "${local.name}-missing-hostname-header"
+  log_group_name = module.envelope.log_group_name
+  pattern        = "{ $.reason = \"missing_hostname_header\" }"
+
+  metric_transformation {
+    name      = "MissingHostnameHeader"
+    namespace = "CommunityHub/Service"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "missing_hostname_header" {
+  region              = var.aws_region
+  alarm_name          = "${local.name}-missing-hostname-header"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "MissingHostnameHeader"
+  namespace           = "CommunityHub/Service"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+
+  tags = {
+    environment = var.environment
+    project     = "community-hub"
+  }
+}
+
 module "ingress" {
   source = "../../modules/aws-ingress"
 
@@ -153,8 +235,8 @@ module "ingress" {
   execution_role_name    = module.envelope.execution_role_name
   task_role_arn          = module.envelope.task_role_arn
   log_group_name         = module.envelope.log_group_name
-  db_host                = module.rds.address
-  db_port                = module.rds.port
+  db_host                = var.enable_database ? module.rds[0].address : ""
+  db_port                = var.enable_database ? module.rds[0].port : 5432
   envelope_key_arn       = module.envelope.key_arn
   app_secret_arn         = module.db_secrets.app_secret_arn
   identity_secret_arn    = module.db_secrets.identity_secret_arn

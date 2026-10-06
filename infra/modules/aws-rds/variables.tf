@@ -76,9 +76,9 @@ variable "backup_retention_days" {
   description = "Backup retention in days passed from the cell root."
 }
 
-variable "alert_email" {
+variable "alarm_topic_arn" {
   type        = string
-  description = "Email address for RDS alarm SNS subscription."
+  description = "SNS topic ARN for the four database alarms. The root owns the topic."
 }
 
 variable "publicly_accessible" {

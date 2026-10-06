@@ -15,3 +15,5 @@ crash.log
 crash.*.log
 packages/db/test/.userlist.txt
 packages/db/test/.runtime.json
+infra/regions/au/env/*.local.tfvars
+infra/bootstrap/backend_override.tf
