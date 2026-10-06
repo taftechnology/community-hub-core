@@ -342,5 +342,20 @@ describe.skipIf(process.env.RUN_IMAGE_TESTS !== "1")("regional service image", (
     expect(probe.status).toBe(1);
     expect(probe.stdout).toBe("fail\n");
     expect(probe.stderr).toBe("env\n");
+
+    const shipped = spawnSync(
+      "docker",
+      [
+        "run",
+        "--rm",
+        image,
+        "node",
+        "--input-type=module",
+        "-e",
+        'import { existsSync } from "node:fs"; process.exit(existsSync("/app/db-bootstrap.js") && existsSync("/app/node_modules/@community-hub/db/sql/bootstrap.sql") ? 0 : 1);',
+      ],
+      { encoding: "utf8" },
+    );
+    expect(shipped.status, shipped.stderr).toBe(0);
   }, 600_000);
 });
