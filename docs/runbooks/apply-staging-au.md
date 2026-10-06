@@ -114,7 +114,7 @@ Apply complete: 1 added, 0 changed, 8 destroyed. The follow-up plan showed no ch
 
 ## Change a database role
 
-When a role's password changes, an operator runs `ALTER ROLE` for that role. The password comes from the secret's current version. This procedure does not record the password, the secret ARN, or a connection string. The master user is used only for bootstrap and for `ALTER ROLE`. There is no rotation function.
+An operator runs the database ops task. A person does not open a master session. The database is on and `service_image` is set, because otherwise the task definition does not exist. The task uses the task security group, the staging public subnet, and a public address. The command is `["node", "/app/db-bootstrap.js"]`. Stdout is only the integer from `SHOW max_connections`. This procedure does not record a password, a connection string, or a secret ARN. There is no rotation function. The same task is how a later password change is applied.
 
 ## Restore drill
 

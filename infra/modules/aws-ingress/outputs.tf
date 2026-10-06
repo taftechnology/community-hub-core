@@ -29,6 +29,11 @@ output "repository_url" {
   value       = aws_ecr_repository.service.repository_url
 }
 
+output "repository_arn" {
+  description = "ECR repository ARN for the one service image."
+  value       = aws_ecr_repository.service.arn
+}
+
 output "tenant_write_throttle" {
   description = "Write-route caps, built from the same locals the tenant stage uses."
   value = {

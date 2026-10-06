@@ -18,5 +18,5 @@ RUN mkdir -p /tmp && chown node:node /tmp
 VOLUME ["/tmp"]
 USER node
 WORKDIR /app
-ENTRYPOINT ["node", "/app/index.js"]
+CMD ["node", "/app/index.js"]
 HEALTHCHECK CMD ["node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
