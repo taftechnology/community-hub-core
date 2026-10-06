@@ -1,7 +1,7 @@
 # Spec: Database ops task
 
 Slug: db-ops-task
-Status: draft
+Status: approved (2026-10-06, Abdus)
 Architecture refs: §7.3, ADR 0009. Sits before `first-running-task`. That spec is revised to call this task. It is not edited here.
 
 ## Problem
