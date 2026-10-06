@@ -422,7 +422,9 @@ run "staging_image_set" {
     condition = (
       aws_iam_role_policy.db_ops_execution[0].role == aws_iam_role.db_ops_execution[0].id &&
       length(aws_iam_role.db_ops_task[0].inline_policy) == 0 &&
-      !strcontains(file("${path.module}/main.tf"), "managed_policy_arns")
+      !strcontains(file("${path.module}/main.tf"), "managed_policy_arns") &&
+      length(regexall("aws_iam_role\\.db_ops_task\\[0\\]\\.(id|name)", file("${path.module}/main.tf"))) == 0 &&
+      !strcontains(file("${path.module}/main.tf"), "aws_iam_role_policy_attachment")
     )
     error_message = "the ops execution policy attaches only to the execution role, and the task role has no policy"
   }
