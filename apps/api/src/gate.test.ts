@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { Mock } from "vitest";
 
 import { createGate, RoutesRejected, assertRoutes, type GateRoute, type Surface } from "./gate.js";
 
@@ -12,9 +13,9 @@ const HOSTS = {
 type Line = Record<string, unknown>;
 
 function routes(spies: {
-  health: ReturnType<typeof vi.fn>;
-  ops: ReturnType<typeof vi.fn>;
-  tenant: ReturnType<typeof vi.fn>;
+  health: Mock<(request: Request) => void>;
+  ops: Mock<(request: Request) => void>;
+  tenant: Mock<(request: Request) => void>;
 }): GateRoute[] {
   return [
     {
@@ -50,7 +51,11 @@ function routes(spies: {
 describe("createGate", () => {
   function setup() {
     const lines: Line[] = [];
-    const spies = {
+    const spies: {
+      health: Mock<(request: Request) => void>;
+      ops: Mock<(request: Request) => void>;
+      tenant: Mock<(request: Request) => void>;
+    } = {
       health: vi.fn(),
       ops: vi.fn(),
       tenant: vi.fn(),
