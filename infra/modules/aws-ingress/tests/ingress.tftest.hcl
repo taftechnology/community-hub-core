@@ -200,8 +200,8 @@ run "staging_unset" {
   }
 
   assert {
-    condition     = aws_service_discovery_service.this.dns_config[0].dns_records[0].type == "SRV" && length(aws_service_discovery_service.this.health_check_custom_config) == 1
-    error_message = "Cloud Map publishes SRV and sets the ECS custom-health block"
+    condition     = aws_service_discovery_service.this.dns_config[0].dns_records[0].type == "SRV" && aws_service_discovery_service.this.health_check_custom_config[0].failure_threshold == 1
+    error_message = "Cloud Map publishes SRV and sets failure_threshold 1"
   }
 
   assert {
