@@ -1,7 +1,7 @@
 # Spec: Staging base
 
 Slug: staging-base
-Status: draft
+Status: approved (2026-10-05, Abdus Salam)
 Architecture refs: §7.3, ADR 0009, ADR 0010. Implements the `staging-base` row that replaces `first staging apply` in `docs/roadmap.md`. `docs/specs/2026-10-03-personal-data-on-aws.md`, `docs/specs/2026-10-03-foundations.md`, `docs/specs/2026-10-04-ingress.md`, and `docs/specs/2026-09-18-terraform-au-cell.md` are not edited.
 
 ## Problem
