@@ -104,11 +104,11 @@ Unpark is `first-running-task`: recreate the database, the ALTER ROLE procedure,
 
 ### Park apply
 
-Commit: (filled by Task 5)
+Commit: e16695548da171acd8135293db7365d391bc7698
 
 ### Park evidence
 
-(filled by Task 6)
+Apply complete: 1 added, 0 changed, 8 destroyed. The follow-up plan showed no changes, exit 0. The SNS topic, email subscription, hostname alarm, and budget remain. Budget ch-staging-cost, limit USD 50, filter user:environment$staging. Staging now costs about USD 6.30/month while parked.
 
 ## Change a database role
 
