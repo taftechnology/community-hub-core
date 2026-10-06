@@ -10,7 +10,7 @@ Spec: docs/specs/2026-10-06-db-ops-task.md
 
 **Tech Stack:** TypeScript, Node 24, Vitest, `@community-hub/db` `createDirectSql`, `runBootstrap`, and `setLoginPasswords`, Docker, Terraform 1.11.4, `terraform test`. No new dependency. No AWS call.
 
-Status: draft
+Status: approved (2026-10-06, Abdus)
 
 **Branch:** `feat/2026-10-06-db-ops-task` · one PR · 5 tasks, one commit each
 
