@@ -8,7 +8,7 @@ Spec: docs/specs/2026-10-06-db-ops-task.md
 
 **Architecture:** Five commits. The image `CMD` replaces `ENTRYPOINT`. `db-bootstrap.js` runs `bootstrap.sql`, then three `ALTER ROLE` statements that carry a client-side SCRAM-SHA-256 verifier. A separate task definition and execution role exist only when the image is set and the database is on. The runbook names that task. Nothing is applied. The last commit updates the catalogue.
 
-**Tech Stack:** TypeScript, Node 24, Vitest, `node:crypto`, `@community-hub/db` `createDirectSql`, Docker, Terraform 1.11.4, `terraform test`. No new dependency. No AWS call.
+**Tech Stack:** TypeScript, Node 24, Vitest, `@community-hub/db` `createDirectSql`, `runBootstrap`, and `setLoginPasswords`, Docker, Terraform 1.11.4, `terraform test`. No new dependency. No AWS call.
 
 Status: draft
 
@@ -31,20 +31,19 @@ Status: draft
 
 ## File map
 
-| File                                                       | Responsibility                                                                          |
-| ---------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `apps/api/Dockerfile`                                      | `CMD` instead of `ENTRYPOINT`. Copy `bootstrap.sql` into the image.                     |
-| `apps/api/src/image.test.ts`                               | Command override with no `--entrypoint`.                                                |
-| `apps/api/src/db-bootstrap.ts`                             | Bootstrap, three verifier `ALTER ROLE`s, `SHOW max_connections`.                        |
-| `apps/api/src/db-bootstrap.test.ts`                        | SQL-text must-fail, output must-fail, success, and the failure words.                   |
-| `apps/api/src/db-bootstrap.integration.test.ts`            | Compose Postgres: planted password logs in, a wrong one is refused, second run exits 0. |
-| `infra/modules/aws-rds/outputs.tf`                         | Master secret ARN output.                                                               |
-| `infra/modules/aws-ingress/outputs.tf`                     | `repository_arn` for the one service repository.                                        |
-| `infra/regions/au/main.tf`                                 | Ops task definition, task role with no policies, execution role.                        |
-| `infra/regions/au/tests/cell.tftest.hcl`                   | Count gates and the ops role's IAM assertions. Root resources only.                     |
-| `infra/modules/aws-kms-envelope/tests/envelope.tftest.hcl` | Master secret ARN stays out of `execution_secrets`.                                     |
-| `docs/runbooks/apply-staging-au.md`                        | "Change a database role" runs this task.                                                |
-| `docs/roadmap.md`, `AGENTS.md`                             | Catalogue. Last commit only.                                                            |
+| File                                                       | Responsibility                                                                                    |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `apps/api/Dockerfile`                                      | `CMD` instead of `ENTRYPOINT`.                                                                    |
+| `apps/api/src/image.test.ts`                               | Command override with no `--entrypoint`. The image contains the program and the shipped SQL file. |
+| `apps/api/src/db-bootstrap.ts`                             | Connect, call `runBootstrap` and `setLoginPasswords`, print `SHOW max_connections`.               |
+| `apps/api/src/db-bootstrap.test.ts`                        | SQL-text must-fail, output must-fail, success, and the failure words.                             |
+| `infra/modules/aws-rds/outputs.tf`                         | Master secret ARN output.                                                                         |
+| `infra/modules/aws-ingress/outputs.tf`                     | `repository_arn` for the one service repository.                                                  |
+| `infra/regions/au/main.tf`                                 | Ops task definition, task role with no policies, execution role.                                  |
+| `infra/regions/au/tests/cell.tftest.hcl`                   | Count gates and the ops role's IAM assertions. Root resources only.                               |
+| `infra/modules/aws-kms-envelope/tests/envelope.tftest.hcl` | Master secret ARN stays out of `execution_secrets`.                                               |
+| `docs/runbooks/apply-staging-au.md`                        | "Change a database role" runs this task.                                                          |
+| `docs/roadmap.md`, `AGENTS.md`                             | Catalogue. Last commit only.                                                                      |
 
 ---
 
@@ -102,35 +101,36 @@ EOF
 
 ### Task 2: Bootstrap program, SQL-text test first
 
+`@community-hub/db` already exports `runBootstrap(sql)` and `setLoginPasswords(sql, passwords)` from `packages/db/src/bootstrap.ts`. `runBootstrap` reads `sql/bootstrap.sql`, then `constrainRoleAttributes` and `assertRoleAttributes`. It fails closed on `SUPERUSER`, `BYPASSRLS`, `CREATEROLE`, `CREATEDB`, and `migrator` `LOGIN`, and it already omits the superuser clauses when the master is `rds_superuser`. `setLoginPasswords` sends `ALTER ROLE <role> PASSWORD '<SCRAM verifier>'` through `scram.ts`, after the `VERIFIER_SAFE` check. `packages/db/test/global-setup.ts` proves those verifiers by logging in as `app` through PgBouncer on every CI run. This task does not reimplement that, and it does not open the compose Postgres. Roles are cluster-wide, and Turbo runs packages in parallel, so an `apps/api` test that changed `app`'s password would race the `@community-hub/db` suite.
+
 **Files:**
 
 - Create: `apps/api/src/db-bootstrap.test.ts`
-- Create: `apps/api/src/db-bootstrap.integration.test.ts`
 - Create: `apps/api/src/db-bootstrap.ts`
-- Modify: `apps/api/Dockerfile`
-- Modify: `apps/api/vitest.config.ts`
+- Modify: `apps/api/src/image.test.ts`
 
 **Interfaces:**
 
-- Consumes: `createDirectSql` from `@community-hub/db`. The integration test injects `createPlaintextDirectSql` from `@community-hub/db/plaintext`. `IMAGE_CERT_PATH` from `./env.js`. `packages/db/sql/bootstrap.sql`. The CI test job's Postgres from `packages/db/test/docker-compose.yml`.
+- Consumes: `createDirectSql`, `runBootstrap`, and `setLoginPasswords` from `@community-hub/db`. `IMAGE_CERT_PATH` from `./env.js`. The SQL file ships in the db package `files` list, so `runBootstrap` reads `node_modules/@community-hub/db/sql/bootstrap.sql` inside the image.
 - Produces: `runDbBootstrap(deps)` exported for tests, and `node /app/db-bootstrap.js` as the compiled entry. Stdout on success is one integer and a newline. Stderr on failure is `env`, `bootstrap`, `alter_role`, or `max_connections`, plus one newline. Exit 0 or 1.
 
-**Rule this must not break:** no cleartext password in any statement, stdout, or stderr. The production path uses `createDirectSql` with verify-full. A role password is passed only into the verifier. The plaintext connector is injected by the integration test and is not imported from `db-bootstrap.ts`. No package export for `@community-hub/db/plaintext`. No new dependency. No Secrets Manager call. No secret ARN in the program.
+**Rule this must not break:** no cleartext password in any statement, stdout, or stderr. The production path uses `createDirectSql` with verify-full. Do not implement SCRAM. Do not read `bootstrap.sql` in this program. Do not print the verifiers `setLoginPasswords` returns. No new dependency. No Secrets Manager call. No secret ARN in the program. No Dockerfile copy of the SQL file. No Vitest alias.
 
-Do not write `ALTER ROLE` until Step 2 has failed.
+Do not add `db-bootstrap.ts` until Step 2 has failed.
 
 - [ ] **Step 1: Write the SQL-text must-fail test**
 
 Add `apps/api/src/db-bootstrap.test.ts` only. Do not add `db-bootstrap.ts` in this step.
 
-The test plants `planted-password-marker` as each role password and as the master password. It injects a connect function. The returned driver records the full text of every statement it is asked to run. Assert all of these:
+The test plants `planted-password-marker` as each role password and as the master password. It injects a connect function. The returned fake `Sql` records the full text of every `unsafe()` call and every tagged-template query. Assert all of these:
 
-- The planted marker appears in none of those strings.
-- Three statements match `ALTER ROLE` for `app`, `identity`, and `platform`.
-- Each password clause is a quoted literal whose value starts with `SCRAM-SHA-256$`.
+- The planted marker appears in no statement text.
+- Three `ALTER ROLE` statements, for `app`, `identity`, and `platform`, carry a value starting with `SCRAM-SHA-256$`.
 - The marker is also absent from stdout and stderr when the driver throws an error whose message is the marker.
 
-Also cover, in this same file, before any implementation: success stdout is the `SHOW max_connections` integer plus one newline and stderr is empty; a second call exits 0 again; missing environment yields stdout empty, stderr `env\n`, exit 1; a bootstrap failure, an alter failure, and a show failure yield the matching word and empty stdout. Connect is called with the master password, the host, the port, the database, user `postgres`, and the CA pem. The role passwords are not on that object.
+Also cover, in this same file, before any implementation: success stdout is the `SHOW max_connections` integer plus one newline and stderr is empty; a second call exits 0 again; missing environment yields stdout empty, stderr `env\n`, exit 1; a `runBootstrap` failure yields `bootstrap`, a `setLoginPasswords` failure yields `alter_role`, and a `SHOW` failure yields `max_connections`, each with empty stdout. Connect is called with the master password, the host, the port, the database, user `postgres`, and the CA pem. The role passwords are not on that object.
+
+The fake answers the attribute queries `runBootstrap` issues so both library calls run to completion. It does not replace them.
 
 - [ ] **Step 2: Run the test and watch it fail**
 
@@ -138,49 +138,39 @@ Run: `pnpm test --filter @community-hub/api -- src/db-bootstrap.test.ts`
 
 Expected: FAIL because `./db-bootstrap.js` does not exist. This is the RED. Do not commit.
 
-- [ ] **Step 3: Implement the verifier and the statements**
+- [ ] **Step 3: Call the existing functions**
 
 Add `apps/api/src/db-bootstrap.ts`.
 
 Read `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER` (`postgres` in the task), `PGPASSWORD_MASTER`, `PGPASSWORD_APP`, `PGPASSWORD_IDENTITY`, and `PGPASSWORD_PLATFORM` from the environment. A missing or empty value is the `env` failure.
 
-The production connect function is `createDirectSql`, the same way the probe connects: host, port, database, user, master password, and the image CA pem. Omit `servername` so a hostname is the server name. `rds.force_ssl` is 1. That factory is verify-full. Tests inject `deps.connect`. Do not import `@community-hub/db/plaintext` from this file.
+Connect with `createDirectSql` the way the probe does: host, port, database, user, master password, and the image CA pem. Omit `servername` so a hostname is the server name. `rds.force_ssl` is 1. That factory is verify-full. Tests inject `deps.connect`.
 
-Read `packages/db/sql/bootstrap.sql` from `/app/sql/bootstrap.sql` and run it. Then, for each of `app`, `identity`, and `platform`, compute a SCRAM-SHA-256 verifier with `node:crypto` only: 16 random salt bytes, 4096 iterations, PBKDF2-HMAC-SHA256, client key, stored key, and server key. The statement text is `ALTER ROLE <role> PASSWORD '<verifier>'`. The role is one of those three identifiers. The verifier is a single-quoted literal with any single quote doubled. It looks like `SCRAM-SHA-256$4096:<base64 salt>$<base64 stored key>:<base64 server key>`. Then run `SHOW max_connections` and print that integer as the only stdout line.
+Call `runBootstrap(sql)`, then `setLoginPasswords(sql, { app, identity, platform })`. Discard the returned verifiers. Do not print them. Then run `SHOW max_connections` and print that integer as the only stdout line.
 
-Pass each statement as text the test's driver records. Do not bind a password. A thrown driver error is not written. Map it to the step word.
+A thrown driver error is not written. Map a `runBootstrap` failure to `bootstrap`, a `setLoginPasswords` failure to `alter_role`, and a `SHOW` failure to `max_connections`.
 
 - [ ] **Step 4: Run the test and watch it pass**
 
 Run the same test command. Expected: PASS, including both must-fail assertions.
 
-- [ ] **Step 5: Put the SQL file in the image**
+- [ ] **Step 5: Assert the shipped SQL file is in the image**
 
-In the Dockerfile build stage, copy `packages/db/sql/bootstrap.sql` to `/runtime/sql/bootstrap.sql` before the runtime stage copies `/runtime` to `/app`. The existing `dist` copy already places `db-bootstrap.js` at `/app/db-bootstrap.js`. Do not add an `ENTRYPOINT`.
+Do not copy `bootstrap.sql` in the Dockerfile. `runBootstrap` reads it from `node_modules/@community-hub/db/sql/bootstrap.sql`, and the db package `files` list already ships `sql`. The existing `dist` copy places `db-bootstrap.js` at `/app/db-bootstrap.js`.
 
-With `RUN_IMAGE_TESTS=1`, `docker run --rm <image> node --input-type=module -e` exits 0 only when both `/app/sql/bootstrap.sql` and `/app/db-bootstrap.js` exist. Add that assertion to `image.test.ts`.
+With `RUN_IMAGE_TESTS=1`, `docker run --rm <image> node --input-type=module -e` exits 0 only when both `/app/db-bootstrap.js` and `/app/node_modules/@community-hub/db/sql/bootstrap.sql` exist. Add that assertion to `image.test.ts`.
 
-- [ ] **Step 6: Prove the verifier against the CI Postgres**
-
-The CI `test` job already runs `docker compose -f packages/db/test/docker-compose.yml up -d postgres` before `pnpm test`. Start that Postgres locally the same way before this step.
-
-Add `apps/api/src/db-bootstrap.integration.test.ts`. In `apps/api/vitest.config.ts`, alias `@community-hub/db/plaintext` to `packages/db/src/plaintext.ts`, the same specifier `packages/db/vitest.config.ts` already uses. Do not add a package export.
-
-The test calls `runDbBootstrap` with `connect` set to `createPlaintextDirectSql` and the compose URL `postgres://hub:local-bootstrap-only@127.0.0.1:5432/hub`. Role passwords are `planted-password-marker`. After it exits 0, a plaintext connection as `app` with that password succeeds, and one with a different password is refused. Run the bootstrap a second time. It exits 0.
-
-Roles are cluster-wide on that instance, and `@community-hub/db` uses them too. In `finally`, when `packages/db/test/.runtime.json` exists, run the bootstrap once more with that file's three passwords so `app` matches the PgBouncer userlist again.
-
-- [ ] **Step 7: Gate and commit**
+- [ ] **Step 6: Gate and commit**
 
 Run: `pnpm lint && pnpm typecheck && pnpm test --filter @community-hub/api && pnpm check:boundaries`
 
 ```bash
-git add apps/api/src/db-bootstrap.ts apps/api/src/db-bootstrap.test.ts apps/api/src/db-bootstrap.integration.test.ts apps/api/vitest.config.ts apps/api/Dockerfile apps/api/src/image.test.ts
+git add apps/api/src/db-bootstrap.ts apps/api/src/db-bootstrap.test.ts apps/api/src/image.test.ts
 git commit -m "$(cat <<'EOF'
-feat(api): bootstrap roles with a SCRAM verifier
+feat(api): bootstrap roles with the existing verifier
 
-ALTER ROLE carries the verifier, not the password, so a failed
-statement cannot land the secret in the database logs.
+The program calls runBootstrap and setLoginPasswords. It does not
+send a cleartext password or print the verifier.
 
 EOF
 )"
