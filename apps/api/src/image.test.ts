@@ -116,7 +116,8 @@ describe.skipIf(process.env.RUN_IMAGE_TESTS !== "1")("regional service image", (
     const inspected = JSON.parse(docker(["inspect", image])) as Array<{
       Config: {
         User: string;
-        Entrypoint: string[];
+        Entrypoint: string[] | null;
+        Cmd: string[] | null;
         Env: string[] | null;
         Volumes: Record<string, unknown> | null;
         Healthcheck?: { Test: string[] };
@@ -124,7 +125,8 @@ describe.skipIf(process.env.RUN_IMAGE_TESTS !== "1")("regional service image", (
     }>;
     const config = inspected[0]?.Config;
     expect(config?.User).toBe("node");
-    expect(config?.Entrypoint).toEqual(["node", "/app/index.js"]);
+    expect(config?.Entrypoint).toEqual(["docker-entrypoint.sh"]);
+    expect(config?.Cmd).toEqual(["node", "/app/index.js"]);
     expect(config?.Volumes).toHaveProperty("/tmp");
     const health = config?.Healthcheck?.Test ?? [];
     expect(health[0]).toBe("CMD");
@@ -334,11 +336,9 @@ describe.skipIf(process.env.RUN_IMAGE_TESTS !== "1")("regional service image", (
       spawnSync("docker", ["rm", "-f", second.id]);
     }
 
-    const probe = spawnSync(
-      "docker",
-      ["run", "--rm", "--entrypoint", "node", image, "/app/probe.js"],
-      { encoding: "utf8" },
-    );
+    const probe = spawnSync("docker", ["run", "--rm", image, "node", "/app/probe.js"], {
+      encoding: "utf8",
+    });
     expect(probe.status).toBe(1);
     expect(probe.stdout).toBe("fail\n");
     expect(probe.stderr).toBe("env\n");
