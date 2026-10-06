@@ -87,14 +87,14 @@ terraform init -backend=false -upgrade
 terraform providers lock -platform=linux_amd64 -platform=darwin_arm64
 ```
 
-Restore `version = "~> 6.0"`. Run lock again so the lock keeps 6.67.0 under that constraint:
+Restore `version = "~> 6.0"`. Do not run `terraform providers lock` again.
 
 ```bash
-terraform providers lock -platform=linux_amd64 -platform=darwin_arm64
+terraform init -backend=false -lockfile=readonly
 grep -A2 'provider "registry.terraform.io/hashicorp/aws"' .terraform.lock.hcl
 ```
 
-Expected: `version     = "6.67.0"`. Repeat for `infra/regions/au`, `infra/modules/aws-network`, `infra/modules/aws-kms-storage`, and `infra/modules/aws-rds`. In `infra/regions/au`, do not change the `random` constraint `~> 3.7`, and do not let its locked version move off `3.9.1`.
+Expected: init exits 0 and the AWS provider line is `version     = "6.67.0"`. Repeat for `infra/regions/au`, `infra/modules/aws-network`, `infra/modules/aws-kms-storage`, and `infra/modules/aws-rds`. In `infra/regions/au`, do not change the `random` constraint `~> 3.7`, and do not let its locked version move off `3.9.1`.
 
 - [ ] **Step 3: Readonly init**
 
@@ -135,6 +135,7 @@ EOF
 - Modify: `infra/modules/aws-rds/variables.tf`
 - Modify: `infra/modules/aws-rds/main.tf`
 - Modify: `infra/modules/aws-rds/tests/rds.tftest.hcl`
+- Modify: `infra/modules/aws-budgets/outputs.tf`
 - Modify: `infra/regions/au/variables.tf`
 - Modify: `infra/regions/au/main.tf`
 - Modify: `infra/regions/au/outputs.tf`
@@ -143,11 +144,11 @@ EOF
 **Interfaces:**
 
 - Consumes: `module.envelope.log_group_name`, `var.alert_email`, `var.service_image`, `local.name`.
-- Produces: `var.enable_database` (bool, default true). `module.rds` is a list of 0 or 1. `rds_hostname` is null when the database is off. `aws_sns_topic.alarms.arn` is the topic the four RDS alarms and the hostname alarm use.
+- Produces: `var.enable_database` (bool, default true). `module.rds` is a list of 0 or 1. `rds_hostname` is null when the database is off. `aws_sns_topic.alarms.arn` is the topic the four RDS alarms and the hostname alarm use. `module.budgets.budget_name` is `one(aws_budgets_budget.environment[*].name)`.
 
 - [ ] **Step 1: Write the failing RDS test**
 
-In `infra/modules/aws-rds/tests/rds.tftest.hcl`, delete the `mock_resource "aws_sns_topic"` block and the `override_resource` whose target is `aws_sns_topic.alarms`.
+In `infra/modules/aws-rds/tests/rds.tftest.hcl`, delete the `mock_resource "aws_sns_topic"` block, the `override_resource` whose target is `aws_sns_topic.alarms`, and the assert that `aws_sns_topic.alarms.kms_master_key_id == null`. That assert moves to the cell test. Do not drop it.
 
 In every `variables` block, replace `alert_email = "alerts@example.com"` with:
 
@@ -235,6 +236,11 @@ run "database_off" {
   }
 
   assert {
+    condition     = aws_sns_topic.alarms.kms_master_key_id == null
+    error_message = "alarm SNS topic must not use a KMS key"
+  }
+
+  assert {
     condition     = aws_sns_topic_subscription.alarms.endpoint == "alerts@example.com"
     error_message = "the email subscription stays when the database is parked"
   }
@@ -260,7 +266,7 @@ run "database_off" {
   }
 
   assert {
-    condition     = length(module.budgets.aws_budgets_budget.environment) == 1
+    condition     = module.budgets.budget_name == "ch-staging-cost"
     error_message = "the park plan creates the staging budget"
   }
 }
@@ -453,6 +459,17 @@ db_host = var.enable_database ? module.rds[0].address : ""
 db_port = var.enable_database ? module.rds[0].port : 5432
 ```
 
+In `infra/modules/aws-budgets/outputs.tf`, add:
+
+```hcl
+output "budget_name" {
+  description = "Name of the environment budget when enable_budgets is true. Null when the budget is off."
+  value       = one(aws_budgets_budget.environment[*].name)
+}
+```
+
+`terraform test` cannot address a resource inside a child module. The cell test asserts this output.
+
 In `infra/regions/au/outputs.tf`:
 
 ```hcl
@@ -471,12 +488,12 @@ terraform -chdir=infra/regions/au test
 terraform -chdir=infra/modules/aws-rds test
 ```
 
-Expected: both PASS. `database_off` plans no `aws_db_instance`. If `length(module.rds)` is not addressable that way, assert `module.rds == []` or the address Terraform test prints, and keep the failure message. If `module.budgets.aws_budgets_budget.environment` is not addressable, assert the budget the same way the budgets module test asserts `aws_budgets_budget.environment[0]`, from a `terraform test` run inside `infra/modules/aws-budgets` that already passes, and in the cell test assert `var.enable_budgets == true` only as a fallback after you have seen the plan contain `module.budgets.aws_budgets_budget.environment[0]`. Do not drop the budget assertion.
+Expected: both PASS. `database_off` plans no `aws_db_instance` and `module.budgets.budget_name` is `ch-staging-cost`. If `length(module.rds)` is not addressable that way, assert `module.rds == []` or the address Terraform test prints, and keep the failure message.
 
 - [ ] **Step 10: Commit**
 
 ```bash
-git add infra/modules/aws-rds infra/regions/au
+git add infra/modules/aws-rds infra/modules/aws-budgets/outputs.tf infra/regions/au
 git commit -m "$(cat <<'EOF'
 feat(infra): park the database without dropping the alarms topic
 
@@ -524,7 +541,7 @@ Do not add `*.tfvars`.
 
 Delete everything from the opening through `## Never`, including the Cloudflare apply order, the tunnel, the broker, and the feature-flag table.
 
-Keep `## Change a database role` and `## Restore drill` as they stand.
+Keep `## Change a database role` as it stands. In `## Restore drill`, change "the first staging apply" to `first-running-task`. Leave the rest of that section.
 
 Replace the opening, the prerequisites, and `## Park and unpark` with the procedure below. Evidence headings stay empty until Tasks 4 and 5.
 
@@ -546,28 +563,34 @@ Any rebase onto origin/main happens before the first apply. After that apply the
 
 Create infra/regions/au/env/staging.local.tfvars. It is gitignored. It holds aws_account_id, staging_zone_id, and alert_email. Pass it after env/staging.tfvars so it wins. The committed staging file keeps the synthetic account id 123456789012.
 
+## Before each apply
+
+1. git status is clean.
+2. git rev-parse HEAD equals the SHA named for that apply, and that SHA is on origin.
+3. terraform init uses -lockfile=readonly.
+
 ## Bootstrap
 
-infra/bootstrap declares backend "s3" {} and creates the bucket. From infra/bootstrap, write a gitignored backend_override.tf:
+infra/bootstrap declares backend "s3" {} and creates the bucket. The named SHA is the first-apply commit. From infra/bootstrap, write a gitignored backend_override.tf:
 
     terraform { backend "local" {} }
 
 Then:
 
-    terraform init
+    terraform init -lockfile=readonly
     terraform apply -var-file=env/staging.tfvars
 
 Delete backend_override.tf. Then:
 
-    terraform init -backend-config=backend/staging.hcl -migrate-state
+    terraform init -backend-config=backend/staging.hcl -lockfile=readonly -migrate-state
 
 terraform state list must show the state bucket and the state KMS key from the bucket. Only then delete the local terraform.tfstate and terraform.tfstate.backup. Confirm git status is clean. If apply returns BucketAlreadyExists, stop and report. Do not pick another bucket name.
 
 ## First AU apply
 
-From infra/regions/au, on the commit this runbook names under "First apply". enable_database is still the default true. enable_budgets is still the default false. service_image is null. desired_count is 0.
+From infra/regions/au, on the commit this runbook names under "First apply". enable_database is still the default true. enable_budgets is still the default false. service_image is null. desired_count is 0. Run the before-each-apply checks. Then:
 
-    terraform init -backend-config=backend/staging.hcl
+    terraform init -backend-config=backend/staging.hcl -lockfile=readonly
     terraform apply -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars
 
 ## After the first apply
@@ -595,7 +618,12 @@ Commit: (filled by Task 4)
 
 ## Park
 
-Commit enable_database = false and enable_budgets = true in infra/regions/au/env/staging.tfvars first. Apply that commit with the same two var files. Record that SHA. Then terraform plan shows no changes. The plan still contains the topic, the subscription, the hostname alarm, and the staging budget. Record that the budget exists and that its tag filter is user:environment$staging.
+Commit enable_database = false and enable_budgets = true in infra/regions/au/env/staging.tfvars first. That commit is the park SHA. Run the before-each-apply checks against it. Then, from infra/regions/au:
+
+    terraform init -backend-config=backend/staging.hcl -lockfile=readonly
+    terraform apply -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars
+
+Record that SHA. Then terraform plan shows no changes. The plan still contains the topic, the subscription, the hostname alarm, and the staging budget. Record that the budget exists and that its tag filter is user:environment$staging.
 
 Unpark is the next chunk: recreate the database, the ALTER ROLE procedure, and wait until the VPC link is AVAILABLE. This runbook does not unpark.
 
@@ -632,7 +660,53 @@ EOF
 )"
 ```
 
-This commit is the first-apply SHA. Do not apply it in this task.
+- [ ] **Step 6: Last rebase, then a draft pull request**
+
+This is the last point a rebase is allowed. It happens before the first apply.
+
+```bash
+git fetch origin
+git rebase origin/main
+git push -u origin HEAD
+```
+
+If `origin/main` has moved, the rebase rewrites this commit. The first-apply SHA is the pushed HEAD, not the hash from before the rebase. Do not rebase again after this.
+
+Open a draft pull request. The body starts with:
+
+```markdown
+Spec: docs/specs/2026-10-05-staging-base.md
+Plan: docs/plans/2026-10-05-staging-base.md
+```
+
+State that this departs from AGENTS.md §5: after this push the branch is not rebased, and the pull request is merged with a merge commit, never squashed, because the runbook names the SHAs that were applied. State that the human applies and the agent does not. The two SHAs are filled in when Task 7 marks the pull request ready.
+
+```bash
+gh pr create --draft --title "feat(infra): apply staging with no task" --body "$(cat <<'EOF'
+Spec: docs/specs/2026-10-05-staging-base.md
+Plan: docs/plans/2026-10-05-staging-base.md
+
+## Summary
+
+Staging is applied with no task, the proofs are recorded, and the database is then parked.
+
+This departs from AGENTS.md §5. After this push the branch is not rebased, amended, or force-pushed. main is brought in with a merge commit. This pull request is merged with a merge commit, never squashed. A rebase would replace the SHAs the runbook names.
+
+The human applies. The agent does not.
+
+EOF
+)"
+```
+
+Confirm every check is green on that SHA:
+
+```bash
+gh pr checks --watch
+```
+
+Expected: every check passes. If one fails, stop. Do not tell the human to apply.
+
+The green SHA is the first-apply SHA. Do not apply it in this task.
 
 ---
 
@@ -651,11 +725,11 @@ The agent does not run `terraform apply`, `terraform state`, or any AWS command.
 
 - [ ] **Step 1: Stop**
 
-Tell the human: apply bootstrap, then the AU root, from commit `<Task 3 SHA>`, using the runbook. Ask them to paste the redacted proofs. Do not invent a status, a count, or a timestamp. If they report `BucketAlreadyExists`, or that `environment` is not Active, stop. Do not continue to Task 5.
+The draft pull request's checks are already green on the SHA from Task 3. Tell the human: apply bootstrap, then the AU root, from that SHA, using the runbook. Ask them to paste the redacted proofs. Do not invent a status, a count, or a timestamp. If they report `BucketAlreadyExists`, or that `environment` is not Active, stop. Do not continue to Task 5.
 
 - [ ] **Step 2: Write only what they returned**
 
-Under `### First apply`, the commit SHA of Task 3.
+Under `### First apply`, the pushed SHA whose checks were green.
 
 Under `### Evidence`, the six proofs in order. Redact an account id, a hosted zone id, an email address, or a key ARN if one slipped into the paste. A 429 count, a 503 count, an HTTP status, and "matches" for the storage key are safe.
 
@@ -760,7 +834,7 @@ EOF
 
 ---
 
-### Task 7: Update the catalogue and open the PR
+### Task 7: Update the catalogue and mark the pull request ready
 
 **Files:**
 
@@ -837,26 +911,21 @@ EOF
 )"
 ```
 
-- [ ] **Step 4: Open the PR**
+- [ ] **Step 4: Mark the pull request ready**
 
-Push, then `gh pr create`. The body starts with:
+The draft pull request already exists. Push this commit. Edit the body so it names the first-apply SHA and the park SHA, and says the evidence redacts the account id, the zone id, the alarm email, and key ARNs. Keep the Spec and Plan lines and the AGENTS.md §5 departure.
 
-```markdown
-Spec: docs/specs/2026-10-05-staging-base.md
-Plan: docs/plans/2026-10-05-staging-base.md
+```bash
+gh pr ready
 ```
 
-State that this departs from AGENTS.md §5: the branch is not rebased after the first apply, and the PR is merged with a merge commit, never squashed, because the runbook names the SHAs that were applied.
-
-State that the human applied and the agent did not. Name the two SHAs. Say the evidence redacts the account id, the zone id, the alarm email, and key ARNs.
-
-Do not merge.
+Do not open a second pull request. Do not merge.
 
 ---
 
 ## Self-review
 
-Spec coverage: locks (Task 1), topic move, hostname alarm, `enable_database`, tests (Task 2), gitignore and runbook (Task 3), first apply and six proofs (Task 4), park flags (Task 5), park evidence (Task 6), catalogue (Task 7). VPC link group is in the runbook proof. The Active-tag stop is in the runbook. List-price totals live in the spec and are not recalculated here.
+Spec coverage: locks (Task 1), topic move, hostname alarm, `enable_database`, `budget_name`, tests (Task 2), gitignore and runbook (Task 3), draft pull request before the first apply (Task 3), first apply and six proofs (Task 4), park flags (Task 5), park evidence (Task 6), catalogue and marking the pull request ready (Task 7). The VPC link group is in the runbook proof. The Active-tag stop is in the runbook. List-price totals live in the spec and are not recalculated here.
 
 Placeholder scan: evidence headings are filled from the human's paste, not from invented counts.
 
