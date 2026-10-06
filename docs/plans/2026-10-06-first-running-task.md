@@ -10,7 +10,7 @@ Spec: docs/specs/2026-10-06-first-running-task.md
 
 **Tech Stack:** Terraform 1.11.4, `terraform test`, the existing `apps/api` image. No new dependency. No AWS call by the agent.
 
-Status: draft
+Status: approved (2026-10-06, Abdus)
 
 **Branch:** `feat/2026-10-06-first-running-task` · one PR · 7 agent commits
 
