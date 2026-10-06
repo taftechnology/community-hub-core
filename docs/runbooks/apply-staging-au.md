@@ -62,11 +62,32 @@ Recorded against the first-apply commit. Redact the account id, the hosted zone 
 
 ### First apply
 
-Commit: (filled by Task 4)
+- ea4d796693969b5a84ec026237e95a0f5acc79b4: partial. Metric filter failed (log group not yet created) and the auth and webhooks custom domains failed (certificate not yet ISSUED); the following plan showed 12 add, 3 change, 1 destroy, including a Cloud Map replacement and a parameter-group diff. Fixed on main by PR #28 and merged into this branch.
+- 63bbf7c2891c898ce25f7d1bbee2dee3c95b20ff: completing apply. Apply complete: 13 added, 0 changed, 2 destroyed (Cloud Map service replaced to set failure_threshold 1; SNS subscription replaced because the placeholder address was corrected).
 
 ### Evidence
 
-(filled by Task 4)
+Evidence (against 63bbf7c, 2026-10-06 UTC)
+
+1. SNS email subscription: confirmed. A second subscription from the replaced placeholder address remains PendingConfirmation; AWS cannot delete a pending subscription and removes it automatically.
+2. Custom domain with no Cloud Map instances, 17:58:10Z: GET https://au.api.communityhub-staging.net/health returned HTTP 500. Access log: integrationStatus 500, integrationErrorMessage "No target endpoints found for integration arn:aws:servicediscovery:ap-southeast-2:<account>:service/<service-id>", routeKey $default.
+3. Security-group rules, live, compared with declared, exact match:
+   - ch-staging-rds inbound tcp 5432 from ch-staging-task
+   - ch-staging-task egress tcp 443 to 0.0.0.0/0
+   - ch-staging-task egress tcp 5432 to ch-staging-rds
+   - ch-staging-vpc-link egress tcp 8080 to ch-staging-task
+   - No other inbound or egress rules on the three groups.
+4. Throttle, curl 8.7.1 via xargs, no body, no query string, no personal data.
+   - Run A, 18:01:17Z to 18:01:21Z: 300 x GET / -> 3 x 429, 297 x 500; then 300 x POST / -> 196 x 429, 104 x 500. Shows write routes are throttled harder than the default route.
+   - Run B, 18:49:13Z to 18:49:16Z: 600 x GET / (300 concurrent) -> 242 x 429, 358 x 500; immediately 10 x POST / -> 10 x 500.
+   - Conclusion: the stage default route and the write routes do not share one bucket; each route has its own. Run A alone could not decide this, because the write route's own lower limit produces 429s either way.
+5. Database: availability zone ap-southeast-2b; StorageEncrypted true; KmsKeyId matches the storage key (ARN not recorded); PubliclyAccessible false; BackupRetentionPeriod 0; master password managed by RDS. rds.force_ssl = 1 (source system, the PostgreSQL 17 default, equal to the declared value); parameter group ch-staging-postgres in-sync.
+6. terraform plan after the completing apply: "No changes", exit code 0.
+
+Notes for first-running-task:
+
+- An empty or unhealthy Cloud Map returns 500, not 503; 5xx counts during rolling deploys will include these.
+- Throttle buckets are per route.
 
 ## Park
 
