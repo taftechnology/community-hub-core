@@ -7,10 +7,12 @@ export type RequestLogFields = {
   status: number;
   duration: number;
   requestId: string;
+  gatewayRequestId?: string;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CLIENT_IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{1,255}$/;
+const GATEWAY_REQUEST_ID = /^[A-Za-z0-9+/=_-]{1,128}$/;
 
 function resolveRequestId(request: Request, acceptInboundRequestId: boolean): string {
   const inbound = request.headers.get("x-request-id");
@@ -28,9 +30,18 @@ function resolveClientIdempotencyKey(request: Request): string | undefined {
   return raw;
 }
 
+function resolveGatewayRequestId(request: Request): string | undefined {
+  const raw = request.headers.get("x-community-hub-request-id");
+  if (raw === null || !GATEWAY_REQUEST_ID.test(raw)) {
+    return undefined;
+  }
+  return raw;
+}
+
 export function createRequestHandler(
   options: {
     info: (fields: RequestLogFields) => void;
+    pathFor: (request: Request) => string;
     acceptInboundRequestId?: boolean;
   },
   handle: (request: Request) => Response | Promise<Response>,
@@ -57,13 +68,18 @@ export function createRequestHandler(
         status = 500;
         return new Response(null, { status: 500 });
       } finally {
-        options.info({
+        const fields: RequestLogFields = {
           method: request.method,
-          path: new URL(request.url).pathname,
+          path: options.pathFor(request),
           status,
           duration: Math.round(performance.now() - started),
           requestId: getRequestContext().requestId,
-        });
+        };
+        const gatewayRequestId = resolveGatewayRequestId(request);
+        if (gatewayRequestId !== undefined) {
+          fields.gatewayRequestId = gatewayRequestId;
+        }
+        options.info(fields);
       }
     });
   };

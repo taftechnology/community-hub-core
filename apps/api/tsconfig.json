@@ -10,5 +10,10 @@
   },
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"],
-  "references": [{ "path": "../../packages/kernel" }, { "path": "../../packages/observability" }]
+  "references": [
+    { "path": "../../packages/crypto" },
+    { "path": "../../packages/db" },
+    { "path": "../../packages/kernel" },
+    { "path": "../../packages/observability" }
+  ]
 }

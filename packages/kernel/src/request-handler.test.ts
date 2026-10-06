@@ -12,10 +12,16 @@ function fieldValues(fields: Record<string, unknown>): string[] {
   return Object.values(fields).map((value) => String(value));
 }
 
+function pathFor(request: Request): string {
+  return request.method === "GET" && new URL(request.url).pathname === "/health"
+    ? "/health"
+    : "unmatched";
+}
+
 describe("createRequestHandler", () => {
   it("logs one structured line without leaking request parts", async () => {
     const info = vi.fn();
-    const run = createRequestHandler({ info }, (request) => healthRequest(request));
+    const run = createRequestHandler({ info, pathFor }, (request) => healthRequest(request));
 
     const getResponse = await run(
       new Request("https://example.test/health?query-leak-token", {
@@ -63,7 +69,7 @@ describe("createRequestHandler", () => {
       expect(value).not.toContain("header-leak-token");
       expect(value).not.toContain("body-leak-token");
     }
-    expect(postFields.path).toBe("/health");
+    expect(postFields.path).toBe("unmatched");
     expect(postFields.method).toBe("POST");
     expect(postFields.status).toBe(404);
     expect(Number.isInteger(postFields.duration)).toBe(true);
@@ -71,7 +77,7 @@ describe("createRequestHandler", () => {
 
   it("accepts a UUID x-request-id when acceptInboundRequestId is true", async () => {
     const info = vi.fn();
-    const run = createRequestHandler({ info, acceptInboundRequestId: true }, async () => {
+    const run = createRequestHandler({ info, pathFor, acceptInboundRequestId: true }, async () => {
       const ctx = getRequestContext();
       expect(ctx.requestId).toBe(INBOUND_UUID);
       expect(ctx.idempotencyKey).toBeUndefined();
@@ -95,7 +101,7 @@ describe("createRequestHandler", () => {
     ["accept inbound with email header", { "x-request-id": "person@example.test" }, true],
   ])("mints requestId when %s", async (_label, headers, acceptInboundRequestId) => {
     const info = vi.fn();
-    const run = createRequestHandler({ info, acceptInboundRequestId }, async () => {
+    const run = createRequestHandler({ info, pathFor, acceptInboundRequestId }, async () => {
       return new Response(null, { status: 204 });
     });
 
@@ -115,7 +121,7 @@ describe("createRequestHandler", () => {
   it("stores a valid Idempotency-Key as clientIdempotencyKey", async () => {
     const info = vi.fn();
     const clientKey = "abc.DEF_123";
-    const run = createRequestHandler({ info }, async () => {
+    const run = createRequestHandler({ info, pathFor }, async () => {
       const ctx = getRequestContext();
       expect(ctx.clientIdempotencyKey).toBe(clientKey);
       expect(ctx.idempotencyKey).toBeUndefined();
@@ -139,7 +145,7 @@ describe("createRequestHandler", () => {
     ["256 chars", "a".repeat(256)],
   ])("ignores invalid Idempotency-Key (%s)", async (_label, key) => {
     const info = vi.fn();
-    const run = createRequestHandler({ info }, async () => {
+    const run = createRequestHandler({ info, pathFor }, async () => {
       expect(getRequestContext().clientIdempotencyKey).toBeUndefined();
       return new Response(null, { status: 204 });
     });
@@ -159,7 +165,7 @@ describe("createRequestHandler", () => {
   it("returns 500 without leaking when handle throws", async () => {
     const info = vi.fn();
     const secret = "secret-stack-token";
-    const run = createRequestHandler({ info }, async () => {
+    const run = createRequestHandler({ info, pathFor }, async () => {
       throw new Error(secret);
     });
 
@@ -173,6 +179,53 @@ describe("createRequestHandler", () => {
     for (const value of fieldValues(fields)) {
       expect(value).not.toContain(secret);
     }
+  });
+
+  it("logs pathFor and a valid gateway request id, not the URL path", async () => {
+    const info = vi.fn();
+    const marker = "caller-supplied-segment";
+    const run = createRequestHandler(
+      {
+        info,
+        pathFor: (request) =>
+          new URL(request.url).pathname === "/health" ? "/health" : "unmatched",
+      },
+      () => new Response(null, { status: 204 }),
+    );
+    await run(
+      new Request(`https://example.test/health/${marker}?query-leak-token`, {
+        headers: {
+          "x-community-hub-request-id": "gateway-id_1",
+          "x-request-id": "22222222-2222-4222-8222-222222222222",
+          "x-community-hub-client-ip": "203.0.113.5",
+        },
+      }),
+    );
+    const fields = info.mock.calls[0]![0] as Record<string, unknown>;
+    expect(fields.path).toBe("unmatched");
+    expect(fields.gatewayRequestId).toBe("gateway-id_1");
+    expect(fields.requestId).not.toBe("22222222-2222-4222-8222-222222222222");
+    expect(JSON.stringify(fields)).not.toContain(marker);
+    expect(JSON.stringify(fields)).not.toContain("query-leak-token");
+    expect(JSON.stringify(fields)).not.toContain("203.0.113.5");
+  });
+
+  it("omits a gateway request id that fails the pattern", async () => {
+    const info = vi.fn();
+    const run = createRequestHandler(
+      {
+        info,
+        pathFor: () => "unmatched",
+      },
+      () => new Response(null, { status: 204 }),
+    );
+    await run(
+      new Request("https://example.test/health", {
+        headers: { "x-community-hub-request-id": "bad id" },
+      }),
+    );
+    const fields = info.mock.calls[0]![0] as Record<string, unknown>;
+    expect(fields.gatewayRequestId).toBeUndefined();
   });
 });
 

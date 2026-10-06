@@ -135,7 +135,7 @@ jobs:
 
   build-preview:
     name: build-preview
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
@@ -152,5 +152,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build workspace packages
-        run: pnpm --filter @community-hub/api... build
+      - name: Build the ARM image
+        run: docker build --platform linux/arm64 -f apps/api/Dockerfile -t community-hub-api:local .
+
+      - name: Image contract checks
+        env:
+          RUN_IMAGE_TESTS: "1"
+        run: pnpm --filter @community-hub/api exec vitest run --config vitest.config.ts src/image.test.ts
