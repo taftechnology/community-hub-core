@@ -25,23 +25,26 @@ Status: draft
 - Session scratch (`.superpowers/`, `*-report.md`) is never committed.
 - Do not mark this plan approved yourself.
 - This chunk injects the master password and adds an IAM role that can read it. A second fresh-context review reads the final diff and has not seen the implementation. Leave that line open in the PR. Do not write the second review yourself.
-- Every task runs this gate before its commit, with the filter named in that task: `pnpm lint && pnpm typecheck && pnpm test --filter <filter> && pnpm check:boundaries`. Task 3 also runs `terraform test` in `infra/regions/au` and `infra/modules/aws-rds`. Task 5 runs the full CI sequence in §8 of `AGENTS.md` for the packages this branch touches, not a deploy.
+- Every task runs this gate before its commit, with the filter named in that task: `pnpm lint && pnpm typecheck && pnpm test --filter <filter> && pnpm check:boundaries`. Task 3 also runs the Stage 1 Terraform sequence in `infra/regions/au`, `infra/modules/aws-rds`, `infra/modules/aws-ingress`, and `infra/modules/aws-kms-envelope`. Task 5 runs the full CI sequence in §8 of `AGENTS.md` for the packages this branch touches, not a deploy.
 
 **Rollback:** Revert the merge. Nothing is applied. There is no migration and no live secret change. Staging stays parked.
 
 ## File map
 
-| File                                     | Responsibility                                                        |
-| ---------------------------------------- | --------------------------------------------------------------------- |
-| `apps/api/Dockerfile`                    | `CMD` instead of `ENTRYPOINT`. Copy `bootstrap.sql` into the image.   |
-| `apps/api/src/image.test.ts`             | Command override with no `--entrypoint`.                              |
-| `apps/api/src/db-bootstrap.ts`           | Bootstrap, three verifier `ALTER ROLE`s, `SHOW max_connections`.      |
-| `apps/api/src/db-bootstrap.test.ts`      | SQL-text must-fail, output must-fail, success, and the failure words. |
-| `infra/modules/aws-rds/outputs.tf`       | Master secret ARN output.                                             |
-| `infra/regions/au/main.tf`               | Ops task definition, task role with no policies, execution role.      |
-| `infra/regions/au/tests/cell.tftest.hcl` | Count gates and the exact IAM assertions.                             |
-| `docs/runbooks/apply-staging-au.md`      | "Change a database role" runs this task.                              |
-| `docs/roadmap.md`, `AGENTS.md`           | Catalogue. Last commit only.                                          |
+| File                                                       | Responsibility                                                                          |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `apps/api/Dockerfile`                                      | `CMD` instead of `ENTRYPOINT`. Copy `bootstrap.sql` into the image.                     |
+| `apps/api/src/image.test.ts`                               | Command override with no `--entrypoint`.                                                |
+| `apps/api/src/db-bootstrap.ts`                             | Bootstrap, three verifier `ALTER ROLE`s, `SHOW max_connections`.                        |
+| `apps/api/src/db-bootstrap.test.ts`                        | SQL-text must-fail, output must-fail, success, and the failure words.                   |
+| `apps/api/src/db-bootstrap.integration.test.ts`            | Compose Postgres: planted password logs in, a wrong one is refused, second run exits 0. |
+| `infra/modules/aws-rds/outputs.tf`                         | Master secret ARN output.                                                               |
+| `infra/modules/aws-ingress/outputs.tf`                     | `repository_arn` for the one service repository.                                        |
+| `infra/regions/au/main.tf`                                 | Ops task definition, task role with no policies, execution role.                        |
+| `infra/regions/au/tests/cell.tftest.hcl`                   | Count gates and the ops role's IAM assertions. Root resources only.                     |
+| `infra/modules/aws-kms-envelope/tests/envelope.tftest.hcl` | Master secret ARN stays out of `execution_secrets`.                                     |
+| `docs/runbooks/apply-staging-au.md`                        | "Change a database role" runs this task.                                                |
+| `docs/roadmap.md`, `AGENTS.md`                             | Catalogue. Last commit only.                                                            |
 
 ---
 
@@ -102,15 +105,17 @@ EOF
 **Files:**
 
 - Create: `apps/api/src/db-bootstrap.test.ts`
+- Create: `apps/api/src/db-bootstrap.integration.test.ts`
 - Create: `apps/api/src/db-bootstrap.ts`
 - Modify: `apps/api/Dockerfile`
+- Modify: `apps/api/vitest.config.ts`
 
 **Interfaces:**
 
-- Consumes: `createDirectSql` from `@community-hub/db`. `IMAGE_CERT_PATH` from `./env.js`. `packages/db/sql/bootstrap.sql`.
+- Consumes: `createDirectSql` from `@community-hub/db`. The integration test injects `createPlaintextDirectSql` from `@community-hub/db/plaintext`. `IMAGE_CERT_PATH` from `./env.js`. `packages/db/sql/bootstrap.sql`. The CI test job's Postgres from `packages/db/test/docker-compose.yml`.
 - Produces: `runDbBootstrap(deps)` exported for tests, and `node /app/db-bootstrap.js` as the compiled entry. Stdout on success is one integer and a newline. Stderr on failure is `env`, `bootstrap`, `alter_role`, or `max_connections`, plus one newline. Exit 0 or 1.
 
-**Rule this must not break:** no cleartext password in any statement, stdout, or stderr. The master password is passed only to `createDirectSql`. A role password is passed only into the verifier. No new dependency. No Secrets Manager call. No secret ARN in the program.
+**Rule this must not break:** no cleartext password in any statement, stdout, or stderr. The production path uses `createDirectSql` with verify-full. A role password is passed only into the verifier. The plaintext connector is injected by the integration test and is not imported from `db-bootstrap.ts`. No package export for `@community-hub/db/plaintext`. No new dependency. No Secrets Manager call. No secret ARN in the program.
 
 Do not write `ALTER ROLE` until Step 2 has failed.
 
@@ -139,7 +144,7 @@ Add `apps/api/src/db-bootstrap.ts`.
 
 Read `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER` (`postgres` in the task), `PGPASSWORD_MASTER`, `PGPASSWORD_APP`, `PGPASSWORD_IDENTITY`, and `PGPASSWORD_PLATFORM` from the environment. A missing or empty value is the `env` failure.
 
-Connect with `createDirectSql` the way the probe does: host, port, database, user, master password, and the image CA pem. Omit `servername` so a hostname is the server name. `rds.force_ssl` is 1. This factory is verify-full.
+The production connect function is `createDirectSql`, the same way the probe connects: host, port, database, user, master password, and the image CA pem. Omit `servername` so a hostname is the server name. `rds.force_ssl` is 1. That factory is verify-full. Tests inject `deps.connect`. Do not import `@community-hub/db/plaintext` from this file.
 
 Read `packages/db/sql/bootstrap.sql` from `/app/sql/bootstrap.sql` and run it. Then, for each of `app`, `identity`, and `platform`, compute a SCRAM-SHA-256 verifier with `node:crypto` only: 16 random salt bytes, 4096 iterations, PBKDF2-HMAC-SHA256, client key, stored key, and server key. The statement text is `ALTER ROLE <role> PASSWORD '<verifier>'`. The role is one of those three identifiers. The verifier is a single-quoted literal with any single quote doubled. It looks like `SCRAM-SHA-256$4096:<base64 salt>$<base64 stored key>:<base64 server key>`. Then run `SHOW max_connections` and print that integer as the only stdout line.
 
@@ -155,12 +160,22 @@ In the Dockerfile build stage, copy `packages/db/sql/bootstrap.sql` to `/runtime
 
 With `RUN_IMAGE_TESTS=1`, `docker run --rm <image> node --input-type=module -e` exits 0 only when both `/app/sql/bootstrap.sql` and `/app/db-bootstrap.js` exist. Add that assertion to `image.test.ts`.
 
-- [ ] **Step 6: Gate and commit**
+- [ ] **Step 6: Prove the verifier against the CI Postgres**
+
+The CI `test` job already runs `docker compose -f packages/db/test/docker-compose.yml up -d postgres` before `pnpm test`. Start that Postgres locally the same way before this step.
+
+Add `apps/api/src/db-bootstrap.integration.test.ts`. In `apps/api/vitest.config.ts`, alias `@community-hub/db/plaintext` to `packages/db/src/plaintext.ts`, the same specifier `packages/db/vitest.config.ts` already uses. Do not add a package export.
+
+The test calls `runDbBootstrap` with `connect` set to `createPlaintextDirectSql` and the compose URL `postgres://hub:local-bootstrap-only@127.0.0.1:5432/hub`. Role passwords are `planted-password-marker`. After it exits 0, a plaintext connection as `app` with that password succeeds, and one with a different password is refused. Run the bootstrap a second time. It exits 0.
+
+Roles are cluster-wide on that instance, and `@community-hub/db` uses them too. In `finally`, when `packages/db/test/.runtime.json` exists, run the bootstrap once more with that file's three passwords so `app` matches the PgBouncer userlist again.
+
+- [ ] **Step 7: Gate and commit**
 
 Run: `pnpm lint && pnpm typecheck && pnpm test --filter @community-hub/api && pnpm check:boundaries`
 
 ```bash
-git add apps/api/src/db-bootstrap.ts apps/api/src/db-bootstrap.test.ts apps/api/Dockerfile apps/api/src/image.test.ts
+git add apps/api/src/db-bootstrap.ts apps/api/src/db-bootstrap.test.ts apps/api/src/db-bootstrap.integration.test.ts apps/api/vitest.config.ts apps/api/Dockerfile apps/api/src/image.test.ts
 git commit -m "$(cat <<'EOF'
 feat(api): bootstrap roles with a SCRAM verifier
 
@@ -178,14 +193,16 @@ EOF
 **Files:**
 
 - Modify: `infra/modules/aws-rds/outputs.tf`
+- Modify: `infra/modules/aws-ingress/outputs.tf`
 - Modify: `infra/regions/au/main.tf`
 - Modify: `infra/regions/au/tests/cell.tftest.hcl`
+- Modify: `infra/modules/aws-kms-envelope/tests/envelope.tftest.hcl`
 - Modify: `infra/modules/aws-rds/tests/rds.tftest.hcl` only if the new output breaks that suite's mock
 
 **Interfaces:**
 
-- Consumes: `module.rds[0]` when `enable_database` is true. `module.db_secrets` secret ARNs and `key_arn`. `module.envelope.log_group_name`. `module.ingress.aws_ecr_repository.service.arn`. `var.service_image`.
-- Produces: `aws_ecs_task_definition.db_ops`, `aws_iam_role.db_ops_execution`, `aws_iam_role.db_ops_task`, and `aws_iam_role_policy.db_ops_execution`, each with count 1 only when `service_image` is set and `enable_database` is true. RDS output `master_user_secret_arn` is `aws_db_instance.this.master_user_secret[0].secret_arn`. The AU root does not output that ARN.
+- Consumes: `module.rds[0]` when `enable_database` is true. `module.db_secrets` secret ARNs and `key_arn`. `module.envelope.log_group_name`. `module.ingress.repository_arn`. `var.service_image`.
+- Produces: `aws_ecs_task_definition.db_ops`, `aws_iam_role.db_ops_execution`, `aws_iam_role.db_ops_task`, and `aws_iam_role_policy.db_ops_execution`, each with count 1 only when `service_image` is set and `enable_database` is true. RDS output `master_user_secret_arn` is `aws_db_instance.this.master_user_secret[0].secret_arn`. Ingress output `repository_arn` is `aws_ecr_repository.service.arn`. The AU root does not output either ARN. `cell.tftest.hcl` references root resources and module outputs only.
 
 **Rule this must not break:** the service task definition's secret list, `aws_iam_role_policy.execution_secrets`, and `aws_iam_role_policy.task_secrets` stay as they are. No storage key, no envelope key, and no `kms:Decrypt` for the master secret. The task role has no policies. No apply.
 
@@ -204,7 +221,7 @@ On `staging_image_set`, decode `aws_iam_role_policy.db_ops_execution[0].policy` 
 - `secretsmanager:GetSecretValue` resources are exactly the master secret ARN plus `module.db_secrets.app_secret_arn`, `module.db_secrets.identity_secret_arn`, and `module.db_secrets.platform_secret_arn`. No wildcard.
 - Exactly one statement has Action `kms:Decrypt`. Its Resource is exactly `module.db_secrets.key_arn`. It is not a list that also contains the storage key, the envelope key, or another key.
 - One statement has Action `ecr:GetAuthorizationToken` and Resource `*`.
-- One statement has Actions `ecr:BatchCheckLayerAvailability`, `ecr:GetDownloadUrlForLayer`, and `ecr:BatchGetImage`, and its Resource is exactly `module.ingress.aws_ecr_repository.service.arn`.
+- One statement has Actions `ecr:BatchCheckLayerAvailability`, `ecr:GetDownloadUrlForLayer`, and `ecr:BatchGetImage`, and its Resource is exactly `module.ingress.repository_arn`.
 - Log writes are `logs:CreateLogStream` and `logs:PutLogEvents` on the service log group, the same shape as `aws_iam_role_policy.execution` in `infra/modules/aws-kms-envelope/main.tf`.
 
 Also assert on that run:
@@ -213,8 +230,12 @@ Also assert on that run:
 - The ops container command is `["node", "/app/db-bootstrap.js"]`, the image is `var.service_image`, cpu is `256`, memory is `512`, runtime is `ARM64`, `readonlyRootFilesystem` is true, the user is `node`, and a writable `/tmp` volume exists.
 - Environment names are only `PGHOST`, `PGPORT`, `PGDATABASE`, and `PGUSER`. `PGUSER` is `postgres`. No environment value contains `arn:`.
 - Secret names are `PGPASSWORD_MASTER`, `PGPASSWORD_APP`, `PGPASSWORD_IDENTITY`, and `PGPASSWORD_PLATFORM`. `PGPASSWORD_MASTER` uses the master secret's `password` JSON key. The other three use the raw secret ARNs. The log stream prefix is `db-ops`.
-- The service container's secret `valueFrom` list, from `module.ingress.aws_ecs_task_definition.this[0]`, does not contain the master secret ARN.
-- `module.envelope.aws_iam_role_policy.execution_secrets` `GetSecretValue` resources do not contain the master secret ARN.
+
+Do not assert `module.ingress.aws_ecs_task_definition.this[0]` or `module.envelope.aws_iam_role_policy.execution_secrets` from `cell.tftest.hcl`. A root test can read module outputs, not child-module resources.
+
+In `infra/modules/aws-kms-envelope/tests/envelope.tftest.hcl`, assert `aws_iam_role_policy.execution_secrets` does not contain `arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:master`. Its `GetSecretValue` resources stay the three role-secret ARNs that run already supplies.
+
+The existing `aws-ingress` suite stays as it is. `infra/modules/aws-ingress/tests/ingress.tftest.hcl` pins the service secret names at the `PGPASSWORD_APP`, `PGPASSWORD_IDENTITY`, `PGPASSWORD_PLATFORM` list. That suite and the envelope suite must pass unchanged apart from the new envelope assert.
 
 - [ ] **Step 2: Run the test and watch it fail**
 
@@ -222,26 +243,30 @@ Run: `terraform -chdir=infra/regions/au test`
 
 Expected: FAIL. `aws_ecs_task_definition.db_ops` does not exist yet.
 
-- [ ] **Step 3: Add the output and the resources**
+- [ ] **Step 3: Add the outputs and the resources**
 
 Add `master_user_secret_arn` to `infra/modules/aws-rds/outputs.tf`.
 
-In `infra/regions/au/main.tf`, create the four resources with count `var.service_image != null && var.enable_database ? 1 : 0`. Family is `${local.name}-db-ops`, distinct from the service family `local.name`. Trust policy is `ecs-tasks.amazonaws.com` on both roles. Container has no port and no Cloud Map registry. Passwords are `secrets` entries, not environment entries. Do not reference `module.rds[0]` unless the count is 1.
+Add `repository_arn` to `infra/modules/aws-ingress/outputs.tf`, value `aws_ecr_repository.service.arn`. `repository_url` stays.
+
+In `infra/regions/au/main.tf`, create the four resources with count `var.service_image != null && var.enable_database ? 1 : 0`. Family is `${local.name}-db-ops`, distinct from the service family `local.name`. Trust policy is `ecs-tasks.amazonaws.com` on both roles. The image-pull statement's repository resource is `module.ingress.repository_arn`. Container has no port and no Cloud Map registry. Passwords are `secrets` entries, not environment entries. Do not reference `module.rds[0]` unless the count is 1. Do not read `module.ingress.aws_ecr_repository.service.arn`.
 
 If `terraform -chdir=infra/modules/aws-rds test` fails on the new output, add the same synthetic `master_user_secret` mock there. Do not change the `rds.force_ssl` or alarm asserts.
 
 - [ ] **Step 4: Run the tests and watch them pass**
 
-Run: `terraform -chdir=infra/regions/au test` and `terraform -chdir=infra/modules/aws-rds test`
+Run `terraform test` in `infra/regions/au`, `infra/modules/aws-rds`, `infra/modules/aws-ingress`, and `infra/modules/aws-kms-envelope`.
 
-Expected: the new asserts pass, and the existing runs still pass.
+Expected: the new asserts pass. The ingress suite passes with its service secret names unchanged. The envelope suite passes with the new absence assert.
 
 - [ ] **Step 5: Gate and commit**
+
+In `infra/regions/au`, `infra/modules/aws-rds`, and `infra/modules/aws-ingress`, run the Stage 1 sequence: `terraform init -backend=false -lockfile=readonly`, `terraform fmt -check`, `terraform validate`, `tflint --init`, and `tflint`. Run the same sequence in `infra/modules/aws-kms-envelope` because this task edits its test.
 
 Run: `pnpm lint && pnpm typecheck && pnpm test --filter @community-hub/api && pnpm check:boundaries`
 
 ```bash
-git add infra/modules/aws-rds/outputs.tf infra/regions/au/main.tf infra/regions/au/tests/cell.tftest.hcl infra/modules/aws-rds/tests/rds.tftest.hcl
+git add infra/modules/aws-rds/outputs.tf infra/modules/aws-ingress/outputs.tf infra/regions/au/main.tf infra/regions/au/tests/cell.tftest.hcl infra/modules/aws-kms-envelope/tests/envelope.tftest.hcl infra/modules/aws-rds/tests/rds.tftest.hcl
 git commit -m "$(cat <<'EOF'
 feat(infra): add the database ops task definition
 
