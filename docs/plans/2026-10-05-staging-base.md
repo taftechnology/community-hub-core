@@ -74,13 +74,13 @@ Expected: each AWS provider block says `6.65.0`. The `random` blocks, where pres
 
 - [ ] **Step 2: Select 6.67.0 without floating past it**
 
-In each of the five directories, set the AWS provider version to an exact pin, initialise, lock both platforms, then restore the constraint. Do them one directory at a time. Example for `infra/bootstrap`:
+Do the four directories that have no `random` provider first, one at a time: `infra/bootstrap`, `infra/modules/aws-network`, `infra/modules/aws-kms-storage`, `infra/modules/aws-rds`. Example for `infra/bootstrap`:
 
 ```bash
 cd infra/bootstrap
 ```
 
-In `versions.tf`, change `version = "~> 6.0"` to `version = "6.67.0"` for the AWS provider only.
+In `versions.tf`, change the AWS provider `version = "~> 6.0"` to `version = "6.67.0"`.
 
 ```bash
 terraform init -backend=false -upgrade
@@ -94,7 +94,36 @@ terraform init -backend=false -lockfile=readonly
 grep -A2 'provider "registry.terraform.io/hashicorp/aws"' .terraform.lock.hcl
 ```
 
-Expected: init exits 0 and the AWS provider line is `version     = "6.67.0"`. Repeat for `infra/regions/au`, `infra/modules/aws-network`, `infra/modules/aws-kms-storage`, and `infra/modules/aws-rds`. In `infra/regions/au`, do not change the `random` constraint `~> 3.7`, and do not let its locked version move off `3.9.1`.
+Expected: init exits 0 and the AWS provider line is `version     = "6.67.0"`.
+
+`infra/regions/au` is different. `terraform init -upgrade` upgrades every provider, so `random` (`~> 3.7`) can move off `3.9.1`. While AWS is pinned to `6.67.0`, also pin `random` to `3.9.1` in `infra/regions/au/versions.tf`:
+
+```hcl
+    aws = {
+      source  = "hashicorp/aws"
+      version = "6.67.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "3.9.1"
+    }
+```
+
+```bash
+cd infra/regions/au
+terraform init -backend=false -upgrade
+terraform providers lock -platform=linux_amd64 -platform=darwin_arm64
+```
+
+Restore both constraints: AWS `version = "~> 6.0"` and random `version = "~> 3.7"`. Do not run `terraform providers lock` again. `versions.tf` is unchanged in the commit.
+
+```bash
+terraform init -backend=false -lockfile=readonly
+grep -A2 'provider "registry.terraform.io/hashicorp/aws"' .terraform.lock.hcl
+grep -A2 'provider "registry.terraform.io/hashicorp/random"' .terraform.lock.hcl
+```
+
+Expected: init exits 0, the AWS line is `version     = "6.67.0"`, and the random line is `version     = "3.9.1"`.
 
 - [ ] **Step 3: Readonly init**
 
