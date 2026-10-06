@@ -24,7 +24,9 @@ resource "aws_service_discovery_service" "this" {
     routing_policy = "MULTIVALUE"
   }
 
-  health_check_custom_config {}
+  health_check_custom_config {
+    failure_threshold = 1
+  }
 
   tags = {
     environment = var.environment
@@ -368,7 +370,7 @@ resource "aws_apigatewayv2_domain_name" "hostname" {
   domain_name = each.key
 
   domain_name_configuration {
-    certificate_arn = aws_acm_certificate.this[0].arn
+    certificate_arn = aws_acm_certificate_validation.this[0].certificate_arn
     endpoint_type   = "REGIONAL"
     security_policy = var.minimum_tls_version
   }

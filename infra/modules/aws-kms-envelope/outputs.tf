@@ -50,5 +50,5 @@ output "execution_role_name" {
 
 output "log_group_name" {
   description = "Service log group name."
-  value       = local.log_group_name
+  value       = aws_cloudwatch_log_group.service.name
 }
