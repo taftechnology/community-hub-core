@@ -1,4 +1,4 @@
-FROM node:24-slim@sha256:24b8bc17702002d2ed0c1da9ad66c3ee507cc279d0856726662ff2b6fc35c149 AS build
+FROM node:24-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS build
 WORKDIR /src
 RUN corepack enable && corepack prepare pnpm@10.26.0 --activate
 COPY . .
@@ -12,7 +12,8 @@ RUN mkdir -p /runtime/certs \
  && cp -a apps/api/dist/. /runtime/ \
  && cp apps/api/certs/rds-ap-southeast-2-bundle.pem /runtime/certs/rds-ap-southeast-2-bundle.pem
 
-FROM node:24-slim@sha256:24b8bc17702002d2ed0c1da9ad66c3ee507cc279d0856726662ff2b6fc35c149
+FROM node:24-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 COPY --from=build --chown=node:node /runtime /app
 RUN mkdir -p /tmp && chown node:node /tmp
 VOLUME ["/tmp"]
