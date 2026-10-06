@@ -48,9 +48,11 @@ The first bootstrap apply uses a gitignored file `infra/bootstrap/backend_overri
 
 The AU apply passes `env/staging.tfvars` and then `env/staging.local.tfvars`. The local file wins. It holds the real account id, the hosted zone id, and the alarm email. The committed staging file keeps the synthetic account id `123456789012`. `.gitignore` gains `infra/regions/au/env/*.local.tfvars` and `infra/bootstrap/backend_override.tf`. It does not ignore `*.tfvars`. `staging.tfvars` and `prod.tfvars` stay committed.
 
+The branch is `feat/2026-10-05-staging-base`. Any rebase onto `origin/main` happens before the first apply. After the first apply there is no rebase, no amend, and no force-push. `main` is brought in with a merge commit. The pull request is merged with a merge commit, never squashed. The recorded SHAs are then the commits that ran. The pull request body states that this departs from AGENTS.md §5's rebase-before-PR rule, and why: a rebase would replace the SHAs the evidence names.
+
 The first AU apply is the branch head at which `enable_database` is still the default true, `enable_budgets` is still the default false, `service_image` is null, and `desired_count` is 0. The runbook records that commit SHA with the proofs. The evidence redacts the account id, the hosted zone id, the alarm email, and any key ARN.
 
-After that apply the human activates the `environment` cost-allocation tag in Billing. The tag can take up to 24 hours to appear and up to 24 hours more to become active. If it is not active when it is time to park, stop and report. Do not park without it.
+After that apply the human activates the `environment` cost-allocation tag in Billing. The tag can take up to 24 hours to appear and up to 24 hours more to become active. The check is that Billing's cost-allocation tags page shows `environment` as Active. A budget whose tag filter is not yet active is created and counts USD 0. It does not fail. If the tag is not Active when it is time to park, stop and report. Do not park without it.
 
 ### Proofs, before parking
 
@@ -58,7 +60,7 @@ Recorded in the runbook, in this order, against the first apply's commit SHA.
 
 1. The SNS email subscription is confirmed.
 2. The custom domain, while Cloud Map has no instances: the HTTP status and the integration error. This spec does not state them.
-3. The live rules on the task security group and the RDS security group, compared with the declared set. With no image, the task group has egress TCP 443 to `0.0.0.0/0` and egress TCP 5432 to the RDS group, and no inbound rule. The RDS group has inbound TCP 5432 from the task group only.
+3. The live rules on the task security group, the RDS security group, and the VPC link security group, compared with the declared set. With no image, the task group has egress TCP 443 to `0.0.0.0/0` and egress TCP 5432 to the RDS group, and no inbound rule. The RDS group has inbound TCP 5432 from the task group only. The VPC link group has egress TCP 8080 to the task group and no inbound rule. That group exists with no image.
 4. Throttle. 300 requests in about one second to `GET /` on a tenant hostname, which is a default route. Record the 429 count and the 503 count. Immediately, 300 requests to `POST /` on that same hostname, which is a write route. Record the same two counts. A 429 on the write route after the burst means one shared bucket. Record the tool, the counts, and the timestamps. No request carries a body, a query string, or personal data.
 5. `describe-db-instances` shows region `ap-southeast-2`, `StorageEncrypted` true, `KmsKeyId` equal to the storage key, `PubliclyAccessible` false, backup retention 0, and `ManageMasterUserPassword` true. `rds.force_ssl` = `1` is read with `describe-db-parameters` on the parameter group the instance names, because the instance description does not include parameter values. The evidence says the key matches. It does not record the ARN.
 6. A second `terraform plan` shows no changes.
@@ -85,7 +87,7 @@ Production refuses false, with a `terraform_data` precondition of the same shape
 
 ### Provider lock
 
-Every `.terraform.lock.hcl` under `infra/` selects `hashicorp/aws` 6.67.0. Ingress, the envelope, budgets, and db-secrets are already on that version. Bootstrap, the AU root, network, RDS, and the storage key are on 6.65.0 and are regenerated. The command is `terraform providers lock -platform=linux_amd64 -platform=darwin_arm64`. The `random` provider stays 3.9.1. CI runs `terraform init -backend=false -lockfile=readonly`, so a mismatched lock fails that job.
+Every `.terraform.lock.hcl` under `infra/` selects `hashicorp/aws` 6.67.0. Ingress, the envelope, budgets, and db-secrets are already on that version. Bootstrap, the AU root, network, RDS, and the storage key are on 6.65.0 and are regenerated. The platforms are `linux_amd64` and `darwin_arm64`, plus the human's apply platform if it is neither of those. The apply machine is `darwin` `arm64`, so `darwin_arm64` is already in that list. The `random` provider stays 3.9.1. CI runs `terraform init -backend=false -lockfile=readonly`, so a mismatched lock fails that job.
 
 ## Data
 
@@ -121,6 +123,7 @@ Rule 5. The hostname alarm matches `reason` only. The log has no remote address.
 | Bootstrap override | `infra/bootstrap/backend_override.tf`, gitignored, `backend "local" {}`, deleted before migrate. |
 | Task group, no image | Egress TCP 443 to `0.0.0.0/0`. Egress TCP 5432 to the RDS group. No inbound rule. |
 | RDS group | Inbound TCP 5432 from the task group only. |
+| VPC link group | Egress TCP 8080 to the task group. No inbound rule. Exists with no image. |
 
 ## Cost
 
@@ -171,13 +174,15 @@ The throttle proof records counts. A 429 on the write route after the burst is w
 
 `BucketAlreadyExists` on the state bucket stops the apply. A different bucket name is a change to the backend, and it is not made in this chunk.
 
-Parking before the `environment` tag is active would fail the budget, or would leave the cell parked with no budget. The runbook stops instead.
+A budget whose tag filter is not yet active is created and counts USD 0. It does not fail. The runbook still stops, because that budget would not see the cell's tagged spend. The check is that Billing's cost-allocation tags page shows `environment` as Active.
 
 The filter misses untagged spend and tax, so a month can pass USD 40 on the account while the staging budget stays quiet. That gap is the one foundations accepted. This chunk does not add an unfiltered budget.
 
 The VPC link's subnets and security groups are fixed at create. A link with no traffic for 60 days becomes `INACTIVE`. Unpark belongs to the next chunk, which waits until the link is `AVAILABLE`.
 
 The applied commits are the ones the evidence names. A later commit that changes Terraform would make the parked plan show changes. The last commit on this branch changes the catalogue and `AGENTS.md` only.
+
+Those SHAs have to survive the merge. A rebase, an amend, a force-push, or a squash replaces them, and the evidence would name commits that are no longer on `main`. Any rebase onto `origin/main` happens before the first apply. After that apply there is no rebase, no amend, and no force-push. `main` is brought in with a merge commit, and the pull request is merged with a merge commit. The pull request body states that this departs from AGENTS.md §5's rebase-before-PR rule, and why.
 
 ## Out-of-band
 
