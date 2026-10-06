@@ -155,16 +155,18 @@ Profile is `ch-admin`. Region is `ap-southeast-2`. Both var files are passed, th
 
 ### a. Image
 
-Clean checkout of `main` at `d4b22132d69ae02413d257b3bf3df1b6fa162a6f` or a later `main` that contains it. Not the unpark commit. From the repo root:
+Build from a separate worktree of `main` at `d4b22132d69ae02413d257b3bf3df1b6fa162a6f`, or a later `main` that contains it. Not the unpark commit. The apply checkout stays on `feat/2026-10-06-first-running-task`.
 
 ```bash
 git fetch origin
-git switch --detach d4b22132d69ae02413d257b3bf3df1b6fa162a6f
+git worktree add ../community-hub-image d4b22132d69ae02413d257b3bf3df1b6fa162a6f
+cd ../community-hub-image
+pnpm install --frozen-lockfile
 docker build --platform linux/arm64 -f apps/api/Dockerfile -t community-hub-api:local .
 RUN_IMAGE_TESTS=1 pnpm --filter @community-hub/api exec vitest run --config vitest.config.ts src/image.test.ts
 ```
 
-The image test must pass on that exact local image. Then:
+The image test must pass on that exact local image. Then, still in the worktree:
 
 ```bash
 aws ecr get-login-password --profile ch-admin --region ap-southeast-2 \
@@ -232,18 +234,26 @@ aws ec2 describe-security-groups --profile ch-admin --region ap-southeast-2 \
   --query 'SecurityGroups[0].GroupId' --output text
 ```
 
-Run the ops task. Command override only. No `entryPoint`.
+Run the ops task. Command override only. No `entryPoint`. The task ARN stays in the shell and is never pasted.
 
 ```bash
-aws ecs run-task --profile ch-admin --region ap-southeast-2 \
+TASK_ARN=$(aws ecs run-task --profile ch-admin --region ap-southeast-2 \
   --cluster ch-staging \
   --task-definition ch-staging-db-ops \
   --launch-type FARGATE \
   --network-configuration 'awsvpcConfiguration={subnets=[<staging-public-subnet-id>],securityGroups=[<task-security-group-id>],assignPublicIp=ENABLED}' \
-  --overrides '{"containerOverrides":[{"name":"db-ops","command":["node","/app/db-bootstrap.js"]}]}'
+  --overrides '{"containerOverrides":[{"name":"db-ops","command":["node","/app/db-bootstrap.js"]}]}' \
+  --query 'tasks[0].taskArn' --output text)
+aws ecs wait tasks-stopped --profile ch-admin --region ap-southeast-2 \
+  --cluster ch-staging --tasks "$TASK_ARN"
+aws ecs describe-tasks --profile ch-admin --region ap-southeast-2 \
+  --cluster ch-staging --tasks "$TASK_ARN" \
+  --query 'tasks[0].containers[0].exitCode' --output text
+aws logs tail /community-hub/ch-staging/service --profile ch-admin --region ap-southeast-2 \
+  --log-stream-name-prefix db-ops --since 15m
 ```
 
-Wait until the task stops. Read the exit code locally. Read stdout from log group `/community-hub/ch-staging/service`, stream prefix `db-ops`. Paste the exit code and the stdout line. Exit must be 0 and stdout must be one integer and nothing else, before any later proof. Do not paste the task ARN.
+Paste the exit code and the stdout line. Exit must be 0 and stdout must be one integer and nothing else, before any later proof.
 
 ### e. Proofs
 
@@ -259,26 +269,69 @@ Look up the Cloud Map service by namespace `ch-staging.local` and name `service`
 
 2. Security groups. Compare live rules for `ch-staging-task`, `ch-staging-rds`, and `ch-staging-vpc-link` with the parked set in the runbook, plus inbound TCP 8080 on `ch-staging-task` from `ch-staging-vpc-link`. Paste "match" or the extra rule. No other new rule.
 
-3. `/tmp` write. Same cluster, task definition `ch-staging`, launch type `FARGATE`, the staging public subnet, the task security group, `assignPublicIp=ENABLED`. Container `service`. Command override only:
+3. `/tmp` write. Task definition `ch-staging`, container `service`, command override only. The task ARN stays in the shell and is never pasted.
 
-```json
-["node", "-e", "require('node:fs').writeFileSync('/tmp/probe-write','ok')"]
+```bash
+TASK_ARN=$(aws ecs run-task --profile ch-admin --region ap-southeast-2 \
+  --cluster ch-staging \
+  --task-definition ch-staging \
+  --launch-type FARGATE \
+  --network-configuration 'awsvpcConfiguration={subnets=[<staging-public-subnet-id>],securityGroups=[<task-security-group-id>],assignPublicIp=ENABLED}' \
+  --overrides '{"containerOverrides":[{"name":"service","command":["node","-e","require('"'"'node:fs'"'"').writeFileSync('"'"'/tmp/probe-write'"'"','"'"'ok'"'"')"]}]}' \
+  --query 'tasks[0].taskArn' --output text)
+aws ecs wait tasks-stopped --profile ch-admin --region ap-southeast-2 \
+  --cluster ch-staging --tasks "$TASK_ARN"
+aws ecs describe-tasks --profile ch-admin --region ap-southeast-2 \
+  --cluster ch-staging --tasks "$TASK_ARN" \
+  --query 'tasks[0].containers[0].exitCode' --output text
+aws logs tail /community-hub/ch-staging/service --profile ch-admin --region ap-southeast-2 \
+  --log-stream-name-prefix service --since 15m
 ```
 
-Paste the exit code. `desired_count` stays 1. ECS Exec stays off.
+Paste the exit code. Expected: 0. `desired_count` stays 1. ECS Exec stays off.
 
-4. Probe. Same network as step 3. Container `service`. Command `["node", "/app/probe.js"]`. No `entryPoint`. Paste stdout, stderr, and the exit code. Expected: stdout `pass`, stderr empty, exit 0. This is the database round trip and the KMS round trip with the endpoint off.
+4. Probe. Same network as proof 3. Container `service`. Command `["node", "/app/probe.js"]`. No `entryPoint`. The task ARN stays in the shell and is never pasted.
+
+```bash
+TASK_ARN=$(aws ecs run-task --profile ch-admin --region ap-southeast-2 \
+  --cluster ch-staging \
+  --task-definition ch-staging \
+  --launch-type FARGATE \
+  --network-configuration 'awsvpcConfiguration={subnets=[<staging-public-subnet-id>],securityGroups=[<task-security-group-id>],assignPublicIp=ENABLED}' \
+  --overrides '{"containerOverrides":[{"name":"service","command":["node","/app/probe.js"]}]}' \
+  --query 'tasks[0].taskArn' --output text)
+aws ecs wait tasks-stopped --profile ch-admin --region ap-southeast-2 \
+  --cluster ch-staging --tasks "$TASK_ARN"
+aws ecs describe-tasks --profile ch-admin --region ap-southeast-2 \
+  --cluster ch-staging --tasks "$TASK_ARN" \
+  --query 'tasks[0].containers[0].exitCode' --output text
+aws logs tail /community-hub/ch-staging/service --profile ch-admin --region ap-southeast-2 \
+  --log-stream-name-prefix service --since 15m
+```
+
+Paste stdout, stderr, and the exit code. Expected: stdout `pass`, stderr empty, exit 0. This is the database round trip and the KMS round trip with the endpoint off.
 
 5. Paste the integer from step d again, and nothing else. There is no master session.
 
-6. Rolling deploy of the same task definition.
+6. Rolling deploy of the same task definition. In a second terminal, start the request loop before `update-service`. No body, no query string, no personal data.
+
+```bash
+while true; do
+  curl -sS -o /dev/null -w '%{http_code}\n' https://au.api.communityhub-staging.net/health
+  sleep 1
+done
+```
+
+In the first terminal:
 
 ```bash
 aws ecs update-service --profile ch-admin --region ap-southeast-2 \
   --cluster ch-staging --service ch-staging --force-new-deployment
+aws ecs wait services-stable --profile ch-admin --region ap-southeast-2 \
+  --cluster ch-staging --services ch-staging
 ```
 
-From the start of that deployment until the new task is healthy, count HTTP 5xx from `GET /health` on `https://au.api.communityhub-staging.net/health`. No body, no query string, no personal data. Paste the count. A 500 while Cloud Map is empty counts as a 5xx from that cause.
+After `services-stable` returns, stop the loop. Count the 5xx lines. Paste the count. A 500 while Cloud Map is empty counts as a 5xx from that cause.
 
 7. Steady traffic: 60 requests over 60 seconds, same URL and the same restrictions.
 
@@ -291,27 +344,43 @@ done
 
 Paste the 5xx count. That count confirms `keepAliveTimeout` 65000 and `requestTimeout` 30000. Change those two numbers only when the count is not zero and the log shows a timeout. Otherwise leave them. A change is one later commit, and this loop is run again.
 
-8. Hostname alarm. Look up `ch-staging-vpc-link` the same way as the task group. Describe the running service task and take its private IPv4. Do not paste that address.
-
-One-off task, task definition `ch-staging`, container `service`, both security groups, the staging public subnet, `assignPublicIp=ENABLED`. Command override only, so the request has no Host header:
-
-```json
-[
-  "node",
-  "-e",
-  "const s=require('node:net').connect(8080,process.env.TARGET); s.on('connect',()=>s.end('GET /health HTTP/1.1\\r\\n\\r\\n'));"
-]
-```
-
-Pass `TARGET` as `<service-task-private-ipv4>` in the container environment override. Stop that one-off task after it exits. In log group `/community-hub/ch-staging/service`, confirm `missing_hostname_header`. Then:
+8. Hostname alarm. The gate checks `x-community-hub-hostname`, not `Host`. A raw request with no Host header is rejected by Node (`requireHostHeader` defaults true) before the handler, so the gate never logs `missing_hostname_header`. Look up `ch-staging-vpc-link` the same way as the task group. Read the running service task's private IPv4 into the shell only. Neither that address nor either task ARN is pasted.
 
 ```bash
+aws ec2 describe-security-groups --profile ch-admin --region ap-southeast-2 \
+  --filters Name=group-name,Values=ch-staging-vpc-link \
+  --query 'SecurityGroups[0].GroupId' --output text
+SERVICE_TASK=$(aws ecs list-tasks --profile ch-admin --region ap-southeast-2 \
+  --cluster ch-staging --service-name ch-staging --desired-status RUNNING \
+  --query 'taskArns[0]' --output text)
+aws ecs describe-tasks --profile ch-admin --region ap-southeast-2 \
+  --cluster ch-staging --tasks "$SERVICE_TASK" \
+  --query 'tasks[0].attachments[0].details[?name==`privateIPv4Address`].value' --output text
+```
+
+One-off task, task definition `ch-staging`, container `service`, both security groups, the staging public subnet, `assignPublicIp=ENABLED`. Command override only. `TARGET` is an environment override set to `<service-task-private-ipv4>` and is never recorded.
+
+```bash
+TASK_ARN=$(aws ecs run-task --profile ch-admin --region ap-southeast-2 \
+  --cluster ch-staging \
+  --task-definition ch-staging \
+  --launch-type FARGATE \
+  --network-configuration 'awsvpcConfiguration={subnets=[<staging-public-subnet-id>],securityGroups=[<task-security-group-id>,<vpc-link-security-group-id>],assignPublicIp=ENABLED}' \
+  --overrides '{"containerOverrides":[{"name":"service","command":["node","-e","fetch('"'"'http://'"'"'+process.env.TARGET+'"'"':8080/health'"'"').then(r=>{console.log(r.status);process.exit(0)}).catch(()=>process.exit(1))"],"environment":[{"name":"TARGET","value":"<service-task-private-ipv4>"}]}]}' \
+  --query 'tasks[0].taskArn' --output text)
+aws ecs wait tasks-stopped --profile ch-admin --region ap-southeast-2 \
+  --cluster ch-staging --tasks "$TASK_ARN"
+aws ecs describe-tasks --profile ch-admin --region ap-southeast-2 \
+  --cluster ch-staging --tasks "$TASK_ARN" \
+  --query 'tasks[0].containers[0].exitCode' --output text
+aws logs tail /community-hub/ch-staging/service --profile ch-admin --region ap-southeast-2 \
+  --log-stream-name-prefix service --since 15m
 aws cloudwatch describe-alarms --profile ch-admin --region ap-southeast-2 \
   --alarm-names ch-staging-missing-hostname-header \
   --query 'MetricAlarms[0].StateValue' --output text
 ```
 
-Paste the log reason and the alarm state. Expected: `missing_hostname_header` and `ALARM`. Do not paste the address. Port 8080 is not opened to the internet.
+The one-off prints `404` and exits 0. The service log has reason `missing_hostname_header`. The alarm reaches `ALARM`. Paste those three. Do not paste the address. Port 8080 is not opened to the internet.
 
 9. Endpoint. This is its own apply. The committed file stays unchanged.
 
@@ -320,7 +389,26 @@ terraform apply -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars 
   -var enable_kms_endpoint=true
 ```
 
-Run the probe again with the step 4 command. Paste stdout `pass` and exit 0. Then:
+Run the probe again. Same command as proof 4. The task ARN stays in the shell and is never pasted.
+
+```bash
+TASK_ARN=$(aws ecs run-task --profile ch-admin --region ap-southeast-2 \
+  --cluster ch-staging \
+  --task-definition ch-staging \
+  --launch-type FARGATE \
+  --network-configuration 'awsvpcConfiguration={subnets=[<staging-public-subnet-id>],securityGroups=[<task-security-group-id>],assignPublicIp=ENABLED}' \
+  --overrides '{"containerOverrides":[{"name":"service","command":["node","/app/probe.js"]}]}' \
+  --query 'tasks[0].taskArn' --output text)
+aws ecs wait tasks-stopped --profile ch-admin --region ap-southeast-2 \
+  --cluster ch-staging --tasks "$TASK_ARN"
+aws ecs describe-tasks --profile ch-admin --region ap-southeast-2 \
+  --cluster ch-staging --tasks "$TASK_ARN" \
+  --query 'tasks[0].containers[0].exitCode' --output text
+aws logs tail /community-hub/ch-staging/service --profile ch-admin --region ap-southeast-2 \
+  --log-stream-name-prefix service --since 15m
+```
+
+Paste stdout `pass` and exit 0. Then:
 
 ```bash
 aws cloudtrail lookup-events --profile ch-admin --region ap-southeast-2 \
@@ -328,7 +416,7 @@ aws cloudtrail lookup-events --profile ch-admin --region ap-southeast-2 \
   --max-results 5
 ```
 
-Confirm the probe event has `vpcEndpointId`. Paste the word `present`. Do not paste the id. Then:
+Event history can lag 5–15 minutes. Wait and repeat `lookup-events` before concluding `vpcEndpointId` is absent. When the probe event has it, paste the word `present`. Do not paste the id. Only after it is present, or after that wait still shows it absent, apply the flag back to false:
 
 ```bash
 terraform apply -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars \
