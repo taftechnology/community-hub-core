@@ -1,6 +1,6 @@
 output "rds_hostname" {
-  description = "RDS hostname for the VPC service (not a private IP)."
-  value       = module.rds.address
+  description = "RDS hostname. Null when enable_database is false."
+  value       = var.enable_database ? module.rds[0].address : null
 }
 
 output "envelope_key_arn" {

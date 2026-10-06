@@ -42,6 +42,12 @@ mock_provider "aws" {
     }
   }
 
+  mock_resource "aws_sns_topic" {
+    defaults = {
+      arn = "arn:aws:sns:ap-southeast-2:123456789012:ch-staging-alarms"
+    }
+  }
+
   mock_resource "aws_apigatewayv2_domain_name" {
     defaults = {
       id = "domain-mock"
@@ -343,4 +349,126 @@ run "prod_image_set" {
     condition     = length(module.ingress.task_subnet_ids) == 2
     error_message = "a set production image plans both public subnets"
   }
+}
+
+run "database_off" {
+  command = plan
+
+  variables {
+    aws_region            = "ap-southeast-2"
+    aws_account_id        = "123456789012"
+    environment           = "staging"
+    deletion_protection   = false
+    backup_retention_days = 0
+    alert_email           = "alerts@example.com"
+    staging_zone_id       = "ZSTAGING"
+    create_public_zone    = false
+    attach_public_dns     = true
+    enable_database       = false
+    enable_budgets        = true
+  }
+
+  assert {
+    condition     = length(module.rds) == 0
+    error_message = "parking removes the RDS module"
+  }
+
+  assert {
+    condition     = output.rds_hostname == null
+    error_message = "rds_hostname is null when the database is off"
+  }
+
+  assert {
+    condition     = aws_sns_topic.alarms.name == "ch-staging-alarms"
+    error_message = "the alarms topic stays when the database is parked"
+  }
+
+  assert {
+    condition     = aws_sns_topic.alarms.tags["environment"] == "staging" && aws_sns_topic.alarms.tags["project"] == "community-hub"
+    error_message = "the alarms topic carries environment and project"
+  }
+
+  assert {
+    condition     = aws_sns_topic.alarms.kms_master_key_id == null
+    error_message = "alarm SNS topic must not use a KMS key"
+  }
+
+  assert {
+    condition     = aws_sns_topic_subscription.alarms.endpoint == "alerts@example.com"
+    error_message = "the email subscription stays when the database is parked"
+  }
+
+  assert {
+    condition     = aws_cloudwatch_log_metric_filter.missing_hostname_header.pattern == "{ $.reason = \"missing_hostname_header\" }"
+    error_message = "the hostname filter matches the reason field"
+  }
+
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.missing_hostname_header.comparison_operator == "GreaterThanOrEqualToThreshold" &&
+      aws_cloudwatch_metric_alarm.missing_hostname_header.threshold == 1 &&
+      aws_cloudwatch_metric_alarm.missing_hostname_header.period == 300 &&
+      aws_cloudwatch_metric_alarm.missing_hostname_header.evaluation_periods == 1 &&
+      aws_cloudwatch_metric_alarm.missing_hostname_header.statistic == "Sum" &&
+      aws_cloudwatch_metric_alarm.missing_hostname_header.treat_missing_data == "notBreaching" &&
+      aws_cloudwatch_metric_alarm.missing_hostname_header.alarm_actions == toset([aws_sns_topic.alarms.arn]) &&
+      aws_cloudwatch_metric_alarm.missing_hostname_header.tags["environment"] == "staging" &&
+      aws_cloudwatch_metric_alarm.missing_hostname_header.tags["project"] == "community-hub"
+    )
+    error_message = "the hostname alarm must match the spec"
+  }
+
+  assert {
+    condition     = module.budgets.budget_name == "ch-staging-cost"
+    error_message = "the park plan creates the staging budget"
+  }
+}
+
+run "prod_database_off_fails" {
+  command = plan
+
+  variables {
+    aws_region            = "ap-southeast-2"
+    aws_account_id        = "123456789012"
+    environment           = "prod"
+    enable_database       = false
+    enable_kms_endpoint   = true
+    deletion_protection   = true
+    backup_retention_days = 7
+    alert_email           = "alerts@example.com"
+    create_public_zone    = true
+    attach_public_dns     = false
+  }
+
+  expect_failures = [
+    check.prod_database,
+    terraform_data.prod_database,
+  ]
+}
+
+run "image_without_database_fails" {
+  command = plan
+
+  variables {
+    aws_region            = "ap-southeast-2"
+    aws_account_id        = "123456789012"
+    environment           = "staging"
+    deletion_protection   = false
+    backup_retention_days = 0
+    alert_email           = "alerts@example.com"
+    staging_zone_id       = "ZSTAGING"
+    create_public_zone    = false
+    attach_public_dns     = true
+    enable_database       = false
+    service_image         = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+
+  override_module {
+    target = module.ingress
+  }
+
+  expect_failures = [
+    check.image_needs_database,
+    terraform_data.image_needs_database,
+  ]
 }

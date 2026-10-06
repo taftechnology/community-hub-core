@@ -85,3 +85,9 @@ variable "enable_budgets" {
   description = "Create the per-environment budget. Off until the cost-allocation tag is active."
   default     = false
 }
+
+variable "enable_database" {
+  type        = bool
+  description = "Plan the RDS module. False parks staging by removing it. Production refuses false."
+  default     = true
+}

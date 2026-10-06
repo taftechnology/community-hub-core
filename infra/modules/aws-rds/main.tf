@@ -72,23 +72,6 @@ resource "aws_db_instance" "this" {
   )
 }
 
-resource "aws_sns_topic" "alarms" {
-  region = var.aws_region
-  name   = "${var.name}-postgres-alarms"
-
-  tags = {
-    environment = var.environment
-    project     = var.project
-  }
-}
-
-resource "aws_sns_topic_subscription" "alarms" {
-  region    = var.aws_region
-  topic_arn = aws_sns_topic.alarms.arn
-  protocol  = "email"
-  endpoint  = var.alert_email
-}
-
 resource "aws_cloudwatch_metric_alarm" "cpu_credit_balance" {
   region              = var.aws_region
   alarm_name          = "${var.name}-postgres-cpu-credit-balance"
@@ -100,7 +83,7 @@ resource "aws_cloudwatch_metric_alarm" "cpu_credit_balance" {
   period              = 300
   statistic           = "Average"
   threshold           = 24
-  alarm_actions       = [aws_sns_topic.alarms.arn]
+  alarm_actions       = [var.alarm_topic_arn]
 
   dimensions = {
     DBInstanceIdentifier = aws_db_instance.this.identifier
@@ -123,7 +106,7 @@ resource "aws_cloudwatch_metric_alarm" "freeable_memory" {
   period              = 300
   statistic           = "Average"
   threshold           = 104857600
-  alarm_actions       = [aws_sns_topic.alarms.arn]
+  alarm_actions       = [var.alarm_topic_arn]
 
   dimensions = {
     DBInstanceIdentifier = aws_db_instance.this.identifier
@@ -146,7 +129,7 @@ resource "aws_cloudwatch_metric_alarm" "free_storage_space" {
   period              = 300
   statistic           = "Average"
   threshold           = 2147483648
-  alarm_actions       = [aws_sns_topic.alarms.arn]
+  alarm_actions       = [var.alarm_topic_arn]
 
   dimensions = {
     DBInstanceIdentifier = aws_db_instance.this.identifier
@@ -169,7 +152,7 @@ resource "aws_cloudwatch_metric_alarm" "database_connections" {
   period              = 300
   statistic           = "Average"
   threshold           = 30
-  alarm_actions       = [aws_sns_topic.alarms.arn]
+  alarm_actions       = [var.alarm_topic_arn]
 
   dimensions = {
     DBInstanceIdentifier = aws_db_instance.this.identifier
