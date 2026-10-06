@@ -16,7 +16,7 @@ The database accepts TCP 5432 only from the task security group. It is not publi
 
 - Replace the image `ENTRYPOINT` with `CMD ["node", "/app/index.js"]`. The default container command is still the server.
 - An image test runs `docker run <image> node /app/probe.js` with no `--entrypoint`. The probe gets the expected environment failure. That proves a command override reaches the probe.
-- `node /app/db-bootstrap.js` in the same image. It runs `packages/db/sql/bootstrap.sql`, then `ALTER ROLE` for `app`, `identity`, and `platform`, using the passwords from their secrets, then prints `SHOW max_connections` as the only stdout line.
+- `node /app/db-bootstrap.js` in the same image. It runs `packages/db/sql/bootstrap.sql`, then `ALTER ROLE` for `app`, `identity`, and `platform`. Each statement carries a SCRAM-SHA-256 verifier computed in the program, not the cleartext password. It then prints `SHOW max_connections` as the only stdout line.
 - A separate ops task definition. It exists only when `service_image` is set and the database is on. Its execution role is the only new principal that may read the RDS-managed master secret and the three role secrets. The service task definition gains nothing.
 - `docs/runbooks/apply-staging-au.md`, section "Change a database role", names this ops task as the way to run bootstrap and `ALTER ROLE`.
 
@@ -44,9 +44,11 @@ The runtime stage has `CMD ["node", "/app/index.js"]` and no `ENTRYPOINT`. `HEAL
 
 It reads four passwords from the environment. ECS injects them. The program does not take them as arguments. The master value is the `password` field of the RDS-managed master secret. The other three are the raw role-secret strings. The program does not read a secret ARN and does not call Secrets Manager.
 
-On success it connects as the master, runs the bootstrap script, sets the three login passwords from those strings, runs `SHOW max_connections`, and exits 0. Stdout is that integer and one newline. Stderr is empty. A second run does the same. The roles are not created twice, and the passwords match the current secrets.
+It connects as the master through `createDirectSql` from `@community-hub/db`, with the image's RDS CA bundle, the same way the probe connects. That factory is verify-full. `rds.force_ssl` is 1.
 
-On failure stdout is empty, stderr is one of `env`, `bootstrap`, `alter_role`, or `max_connections`, plus one newline, and the exit code is 1. A driver error, a stack, a connection string, a secret ARN, and a password are not written. Both copies of each password are discarded before exit.
+On success it runs the bootstrap script. For each of `app`, `identity`, and `platform` it computes a SCRAM-SHA-256 verifier client-side and runs `ALTER ROLE <role> PASSWORD '<verifier>'`. The verifier is a properly quoted literal. No statement contains a cleartext password. It then runs `SHOW max_connections` and exits 0. Stdout is that integer and one newline. Stderr is empty. A second run does the same. The roles are not created twice, and the stored verifiers match the current secrets.
+
+On failure stdout is empty, stderr is one of `env`, `bootstrap`, `alter_role`, or `max_connections`, plus one newline, and the exit code is 1. A driver error, a stack, a connection string, a secret ARN, and a password are not written. Passwords are not retained, logged, or passed to anything but the verifier computation. The master password is the exception: it is passed only to `createDirectSql`.
 
 ### Ops task definition
 
@@ -58,7 +60,9 @@ Environment is the host, port, database name, and master user. Those are not sec
 
 The task role has no policies. The program makes no AWS call.
 
-The execution role may `GetSecretValue` on the master secret and the three role secrets, `kms:Decrypt` only on the key that wraps each of those secrets, and write to the service log group under stream prefix `db-ops`. It cannot decrypt the storage key or the envelope key. It cannot read any other secret.
+The execution role may `GetSecretValue` on the master secret and the three role secrets, `kms:Decrypt` on the role-secrets key only, pull the service image, and write to the service log group under stream prefix `db-ops`. The RDS-managed master secret uses the AWS-managed `aws/secretsmanager` key. No `master_user_secret_kms_key_id` is set, so that secret needs no IAM `kms:Decrypt`. The decrypt list is exactly the role-secrets key. It cannot decrypt the storage key or the envelope key. It cannot read any other secret.
+
+Image pull matches the service execution role (`infra/modules/aws-ingress/main.tf`). `ecr:GetAuthorizationToken` is on `*`. `ecr:BatchCheckLayerAvailability`, `ecr:GetDownloadUrlForLayer`, and `ecr:BatchGetImage` are on the one service repository only.
 
 The service task definition, its execution role, and its task role are unchanged. The service execution role does not gain the master secret. The RDS module gains an output for the master secret ARN so the ops role can name it. That output is not a task environment variable.
 
@@ -70,7 +74,7 @@ Network, when a later chunk runs the task: the task security group, a public sub
 
 ## Data
 
-No new table and no new column. Bootstrap creates the four roles and the empty schemas if they are missing. `ALTER ROLE` sets a password. `SHOW max_connections` reads a server setting. None of these is personal data.
+No new table and no new column. Bootstrap creates the four roles and the empty schemas if they are missing. `ALTER ROLE` stores a SCRAM-SHA-256 verifier. `SHOW max_connections` reads a server setting. None of these is personal data.
 
 ## Rules touched
 
@@ -80,24 +84,24 @@ Children. No new public path.
 
 Tenancy. No query of an `app` row.
 
-Encryption. The three role secrets stay on their existing key. The master secret stays on the key RDS already uses. The new role can decrypt only those keys.
+Encryption. The three role secrets stay on their existing key. The master secret stays on the AWS-managed `aws/secretsmanager` key. The ops role's `kms:Decrypt` list is exactly the role-secrets key.
 
-Secrets. Passwords are injected and then discarded. They are not in the image, the repo, stdout, stderr, or the runbook. The service task does not receive the master password.
+Secrets. Passwords are not retained, logged, or written. A role password is passed only to the verifier computation. The master password is passed only to `createDirectSql`. They are not in the image, the repo, stdout, stderr, the SQL text, or the runbook. The service task does not receive the master password.
 
 Rule 5. The log stream receives the program's stdout and stderr, which are the integer or one failure word.
 
 ## Contracts
 
-| Contract            | Value                                                                                     |
-| ------------------- | ----------------------------------------------------------------------------------------- |
-| Image command       | `CMD ["node", "/app/index.js"]`. No `ENTRYPOINT`.                                         |
-| Probe override      | `docker run <image> node /app/probe.js` with no `--entrypoint` reaches the probe.         |
-| `db-bootstrap.js`   | Bootstrap, then three `ALTER ROLE`s, then `SHOW max_connections` as the only stdout line. |
-| Ops task definition | Present only when `service_image` is set and the database is on.                          |
-| Ops execution role  | Master secret plus the three role secrets. No storage key. No envelope key.               |
-| Ops task role       | No policies.                                                                              |
-| Service task        | Unchanged, including its secrets and its roles.                                           |
-| Runbook             | "Change a database role" runs this task. A person does not connect as master.             |
+| Contract            | Value                                                                                                                                                                                  |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Image command       | `CMD ["node", "/app/index.js"]`. No `ENTRYPOINT`.                                                                                                                                      |
+| Probe override      | `docker run <image> node /app/probe.js` with no `--entrypoint` reaches the probe.                                                                                                      |
+| `db-bootstrap.js`   | Bootstrap, then three `ALTER ROLE`s with a client-side SCRAM-SHA-256 verifier, then `SHOW max_connections` as the only stdout line.                                                    |
+| Ops task definition | Present only when `service_image` is set and the database is on.                                                                                                                       |
+| Ops execution role  | Master secret plus the three role secrets. `kms:Decrypt` is exactly the role-secrets key. Image pull matches the service role, on the one repository. No storage key. No envelope key. |
+| Ops task role       | No policies.                                                                                                                                                                           |
+| Service task        | Unchanged, including its secrets and its roles.                                                                                                                                        |
+| Runbook             | "Change a database role" runs this task. A person does not connect as master.                                                                                                          |
 
 ## Cost
 
@@ -107,9 +111,11 @@ This chunk is not applied, so it adds no monthly charge. A task definition and a
 
 A command override that still hits the server would leave proofs hanging. The image test with no `--entrypoint` is the check.
 
-A policy copied from the service task role would let the ops task read the envelope key. The ops task role has no policies, and the execution role's decrypt list excludes that key and the storage key.
+A policy copied from the service task role would let the ops task read the envelope key. The ops task role has no policies, and the execution role's `kms:Decrypt` list is exactly the role-secrets key.
 
 The master password on the service task would widen the service. The service task definition does not gain it.
+
+A cleartext password in `ALTER ROLE` would be logged by the default `log_min_error_statement` on a failed statement, and `pg_stat_statements` can keep that text. The statement carries the verifier. The must-fail test checks the SQL text of every statement.
 
 Running the task definition before the database exists is refused by the count. The runbook says the database is on first.
 
@@ -130,9 +136,10 @@ No test uses a real account id or a real password from a secret. Fixtures use a 
 - Bootstrap success: stdout matches one integer and a newline, stderr is empty, exit 0. A second run does the same.
 - Failure at each step: stdout empty, stderr the step word, exit 1.
 - Must-fail: a planted password appears in neither stdout nor stderr, including when the driver throws that password.
+- Must-fail: the SQL text handed to the driver for every statement never contains the planted password.
 - `service_image` null: no ops task definition.
 - Database off: no ops task definition.
-- Both set: the ops task definition exists, its execution role names the master secret and the three role secrets, its task role has no policy, and the service task definition's secret list is unchanged.
+- Both set: the ops task definition exists, its execution role names the master secret and the three role secrets, `kms:Decrypt` is exactly the role-secrets key, image pull is `ecr:GetAuthorizationToken` plus `ecr:BatchCheckLayerAvailability`, `ecr:GetDownloadUrlForLayer`, and `ecr:BatchGetImage` on the service repository only, its task role has no policy, and the service task definition's secret list is unchanged.
 
 ## Catalogue
 
