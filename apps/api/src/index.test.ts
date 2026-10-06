@@ -14,7 +14,7 @@ const marker = "arn:aws:kms:ap-southeast-2:123456789012:alias/not-a-key";
 
 function source(): NodeJS.ProcessEnv {
   return {
-    PORT: "39453",
+    PORT: "18453",
     PGPORT: "5432",
     AWS_REGION: "ap-southeast-2",
     NODE_ENV: "test",

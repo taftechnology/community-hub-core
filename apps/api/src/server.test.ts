@@ -73,8 +73,9 @@ async function listening(server: ReturnType<typeof startServer>): Promise<void> 
   if (server.listening) {
     return;
   }
-  await new Promise<void>((resolve) => {
+  await new Promise<void>((resolve, reject) => {
     server.once("listening", () => resolve());
+    server.once("error", reject);
   });
 }
 
@@ -98,7 +99,7 @@ describe("startServer", () => {
     expect(source).not.toContain("@community-hub/db");
     expect(source).not.toContain("aws-kms-adapter");
 
-    const env = envFor(39451);
+    const env = envFor(18451);
     const server = startServer({ env, routes: [health] });
     servers.push(server);
     await listening(server);
@@ -107,9 +108,9 @@ describe("startServer", () => {
     expect(server.requestTimeout).toBe(REQUEST_TIMEOUT_MS);
     expect(server.keepAliveTimeout).toBe(65000);
     expect(server.headersTimeout).toBe(30000);
-    expect(server.address()).toMatchObject({ address: "0.0.0.0", port: 39451 });
+    expect(server.address()).toMatchObject({ address: "0.0.0.0", port: 18451 });
 
-    const response = await fetch("http://127.0.0.1:39451/health");
+    const response = await fetch("http://127.0.0.1:18451/health");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
     expect(db.createDirectSql).not.toHaveBeenCalled();
@@ -120,7 +121,7 @@ describe("startServer", () => {
   });
 
   it("drains on an injected signal and exits without stopping the test runner", async () => {
-    const env = envFor(39452);
+    const env = envFor(18452);
     let exitCode: number | undefined;
     let onTerm: (() => void) | undefined;
     const started = Date.now();
@@ -159,8 +160,8 @@ describe("startServer", () => {
     await listening(server);
 
     const headers = { "x-community-hub-hostname": "au.api.example.test" };
-    const quick = fetch("http://127.0.0.1:39452/quick", { headers });
-    const hangSettled = fetch("http://127.0.0.1:39452/hang", { headers }).then(
+    const quick = fetch("http://127.0.0.1:18452/quick", { headers });
+    const hangSettled = fetch("http://127.0.0.1:18452/hang", { headers }).then(
       () => "resolved" as const,
       () => "rejected" as const,
     );
@@ -177,13 +178,13 @@ describe("startServer", () => {
   });
 
   it("answers TRACE and still serves the next health check", async () => {
-    const env = envFor(39454);
+    const env = envFor(18454);
     const server = startServer({ env, routes: [health] });
     servers.push(server);
     await listening(server);
 
     const raw = await new Promise<string>((resolve, reject) => {
-      const socket = net.connect(39454, "127.0.0.1");
+      const socket = net.connect(18454, "127.0.0.1");
       let received = "";
       socket.on("data", (chunk) => {
         received += chunk.toString();
@@ -200,14 +201,14 @@ describe("startServer", () => {
     expect(raw.startsWith("HTTP/1.1 ")).toBe(true);
     expect(body).toBe("");
     expect(raw).not.toContain("TypeError");
-    const response = await fetch("http://127.0.0.1:39454/health");
+    const response = await fetch("http://127.0.0.1:18454/health");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
   });
 
   it("closes a request that never sends its body", async () => {
     const requestTimeoutMs = 200;
-    const env = envFor(39458);
+    const env = envFor(18458);
     const server = startServer({ env, routes: [health], requestTimeoutMs });
     servers.push(server);
     await listening(server);
@@ -215,7 +216,7 @@ describe("startServer", () => {
     const started = Date.now();
     const closed = await new Promise<number>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("still-open")), requestTimeoutMs + 1000);
-      const socket = net.connect(39458, "127.0.0.1");
+      const socket = net.connect(18458, "127.0.0.1");
       socket.on("data", () => {});
       socket.on("close", () => {
         clearTimeout(timer);
@@ -228,7 +229,7 @@ describe("startServer", () => {
   });
 
   it("destroys the socket when headers were already sent", async () => {
-    const env = envFor(39457);
+    const env = envFor(18457);
     const server = startServer({
       env,
       routes: [
@@ -269,7 +270,7 @@ describe("startServer", () => {
     } as typeof ServerResponse.prototype.writeHead;
 
     try {
-      const settled = await fetch("http://127.0.0.1:39457/partial", {
+      const settled = await fetch("http://127.0.0.1:18457/partial", {
         headers: { "x-community-hub-hostname": "au.api.example.test" },
         signal: AbortSignal.timeout(1000),
       }).then(
@@ -285,12 +286,12 @@ describe("startServer", () => {
       spy.mockRestore();
     }
 
-    const response = await fetch("http://127.0.0.1:39457/health");
+    const response = await fetch("http://127.0.0.1:18457/health");
     expect(response.status).toBe(200);
   });
 
   it("keeps listening when a handler throws", async () => {
-    const env = envFor(39455);
+    const env = envFor(18455);
     const writes: string[] = [];
     const spy = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
       writes.push(String(chunk));
@@ -313,19 +314,19 @@ describe("startServer", () => {
     servers.push(server);
     await listening(server);
 
-    const boom = await fetch("http://127.0.0.1:39455/boom", {
+    const boom = await fetch("http://127.0.0.1:18455/boom", {
       headers: { "x-community-hub-hostname": "au.api.example.test" },
     });
     expect(boom.status).toBeGreaterThanOrEqual(400);
     expect(await boom.text()).toBe("");
     expect(writes.join("")).not.toContain("marker-handler");
-    const response = await fetch("http://127.0.0.1:39455/health");
+    const response = await fetch("http://127.0.0.1:18455/health");
     expect(response.status).toBe(200);
     spy.mockRestore();
   });
 
   it("exits after the accept window when nothing is connected", async () => {
-    const env = envFor(39456);
+    const env = envFor(18456);
     let exitCode: number | undefined;
     let onTerm: (() => void) | undefined;
     const server = startServer({
