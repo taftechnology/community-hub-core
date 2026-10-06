@@ -109,21 +109,21 @@ Rule 5. The hostname alarm matches `reason` only. The log has no remote address.
 
 ## Contracts
 
-| Contract | Value |
-| --- | --- |
-| `enable_database` | Root variable, default true. False removes `module.rds` only. Production refuses false. False with `service_image` set fails the plan. |
-| `enable_budgets` | Stays the foundations variable, default false. The park commit sets it true in `staging.tfvars`. |
-| `service_image` | Null on both applies. |
-| `desired_count` | 0 on both applies. |
-| Topic | Root resource `${name}-alarms`, email subscription to `alert_email`, tags `environment` and `project`. |
-| RDS alarms | The four existing alarms, `alarm_actions` the topic ARN input. The module plans no topic and no subscription, and it no longer takes `alert_email`. |
-| Hostname filter | Log group is the envelope service log group. Pattern `{ $.reason = "missing_hostname_header" }`. No tags. |
-| Hostname alarm | Sum, period 300, `GreaterThanOrEqualToThreshold`, threshold 1, one evaluation period, `treat_missing_data` `notBreaching`, `alarm_actions` the root topic, tags `environment` and `project`. |
-| Local tfvars | `infra/regions/au/env/staging.local.tfvars`, gitignored, passed after `staging.tfvars`. Holds the account id, the hosted zone id, and the alarm email. |
-| Bootstrap override | `infra/bootstrap/backend_override.tf`, gitignored, `backend "local" {}`, deleted before migrate. |
-| Task group, no image | Egress TCP 443 to `0.0.0.0/0`. Egress TCP 5432 to the RDS group. No inbound rule. |
-| RDS group | Inbound TCP 5432 from the task group only. |
-| VPC link group | Egress TCP 8080 to the task group. No inbound rule. Exists with no image. |
+| Contract             | Value                                                                                                                                                                                        |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enable_database`    | Root variable, default true. False removes `module.rds` only. Production refuses false. False with `service_image` set fails the plan.                                                       |
+| `enable_budgets`     | Stays the foundations variable, default false. The park commit sets it true in `staging.tfvars`.                                                                                             |
+| `service_image`      | Null on both applies.                                                                                                                                                                        |
+| `desired_count`      | 0 on both applies.                                                                                                                                                                           |
+| Topic                | Root resource `${name}-alarms`, email subscription to `alert_email`, tags `environment` and `project`.                                                                                       |
+| RDS alarms           | The four existing alarms, `alarm_actions` the topic ARN input. The module plans no topic and no subscription, and it no longer takes `alert_email`.                                          |
+| Hostname filter      | Log group is the envelope service log group. Pattern `{ $.reason = "missing_hostname_header" }`. No tags.                                                                                    |
+| Hostname alarm       | Sum, period 300, `GreaterThanOrEqualToThreshold`, threshold 1, one evaluation period, `treat_missing_data` `notBreaching`, `alarm_actions` the root topic, tags `environment` and `project`. |
+| Local tfvars         | `infra/regions/au/env/staging.local.tfvars`, gitignored, passed after `staging.tfvars`. Holds the account id, the hosted zone id, and the alarm email.                                       |
+| Bootstrap override   | `infra/bootstrap/backend_override.tf`, gitignored, `backend "local" {}`, deleted before migrate.                                                                                             |
+| Task group, no image | Egress TCP 443 to `0.0.0.0/0`. Egress TCP 5432 to the RDS group. No inbound rule.                                                                                                            |
+| RDS group            | Inbound TCP 5432 from the task group only.                                                                                                                                                   |
+| VPC link group       | Egress TCP 8080 to the task group. No inbound rule. Exists with no image.                                                                                                                    |
 
 ## Cost
 
@@ -135,28 +135,28 @@ AWS Budgets, read 2026-10-05 from the [pricing page](https://aws.amazon.com/aws-
 
 Database up. The budget is not created yet.
 
-| Line | USD |
-| --- | ---: |
-| Four KMS key versions | 4.00 |
-| Three role secrets plus the RDS master secret | 1.60 |
-| Two hosted zones | 1.00 |
-| Database instance | 18.25 |
-| 20 GB storage | 2.76 |
-| Five standard alarms | 0.50 |
-| Custom metric | 0.00 |
-| Total | 28.11 |
+| Line                                          |   USD |
+| --------------------------------------------- | ----: |
+| Four KMS key versions                         |  4.00 |
+| Three role secrets plus the RDS master secret |  1.60 |
+| Two hosted zones                              |  1.00 |
+| Database instance                             | 18.25 |
+| 20 GB storage                                 |  2.76 |
+| Five standard alarms                          |  0.50 |
+| Custom metric                                 |  0.00 |
+| Total                                         | 28.11 |
 
 Parked. The park apply creates the budget and removes the database, the master secret, and the four RDS alarms.
 
-| Line | USD |
-| --- | ---: |
+| Line                  |  USD |
+| --------------------- | ---: |
 | Four KMS key versions | 4.00 |
-| Three role secrets | 1.20 |
-| Two hosted zones | 1.00 |
-| Hostname alarm | 0.10 |
-| Custom metric | 0.00 |
-| Staging budget | 0.00 |
-| Total | 6.30 |
+| Three role secrets    | 1.20 |
+| Two hosted zones      | 1.00 |
+| Hostname alarm        | 0.10 |
+| Custom metric         | 0.00 |
+| Staging budget        | 0.00 |
+| Total                 | 6.30 |
 
 This apply creates no ECS cluster: `aws_ecs_cluster` has `count` 0 while `service_image` is null. The VPC, subnets, internet gateway, security groups, an empty ECR repository, both HTTP APIs, the VPC link, the certificate, empty log groups, and the SNS topic have no monthly charge. No task, no public address, no Cloud Map registration, no KMS endpoint, and no Turnstile secret.
 
@@ -213,10 +213,10 @@ The last commit on this branch updates `docs/roadmap.md` and the repository-stat
 
 `first staging apply` is replaced by three rows, in this order:
 
-| Status | Chunk | What |
-| --- | --- | --- |
-| done | `staging-base` | This spec. Staging applied with no task, proofs recorded, then parked. |
-| not started | `first-running-task` | The running-task proofs listed under Scope. Next chunk. |
-| not started | `image-publish` | CI builds, tests, and pushes by digest through a GitHub OIDC role scoped to this one repository. `AGENTS.md` §10 requires production to promote that exact CI build. After `first-running-task` and before any production apply. |
+| Status      | Chunk                | What                                                                                                                                                                                                                             |
+| ----------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| done        | `staging-base`       | This spec. Staging applied with no task, proofs recorded, then parked.                                                                                                                                                           |
+| not started | `first-running-task` | The running-task proofs listed under Scope. Next chunk.                                                                                                                                                                          |
+| not started | `image-publish`      | CI builds, tests, and pushes by digest through a GitHub OIDC role scoped to this one repository. `AGENTS.md` §10 requires production to promote that exact CI build. After `first-running-task` and before any production apply. |
 
 `kms-mrk-replica` stays last. The snapshot's next chunk is `first-running-task`.

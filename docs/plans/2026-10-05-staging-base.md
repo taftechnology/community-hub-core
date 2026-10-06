@@ -34,14 +34,14 @@ Status: approved (2026-10-05, Abdus Salam)
 
 ## File map
 
-| File | Responsibility |
-| --- | --- |
-| `infra/bootstrap/.terraform.lock.hcl` and the 6.65.0 module locks | Select AWS provider 6.67.0 for `linux_amd64` and `darwin_arm64`. |
-| `infra/modules/aws-rds/` | Four alarms take a topic ARN. No topic and no subscription in this module. |
-| `infra/regions/au/` | Topic, subscription, hostname filter and alarm, `enable_database`. |
-| `.gitignore` | Local tfvars and the bootstrap backend override. |
-| `docs/runbooks/apply-staging-au.md` | The AWS apply, the proofs, and the park. |
-| `docs/roadmap.md`, `AGENTS.md` | Catalogue. Last commit only. |
+| File                                                              | Responsibility                                                             |
+| ----------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `infra/bootstrap/.terraform.lock.hcl` and the 6.65.0 module locks | Select AWS provider 6.67.0 for `linux_amd64` and `darwin_arm64`.           |
+| `infra/modules/aws-rds/`                                          | Four alarms take a topic ARN. No topic and no subscription in this module. |
+| `infra/regions/au/`                                               | Topic, subscription, hostname filter and alarm, `enable_database`.         |
+| `.gitignore`                                                      | Local tfvars and the bootstrap backend override.                           |
+| `docs/runbooks/apply-staging-au.md`                               | The AWS apply, the proofs, and the park.                                   |
+| `docs/roadmap.md`, `AGENTS.md`                                    | Catalogue. Last commit only.                                               |
 
 ---
 
@@ -882,9 +882,9 @@ In `docs/roadmap.md`, set Last shipped to `` `staging-base` ``, Next chunk to ``
 Replace the `first staging apply` row with these three rows, in order, and leave `kms-mrk-replica` last:
 
 ```markdown
-| done        | `staging-base`           | Staging applied with no task, proofs recorded, then parked. Spec `docs/specs/2026-10-05-staging-base.md`. |
-| not started | `first-running-task`     | Image pushed by a person from a merged main commit, service_image set, desired_count 1, health, database and KMS round trips, VPC link to a public-subnet task, /tmp write, probe task, SHOW max_connections, rolling-deploy and steady-traffic 5xx counts, one run with the KMS endpoint on, and the hostname alarm firing. |
-| not started | `image-publish`          | CI builds, tests, and pushes by digest through a GitHub OIDC role scoped to this one repository. AGENTS.md section 10 requires production to promote that exact CI build. After `first-running-task` and before any production apply. |
+| done | `staging-base` | Staging applied with no task, proofs recorded, then parked. Spec `docs/specs/2026-10-05-staging-base.md`. |
+| not started | `first-running-task` | Image pushed by a person from a merged main commit, service_image set, desired_count 1, health, database and KMS round trips, VPC link to a public-subnet task, /tmp write, probe task, SHOW max_connections, rolling-deploy and steady-traffic 5xx counts, one run with the KMS endpoint on, and the hostname alarm firing. |
+| not started | `image-publish` | CI builds, tests, and pushes by digest through a GitHub OIDC role scoped to this one repository. AGENTS.md section 10 requires production to promote that exact CI build. After `first-running-task` and before any production apply. |
 ```
 
 Update the "Next spec" sentence to name `first-running-task`.
