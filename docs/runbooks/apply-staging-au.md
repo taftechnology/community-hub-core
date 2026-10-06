@@ -7,9 +7,9 @@ Any rebase onto origin/main happens before the first apply. After that apply the
 ## Human prerequisites
 
 1. Every apply uses the ch-admin profile, an IAM Identity Center administrator, never the root user.
-2. Register communityhub-staging.net in Route 53. Registration creates the hosted zone. Pass that zone id in the gitignored tfvars file. Do not commit it.
+2. communityhub-staging.net is registered and its hosted zone exists. The zone id lives only in the gitignored tfvars file. Do not commit it.
 3. Choose the alarm email. It goes in the same gitignored file. This runbook does not record it.
-4. infra/bootstrap has not been applied. Apply it before the AU root.
+4. infra/bootstrap is already applied. The state bucket and lock exist, and state is migrated to S3. Do not run the Bootstrap section again. A re-run fails with BucketAlreadyExists.
 
 ## Local tfvars
 
@@ -22,6 +22,8 @@ Create infra/regions/au/env/staging.local.tfvars. It is gitignored. It holds aws
 3. terraform init uses -lockfile=readonly.
 
 ## Bootstrap
+
+This is a one-time step and it is already complete.
 
 infra/bootstrap declares backend "s3" {} and creates the bucket. The named SHA is the first-apply commit. From infra/bootstrap, write a gitignored backend_override.tf:
 
