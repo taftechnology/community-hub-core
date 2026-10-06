@@ -1,7 +1,7 @@
 # Spec: First running task
 
 Slug: first-running-task
-Status: draft
+Status: approved (2026-10-06, Abdus)
 Architecture refs: §7.3, ADR 0009. Implements the `first-running-task` row. Depends on `docs/specs/2026-10-06-db-ops-task.md`, which is on `main` before this image is built. `docs/specs/2026-10-05-staging-base.md` is not edited.
 
 ## Problem
