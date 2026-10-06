@@ -104,6 +104,14 @@ run "staging_happy" {
   }
 
   assert {
+    condition = one([
+      for parameter in aws_db_parameter_group.this.parameter : parameter.apply_method
+      if parameter.name == "rds.force_ssl"
+    ]) == "pending-reboot"
+    error_message = "rds.force_ssl must apply on reboot"
+  }
+
+  assert {
     condition     = aws_sns_topic.alarms.kms_master_key_id == null
     error_message = "alarm SNS topic must not use a KMS key"
   }
