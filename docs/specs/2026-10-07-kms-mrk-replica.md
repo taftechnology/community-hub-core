@@ -20,7 +20,7 @@ The envelope key is a multi-Region primary in `ap-southeast-2`, and nothing has 
 - Both new resources set `deletion_window_in_days` to 30 where the resource has that argument, `bypass_policy_lockout_safety_check` false on the replica key, `prevent_destroy`, and the tags `environment` and `project`.
 - The replica key policy is the `Admin` statement only: account root, the same 16 `Admin` actions, Resource `*`. It has no `GenerateDataKey` statement, no `Decrypt` statement, and no task-role principal.
 - The cell provider stays `var.aws_region`, which must remain `ap-southeast-2`. The replica uses the resource `region` argument. There is no provider block whose region is `ap-southeast-4`.
-- The region check fails any literal `region` argument on a resource or a provider under `infra/**/*.tf`. The only allowed literal is `ap-southeast-4` on `aws_kms_replica_key.envelope` and `aws_kms_alias.envelope_replica` in the envelope module. `awslogs-region` is a different argument and is left alone. Backend `.hcl` files are not resource or provider blocks. Must-fail fixtures: a database instance, an S3 bucket, and a log group with `region = "ap-southeast-4"`; a provider block with that region; and one resource whose literal region is outside Australia (`us-east-1`).
+- The region check is an allow-list. Every `region` argument on a resource or a provider under `infra/**/*.tf` must be exactly `var.aws_region`, or the literal `"ap-southeast-4"` on `aws_kms_replica_key.envelope` and `aws_kms_alias.envelope_replica` in the envelope module. Anything else fails, including another variable, a local, or an expression. All 77 `region` arguments on `main` are already `var.aws_region`. `awslogs-region` and the module argument `aws_region` are different arguments and stay out of the rule. Backend `.hcl` files are not resource or provider blocks. Must-fail fixtures: a database instance, an S3 bucket, and a log group with `region = "ap-southeast-4"`; a provider block with that region; one resource whose literal region is outside Australia (`us-east-1`); and one resource with `region = var.other_region`.
 - The terraform-invariants envelope rule that requires `prevent_destroy` on `aws_kms_key.envelope` also requires it on `aws_kms_replica_key.envelope`. A must-fail fixture is the replica without that lifecycle.
 - The human enables `ap-southeast-4` on the staging account, then applies. The agent does not call AWS and does not enable the Region.
 - The catalogue commit marks this row done. Phase 0 becomes 23 rows: 22 done, 1 superseded (`api-au-hostname`), 0 not started. Next is `admin-shell`.
@@ -58,7 +58,7 @@ No new table and no new column. The replica is key material. It is not a copy of
 
 ## Rules touched
 
-Residency. `ap-southeast-4` is in Australia. The only new resources there are the envelope replica and its alias. The region check fails any other literal `region` on a resource or a provider under `infra/`.
+Residency. `ap-southeast-4` is in Australia. The only new resources there are the envelope replica and its alias. Every `region` argument on a resource or a provider under `infra/**/*.tf` is exactly `var.aws_region`, or the literal `"ap-southeast-4"` on those two resources in the envelope module. Another variable, a local, or an expression fails.
 
 Encryption. The primary stays a multi-Region key in `ap-southeast-2` with `prevent_destroy`. Its policy is updated in place: the sixth statement allows the account root to call `kms:ReplicateKey` only when `kms:ReplicaRegion` is `ap-southeast-4`. The key is never replaced. Rotation is not set on the replica. The replica policy is the `Admin` statement only. It does not grant `kms:GenerateDataKey` or `kms:Decrypt`, and it does not name the task role. When `enable_kms_endpoint` is true, the primary's use statements stay bound to `aws:SourceVpce`.
 
@@ -94,7 +94,7 @@ An apply before the Region is enabled fails. The fix is to wait until the opt-in
 
 The two resources are unconditional, so a first production apply before `ap-southeast-4` is enabled in that account fails partway. Owner: the production apply runbook. This chunk does not write that runbook and does not apply production.
 
-A literal `region` other than the two allowed lines fails the check. The must-fail fixtures cover a database, a bucket, a log group, a provider, and `us-east-1`.
+A `region` argument that is not exactly `var.aws_region`, and is not the literal `"ap-southeast-4"` on the replica and its alias, fails the check. That includes another variable, a local, or an expression. The must-fail fixtures cover a database, a bucket, a log group, a provider, `us-east-1`, and `region = var.other_region`.
 
 ## Out-of-band
 
@@ -112,7 +112,7 @@ Terraform tests are mocked plans. They use account `123456789012`.
 - The replica policy has exactly one statement, Sid `Admin`. It does not contain `kms:Decrypt`, `kms:GenerateDataKey`, or the task role ARN.
 - The replica alias name is `alias/ch-staging-envelope` when `name` is `ch-staging`, and its region is `ap-southeast-4`. The Sydney alias is unchanged.
 - `env/staging.tfvars` still has `enable_database = false` and `desired_count = 0`, and still does not set `service_image` or `enable_kms_endpoint`.
-- The region check passes `region = "ap-southeast-4"` on `aws_kms_replica_key.envelope` and `aws_kms_alias.envelope_replica` in the envelope module. It fails a database instance, an S3 bucket, a log group, and a provider block with that region, and it fails a resource whose literal region is `us-east-1`.
+- The region check passes `region = var.aws_region`, and it passes `region = "ap-southeast-4"` on `aws_kms_replica_key.envelope` and `aws_kms_alias.envelope_replica` in the envelope module. It fails a database instance, an S3 bucket, a log group, and a provider block with that region. It fails a resource whose literal region is `us-east-1`. It fails a resource with `region = var.other_region`.
 - `prevent_destroy` on the replica is required by the terraform-invariants envelope rule. A fixture with the replica and without that lifecycle fails the check. Terraform tests do not assert `prevent_destroy`.
 
 No application test changes. The KMS client region is still `ap-southeast-2`.
