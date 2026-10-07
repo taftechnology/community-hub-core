@@ -91,3 +91,15 @@ variable "enable_database" {
   description = "Plan the RDS module. False parks staging by removing it. Production refuses false."
   default     = true
 }
+
+variable "github_repository_id" {
+  type        = string
+  description = "GitHub repository id for the staging image-publish trust. Null outside staging."
+  default     = null
+}
+
+variable "github_repository_owner_id" {
+  type        = string
+  description = "GitHub repository owner id for the staging image-publish trust. Null outside staging."
+  default     = null
+}
