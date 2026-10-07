@@ -453,8 +453,10 @@ export function check(root: string = process.cwd()): CheckResult {
   const infraRoot = path.join(resolvedRoot, INFRA_DIR);
   const allHcl: string[] = [];
   const allTf: string[] = [];
+  const allTfJson: string[] = [];
   collectFiles(infraRoot, (name) => name.endsWith(".hcl"), allHcl);
   collectFiles(infraRoot, (name) => name.endsWith(".tf"), allTf);
+  collectFiles(infraRoot, (name) => name.endsWith(".tf.json"), allTfJson);
 
   const backendFiles = allHcl.filter((filePath) => isBackendFile(filePath));
   const violations: TerraformInvariantViolation[] = [];
@@ -462,6 +464,13 @@ export function check(root: string = process.cwd()): CheckResult {
   for (const filePath of backendFiles) {
     const hcl = stripHclComments(fs.readFileSync(filePath, "utf8"));
     violations.push(...validateBackendFile(filePath, resolvedRoot, hcl));
+  }
+
+  for (const filePath of allTfJson) {
+    violations.push({
+      file: path.relative(resolvedRoot, filePath),
+      message: "JSON-syntax Terraform files are not allowed under infra",
+    });
   }
 
   for (const filePath of allTf) {

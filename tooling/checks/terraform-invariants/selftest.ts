@@ -25,6 +25,7 @@ const mustFail = [
   "region-us-east-1",
   "region-other-variable",
   "missing-replica-prevent-destroy",
+  "tf-json-file",
 ] as const;
 
 const mustPass = ["valid", "melbourne-replica"] as const;
@@ -66,6 +67,17 @@ describe("terraform-invariants check fixtures", () => {
       ).toBe(true);
     });
   }
+
+  it("fails tf-json-file because JSON-syntax Terraform is not allowed", () => {
+    const result = check(path.join(fixturesDir, "tf-json-file"));
+    expect(result.ok).toBe(false);
+    expect(
+      result.violations.some(
+        (violation) =>
+          violation.message === "JSON-syntax Terraform files are not allowed under infra",
+      ),
+    ).toBe(true);
+  });
 
   it("fails missing-replica-prevent-destroy for the replica lifecycle", () => {
     const result = check(path.join(fixturesDir, "missing-replica-prevent-destroy"));
