@@ -143,7 +143,7 @@ VPC link `ch-staging-link` was AVAILABLE. Family `ch-staging-db-ops`, command `[
 1. `GET https://au.api.communityhub-staging.net/health` returned 200. Cloud Map has one HEALTHY instance.
 2. Live rules, exact. `ch-staging-task`: egress 443 to 0.0.0.0/0, egress 5432 to `ch-staging-rds`, ingress 8080 from `ch-staging-vpc-link` (the only new rule). `ch-staging-rds`: ingress 5432 from `ch-staging-task` only. `ch-staging-vpc-link`: egress 8080 to `ch-staging-task` only. No other rule.
 3. `/tmp` write one-off, exit 0. The service stayed 1/1. ECS Exec stayed off.
-4. Probe one-off, stdout `pass`, exit 0. Database and KMS round trip, endpoint off.
+4. Probe one-off, stdout `pass`, stderr empty, exit 0. The task's own log stream carries both stdout and stderr and held exactly one line, `pass`. Database and KMS round trip, endpoint off.
 5. `SHOW max_connections` is 79, the ops stdout above.
 6. Forced rolling deploy of the same task definition. 113 requests to `/health` from before `update-service` until `services-stable`: 113 times 200, 0 times 5xx.
 7. 60 requests over 60 seconds: 60 times 200, 0 times 5xx. `keepAliveTimeout` 65000 and `requestTimeout` 30000 were left unchanged.
@@ -159,7 +159,7 @@ VPC link `ch-staging-link` was AVAILABLE. Family `ch-staging-db-ops`, command `[
 
 ## KMS endpoint proof
 
-Same SHA `ba881554b5ca7d72d3faabbf9994f464df490f38`, applied with `-var enable_kms_endpoint=true`. That apply created the KMS interface endpoint and its security group, and updated the envelope key policy in place. While the endpoint exists, the module adds an `aws:SourceVpce` condition to the task-role `GenerateDataKey` and `Decrypt` statements. The probe printed `pass` and exited 0. CloudTrail `GenerateDataKey` at 2026-10-07T01:38:00Z had `vpcEndpointId` present. Earlier events, from before the endpoint, had it absent. The id is not recorded.
+Same SHA `ba881554b5ca7d72d3faabbf9994f464df490f38`, applied with `-var enable_kms_endpoint=true`. That apply created the KMS interface endpoint and its security group, and updated the envelope key policy in place. While the endpoint exists, the module adds an `aws:SourceVpce` condition to the task-role `GenerateDataKey` and `Decrypt` statements. The probe printed `pass`, stderr empty, and exited 0. The task's own log stream carries both stdout and stderr and held exactly one line, `pass`. CloudTrail `GenerateDataKey` at 2026-10-07T01:38:00Z had `vpcEndpointId` present. Earlier events, from before the endpoint, had it absent. The id is not recorded.
 
 The following apply used `-var enable_kms_endpoint=false`. The endpoint and its security group were destroyed, and the key-policy condition was removed. A plan with the committed values then showed no changes, detailed exit code 0. KMS endpoints remaining: 0. The committed tfvars never set `enable_kms_endpoint`.
 
@@ -169,7 +169,7 @@ Proof 10. SHA `e441c8bfbfded2d6308a42c3aef4ce4ee7fc1406`. `service_image` was re
 
 The plan listed exactly 18 resources, all destroyed, nothing created, updated, or replaced. Ten came from the image apply: the ECS cluster, capacity providers, the service, the service task definition, the ECR pull policy, the task API ingress rule, the ops task definition, the ops execution role, the ops task role, and the ops execution policy. Eight were under `module.rds[0]`: the instance, the parameter group, the subnet group, four alarms, and the prod-protection guard. The apply completed.
 
-The following plan, with the committed values, showed no changes, detailed exit code 0. Live checks: RDS instances 0; ECS services in `ch-staging` 0; the `ch-staging-alarms` topic still exists; budget `ch-staging-cost` still exists; KMS endpoints 0. The lasting cost is the parked month, about USD 6.30.
+The following plan, with the committed values, showed no changes, detailed exit code 0. That plan refreshes against AWS. The re-park plan destroyed only the 18 resources listed above, so the email subscription and the `ch-staging-missing-hostname-header` alarm were not among them, and the empty following plan confirms both still exist. They were not queried individually. Live checks: RDS instances 0; ECS services in `ch-staging` 0; the `ch-staging-alarms` topic still exists; budget `ch-staging-cost` still exists; KMS endpoints 0. The lasting cost is the parked month, about USD 6.30.
 
 ## Restore drill
 
