@@ -42,7 +42,7 @@ Status: draft
 | `tooling/checks/terraform-invariants/`   | `us-east-1` only on the two certificate resources.                     |
 | `infra/modules/aws-admin-static/`        | Bucket, distribution, certificate, alias. Mocks live in its test file. |
 | `infra/regions/au/main.tf`               | Module call and the publish role. No new provider.                     |
-| `infra/regions/au/outputs.tf`            | `admin_bucket`, captured and not printed.                              |
+| `infra/regions/au/outputs.tf`            | `admin_bucket` and `admin_distribution_id`, both sensitive.            |
 | `infra/regions/au/tests/cell.tftest.hcl` | Trust map. No new mock defaults.                                       |
 | `.github/workflows/ci.yml`               | Matrix entry and job `admin-publish`.                                  |
 | `tooling/checks/image-publish/`          | `checkWorkflow` rules and fixtures.                                    |
@@ -181,7 +181,7 @@ Do not set `frame_options`. `frame-ancestors` is inside the CSP string.
 - Axe reports no violations. Disable `color-contrast`, the same way `packages/ui/src/button.a11y.test.tsx` does. A button fixture with no accessible name fails `button-name`.
 - Replace `fetch` with a spy that throws. Render, then `fireEvent.click` the Refresh button. The spy was not called. Stub `window.location.reload` and assert it was called. Do not add `@testing-library/user-event`.
 
-`fetch-source.test.ts` reads `apps/admin/src` and fails if any file contains `fetch(`. It fails `fixtures/calls-fetch.ts` and passes `fixtures/no-fetch.ts`.
+`fetch-source.test.ts` lives in `apps/admin/src`, the directory it scans. The scan skips `*.test.ts` and `*.test.tsx`, and fails if any other file there contains `fetch(`. The fixtures prove the rule: `fixtures/calls-fetch.ts` fails and `fixtures/no-fetch.ts` passes.
 
 `build-html.test.ts` runs `vite build` and reads `dist/index.html`. Every `script` has `src`. No `src` contains `://`. There is no `style` element and no `style` attribute.
 
@@ -197,7 +197,7 @@ Expected: fail because the app does not exist yet.
 
 Vite config uses `@vitejs/plugin-react` and `@tailwindcss/vite` only. `index.html` has one module script whose `src` is `/src/main.tsx`, and no inline script or style.
 
-Do not put `fetch(` in `src`, including comments. Fixtures stay under `apps/admin/fixtures/` so the root ESLint ignore skips them.
+Do not put `fetch(` in `src`, including comments, except in `*.test.ts` and `*.test.tsx`. The scan skips those two suffixes. Fixtures stay under `apps/admin/fixtures/` so the root ESLint ignore skips them.
 
 - [ ] **Step 4: Format, gate, and commit**
 
@@ -322,12 +322,13 @@ feat(admin): add the static site module
 - Modify: `infra/regions/au/main.tf`
 - Modify: `infra/regions/au/outputs.tf`
 - Modify: `infra/regions/au/tests/cell.tftest.hcl`
+- Modify: `tooling/checks/terraform-invariants/selftest.ts`
 
 **Interfaces:**
 
 - Produces: `module.admin_static` with `count = local.image_publish_count`, source `../../modules/aws-admin-static`. `zone_name` is the same expression the ingress module already uses. `zone_id` is `var.staging_zone_id`. `name` is `local.name`. No new hosted zone and no second OIDC provider.
 - Produces: `aws_iam_role.admin_publish` and `aws_iam_role_policy.admin_publish`, same count. Role name `ch-staging-admin-publish`. The trust principal is `aws_iam_openid_connect_provider.github[count.index].arn`. The role policy is `module.admin_static[count.index].publish_policy`.
-- Produces: output `admin_bucket` is `one(module.admin_static[*].bucket_name)`. Output `admin_distribution_id` is `one(module.admin_static[*].distribution_id)`.
+- Produces: output `admin_bucket` is `one(module.admin_static[*].bucket_name)`. Output `admin_distribution_id` is `one(module.admin_static[*].distribution_id)`. Both set `sensitive = true`, so `terraform apply` does not print them. `terraform output -raw` still returns each value.
 
 **Rule this must not break:** the image publish role, its trust, and the GitHub provider are unchanged. Prod still plans zero of these resources.
 
@@ -339,6 +340,8 @@ On `staging_image_publish`, assert length 1 for the module, the role, and the ro
 
 On `prod_tfvars`, assert those three lengths are 0.
 
+Terraform test cannot see the sensitive flag. A file assert in `tooling/checks/terraform-invariants/selftest.ts` reads `infra/regions/au/outputs.tf` and requires `sensitive = true` inside the `admin_bucket` block and inside the `admin_distribution_id` block.
+
 Do not add a mock block.
 
 - [ ] **Step 2: Run the cell test and confirm the new asserts fail**
@@ -347,13 +350,17 @@ Run: `terraform -chdir=infra/regions/au test -filter=tests/cell.tftest.hcl`
 
 Expected: the new asserts fail. Existing runs stay green except where they now plan a missing module. If a run fails for an unknown `for_each`, stop.
 
+Run: `pnpm --filter @community-hub/check-terraform-invariants test`
+
+Expected: the `outputs.tf` assert fails because the two outputs do not exist yet.
+
 - [ ] **Step 3: Wire the cell**
 
 Do not set `region` on the role or the role policy. Do not add a provider.
 
 - [ ] **Step 4: Format, gate, and commit**
 
-`terraform fmt -recursive` under `infra/regions/au`. Then `terraform test` in `infra/regions/au` and in the module, and `pnpm check:boundaries`.
+`terraform fmt -recursive` under `infra/regions/au`. Then `terraform test` in `infra/regions/au` and in the module, `pnpm test --filter @community-hub/check-terraform-invariants`, and `pnpm check:boundaries`.
 
 ```
 feat(admin): attach the publish role in the cell
@@ -403,9 +410,11 @@ Add:
 - `admin-publish-floating-uses` when a `uses:` in that job is not `owner/repo` plus a 40-character SHA.
 - `admin-publish-concurrency` when the group is not `admin-publish` or `cancel-in-progress` is not false.
 - `admin-publish-sync` when the sync line is missing `dist/assets`, `--delete`, `--only-show-errors`, or `public, max-age=31536000, immutable`, or the cp line is missing `index.html`, `--only-show-errors`, or `no-cache`, or the cp line contains `--delete`, or the sync line does not appear before the cp line.
-- `admin-publish-query` when a line contains `aws `, does not contain `aws s3 sync`, does not contain `aws s3 cp`, and does not contain `--query`.
+- `admin-publish-query` inside the `admin-publish` job only. Join lines that end with a backslash, then flag a logical command where `aws` is the command word (the start of the command, or after `$(` or a pipe), that is not `aws s3 sync` or `aws s3 cp`, and that has no `--query`.
 
 Each new fixture is a passing workflow plus that one defect. Add a valid `admin-publish` job to every existing fixture so each still fails with exactly one id. Assert the real `ci.yml` passes, and assert job `test` does not mention the admin role.
+
+Add a must-pass case. It contains `command -v aws >/dev/null` and one multi-line `aws` command whose `--query` is on a later line. That case does not report `admin-publish-query`.
 
 - [ ] **Step 2: Run the checker tests and confirm they fail**
 
@@ -415,7 +424,7 @@ Expected: the real workflow fails `workflow-id-token` until the job exists. Each
 
 - [ ] **Step 3: Add the job and the matrix entry**
 
-Secrets are `ADMIN_PUBLISH_ROLE_ARN`, `ADMIN_BUCKET`, and `ADMIN_DISTRIBUTION_ID`. If either is empty, exit 1 with a fixed sentence that does not include the value. `command -v aws` must succeed. Assume-role session name `admin-publish`, `--region ap-southeast-2`, and a `--query` on the credentials. Do not write a 12-digit account id into the workflow. The account-id rule fails the file if one appears.
+Secrets are `ADMIN_PUBLISH_ROLE_ARN`, `ADMIN_BUCKET`, and `ADMIN_DISTRIBUTION_ID`. If either is empty, exit 1 with a fixed sentence that does not include the value. `command -v aws >/dev/null` must succeed. Assume-role session name `admin-publish`, `--region ap-southeast-2`, and a `--query` on the credentials. A multi-line `aws` command may put `--query` on a continuation line. Do not write a 12-digit account id into the workflow. The account-id rule fails the file if one appears.
 
 - [ ] **Step 4: Format, gate, and commit**
 
@@ -435,6 +444,9 @@ The reviewer runs this read-only plan before the apply, from `infra/regions/au`,
 
 ```bash
 terraform init -backend-config=backend/staging.hcl -lockfile=readonly
+```
+
+```bash
 terraform plan -lock=false -detailed-exitcode -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars
 ```
 
@@ -461,11 +473,25 @@ The validation key is `admin.` concatenated with the zone name the cell passes. 
 
 The human then applies that same plan, profile `ch-admin`, both var files, the gitignored file last. The agent does not apply.
 
-After the apply, the human checks out that SHA, builds `@community-hub/admin`, and syncs with `ch-admin`. Capture the bucket and do not print it. Do not run `terraform output` without a capture.
+After the apply, the human checks out that SHA in the apply worktree and syncs with `ch-admin`. From that worktree root, build first. Capture the bucket and do not print it. Do not run `terraform output` without a capture. The output commands read the state bucket, so they set `AWS_PROFILE=ch-admin`.
 
 ```bash
-bucket=$(terraform -chdir=infra/regions/au output -raw admin_bucket)
+pnpm install --frozen-lockfile
+```
+
+```bash
+pnpm --filter @community-hub/admin build
+```
+
+```bash
+bucket=$(AWS_PROFILE=ch-admin terraform -chdir=infra/regions/au output -raw admin_bucket)
+```
+
+```bash
 aws s3 sync apps/admin/dist/assets "s3://${bucket}/assets" --delete --only-show-errors --cache-control "public, max-age=31536000, immutable" --region ap-southeast-2 --profile ch-admin
+```
+
+```bash
 aws s3 cp apps/admin/dist/index.html "s3://${bucket}/index.html" --only-show-errors --cache-control "no-cache" --region ap-southeast-2 --profile ch-admin
 ```
 
@@ -473,7 +499,13 @@ Those are the job's two commands. `--profile ch-admin` and the captured bucket a
 
 The reviewer, not the agent, then loads `https://admin.<zone>/`. If the first response is still the pre-upload 403, wait out CloudFront's short error cache and reload once. Do not add an invalidation command here. Check the heading Dashboard, one nav link, the five response headers, and a console with no policy violation.
 
-The human sets `ADMIN_PUBLISH_ROLE_ARN`, `ADMIN_BUCKET`, and `ADMIN_DISTRIBUTION_ID` after the apply and before merge. Capture `admin_distribution_id` the same way as the bucket, into a variable, and do not print it. The values are not written into the repo, the runbook, or the pull request.
+The human sets `ADMIN_PUBLISH_ROLE_ARN`, `ADMIN_BUCKET`, and `ADMIN_DISTRIBUTION_ID` after the apply and before merge. Capture the distribution id the same way as the bucket, and do not print it.
+
+```bash
+distribution_id=$(AWS_PROFILE=ch-admin terraform -chdir=infra/regions/au output -raw admin_distribution_id)
+```
+
+The values are not written into the repo, the runbook, or the pull request.
 
 From this applied commit on: no rebase, no amend, and no force-push.
 
