@@ -236,6 +236,7 @@ jobs:
             > "${creds_file}"
           rm -f "${token_file}"
           read -r AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN < "${creds_file}"
+          rm -f "${creds_file}"
           echo "::add-mask::${AWS_ACCESS_KEY_ID}"
           echo "::add-mask::${AWS_SECRET_ACCESS_KEY}"
           echo "::add-mask::${AWS_SESSION_TOKEN}"
@@ -330,16 +331,20 @@ jobs:
                 counts = null;
               }
               const errorName = errorNameFromStderr(fs.readFileSync(process.argv[3], "utf8"));
+              const mediaType = process.argv[5];
+              const timedOut = process.argv[6] === "yes" ? "yes" : "no";
               const text = [
                 "### Image publish",
                 "Digest: " + digest,
                 "Status: " + (status === null ? "null" : status),
+                "Media type: " + mediaType,
                 "Severity counts: " + JSON.stringify(counts ?? {}),
                 "Error name: " + (errorName === null ? "null" : errorName),
+                "Timed out: " + timedOut,
               ].join("\n");
               console.log(text);
               fs.appendFileSync(process.argv[4], text + "\n");
-              ' "${digest}" "${stdout_file}" "${stderr_file}" "${GITHUB_STEP_SUMMARY}"
+              ' "${digest}" "${stdout_file}" "${stderr_file}" "${GITHUB_STEP_SUMMARY}" "${media_type}" "${timed_out_arg:+yes}"
               exit 1
             fi
             if (( SECONDS >= deadline )); then
