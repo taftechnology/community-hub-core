@@ -28,7 +28,7 @@ Status: draft
 - The pull request is not merged until the second fresh-context review line is closed. This chunk replicates the key that wraps personal data. Leave that line open. Do not write the second review. The agent does not merge.
 - Session scratch (`.superpowers/`, `*-report.md`) is never committed.
 - Do not mark this plan approved yourself.
-- Run `pnpm exec prettier --write` on the files in the commit before every commit, then the gate. The plan file is formatted before its own commit. A code fence inside a list item is indented so Prettier does not join the list.
+- Prettier formats Markdown, TypeScript, and YAML. It has no parser for `.tf` or `.tftest.hcl` and exits 2, so those files are not passed to it. Terraform files use `terraform fmt -recursive`. A non-recursive `terraform fmt -check` misses `tests/`. Run the matching formatter on the files in the commit before every commit, then the gate. The plan file is formatted before its own commit. A code fence inside a list item is indented so Prettier does not join the list.
 
 **Rollback:** A later commit removes `aws_kms_replica_key.envelope` and `aws_kms_alias.envelope_replica`, including their `prevent_destroy` blocks, and the human applies it. That plan destroys only those two. The primary stays, and the sixth statement stays. Removing the sixth statement is a separate policy change. Replica deletion uses the 30-day window and does not delete the primary. The agent does not run the apply.
 
@@ -40,7 +40,7 @@ Status: draft
 | ---------------------------------------------------------- | ---------------------------------------------------------------------- |
 | `infra/modules/aws-kms-envelope/main.tf`                   | Sixth statement, replica key, replica alias.                           |
 | `infra/modules/aws-kms-envelope/tests/envelope.tftest.hcl` | Plan-time asserts and the mock defaults below.                         |
-| `infra/regions/au/tests/cell.tftest.hcl`                   | The same three mock blocks, so the cell plan can fill computed ids.    |
+| `infra/regions/au/tests/cell.tftest.hcl`                   | Statement count 6, the three Sid filters, and the sixth Sid. No mocks. |
 | `tooling/checks/terraform-invariants/check.ts`             | Region allow-list, and `prevent_destroy` on the replica.               |
 | `tooling/checks/terraform-invariants/selftest.ts`          | New must-fail names, and one must-pass replica fixture.                |
 | `tooling/checks/terraform-invariants/fixtures/`            | Existing `region = "ap-southeast-2"` literals become `var.aws_region`. |
@@ -49,7 +49,7 @@ Status: draft
 
 ## Mock defaults
 
-`envelope.tftest.hcl` already sets `mock_provider "aws" { override_during = plan }`. Add these blocks inside that provider. Copy the same three blocks into the cell file's existing `mock_provider "aws"`. Do not add replica asserts to the cell file.
+`envelope.tftest.hcl` already sets `mock_provider "aws" { override_during = plan }`. Add these blocks inside that provider. They stay in the module test file only. Do not copy them into `infra/regions/au/tests/cell.tftest.hcl`. The cell runs pass without them. A shared `aws_kms_key` default gives the storage, secrets, and envelope keys the same ARN, and the cell asserts tell those keys apart.
 
 Defaults fill computed attributes only. Do not default `region`, `policy`, `name`, `target_key_id`, `primary_key_arn`, `deletion_window_in_days`, `bypass_policy_lockout_safety_check`, or `tags`. A default on any of those would hide a wrong value under `override_during = plan`.
 
@@ -104,7 +104,7 @@ On run `happy`, change the length assert from 5 to 6 and append `ReplicateToMelb
 
 - `toset` of `Statement[0].Action` equals the existing 16 names and does not contain `kms:ReplicateKey`.
 - Statement index 5 has Sid `ReplicateToMelbourne`, principal `arn:aws:iam::123456789012:root`, resource `"*"`, and `try(toset(action), toset([action]))` equals `toset(["kms:ReplicateKey"])`.
-- `keys(statement.Condition.StringEquals)` equals `toset(["kms:ReplicaRegion"])` and the value is `"ap-southeast-4"`.
+- `keys(statement.Condition.StringEquals) == ["kms:ReplicaRegion"]`, the value is `"ap-southeast-4"`, and `keys(statement.Condition) == ["StringEquals"]`. `keys` returns a list, so it is not compared with `toset`.
 - `aws_kms_replica_key.envelope.region` is `"ap-southeast-4"`.
 - `aws_kms_replica_key.envelope.primary_key_arn` equals `aws_kms_key.envelope.arn` and equals `arn:aws:kms:ap-southeast-2:123456789012:key/mock-envelope`.
 - `deletion_window_in_days` is 30 and `bypass_policy_lockout_safety_check` is false.
@@ -117,7 +117,9 @@ On run `endpoint_on`, keep the SourceVpce filter on the four cryptographic Sids.
 
 Do not assert `prevent_destroy`. Terraform test cannot see it.
 
-Add the three mock blocks from Mock defaults to both test files.
+Add the three mock blocks from Mock defaults to `envelope.tftest.hcl` only.
+
+In `infra/regions/au/tests/cell.tftest.hcl`, on `staging_happy`, change the envelope policy length from 5 to 6. Change the two filters in that assert, and the filter on `staging_endpoint_on`, from `statement.Sid != "Admin"` to `contains(["GenerateDataKeyOrg", "GenerateDataKeyIdentity", "DecryptOrg", "DecryptIdentity"], statement.Sid)`. Those are the filters at lines 135, 140, and 238. The filtered length stays 4. Add an assert that statement index 5 has Sid `ReplicateToMelbourne`. Do not add mock blocks to this file.
 
 Run `terraform test` in `infra/modules/aws-kms-envelope`. Expected: the new resources are missing and the test fails.
 
@@ -126,15 +128,14 @@ Run `terraform test` in `infra/modules/aws-kms-envelope`. Expected: the new reso
 - [ ] **Step 3: Gate and commit**
 
 ```bash
-terraform -chdir=infra/modules/aws-kms-envelope fmt -check
+terraform -chdir=infra/modules/aws-kms-envelope fmt -check -recursive
 terraform -chdir=infra/modules/aws-kms-envelope init -backend=false -lockfile=readonly
 terraform -chdir=infra/modules/aws-kms-envelope validate
 terraform -chdir=infra/modules/aws-kms-envelope test
-terraform -chdir=infra/regions/au fmt -check
+terraform -chdir=infra/regions/au fmt -check -recursive
 terraform -chdir=infra/regions/au init -backend=false -lockfile=readonly
 terraform -chdir=infra/regions/au validate
 terraform -chdir=infra/regions/au test
-pnpm exec prettier --write infra/modules/aws-kms-envelope/main.tf infra/modules/aws-kms-envelope/tests/envelope.tftest.hcl infra/regions/au/tests/cell.tftest.hcl
 pnpm lint && pnpm typecheck && pnpm test && pnpm check:boundaries
 git add infra/modules/aws-kms-envelope/main.tf infra/modules/aws-kms-envelope/tests/envelope.tftest.hcl infra/regions/au/tests/cell.tftest.hcl
 git commit -m "$(cat <<'EOF'
@@ -179,7 +180,7 @@ Add must-fail fixtures. Each is a small `infra/**/*.tf` tree. The self-test asse
 - `region-other-variable`: a resource with `region = var.other_region`
 - `missing-replica-prevent-destroy`: `aws_kms_replica_key.envelope` in the envelope module, `region = "ap-southeast-4"`, no `prevent_destroy`. The message is the replica `prevent_destroy` rule.
 
-Add must-pass fixture `melbourne-replica`: in the envelope module, `aws_kms_key.envelope` with `region = var.aws_region` and `prevent_destroy`, plus the replica and `aws_kms_alias.envelope_replica` with `region = "ap-southeast-4"` and `prevent_destroy` on the replica. A provider in that fixture uses `region = var.aws_region`.
+Add must-pass fixture `melbourne-replica`: in the envelope module, `aws_kms_key.envelope` with `region = var.aws_region` and `prevent_destroy`, plus the replica and `aws_kms_alias.envelope_replica` with `region = "ap-southeast-4"` and `prevent_destroy` on the replica. A provider in that fixture uses `region = var.aws_region`. The same fixture also contains the forms the rule must ignore: `awslogs-region = "ap-southeast-2"`, `multi_region = true`, a module call with `aws_region = var.aws_region`, and a `backend "s3"` block with a literal region inside a `.tf` file.
 
 Run `pnpm --filter @community-hub/check-terraform-invariants test`. Expected: the new fixtures fail because the check does not know them yet.
 
@@ -188,7 +189,8 @@ Run `pnpm --filter @community-hub/check-terraform-invariants test`. Expected: th
 - [ ] **Step 3: Gate and commit**
 
 ```bash
-pnpm exec prettier --write tooling/checks/terraform-invariants
+pnpm exec prettier --write tooling/checks/terraform-invariants/check.ts tooling/checks/terraform-invariants/selftest.ts
+terraform fmt -recursive tooling/checks/terraform-invariants/fixtures
 pnpm lint && pnpm typecheck && pnpm test && pnpm check:boundaries
 git add tooling/checks/terraform-invariants
 git commit -m "$(cat <<'EOF'
@@ -257,7 +259,7 @@ The human then applies:
 terraform apply -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars
 ```
 
-If the apply returns `AccessDenied` on `ReplicateKey` right after the policy update, run the apply again. Do not change the policy.
+If the apply returns `AccessDenied` on `ReplicateKey` right after the policy update, run the apply again. Do not change the policy. That retry shows 2 to add, 0 to change, 0 to destroy, and that is expected: the policy change is already in state, and the two resources are still to add. The stop rule for a first apply does not apply to this retry.
 
 Then:
 
@@ -265,7 +267,7 @@ Then:
 terraform plan -detailed-exitcode -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars
 ```
 
-The following plan shows no changes. Detailed exit code 0. Paste the SHA, `2 added, 1 changed, 0 destroyed`, and the three addresses. Read the replica back far enough to say its Region is `ap-southeast-4` and that it is a replica of the envelope key. Do not paste a key id or a key ARN.
+The following plan shows no changes. Detailed exit code 0. Paste the SHA and the three addresses. A first apply that succeeds is `2 added, 1 changed, 0 destroyed`. A retry after `AccessDenied` on `ReplicateKey` is recorded as both applies: the failed one, then `2 added, 0 changed, 0 destroyed`. Read the replica back far enough to say its Region is `ap-southeast-4` and that it is a replica of the envelope key. Do not paste a key id or a key ARN.
 
 From this applied commit on: no rebase, no amend, and no force-push.
 
@@ -280,7 +282,7 @@ From this applied commit on: no rebase, no amend, and no force-push.
 **Interfaces:**
 
 - Consumes: the human's paste, and the applied SHA reported in chat.
-- Produces: a section after Image publish role. It records that SHA, profile `ch-admin`, 2 added, 1 changed, 0 destroyed, and the three addresses. The change is the policy on `module.envelope.aws_kms_key.envelope`, in place. The key was not replaced. `terraform_data.envelope_key_policy` was not in the change set. The following plan showed no changes. The replica's Region is `ap-southeast-4`. No key id and no key ARN. A rollback that removes the two resources destroys only those two. The production apply runbook, which this chunk does not write, enables `ap-southeast-4` in the production account before the first production apply.
+- Produces: a section after Image publish role. It records that SHA, profile `ch-admin`, and the addresses. A first apply that succeeds is 2 added, 1 changed, 0 destroyed. The change is the policy on `module.envelope.aws_kms_key.envelope`, in place. If that apply fails at `ReplicateKey` after the policy update, the section records both applies: the failed one, and the retry that is 2 added, 0 changed, 0 destroyed. The key was not replaced. `terraform_data.envelope_key_policy` was not in the change set. The following plan showed no changes. The replica's Region is `ap-southeast-4`. No key id and no key ARN. A rollback that removes the two resources destroys only those two. The production apply runbook, which this chunk does not write, enables `ap-southeast-4` in the production account before the first production apply.
 
 **Rule this must not break:** if the human has not pasted, stop. Do not invent an apply.
 
