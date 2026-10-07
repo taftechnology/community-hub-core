@@ -1,7 +1,7 @@
 # Spec: Image publish
 
 Slug: image-publish
-Status: draft
+Status: approved (2026-10-06, Abdus)
 Architecture refs: §7.3, §23.2, ADR 0009, AGENTS.md §8 and §10. Implements the `image-publish` row. Depends on `docs/specs/2026-10-06-first-running-task.md`, which is on `main`. Staging stays parked.
 
 ## Problem
