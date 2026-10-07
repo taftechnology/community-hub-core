@@ -27,3 +27,15 @@ output "execution_policy" {
   description = "Service execution role policy document."
   value       = module.envelope.execution_policy
 }
+
+output "admin_bucket" {
+  description = "Admin static bucket name. Sensitive so apply does not print it."
+  value       = one(module.admin_static[*].bucket_name)
+  sensitive   = true
+}
+
+output "admin_distribution_id" {
+  description = "Admin CloudFront distribution id. Sensitive so apply does not print it."
+  value       = one(module.admin_static[*].distribution_id)
+  sensitive   = true
+}
