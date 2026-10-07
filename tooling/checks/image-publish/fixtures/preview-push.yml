@@ -1,0 +1,49 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('ci-{0}', github.ref) || format('ci-main-{0}', github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo static
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo test
+  build-preview:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Build the ARM image
+        run: docker build --platform linux/arm64 --provenance=false --sbom=false -f apps/api/Dockerfile -t community-hub-api:local . && docker push community-hub-api:local
+      - name: Image contract checks
+        env:
+          RUN_IMAGE_TESTS: "1"
+        run: pnpm --filter @community-hub/api exec vitest run --config vitest.config.ts src/image.test.ts
+  publish:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    needs: [static, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: image-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Publish the image
+        run: |
+          node tooling/checks/image-publish/scan-decision-cli.js --stdout out --stderr err --aws-exit 0 --media-type manifest
+          aws ecr describe-image-scan-findings --query '{status:imageScanStatus.status,counts:imageScanFindings.findingSeverityCounts}'

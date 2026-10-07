@@ -171,6 +171,14 @@ The plan listed exactly 18 resources, all destroyed, nothing created, updated, o
 
 The following plan, with the committed values, showed no changes, detailed exit code 0. That plan refreshes against AWS. The re-park plan destroyed only the 18 resources listed above, so the email subscription and the `ch-staging-missing-hostname-header` alarm were not among them, and the empty following plan confirms both still exist. They were not queried individually. Live checks: RDS instances 0; ECS services in `ch-staging` 0; the `ch-staging-alarms` topic still exists; budget `ch-staging-cost` still exists; KMS endpoints 0. The lasting cost is the parked month, about USD 6.30.
 
+## Image publish role
+
+SHA `c9a7106fe54f4b2119359e79b0097074d0ed5d13`. Profile ch-admin. The apply added 4 resources, changed 0, and destroyed 0: `aws_iam_openid_connect_provider.github`, `aws_iam_role.image_publish`, `aws_iam_role_policy.image_publish`, and `terraform_data.github_ids`. The spec and the plan counted three and did not count the guard. `terraform_data.github_ids` is state-only and makes no AWS call. The following plan showed no changes. Both GitHub Actions secrets are set. Their values are not recorded here. The reviewer read the applied trust policy, the role policy, and the provider back from AWS and they match the spec.
+
+This chunk does not set `service_image`. A later `service_image` is the digest from the publish job summary, not a laptop push.
+
+A rollback that removes the guard destroys four: the provider, the role, the policy, and `terraform_data.github_ids`. If that plan shows anything else, answer no and stop.
+
 ## Restore drill
 
 Quarterly, and only against staging. Restore the staging database to a new instance from point-in-time recovery. Record the time taken against the 4-hour target. Then delete the restored instance, because it bills by the hour. This drill does not restore production. Reading `SHOW max_connections` belongs to `first-running-task`, not to this drill.

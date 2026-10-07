@@ -6,6 +6,9 @@ locals {
   name           = "ch-${var.environment}"
   db_ops_count   = var.service_image != null && var.enable_database ? 1 : 0
   db_ops_log_arn = "arn:aws:logs:${var.aws_region}:${var.aws_account_id}:log-group:${module.envelope.log_group_name}"
+  image_publish_count = (
+    var.environment == "staging" && var.github_repository_id != null && var.github_repository_owner_id != null
+  ) ? 1 : 0
 }
 
 resource "terraform_data" "prod_backup" {
@@ -391,4 +394,84 @@ resource "aws_ecs_task_definition" "db_ops" {
     environment = var.environment
     project     = "community-hub"
   }
+}
+
+resource "terraform_data" "github_ids" {
+  lifecycle {
+    precondition {
+      condition     = var.environment != "staging" || (var.github_repository_id != null && var.github_repository_owner_id != null)
+      error_message = "staging image publish requires the GitHub repository id and owner id."
+    }
+  }
+}
+
+check "github_ids" {
+  assert {
+    condition     = var.environment != "staging" || (var.github_repository_id != null && var.github_repository_owner_id != null)
+    error_message = "staging image publish requires the GitHub repository id and owner id."
+  }
+}
+
+resource "aws_iam_openid_connect_provider" "github" {
+  count          = local.image_publish_count
+  url            = "https://token.actions.githubusercontent.com"
+  client_id_list = ["sts.amazonaws.com"]
+}
+
+resource "aws_iam_role" "image_publish" {
+  count = local.image_publish_count
+  name  = "ch-staging-image-publish"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Federated = aws_iam_openid_connect_provider.github[0].arn
+        }
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Condition = {
+          StringEquals = {
+            "token.actions.githubusercontent.com:aud"                 = "sts.amazonaws.com"
+            "token.actions.githubusercontent.com:sub"                 = "repo:taftechnology@${var.github_repository_owner_id}/community-hub-core@${var.github_repository_id}:ref:refs/heads/main"
+            "token.actions.githubusercontent.com:job_workflow_ref"    = "taftechnology/community-hub-core/.github/workflows/ci.yml@refs/heads/main"
+            "token.actions.githubusercontent.com:repository_id"       = var.github_repository_id
+            "token.actions.githubusercontent.com:repository_owner_id" = var.github_repository_owner_id
+          }
+        }
+      },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "image_publish" {
+  count = local.image_publish_count
+  name  = "image-publish"
+  role  = aws_iam_role.image_publish[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "ecr:GetAuthorizationToken"
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:InitiateLayerUpload",
+          "ecr:UploadLayerPart",
+          "ecr:CompleteLayerUpload",
+          "ecr:PutImage",
+          "ecr:BatchGetImage",
+          "ecr:DescribeImages",
+          "ecr:DescribeImageScanFindings",
+        ]
+        Resource = module.ingress.repository_arn
+      },
+    ]
+  })
 }

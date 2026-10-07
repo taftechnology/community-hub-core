@@ -35,6 +35,13 @@ mock_provider "aws" {
     }
   }
 
+  mock_resource "aws_iam_openid_connect_provider" {
+    defaults = {
+      arn             = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+      thumbprint_list = null
+    }
+  }
+
   mock_resource "aws_acm_certificate" {
     defaults = {
       arn = "arn:aws:acm:ap-southeast-2:123456789012:certificate/mock"
@@ -70,15 +77,17 @@ run "staging_happy" {
   command = plan
 
   variables {
-    aws_region            = "ap-southeast-2"
-    aws_account_id        = "123456789012"
-    environment           = "staging"
-    deletion_protection   = false
-    backup_retention_days = 0
-    alert_email           = "alerts@example.com"
-    staging_zone_id       = "ZSTAGING"
-    create_public_zone    = false
-    attach_public_dns     = true
+    aws_region                 = "ap-southeast-2"
+    aws_account_id             = "123456789012"
+    environment                = "staging"
+    deletion_protection        = false
+    backup_retention_days      = 0
+    alert_email                = "alerts@example.com"
+    staging_zone_id            = "ZSTAGING"
+    create_public_zone         = false
+    attach_public_dns          = true
+    github_repository_id       = "100000000001"
+    github_repository_owner_id = "100000000002"
   }
 
   override_resource {
@@ -178,14 +187,16 @@ run "budgets_on" {
   command = plan
 
   variables {
-    aws_region         = "ap-southeast-2"
-    aws_account_id     = "123456789012"
-    environment        = "staging"
-    enable_budgets     = true
-    alert_email        = "alerts@example.com"
-    staging_zone_id    = "ZSTAGING"
-    create_public_zone = false
-    attach_public_dns  = true
+    aws_region                 = "ap-southeast-2"
+    aws_account_id             = "123456789012"
+    environment                = "staging"
+    enable_budgets             = true
+    alert_email                = "alerts@example.com"
+    staging_zone_id            = "ZSTAGING"
+    create_public_zone         = false
+    attach_public_dns          = true
+    github_repository_id       = "100000000001"
+    github_repository_owner_id = "100000000002"
   }
 }
 
@@ -193,16 +204,18 @@ run "staging_endpoint_on" {
   command = plan
 
   variables {
-    aws_region            = "ap-southeast-2"
-    aws_account_id        = "123456789012"
-    environment           = "staging"
-    deletion_protection   = false
-    backup_retention_days = 0
-    enable_kms_endpoint   = true
-    alert_email           = "alerts@example.com"
-    staging_zone_id       = "ZSTAGING"
-    create_public_zone    = false
-    attach_public_dns     = true
+    aws_region                 = "ap-southeast-2"
+    aws_account_id             = "123456789012"
+    environment                = "staging"
+    deletion_protection        = false
+    backup_retention_days      = 0
+    enable_kms_endpoint        = true
+    alert_email                = "alerts@example.com"
+    staging_zone_id            = "ZSTAGING"
+    create_public_zone         = false
+    attach_public_dns          = true
+    github_repository_id       = "100000000001"
+    github_repository_owner_id = "100000000002"
   }
 
   override_resource {
@@ -257,6 +270,15 @@ run "prod_tfvars" {
     condition     = module.ingress.api_hostname == "au.api.communityhub.one" && module.ingress.ecs_service_desired_count == 0
     error_message = "production root creates hostnames for communityhub.one and plans no ECS service"
   }
+
+  assert {
+    condition = (
+      length(aws_iam_openid_connect_provider.github) == 0 &&
+      length(aws_iam_role.image_publish) == 0 &&
+      length(aws_iam_role_policy.image_publish) == 0
+    )
+    error_message = "prod plans no image publish provider or role"
+  }
 }
 
 run "prod_endpoint_off_fails" {
@@ -284,13 +306,15 @@ run "wrong_region_fails" {
   command = plan
 
   variables {
-    aws_region         = "us-east-1"
-    aws_account_id     = "123456789012"
-    environment        = "staging"
-    alert_email        = "alerts@example.com"
-    staging_zone_id    = "ZSTAGING"
-    create_public_zone = false
-    attach_public_dns  = true
+    aws_region                 = "us-east-1"
+    aws_account_id             = "123456789012"
+    environment                = "staging"
+    alert_email                = "alerts@example.com"
+    staging_zone_id            = "ZSTAGING"
+    create_public_zone         = false
+    attach_public_dns          = true
+    github_repository_id       = "100000000001"
+    github_repository_owner_id = "100000000002"
   }
 
   expect_failures = [var.aws_region]
@@ -300,15 +324,17 @@ run "staging_without_zone_id_fails" {
   command = plan
 
   variables {
-    aws_region            = "ap-southeast-2"
-    aws_account_id        = "123456789012"
-    environment           = "staging"
-    deletion_protection   = false
-    backup_retention_days = 0
-    alert_email           = "alerts@example.com"
-    staging_zone_id       = null
-    create_public_zone    = false
-    attach_public_dns     = false
+    aws_region                 = "ap-southeast-2"
+    aws_account_id             = "123456789012"
+    environment                = "staging"
+    deletion_protection        = false
+    backup_retention_days      = 0
+    alert_email                = "alerts@example.com"
+    staging_zone_id            = null
+    create_public_zone         = false
+    attach_public_dns          = false
+    github_repository_id       = "100000000001"
+    github_repository_owner_id = "100000000002"
   }
 
   expect_failures = [
@@ -321,17 +347,19 @@ run "staging_image_set" {
   command = plan
 
   variables {
-    aws_region            = "ap-southeast-2"
-    aws_account_id        = "123456789012"
-    environment           = "staging"
-    deletion_protection   = false
-    backup_retention_days = 0
-    alert_email           = "alerts@example.com"
-    staging_zone_id       = "ZSTAGING"
-    create_public_zone    = false
-    attach_public_dns     = true
-    desired_count         = 0
-    service_image         = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    aws_region                 = "ap-southeast-2"
+    aws_account_id             = "123456789012"
+    environment                = "staging"
+    deletion_protection        = false
+    backup_retention_days      = 0
+    alert_email                = "alerts@example.com"
+    staging_zone_id            = "ZSTAGING"
+    create_public_zone         = false
+    attach_public_dns          = true
+    desired_count              = 0
+    service_image              = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    github_repository_id       = "100000000001"
+    github_repository_owner_id = "100000000002"
   }
 
   override_resource {
@@ -553,18 +581,20 @@ run "database_off" {
   command = plan
 
   variables {
-    aws_region            = "ap-southeast-2"
-    aws_account_id        = "123456789012"
-    environment           = "staging"
-    deletion_protection   = false
-    backup_retention_days = 0
-    alert_email           = "alerts@example.com"
-    staging_zone_id       = "ZSTAGING"
-    create_public_zone    = false
-    attach_public_dns     = true
-    enable_database       = false
-    enable_budgets        = true
-    desired_count         = 0
+    aws_region                 = "ap-southeast-2"
+    aws_account_id             = "123456789012"
+    environment                = "staging"
+    deletion_protection        = false
+    backup_retention_days      = 0
+    alert_email                = "alerts@example.com"
+    staging_zone_id            = "ZSTAGING"
+    create_public_zone         = false
+    attach_public_dns          = true
+    enable_database            = false
+    enable_budgets             = true
+    desired_count              = 0
+    github_repository_id       = "100000000001"
+    github_repository_owner_id = "100000000002"
   }
 
   assert {
@@ -667,17 +697,19 @@ run "image_without_database_fails" {
   command = plan
 
   variables {
-    aws_region            = "ap-southeast-2"
-    aws_account_id        = "123456789012"
-    environment           = "staging"
-    deletion_protection   = false
-    backup_retention_days = 0
-    alert_email           = "alerts@example.com"
-    staging_zone_id       = "ZSTAGING"
-    create_public_zone    = false
-    attach_public_dns     = true
-    enable_database       = false
-    service_image         = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    aws_region                 = "ap-southeast-2"
+    aws_account_id             = "123456789012"
+    environment                = "staging"
+    deletion_protection        = false
+    backup_retention_days      = 0
+    alert_email                = "alerts@example.com"
+    staging_zone_id            = "ZSTAGING"
+    create_public_zone         = false
+    attach_public_dns          = true
+    enable_database            = false
+    service_image              = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    github_repository_id       = "100000000001"
+    github_repository_owner_id = "100000000002"
   }
 
   override_module {
@@ -694,18 +726,20 @@ run "staging_unpark" {
   command = plan
 
   variables {
-    aws_region            = "ap-southeast-2"
-    aws_account_id        = "123456789012"
-    environment           = "staging"
-    deletion_protection   = false
-    backup_retention_days = 0
-    alert_email           = "alerts@example.com"
-    staging_zone_id       = "ZSTAGING"
-    create_public_zone    = false
-    attach_public_dns     = true
-    enable_database       = true
-    desired_count         = 1
-    service_image         = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    aws_region                 = "ap-southeast-2"
+    aws_account_id             = "123456789012"
+    environment                = "staging"
+    deletion_protection        = false
+    backup_retention_days      = 0
+    alert_email                = "alerts@example.com"
+    staging_zone_id            = "ZSTAGING"
+    create_public_zone         = false
+    attach_public_dns          = true
+    enable_database            = true
+    desired_count              = 1
+    service_image              = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    github_repository_id       = "100000000001"
+    github_repository_owner_id = "100000000002"
   }
 
   assert {
@@ -738,17 +772,19 @@ run "staging_image_null" {
   command = plan
 
   variables {
-    aws_region            = "ap-southeast-2"
-    aws_account_id        = "123456789012"
-    environment           = "staging"
-    deletion_protection   = false
-    backup_retention_days = 0
-    alert_email           = "alerts@example.com"
-    staging_zone_id       = "ZSTAGING"
-    create_public_zone    = false
-    attach_public_dns     = true
-    enable_database       = true
-    desired_count         = 1
+    aws_region                 = "ap-southeast-2"
+    aws_account_id             = "123456789012"
+    environment                = "staging"
+    deletion_protection        = false
+    backup_retention_days      = 0
+    alert_email                = "alerts@example.com"
+    staging_zone_id            = "ZSTAGING"
+    create_public_zone         = false
+    attach_public_dns          = true
+    enable_database            = true
+    desired_count              = 1
+    github_repository_id       = "100000000001"
+    github_repository_owner_id = "100000000002"
   }
 
   assert {
@@ -769,5 +805,122 @@ run "staging_image_null" {
   assert {
     condition     = length(aws_iam_role.db_ops_execution) == 0
     error_message = "an unset image plans no ops execution role"
+  }
+}
+
+run "staging_without_github_ids_fails" {
+  command = plan
+
+  variables {
+    aws_region            = "ap-southeast-2"
+    aws_account_id        = "123456789012"
+    environment           = "staging"
+    deletion_protection   = false
+    backup_retention_days = 0
+    alert_email           = "alerts@example.com"
+    staging_zone_id       = "ZSTAGING"
+    create_public_zone    = false
+    attach_public_dns     = true
+  }
+
+  expect_failures = [
+    check.github_ids,
+    terraform_data.github_ids,
+  ]
+}
+
+run "staging_image_publish" {
+  command = plan
+
+  override_resource {
+    target = module.ingress.aws_ecr_repository.service
+    values = {
+      arn = "arn:aws:ecr:ap-southeast-2:123456789012:repository/ch-staging/service"
+    }
+    override_during = plan
+  }
+
+  variables {
+    aws_region                 = "ap-southeast-2"
+    aws_account_id             = "123456789012"
+    environment                = "staging"
+    deletion_protection        = false
+    backup_retention_days      = 0
+    alert_email                = "alerts@example.com"
+    staging_zone_id            = "ZSTAGING"
+    create_public_zone         = false
+    attach_public_dns          = true
+    github_repository_id       = "100000000001"
+    github_repository_owner_id = "100000000002"
+  }
+
+  assert {
+    condition = (
+      length(aws_iam_openid_connect_provider.github) == 1 &&
+      aws_iam_openid_connect_provider.github[0].url == "https://token.actions.githubusercontent.com" &&
+      aws_iam_openid_connect_provider.github[0].client_id_list == toset(["sts.amazonaws.com"]) &&
+      aws_iam_openid_connect_provider.github[0].thumbprint_list == null
+    )
+    error_message = "the provider url, audience, and unset thumbprint must match"
+  }
+
+  assert {
+    condition     = length(aws_iam_role.image_publish) == 1 && length(aws_iam_role_policy.image_publish) == 1
+    error_message = "staging plans one publish role and one role policy"
+  }
+
+  assert {
+    condition = (
+      length(jsondecode(aws_iam_role.image_publish[0].assume_role_policy).Statement) == 1 &&
+      jsondecode(aws_iam_role.image_publish[0].assume_role_policy).Statement[0].Effect == "Allow" &&
+      jsondecode(aws_iam_role.image_publish[0].assume_role_policy).Statement[0].Action == "sts:AssumeRoleWithWebIdentity" &&
+      jsondecode(aws_iam_role.image_publish[0].assume_role_policy).Statement[0].Principal == { Federated = aws_iam_openid_connect_provider.github[0].arn } &&
+      keys(jsondecode(aws_iam_role.image_publish[0].assume_role_policy).Statement[0].Condition) == ["StringEquals"] &&
+      jsondecode(aws_iam_role.image_publish[0].assume_role_policy).Statement[0].Condition.StringEquals == {
+        "token.actions.githubusercontent.com:aud"                 = "sts.amazonaws.com"
+        "token.actions.githubusercontent.com:sub"                 = "repo:taftechnology@100000000002/community-hub-core@100000000001:ref:refs/heads/main"
+        "token.actions.githubusercontent.com:job_workflow_ref"    = "taftechnology/community-hub-core/.github/workflows/ci.yml@refs/heads/main"
+        "token.actions.githubusercontent.com:repository_id"       = "100000000001"
+        "token.actions.githubusercontent.com:repository_owner_id" = "100000000002"
+      }
+    )
+    error_message = "the trust must be one Allow statement with exactly the five StringEquals claims"
+  }
+
+  assert {
+    condition = (
+      length(jsondecode(aws_iam_role_policy.image_publish[0].policy).Statement) == 2 &&
+      alltrue([
+        for statement in jsondecode(aws_iam_role_policy.image_publish[0].policy).Statement :
+        statement.Effect == "Allow"
+      ])
+    )
+    error_message = "the role policy has exactly two Allow statements"
+  }
+
+  assert {
+    condition = (
+      length([
+        for statement in jsondecode(aws_iam_role_policy.image_publish[0].policy).Statement : statement
+        if statement.Action == "ecr:GetAuthorizationToken" && statement.Resource == "*"
+      ]) == 1 &&
+      length([
+        for statement in jsondecode(aws_iam_role_policy.image_publish[0].policy).Statement : statement
+        if(
+          try(toset(statement.Action), toset([])) == toset([
+            "ecr:BatchCheckLayerAvailability",
+            "ecr:InitiateLayerUpload",
+            "ecr:UploadLayerPart",
+            "ecr:CompleteLayerUpload",
+            "ecr:PutImage",
+            "ecr:BatchGetImage",
+            "ecr:DescribeImages",
+            "ecr:DescribeImageScanFindings",
+          ]) &&
+          statement.Resource == module.ingress.repository_arn
+        )
+      ]) == 1
+    )
+    error_message = "GetAuthorizationToken is the only star action, and the other statement is the repository set"
   }
 }
