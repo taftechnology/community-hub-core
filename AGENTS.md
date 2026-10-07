@@ -374,7 +374,7 @@ Omitted until first real input plus a must-fail fixture: tenant-isolation suite,
 
 **Stage 3 — Build and preview (every PR)**
 
-- A pull request still builds this ARM image and does not push it. A push to `main` publishes the digest. Stage 3 does not call Wrangler or require a Cloudflare token. Live Terraform `plan` stays absent. This role is not a plan role.
+- A pull request still builds this ARM image and does not push it. A push to `main` publishes the digest. Stage 3 does not call Wrangler or require a Cloudflare token. Live Terraform `plan` stays absent. The image publish role is not a plan role. Verification of a running task stays the staging hostname.
 - OpenAPI diff comments apply only once those artefacts exist in the repo. Live Terraform `plan` comments wait on CI identities (AWS OIDC).
 
 **Stage 4 — Deploy**
