@@ -1,7 +1,7 @@
 # Spec: KMS multi-Region replica
 
 Slug: kms-mrk-replica
-Status: draft
+Status: approved (2026-10-07, Abdus)
 Architecture refs: §7.3, §22, ADR 0009. Implements the `kms-mrk-replica` row. Depends on `foundations`, which set `multi_region = true` on the envelope key and is on `main`. Staging stays parked.
 
 ## Problem
