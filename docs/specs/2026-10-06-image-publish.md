@@ -16,7 +16,7 @@ The image that ran the first staging task was built on a laptop and pushed with 
 - The role can push to the existing staging service repository and read that repository's scan findings. `ecr:BatchGetImage` is included because AWS's documented push policy requires it. `ecr:GetDownloadUrlForLayer` is not included, so the role still cannot pull layers. It cannot delete an image, change ECS, read a secret, or call KMS.
 - A publish job on `main` only. When the git SHA tag is absent, it builds `linux/arm64` with provenance and SBOM attestations off, runs the existing image tests, and pushes that tag. When the tag already exists, it skips the build, the tests, and the push. Either way it passes the scan only when `imageScanStatus.status` is `COMPLETE` and `CRITICAL` is absent or 0.
 - Pull-request `build-preview` keeps building and testing. It gains the same provenance and SBOM flags so the tested image is a single manifest. It does not push and it does not receive `id-token: write`. It already runs on a push to `main` as well, because `.github/workflows/ci.yml` triggers on `pull_request` and on `push` to `main`, and this chunk does not remove that. Publish does its own build. It does not reuse the `build-preview` docker daemon.
-- The role ARN and the registry hostname are GitHub Actions secrets. Neither is committed. Tests keep account `123456789012` and synthetic GitHub ids. The real GitHub repository id and owner id are not placed until Abdus chooses committed tfvars or the gitignored file.
+- The role ARN and the registry hostname are GitHub Actions secrets. Neither is committed. Tests keep account `123456789012` and synthetic GitHub ids. `env/staging.tfvars` holds repository id `1374054927` and owner id `41717792`. They are not in the gitignored file.
 - The catalogue commit marks this row done. Next is `kms-mrk-replica`. Phase 0 stays 23 rows: 21 done, 1 superseded (`api-au-hostname`), 1 not started.
 - The same PR updates the AGENTS.md Stage 3 sentence: a pull request still does not push; a push to `main` publishes the digest. Live Terraform `plan` stays absent. This role is not a plan role.
 - The same PR updates the architecture.md §23.2 sentence that now says live `terraform plan` waits until a GitHub OIDC role exists. The revised sentence waits until a GitHub OIDC **plan** role exists. This publish role does not satisfy that wait.
@@ -25,7 +25,7 @@ The image that ran the first staging task was built on a laptop and pushed with 
 **Out**
 
 - Unparking staging. `enable_database` stays false. `desired_count` stays 0. `service_image` stays unset in git. The publish does not apply Terraform and does not update a service.
-- Production. No prod repository, no prod role, and no prod apply. Whether production shares this account is an open question below.
+- Production is a separate AWS account. It gets its own provider when a production chunk needs one. This role pushes only `ch-staging/service` and is not reused. How production obtains the digest is the promotion chunk's decision. No prod repository, no prod role, and no prod apply in this chunk.
 - `kms-mrk-replica`. `ap-southeast-4` stays disabled.
 - A live Terraform `plan` in CI, an apply role, or any permission outside the list below.
 - Deleting an image from CI, including one that later scans as `CRITICAL`. The role has no delete action. A person deletes with `ch-admin` if a bad tag must go.
@@ -73,7 +73,7 @@ The role trust is `StringEquals` on all five of these, not `StringLike`:
 
 A pull request, a tag, another branch, and any other workflow file cannot assume the role. The count is `environment == "staging"`. A prod plan has no provider and no role.
 
-Tests use synthetic ids. They do not use `41717792` or `1374054927`. Where those two real ids are stored, committed `env/staging.tfvars` or the gitignored tfvars, waits on Abdus. The plan does not choose.
+Tests use synthetic ids. They do not use `41717792` or `1374054927`. `env/staging.tfvars` holds repository id `1374054927` and owner id `41717792`. They are not in the gitignored file.
 
 ### Permissions
 
@@ -201,8 +201,7 @@ The lifecycle policy keeps the 10 newest tagged images. run1 and run2 already co
 - The second fresh-context review. This chunk adds an IAM role that can write the image the regional service runs. The review that writes this spec does not count.
 - The human applies, then creates the two secrets, then merges.
 - No account id, role ARN, registry hostname, password, or key in this spec, the plan, the tests, or the job summary. The GitHub repository id and owner id in the trust section are the values the customization API returned. They are not an AWS account id.
-- Abdus decides whether `41717792` and `1374054927` are committed in `env/staging.tfvars` or only in the gitignored tfvars. This draft does not choose.
-- Abdus decides whether production shares this AWS account. The provider is one per account. The only repository this role pushes is `ch-staging/service`. This chunk does not create a second provider or a prod repository. If production is the same account, a later chunk still does not reuse this role to push any other repository.
+- Production is a separate AWS account. It gets its own provider when a production chunk needs one. This role pushes only `ch-staging/service` and is not reused. How production obtains the digest is the promotion chunk's decision.
 
 ## Tests
 
