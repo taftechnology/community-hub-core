@@ -27,6 +27,11 @@ const mustFail = [
   ["publish-if-extra", "publish-without-main"],
   ["preview-image-tests", "preview-image-tests"],
   ["publish-image-test", "publish-image-test"],
+  ["admin-publish-without-needs", "admin-publish-without-needs"],
+  ["admin-publish-floating-uses", "admin-publish-floating-uses"],
+  ["admin-publish-concurrency", "admin-publish-concurrency"],
+  ["admin-publish-sync", "admin-publish-sync"],
+  ["admin-publish-query", "admin-publish-query"],
 ] as const;
 
 describe("workflow check fixtures", () => {
@@ -41,6 +46,11 @@ describe("workflow check fixtures", () => {
 
   it("passes the real workflow", () => {
     const text = fs.readFileSync(workflowPath, "utf8");
+    expect(text).toContain("command -v aws >/dev/null");
+    expect(text).toMatch(/aws sts assume-role-with-web-identity \\\n(?:.*\\\n)*\s+--query/);
+    const testJob = text.slice(text.indexOf("\n  test:"), text.indexOf("\n  terraform:"));
+    expect(testJob).not.toContain("ADMIN_PUBLISH_ROLE_ARN");
+    expect(testJob).not.toContain("assume-role-with-web-identity");
     const result = checkWorkflow(text);
     expect(result.violations).toEqual([]);
     expect(result.ok).toBe(true);
