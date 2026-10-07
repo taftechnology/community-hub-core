@@ -39,18 +39,18 @@ Status: approved (2026-10-06, Abdus)
 
 ## File map
 
-| File                                                  | Responsibility                                                                 |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `tooling/checks/image-publish/scan-decision.js`       | The decision the fixtures test and the publish job runs.                      |
-| `tooling/checks/image-publish/scan-decision.test.ts`  | The spec's scan fixtures, including spawned exit codes.                       |
-| `tooling/checks/image-publish/workflow-check.ts`      | Function over workflow text.                                                   |
-| `tooling/checks/image-publish/workflow.test.ts`       | Must-fail workflow fixtures, and the real `ci.yml`.                            |
-| `infra/regions/au/main.tf`, `variables.tf`            | Provider, role, and policy. Staging only.                                      |
-| `infra/regions/au/env/staging.tfvars`                 | The real GitHub ids.                                                           |
-| `infra/regions/au/tests/cell.tftest.hcl`              | Synthetic ids on staging runs. Trust and policy asserts.                      |
-| `.github/workflows/ci.yml`                            | Publish job, attestation flags, concurrency.                                   |
-| `docs/runbooks/apply-staging-au.md`                   | Apply record, and that `service_image` comes from a CI digest.                 |
-| `docs/roadmap.md`, `AGENTS.md`, `architecture.md`     | Catalogue, Stage 3, and the §23.2 plan-role sentence.                          |
+| File                                                 | Responsibility                                                 |
+| ---------------------------------------------------- | -------------------------------------------------------------- |
+| `tooling/checks/image-publish/scan-decision.js`      | The decision the fixtures test and the publish job runs.       |
+| `tooling/checks/image-publish/scan-decision.test.ts` | The spec's scan fixtures, including spawned exit codes.        |
+| `tooling/checks/image-publish/workflow-check.ts`     | Function over workflow text.                                   |
+| `tooling/checks/image-publish/workflow.test.ts`      | Must-fail workflow fixtures, and the real `ci.yml`.            |
+| `infra/regions/au/main.tf`, `variables.tf`           | Provider, role, and policy. Staging only.                      |
+| `infra/regions/au/env/staging.tfvars`                | The real GitHub ids.                                           |
+| `infra/regions/au/tests/cell.tftest.hcl`             | Synthetic ids on staging runs. Trust and policy asserts.       |
+| `.github/workflows/ci.yml`                           | Publish job, attestation flags, concurrency.                   |
+| `docs/runbooks/apply-staging-au.md`                  | Apply record, and that `service_image` comes from a CI digest. |
+| `docs/roadmap.md`, `AGENTS.md`, `architecture.md`    | Catalogue, Stage 3, and the §23.2 plan-role sentence.          |
 
 ---
 
@@ -316,14 +316,15 @@ Order inside the job:
 
 1. Do not use `pnpm/action-setup`. `corepack enable` provides pnpm, because `packageManager` is `pnpm@10.26.0`. Pin each `uses:` to the v4 commit, with the version in a comment:
 
-```yaml
-- uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-- uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-  with:
-    node-version: 24
-```
+   ```yaml
+   - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+   - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+     with:
+       node-version: 24
+   ```
 
-Do not set `cache: pnpm`. `corepack enable` runs after setup-node.
+   Do not set `cache: pnpm`. `corepack enable` runs after setup-node.
+
 2. Fail if `ECR_PUSH_ROLE_ARN` or `ECR_REGISTRY` is empty. Fail if `aws` is not on `PATH`.
 3. Derive the account id as the first label of `ECR_REGISTRY`. Mask it with `::add-mask::` before any AWS call. Request the OpenID Connect token, write it only to a file under `RUNNER_TEMP`, mask it, and delete the file before the job ends. Never print the token. Before assuming the role, print only the decoded `sub`, `ref`, and `job_workflow_ref`.
 4. Assume the role in `ap-southeast-2`. Then check the tag. The tag is `github.sha`. The repository name is `ch-staging/service`. Use `aws ecr batch-get-image` with `--query` limited to the digest, the manifest media type, and `failures[0].failureCode`. A missing tag is `ImageNotFound` in that result, not a `describe-images` error. Do not use `describe-images` to discover a missing tag.
