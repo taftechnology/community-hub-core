@@ -77,15 +77,15 @@ run "staging_happy" {
   command = plan
 
   variables {
-    aws_region            = "ap-southeast-2"
-    aws_account_id        = "123456789012"
-    environment           = "staging"
-    deletion_protection   = false
-    backup_retention_days = 0
-    alert_email           = "alerts@example.com"
-    staging_zone_id       = "ZSTAGING"
-    create_public_zone    = false
-    attach_public_dns     = true
+    aws_region                 = "ap-southeast-2"
+    aws_account_id             = "123456789012"
+    environment                = "staging"
+    deletion_protection        = false
+    backup_retention_days      = 0
+    alert_email                = "alerts@example.com"
+    staging_zone_id            = "ZSTAGING"
+    create_public_zone         = false
+    attach_public_dns          = true
     github_repository_id       = "100000000001"
     github_repository_owner_id = "100000000002"
   }
@@ -187,14 +187,14 @@ run "budgets_on" {
   command = plan
 
   variables {
-    aws_region         = "ap-southeast-2"
-    aws_account_id     = "123456789012"
-    environment        = "staging"
-    enable_budgets     = true
-    alert_email        = "alerts@example.com"
-    staging_zone_id    = "ZSTAGING"
-    create_public_zone = false
-    attach_public_dns  = true
+    aws_region                 = "ap-southeast-2"
+    aws_account_id             = "123456789012"
+    environment                = "staging"
+    enable_budgets             = true
+    alert_email                = "alerts@example.com"
+    staging_zone_id            = "ZSTAGING"
+    create_public_zone         = false
+    attach_public_dns          = true
     github_repository_id       = "100000000001"
     github_repository_owner_id = "100000000002"
   }
@@ -204,16 +204,16 @@ run "staging_endpoint_on" {
   command = plan
 
   variables {
-    aws_region            = "ap-southeast-2"
-    aws_account_id        = "123456789012"
-    environment           = "staging"
-    deletion_protection   = false
-    backup_retention_days = 0
-    enable_kms_endpoint   = true
-    alert_email           = "alerts@example.com"
-    staging_zone_id       = "ZSTAGING"
-    create_public_zone    = false
-    attach_public_dns     = true
+    aws_region                 = "ap-southeast-2"
+    aws_account_id             = "123456789012"
+    environment                = "staging"
+    deletion_protection        = false
+    backup_retention_days      = 0
+    enable_kms_endpoint        = true
+    alert_email                = "alerts@example.com"
+    staging_zone_id            = "ZSTAGING"
+    create_public_zone         = false
+    attach_public_dns          = true
     github_repository_id       = "100000000001"
     github_repository_owner_id = "100000000002"
   }
@@ -306,13 +306,13 @@ run "wrong_region_fails" {
   command = plan
 
   variables {
-    aws_region         = "us-east-1"
-    aws_account_id     = "123456789012"
-    environment        = "staging"
-    alert_email        = "alerts@example.com"
-    staging_zone_id    = "ZSTAGING"
-    create_public_zone = false
-    attach_public_dns  = true
+    aws_region                 = "us-east-1"
+    aws_account_id             = "123456789012"
+    environment                = "staging"
+    alert_email                = "alerts@example.com"
+    staging_zone_id            = "ZSTAGING"
+    create_public_zone         = false
+    attach_public_dns          = true
     github_repository_id       = "100000000001"
     github_repository_owner_id = "100000000002"
   }
@@ -324,15 +324,15 @@ run "staging_without_zone_id_fails" {
   command = plan
 
   variables {
-    aws_region            = "ap-southeast-2"
-    aws_account_id        = "123456789012"
-    environment           = "staging"
-    deletion_protection   = false
-    backup_retention_days = 0
-    alert_email           = "alerts@example.com"
-    staging_zone_id       = null
-    create_public_zone    = false
-    attach_public_dns     = false
+    aws_region                 = "ap-southeast-2"
+    aws_account_id             = "123456789012"
+    environment                = "staging"
+    deletion_protection        = false
+    backup_retention_days      = 0
+    alert_email                = "alerts@example.com"
+    staging_zone_id            = null
+    create_public_zone         = false
+    attach_public_dns          = false
     github_repository_id       = "100000000001"
     github_repository_owner_id = "100000000002"
   }
@@ -347,17 +347,17 @@ run "staging_image_set" {
   command = plan
 
   variables {
-    aws_region            = "ap-southeast-2"
-    aws_account_id        = "123456789012"
-    environment           = "staging"
-    deletion_protection   = false
-    backup_retention_days = 0
-    alert_email           = "alerts@example.com"
-    staging_zone_id       = "ZSTAGING"
-    create_public_zone    = false
-    attach_public_dns     = true
-    desired_count         = 0
-    service_image         = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    aws_region                 = "ap-southeast-2"
+    aws_account_id             = "123456789012"
+    environment                = "staging"
+    deletion_protection        = false
+    backup_retention_days      = 0
+    alert_email                = "alerts@example.com"
+    staging_zone_id            = "ZSTAGING"
+    create_public_zone         = false
+    attach_public_dns          = true
+    desired_count              = 0
+    service_image              = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     github_repository_id       = "100000000001"
     github_repository_owner_id = "100000000002"
   }
@@ -581,18 +581,18 @@ run "database_off" {
   command = plan
 
   variables {
-    aws_region            = "ap-southeast-2"
-    aws_account_id        = "123456789012"
-    environment           = "staging"
-    deletion_protection   = false
-    backup_retention_days = 0
-    alert_email           = "alerts@example.com"
-    staging_zone_id       = "ZSTAGING"
-    create_public_zone    = false
-    attach_public_dns     = true
-    enable_database       = false
-    enable_budgets        = true
-    desired_count         = 0
+    aws_region                 = "ap-southeast-2"
+    aws_account_id             = "123456789012"
+    environment                = "staging"
+    deletion_protection        = false
+    backup_retention_days      = 0
+    alert_email                = "alerts@example.com"
+    staging_zone_id            = "ZSTAGING"
+    create_public_zone         = false
+    attach_public_dns          = true
+    enable_database            = false
+    enable_budgets             = true
+    desired_count              = 0
     github_repository_id       = "100000000001"
     github_repository_owner_id = "100000000002"
   }
@@ -697,17 +697,17 @@ run "image_without_database_fails" {
   command = plan
 
   variables {
-    aws_region            = "ap-southeast-2"
-    aws_account_id        = "123456789012"
-    environment           = "staging"
-    deletion_protection   = false
-    backup_retention_days = 0
-    alert_email           = "alerts@example.com"
-    staging_zone_id       = "ZSTAGING"
-    create_public_zone    = false
-    attach_public_dns     = true
-    enable_database       = false
-    service_image         = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    aws_region                 = "ap-southeast-2"
+    aws_account_id             = "123456789012"
+    environment                = "staging"
+    deletion_protection        = false
+    backup_retention_days      = 0
+    alert_email                = "alerts@example.com"
+    staging_zone_id            = "ZSTAGING"
+    create_public_zone         = false
+    attach_public_dns          = true
+    enable_database            = false
+    service_image              = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     github_repository_id       = "100000000001"
     github_repository_owner_id = "100000000002"
   }
@@ -726,18 +726,18 @@ run "staging_unpark" {
   command = plan
 
   variables {
-    aws_region            = "ap-southeast-2"
-    aws_account_id        = "123456789012"
-    environment           = "staging"
-    deletion_protection   = false
-    backup_retention_days = 0
-    alert_email           = "alerts@example.com"
-    staging_zone_id       = "ZSTAGING"
-    create_public_zone    = false
-    attach_public_dns     = true
-    enable_database       = true
-    desired_count         = 1
-    service_image         = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    aws_region                 = "ap-southeast-2"
+    aws_account_id             = "123456789012"
+    environment                = "staging"
+    deletion_protection        = false
+    backup_retention_days      = 0
+    alert_email                = "alerts@example.com"
+    staging_zone_id            = "ZSTAGING"
+    create_public_zone         = false
+    attach_public_dns          = true
+    enable_database            = true
+    desired_count              = 1
+    service_image              = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     github_repository_id       = "100000000001"
     github_repository_owner_id = "100000000002"
   }
@@ -772,17 +772,17 @@ run "staging_image_null" {
   command = plan
 
   variables {
-    aws_region            = "ap-southeast-2"
-    aws_account_id        = "123456789012"
-    environment           = "staging"
-    deletion_protection   = false
-    backup_retention_days = 0
-    alert_email           = "alerts@example.com"
-    staging_zone_id       = "ZSTAGING"
-    create_public_zone    = false
-    attach_public_dns     = true
-    enable_database       = true
-    desired_count         = 1
+    aws_region                 = "ap-southeast-2"
+    aws_account_id             = "123456789012"
+    environment                = "staging"
+    deletion_protection        = false
+    backup_retention_days      = 0
+    alert_email                = "alerts@example.com"
+    staging_zone_id            = "ZSTAGING"
+    create_public_zone         = false
+    attach_public_dns          = true
+    enable_database            = true
+    desired_count              = 1
     github_repository_id       = "100000000001"
     github_repository_owner_id = "100000000002"
   }
@@ -841,15 +841,15 @@ run "staging_image_publish" {
   }
 
   variables {
-    aws_region            = "ap-southeast-2"
-    aws_account_id        = "123456789012"
-    environment           = "staging"
-    deletion_protection   = false
-    backup_retention_days = 0
-    alert_email           = "alerts@example.com"
-    staging_zone_id       = "ZSTAGING"
-    create_public_zone    = false
-    attach_public_dns     = true
+    aws_region                 = "ap-southeast-2"
+    aws_account_id             = "123456789012"
+    environment                = "staging"
+    deletion_protection        = false
+    backup_retention_days      = 0
+    alert_email                = "alerts@example.com"
+    staging_zone_id            = "ZSTAGING"
+    create_public_zone         = false
+    attach_public_dns          = true
     github_repository_id       = "100000000001"
     github_repository_owner_id = "100000000002"
   }
