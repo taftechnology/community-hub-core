@@ -10,7 +10,7 @@ Spec: docs/specs/2026-10-07-admin-shell.md
 
 **Tech Stack:** Terraform 1.11.4, AWS provider 6.67.0, Vite 8.3.3, React 19.3.0, `react-router` 7.18.4 as a library. `terraform test` with `override_during = plan`.
 
-Status: draft
+Status: approved (2026-10-07, Abdus)
 
 **Branch:** `feat/2026-10-07-admin-shell` · one PR · 7 agent commits
 
