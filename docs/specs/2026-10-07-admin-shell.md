@@ -1,7 +1,7 @@
 # Spec: Admin shell
 
 Slug: admin-shell
-Status: draft
+Status: approved (2026-10-07, Abdus)
 Architecture refs: §7.1, §7.2, §7.3, §8.5, §12.2, §21, ADR 0009. Implements the `admin-shell` row. Depends on `packages-ui` and `image-publish`, both on `main`. Staging stays parked.
 
 ## Problem
