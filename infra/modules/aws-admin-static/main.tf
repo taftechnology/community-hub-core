@@ -113,6 +113,10 @@ resource "aws_acm_certificate" "admin" {
   domain_name       = local.hostname
   validation_method = "DNS"
   tags              = local.tags
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_route53_record" "validation" {
