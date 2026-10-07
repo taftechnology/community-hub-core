@@ -298,7 +298,7 @@ jobs:
               timed_out_arg="--timed-out"
             fi
             set +e
-            node tooling/checks/image-publish/scan-decision.js --stdout "${stdout_file}" --stderr "${stderr_file}" --aws-exit "${aws_exit}" --media-type "${media_type}" ${timed_out_arg}
+            node tooling/checks/image-publish/scan-decision-cli.js --stdout "${stdout_file}" --stderr "${stderr_file}" --aws-exit "${aws_exit}" --media-type "${media_type}" ${timed_out_arg}
             decision=$?
             set -e
             if (( decision == 0 )); then

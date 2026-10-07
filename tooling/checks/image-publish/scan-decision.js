@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import { pathToFileURL } from "node:url";
 
 const INDEX_MEDIA_TYPES = new Set([
   "application/vnd.oci.image.index.v1+json",
@@ -113,7 +112,7 @@ function readArg(argv, name) {
   return value;
 }
 
-function main() {
+export function main() {
   const argv = globalThis.process.argv.slice(2);
   const stdoutPath = readArg(argv, "--stdout");
   const stderrPath = readArg(argv, "--stderr");
@@ -159,11 +158,4 @@ function main() {
     globalThis.process.exit(0);
   }
   globalThis.process.exit(decision.retry ? 2 : 1);
-}
-
-if (
-  globalThis.process.argv[1] != null &&
-  import.meta.url === pathToFileURL(globalThis.process.argv[1]).href
-) {
-  main();
 }

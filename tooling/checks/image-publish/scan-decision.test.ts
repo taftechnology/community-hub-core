@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import { decide, errorNameFromStderr } from "./scan-decision.js";
 
-const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "scan-decision.js");
+const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "scan-decision-cli.js");
 
 const manifest = "application/vnd.oci.image.manifest.v1+json";
 
@@ -200,6 +200,42 @@ describe("scan-decision CLI", () => {
       stderr: "warning: scan still starting",
       awsExit: "254",
     });
+    expect(result.status).toBe(1);
+  });
+
+  it("exits 1 for CRITICAL 5 through a symlinked directory", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "image-publish-link-"));
+    const linkDir = path.join(dir, "linked");
+    fs.symlinkSync(path.dirname(script), linkDir);
+    const stdoutPath = path.join(dir, "stdout");
+    const stderrPath = path.join(dir, "stderr");
+    fs.writeFileSync(stdoutPath, JSON.stringify({ status: "COMPLETE", counts: { CRITICAL: 5 } }));
+    fs.writeFileSync(stderrPath, "");
+    const result = spawnSync(
+      process.execPath,
+      [
+        path.join(linkDir, path.basename(script)),
+        "--stdout",
+        stdoutPath,
+        "--stderr",
+        stderrPath,
+        "--aws-exit",
+        "0",
+        "--media-type",
+        manifest,
+      ],
+      { encoding: "utf8" },
+    );
+    fs.rmSync(dir, { recursive: true, force: true });
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(1);
+  });
+
+  it("exits 1 with no arguments", () => {
+    const result = spawnSync(process.execPath, [script], { encoding: "utf8" });
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
     expect(result.status).toBe(1);
   });
 });

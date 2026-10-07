@@ -6,7 +6,7 @@ export type WorkflowCheck = {
 const WORKFLOW_CANCEL = "cancel-in-progress: ${{ github.event_name == 'pull_request' }}";
 const PUBLISH_IF = "if: github.event_name == 'push' && github.ref == 'refs/heads/main'";
 const PUBLISH_NEEDS = "needs: [static, test]";
-const SCAN_COMMAND = "node tooling/checks/image-publish/scan-decision.js";
+const SCAN_COMMAND = "node tooling/checks/image-publish/scan-decision-cli.js";
 
 function header(text: string): string {
   const index = text.search(/^jobs:\n/m);

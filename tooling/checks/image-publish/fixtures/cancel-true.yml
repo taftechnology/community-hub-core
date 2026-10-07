@@ -43,5 +43,5 @@ jobs:
           node-version: 24
       - name: Publish the image
         run: |
-          node tooling/checks/image-publish/scan-decision.js --stdout out --stderr err --aws-exit 0 --media-type manifest
+          node tooling/checks/image-publish/scan-decision-cli.js --stdout out --stderr err --aws-exit 0 --media-type manifest
           aws ecr describe-image-scan-findings --query '{status:imageScanStatus.status,counts:imageScanFindings.findingSeverityCounts}'
