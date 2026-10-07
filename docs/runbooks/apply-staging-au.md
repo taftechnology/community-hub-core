@@ -116,6 +116,47 @@ Apply complete: 1 added, 0 changed, 8 destroyed. The follow-up plan showed no ch
 
 An operator runs the database ops task. A person does not open a master session. The database is on and `service_image` is set, because otherwise the task definition does not exist. The task uses the task security group, the staging public subnet, and a public address. The command is `["node", "/app/db-bootstrap.js"]`. Stdout is only the integer from `SHOW max_connections`. This procedure does not record a password, a connection string, or a secret ARN. There is no rotation function. The same task is how a later password change is applied.
 
+## First running task
+
+Both applies used `feat/2026-10-06-first-running-task` at `ba881554b5ca7d72d3faabbf9994f464df490f38`, profile ch-admin. `service_image` stayed in the gitignored file. The ops task ran `db-bootstrap.js`. A person did not open a master session.
+
+### Image
+
+run1, built from main `d4b22132d69ae02413d257b3bf3df1b6fa162a6f`, failed the scan gate and was never deployed. Findings: 5 CRITICAL, all Debian perl 5.36.0-7+deb12u3 from the pinned node:24-slim base, plus 15 HIGH, 6 MEDIUM, 3 LOW. PR #30 pinned `node:24-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20` and added a runtime `apt-get upgrade` (perl 5.36.0-7+deb12u4). Merged as main `3c77dd5e328779216b1bb1e3c4c2ea6724ce9bc4`.
+
+run2, built from that main SHA, linux/arm64, `--provenance=false --sbom=false` (a single image manifest). `RUN_IMAGE_TESTS=1`: 2 passed. Digest `sha256:0d06f8418729f57423375e7650c77b7929e8aec59bbd89e1b179c1ee4757bd8c`. Scan COMPLETE: 0 CRITICAL, 8 HIGH, 2 MEDIUM, 3 LOW.
+
+### Database apply
+
+No image. 8 added, 0 changed, 0 destroyed (`module.rds[0]` only). Database available, PostgreSQL 17.9, storage encrypted true, publicly accessible false.
+
+### Image apply
+
+Same SHA, digest above, gitignored file only. 10 added, 0 changed, 0 destroyed: cluster, capacity providers, service task definition, service, ECR pull policy, task API ingress rule, ops task definition, ops execution role, ops task role, ops execution policy. Service stable, desired 1, running 1.
+
+### Ops task
+
+VPC link `ch-staging-link` was AVAILABLE. Family `ch-staging-db-ops`, command `["node", "/app/db-bootstrap.js"]`, task security group, staging public subnet, public address, command override only. Exit 0. The essential container exited. Stdout was exactly `79`.
+
+### Proofs
+
+1. `GET https://au.api.communityhub-staging.net/health` returned 200. Cloud Map has one HEALTHY instance.
+2. Live rules, exact. `ch-staging-task`: egress 443 to 0.0.0.0/0, egress 5432 to `ch-staging-rds`, ingress 8080 from `ch-staging-vpc-link` (the only new rule). `ch-staging-rds`: ingress 5432 from `ch-staging-task` only. `ch-staging-vpc-link`: egress 8080 to `ch-staging-task` only. No other rule.
+3. `/tmp` write one-off, exit 0. The service stayed 1/1. ECS Exec stayed off.
+4. Probe one-off, stdout `pass`, exit 0. Database and KMS round trip, endpoint off.
+5. `SHOW max_connections` is 79, the ops stdout above.
+6. Forced rolling deploy of the same task definition. 113 requests to `/health` from before `update-service` until `services-stable`: 113 times 200, 0 times 5xx.
+7. 60 requests over 60 seconds: 60 times 200, 0 times 5xx. `keepAliveTimeout` 65000 and `requestTimeout` 30000 were left unchanged.
+8. A one-off with the task security group and the VPC link security group fetched the service task on port 8080 without `x-community-hub-hostname`. It printed 404 and exited 0. Service log: `{"method":"GET","path":"/health","status":404,"reason":"missing_hostname_header"}`. Alarm `ch-staging-missing-hostname-header` went from OK to ALARM.
+
+### Operator notes
+
+- `staging.local.tfvars` is gitignored and is removed with the apply worktree. It was rebuilt from AWS (account from sts, zone from Route 53, alert email from the confirmed SNS subscription), never typed or printed.
+- Build the image with `--provenance=false --sbom=false` so the tag is a single scannable manifest. An attestation index is not scanned by ECR.
+- `describe-images` may show no scan status right after push while the scan-on-push result exists. Read `describe-image-scan-findings`.
+- In zsh write `${VAR}:text`, not `$VAR:text`. zsh treats `:t` and `:r` as modifiers.
+- One transient DNS failure and one expired SSO session interrupted plans. Both were retried with no change.
+
 ## Restore drill
 
 Quarterly, and only against staging. Restore the staging database to a new instance from point-in-time recovery. Record the time taken against the 4-hour target. Then delete the restored instance, because it bills by the hour. This drill does not restore production. Reading `SHOW max_connections` belongs to `first-running-task`, not to this drill.
