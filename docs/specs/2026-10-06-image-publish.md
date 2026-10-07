@@ -14,7 +14,7 @@ The image that ran the first staging task was built on a laptop and pushed with 
 
 - An OpenID Connect provider for `https://token.actions.githubusercontent.com` and one IAM role, in the AU cell, created only when `environment` is `staging`.
 - The role can push to the existing staging service repository and read that repository's scan findings. `ecr:BatchGetImage` is included because AWS's documented push policy requires it. `ecr:GetDownloadUrlForLayer` is not included, so the role still cannot pull layers. It cannot delete an image, change ECS, read a secret, or call KMS.
-- A publish job on `main` only. It builds `linux/arm64` with provenance and SBOM attestations off, runs the existing image tests, pushes by the git SHA tag, and passes the scan only when `imageScanStatus.status` is `COMPLETE` and `CRITICAL` is absent or 0.
+- A publish job on `main` only. When the git SHA tag is absent, it builds `linux/arm64` with provenance and SBOM attestations off, runs the existing image tests, and pushes that tag. When the tag already exists, it skips the build, the tests, and the push. Either way it passes the scan only when `imageScanStatus.status` is `COMPLETE` and `CRITICAL` is absent or 0.
 - Pull-request `build-preview` keeps building and testing. It gains the same provenance and SBOM flags so the tested image is a single manifest. It does not push and it does not receive `id-token: write`. It already runs on a push to `main` as well, because `.github/workflows/ci.yml` triggers on `pull_request` and on `push` to `main`, and this chunk does not remove that. Publish does its own build. It does not reuse the `build-preview` docker daemon.
 - The role ARN and the registry hostname are GitHub Actions secrets. Neither is committed. Tests keep account `123456789012` and synthetic GitHub ids. The real GitHub repository id and owner id are not placed until Abdus chooses committed tfvars or the gitignored file.
 - The catalogue commit marks this row done. Next is `kms-mrk-replica`. Phase 0 stays 23 rows: 21 done, 1 superseded (`api-au-hostname`), 1 not started.
@@ -98,15 +98,26 @@ No other action. No `ecr:GetDownloadUrlForLayer`, no `ecr:BatchDeleteImage`, no 
 
 The job runs on `ubuntu-24.04-arm` only when `github.event_name == 'push'` and `github.ref == 'refs/heads/main'`. Its permissions are `contents: read` and `id-token: write`. It does not have `pull-requests: write`. The string `id-token: write` appears exactly once in the workflow file, on this job, and not under the workflow-level `permissions`.
 
-The job has its own concurrency group `image-publish` with `cancel-in-progress: false`. A newer push waits. It does not cancel a publish in progress. The other jobs keep a cancelling group. The workflow-level `cancel-in-progress: true` on `ci-${{ github.workflow }}-${{ github.ref }}` is removed from covering this job, because that setting would cancel the publish anyway. The trust pin stays `.github/workflows/ci.yml`.
+A job-level concurrency group cannot exempt a job from the workflow-level one. With `cancel-in-progress: true` at workflow level, a second push to `main` cancels the whole earlier run, publish included. The required behaviour is:
+
+- A push to `main` never cancels a run already in progress on `main`.
+- Pull-request runs still cancel their own older runs.
+- Publish jobs run one at a time in the group `image-publish`.
+- A publish that is waiting can be replaced by a newer one, so not every commit on `main` has an image.
+
+The plan chooses the mechanism. The trust pin stays `.github/workflows/ci.yml`. The workflow test fails if the workflow-level setting cancels a push to `main`.
 
 If either secret is empty, the job fails before an AWS call. If `aws` is not on `PATH`, the job fails before an AWS call.
 
 Before the first AWS call, the job derives the account id as the first label of `ECR_REGISTRY` and masks that bare id. It masks the OpenID Connect token. The token is written only to a file under `RUNNER_TEMP` and that file is removed before the job ends. The job never prints the token. Before it assumes the role, it prints only the decoded `sub`, `ref`, and `job_workflow_ref` claims.
 
-Every AWS CLI call uses `--query`. `describe-images` and `describe-image-scan-findings` both return `registryId`, and an `AccessDenied` message prints the assumed-role ARN. The queries return only the fields named below, so those values are not printed. The masked account id covers the account portion of an error that still slips through.
+Every AWS CLI call uses `--query`. `describe-images` and `describe-image-scan-findings` both return `registryId`, and an `AccessDenied` message prints the assumed-role ARN. The queries return only the fields named below, so those values are not printed. The masked account id covers the account portion of an error that still slips through. A missing tag makes `describe-images` return an error that names the registry id, and that mask covers it. The plan picks a tag-existence check that does not depend on that error.
 
-The build matches the pull-request build:
+The role is assumed first. The tag check is next, before any build. The tag is the full `github.sha`. The repository name in the workflow is `ch-staging/service`. The hostname comes from `ECR_REGISTRY`. The repository is already `IMMUTABLE` with scan-on-push. The push is not forced.
+
+If the tag exists, the job skips the build, the image tests, and the push. It reads the digest for that tag and runs the gate. The job summary says the tag was reused. A re-run must not test a new build and then gate an older digest. The Dockerfile runs `apt-get upgrade`, so a later build of the same commit is not the same image.
+
+If the tag does not exist, the job builds, tests, and pushes, then reads the digest and runs the gate:
 
 ```bash
 docker build --platform linux/arm64 --provenance=false --sbom=false -f apps/api/Dockerfile -t community-hub-api:local .
@@ -114,20 +125,16 @@ docker build --platform linux/arm64 --provenance=false --sbom=false -f apps/api/
 
 `RUN_IMAGE_TESTS=1` runs `src/image.test.ts` against that local image. A failed test does not push.
 
-The tag is the full `github.sha`. The repository name in the workflow is `ch-staging/service`. The hostname comes from `ECR_REGISTRY`.
+The digest in the job summary is read back from ECR for that tag, with `--query` limited to the digest. The gate reads `describe-image-scan-findings` for that digest. It does not read findings from `describe-images`.
 
-If that tag does not exist, the job pushes it. The push is not forced. The repository is already `IMMUTABLE` with scan-on-push. If the tag already exists, the job does not push again. It reads the digest for that tag and runs the gate. A re-run of a commit whose tag exists therefore reaches the gate instead of failing on the immutable tag.
-
-The digest in the job summary is read back from ECR for the pushed tag, with `--query` limited to the digest. The gate reads `describe-image-scan-findings` for that digest. It does not read findings from `describe-images`.
-
-The scan decision is a pure function. ECR omits a severity whose count is zero. run2 was `COMPLETE` with `HIGH` 8, `MEDIUM` 2, `LOW` 3, and no `CRITICAL` key, and that shape passes.
+The scan decision is a pure function, and the job executes that same function. The fixtures test it, not a copy. ECR omits a severity whose count is zero. run2 was `COMPLETE` with `HIGH` 8, `MEDIUM` 2, `LOW` 3, and no `CRITICAL` key, and that shape passes.
 
 Pass only when `imageScanStatus.status` is `COMPLETE` and `CRITICAL` is absent or 0. `HIGH` does not fail the job. The first running task shipped with 8 HIGH. This chunk does not raise that bar and does not waive a critical finding.
 
 Fail when:
 
 - `CRITICAL` is greater than 0
-- the status is `FAILED`
+- the status is `FAILED`, `UNSUPPORTED_IMAGE`, `SCAN_ELIGIBILITY_EXPIRED`, or `FINDINGS_UNAVAILABLE` (these four fail at once, without waiting out the timeout)
 - the status is anything other than `COMPLETE` once the timeout has been reached, including still in progress
 - the API returns an error other than `ScanNotFoundException`
 - the manifest media type is an index (`application/vnd.oci.image.index.v1+json` or `application/vnd.docker.distribution.manifest.list.v2+json`)
@@ -136,7 +143,7 @@ Fail when:
 
 A failed scan does not deploy anything. Staging is parked either way. The tag remains. The role cannot delete it.
 
-The job summary records the digest and the severity counts. It does not record the registry hostname, the role ARN, or the account id.
+The job summary records the digest and the severity counts. When the tag was reused, it says so. It does not record the registry hostname, the role ARN, or the account id.
 
 ### Pull requests
 
@@ -205,13 +212,13 @@ Terraform tests are mocked plans. No test uses a real account id or the real Git
 - The trust policy contains `StringEquals` for `aud`, the immutable `sub` shape, `job_workflow_ref`, `repository_id`, and `repository_owner_id`. It does not contain `StringLike`. The test `sub` uses the synthetic ids.
 - The role policy's actions are exactly the list in Permissions, including `ecr:BatchGetImage` and excluding `ecr:GetDownloadUrlForLayer`. `GetAuthorizationToken` is the only action on `*`. Every other action is on the staging service repository ARN built from account `123456789012`.
 - `env/staging.tfvars` still does not contain `service_image` or `enable_kms_endpoint`, and still has `enable_database = false` and `desired_count = 0`.
-- The workflow file has a publish job conditioned on a push to `refs/heads/main`. `id-token: write` appears exactly once, on that job, and not at workflow level. `build-preview` has no `id-token` and no `docker push`. The workflow file contains no 12-digit account id. Both builds pass `--provenance=false --sbom=false`. The publish job's concurrency group is `image-publish` with `cancel-in-progress: false`.
+- The workflow file has a publish job conditioned on a push to `refs/heads/main`. `id-token: write` appears exactly once, on that job, and not at workflow level. `build-preview` has no `id-token` and no `docker push`. The workflow file contains no 12-digit account id. Both builds pass `--provenance=false --sbom=false`. The workflow-level concurrency setting does not cancel a push to `main`. Pull-request runs still cancel their own older runs. The publish job uses the group `image-publish`.
 
 The scan decision is a pure function with fixtures. These must fail or pass as written:
 
 - run2's shape passes: status `COMPLETE`, counts `HIGH` 8, `MEDIUM` 2, `LOW` 3, and no `CRITICAL` key.
 - `COMPLETE` with `CRITICAL` greater than 0 fails.
-- Status `FAILED` fails.
+- Status `FAILED`, `UNSUPPORTED_IMAGE`, `SCAN_ELIGIBILITY_EXPIRED`, or `FINDINGS_UNAVAILABLE` fails at once.
 - Still in progress when the 10-minute timeout is reached fails.
 - `ScanNotFoundException` at the timeout fails.
 - An index manifest media type fails.
