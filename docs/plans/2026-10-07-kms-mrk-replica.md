@@ -10,7 +10,7 @@ Spec: docs/specs/2026-10-07-kms-mrk-replica.md
 
 **Tech Stack:** Terraform 1.11.4, AWS provider 6.67.0, `terraform test` with the existing `override_during = plan` mock. No new dependency.
 
-Status: draft
+Status: approved (2026-10-07, Abdus)
 
 **Branch:** `feat/2026-10-07-kms-mrk-replica` · one PR · 4 agent commits
 
