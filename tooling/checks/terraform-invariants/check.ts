@@ -162,6 +162,7 @@ function findProviders(hcl: string): HclResource[] {
 const REGION_ARGUMENT = /^[ \t]*region[ \t]*=[ \t]*(.+?)[ \t]*$/gm;
 const AWS_REGION_REFERENCE = "var.aws_region";
 const MELBOURNE_REGION = '"ap-southeast-4"';
+const VIEWER_CERTIFICATE_REGION = '"us-east-1"';
 
 function regionArguments(body: string): string[] {
   const values: string[] = [];
@@ -179,6 +180,14 @@ function isMelbourneReplica(filePath: string, root: string, resource: HclResourc
     isUnder(filePath, root, ENVELOPE_MODULE) &&
     ((resource.type === "aws_kms_replica_key" && resource.name === "envelope") ||
       (resource.type === "aws_kms_alias" && resource.name === "envelope_replica"))
+  );
+}
+
+function isViewerCertificate(filePath: string, root: string, resource: HclResource): boolean {
+  return (
+    isUnder(filePath, root, ADMIN_STATIC_MODULE) &&
+    ((resource.type === "aws_acm_certificate" && resource.name === "admin") ||
+      (resource.type === "aws_acm_certificate_validation" && resource.name === "admin"))
   );
 }
 
@@ -202,6 +211,9 @@ function validateRegionArguments(
         continue;
       }
       if (region === MELBOURNE_REGION && isMelbourneReplica(filePath, root, resource)) {
+        continue;
+      }
+      if (region === VIEWER_CERTIFICATE_REGION && isViewerCertificate(filePath, root, resource)) {
         continue;
       }
       reject();
@@ -316,6 +328,7 @@ function validateBootstrapFile(
 }
 
 const ENVELOPE_MODULE = path.join(INFRA_DIR, "modules", "aws-kms-envelope");
+const ADMIN_STATIC_MODULE = path.join(INFRA_DIR, "modules", "aws-admin-static");
 const NETWORK_MODULE = path.join(INFRA_DIR, "modules", "aws-network");
 
 const ALLOWED_NETWORK_RULES = new Set(["task_https", "task_rds", "rds_postgres"]);

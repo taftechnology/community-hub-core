@@ -24,11 +24,14 @@ const mustFail = [
   "region-provider",
   "region-us-east-1",
   "region-other-variable",
+  "admin-bucket-us-east-1",
+  "admin-cloudfront-us-east-1",
+  "region-provider-us-east-1",
   "missing-replica-prevent-destroy",
   "tf-json-file",
 ] as const;
 
-const mustPass = ["valid", "melbourne-replica"] as const;
+const mustPass = ["valid", "melbourne-replica", "viewer-certificate"] as const;
 
 const regionFixtures = [
   "region-database",
@@ -37,6 +40,9 @@ const regionFixtures = [
   "region-provider",
   "region-us-east-1",
   "region-other-variable",
+  "admin-bucket-us-east-1",
+  "admin-cloudfront-us-east-1",
+  "region-provider-us-east-1",
 ] as const;
 
 describe("terraform-invariants check fixtures", () => {
