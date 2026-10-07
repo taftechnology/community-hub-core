@@ -10,7 +10,7 @@ Spec: docs/specs/2026-10-06-image-publish.md
 
 **Tech Stack:** Terraform 1.11.4, `terraform test`, Node on the existing runner, the AWS CLI already installed on `ubuntu-24.04-arm`. No new dependency. No new GitHub Action.
 
-Status: draft
+Status: approved (2026-10-06, Abdus)
 
 **Branch:** `feat/2026-10-06-image-publish` · one PR · 5 agent commits
 
