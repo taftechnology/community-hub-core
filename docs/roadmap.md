@@ -21,9 +21,9 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 |              |                                                                   |
 | ------------ | ----------------------------------------------------------------- |
 | Phase        | 0 — Foundations                                                   |
-| Last shipped | `db-ops-task`                                                     |
-| Next chunk   | `first-running-task`                                              |
-| Phase 0      | 23 rows: 19 done, 1 superseded (`api-au-hostname`), 3 not started |
+| Last shipped | `first-running-task`                                              |
+| Next chunk   | `image-publish`                                                   |
+| Phase 0      | 23 rows: 20 done, 1 superseded (`api-au-hostname`), 2 not started |
 | Later phases | not started                                                       |
 
 Update the snapshot and the row in the **same PR**, last commit on the chunk branch, before the PR opens. Do not defer to a follow-up chore after merge. Do not put implementer reports here ([AGENTS.md](../AGENTS.md) §5).
@@ -79,7 +79,7 @@ Architecture: monorepo, CI, Terraform for AWS in `ap-southeast-2`, kernel, db wi
 | done        | regional service         | `apps/api` in place. ARM, one process, the `KmsPort` reshape, the ported server tests, and TLS `verify-full`. The connection factories and required TLS landed in `db-tls`. This row converts `apps/api`, the `KmsPort` reshape, the probe, and the image. Spec `docs/specs/2026-10-05-regional-service.md`.                                                                                                                                                                       |
 | done        | `staging-base`           | Staging applied with no task, proofs recorded, then parked. Spec `docs/specs/2026-10-05-staging-base.md`.                                                                                                                                                                                                                                                                                                                                                                          |
 | done        | `db-ops-task`            | Image command is `CMD`. Bootstrap uses a SCRAM verifier. The ops task is not applied. Spec `docs/specs/2026-10-06-db-ops-task.md`.                                                                                                                                                                                                                                                                                                                                                 |
-| not started | `first-running-task`     | Image pushed by a person from a merged main commit, service_image set, desired_count 1, health, database and KMS round trips, VPC link to a public-subnet task, /tmp write, probe task, SHOW max_connections, rolling-deploy and steady-traffic 5xx counts, one run with the KMS endpoint on, and the hostname alarm firing.                                                                                                                                                       |
+| done        | `first-running-task`     | The task ran, the proofs were recorded, and staging was parked again. Spec `docs/specs/2026-10-06-first-running-task.md`.                                                                                                                                                                                                                                                                                                                                                          |
 | not started | `image-publish`          | CI builds, tests, and pushes by digest through a GitHub OIDC role scoped to this one repository. AGENTS.md section 10 requires production to promote that exact CI build. After `first-running-task` and before any production apply.                                                                                                                                                                                                                                              |
 | not started | `kms-mrk-replica`        | A replica of the envelope key in `ap-southeast-4`, not a database backup. After the first staging apply. The Region is opt-in and disabled until a person enables it.                                                                                                                                                                                                                                                                                                              |
 
@@ -241,7 +241,7 @@ Whether startup should prove the database or KMS is decided by the first chunk t
 
 ## Next spec
 
-The next approved chunk on this list is **first-running-task**, unless the human picks another remaining Phase 0 row.
+The next approved chunk on this list is **image-publish**, unless the human picks another remaining Phase 0 row.
 
 ---
 

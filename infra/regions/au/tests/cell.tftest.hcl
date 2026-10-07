@@ -564,11 +564,17 @@ run "database_off" {
     attach_public_dns     = true
     enable_database       = false
     enable_budgets        = true
+    desired_count         = 0
   }
 
   assert {
     condition     = length(module.rds) == 0
     error_message = "parking removes the RDS module"
+  }
+
+  assert {
+    condition     = module.ingress.ecs_service_desired_count == 0
+    error_message = "re-park values plan no ECS service"
   }
 
   assert {
@@ -625,6 +631,14 @@ run "database_off" {
     condition     = module.budgets.budget_name == "ch-staging-cost"
     error_message = "the park plan creates the staging budget"
   }
+
+  assert {
+    condition = (
+      !strcontains(file("${path.module}/env/staging.tfvars"), "service_image") &&
+      !strcontains(file("${path.module}/env/staging.tfvars"), "enable_kms_endpoint")
+    )
+    error_message = "committed staging tfvars must not set service_image or enable_kms_endpoint"
+  }
 }
 
 run "prod_database_off_fails" {
@@ -674,4 +688,86 @@ run "image_without_database_fails" {
     check.image_needs_database,
     terraform_data.image_needs_database,
   ]
+}
+
+run "staging_unpark" {
+  command = plan
+
+  variables {
+    aws_region            = "ap-southeast-2"
+    aws_account_id        = "123456789012"
+    environment           = "staging"
+    deletion_protection   = false
+    backup_retention_days = 0
+    alert_email           = "alerts@example.com"
+    staging_zone_id       = "ZSTAGING"
+    create_public_zone    = false
+    attach_public_dns     = true
+    enable_database       = true
+    desired_count         = 1
+    service_image         = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+
+  assert {
+    condition     = length(module.rds) == 1
+    error_message = "unpark plans the database"
+  }
+
+  assert {
+    condition     = module.ingress.ecs_service_desired_count == 1
+    error_message = "unpark plans the service at count 1"
+  }
+
+  assert {
+    condition     = length(module.ingress.task_subnet_ids) == 1
+    error_message = "unpark plans the staging public subnet"
+  }
+
+  assert {
+    condition     = length(aws_ecs_task_definition.db_ops) == 1
+    error_message = "unpark plans the ops task"
+  }
+
+  assert {
+    condition     = module.envelope.endpoint_id == null
+    error_message = "unpark leaves the KMS endpoint off"
+  }
+}
+
+run "staging_image_null" {
+  command = plan
+
+  variables {
+    aws_region            = "ap-southeast-2"
+    aws_account_id        = "123456789012"
+    environment           = "staging"
+    deletion_protection   = false
+    backup_retention_days = 0
+    alert_email           = "alerts@example.com"
+    staging_zone_id       = "ZSTAGING"
+    create_public_zone    = false
+    attach_public_dns     = true
+    enable_database       = true
+    desired_count         = 1
+  }
+
+  assert {
+    condition     = length(module.rds) == 1
+    error_message = "an unset image still plans the database"
+  }
+
+  assert {
+    condition     = module.ingress.ecs_service_desired_count == 0
+    error_message = "an unset image plans no ECS service"
+  }
+
+  assert {
+    condition     = length(aws_ecs_task_definition.db_ops) == 0
+    error_message = "an unset image plans no ops task"
+  }
+
+  assert {
+    condition     = length(aws_iam_role.db_ops_execution) == 0
+    error_message = "an unset image plans no ops execution role"
+  }
 }
