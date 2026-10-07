@@ -1,4 +1,4 @@
 resource "aws_kms_key" "envelope" {
-  region              = "ap-southeast-2"
+  region              = var.aws_region
   enable_key_rotation = true
 }

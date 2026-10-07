@@ -1,5 +1,5 @@
 resource "aws_security_group" "endpoint" {
-  region = "ap-southeast-2"
+  region = var.aws_region
   vpc_id = "vpc-example"
   egress = []
 

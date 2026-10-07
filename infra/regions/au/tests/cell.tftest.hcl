@@ -129,15 +129,16 @@ run "staging_happy" {
 
   assert {
     condition = (
-      length(jsondecode(output.envelope_key_policy).Statement) == 5 &&
+      length(jsondecode(output.envelope_key_policy).Statement) == 6 &&
+      jsondecode(output.envelope_key_policy).Statement[5].Sid == "ReplicateToMelbourne" &&
       length([
         for statement in jsondecode(output.envelope_key_policy).Statement : statement
-        if statement.Sid != "Admin"
+        if contains(["GenerateDataKeyOrg", "GenerateDataKeyIdentity", "DecryptOrg", "DecryptIdentity"], statement.Sid)
       ]) == 4 &&
       alltrue([
         for statement in jsondecode(output.envelope_key_policy).Statement :
         statement.Principal.AWS == "arn:aws:iam::123456789012:role/ch-staging-task"
-        if statement.Sid != "Admin"
+        if contains(["GenerateDataKeyOrg", "GenerateDataKeyIdentity", "DecryptOrg", "DecryptIdentity"], statement.Sid)
       ]) &&
       !strcontains(output.envelope_key_policy, "aws:SourceVpce")
     )
@@ -235,7 +236,7 @@ run "staging_endpoint_on" {
     condition = alltrue([
       for statement in jsondecode(output.envelope_key_policy).Statement :
       statement.Condition.StringEquals["aws:SourceVpce"] == "vpce-mock"
-      if statement.Sid != "Admin"
+      if contains(["GenerateDataKeyOrg", "GenerateDataKeyIdentity", "DecryptOrg", "DecryptIdentity"], statement.Sid)
     ])
     error_message = "cryptographic statements must bind aws:SourceVpce to the VPC endpoint"
   }

@@ -1,5 +1,5 @@
 resource "aws_security_group" "worker" {
-  region = "ap-southeast-2"
+  region = var.aws_region
   vpc_id = "vpc-example"
 
   dynamic "ingress" {

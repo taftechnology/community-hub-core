@@ -128,13 +128,16 @@ type HclResource = {
   body: string;
 };
 
-function findResources(hcl: string): HclResource[] {
-  const resources: HclResource[] = [];
-  const pattern = /resource\s+"([^"]+)"\s+"([^"]+)"\s*\{/g;
+function findBlocks(hcl: string, keyword: "resource" | "provider"): HclResource[] {
+  const blocks: HclResource[] = [];
+  const pattern =
+    keyword === "resource"
+      ? /resource\s+"([^"]+)"\s+"([^"]+)"\s*\{/g
+      : /provider\s+"([^"]+)"\s*\{/g;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(hcl)) !== null) {
-    const type = match[1];
-    const name = match[2];
+    const type = keyword === "resource" ? match[1] : "provider";
+    const name = keyword === "resource" ? match[2] : match[1];
     if (type === undefined || name === undefined) {
       continue;
     }
@@ -143,9 +146,78 @@ function findResources(hcl: string): HclResource[] {
     if (body === null) {
       continue;
     }
-    resources.push({ type, name, body });
+    blocks.push({ type, name, body });
   }
-  return resources;
+  return blocks;
+}
+
+function findResources(hcl: string): HclResource[] {
+  return findBlocks(hcl, "resource");
+}
+
+function findProviders(hcl: string): HclResource[] {
+  return findBlocks(hcl, "provider");
+}
+
+const REGION_ARGUMENT = /^[ \t]*region[ \t]*=[ \t]*(.+?)[ \t]*$/gm;
+const AWS_REGION_REFERENCE = "var.aws_region";
+const MELBOURNE_REGION = '"ap-southeast-4"';
+
+function regionArguments(body: string): string[] {
+  const values: string[] = [];
+  for (const match of body.matchAll(REGION_ARGUMENT)) {
+    const raw = match[1];
+    if (raw !== undefined) {
+      values.push(raw.trim());
+    }
+  }
+  return values;
+}
+
+function isMelbourneReplica(filePath: string, root: string, resource: HclResource): boolean {
+  return (
+    isUnder(filePath, root, ENVELOPE_MODULE) &&
+    ((resource.type === "aws_kms_replica_key" && resource.name === "envelope") ||
+      (resource.type === "aws_kms_alias" && resource.name === "envelope_replica"))
+  );
+}
+
+function validateRegionArguments(
+  filePath: string,
+  root: string,
+  hcl: string,
+): TerraformInvariantViolation[] {
+  const relFile = path.relative(root, filePath);
+  const violations: TerraformInvariantViolation[] = [];
+  const reject = () => {
+    violations.push({
+      file: relFile,
+      message: "region argument must be var.aws_region",
+    });
+  };
+
+  for (const resource of findResources(hcl)) {
+    for (const region of regionArguments(resource.body)) {
+      if (region === AWS_REGION_REFERENCE) {
+        continue;
+      }
+      if (region === MELBOURNE_REGION && isMelbourneReplica(filePath, root, resource)) {
+        continue;
+      }
+      reject();
+    }
+  }
+
+  for (const provider of findProviders(hcl)) {
+    for (const region of regionArguments(provider.body)) {
+      if (region === AWS_REGION_REFERENCE) {
+        continue;
+      }
+      reject();
+    }
+  }
+
+  return violations;
 }
 
 function isBackendFile(filePath: string): boolean {
@@ -357,6 +429,14 @@ function validateEnvelopeKeyFile(
         });
       }
     }
+    if (resource.type === "aws_kms_replica_key" && resource.name === "envelope") {
+      if (!/prevent_destroy\s*=\s*true\b/.test(resource.body)) {
+        violations.push({
+          file: relFile,
+          message: "envelope replica key must set lifecycle.prevent_destroy = true",
+        });
+      }
+    }
   }
 
   return violations;
@@ -373,8 +453,10 @@ export function check(root: string = process.cwd()): CheckResult {
   const infraRoot = path.join(resolvedRoot, INFRA_DIR);
   const allHcl: string[] = [];
   const allTf: string[] = [];
+  const allTfJson: string[] = [];
   collectFiles(infraRoot, (name) => name.endsWith(".hcl"), allHcl);
   collectFiles(infraRoot, (name) => name.endsWith(".tf"), allTf);
+  collectFiles(infraRoot, (name) => name.endsWith(".tf.json"), allTfJson);
 
   const backendFiles = allHcl.filter((filePath) => isBackendFile(filePath));
   const violations: TerraformInvariantViolation[] = [];
@@ -384,11 +466,19 @@ export function check(root: string = process.cwd()): CheckResult {
     violations.push(...validateBackendFile(filePath, resolvedRoot, hcl));
   }
 
+  for (const filePath of allTfJson) {
+    violations.push({
+      file: path.relative(resolvedRoot, filePath),
+      message: "JSON-syntax Terraform files are not allowed under infra",
+    });
+  }
+
   for (const filePath of allTf) {
     const hcl = stripHclComments(fs.readFileSync(filePath, "utf8"));
     if (isUnder(filePath, resolvedRoot, path.join(INFRA_DIR, "bootstrap"))) {
       violations.push(...validateBootstrapFile(filePath, resolvedRoot, hcl));
     }
+    violations.push(...validateRegionArguments(filePath, resolvedRoot, hcl));
     violations.push(...validateInlineSecurityGroups(filePath, resolvedRoot, hcl));
     violations.push(...validateNetworkRuleSet(filePath, resolvedRoot, hcl));
     if (isUnder(filePath, resolvedRoot, path.join(INFRA_DIR, "modules", "aws-kms-envelope"))) {

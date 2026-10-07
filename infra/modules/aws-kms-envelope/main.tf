@@ -24,6 +24,7 @@ locals {
     "GenerateDataKeyIdentity",
     "DecryptOrg",
     "DecryptIdentity",
+    "ReplicateToMelbourne",
   ]
 
   task_role_arn = "arn:aws:iam::${var.aws_account_id}:role/${var.name}-task"
@@ -139,6 +140,28 @@ locals {
         }
       }
     },
+    {
+      Sid       = "ReplicateToMelbourne"
+      Effect    = "Allow"
+      Principal = { AWS = local.root_arn }
+      Action    = ["kms:ReplicateKey"]
+      Resource  = "*"
+      Condition = {
+        StringEquals = {
+          "kms:ReplicaRegion" = "ap-southeast-4"
+        }
+      }
+    },
+  ]
+
+  replica_policy_statements = [
+    {
+      Sid       = "Admin"
+      Effect    = "Allow"
+      Principal = { AWS = local.root_arn }
+      Action    = local.admin_actions
+      Resource  = "*"
+    },
   ]
 
   log_group_name = "/community-hub/${var.name}/service"
@@ -150,15 +173,16 @@ resource "terraform_data" "envelope_key_policy" {
     precondition {
       condition = (
         var.policy_probe_action == null &&
-        length(local.policy_statements) == 5 &&
+        length(local.policy_statements) == 6 &&
         [for statement in local.policy_statements : statement.Sid] == local.expected_sids &&
         local.policy_statements[0].Action == local.admin_actions &&
         local.policy_statements[1].Action == ["kms:GenerateDataKey"] &&
         local.policy_statements[2].Action == ["kms:GenerateDataKey"] &&
         local.policy_statements[3].Action == ["kms:Decrypt"] &&
-        local.policy_statements[4].Action == ["kms:Decrypt"]
+        local.policy_statements[4].Action == ["kms:Decrypt"] &&
+        local.policy_statements[5].Action == ["kms:ReplicateKey"]
       )
-      error_message = "envelope key policy must be exactly five statements with the allowed actions."
+      error_message = "envelope key policy must be exactly six statements with the allowed actions."
     }
   }
 }
@@ -188,6 +212,34 @@ resource "aws_kms_alias" "envelope" {
   region        = var.aws_region
   name          = "alias/${var.name}-envelope"
   target_key_id = aws_kms_key.envelope.key_id
+}
+
+resource "aws_kms_replica_key" "envelope" {
+  region                             = "ap-southeast-4"
+  description                        = "Envelope wrapping key replica (${var.name})"
+  primary_key_arn                    = aws_kms_key.envelope.arn
+  deletion_window_in_days            = 30
+  bypass_policy_lockout_safety_check = false
+  policy                             = jsonencode({ Version = "2012-10-17", Statement = local.replica_policy_statements })
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  tags = {
+    environment = var.environment
+    project     = var.project
+  }
+}
+
+resource "aws_kms_alias" "envelope_replica" {
+  region        = "ap-southeast-4"
+  name          = "alias/${var.name}-envelope"
+  target_key_id = aws_kms_replica_key.envelope.key_id
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_iam_role" "task" {

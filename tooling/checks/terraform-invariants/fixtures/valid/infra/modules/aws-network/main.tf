@@ -1,10 +1,10 @@
 resource "aws_security_group" "connector" {
-  region = "ap-southeast-2"
+  region = var.aws_region
   vpc_id = "vpc-example"
 }
 
 resource "aws_security_group" "rds" {
-  region = "ap-southeast-2"
+  region = var.aws_region
   vpc_id = "vpc-example"
 }
 

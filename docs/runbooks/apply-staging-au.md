@@ -179,6 +179,22 @@ This chunk does not set `service_image`. A later `service_image` is the digest f
 
 A rollback that removes the guard destroys four: the provider, the role, the policy, and `terraform_data.github_ids`. If that plan shows anything else, answer no and stop.
 
+## Melbourne key replica
+
+SHA `341cdc056f7684a08f6ef9b6750145808e11c2cd`. Profile ch-admin. The first apply succeeded with no retry: 2 added, 1 changed, 0 destroyed.
+
+- `module.envelope.aws_kms_replica_key.envelope` was added.
+- `module.envelope.aws_kms_alias.envelope_replica` was added.
+- `module.envelope.aws_kms_key.envelope` changed in place, the policy only. The key was not replaced.
+
+`module.envelope.terraform_data.envelope_key_policy` was not in the change set. The following plan showed no changes.
+
+The reviewer ran a read-only plan against staging before the apply. It showed the same three addresses. After the apply the reviewer read both keys back from AWS. The replica's Region is `ap-southeast-4` and it is a replica of the envelope key. Its policy is the Admin statement only. The primary has six statements. `ReplicateToMelbourne` allows `kms:ReplicateKey` only into `ap-southeast-4`.
+
+A rollback that removes the two replica resources destroys only those two. The primary stays. The sixth statement stays until a separate policy change.
+
+The production apply runbook, which this chunk does not write, enables `ap-southeast-4` in the production account before the first production apply.
+
 ## Restore drill
 
 Quarterly, and only against staging. Restore the staging database to a new instance from point-in-time recovery. Record the time taken against the 4-hour target. Then delete the restored instance, because it bills by the hour. This drill does not restore production. Reading `SHOW max_connections` belongs to `first-running-task`, not to this drill.
