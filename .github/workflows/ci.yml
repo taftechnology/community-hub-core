@@ -6,8 +6,8 @@ on:
     branches: [main]
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.event_name == 'pull_request' && format('ci-{0}', github.ref) || format('ci-main-{0}', github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -153,7 +153,179 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build the ARM image
-        run: docker build --platform linux/arm64 -f apps/api/Dockerfile -t community-hub-api:local .
+        run: docker build --platform linux/arm64 --provenance=false --sbom=false -f apps/api/Dockerfile -t community-hub-api:local .
+
+  publish:
+    name: publish
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    needs: [static, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: image-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Publish the image
+        env:
+          ECR_PUSH_ROLE_ARN: ${{ secrets.ECR_PUSH_ROLE_ARN }}
+          ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ECR_PUSH_ROLE_ARN:-}" || -z "${ECR_REGISTRY:-}" ]]; then
+            echo "image publish secrets are empty" >&2
+            exit 1
+          fi
+          if ! command -v aws >/dev/null 2>&1; then
+            echo "aws is not on PATH" >&2
+            exit 1
+          fi
+
+          account_id="${ECR_REGISTRY%%.*}"
+          echo "::add-mask::${account_id}"
+
+          token_file="${RUNNER_TEMP}/github-oidc-token"
+          response_file="${RUNNER_TEMP}/github-oidc-response"
+          curl --silent --show-error --fail \
+            --header "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" \
+            --output "${response_file}"
+          node --input-type=module -e '
+          import fs from "node:fs";
+          const response = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+          fs.writeFileSync(process.argv[2], response.value, { mode: 0o600 });
+          ' "${response_file}" "${token_file}"
+          rm -f "${response_file}"
+          token="$(cat "${token_file}")"
+          echo "::add-mask::${token}"
+          node --input-type=module -e '
+          import fs from "node:fs";
+          const token = fs.readFileSync(process.argv[1], "utf8").trim();
+          const payload = token.split(".")[1] ?? "";
+          const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+          console.log(claims.sub);
+          console.log(claims.ref);
+          console.log(claims.job_workflow_ref);
+          ' "${token_file}"
+
+          creds_file="${RUNNER_TEMP}/aws-creds"
+          aws sts assume-role-with-web-identity \
+            --role-arn "${ECR_PUSH_ROLE_ARN}" \
+            --role-session-name image-publish \
+            --web-identity-token "${token}" \
+            --query "Credentials.[AccessKeyId,SecretAccessKey,SessionToken]" \
+            --output text \
+            --region ap-southeast-2 \
+            > "${creds_file}"
+          rm -f "${token_file}"
+          read -r AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN < "${creds_file}"
+          rm -f "${creds_file}"
+          export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+          export AWS_DEFAULT_REGION=ap-southeast-2
+          unset token
+
+          repo="ch-staging/service"
+          tag="${GITHUB_SHA}"
+          image_query="[images[0].imageId.imageDigest, images[0].imageManifestMediaType, failures[0].failureCode]"
+          read_image() {
+            local result_file="${RUNNER_TEMP}/batch-get.json"
+            aws ecr batch-get-image \
+              --repository-name "${repo}" \
+              --image-ids "imageTag=${tag}" \
+              --query "${image_query}" \
+              --output json \
+              --region ap-southeast-2 \
+              > "${result_file}"
+            node --input-type=module -e '
+            import fs from "node:fs";
+            const parsed = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const digest = parsed[0];
+            const mediaType = parsed[1];
+            const failureCode = parsed[2];
+            fs.writeFileSync(process.argv[2], typeof digest === "string" ? digest : "");
+            fs.writeFileSync(process.argv[3], typeof mediaType === "string" ? mediaType : "");
+            fs.writeFileSync(process.argv[4], typeof failureCode === "string" ? failureCode : "");
+            ' "${result_file}" "${RUNNER_TEMP}/digest" "${RUNNER_TEMP}/media-type" "${RUNNER_TEMP}/failure-code"
+            rm -f "${result_file}"
+          }
+
+          read_image
+          digest="$(cat "${RUNNER_TEMP}/digest")"
+          media_type="$(cat "${RUNNER_TEMP}/media-type")"
+          failure_code="$(cat "${RUNNER_TEMP}/failure-code")"
+          reused=0
+          if [[ -n "${digest}" && "${failure_code}" != "ImageNotFound" ]]; then
+            reused=1
+          else
+            pnpm install --frozen-lockfile
+            docker build --platform linux/arm64 --provenance=false --sbom=false -f apps/api/Dockerfile -t community-hub-api:local .
+            RUN_IMAGE_TESTS=1 pnpm --filter @community-hub/api exec vitest run --config vitest.config.ts src/image.test.ts
+            aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+            docker tag community-hub-api:local "${ECR_REGISTRY}/${repo}:${tag}"
+            docker push "${ECR_REGISTRY}/${repo}:${tag}"
+            read_image
+            digest="$(cat "${RUNNER_TEMP}/digest")"
+            media_type="$(cat "${RUNNER_TEMP}/media-type")"
+          fi
+
+          stdout_file="${RUNNER_TEMP}/scan-stdout"
+          stderr_file="${RUNNER_TEMP}/scan-stderr"
+          deadline=$((SECONDS + 600))
+          while true; do
+            set +e
+            aws ecr describe-image-scan-findings \
+              --repository-name "${repo}" \
+              --image-id "imageDigest=${digest}" \
+              --query "{status:imageScanStatus.status,counts:imageScanFindings.findingSeverityCounts}" \
+              --output json \
+              --region ap-southeast-2 \
+              > "${stdout_file}" 2> "${stderr_file}"
+            aws_exit=$?
+            set -e
+            timed_out_arg=""
+            if (( SECONDS >= deadline )); then
+              timed_out_arg="--timed-out"
+            fi
+            set +e
+            node tooling/checks/image-publish/scan-decision.js --stdout "${stdout_file}" --stderr "${stderr_file}" --aws-exit "${aws_exit}" --media-type "${media_type}" ${timed_out_arg}
+            decision=$?
+            set -e
+            if (( decision == 0 )); then
+              break
+            fi
+            if (( decision != 2 )); then
+              exit 1
+            fi
+            if (( SECONDS >= deadline )); then
+              exit 1
+            fi
+            sleep 15
+          done
+
+          {
+            echo "### Image publish"
+            if (( reused == 1 )); then
+              echo "The tag was reused."
+            fi
+            echo "Digest: ${digest}"
+            node --input-type=module -e '
+            import fs from "node:fs";
+            const parsed = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const counts = parsed.counts ?? {};
+            console.log("Severity counts: " + JSON.stringify(counts));
+            ' "${stdout_file}"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Image contract checks
         env:
