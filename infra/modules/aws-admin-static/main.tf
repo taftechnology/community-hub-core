@@ -31,9 +31,10 @@ locals {
 }
 
 resource "aws_s3_bucket" "admin" {
-  bucket = "${var.name}-admin"
-  region = var.aws_region
-  tags   = local.tags
+  bucket        = "${var.name}-admin"
+  region        = var.aws_region
+  force_destroy = false
+  tags          = local.tags
 }
 
 resource "aws_s3_bucket_public_access_block" "admin" {
@@ -146,6 +147,7 @@ resource "aws_cloudfront_distribution" "admin" {
   default_cache_behavior {
     target_origin_id           = "admin"
     viewer_protocol_policy     = "redirect-to-https"
+    compress                   = true
     allowed_methods            = ["GET", "HEAD"]
     cached_methods             = ["GET", "HEAD"]
     response_headers_policy_id = aws_cloudfront_response_headers_policy.admin.id

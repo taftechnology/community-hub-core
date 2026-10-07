@@ -68,10 +68,13 @@ function joinContinuations(text: string): string {
 function awsCommands(job: string): string[] {
   const commands: string[] = [];
   for (const line of joinContinuations(job).split("\n")) {
-    const match = /(?:^|[|]|\$\()\s*(aws\b.*)$/.exec(line);
-    const command = match?.[1]?.trim();
-    if (command !== undefined && command.length > 0) {
-      commands.push(command);
+    const segments = line.split(/&&|\|\||;|\$\(|\bthen\b|\bdo\b|\|/);
+    for (const segment of segments) {
+      const match = /^\s*(aws\b.*)$/.exec(segment);
+      const command = match?.[1]?.trim();
+      if (command !== undefined && command.length > 0) {
+        commands.push(command);
+      }
     }
   }
   return commands;
@@ -188,6 +191,9 @@ export function checkWorkflow(text: string): WorkflowCheck {
   }
   if (!adminPublish.includes(PUBLISH_NEEDS)) {
     violations.push("admin-publish-without-needs");
+  }
+  if (!publishIfIsExact(adminPublish)) {
+    violations.push("admin-publish-without-main");
   }
   if (!usesArePinned(adminPublish)) {
     violations.push("admin-publish-floating-uses");

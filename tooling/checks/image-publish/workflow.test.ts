@@ -32,6 +32,9 @@ const mustFail = [
   ["admin-publish-concurrency", "admin-publish-concurrency"],
   ["admin-publish-sync", "admin-publish-sync"],
   ["admin-publish-query", "admin-publish-query"],
+  ["admin-publish-without-main", "admin-publish-without-main"],
+  ["admin-publish-if-extra", "admin-publish-without-main"],
+  ["admin-publish-query-and", "admin-publish-query"],
 ] as const;
 
 describe("workflow check fixtures", () => {

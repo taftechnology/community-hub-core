@@ -52,6 +52,7 @@ run "happy" {
   assert {
     condition = (
       aws_s3_bucket.admin.bucket == "ch-staging-admin" &&
+      aws_s3_bucket.admin.force_destroy == false &&
       aws_s3_bucket.admin.region == "ap-southeast-2" &&
       aws_s3_bucket_public_access_block.admin.region == "ap-southeast-2" &&
       aws_s3_bucket_server_side_encryption_configuration.admin.region == "ap-southeast-2" &&
@@ -92,6 +93,9 @@ run "happy" {
       aws_cloudfront_distribution.admin.aliases == toset(["admin.example.net"]) &&
       aws_cloudfront_distribution.admin.price_class == "PriceClass_All" &&
       aws_cloudfront_distribution.admin.is_ipv6_enabled == false &&
+      aws_cloudfront_distribution.admin.default_cache_behavior[0].viewer_protocol_policy == "redirect-to-https" &&
+      aws_cloudfront_distribution.admin.default_cache_behavior[0].compress &&
+      aws_cloudfront_distribution.admin.viewer_certificate[0].minimum_protocol_version == "TLSv1.2_2021" &&
       aws_cloudfront_distribution.admin.web_acl_id == null &&
       length(aws_cloudfront_distribution.admin.logging_config) == 0 &&
       length(aws_cloudfront_distribution.admin.custom_error_response) == 0
@@ -135,7 +139,9 @@ run "happy" {
       aws_route53_record.admin.type == "A" &&
       aws_route53_record.admin.alias[0].name == "d111111abcdef8.cloudfront.net" &&
       aws_route53_record.admin.alias[0].zone_id == "Z2FDTNDATAQYW2" &&
-      aws_route53_record.admin.records == null
+      aws_route53_record.admin.records == null &&
+      length(regexall("resource \"aws_route53_record\"", file("${path.module}/main.tf"))) == 2 &&
+      length(regexall("\"AAAA\"", file("${path.module}/main.tf"))) == 0
     )
     error_message = "DNS is one A alias and the certificate validation record"
   }
