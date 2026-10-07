@@ -18,9 +18,25 @@ const mustFail = [
   "dynamic-security-group-rules",
   "extra-network-security-group-rule",
   "envelope-standalone-rule",
+  "region-database",
+  "region-bucket",
+  "region-log-group",
+  "region-provider",
+  "region-us-east-1",
+  "region-other-variable",
+  "missing-replica-prevent-destroy",
 ] as const;
 
-const mustPass = ["valid"] as const;
+const mustPass = ["valid", "melbourne-replica"] as const;
+
+const regionFixtures = [
+  "region-database",
+  "region-bucket",
+  "region-log-group",
+  "region-provider",
+  "region-us-east-1",
+  "region-other-variable",
+] as const;
 
 describe("terraform-invariants check fixtures", () => {
   for (const name of mustFail) {
@@ -38,6 +54,30 @@ describe("terraform-invariants check fixtures", () => {
       expect(result.violations).toEqual([]);
     });
   }
+
+  for (const name of regionFixtures) {
+    it(`fails fixture ${name} because the region argument is not allowed`, () => {
+      const result = check(path.join(fixturesDir, name));
+      expect(result.ok).toBe(false);
+      expect(
+        result.violations.some((violation) =>
+          violation.message.includes("region argument must be var.aws_region"),
+        ),
+      ).toBe(true);
+    });
+  }
+
+  it("fails missing-replica-prevent-destroy for the replica lifecycle", () => {
+    const result = check(path.join(fixturesDir, "missing-replica-prevent-destroy"));
+    expect(result.ok).toBe(false);
+    expect(
+      result.violations.some((violation) =>
+        violation.message.includes(
+          "envelope replica key must set lifecycle.prevent_destroy = true",
+        ),
+      ),
+    ).toBe(true);
+  });
 
   it("reports a notice when no backend files exist yet", () => {
     const result = check(path.join(fixturesDir, "empty-tree"));

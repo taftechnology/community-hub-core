@@ -1,5 +1,5 @@
 resource "aws_security_group" "task" {
-  region  = "ap-southeast-2"
+  region  = var.aws_region
   vpc_id  = "vpc-example"
   ingress = []
 
@@ -14,7 +14,7 @@ resource "aws_security_group" "task" {
 }
 
 resource "aws_security_group" "rds" {
-  region  = "ap-southeast-2"
+  region  = var.aws_region
   vpc_id  = "vpc-example"
   ingress = []
   egress  = []
