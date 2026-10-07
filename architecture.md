@@ -1288,7 +1288,7 @@ Production data is never copied to non-production environments.
 ### 23.2 Delivery
 
 - GitHub Actions: lint, type-check, unit and integration tests, boundary checks (including terraform-invariants), RLS checks, OpenAPI diff, build.
-- **Offline Terraform** on every PR: `fmt -check`, `validate`, `tflint`, `terraform test` after `init -backend=false -lockfile=readonly`, on every root **and every module**. No cloud credentials. Live `terraform plan` waits until a GitHub OIDC role for AWS exists; until then that job is absent, not skip-green. Apply is a human-triggered operations step (see `docs/runbooks/apply-staging-au.md`), never on merge.
+- **Offline Terraform** on every PR: `fmt -check`, `validate`, `tflint`, `terraform test` after `init -backend=false -lockfile=readonly`, on every root **and every module**. No cloud credentials. Live `terraform plan` waits until a GitHub OIDC plan role for AWS exists; until then that job is absent, not skip-green. Apply is a human-triggered operations step (see `docs/runbooks/apply-staging-au.md`), never on merge.
 - Terraform owns the Sydney runtime. ADR 0002 is not edited. Ownership of Regional Services, Tunnel, Hyperdrive, and Workers VPC was superseded by ADR 0009.
 - Database migrations run before deployment and must be backward compatible with the deployed service (expand, migrate, contract).
 - Merge deploys the container to staging. Automatic rollback stays on the error-rate alert. Wrangler deploys were superseded by ADR 0009.

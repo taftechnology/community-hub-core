@@ -2,12 +2,12 @@
 
 Applies to **every contributor: AI agents and humans**. If you are an agent, read this file before your first action in a session.
 
-|                        |                                                                                                                                                                                                                                                                                                         |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Companion document** | [`architecture.md`](architecture.md) — what we are building and why. This file is _how_ we build it.                                                                                                                                                                                                    |
-| **Precedence**         | `architecture.md` decisions (D1…) > this file > personal preference. If you must break a rule here, say so in the PR and why.                                                                                                                                                                           |
-| **Repository state**   | Phase 0: 23 rows, 20 done, 1 superseded (`api-au-hostname`), 2 not started. Next is `image-publish`. `packages/kernel`, `packages/observability`, `packages/db`, `tooling/checks`, CI Stages 1–3, and `apps/api` are on `main`. Workers were superseded by ADR 0009, and that layout is not the design. |
-| **Tooling**            | [Superpowers](https://github.com/obra/superpowers) is required for agent sessions: `/plugin install superpowers@claude-plugins-official`                                                                                                                                                                |
+|                        |                                                                                                                                                                                                                                                                                                           |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Companion document** | [`architecture.md`](architecture.md) — what we are building and why. This file is _how_ we build it.                                                                                                                                                                                                      |
+| **Precedence**         | `architecture.md` decisions (D1…) > this file > personal preference. If you must break a rule here, say so in the PR and why.                                                                                                                                                                             |
+| **Repository state**   | Phase 0: 23 rows, 21 done, 1 superseded (`api-au-hostname`), 1 not started. Next is `kms-mrk-replica`. `packages/kernel`, `packages/observability`, `packages/db`, `tooling/checks`, CI Stages 1–3, and `apps/api` are on `main`. Workers were superseded by ADR 0009, and that layout is not the design. |
+| **Tooling**            | [Superpowers](https://github.com/obra/superpowers) is required for agent sessions: `/plugin install superpowers@claude-plugins-official`                                                                                                                                                                  |
 
 ---
 
@@ -374,7 +374,7 @@ Omitted until first real input plus a must-fail fixture: tenant-isolation suite,
 
 **Stage 3 — Build and preview (every PR)**
 
-- Stage 3 builds this ARM image, does not push it, and does not call Wrangler or require a Cloudflare token. Verification of a running task stays the staging hostname.
+- A pull request still builds this ARM image and does not push it. A push to `main` publishes the digest. Stage 3 does not call Wrangler or require a Cloudflare token. Live Terraform `plan` stays absent. This role is not a plan role.
 - OpenAPI diff comments apply only once those artefacts exist in the repo. Live Terraform `plan` comments wait on CI identities (AWS OIDC).
 
 **Stage 4 — Deploy**
