@@ -155,6 +155,11 @@ jobs:
       - name: Build the ARM image
         run: docker build --platform linux/arm64 --provenance=false --sbom=false -f apps/api/Dockerfile -t community-hub-api:local .
 
+      - name: Image contract checks
+        env:
+          RUN_IMAGE_TESTS: "1"
+        run: pnpm --filter @community-hub/api exec vitest run --config vitest.config.ts src/image.test.ts
+
   publish:
     name: publish
     runs-on: ubuntu-24.04-arm
@@ -197,6 +202,8 @@ jobs:
 
           token_file="${RUNNER_TEMP}/github-oidc-token"
           response_file="${RUNNER_TEMP}/github-oidc-response"
+          creds_file="${RUNNER_TEMP}/aws-creds"
+          trap 'rm -f "${token_file}" "${response_file}" "${creds_file}"' EXIT
           curl --silent --show-error --fail \
             --header "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
             "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" \
@@ -219,7 +226,6 @@ jobs:
           console.log(claims.job_workflow_ref);
           ' "${token_file}"
 
-          creds_file="${RUNNER_TEMP}/aws-creds"
           aws sts assume-role-with-web-identity \
             --role-arn "${ECR_PUSH_ROLE_ARN}" \
             --role-session-name image-publish \
@@ -230,7 +236,9 @@ jobs:
             > "${creds_file}"
           rm -f "${token_file}"
           read -r AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN < "${creds_file}"
-          rm -f "${creds_file}"
+          echo "::add-mask::${AWS_ACCESS_KEY_ID}"
+          echo "::add-mask::${AWS_SECRET_ACCESS_KEY}"
+          echo "::add-mask::${AWS_SESSION_TOKEN}"
           export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
           export AWS_DEFAULT_REGION=ap-southeast-2
           unset token
@@ -271,7 +279,7 @@ jobs:
             pnpm install --frozen-lockfile
             docker build --platform linux/arm64 --provenance=false --sbom=false -f apps/api/Dockerfile -t community-hub-api:local .
             RUN_IMAGE_TESTS=1 pnpm --filter @community-hub/api exec vitest run --config vitest.config.ts src/image.test.ts
-            aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+            aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin "${ECR_REGISTRY}" >/dev/null
             docker tag community-hub-api:local "${ECR_REGISTRY}/${repo}:${tag}"
             docker push "${ECR_REGISTRY}/${repo}:${tag}"
             read_image
@@ -305,6 +313,33 @@ jobs:
               break
             fi
             if (( decision != 2 )); then
+              node --input-type=module -e '
+              import fs from "node:fs";
+              import { errorNameFromStderr } from "./tooling/checks/image-publish/scan-decision.js";
+              const digest = process.argv[1];
+              let status = null;
+              let counts = null;
+              try {
+                const parsed = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+                if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+                  status = typeof parsed.status === "string" ? parsed.status : null;
+                  counts = Object.hasOwn(parsed, "counts") ? parsed.counts : null;
+                }
+              } catch {
+                status = null;
+                counts = null;
+              }
+              const errorName = errorNameFromStderr(fs.readFileSync(process.argv[3], "utf8"));
+              const text = [
+                "### Image publish",
+                "Digest: " + digest,
+                "Status: " + (status === null ? "null" : status),
+                "Severity counts: " + JSON.stringify(counts ?? {}),
+                "Error name: " + (errorName === null ? "null" : errorName),
+              ].join("\n");
+              console.log(text);
+              fs.appendFileSync(process.argv[4], text + "\n");
+              ' "${digest}" "${stdout_file}" "${stderr_file}" "${GITHUB_STEP_SUMMARY}"
               exit 1
             fi
             if (( SECONDS >= deadline )); then
@@ -326,8 +361,3 @@ jobs:
             console.log("Severity counts: " + JSON.stringify(counts));
             ' "${stdout_file}"
           } >> "${GITHUB_STEP_SUMMARY}"
-
-      - name: Image contract checks
-        env:
-          RUN_IMAGE_TESTS: "1"
-        run: pnpm --filter @community-hub/api exec vitest run --config vitest.config.ts src/image.test.ts

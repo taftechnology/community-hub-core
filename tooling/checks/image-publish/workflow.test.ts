@@ -11,23 +11,31 @@ const fixturesDir = path.join(here, "fixtures");
 const workflowPath = path.join(here, "../../../.github/workflows/ci.yml");
 
 const mustFail = [
-  "workflow-id-token",
-  "cancel-true",
-  "preview-push",
-  "missing-attestation",
-  "account-id",
-  "publish-without-main",
-  "publish-floating-uses",
-  "publish-without-needs",
+  ["workflow-id-token", "workflow-id-token"],
+  ["cancel-true", "cancel-true"],
+  ["preview-push", "preview-push"],
+  ["missing-attestation", "missing-attestation"],
+  ["account-id", "account-id"],
+  ["publish-without-main", "publish-without-main"],
+  ["publish-floating-uses", "publish-floating-uses"],
+  ["publish-without-needs", "publish-without-needs"],
+  ["workflow-cancel", "workflow-cancel"],
+  ["publish-concurrency", "publish-concurrency"],
+  ["publish-scan", "publish-scan"],
+  ["preview-id-token", "preview-id-token"],
+  ["publish-floating-uses-name", "publish-floating-uses"],
+  ["publish-if-extra", "publish-without-main"],
+  ["preview-image-tests", "preview-image-tests"],
+  ["publish-image-test", "publish-image-test"],
 ] as const;
 
 describe("workflow check fixtures", () => {
-  for (const name of mustFail) {
-    it(`fails fixture ${name} for that rule only`, () => {
-      const text = fs.readFileSync(path.join(fixturesDir, `${name}.yml`), "utf8");
+  for (const [file, rule] of mustFail) {
+    it(`fails fixture ${file} for ${rule} only`, () => {
+      const text = fs.readFileSync(path.join(fixturesDir, `${file}.yml`), "utf8");
       const result = checkWorkflow(text);
       expect(result.ok).toBe(false);
-      expect(result.violations).toEqual([name]);
+      expect(result.violations).toEqual([rule]);
     });
   }
 

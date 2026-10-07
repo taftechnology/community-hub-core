@@ -34,11 +34,37 @@ function count(text: string, needle: string): number {
 }
 
 function usesArePinned(job: string): boolean {
-  const uses = [...job.matchAll(/^\s*- uses:\s*(\S+)/gm)].map((match) => match[1] ?? "");
+  const uses = [...job.matchAll(/^\s*(?:-\s+)?uses:\s*(\S+)/gm)].map((match) => match[1] ?? "");
   if (uses.length === 0) {
     return false;
   }
   return uses.every((value) => /^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/.test(value));
+}
+
+function publishIfIsExact(publish: string): boolean {
+  return publish.split("\n").some((line) => line.trim() === PUBLISH_IF);
+}
+
+function jobSteps(job: string): string[] {
+  const lines = job.split("\n");
+  const blocks: string[][] = [];
+  for (const line of lines) {
+    if (/^ {6}- /.test(line)) {
+      blocks.push([line]);
+      continue;
+    }
+    const current = blocks.at(-1);
+    if (current) {
+      current.push(line);
+    }
+  }
+  return blocks.map((block) => block.join("\n"));
+}
+
+function publishHasSeparateImageTest(publish: string): boolean {
+  return jobSteps(publish).some(
+    (step) => step.includes("src/image.test.ts") && !step.includes(SCAN_COMMAND),
+  );
 }
 
 function buildsAreAttested(text: string): boolean {
@@ -78,7 +104,7 @@ export function checkWorkflow(text: string): WorkflowCheck {
   if (/(?<!\d)\d{12}(?!\d)/.test(text)) {
     violations.push("account-id");
   }
-  if (!publish.includes(PUBLISH_IF)) {
+  if (!publishIfIsExact(publish)) {
     violations.push("publish-without-main");
   }
   if (!usesArePinned(publish)) {
@@ -103,6 +129,12 @@ export function checkWorkflow(text: string): WorkflowCheck {
   }
   if (preview.includes("id-token")) {
     violations.push("preview-id-token");
+  }
+  if (!preview.includes("RUN_IMAGE_TESTS") || !preview.includes("src/image.test.ts")) {
+    violations.push("preview-image-tests");
+  }
+  if (publishHasSeparateImageTest(publish)) {
+    violations.push("publish-image-test");
   }
 
   return { ok: violations.length === 0, violations };
