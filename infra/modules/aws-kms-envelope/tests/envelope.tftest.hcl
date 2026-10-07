@@ -12,6 +12,27 @@ mock_provider "aws" {
       managed_policy_arns = null
     }
   }
+
+  mock_resource "aws_kms_key" {
+    defaults = {
+      arn    = "arn:aws:kms:ap-southeast-2:123456789012:key/mock-envelope"
+      key_id = "mock-envelope"
+    }
+  }
+
+  mock_resource "aws_kms_replica_key" {
+    defaults = {
+      arn    = "arn:aws:kms:ap-southeast-4:123456789012:key/mock-envelope-replica"
+      key_id = "mock-envelope-replica"
+    }
+  }
+
+  mock_resource "aws_kms_alias" {
+    defaults = {
+      arn            = "arn:aws:kms:ap-southeast-2:123456789012:alias/mock-envelope"
+      target_key_arn = "arn:aws:kms:ap-southeast-2:123456789012:key/mock-envelope"
+    }
+  }
 }
 
 run "happy" {
@@ -102,8 +123,8 @@ run "happy" {
   }
 
   assert {
-    condition     = length(jsondecode(aws_kms_key.envelope.policy).Statement) == 5
-    error_message = "envelope key policy must have exactly five statements"
+    condition     = length(jsondecode(aws_kms_key.envelope.policy).Statement) == 6
+    error_message = "envelope key policy must have exactly six statements"
   }
 
   assert {
@@ -113,8 +134,125 @@ run "happy" {
       "GenerateDataKeyIdentity",
       "DecryptOrg",
       "DecryptIdentity",
+      "ReplicateToMelbourne",
     ]
-    error_message = "envelope key policy sids must be Admin, GenerateDataKeyOrg, GenerateDataKeyIdentity, DecryptOrg, DecryptIdentity"
+    error_message = "envelope key policy sids must be Admin, GenerateDataKeyOrg, GenerateDataKeyIdentity, DecryptOrg, DecryptIdentity, ReplicateToMelbourne"
+  }
+
+  assert {
+    condition = (
+      toset(jsondecode(aws_kms_key.envelope.policy).Statement[0].Action) == toset([
+        "kms:DescribeKey",
+        "kms:GetKeyPolicy",
+        "kms:GetKeyRotationStatus",
+        "kms:ListResourceTags",
+        "kms:PutKeyPolicy",
+        "kms:CreateAlias",
+        "kms:DeleteAlias",
+        "kms:EnableKey",
+        "kms:DisableKey",
+        "kms:EnableKeyRotation",
+        "kms:DisableKeyRotation",
+        "kms:UpdateKeyDescription",
+        "kms:TagResource",
+        "kms:UntagResource",
+        "kms:ScheduleKeyDeletion",
+        "kms:CancelKeyDeletion",
+      ]) &&
+      !contains(jsondecode(aws_kms_key.envelope.policy).Statement[0].Action, "kms:ReplicateKey")
+    )
+    error_message = "admin actions must equal the 16-name set and must not include kms:ReplicateKey"
+  }
+
+  assert {
+    condition = (
+      jsondecode(aws_kms_key.envelope.policy).Statement[5].Sid == "ReplicateToMelbourne" &&
+      jsondecode(aws_kms_key.envelope.policy).Statement[5].Principal.AWS == "arn:aws:iam::123456789012:root" &&
+      jsondecode(aws_kms_key.envelope.policy).Statement[5].Resource == "*" &&
+      try(toset(jsondecode(aws_kms_key.envelope.policy).Statement[5].Action), toset([jsondecode(aws_kms_key.envelope.policy).Statement[5].Action])) == toset(["kms:ReplicateKey"]) &&
+      keys(jsondecode(aws_kms_key.envelope.policy).Statement[5].Condition.StringEquals) == ["kms:ReplicaRegion"] &&
+      jsondecode(aws_kms_key.envelope.policy).Statement[5].Condition.StringEquals["kms:ReplicaRegion"] == "ap-southeast-4" &&
+      keys(jsondecode(aws_kms_key.envelope.policy).Statement[5].Condition) == ["StringEquals"]
+    )
+    error_message = "ReplicateToMelbourne must allow only kms:ReplicateKey into ap-southeast-4"
+  }
+
+  assert {
+    condition     = aws_kms_replica_key.envelope.region == "ap-southeast-4"
+    error_message = "envelope replica region must be ap-southeast-4"
+  }
+
+  assert {
+    condition = (
+      aws_kms_replica_key.envelope.primary_key_arn == aws_kms_key.envelope.arn &&
+      aws_kms_replica_key.envelope.primary_key_arn == "arn:aws:kms:ap-southeast-2:123456789012:key/mock-envelope"
+    )
+    error_message = "envelope replica must target the mocked envelope key ARN"
+  }
+
+  assert {
+    condition     = aws_kms_replica_key.envelope.deletion_window_in_days == 30
+    error_message = "envelope replica deletion window must be 30 days"
+  }
+
+  assert {
+    condition     = aws_kms_replica_key.envelope.bypass_policy_lockout_safety_check == false
+    error_message = "envelope replica must keep the policy lockout safety check"
+  }
+
+  assert {
+    condition = (
+      aws_kms_replica_key.envelope.tags["environment"] == "staging" &&
+      aws_kms_replica_key.envelope.tags["project"] == "community-hub"
+    )
+    error_message = "envelope replica tags must be environment=staging and project=community-hub"
+  }
+
+  assert {
+    condition = (
+      length(jsondecode(aws_kms_replica_key.envelope.policy).Statement) == 1 &&
+      jsondecode(aws_kms_replica_key.envelope.policy).Statement[0].Sid == "Admin" &&
+      try(toset(jsondecode(aws_kms_replica_key.envelope.policy).Statement[0].Action), toset([jsondecode(aws_kms_replica_key.envelope.policy).Statement[0].Action])) == toset([
+        "kms:DescribeKey",
+        "kms:GetKeyPolicy",
+        "kms:GetKeyRotationStatus",
+        "kms:ListResourceTags",
+        "kms:PutKeyPolicy",
+        "kms:CreateAlias",
+        "kms:DeleteAlias",
+        "kms:EnableKey",
+        "kms:DisableKey",
+        "kms:EnableKeyRotation",
+        "kms:DisableKeyRotation",
+        "kms:UpdateKeyDescription",
+        "kms:TagResource",
+        "kms:UntagResource",
+        "kms:ScheduleKeyDeletion",
+        "kms:CancelKeyDeletion",
+      ]) &&
+      !strcontains(aws_kms_replica_key.envelope.policy, "kms:Decrypt") &&
+      !strcontains(aws_kms_replica_key.envelope.policy, "kms:GenerateDataKey") &&
+      !strcontains(aws_kms_replica_key.envelope.policy, "arn:aws:iam::123456789012:role/ch-staging-task")
+    )
+    error_message = "replica policy must be the admin statement only"
+  }
+
+  assert {
+    condition = (
+      aws_kms_alias.envelope_replica.region == "ap-southeast-4" &&
+      aws_kms_alias.envelope_replica.name == "alias/ch-staging-envelope" &&
+      aws_kms_alias.envelope_replica.target_key_id == aws_kms_replica_key.envelope.key_id &&
+      aws_kms_alias.envelope_replica.target_key_id == "mock-envelope-replica"
+    )
+    error_message = "replica alias must target the Melbourne replica key"
+  }
+
+  assert {
+    condition = (
+      aws_kms_alias.envelope.name == "alias/ch-staging-envelope" &&
+      aws_kms_alias.envelope.region == "ap-southeast-2"
+    )
+    error_message = "Sydney envelope alias must stay alias/ch-staging-envelope in ap-southeast-2"
   }
 
   assert {
@@ -389,6 +527,17 @@ run "endpoint_on" {
       if contains(["GenerateDataKeyOrg", "GenerateDataKeyIdentity", "DecryptOrg", "DecryptIdentity"], statement.Sid)
     ])
     error_message = "cryptographic statements must bind SourceVpce, encryption context keys, and Null presence"
+  }
+
+  assert {
+    condition = (
+      !strcontains(one([
+        for statement in jsondecode(aws_kms_key.envelope.policy).Statement : jsonencode(statement)
+        if statement.Sid == "ReplicateToMelbourne"
+      ]), "aws:SourceVpce") &&
+      !strcontains(aws_kms_replica_key.envelope.policy, "aws:SourceVpce")
+    )
+    error_message = "ReplicateToMelbourne and the replica policy must not contain aws:SourceVpce"
   }
 }
 
