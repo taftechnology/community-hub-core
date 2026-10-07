@@ -37,8 +37,6 @@ Status: draft
 
 **AWS CLI:** The `ubuntu-24.04-arm` runner image ships the AWS CLI (GitHub's Ubuntu 24.04 ARM64 runner readme lists it). The publish job uses that binary. If `aws` is not on `PATH`, the job exits before any AWS call. It does not install a CLI.
 
-**Waits on Abdus:** whether `publish` has `needs: [static, test]`. The reviewer recommends it. Task 3 does not add `needs` until Abdus says so.
-
 ## File map
 
 | File                                                  | Responsibility                                                                 |
@@ -70,7 +68,7 @@ Status: draft
 
 - Produces: `export function decide(input)` and `export function errorNameFromStderr(stderr)` from `scan-decision.js`. The package is `"type": "module"`. The same file is the CLI. Task 3's publish job runs `node tooling/checks/image-publish/scan-decision.js`. The fixtures import `decide` from that path and spawn that file. They do not reimplement it.
 
-**Rule this must not break:** no AWS call, no account id, no token. Copy the TypeScript and Vitest setup from `tooling/checks/traceability` only as far as this package needs. Package name `@community-hub/image-publish`. `pnpm test` must run this package because it lives under `tooling/checks/*`. The root ESLint glob is `**/*.{js,ts,tsx}`, so this file is `.js`, not `.mjs`. `tsconfig.json` sets `allowJs` and `checkJs` and includes `scan-decision.js` plus the test. Do not add a package ESLint config.
+**Rule this must not break:** no AWS call, no account id, no token. Copy the TypeScript and Vitest setup from `tooling/checks/traceability` only as far as this package needs. Package name `@community-hub/image-publish`. `pnpm test` must run this package because it lives under `tooling/checks/*`. The root ESLint glob is `**/*.{js,ts,tsx}`, so this file is `.js`, not `.mjs`. `tsconfig.json` sets `allowJs` and `checkJs` and includes `*.ts` and `*.js`. Task 3 does not edit it. Do not add a package ESLint config.
 
 `decide` takes `{ status, counts, mediaType, errorName, timedOut }` and returns `{ pass, retry }`.
 
@@ -81,22 +79,30 @@ Status: draft
 - Immediate failures set `pass` false and `retry` false: `CRITICAL` greater than 0; status `FAILED`, `UNSUPPORTED_IMAGE`, `SCAN_ELIGIBILITY_EXPIRED`, or `FINDINGS_UNAVAILABLE`; an `errorName` other than null and other than `ScanNotFoundException`; media type `application/vnd.oci.image.index.v1+json` or `application/vnd.docker.distribution.manifest.list.v2+json`.
 - `timedOut` true sets `pass` false and `retry` false, including still in progress and `ScanNotFoundException`.
 
-`errorNameFromStderr` reads AWS CLI stderr. The name is the text in parentheses immediately after `An error occurred`. `An error occurred (ScanNotFoundException) when calling the DescribeImageScanFindings operation` yields `ScanNotFoundException`. Empty stderr yields null. Any other non-empty stderr yields `Unknown`, which `decide` treats as an unknown error and fails.
+`errorNameFromStderr` reads AWS CLI stderr. The name is the text in parentheses immediately after `An error occurred`. Empty stderr yields null. Any other non-empty stderr yields `Unknown`, which `decide` treats as an unknown error and fails.
 
-The CLI reads one JSON object from stdin and prints nothing. Exit 0 is pass, 1 is fail, 2 is retry. Unparseable input exits 1. If the object has `stderr`, the CLI sets `errorName` from `errorNameFromStderr` and ignores a caller-supplied `errorName`.
+The shell does not build JSON. The CLI prints nothing. It takes arguments and reads the files itself:
+
+```text
+node tooling/checks/image-publish/scan-decision.js --stdout <file> --stderr <file> --aws-exit <code> --media-type <type> [--timed-out]
+```
+
+Exit 0 is pass, 1 is fail, 2 is retry. It reads the stderr file only when `--aws-exit` is not 0, and then sets `errorName` from `errorNameFromStderr`. When `--aws-exit` is 0 it does not read stderr, it parses the stdout file as the query JSON, and stdout that is not JSON exits 1.
 
 - [ ] **Step 1: Write the failing fixtures**
 
-`scan-decision.test.ts` imports `decide` and `errorNameFromStderr` from `./scan-decision.js`. One test per bullet above, plus the spec's scan cases. It also spawns `node tooling/checks/image-publish/scan-decision.js` and asserts the exit code:
+`scan-decision.test.ts` imports `decide` and `errorNameFromStderr` from `./scan-decision.js`. One imported test per bullet above, plus the spec's scan cases. It also spawns `node tooling/checks/image-publish/scan-decision.js` with the arguments above and asserts the exit code:
 
-- a `COMPLETE` run2 shape (`HIGH` 8, no `CRITICAL` key) exits 0
-- `CRITICAL` greater than 0 exits 1
-- `ScanNotFoundException` with `timedOut` false exits 2
-- stdin that is not JSON exits 1
-- `counts` as an array exits 1
-- `CRITICAL` as a string exits 1
-- stderr `An error occurred (ScanNotFoundException) when calling the DescribeImageScanFindings operation` with `timedOut` false exits 2
-- stderr that does not contain that phrase exits 1
+- `--aws-exit 0`, stdout file is the `COMPLETE` run2 shape (`HIGH` 8, no `CRITICAL` key), and the stderr file holds a warning: exit 0
+- `--aws-exit 0` and a stdout file that is not JSON: exit 1
+- `--aws-exit 0` and stdout `CRITICAL` greater than 0: exit 1
+- `--aws-exit` not 0, no `--timed-out`, and a stderr file whose contents are exactly this line: exit 2
+
+```text
+aws: [ERROR]: An error occurred (ScanNotFoundException) when calling the DescribeImageScanFindings operation: Image scan does not exist for the image with '{imageDigest:'sha256:0000', imageTag:'null'}' in the repository with name 'ch-staging/service' in the registry with id '123456789012'
+```
+
+- `--aws-exit` not 0 and a stderr file that does not contain that phrase: exit 1
 
 Run `pnpm test --filter @community-hub/image-publish`. Expected: the import fails.
 
@@ -130,9 +136,9 @@ EOF
 **Interfaces:**
 
 - Consumes: `module.ingress.repository_arn`. The repository already exists when the image is null.
-- Produces: `aws_iam_openid_connect_provider.github`, `aws_iam_role.image_publish`, and `aws_iam_role_policy.image_publish`, each with count 1 only when `var.environment == "staging"`. Also `terraform_data.github_ids` and `check "github_ids"`, the same pair as `staging_zone`.
+- Produces: `aws_iam_openid_connect_provider.github`, `aws_iam_role.image_publish`, and `aws_iam_role_policy.image_publish`. The count of each is 1 only when `var.environment == "staging"` and both GitHub ids are non-null. A staging plan with either id null does not interpolate those ids into `sub`. Also `terraform_data.github_ids` and `check "github_ids"`, the same pair as `staging_zone`. That pair still fails a staging plan that omits the ids.
 
-**Rule this must not break:** prod plans zero of those three resources. `thumbprint_list` is unset. Trust is `StringEquals` only, on `aud`, the immutable `sub`, `job_workflow_ref`, `repository_id`, and `repository_owner_id`. No `StringLike`. The policy actions are exactly `ecr:GetAuthorizationToken` on `*`, and on `module.ingress.repository_arn` only: `ecr:BatchCheckLayerAvailability`, `ecr:InitiateLayerUpload`, `ecr:UploadLayerPart`, `ecr:CompleteLayerUpload`, `ecr:PutImage`, `ecr:BatchGetImage`, `ecr:DescribeImages`, `ecr:DescribeImageScanFindings`. No `ecr:GetDownloadUrlForLayer`. No delete, ECS, Secrets Manager, KMS, IAM, or S3 action.
+**Rule this must not break:** prod plans zero of those three resources. The count is 1 only when the environment is staging and both ids are non-null, so a null id is never interpolated into `sub`. `thumbprint_list` is unset. Trust is `StringEquals` only, on `aud`, the immutable `sub`, `job_workflow_ref`, `repository_id`, and `repository_owner_id`. No `StringLike`. The policy actions are exactly `ecr:GetAuthorizationToken` on `*`, and on `module.ingress.repository_arn` only: `ecr:BatchCheckLayerAvailability`, `ecr:InitiateLayerUpload`, `ecr:UploadLayerPart`, `ecr:CompleteLayerUpload`, `ecr:PutImage`, `ecr:BatchGetImage`, `ecr:DescribeImages`, `ecr:DescribeImageScanFindings`. No `ecr:GetDownloadUrlForLayer`. No delete, ECS, Secrets Manager, KMS, IAM, or S3 action.
 
 Variables `github_repository_id` and `github_repository_owner_id` are optional strings, default `null`. Prod does not need them. `env/prod.tfvars` stays unchanged.
 
@@ -158,11 +164,24 @@ Leave both unset on `prod_tfvars`, `prod_endpoint_off_fails`, `prod_image_set`, 
 
 Add run `staging_without_github_ids_fails`. Copy the staging variables from `staging_happy` and omit both GitHub ids. `expect_failures` is `check.github_ids` and `terraform_data.github_ids` only, the same shape as `staging_without_zone_id_fails`.
 
+In the existing `mock_provider "aws"` block (`override_during = plan`), add:
+
+```hcl
+mock_resource "aws_iam_openid_connect_provider" {
+  defaults = {
+    arn             = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+    thumbprint_list = null
+  }
+}
+```
+
+`thumbprint_list == null` is unknown at plan on provider 6.67.0 without this mock. With the mock, that assert passes when the config leaves `thumbprint_list` unset and fails when the config sets it.
+
 Add run `staging_image_publish`. Staging variables as in `staging_happy`, plus those two synthetic ids. `jsondecode` the assume-role policy and assert:
 
 - `length(aws_iam_openid_connect_provider.github) == 1`
 - `aws_iam_openid_connect_provider.github[0].url == "https://token.actions.githubusercontent.com"`
-- `aws_iam_openid_connect_provider.github[0].client_id_list == ["sts.amazonaws.com"]`
+- `aws_iam_openid_connect_provider.github[0].client_id_list == toset(["sts.amazonaws.com"])`
 - `aws_iam_openid_connect_provider.github[0].thumbprint_list == null`
 - `length(aws_iam_role.image_publish) == 1`
 - the decoded policy has exactly one statement
@@ -194,7 +213,13 @@ Run `terraform -chdir=infra/regions/au test`. Expected: `staging_image_publish` 
 
 Role name `ch-staging-image-publish`. Provider URL `https://token.actions.githubusercontent.com`. Audience `sts.amazonaws.com`. Do not set `thumbprint_list`.
 
-Add `terraform_data.github_ids` and `check "github_ids"` with the same condition: staging requires both ids to be non-null. Match the `staging_zone` pair so `expect_failures` can name both.
+One local, used as the count of the provider, the role, and the role policy:
+
+```hcl
+var.environment == "staging" && var.github_repository_id != null && var.github_repository_owner_id != null ? 1 : 0
+```
+
+Add `terraform_data.github_ids` and `check "github_ids"` with the same condition: staging requires both ids to be non-null. Match the `staging_zone` pair so `expect_failures` can name both. Those two still fail when the three resources have count 0.
 
 - [ ] **Step 3: Gate and commit**
 
@@ -225,10 +250,10 @@ EOF
 
 **Interfaces:**
 
-- Consumes: `tooling/checks/image-publish/scan-decision.js` from Task 1.
-- Produces: `checkWorkflow(text)` returning `{ ok, violations }`, job `publish`, and the concurrency behaviour below. `build-preview` gains `--provenance=false --sbom=false` and still does not push. Do not add `needs` on `publish`. That waits on Abdus.
+- Consumes: `tooling/checks/image-publish/scan-decision.js` from Task 1. `tsconfig.json` already includes `*.ts` and `*.js`. Do not edit it.
+- Produces: `checkWorkflow(text)` returning `{ ok, violations }`, job `publish` with `needs: [static, test]`, and the concurrency behaviour below. `build-preview` gains `--provenance=false --sbom=false` and still does not push.
 
-**Rule this must not break:** `id-token: write` appears exactly once in `ci.yml`, on `publish`, not under the workflow `permissions`. The trust pin stays `.github/workflows/ci.yml`. The job does not print the token, the role ARN, the login password, or the account id. After this commit is pushed: no rebase, no amend, no force-push.
+**Rule this must not break:** `id-token: write` appears exactly once in `ci.yml`, on `publish`, not under the workflow `permissions`. The trust pin stays `.github/workflows/ci.yml`. The job does not print the token, the role ARN, the login password, or the account id. After this commit is pushed: no rebase, no amend, no force-push. Report this commit's full SHA in chat. Do not write it into this plan.
 
 **Concurrency mechanism:**
 
@@ -254,7 +279,7 @@ GitHub keeps the in-progress run in a group when `cancel-in-progress` is false, 
 
 - [ ] **Step 1: Write the failing workflow test**
 
-`workflow-check.ts` exports `checkWorkflow(text)`. `workflow.test.ts` calls that function. It does not reimplement the rules. Must-fail fixtures, each a workflow file under `tooling/checks/image-publish/fixtures/`, follow `tooling/checks/traceability`: the function returns `ok: false` and at least one violation.
+`workflow-check.ts` exports `checkWorkflow(text)`. `workflow.test.ts` calls that function. It does not reimplement the rules. Each must-fail fixture is a passing workflow with one defect. The test asserts `ok` is false and `violations` equals exactly that one rule.
 
 - `workflow-id-token`: `id-token: write` under the workflow `permissions`
 - `cancel-true`: a line `cancel-in-progress: true`
@@ -262,6 +287,8 @@ GitHub keeps the in-progress run in a group when `cancel-in-progress` is false, 
 - `missing-attestation`: a `docker build` missing `--provenance=false` or `--sbom=false`
 - `account-id`: a 12-digit id
 - `publish-without-main`: a `publish` job that is not conditioned on a push to `refs/heads/main`
+- `publish-floating-uses`: a `uses:` in `publish` that is not a 40-hex SHA
+- `publish-without-needs`: a `publish` job without `needs: [static, test]`
 
 The real `.github/workflows/ci.yml` is the must-pass. `checkWorkflow` on that file returns `ok: true` only when all of these hold:
 
@@ -274,24 +301,35 @@ The real `.github/workflows/ci.yml` is the must-pass. `checkWorkflow` on that fi
 - every `docker build` contains `--provenance=false` and `--sbom=false`
 - the file matches no 12-digit account id
 - `publish` is conditioned on a push to `refs/heads/main`
-- the job command contains `node tooling/checks/image-publish/scan-decision.js`
+- the job command contains `node tooling/checks/image-publish/scan-decision.js` with `--stdout`, `--stderr`, `--aws-exit`, and `--media-type`
 - the scan query contains `imageScanStatus.status` and `imageScanFindings.findingSeverityCounts`
+- every `uses:` in `publish` is `owner/repo@` plus 40 hex characters
+- `publish` has `needs: [static, test]`
 
 Run the package test. Expected: the real `ci.yml` fails, because it still has workflow-level `cancel-in-progress: true` and no publish job. The must-fail fixtures fail for the reason each name states.
 
 - [ ] **Step 2: Add the job**
 
-`publish` runs on `ubuntu-24.04-arm` with `timeout-minutes: 30`, when `github.event_name == 'push'` and `github.ref == 'refs/heads/main'`. Job permissions are `contents: read` and `id-token: write` only. No `needs`.
+`publish` runs on `ubuntu-24.04-arm` with `timeout-minutes: 30` and `needs: [static, test]`, when `github.event_name == 'push'` and `github.ref == 'refs/heads/main'`. Job permissions are `contents: read` and `id-token: write` only.
 
 Order inside the job:
 
-1. `actions/checkout@v4`. Then `pnpm/action-setup@v4`, `actions/setup-node@v4` with `node-version: 24`, and `corepack enable`, matching the static job.
+1. Do not use `pnpm/action-setup`. `corepack enable` provides pnpm, because `packageManager` is `pnpm@10.26.0`. Pin each `uses:` to the v4 commit, with the version in a comment:
+
+```yaml
+- uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+- uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+  with:
+    node-version: 24
+```
+
+Do not set `cache: pnpm`. `corepack enable` runs after setup-node.
 2. Fail if `ECR_PUSH_ROLE_ARN` or `ECR_REGISTRY` is empty. Fail if `aws` is not on `PATH`.
 3. Derive the account id as the first label of `ECR_REGISTRY`. Mask it with `::add-mask::` before any AWS call. Request the OpenID Connect token, write it only to a file under `RUNNER_TEMP`, mask it, and delete the file before the job ends. Never print the token. Before assuming the role, print only the decoded `sub`, `ref`, and `job_workflow_ref`.
 4. Assume the role in `ap-southeast-2`. Then check the tag. The tag is `github.sha`. The repository name is `ch-staging/service`. Use `aws ecr batch-get-image` with `--query` limited to the digest, the manifest media type, and `failures[0].failureCode`. A missing tag is `ImageNotFound` in that result, not a `describe-images` error. Do not use `describe-images` to discover a missing tag.
 5. If the tag exists, skip install, the build, the image tests, login, and the push. The job summary says the tag was reused. Read that tag's digest from the query above and run the gate on it.
 6. If the tag does not exist, run `pnpm install --frozen-lockfile` on this path only. Build with `--platform linux/arm64 --provenance=false --sbom=false`, and run `RUN_IMAGE_TESTS=1` on `src/image.test.ts`. Log in with `aws ecr get-login-password` piped to `docker login --username AWS --password-stdin`. That is the one AWS call without `--query`. Do not print the password or the command output. Push the git SHA tag. Do not force the push. Then `batch-get-image` again and take the digest from that response.
-7. Poll `aws ecr describe-image-scan-findings` for that digest every 15 seconds, for at most 10 minutes. `--query` is `imageScanStatus.status` and `imageScanFindings.findingSeverityCounts`. Capture stderr. Pass the query JSON, the media type, `timedOut`, and that stderr to `node tooling/checks/image-publish/scan-decision.js`. Exit 0 passes. Exit 2 retries. Exit 1 fails immediately. At 10 minutes, call the CLI once more with `timedOut: true`.
+7. Poll `aws ecr describe-image-scan-findings` for that digest every 15 seconds, for at most 10 minutes. `--query` is `imageScanStatus.status` and `imageScanFindings.findingSeverityCounts`. Write stdout and stderr to files. The shell does not build JSON. Call `node tooling/checks/image-publish/scan-decision.js` with `--stdout`, `--stderr`, `--aws-exit`, and `--media-type`. Exit 0 passes. Exit 2 retries. Exit 1 fails immediately. At 10 minutes, call the CLI once more with `--timed-out`.
 8. The job summary records the digest and the severity counts. It does not record the registry hostname, the role ARN, or the account id.
 
 Every other AWS CLI invocation uses `--query`. `build-preview`'s `docker build` gains the same two attestation flags and is otherwise unchanged, including that it still runs on a push to `main`.
@@ -316,9 +354,7 @@ Push this commit. Do not rebase it afterwards.
 
 ## Human: apply the role and create the secrets
 
-The agent stops. Apply the Task 3 commit, the one whose subject is `ci(api): publish the image from main`. After that commit is on origin, write its full SHA on the line below and apply that SHA. Do not apply a later commit.
-
-Apply SHA: the Task 3 commit
+The agent stops. Apply the Task 3 commit, the one whose subject is `ci(api): publish the image from main`. The agent reports that SHA in chat when the commit is pushed. Do not write the SHA into this plan. Task 4 records it in the runbook. Do not apply a later commit.
 
 From `docs/runbooks/apply-staging-au.md`, before each apply:
 
@@ -355,8 +391,8 @@ Then create GitHub Actions secrets `ECR_PUSH_ROLE_ARN` and `ECR_REGISTRY` on thi
 
 **Interfaces:**
 
-- Consumes: the human's paste from the apply.
-- Produces: a section after Re-park. It records the Task 3 SHA, the three additions, and the empty following plan. It says a later `service_image` is the digest from the publish job summary, not a laptop push. This chunk does not set `service_image`.
+- Consumes: the human's paste from the apply, and the Task 3 SHA reported in chat.
+- Produces: a section after Re-park. It records that SHA, the three additions, and the empty following plan. It says a later `service_image` is the digest from the publish job summary, not a laptop push. This chunk does not set `service_image`. The SHA is not copied back into this plan.
 
 **Rule this must not break:** if the human has not pasted, stop. Do not invent an apply. Do not record a role ARN, a registry hostname, or an account id.
 
