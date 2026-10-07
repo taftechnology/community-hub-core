@@ -102,7 +102,7 @@ Record that SHA. Then terraform plan shows no changes. The plan still contains t
 
 A stopped database is still not parking. A VPC link with no traffic for 60 days becomes `INACTIVE`.
 
-Unpark is `first-running-task`: recreate the database, the ALTER ROLE procedure, and wait until the VPC link is AVAILABLE. This runbook does not unpark.
+Unpark happened in `first-running-task`, and staging is parked again. Do not unpark from this sentence. A later unpark uses the database ops task and needs a fresh image scan with no CRITICAL finding before any apply.
 
 ### Park apply
 
@@ -162,6 +162,14 @@ VPC link `ch-staging-link` was AVAILABLE. Family `ch-staging-db-ops`, command `[
 Same SHA `ba881554b5ca7d72d3faabbf9994f464df490f38`, applied with `-var enable_kms_endpoint=true`. That apply created the KMS interface endpoint and its security group, and updated the envelope key policy in place. While the endpoint exists, the module adds an `aws:SourceVpce` condition to the task-role `GenerateDataKey` and `Decrypt` statements. The probe printed `pass` and exited 0. CloudTrail `GenerateDataKey` at 2026-10-07T01:38:00Z had `vpcEndpointId` present. Earlier events, from before the endpoint, had it absent. The id is not recorded.
 
 The following apply used `-var enable_kms_endpoint=false`. The endpoint and its security group were destroyed, and the key-policy condition was removed. A plan with the committed values then showed no changes, detailed exit code 0. KMS endpoints remaining: 0. The committed tfvars never set `enable_kms_endpoint`.
+
+## Re-park
+
+Proof 10. SHA `e441c8bfbfded2d6308a42c3aef4ce4ee7fc1406`. `service_image` was removed from the gitignored file before the apply. It was not committed.
+
+The plan listed exactly 18 resources, all destroyed, nothing created, updated, or replaced. Ten came from the image apply: the ECS cluster, capacity providers, the service, the service task definition, the ECR pull policy, the task API ingress rule, the ops task definition, the ops execution role, the ops task role, and the ops execution policy. Eight were under `module.rds[0]`: the instance, the parameter group, the subnet group, four alarms, and the prod-protection guard. The apply completed.
+
+The following plan, with the committed values, showed no changes, detailed exit code 0. Live checks: RDS instances 0; ECS services in `ch-staging` 0; the `ch-staging-alarms` topic still exists; budget `ch-staging-cost` still exists; KMS endpoints 0. The lasting cost is the parked month, about USD 6.30.
 
 ## Restore drill
 
