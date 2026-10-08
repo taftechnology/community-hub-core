@@ -100,6 +100,34 @@ export function touchedTerraformDirs(
   return ordered;
 }
 
+function gitOutput(directory: string, args: string[]): string {
+  const result = spawnSync("git", args, { cwd: directory, encoding: "utf8" });
+  if ((result.status ?? 1) !== 0) {
+    const detail = (result.stderr || `git ${args.join(" ")} failed`).trim();
+    throw new Error(detail);
+  }
+  return result.stdout ?? "";
+}
+
+export function changedPaths(directory: string, base: string): string[] {
+  const paths = new Set<string>();
+  const commands = [
+    ["diff", "--name-only", base],
+    ["diff", "--name-only"],
+    ["diff", "--name-only", "--cached"],
+    ["ls-files", "--others", "--exclude-standard"],
+  ];
+  for (const args of commands) {
+    for (const line of gitOutput(directory, args).split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed !== "") {
+        paths.add(trimmed);
+      }
+    }
+  }
+  return [...paths];
+}
+
 export function runScriptInDirectory(
   script: string,
   directory: string,

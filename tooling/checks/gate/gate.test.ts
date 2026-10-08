@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -5,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   TERRAFORM_CHECKS,
+  changedPaths,
   runScriptInDirectory,
   terraformChecksScript,
   terraformMatrixDirs,
@@ -70,6 +72,33 @@ describe("touched terraform directories", () => {
         matrix,
       ),
     ).toEqual(["infra/modules/aws-budgets", "infra/modules/aws-rds", "infra/regions/au"]);
+  });
+});
+
+describe("changedPaths", () => {
+  it("returns an untracked file", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "gate-paths-"));
+    const gitEnv = {
+      ...process.env,
+      GIT_AUTHOR_NAME: "Gate Test",
+      GIT_AUTHOR_EMAIL: "gate-test@example.com",
+      GIT_COMMITTER_NAME: "Gate Test",
+      GIT_COMMITTER_EMAIL: "gate-test@example.com",
+    };
+    const git = (args: string[]) => {
+      const result = spawnSync("git", args, { cwd: directory, encoding: "utf8", env: gitEnv });
+      if ((result.status ?? 1) !== 0) {
+        throw new Error(result.stderr || result.stdout || `git ${args.join(" ")} failed`);
+      }
+      return result.stdout.trim();
+    };
+    git(["init", "-b", "main"]);
+    fs.writeFileSync(path.join(directory, "tracked.txt"), "tracked\n");
+    git(["add", "tracked.txt"]);
+    git(["commit", "-m", "initial"]);
+    fs.writeFileSync(path.join(directory, "untracked.txt"), "untracked\n");
+    const base = git(["rev-parse", "HEAD"]);
+    expect(changedPaths(directory, base)).toEqual(["untracked.txt"]);
   });
 });
 

@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import {
+  changedPaths,
   runScriptInDirectory,
   terraformChecksScript,
   terraformMatrixDirs,
@@ -26,27 +27,10 @@ if (base.status !== 0) {
   process.exit(base.status);
 }
 
-const paths = new Set<string>();
-const diffs = [
-  ["diff", "--name-only", base.stdout.trim()],
-  ["diff", "--name-only"],
-  ["diff", "--name-only", "--cached"],
-];
-for (const args of diffs) {
-  const diff = git(args);
-  if (diff.status !== 0) {
-    process.exit(diff.status);
-  }
-  for (const line of diff.stdout.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed !== "") {
-      paths.add(trimmed);
-    }
-  }
-}
+const paths = changedPaths(process.cwd(), base.stdout.trim());
 
 const workflow = fs.readFileSync(".github/workflows/ci.yml", "utf8");
-const dirs = touchedTerraformDirs([...paths], terraformMatrixDirs(workflow));
+const dirs = touchedTerraformDirs(paths, terraformMatrixDirs(workflow));
 if (dirs.length === 0) {
   console.log("terraform: none");
   process.exit(0);
