@@ -407,6 +407,9 @@ jobs:
           account_id="${account_id%%:*}"
           echo "::add-mask::${account_id}"
 
+          pnpm install --frozen-lockfile
+          pnpm --filter @community-hub/admin build
+
           token_file="${RUNNER_TEMP}/github-oidc-token"
           response_file="${RUNNER_TEMP}/github-oidc-response"
           creds_file="${RUNNER_TEMP}/aws-creds"
@@ -450,9 +453,6 @@ jobs:
           export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
           export AWS_DEFAULT_REGION=ap-southeast-2
           unset token
-
-          pnpm install --frozen-lockfile
-          pnpm --filter @community-hub/admin build
 
           aws s3 sync apps/admin/dist/assets "s3://${ADMIN_BUCKET}/assets" --delete --only-show-errors --cache-control "public, max-age=31536000, immutable" --region ap-southeast-2
           aws s3 cp apps/admin/dist/index.html "s3://${ADMIN_BUCKET}/index.html" --only-show-errors --cache-control "no-cache" --region ap-southeast-2
