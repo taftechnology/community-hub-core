@@ -23,7 +23,7 @@ Status: draft
 - This plan adds no Terraform assert, so there is no scratch probe.
 - The pull request opens after Task 6, not before. Push each task commit as it lands. A branch push with no pull request does not run CI. After the pull request is open, run `pnpm gate` and push related fix commits together. The pull request merges with a merge commit.
 - The `publish` job, the `admin-publish` job, and `tooling/checks/image-publish/` stay untouched.
-- `AGENTS.md` §10 stays untouched, including its `fmt -check` phrase. The executable change is the one `ci.yml` line in Task 2.
+- `AGENTS.md` §10 changes only one phrase, in the Stage 1 offline Terraform bullet: `fmt -check` becomes `fmt -check -recursive`. Nothing else in §10 changes. The executable change is the one `ci.yml` line in Task 2.
 - Session scratch (`.superpowers/`, `*-report.md`) is never committed.
 - Do not mark this plan approved yourself.
 - Prettier formats Markdown, TypeScript, and YAML. Run it on the files in the commit before every commit. On `AGENTS.md`, prettier may reflow padding only inside a table this task edits. Any other hunk is reverted.
@@ -43,11 +43,12 @@ Status: draft
 
 Rules touched, Contracts, and Risks name these. The implementer runs each source change once, sees the named test fail, restores the file, and reports that. The weakened tree is never committed. The report is session scratch.
 
-| Setting                                       | Test that pins it                                       | Source change that makes that test fail                        |
-| --------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------- |
-| Same provider version, same hash set          | `lock-hash-mismatch` fixture, `ok` is false             | In Task 1, give both fixture `hashes` lists the same one hash  |
-| `Terraform checks` is the six lines           | Real `ci.yml` matches; `fmt-not-recursive.yml` does not | In Task 2, change the real line back to `terraform fmt -check` |
-| A module path also selects `infra/regions/au` | The module-only mapping case                            | In Task 2, stop adding `infra/regions/au` for a module path    |
+| Setting                                       | Test that pins it                                              | Source change that makes that test fail                        |
+| --------------------------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------- |
+| Same provider version, same hash set          | `lock-hash-mismatch` fixture, `ok` is false                    | In Task 1, give both fixture `hashes` lists the same one hash  |
+| `Terraform checks` is the six lines           | Real `ci.yml` matches; `fmt-not-recursive.yml` does not        | In Task 2, change the real line back to `terraform fmt -check` |
+| A module path also selects `infra/regions/au` | The module-only mapping case                                   | In Task 2, stop adding `infra/regions/au` for a module path    |
+| A failing Terraform line stops the script     | A two-line script whose first line is `false` writes no marker | In Task 2, remove the `-e`                                     |
 
 Parking, and "the agent does not apply", are prose. No test pins them.
 
@@ -128,13 +129,15 @@ EOF
 - Create: `tooling/checks/gate/tsconfig.json`
 - Create: `tooling/checks/gate/vitest.config.ts`
 - Create: `tooling/checks/gate/gate.ts`
+- Create: `tooling/checks/gate/cli.ts`
 - Create: `tooling/checks/gate/gate.test.ts`
 - Create: `tooling/checks/gate/fixtures/fmt-not-recursive.yml`
 - Modify: `package.json`
 - Modify: `pnpm-lock.yaml`
+- Modify: `turbo.json`
 - Modify: `.github/workflows/ci.yml`
 
-**Proves:** The real Terraform script is the six lines, a script without `-recursive` fails that test, and a module-only path also selects the Sydney cell.
+**Proves:** The real Terraform script is the six lines, a script without `-recursive` fails that test, a module-only path also selects the Sydney cell, and a failing line stops the Terraform script.
 
 - [ ] **Step 1: Package**
 
@@ -142,7 +145,7 @@ Copy the `package.json` script shape and `tsconfig.json` from `@community-hub/ch
 
 - [ ] **Step 2: Write the failing tests**
 
-Export `terraformChecksScript(workflowYaml: string): string`. It finds the job named `terraform`, the step named `Terraform checks`, and returns that `run:` block with each line trimmed and blank lines dropped.
+Export `terraformChecksScript(workflowYaml: string): string`. It reads the workflow line by line, the way `tooling/checks/image-publish/workflow-check.ts` does. No YAML parser is added. It finds the job named `terraform`, the step named `Terraform checks`, and returns that `run:` block with each line trimmed and blank lines dropped.
 
 Export `TERRAFORM_CHECKS` as exactly these six lines:
 
@@ -155,7 +158,9 @@ tflint
 terraform test
 ```
 
-Export `touchedTerraformDirs(changedPaths: readonly string[], matrix: readonly string[]): string[]`. A path selects a matrix directory when the path is that directory or is inside it. A path under `infra/modules/` also selects `infra/regions/au`. Return the selected directories in matrix order, once each.
+Export `touchedTerraformDirs(changedPaths: readonly string[], matrix: readonly string[]): string[]`. A path selects a directory only when it starts with that directory. A path under `infra/modules/` also selects `infra/regions/au`. Return the selected directories in matrix order, once each.
+
+Export `runScriptInDirectory(script: string, directory: string): number`. It runs the script under `bash -eo pipefail`, as GitHub runs it, with that working directory, and returns the status. `gate.ts` has no top-level side effects. `cli.ts` runs the gate. `gate.test.ts` imports only `gate.ts`.
 
 Tests:
 
@@ -164,8 +169,9 @@ Tests:
 - `touchedTerraformDirs(["infra/modules/aws-budgets/main.tf"], matrix)` returns `["infra/modules/aws-budgets", "infra/regions/au"]`. `matrix` is the real `dir` list. This is the module-only case.
 - `["infra/regions/au/main.tf"]` returns `["infra/regions/au"]` only.
 - `["infra/bootstrap/main.tf"]` returns `["infra/bootstrap"]` only.
-- `["AGENTS.md", ".github/workflows/ci.yml", "tooling/checks/gate/gate.ts", "package.json"]` returns `[]`.
+- `["AGENTS.md", ".github/workflows/ci.yml", "tooling/checks/gate/gate.ts", "package.json", "tooling/checks/terraform-invariants/fixtures/lock-hash-mismatch/infra/modules/one/.terraform.lock.hcl"]` returns `[]`.
 - Two module paths return both module directories and `infra/regions/au` once.
+- `runScriptInDirectory` runs a two-line script in a temp directory. The first line is `false`. The second line writes a marker file. The call returns non-zero, and the marker file does not exist.
 
 Run: `pnpm test --filter @community-hub/check-gate`
 
@@ -173,25 +179,44 @@ Expected: FAIL. The real script still says `terraform fmt -check`.
 
 - [ ] **Step 3: Run the source changes once**
 
-After Step 4 is green, change the real `ci.yml` line back to `terraform fmt -check`. Run the test. Expected: the real-script test FAIL. Restore `-recursive`.
+After Step 4 is green, change the real `ci.yml` line back to `terraform fmt -check`. Run `pnpm test --filter @community-hub/check-gate` without `--force`. Expected: the real-script test FAIL. Turbo does not replay the cached pass, because `.github/workflows/ci.yml` is in `globalDependencies`. Restore `-recursive`.
 
 Then stop adding `infra/regions/au` for a module path. Run the test. Expected: the module-only test FAIL. Restore the addition.
 
-Do not commit either weakened change.
+Then remove the `-e` from `bash -eo pipefail`. Run the test. Expected: the marker-file test FAIL. Restore `-e`.
+
+Do not commit any weakened change.
 
 - [ ] **Step 4: Make the tests pass**
 
 In `.github/workflows/ci.yml`, in the `terraform` job only, replace `terraform fmt -check` with `terraform fmt -check -recursive`. No other line of that job changes. Do not edit `publish` or `admin-publish`.
 
-`package.json` gains `"gate": "tsx tooling/checks/gate.ts"`.
+In `turbo.json`, add `".github/workflows/ci.yml"` to `globalDependencies`. Leave the entries that are already there.
 
-`pnpm gate` runs, in order, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm check:boundaries`. It then resolves `git merge-base HEAD origin/main`. If that command exits non-zero, `pnpm gate` exits non-zero. Changed paths are that diff, plus staged and unstaged diffs. For each directory from `touchedTerraformDirs`, it runs `terraformChecksScript` of the real workflow with that working directory. The script text is read from `ci.yml`. It is not copied into `gate.ts` except as `TERRAFORM_CHECKS`, which the test compares. When the directory list is empty, it prints `terraform: none` and does not run Terraform.
+`package.json` gains `"gate": "tsx tooling/checks/gate/cli.ts"`. There is no `tooling/checks/gate.ts`.
 
-- [ ] **Step 5: Run `pnpm gate`**
+`cli.ts` runs, in order, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm check:boundaries`. It then resolves `git merge-base HEAD origin/main`. If that command exits non-zero, `pnpm gate` exits non-zero. Changed paths are that diff, plus staged and unstaged diffs. For each directory from `touchedTerraformDirs`, it runs the real workflow script through `runScriptInDirectory`. That runs under `bash -eo pipefail`, so the first failing line stops the script and `pnpm gate` exits non-zero. The script text is read from `ci.yml`. It is not copied into `gate.ts` except as `TERRAFORM_CHECKS`, which the test compares. When the directory list is empty, it prints `terraform: none` and does not run Terraform.
+
+- [ ] **Step 5: Check formatting in every matrix directory**
+
+Run `terraform fmt -check -recursive` in each of these directories, and expect exit 0 in each:
+
+- `infra/bootstrap`
+- `infra/regions/au`
+- `infra/modules/aws-network`
+- `infra/modules/aws-kms-storage`
+- `infra/modules/aws-kms-envelope`
+- `infra/modules/aws-db-secrets`
+- `infra/modules/aws-budgets`
+- `infra/modules/aws-rds`
+- `infra/modules/aws-ingress`
+- `infra/modules/aws-admin-static`
+
+- [ ] **Step 6: Run `pnpm gate`**
 
 Expected: the five pnpm commands pass, and the output contains `terraform: none`.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git commit -m "$(cat <<'EOF'
@@ -314,7 +339,7 @@ Remove:
 
 Add:
 
-`For chunks touching **children's data, payments, authentication, encryption, residency or tenancy**, the owner's assistant runs the second fresh-context review in a fresh session that has not seen the implementation discussion. The reviewer agent may add its own. It starts when the pull request opens, alongside the final review, and it does not wait until the final review has finished. The pull request's second-review line stays open until that review is written.`
+`For chunks touching **children's data, payments, authentication, encryption, residency or tenancy**, the owner's assistant runs the second fresh-context review in a fresh session that has not seen the implementation discussion. The reviewer agent may add its own. The owner's assistant starts that review when the pull request opens, alongside the final review, and does not wait until the final review has finished. The pull request's second-review line stays open until that review is written.`
 
 - [ ] **Step 4: §4 lifecycle diagram — replace the footer**
 
@@ -403,13 +428,17 @@ Under **Merge policy**, add:
 
 `**Agents never merge.**` stays.
 
-- [ ] **Step 11: §11 — add one checklist item**
+- [ ] **Step 11: §10 — change the format phrase**
+
+In Stage 1, the offline Terraform bullet, `fmt -check` becomes `fmt -check -recursive`. Nothing else in §10 changes.
+
+- [ ] **Step 12: §11 — add one checklist item**
 
 After the existing Cost checkbox, add:
 
 `Does this chunk leave staging parked? If it unparks, does the spec say why, for how long, and at what cost, and does the last apply re-park?`
 
-- [ ] **Step 12: §15 — replace one bullet**
+- [ ] **Step 13: §15 — replace one bullet**
 
 Remove:
 
@@ -421,7 +450,7 @@ Add:
 
 The `❌` prefix stays on that bullet.
 
-- [ ] **Step 13: Run `pnpm gate` and commit**
+- [ ] **Step 14: Run `pnpm gate` and commit**
 
 ```bash
 git commit -m "$(cat <<'EOF'
