@@ -10,7 +10,7 @@ Spec: docs/specs/2026-10-07-review-workflow.md
 
 **Tech Stack:** TypeScript, Vitest, Terraform 1.11.4. `pnpm gate` shells the `Terraform checks` script from `.github/workflows/ci.yml`.
 
-Status: draft
+Status: approved (2026-10-07, Abdus)
 
 **Branch:** `docs/2026-10-07-review-workflow` · one PR · 6 task commits, after the spec and this plan
 
@@ -63,6 +63,8 @@ Parking, and "the agent does not apply", are prose. No test pins them.
 | `.github/PULL_REQUEST_TEMPLATE.md`             | Four review-record lines.                             |
 | `AGENTS.md`                                    | The sentences named in Task 5. Nothing else.          |
 | `docs/roadmap.md`                              | One process row. The snapshot stays.                  |
+| `turbo.json`                                   | `.github/workflows/ci.yml` in globalDependencies      |
+| `package.json`                                 | The `gate` script                                     |
 
 ---
 
