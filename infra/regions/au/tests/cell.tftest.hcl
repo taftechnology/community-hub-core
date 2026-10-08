@@ -947,6 +947,15 @@ run "staging_image_publish" {
 
   assert {
     condition = (
+      length(regexall("resource \"aws_iam_role_policy\" \"admin_publish\"", file("${path.module}/main.tf"))) == 1 &&
+      length(regexall("role\\s*=\\s*aws_iam_role\\.admin_publish\\[count\\.index\\]\\.id", file("${path.module}/main.tf"))) == 1 &&
+      length(regexall("policy\\s*=\\s*module\\.admin_static\\[count\\.index\\]\\.publish_policy", file("${path.module}/main.tf"))) == 1
+    )
+    error_message = "the admin publish role has exactly one policy, and it is the module publish policy"
+  }
+
+  assert {
+    condition = (
       length(jsondecode(aws_iam_role.admin_publish[0].assume_role_policy).Statement) == 1 &&
       jsondecode(aws_iam_role.admin_publish[0].assume_role_policy).Statement[0].Effect == "Allow" &&
       jsondecode(aws_iam_role.admin_publish[0].assume_role_policy).Statement[0].Action == "sts:AssumeRoleWithWebIdentity" &&
