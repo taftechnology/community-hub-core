@@ -445,6 +445,52 @@ resource "aws_iam_role" "image_publish" {
   })
 }
 
+module "admin_static" {
+  count  = local.image_publish_count
+  source = "../../modules/aws-admin-static"
+
+  aws_region  = var.aws_region
+  name        = local.name
+  environment = var.environment
+  project     = "community-hub"
+  zone_name   = var.environment == "prod" ? "communityhub.one" : "communityhub-staging.net"
+  zone_id     = coalesce(var.staging_zone_id, "ZUNUSED")
+}
+
+resource "aws_iam_role" "admin_publish" {
+  count = local.image_publish_count
+  name  = "ch-staging-admin-publish"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Federated = aws_iam_openid_connect_provider.github[count.index].arn
+        }
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Condition = {
+          StringEquals = {
+            "token.actions.githubusercontent.com:aud"                 = "sts.amazonaws.com"
+            "token.actions.githubusercontent.com:sub"                 = "repo:taftechnology@${var.github_repository_owner_id}/community-hub-core@${var.github_repository_id}:ref:refs/heads/main"
+            "token.actions.githubusercontent.com:job_workflow_ref"    = "taftechnology/community-hub-core/.github/workflows/ci.yml@refs/heads/main"
+            "token.actions.githubusercontent.com:repository_id"       = var.github_repository_id
+            "token.actions.githubusercontent.com:repository_owner_id" = var.github_repository_owner_id
+          }
+        }
+      },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "admin_publish" {
+  count  = local.image_publish_count
+  name   = "admin-publish"
+  role   = aws_iam_role.admin_publish[count.index].id
+  policy = module.admin_static[count.index].publish_policy
+}
+
 resource "aws_iam_role_policy" "image_publish" {
   count = local.image_publish_count
   name  = "image-publish"

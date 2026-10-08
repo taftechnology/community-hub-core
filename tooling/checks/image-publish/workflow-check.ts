@@ -61,6 +61,57 @@ function jobSteps(job: string): string[] {
   return blocks.map((block) => block.join("\n"));
 }
 
+function joinContinuations(text: string): string {
+  return text.replace(/\\\n[ \t]*/g, " ");
+}
+
+function awsCommands(job: string): string[] {
+  const commands: string[] = [];
+  for (const line of joinContinuations(job).split("\n")) {
+    const segments = line.split(/&&|\|\||;|\$\(|\bthen\b|\bdo\b|\|/);
+    for (const segment of segments) {
+      const match = /^\s*(aws\b.*)$/.exec(segment);
+      const command = match?.[1]?.trim();
+      if (command !== undefined && command.length > 0) {
+        commands.push(command);
+      }
+    }
+  }
+  return commands;
+}
+
+function isAssetSyncOrIndexCopy(command: string): boolean {
+  return command.startsWith("aws s3 sync") || command.startsWith("aws s3 cp");
+}
+
+function adminPublishSyncFails(job: string): boolean {
+  const lines = joinContinuations(job).split("\n");
+  const syncIndex = lines.findIndex((line) => line.includes("aws s3 sync"));
+  const copyIndex = lines.findIndex((line) => line.includes("aws s3 cp"));
+  if (syncIndex === -1 || copyIndex === -1 || syncIndex > copyIndex) {
+    return true;
+  }
+  const sync = lines[syncIndex] ?? "";
+  const copy = lines[copyIndex] ?? "";
+  const syncOk =
+    sync.includes("dist/assets") &&
+    sync.includes("--delete") &&
+    sync.includes("--only-show-errors") &&
+    sync.includes("public, max-age=31536000, immutable");
+  const copyOk =
+    copy.includes("index.html") &&
+    copy.includes("--only-show-errors") &&
+    copy.includes("no-cache") &&
+    !copy.includes("--delete");
+  return !syncOk || !copyOk;
+}
+
+function adminPublishQueryFails(job: string): boolean {
+  return awsCommands(job).some(
+    (command) => !isAssetSyncOrIndexCopy(command) && !command.includes("--query"),
+  );
+}
+
 function publishHasSeparateImageTest(publish: string): boolean {
   return jobSteps(publish).some(
     (step) => step.includes("src/image.test.ts") && !step.includes(SCAN_COMMAND),
@@ -78,14 +129,16 @@ function buildsAreAttested(text: string): boolean {
 export function checkWorkflow(text: string): WorkflowCheck {
   const violations: string[] = [];
   const publish = jobBlock(text, "publish");
+  const adminPublish = jobBlock(text, "admin-publish");
   const preview = jobBlock(text, "build-preview");
   const top = header(text);
   const idTokenCount = count(text, "id-token: write");
 
   if (
     top.includes("id-token: write") ||
-    idTokenCount !== 1 ||
-    count(publish, "id-token: write") !== 1
+    idTokenCount !== 2 ||
+    count(publish, "id-token: write") !== 1 ||
+    count(adminPublish, "id-token: write") !== 1
   ) {
     violations.push("workflow-id-token");
   }
@@ -135,6 +188,27 @@ export function checkWorkflow(text: string): WorkflowCheck {
   }
   if (publishHasSeparateImageTest(publish)) {
     violations.push("publish-image-test");
+  }
+  if (!adminPublish.includes(PUBLISH_NEEDS)) {
+    violations.push("admin-publish-without-needs");
+  }
+  if (!publishIfIsExact(adminPublish)) {
+    violations.push("admin-publish-without-main");
+  }
+  if (!usesArePinned(adminPublish)) {
+    violations.push("admin-publish-floating-uses");
+  }
+  if (
+    !adminPublish.includes("group: admin-publish") ||
+    !adminPublish.includes("cancel-in-progress: false")
+  ) {
+    violations.push("admin-publish-concurrency");
+  }
+  if (adminPublishSyncFails(adminPublish)) {
+    violations.push("admin-publish-sync");
+  }
+  if (adminPublishQueryFails(adminPublish)) {
+    violations.push("admin-publish-query");
   }
 
   return { ok: violations.length === 0, violations };

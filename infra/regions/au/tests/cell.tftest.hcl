@@ -280,6 +280,15 @@ run "prod_tfvars" {
     )
     error_message = "prod plans no image publish provider or role"
   }
+
+  assert {
+    condition = (
+      length(module.admin_static) == 0 &&
+      length(aws_iam_role.admin_publish) == 0 &&
+      length(aws_iam_role_policy.admin_publish) == 0
+    )
+    error_message = "prod plans no admin shell and no admin publish role"
+  }
 }
 
 run "prod_endpoint_off_fails" {
@@ -923,5 +932,43 @@ run "staging_image_publish" {
       ]) == 1
     )
     error_message = "GetAuthorizationToken is the only star action, and the other statement is the repository set"
+  }
+
+  assert {
+    condition = (
+      length(module.admin_static) == 1 &&
+      length(aws_iam_role.admin_publish) == 1 &&
+      length(aws_iam_role_policy.admin_publish) == 1 &&
+      issensitive(output.admin_bucket) &&
+      issensitive(output.admin_distribution_id)
+    )
+    error_message = "staging plans one admin shell, and the bucket and distribution outputs are sensitive"
+  }
+
+  assert {
+    condition = (
+      length(regexall("resource \"aws_iam_role_policy\" \"admin_publish\"", file("${path.module}/main.tf"))) == 1 &&
+      length(regexall("role\\s*=\\s*aws_iam_role\\.admin_publish\\[count\\.index\\]\\.id", file("${path.module}/main.tf"))) == 1 &&
+      length(regexall("policy\\s*=\\s*module\\.admin_static\\[count\\.index\\]\\.publish_policy", file("${path.module}/main.tf"))) == 1
+    )
+    error_message = "the admin publish role has exactly one policy, and it is the module publish policy"
+  }
+
+  assert {
+    condition = (
+      length(jsondecode(aws_iam_role.admin_publish[0].assume_role_policy).Statement) == 1 &&
+      jsondecode(aws_iam_role.admin_publish[0].assume_role_policy).Statement[0].Effect == "Allow" &&
+      jsondecode(aws_iam_role.admin_publish[0].assume_role_policy).Statement[0].Action == "sts:AssumeRoleWithWebIdentity" &&
+      jsondecode(aws_iam_role.admin_publish[0].assume_role_policy).Statement[0].Principal == { Federated = aws_iam_openid_connect_provider.github[0].arn } &&
+      keys(jsondecode(aws_iam_role.admin_publish[0].assume_role_policy).Statement[0].Condition) == ["StringEquals"] &&
+      jsondecode(aws_iam_role.admin_publish[0].assume_role_policy).Statement[0].Condition.StringEquals == {
+        "token.actions.githubusercontent.com:aud"                 = "sts.amazonaws.com"
+        "token.actions.githubusercontent.com:sub"                 = "repo:taftechnology@100000000002/community-hub-core@100000000001:ref:refs/heads/main"
+        "token.actions.githubusercontent.com:job_workflow_ref"    = "taftechnology/community-hub-core/.github/workflows/ci.yml@refs/heads/main"
+        "token.actions.githubusercontent.com:repository_id"       = "100000000001"
+        "token.actions.githubusercontent.com:repository_owner_id" = "100000000002"
+      }
+    )
+    error_message = "the admin trust must be one Allow statement with exactly the five StringEquals claims"
   }
 }

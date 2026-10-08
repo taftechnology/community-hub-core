@@ -112,6 +112,7 @@ jobs:
           - infra/modules/aws-budgets
           - infra/modules/aws-rds
           - infra/modules/aws-ingress
+          - infra/modules/aws-admin-static
     steps:
       - uses: actions/checkout@v4
 
@@ -366,3 +367,98 @@ jobs:
             console.log("Severity counts: " + JSON.stringify(counts));
             ' "${stdout_file}"
           } >> "${GITHUB_STEP_SUMMARY}"
+
+  admin-publish:
+    name: admin-publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [static, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: admin-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Publish the shell
+        env:
+          ADMIN_PUBLISH_ROLE_ARN: ${{ secrets.ADMIN_PUBLISH_ROLE_ARN }}
+          ADMIN_BUCKET: ${{ secrets.ADMIN_BUCKET }}
+          ADMIN_DISTRIBUTION_ID: ${{ secrets.ADMIN_DISTRIBUTION_ID }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ADMIN_PUBLISH_ROLE_ARN:-}" || -z "${ADMIN_BUCKET:-}" || -z "${ADMIN_DISTRIBUTION_ID:-}" ]]; then
+            echo "admin publish secrets are empty" >&2
+            exit 1
+          fi
+          command -v aws >/dev/null
+
+          account_id="${ADMIN_PUBLISH_ROLE_ARN#arn:aws:iam::}"
+          account_id="${account_id%%:*}"
+          echo "::add-mask::${account_id}"
+
+          pnpm install --frozen-lockfile
+          pnpm --filter @community-hub/admin build
+
+          token_file="${RUNNER_TEMP}/github-oidc-token"
+          response_file="${RUNNER_TEMP}/github-oidc-response"
+          creds_file="${RUNNER_TEMP}/aws-creds"
+          trap 'rm -f "${token_file}" "${response_file}" "${creds_file}"' EXIT
+          curl --silent --show-error --fail \
+            --header "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" \
+            --output "${response_file}"
+          node --input-type=module -e '
+          import fs from "node:fs";
+          const response = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+          fs.writeFileSync(process.argv[2], response.value, { mode: 0o600 });
+          ' "${response_file}" "${token_file}"
+          rm -f "${response_file}"
+          token="$(cat "${token_file}")"
+          echo "::add-mask::${token}"
+          node --input-type=module -e '
+          import fs from "node:fs";
+          const token = fs.readFileSync(process.argv[1], "utf8").trim();
+          const payload = token.split(".")[1] ?? "";
+          const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+          console.log(claims.sub);
+          console.log(claims.ref);
+          console.log(claims.job_workflow_ref);
+          ' "${token_file}"
+
+          aws sts assume-role-with-web-identity \
+            --role-arn "${ADMIN_PUBLISH_ROLE_ARN}" \
+            --role-session-name admin-publish \
+            --web-identity-token "${token}" \
+            --query "Credentials.[AccessKeyId,SecretAccessKey,SessionToken]" \
+            --output text \
+            --region ap-southeast-2 \
+            > "${creds_file}"
+          rm -f "${token_file}"
+          read -r AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN < "${creds_file}"
+          rm -f "${creds_file}"
+          echo "::add-mask::${AWS_ACCESS_KEY_ID}"
+          echo "::add-mask::${AWS_SECRET_ACCESS_KEY}"
+          echo "::add-mask::${AWS_SESSION_TOKEN}"
+          export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+          export AWS_DEFAULT_REGION=ap-southeast-2
+          unset token
+
+          aws s3 sync apps/admin/dist/assets "s3://${ADMIN_BUCKET}/assets" --delete --only-show-errors --cache-control "public, max-age=31536000, immutable" --region ap-southeast-2
+          aws s3 cp apps/admin/dist/index.html "s3://${ADMIN_BUCKET}/index.html" --only-show-errors --cache-control "no-cache" --region ap-southeast-2
+          aws cloudfront create-invalidation \
+            --distribution-id "${ADMIN_DISTRIBUTION_ID}" \
+            --paths "/" "/index.html" \
+            --query "Invalidation.Id" \
+            --output text \
+            --region ap-southeast-2

@@ -195,6 +195,36 @@ A rollback that removes the two replica resources destroys only those two. The p
 
 The production apply runbook, which this chunk does not write, enables `ap-southeast-4` in the production account before the first production apply.
 
+## Admin shell
+
+SHA `8a68085746eb345753fcbcd66b986135ac560fef`. Profile ch-admin. The apply added 14, changed 0, and destroyed 0. IPv6 is off. There is no AAAA record and no `terraform_data`.
+
+- `module.admin_static[0].aws_s3_bucket.admin`
+- `module.admin_static[0].aws_s3_bucket_public_access_block.admin`
+- `module.admin_static[0].aws_s3_bucket_server_side_encryption_configuration.admin`
+- `module.admin_static[0].aws_s3_bucket_ownership_controls.admin`
+- `module.admin_static[0].aws_s3_bucket_policy.admin`
+- `module.admin_static[0].aws_cloudfront_origin_access_control.admin`
+- `module.admin_static[0].aws_cloudfront_response_headers_policy.admin`
+- `module.admin_static[0].aws_cloudfront_distribution.admin`
+- `module.admin_static[0].aws_acm_certificate.admin`
+- `module.admin_static[0].aws_route53_record.validation["admin.<zone>"]`
+- `module.admin_static[0].aws_acm_certificate_validation.admin`
+- `module.admin_static[0].aws_route53_record.admin`
+- `aws_iam_role.admin_publish[0]`
+- `aws_iam_role_policy.admin_publish[0]`
+
+The validation key is `admin.` concatenated with the zone name. A read-only plan after the apply showed no changes. Abdus built that SHA and synced it with profile ch-admin, assets first, then `index.html`. The three GitHub Actions secrets are set. Their values are not recorded here.
+
+The reviewer loaded `https://admin.<zone>/` before merge. The four checks passed:
+
+1. One `h1`, Dashboard.
+2. The nav named Admin has one link, Dashboard to `/`. None of the other 15 labels is in the page.
+3. The five response headers match the spec's exact values.
+4. The console has no message and no policy violation.
+
+Also confirmed: only same-origin requests; `index.html` is `no-cache` and the assets are immutable; the script is served gzip-compressed; `/enquires` returns 403 and is not rewritten to `index.html`; the bucket's direct URL returns 403; HTTP redirects to HTTPS. The reviewer read the bucket, the distribution, the certificate, the headers policy, and the publish role back from AWS and simulated the role's policy. It allows listing the bucket, putting and deleting objects, and invalidating this distribution, and nothing else that was tried.
+
 ## Restore drill
 
 Quarterly, and only against staging. Restore the staging database to a new instance from point-in-time recovery. Record the time taken against the 4-hour target. Then delete the restored instance, because it bills by the hour. This drill does not restore production. Reading `SHOW max_connections` belongs to `first-running-task`, not to this drill.
