@@ -29,6 +29,8 @@ const mustFail = [
   "region-provider-us-east-1",
   "missing-replica-prevent-destroy",
   "tf-json-file",
+  "lock-hash-mismatch",
+  "lock-hash-different",
 ] as const;
 
 const mustPass = ["valid", "melbourne-replica", "viewer-certificate"] as const;
@@ -95,6 +97,16 @@ describe("terraform-invariants check fixtures", () => {
         ),
       ),
     ).toBe(true);
+  });
+
+  it("fails lock-hash-mismatch because the hash sets differ", () => {
+    const result = check(path.join(fixturesDir, "lock-hash-mismatch"));
+    expect(result.ok).toBe(false);
+    const message = result.violations.map((violation) => violation.message).join("\n");
+    expect(message).toContain("infra/modules/one/.terraform.lock.hcl");
+    expect(message).toContain("infra/modules/two/.terraform.lock.hcl");
+    expect(message).toContain("registry.terraform.io/hashicorp/aws");
+    expect(message).toContain("9.9.9");
   });
 
   it("reports a notice when no backend files exist yet", () => {

@@ -13,7 +13,8 @@
     "build": "turbo run build",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
-    "check:boundaries": "tsx tooling/checks/run.ts"
+    "check:boundaries": "tsx tooling/checks/run.ts",
+    "gate": "tsx tooling/checks/gate/cli.ts"
   },
   "pnpm": {
     "overrides": {

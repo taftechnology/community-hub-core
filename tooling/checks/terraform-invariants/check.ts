@@ -232,6 +232,84 @@ function validateRegionArguments(
   return violations;
 }
 
+function quotedHashes(body: string): Set<string> {
+  const marker = body.search(/hashes\s*=\s*\[/);
+  if (marker === -1) {
+    return new Set();
+  }
+  const open = body.indexOf("[", marker);
+  let depth = 0;
+  let end = open;
+  for (let i = open; i < body.length; i += 1) {
+    if (body[i] === "[") {
+      depth += 1;
+    } else if (body[i] === "]") {
+      depth -= 1;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  const list = body.slice(open + 1, end);
+  const hashes = new Set<string>();
+  for (const match of list.matchAll(/"([^"]+)"/g)) {
+    const hash = match[1];
+    if (hash !== undefined) {
+      hashes.add(hash);
+    }
+  }
+  return hashes;
+}
+
+function sameHashes(left: Set<string>, right: Set<string>): boolean {
+  if (left.size !== right.size) {
+    return false;
+  }
+  for (const hash of left) {
+    if (!right.has(hash)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function validateLockHashes(root: string, files: string[]): TerraformInvariantViolation[] {
+  const groups = new Map<string, { file: string; hashes: Set<string> }[]>();
+  for (const filePath of files) {
+    const hcl = stripHclComments(fs.readFileSync(filePath, "utf8"));
+    const relFile = path.relative(root, filePath).split(path.sep).join("/");
+    for (const provider of findProviders(hcl)) {
+      const version = assignmentValue(provider.body, "version").map(unquote)[0];
+      if (version === undefined) {
+        continue;
+      }
+      const key = `${provider.name}\0${version}`;
+      const entries = groups.get(key) ?? [];
+      entries.push({ file: relFile, hashes: quotedHashes(provider.body) });
+      groups.set(key, entries);
+    }
+  }
+
+  const violations: TerraformInvariantViolation[] = [];
+  for (const [key, entries] of groups) {
+    const first = entries[0];
+    if (first === undefined || entries.length < 2) {
+      continue;
+    }
+    if (entries.every((entry) => sameHashes(entry.hashes, first.hashes))) {
+      continue;
+    }
+    const [source, version] = key.split("\0");
+    const listed = entries.map((entry) => entry.file).join(" and ");
+    violations.push({
+      file: first.file,
+      message: `provider ${source} version ${version} has different hash sets in ${listed}`,
+    });
+  }
+  return violations;
+}
+
 function isBackendFile(filePath: string): boolean {
   const parts = filePath.split(path.sep);
   return parts.includes("backend") && filePath.endsWith(".hcl");
@@ -467,12 +545,16 @@ export function check(root: string = process.cwd()): CheckResult {
   const allHcl: string[] = [];
   const allTf: string[] = [];
   const allTfJson: string[] = [];
+  const lockFiles: string[] = [];
   collectFiles(infraRoot, (name) => name.endsWith(".hcl"), allHcl);
+  collectFiles(infraRoot, (name) => name === ".terraform.lock.hcl", lockFiles);
   collectFiles(infraRoot, (name) => name.endsWith(".tf"), allTf);
   collectFiles(infraRoot, (name) => name.endsWith(".tf.json"), allTfJson);
 
   const backendFiles = allHcl.filter((filePath) => isBackendFile(filePath));
   const violations: TerraformInvariantViolation[] = [];
+
+  violations.push(...validateLockHashes(resolvedRoot, lockFiles));
 
   for (const filePath of backendFiles) {
     const hcl = stripHclComments(fs.readFileSync(filePath, "utf8"));

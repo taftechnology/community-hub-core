@@ -53,6 +53,16 @@ Chunks that change a documented decision without belonging to a phase. They do n
 
 ---
 
+## Process
+
+Chunks that change how work is reviewed. They do not count toward phase totals.
+
+| Status | Chunk             | What                                                                                                                        |
+| ------ | ----------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| done   | `review-workflow` | Parking, the owner's check, the local gate, and when a pull request opens. Spec `docs/specs/2026-10-07-review-workflow.md`. |
+
+---
+
 ## Phase 0 — Foundations
 
 Architecture: monorepo, CI, Terraform for AWS in `ap-southeast-2`, kernel, db with RLS, crypto, observability, audit, `packages/ui`.

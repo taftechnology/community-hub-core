@@ -24,7 +24,8 @@ None.
 ## Review record
 
 - Implementer:
-- Reviewer: human (single-agent) / agent configuration:
+- Reviewer agent:
+- Owner's check assisted by: <tool>, <model>, and what it ran
 - Second independent review: not required / required because:
 
 ## Test evidence

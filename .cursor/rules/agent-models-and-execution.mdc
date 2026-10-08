@@ -18,3 +18,7 @@ When work is ready for review — a task diff, a second review, or a pull reques
 ## Approved plan
 
 Once the plan is approved, implement every remaining task in order without stopping for review between tasks. Commit each task as the plan requires. When the last task is done, tell the user the plan is complete and what landed. Do not open the next chunk.
+
+## Human gates
+
+The agent does not merge. The agent does not apply. The agent stops at every Human section.
