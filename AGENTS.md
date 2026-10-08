@@ -38,18 +38,22 @@ Three roles. **No agent both writes and signs off on the same work.**
 | **Reviewer agent**    | The session you talk to (where subagents exist) | Writes the spec, drafts the plan, spawns implementers, reviews every task and the final PR, keeps `architecture.md` honest | Write implementation code or tests for the chunk it is reviewing  |
 | **Implementer agent** | Spawned subagent(s), fresh context              | Implements one task at a time, with tests, and reports back                                                                | Approve its own work, merge, or change the spec/plan unilaterally |
 
+Before approving a spec or a plan, and before merging, the owner has the work checked by an independent assistant. The assistant is in a different tool, and on a different model family, from the implementer and reviewer agents. The owner decides. The assistant reviews by diff, verifies by running, and never writes repo files, never applies, and never merges.
+
+There are still three roles. The assistant is how the owner checks. It is not a fourth role, and it is not one of the repo's agents.
+
 **If the tool has no subagent capability**
 
 Single-agent tools (or a session where spawning is unavailable) collapse to **two roles, not one**: the agent implements, and **the human is the reviewer**. The principle does not bend — nobody signs off on their own work.
 
-|                           | Multi-agent tool              | Single-agent tool                                                                      |
-| ------------------------- | ----------------------------- | -------------------------------------------------------------------------------------- |
-| Spec and plan             | Reviewer agent drafts         | Agent drafts                                                                           |
-| Approval of spec and plan | Human                         | Human                                                                                  |
-| Implementation            | Implementer agent(s)          | The agent                                                                              |
-| Task review               | Reviewer agent, diff only     | **Human**, diff only                                                                   |
-| Sensitive chunks (§2)     | Second fresh-context reviewer | Human review, and a fresh session re-reads the final diff with no memory of writing it |
-| Merge                     | Human                         | Human                                                                                  |
+|                           | Multi-agent tool                                                           | Single-agent tool                     |
+| ------------------------- | -------------------------------------------------------------------------- | ------------------------------------- |
+| Spec and plan             | Reviewer agent drafts                                                      | Agent drafts                          |
+| Approval of spec and plan | Human                                                                      | Human                                 |
+| Implementation            | Implementer agent(s)                                                       | The agent                             |
+| Task review               | Reviewer agent, diff only                                                  | **Human**, diff only                  |
+| Sensitive chunks (§2)     | Owner's assistant, in a fresh session. The reviewer agent may add its own. | Owner's assistant, in a fresh session |
+| Merge                     | Human                                                                      | Human                                 |
 
 In that mode, keep tasks small enough that a human can review each commit in a few minutes — that is the whole reason for one commit per task.
 
@@ -57,7 +61,7 @@ In that mode, keep tasks small enough that a human can review each commit in a f
 
 - The reviewer agent and the implementer agent are **separate sessions with separate context**. The reviewer reads the diff, not the implementer's narration.
 - An implementer that finds the plan wrong **stops and reports**. It does not redesign.
-- For chunks touching **children's data, payments, authentication, encryption, residency or tenancy**, the reviewer spawns a **second, fresh-context reviewer** that has not seen the implementation discussion. Two independent passes, or it does not merge.
+- For chunks touching **children's data, payments, authentication, encryption, residency or tenancy**, the owner's assistant runs the second fresh-context review in a fresh session that has not seen the implementation discussion. The reviewer agent may add its own. The owner's assistant starts that review when the pull request opens, alongside the final review, and does not wait until the final review has finished. The pull request's second-review line stays open until that review is written.
 - **No model names are pinned in this file.** Use different model configurations for reviewer and implementer where available, so a single model never both produces and validates the same work. Record which configuration was used in the PR description.
 
 ---
@@ -103,8 +107,8 @@ A **chunk** is one shippable slice of behaviour. **One spec = one plan = one bra
   │  agent   │          │  agent   │          │ + reviewer   │        │ merges   │
   └──────────┘          └──────────┘          └──────────────┘        └──────────┘
        │                     │                       │                     │
-  docs/specs/          docs/plans/            one commit per task    squash or merge
-  <chunk>.md           <chunk>.md             + reviewer sign-off    per §8
+  docs/specs/          docs/plans/            one commit per task    merge commit
+  <chunk>.md           <chunk>.md             + reviewer sign-off
 ```
 
 Both gates are **human**. An agent never advances past a gate on its own judgement.
@@ -168,6 +172,8 @@ Use superpowers **`writing-plans`**. Write `docs/plans/YYYY-MM-DD-<slug>.md`, op
 - For every task: files touched, the test that proves it, the rule it must not break.
 - Migration wave marked explicitly (expand → migrate → contract; see §7).
 - Rollback note: what undoes this chunk.
+- For each security-relevant setting the spec names under Rules touched, Contracts, or Risks, the plan lists the test that pins it and the source change that makes that test fail. The implementer runs each change once, sees that test fail, restores the source, and reports the failure. The weakened tree is never committed. This is limited to those named settings, not every line. The report is session scratch, not a file under docs/plans/.
+- The plan's Terraform asserts are run in a scratch probe before the plan is sent for approval. The probe uses the plan's proposed test with override_during = plan. The probe is outside the repo, or in a scratch worktree, and it is not committed. An assert that errors or cannot pass is rewritten before the plan is sent. The probe does not apply and does not read a real var file.
 
 **Approval criteria:** tasks are genuinely sequential, no task is "and then wire everything together", and the last task leaves the system releasable. The last task on the branch updates [`docs/roadmap.md`](docs/roadmap.md) (this chunk **done**, snapshot, next chunk) so the PR that merges the work also updates the catalogue. Do not defer that to a follow-up chore.
 
@@ -188,6 +194,8 @@ A task is not done because the implementer says so. It is done when the reviewer
 
 The last commit on the chunk branch has already updated `docs/roadmap.md`. Run the session-scratch cleanup in §5, then use superpowers **`finishing-a-development-branch`**. Open the PR with the template in §9, then **stop**. Agents do not merge.
 
+Push task commits as usual. The pull request opens only when every plan task is done, including the catalogue commit. CI triggers only on pull_request and on push to main, so pushing a branch with no pull request costs no Actions minutes. The runbook requires the applied SHA to be on origin. After the pull request is open, run pnpm gate and push related fix commits together. One fix is not one push. Each fix is still its own commit.
+
 ---
 
 ## 5. Working environment
@@ -202,7 +210,8 @@ git fetch origin
 git switch -c <type>/<YYYY-MM-DD>-<slug> origin/main
 ```
 
-- Rebase on `origin/main` before opening the PR; keep history linear.
+- Before the first apply on a branch, rebase on origin/main and keep history linear. After the first apply there is no rebase, no amend, and no force-push. When origin/main moves after that apply, bring it in with a merge commit.
+- Push task commits as usual. The pull request opens only when every plan task is done, including the catalogue commit. CI triggers only on pull_request and on push to main, so pushing a branch with no pull request costs no Actions minutes. The runbook requires the applied SHA to be on origin. After the pull request is open, run pnpm gate and push related fix commits together. One fix is not one push. Each fix is still its own commit.
 - After the human merges: `git switch main && git pull --ff-only && git branch -d <branch>`. Do not accumulate personal commits on local `main`.
 - Parallel implementers are allowed (**`dispatching-parallel-agents`**) only when tasks touch disjoint files. Two agents in one module at once is a merge conflict factory.
 
@@ -244,6 +253,8 @@ Architecture-specific rules that reviewers check on every diff. Most map to a CI
 **Cost**
 
 - A chunk that adds a resource billed by the hour or the month names it and its monthly cost in its spec. No NAT gateway, load balancer, or extra interface endpoint appears without that.
+- Staging is parked by default. Parked means enable_database = false and desired_count = 0 in the committed infra/regions/au/env/staging.tfvars, and no service_image in any committed var file under infra/regions/au/env/. Parking removes the database and runs zero tasks. Stopping a database is not parking, because RDS starts a stopped instance again after seven days.
+- Staging is unparked only inside a chunk whose approved spec says so. That spec names why, the expected extra monthly cost, and how long it stays up. The same chunk re-parks before its pull request is merged, and docs/runbooks/apply-staging-au.md records both applies. The human runs every park and unpark apply. An agent never does. The steps are in that runbook and are not copied here.
 
 **Modules**
 
@@ -292,7 +303,7 @@ Architecture-specific rules that reviewers check on every diff. Most map to a CI
 **Per task (local gate, before reporting):**
 
 ```bash
-pnpm lint && pnpm typecheck && pnpm test --filter <touched-packages> && pnpm check:boundaries
+pnpm gate
 ```
 
 - [ ] Test written first and proves the behaviour
@@ -339,14 +350,15 @@ Never stage `docs/plans/*-report.md`, `.superpowers/`, or other session scratch.
 - What changed, in behaviour terms
 - Data classification changes and migration wave
 - Which of §1 the chunk could plausibly have broken, and how it doesn't
-- Review record: implementer configuration, reviewer configuration, second review if required
+- Review record: implementer configuration; reviewer agent configuration; Owner's check assisted by, with the tool, the model, and what it ran; and the second-review line
 - Screenshots or a preview link for UI, test evidence for backend
 
 **Merge policy**
 
 - Required checks must pass. No exceptions, no admin override without a written reason in the PR.
 - **Agents never merge.** The human owner merges.
-- Squash when the commits are noise; merge commit when the task history is worth keeping (it usually is — the plan maps to it).
+- The pull request merges with a merge commit.
+- After the first apply on a branch there is no rebase, no amend, and no force-push. When origin/main moves after that apply, it comes in by a merge commit.
 - Delete the branch after merge.
 
 ---
@@ -361,7 +373,7 @@ Never stage `docs/plans/*-report.md`, `.superpowers/`, or other session scratch.
 - `check:boundaries` — schema-rls, terraform-invariants, sql-session-ban, event-names, check-tokens (each checker has must-fail fixtures exercised in Stage 2). Encrypted columns: ESLint `@community-hub/no-encrypted-column-query`, `@community-hub/no-event-payload`, `@community-hub/no-kms-port-outside-crypto`, `@community-hub/no-restricted-disable`, `@community-hub/no-ts-ignore`, and `@community-hub/no-crypto-testing-import`; fixture-tested via `pnpm test` on `@community-hub/check-encrypted-column`, not `run.ts`.
 - secret scanning, dependency audit (fail on high/critical)
 - traceability (pull requests only): branch matches `<type>/<YYYY-MM-DD>-<slug>`; PR body links one spec and one plan with the same slug, both `approved`, or `No spec:` on `chore/` / `fix/` branches
-- **offline Terraform** (every root and every module under `infra/`): `terraform init -backend=false -lockfile=readonly`, `fmt -check`, `validate`, `tflint --init && tflint`, `terraform test`. Missing Terraform or a failed `init` fails the job. No live `plan`. No cloud provider secrets. `GITHUB_TOKEN` is passed so `tflint --init` does not hit unauthenticated GitHub rate limits.
+- **offline Terraform** (every root and every module under `infra/`): `terraform init -backend=false -lockfile=readonly`, `fmt -check -recursive`, `validate`, `tflint --init && tflint`, `terraform test`. Missing Terraform or a failed `init` fails the job. No live `plan`. No cloud provider secrets. `GITHUB_TOKEN` is passed so `tflint --init` does not hit unauthenticated GitHub rate limits.
 
 A CI check is added only when it has a real input **and** a must-fail fixture — never stubbed always-green. Omitted until then: dependency-cruiser module boundaries, manifest and plan-catalogue checks, identity/platform schema ownership scans beyond the provisional schema-rls checker, OpenAPI diff, live Terraform `plan`. A job is present and fail-closed, or absent — never present and silently skipping.
 
@@ -400,6 +412,7 @@ Beyond "does it work":
 - [ ] Children: any new path where a minor's data could become public, searchable, or reach a third party? Are a minor's `confidential*` fields household-keyed, with household-scoped indexes only?
 - [ ] Money: are amounts integer minor units, idempotency keys present, ledger tenant-scoped? Stripe Billing traffic comes from the regional service, and webhooks arrive on the Sydney hostname.
 - [ ] Cost: a chunk that adds a resource billed by the hour or the month names it and its monthly cost in its spec. No NAT gateway, load balancer, or extra interface endpoint appears without that.
+- [ ] Does this chunk leave staging parked? If it unparks, does the spec say why, for how long, and at what cost, and does the last apply re-park?
 - [ ] Encryption: right classification, right key, and nothing encrypted that SQL must query?
 - [ ] Entitlements and permissions checked in the API, the UI, and jobs? Jobs are work the regional service runs.
 - [ ] Public website: is a new surface a collection (not an island or block without a stated reason)? Is the projection a `public`-only allow-list, with a must-fail minor test?
@@ -453,7 +466,7 @@ Speed matters. These are common practices we have consciously skipped for now; d
 - ❌ A second **human** reviewer on every PR. The reviewer agent plus CI plus the merging human is the gate.
 - ❌ Ticket numbers, story points, estimates, burndown, or a status field to update in three places.
 - ❌ 100% coverage targets or coverage gates. Cover behaviour and risk, not lines.
-- ❌ Perfect commit-message poetry, changelog entries per commit, or squash-vs-merge debates.
+- ❌ Perfect commit-message poetry or changelog entries per commit.
 - ❌ Design documents for routine CRUD. A spec for a chunk is enough.
 - ❌ Manual QA sign-off for changes the e2e suite already covers.
 - ❌ RFCs for reversible decisions. Write the ADR when it is hard to undo.
