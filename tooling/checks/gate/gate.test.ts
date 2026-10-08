@@ -28,7 +28,9 @@ describe("terraform checks script", () => {
       path.join(packageDir, "fixtures/fmt-not-recursive.yml"),
       "utf8",
     );
-    expect(terraformChecksScript(fixture)).not.toBe(TERRAFORM_CHECKS);
+    const lines = TERRAFORM_CHECKS.split("\n");
+    lines[1] = "terraform fmt -check";
+    expect(terraformChecksScript(fixture)).toBe(lines.join("\n"));
   });
 });
 
