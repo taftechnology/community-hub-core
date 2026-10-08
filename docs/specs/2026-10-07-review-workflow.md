@@ -1,7 +1,7 @@
 # Spec: Review workflow
 
 Slug: review-workflow
-Status: draft
+Status: approved (2026-10-07, Abdus)
 Architecture refs: none. This chunk does not edit `architecture.md` and does not add an ADR.
 
 ## Problem
