@@ -30,6 +30,7 @@ const mustFail = [
   "missing-replica-prevent-destroy",
   "tf-json-file",
   "lock-hash-mismatch",
+  "lock-hash-different",
 ] as const;
 
 const mustPass = ["valid", "melbourne-replica", "viewer-certificate"] as const;
