@@ -17,7 +17,7 @@ Three recent chunks also lost review rounds to the same causes. The local gate d
 - Parking, in `AGENTS.md` §6 Cost and §11.
 - The owner's independent check, in `AGENTS.md` §2, in a new `docs/owner-review-brief.md`, and in `.cursor/rules/agent-models-and-execution.mdc`.
 - When a pull request opens, how fixes are pushed, and how history moves after the first apply, in `AGENTS.md` §4, §5, and §9.
-- When the second fresh-context review starts, in `AGENTS.md` §2. This draft does not choose who runs it.
+- The second fresh-context review, in `AGENTS.md` §2. The owner's assistant runs it in a fresh session. The reviewer agent may add its own. It starts when the pull request opens, alongside the final review.
 - The review record in `.github/PULL_REQUEST_TEMPLATE.md`.
 - One local command, `pnpm gate`, and `AGENTS.md` §8 pointing the per-task gate at it.
 - One terraform-invariants rule for provider lock hashes.
@@ -36,9 +36,9 @@ Three recent chunks also lost review rounds to the same causes. The local gate d
 
 ### Parking
 
-`AGENTS.md` §6 Cost gains this rule. Staging is parked by default. Parked means `enable_database = false` and `desired_count = 0` in the committed `infra/regions/au/env/staging.tfvars`, and no `service_image` assignment in any file git tracks. Parking removes the database and runs zero tasks. Stopping a database is not parking, because RDS starts a stopped instance again after seven days.
+`AGENTS.md` §6 Cost gains this rule. Staging is parked by default. Parked means `enable_database = false` and `desired_count = 0` in the committed `infra/regions/au/env/staging.tfvars`, and no `service_image` in any committed var file under `infra/regions/au/env/`. Plans and tests assign synthetic values today. Parking removes the database and runs zero tasks. Stopping a database is not parking, because RDS starts a stopped instance again after seven days.
 
-Staging is unparked only inside a chunk whose approved spec says so. That spec names why, the expected extra monthly cost, and how long it stays up. The same chunk re-parks before its pull request is merged, and the runbook records both applies. The committed `staging.tfvars` is back to the parked values in that pull request. `service_image` stays out of git while unparked; it belongs in the gitignored var file, and that assignment is removed before the re-park apply.
+Staging is unparked only inside a chunk whose approved spec says so. That spec names why, the expected extra monthly cost, and how long it stays up. The same chunk re-parks before its pull request is merged, and the runbook records both applies. The committed `staging.tfvars` is back to the parked values in that pull request. While unparked, the real image stays in the gitignored var file, and that assignment is removed before the re-park apply.
 
 The human runs every park and unpark apply. An agent never does.
 
@@ -52,7 +52,7 @@ The human runs every park and unpark apply. An agent never does.
 
 There are still three roles. The assistant is how the owner checks. It is not a fourth role, and it is not one of the repo's agents. `AGENTS.md` still pins no model name.
 
-`docs/owner-review-brief.md` is the assistant's standing rules. Abdus supplies the wording. The agent commits that text and does not draft a substitute. The supplied text covers all of these, and the file contains nothing else:
+`docs/owner-review-brief.md` is the assistant's standing rules. Abdus supplied the wording, and this revision commits that text. Later tasks do not edit it. The file covers at least these:
 
 - Read-only on the repo. The assistant does not write, stage, or commit files in the repository.
 - AWS is read-only. The assistant does not apply and does not merge.
@@ -62,19 +62,15 @@ There are still three roles. The assistant is how the owner checks. It is not a 
 - A read-only Terraform plan before every apply, checked by address.
 - Paste-ready messages for the agent.
 
-If that wording is not in the session when the brief task starts, the task stops.
-
 `.cursor/rules/agent-models-and-execution.mdc` keeps its Models, Commit before review, and Approved plan sections. It gains three sentences: the agent does not merge, the agent does not apply, and the agent stops at every Human section.
 
 ### Pull requests and history
 
-`AGENTS.md` §4 and §5: commits stay on the local branch until every plan task is done, including the catalogue commit. The pull request opens then, with one push. CI minutes are not spent on each task commit. After the pull request is open, the agent runs `pnpm gate` and then pushes related fix commits together. One fix is not one push. Each fix is still its own commit.
+`AGENTS.md` §4 and §5: push task commits as usual. The pull request opens only when every plan task is done, including the catalogue commit. CI triggers only on `pull_request` and on push to `main`, so pushing a branch with no pull request costs no Actions minutes. The runbook requires the applied SHA to be on origin. After the pull request is open, the agent runs `pnpm gate` and then pushes related fix commits together. One fix is not one push. Each fix is still its own commit.
 
 `AGENTS.md` §5 and §9: after the first apply on a branch there is no rebase, no amend, and no force-push. When `origin/main` moves after that apply, it comes in by a merge commit. The pull request merges with a merge commit. The lifecycle diagram says merge commit. The §9 choice between squash and merge commit is removed. The §15 bullet that lists squash-versus-merge debates drops that clause, because the choice is made. Before the first apply, rebasing on `origin/main` stays allowed.
 
-`AGENTS.md` §2: for a sensitive chunk, the second fresh-context review starts when the pull request opens, alongside the final review. It does not wait until the final review has finished. Sensitive stays the existing list: children's data, payments, authentication, encryption, residency, or tenancy.
-
-This draft does not choose who runs that second review. The choices are the reviewer agent, the owner's assistant, or both. Abdus decides before this spec is approved. The pull request's second-review line stays, and it stays open until that review is written.
+`AGENTS.md` §2: for a sensitive chunk, the owner's assistant runs the second fresh-context review in a fresh session. The reviewer agent may add its own. It starts when the pull request opens, alongside the final review. It does not wait until the final review has finished. Sensitive stays the existing list: children's data, payments, authentication, encryption, residency, or tenancy. The pull request's second-review line stays, and it stays open until that review is written.
 
 ### Review record
 
@@ -98,7 +94,9 @@ The command is `pnpm gate`, a script in the root `package.json`. It runs, in ord
 5. `pnpm check:boundaries`
 6. For each Terraform directory the change touches, the `Terraform checks` script of the `terraform` job in `.github/workflows/ci.yml`, with the working directory set to that directory.
 
-A directory is touched when a path under it differs from the merge base of `HEAD` and `origin/main`, including staged and unstaged changes. The directory list is the `dir` matrix of that job. A directory that did not change is not initialized. If `origin/main` cannot be resolved, `pnpm gate` fails.
+A directory is touched when a path under it differs from the merge base of `HEAD` and `origin/main`, including staged and unstaged changes. The directory list is the `dir` matrix of that job. A change under `infra/modules/` also counts `infra/regions/au` as touched, because the cell's tests consume the modules. A directory that did not change, and is not pulled in by that module rule, is not initialized. If `origin/main` cannot be resolved, `pnpm gate` fails.
+
+A test of the function that maps changed paths to directories includes a module-only case: a path under `infra/modules/` and no path under `infra/regions/au` yields both that module's matrix directory and `infra/regions/au`.
 
 `pnpm gate` executes that workflow script. It does not keep a second copy of the lines. A test, run by `pnpm test`, fails when the script is not exactly these lines:
 
@@ -119,7 +117,7 @@ terraform test
 
 ### Lock hashes
 
-`tooling/checks/terraform-invariants` gains one rule. For each provider source and version, every `.terraform.lock.hcl` under `infra/` lists the same set of hashes. The set is the `hashes` list on that provider block. Order does not matter. A provider version that appears in only one lock file passes. A missing lock file still fails the existing missing-lockfile rule.
+`tooling/checks/terraform-invariants` gains one rule. For each provider source and version, every `.terraform.lock.hcl` under `infra/` lists the same set of hashes. The set is the `hashes` list on that provider block. Order does not matter. A provider version that appears in only one lock file passes. terraform-invariants has no rule for a missing `.terraform.lock.hcl`. CI's `terraform init -lockfile=readonly` catches a missing lock file.
 
 The must-fail fixture is two lock files for the same provider version whose hash sets differ. The repository's own `infra/` tree passes, which is what `pnpm check:boundaries` already runs. This is the case a Mac cannot reproduce by running Terraform: a new module's lock file lacked the Linux hash and failed only in CI.
 
@@ -141,7 +139,7 @@ No new table, column, or migration.
 
 ## Rules touched
 
-Process only. No entitlement, permission, consent, retention, or safeguarding rule. Residency and tenancy are unchanged. The parking rule is the cost rule above. Staging stays parked: `enable_database = false`, `desired_count = 0`, and no tracked `service_image`.
+Process only. No entitlement, permission, consent, retention, or safeguarding rule. Residency and tenancy are unchanged. The parking rule is the cost rule above. Staging stays parked: `enable_database = false`, `desired_count = 0`, and no `service_image` in any committed var file under `infra/regions/au/env/`.
 
 ## Contracts
 
@@ -159,11 +157,7 @@ Two modules could intentionally carry different hashes for one provider version.
 
 ## Out-of-band
 
-No legal sign-off. No architecture change. No new subprocessor. No new AWS resource and no monthly cost.
-
-Abdus decides, before approval, who runs the second fresh-context review: the reviewer agent, the owner's assistant, or both.
-
-Abdus supplies the wording of `docs/owner-review-brief.md`.
+No legal sign-off. No architecture change. No new subprocessor. No new AWS resource and no monthly cost. The second-review runner and the brief wording are decided in this draft.
 
 ## Cost
 
