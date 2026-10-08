@@ -1,0 +1,12 @@
+jobs:
+  terraform:
+    name: terraform
+    steps:
+      - name: Terraform checks
+        run: |
+          terraform init -backend=false -lockfile=readonly
+          terraform fmt -check
+          terraform validate
+          tflint --init
+          tflint
+          terraform test

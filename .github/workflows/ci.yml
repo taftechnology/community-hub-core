@@ -128,7 +128,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           terraform init -backend=false -lockfile=readonly
-          terraform fmt -check
+          terraform fmt -check -recursive
           terraform validate
           tflint --init
           tflint

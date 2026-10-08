@@ -1,6 +1,10 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "globalDependencies": ["eslint.config.js", "tooling/eslint-plugin-community-hub/**"],
+  "globalDependencies": [
+    "eslint.config.js",
+    "tooling/eslint-plugin-community-hub/**",
+    ".github/workflows/ci.yml"
+  ],
   "tasks": {
     "lint": {},
     "typecheck": {
