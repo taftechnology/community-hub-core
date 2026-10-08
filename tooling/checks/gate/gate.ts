@@ -100,10 +100,17 @@ export function touchedTerraformDirs(
   return ordered;
 }
 
-export function runScriptInDirectory(script: string, directory: string): number {
+export function runScriptInDirectory(
+  script: string,
+  directory: string,
+): { status: number; stdout: string; stderr: string } {
   const result = spawnSync("bash", ["-eo", "pipefail", "-c", script], {
     cwd: directory,
     encoding: "utf8",
   });
-  return result.status ?? 1;
+  return {
+    status: result.status ?? 1,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+  };
 }

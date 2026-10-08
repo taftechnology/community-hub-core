@@ -76,8 +76,14 @@ describe("touched terraform directories", () => {
 describe("runScriptInDirectory", () => {
   it("stops before the second line when the first line is false", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "gate-"));
-    const status = runScriptInDirectory("false\ntouch marker\n", directory);
-    expect(status).not.toBe(0);
+    const result = runScriptInDirectory("false\ntouch marker\n", directory);
+    expect(result.status).not.toBe(0);
     expect(fs.existsSync(path.join(directory, "marker"))).toBe(false);
+  });
+
+  it("returns the word a script echoes", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "gate-"));
+    const result = runScriptInDirectory("echo gate-visible-word", directory);
+    expect(result.stdout).toContain("gate-visible-word");
   });
 });

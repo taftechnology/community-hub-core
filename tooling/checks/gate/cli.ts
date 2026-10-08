@@ -22,6 +22,7 @@ for (const command of pnpmCommands) {
 
 const base = git(["merge-base", "HEAD", "origin/main"]);
 if (base.status !== 0) {
+  console.error("origin/main could not be resolved");
   process.exit(base.status);
 }
 
@@ -53,8 +54,11 @@ if (dirs.length === 0) {
 
 const script = terraformChecksScript(workflow);
 for (const dir of dirs) {
-  const status = runScriptInDirectory(script, dir);
-  if (status !== 0) {
-    process.exit(status);
+  console.log(`terraform: ${dir}`);
+  const result = runScriptInDirectory(script, dir);
+  process.stdout.write(result.stdout);
+  process.stderr.write(result.stderr);
+  if (result.status !== 0) {
+    process.exit(result.status);
   }
 }
