@@ -14,6 +14,12 @@ mock_provider "aws" {
     }
   }
 
+  mock_resource "aws_cloudfront_response_headers_policy" {
+    defaults = {
+      id = "E123MOCKHEADERS"
+    }
+  }
+
   mock_resource "aws_cloudfront_distribution" {
     defaults = {
       arn            = "arn:aws:cloudfront::123456789012:distribution/MOCKDIST"
@@ -77,6 +83,10 @@ run "happy" {
 
   assert {
     condition = (
+      length(jsondecode(aws_s3_bucket_policy.admin.policy).Statement) == 1 &&
+      jsondecode(aws_s3_bucket_policy.admin.policy).Statement[0].Effect == "Allow" &&
+      jsondecode(aws_s3_bucket_policy.admin.policy).Statement[0].Principal == { Service = "cloudfront.amazonaws.com" } &&
+      jsondecode(aws_s3_bucket_policy.admin.policy).Statement[0].Resource == "${aws_s3_bucket.admin.arn}/*" &&
       try(toset(jsondecode(aws_s3_bucket_policy.admin.policy).Statement[0].Action), toset([jsondecode(aws_s3_bucket_policy.admin.policy).Statement[0].Action])) == toset(["s3:GetObject"]) &&
       jsondecode(aws_s3_bucket_policy.admin.policy).Statement[0].Principal != "*" &&
       keys(jsondecode(aws_s3_bucket_policy.admin.policy).Statement[0].Condition) == ["StringEquals"] &&
@@ -90,11 +100,17 @@ run "happy" {
     condition = (
       one(aws_cloudfront_distribution.admin.origin).domain_name == "mock-admin.s3.ap-southeast-2.amazonaws.com" &&
       one(aws_cloudfront_distribution.admin.origin).origin_access_control_id == "E123MOCKOAC" &&
+      aws_cloudfront_origin_access_control.admin.signing_behavior == "always" &&
+      aws_cloudfront_distribution.admin.default_root_object == "index.html" &&
       aws_cloudfront_distribution.admin.aliases == toset(["admin.example.net"]) &&
       aws_cloudfront_distribution.admin.price_class == "PriceClass_All" &&
       aws_cloudfront_distribution.admin.is_ipv6_enabled == false &&
       aws_cloudfront_distribution.admin.default_cache_behavior[0].viewer_protocol_policy == "redirect-to-https" &&
       aws_cloudfront_distribution.admin.default_cache_behavior[0].compress &&
+      aws_cloudfront_distribution.admin.default_cache_behavior[0].response_headers_policy_id == aws_cloudfront_response_headers_policy.admin.id &&
+      length(aws_cloudfront_distribution.admin.default_cache_behavior[0].function_association) == 0 &&
+      length(aws_cloudfront_distribution.admin.default_cache_behavior[0].lambda_function_association) == 0 &&
+      length(aws_cloudfront_distribution.admin.ordered_cache_behavior) == 0 &&
       aws_cloudfront_distribution.admin.viewer_certificate[0].minimum_protocol_version == "TLSv1.2_2021" &&
       aws_cloudfront_distribution.admin.web_acl_id == null &&
       length(aws_cloudfront_distribution.admin.logging_config) == 0 &&
