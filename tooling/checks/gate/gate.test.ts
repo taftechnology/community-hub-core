@@ -59,6 +59,8 @@ describe("touched terraform directories", () => {
           "tooling/checks/gate/gate.ts",
           "package.json",
           "tooling/checks/terraform-invariants/fixtures/lock-hash-mismatch/infra/modules/one/.terraform.lock.hcl",
+          "docs/infra/modules/aws-budgets/main.tf",
+          "tooling/infra/regions/au/main.tf",
         ],
         matrix,
       ),
