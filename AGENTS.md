@@ -61,7 +61,7 @@ In that mode, keep tasks small enough that a human can review each commit in a f
 
 - The reviewer agent and the implementer agent are **separate sessions with separate context**. The reviewer reads the diff, not the implementer's narration.
 - An implementer that finds the plan wrong **stops and reports**. It does not redesign.
-- For chunks touching **children's data, payments, authentication, encryption, residency or tenancy**, the owner's assistant runs the second fresh-context review in a fresh session that has not seen the implementation discussion. The reviewer agent may add its own. The owner's assistant starts that review when the pull request opens, alongside the final review, and does not wait until the final review has finished. The pull request's second-review line stays open until that review is written.
+- For chunks touching **children's data, payments, authentication, encryption, residency or tenancy**, the owner's assistant runs the second fresh-context review in a fresh session that has not seen the implementation discussion. The reviewer agent may add its own. The owner's assistant starts that review when the pull request opens, alongside the final review, and does not wait until the final review has finished. The pull request's second-review line stays open until that review is written. A sensitive pull request does not merge until then.
 - **No model names are pinned in this file.** Use different model configurations for reviewer and implementer where available, so a single model never both produces and validates the same work. Record which configuration was used in the PR description.
 
 ---
