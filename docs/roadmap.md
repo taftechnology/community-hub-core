@@ -21,8 +21,8 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 |              |                                                                   |
 | ------------ | ----------------------------------------------------------------- |
 | Phase        | 1 — Core platform                                                 |
-| Last shipped | `admin-shell`                                                     |
-| Next chunk   | `tenancy-implicit-org`                                            |
+| Last shipped | `tenancy-implicit-org`                                            |
+| Next chunk   | `identity-otp`                                                    |
 | Phase 0      | 23 rows: 22 done, 1 superseded (`api-au-hostname`), 0 not started |
 | Later phases | not started                                                       |
 
@@ -93,7 +93,7 @@ Architecture: monorepo, CI, Terraform for AWS in `ap-southeast-2`, kernel, db wi
 | done       | `image-publish`          | CI builds, tests, and pushes by digest through a GitHub OIDC role scoped to this one repository. A pull request still does not push. A push to `main` publishes the digest. Spec `docs/specs/2026-10-06-image-publish.md`.                                                                                                                                                                                                                                                         |
 | done       | `kms-mrk-replica`        | A replica of the envelope key in `ap-southeast-4`, not a database backup. Spec `docs/specs/2026-10-07-kms-mrk-replica.md`.                                                                                                                                                                                                                                                                                                                                                         |
 
-Next is `tenancy-implicit-org`.
+Next is `identity-otp`.
 
 SQS, EventBridge, file storage, and the admin static-file distribution are not rows here. Each waits for the first chunk that uses it.
 
@@ -107,17 +107,17 @@ Shipped with the skeleton (not separate chunks): `@community-hub/kernel` `health
 
 Vertical slices. Nav items appear in the frozen order (see [Admin navigation](#admin-navigation-frozen)) and stay **hidden** until entitled.
 
-| Status      | Chunk                  | What                                                                                                                                      |
-| ----------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| done        | `admin-shell`          | The shell is static, Dashboard only, and makes no data call. Spec `docs/specs/2026-10-07-admin-shell.md`.                                 |
-| not started | `tenancy-implicit-org` | Organisation and community rows in the `platform` schema. IDs, slugs, and region. Not a separate control plane.                           |
-| not started | `identity-otp`         | The regional service. OTP and passkeys as designed. No email on a gateway.                                                                |
-| not started | `people-households`    | Person, Household, GuardianLink, `is_minor`. Tags + activity log land here.                                                               |
-| not started | `access-roles`         | Settings → Users & Roles.                                                                                                                 |
-| not started | `entitlements-plans`   | Plans and allocations in the `platform` schema. Not a D1 control plane. Community toggles; nav hide/show. How a request sees them is Q14. |
-| not started | `stripe-billing`       | Our subscriptions. Webhooks on the Sydney hostname. The regional service does the work. Not `exec`. Not GivingJar.                        |
-| not started | `ops-console`          | Routes on the regional service. Passkeys. The `platform` role has no `app` privileges. No Cloudflare Access.                              |
-| not started | `usage-facts`          | `core/usage` skeleton (community × feature × day). Facts grow as modules ship.                                                            |
+| Status      | Chunk                  | What                                                                                                                                                                  |
+| ----------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| done        | `admin-shell`          | The shell is static, Dashboard only, and makes no data call. Spec `docs/specs/2026-10-07-admin-shell.md`.                                                             |
+| done        | `tenancy-implicit-org` | Organisation and community rows in the `platform` schema. IDs, slugs, and region. Not a separate control plane. Spec `docs/specs/2026-10-10-tenancy-implicit-org.md`. |
+| not started | `identity-otp`         | The regional service. OTP and passkeys as designed. No email on a gateway.                                                                                            |
+| not started | `people-households`    | Person, Household, GuardianLink, `is_minor`. Tags + activity log land here.                                                                                           |
+| not started | `access-roles`         | Settings → Users & Roles.                                                                                                                                             |
+| not started | `entitlements-plans`   | Plans and allocations in the `platform` schema. Not a D1 control plane. Community toggles; nav hide/show. How a request sees them is Q14.                             |
+| not started | `stripe-billing`       | Our subscriptions. Webhooks on the Sydney hostname. The regional service does the work. Not `exec`. Not GivingJar.                                                    |
+| not started | `ops-console`          | Routes on the regional service. Passkeys. The `platform` role has no `app` privileges. No Cloudflare Access.                                                          |
+| not started | `usage-facts`          | `core/usage` skeleton (community × feature × day). Facts grow as modules ship.                                                                                        |
 
 Phase 1 does **not** fill Enquires, Engagement, Family Records, Membership, Records, Certifications, Volunteers, Forms, Communication, Mobile App, Website & CMS, Donations, or E-commerce.
 
@@ -253,7 +253,7 @@ Whether startup should prove the database or KMS is decided by the first chunk t
 
 ## Next spec
 
-The next approved chunk on this list is **tenancy-implicit-org**.
+The next approved chunk on this list is **identity-otp**.
 
 ---
 
