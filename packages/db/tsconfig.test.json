@@ -18,6 +18,7 @@
     "test/schema-test.ts",
     "test/plaintext.integration.test.ts",
     "test/tls.integration.test.ts",
-    "test/plaintext-dist.test.ts"
+    "test/plaintext-dist.test.ts",
+    "test/tenancy-implicit-org.integration.test.ts"
   ]
 }
