@@ -1,0 +1,32 @@
+{
+  "name": "@community-hub/tenancy",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/public/index.d.ts",
+      "import": "./dist/public/index.js"
+    }
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --build && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run --config vitest.config.ts",
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "@community-hub/db": "workspace:*",
+    "@community-hub/kernel": "workspace:*",
+    "drizzle-orm": "0.45.2",
+    "postgres": "3.4.9"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2",
+    "vitest": "^4.1.11"
+  }
+}
