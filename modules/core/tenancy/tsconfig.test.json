@@ -5,7 +5,9 @@
     "composite": false,
     "declaration": false,
     "declarationMap": false,
-    "rootDir": "."
+    "paths": {
+      "@community-hub/db/plaintext": ["../../../packages/db/src/plaintext.ts"]
+    }
   },
   "include": [
     "module.manifest.ts",

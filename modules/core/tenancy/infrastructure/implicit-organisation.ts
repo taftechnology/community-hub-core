@@ -1,9 +1,6 @@
 import { newId } from "@community-hub/db";
-import { eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/postgres-js";
 import type { Sql } from "postgres";
 
-import { communities, organisations } from "../db/schema.js";
 import { ImplicitOrganisationError, type ImplicitOrganisationCode } from "../domain/error.js";
 import { implicitPair } from "../domain/slug.js";
 
@@ -34,21 +31,14 @@ export async function createImplicitOrganisation(
   const communityId = newId();
   try {
     await sql.begin(async (tx) => {
-      const client = tx as unknown as Sql;
-      client.options = sql.options;
-      const db = drizzle(client);
-      await db.insert(organisations).values({
-        id: organisationId,
-        slug: pair.organisationSlug,
-        region: pair.region,
-        kind: pair.kind,
-      });
-      await db.insert(communities).values({
-        id: communityId,
-        organisationId,
-        slug: pair.communitySlug,
-        region: pair.region,
-      });
+      await tx`
+        insert into platform.organisations (id, slug, region, kind)
+        values (${organisationId}, ${pair.organisationSlug}, ${pair.region}, ${pair.kind})
+      `;
+      await tx`
+        insert into platform.communities (id, organisation_id, slug, region)
+        values (${communityId}, ${organisationId}, ${pair.communitySlug}, ${pair.region})
+      `;
     });
   } catch (error) {
     const code = duplicateCode(error);
@@ -64,15 +54,20 @@ export async function findCommunityBySlug(
   sql: Sql,
   slug: string,
 ): Promise<{ id: string; organisationId: string; slug: string; region: string } | null> {
-  const rows = await drizzle(sql)
-    .select({
-      id: communities.id,
-      organisationId: communities.organisationId,
-      slug: communities.slug,
-      region: communities.region,
-    })
-    .from(communities)
-    .where(eq(communities.slug, slug))
-    .limit(1);
-  return rows[0] ?? null;
+  const rows = await sql<{ id: string; organisation_id: string; slug: string; region: string }[]>`
+    select id, organisation_id, slug, region
+    from platform.communities
+    where slug = ${slug}
+    limit 1
+  `;
+  const row = rows[0];
+  if (row === undefined) {
+    return null;
+  }
+  return {
+    id: row.id,
+    organisationId: row.organisation_id,
+    slug: row.slug,
+    region: row.region,
+  };
 }

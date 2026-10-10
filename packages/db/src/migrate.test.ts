@@ -56,6 +56,10 @@ describe("package exports", () => {
     ) as { exports: Record<string, unknown> };
     expect(pkg.exports["./migrate-test"]).toBeUndefined();
     expect(Object.keys(pkg.exports)).toEqual(["."]);
+    expect(pkg.exports["."]).toEqual({
+      types: "./dist/index.d.ts",
+      import: "./dist/index.js",
+    });
   });
 });
 
