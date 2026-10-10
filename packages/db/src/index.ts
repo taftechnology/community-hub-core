@@ -14,6 +14,7 @@ export {
   createPlatformSql,
 } from "./connections.js";
 export { newId } from "./ids.js";
+export { platform } from "./namespaces.js";
 export { insertEncrypted } from "./insert-encrypted.js";
 export { applyProductMigrations } from "./migrate.js";
 export { scramSha256Verifier } from "./scram.js";
