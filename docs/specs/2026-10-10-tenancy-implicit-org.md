@@ -1,7 +1,7 @@
 # Spec: Implicit organisation
 
 Slug: tenancy-implicit-org
-Status: approved (2026-10-10, Adnan Bin Hossen)
+Status: draft
 Architecture refs: §6.2, §6.3, §8.1, §8.2, §12.1, §12.2.1, D4. Implements the `tenancy-implicit-org` row. Depends on `packages-db` and `kernel-runtime`, both on `main`. Staging stays parked.
 
 ## Problem

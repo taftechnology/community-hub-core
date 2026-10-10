@@ -10,7 +10,7 @@ Spec: docs/specs/2026-10-10-tenancy-implicit-org.md
 
 **Tech Stack:** TypeScript, Drizzle ORM `0.45.2`, `postgres` `3.4.9`, Vitest, Node 24, Docker `postgres:17`. No new third-party package.
 
-Status: approved (2026-10-10, Adnan Bin Hossen)
+Status: draft
 
 **Branch:** `feat/2026-10-10-tenancy-implicit-org` · one PR · 4 tasks, one commit each
 
