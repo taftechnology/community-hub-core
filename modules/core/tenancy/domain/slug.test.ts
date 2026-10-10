@@ -24,7 +24,24 @@ describe("implicitPair", () => {
     });
   });
 
-  it.each(["Example", "a_b", "-ab", "ab-", "", "a".repeat(64)])("rejects %j", (slug) => {
+  it.each([
+    "Example",
+    "a_b",
+    "-ab",
+    "ab-",
+    "",
+    "a".repeat(64),
+    "admin",
+    "api",
+    "app",
+    "au",
+    "auth",
+    "mail",
+    "ops",
+    "static",
+    "status",
+    "www",
+  ])("rejects %j", (slug) => {
     expect(() => implicitPair({ organisationSlug: slug, communitySlug: "example-parish" })).toThrow(
       ImplicitOrganisationError,
     );
