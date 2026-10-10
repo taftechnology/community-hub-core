@@ -23,9 +23,24 @@ The `platform` schema exists and has no organisation or community rows. A later 
 - Grants stay the default privileges from `0000_schemas.sql`. The `platform` login receives select, insert, update, and delete. This migration does not grant those tables to `app`, `identity`, or `PUBLIC`.
 - One new product journal entry after `0002_rare_jimmy_woo`. Drizzle Kit generates it. No hand-added `FORCE ROW LEVEL SECURITY`. The migration is additive.
 - Domain code under `modules/core/tenancy/domain/` imports no framework and no Drizzle. It accepts an organisation slug and a community slug. It rejects a slug that fails the check above. It does not accept a region. The stored region is `au` and the stored kind is `implicit`.
-- `createImplicitOrganisation` inserts one organisation and one community in one transaction on a connection that is already the `platform` login. It does not call `set_config`. It does not set `app.org_id` or `app.community_id`. A duplicate organisation slug or a duplicate community slug throws `ImplicitOrganisationError` with `code` `duplicate_organisation_slug` or `duplicate_community_slug`, and inserts nothing. An invalid slug throws the same error with `code` `invalid_slug`, and inserts nothing.
-- `findCommunityBySlug` returns `{ id, organisationId, slug, region }` or null. It does not return kind.
-- The public surface is `modules/core/tenancy/public/`. It exports the command, the query, and `ImplicitOrganisationError`. Other packages import that surface only.
+- The public functions take `sql: Sql` from `postgres` as the first argument. The caller passes a connection that is already the `platform` login. The functions do not open a connection.
+
+```ts
+createImplicitOrganisation(
+  sql: Sql,
+  input: { organisationSlug: string; communitySlug: string },
+): Promise<{ organisationId: string; communityId: string }>
+
+findCommunityBySlug(
+  sql: Sql,
+  slug: string,
+): Promise<{ id: string; organisationId: string; slug: string; region: string } | null>
+```
+
+- `createImplicitOrganisation` inserts one organisation and one community in one transaction on that `sql`. It does not call `set_config`. It does not set `app.org_id` or `app.community_id`. A duplicate organisation slug or a duplicate community slug throws `ImplicitOrganisationError` with `code` `duplicate_organisation_slug` or `duplicate_community_slug`, and inserts nothing. An invalid slug throws the same error with `code` `invalid_slug`, and inserts nothing. The resolved value is `{ organisationId, communityId }`.
+- `findCommunityBySlug` resolves to `{ id, organisationId, slug, region }` or `null`. It does not return kind.
+- `ImplicitOrganisationError` extends `Error`. Its discriminating property is `code: "duplicate_organisation_slug" | "duplicate_community_slug" | "invalid_slug"`.
+- The public surface is `modules/core/tenancy/public/`. It exports `createImplicitOrganisation`, `findCommunityBySlug`, and `ImplicitOrganisationError`. Other packages import that surface only.
 - The catalogue commit marks this row done and links this spec. The snapshot stays on Phase `1 — Core platform`. Last shipped becomes `tenancy-implicit-org`. Next chunk becomes `identity-otp`. The Phase 0 count stays `23 rows: 22 done, 1 superseded (api-au-hostname), 0 not started`. Later phases stays `not started`. The sentence under the Phase 0 table names `identity-otp`. The Next spec section names `identity-otp`. The repository-state sentence in `AGENTS.md` names `identity-otp` and leaves the Phase 0 counts unchanged. That is the only `AGENTS.md` edit.
 
 **Out**
@@ -40,11 +55,27 @@ The `platform` schema exists and has no organisation or community rows. A later 
 
 ## Behaviour
 
-`createImplicitOrganisation({ organisationSlug: "example-parish", communitySlug: "example-parish" })` inserts one organisation with `kind = 'implicit'` and `region = 'au'`, and one community with that `organisation_id` and `region = 'au'`. The two ids differ. Both slugs may be the same string. They are unique inside their own table, not across the two tables.
+Both public functions take `sql: Sql` from `postgres` first. `sql` is already the `platform` login.
+
+```ts
+createImplicitOrganisation(
+  sql: Sql,
+  input: { organisationSlug: string; communitySlug: string },
+): Promise<{ organisationId: string; communityId: string }>
+
+findCommunityBySlug(
+  sql: Sql,
+  slug: string,
+): Promise<{ id: string; organisationId: string; slug: string; region: string } | null>
+```
+
+`ImplicitOrganisationError` extends `Error`. Its discriminating property is `code: "duplicate_organisation_slug" | "duplicate_community_slug" | "invalid_slug"`.
+
+`createImplicitOrganisation(sql, { organisationSlug: "example-parish", communitySlug: "example-parish" })` resolves to `{ organisationId, communityId }` and inserts one organisation with `kind = 'implicit'` and `region = 'au'`, and one community with that `organisation_id` and `region = 'au'`. The two ids differ. Both slugs may be the same string. They are unique inside their own table, not across the two tables.
 
 `example-parish` is accepted. `Example`, `a_b`, `-ab`, `ab-`, an empty string, and a 64-character label are rejected with `invalid_slug` before any insert. A second call with the same organisation slug rejects with `duplicate_organisation_slug` and leaves one organisation row. A second call with a new organisation slug and the same community slug rejects with `duplicate_community_slug` and does not insert the second organisation.
 
-`findCommunityBySlug("example-parish")` returns the community id, the organisation id, the slug, and `au`. An unknown slug returns null.
+`findCommunityBySlug(sql, "example-parish")` resolves to `{ id, organisationId, slug, region }` with `region` `au`. An unknown slug resolves to `null`.
 
 The `platform` login can insert and select both tables. The `app` login and the `identity` login cannot. The insert path does not set `app.org_id`.
 
@@ -78,11 +109,30 @@ Children, money, consent, retention, and analytics. No children's fields, no pay
 | Package    | `@community-hub/tenancy`. Public exports are the command, the query, and `ImplicitOrganisationError`.                                                          |
 | Module     | `core.tenancy`, version 1, no events and no entitlement.                                                                                                       |
 | Tables     | `platform.organisations` and `platform.communities`, columns above.                                                                                            |
-| Command    | Two slugs in. One implicit organisation and one community. Region `au`. No `set_config`.                                                                       |
-| Query      | `findCommunityBySlug` returns id, organisation id, slug, and region, or null.                                                                                  |
+| Command    | `createImplicitOrganisation(sql: Sql, input: { organisationSlug: string; communitySlug: string }): Promise<{ organisationId: string; communityId: string }>`. `Sql` is from `postgres`. One implicit organisation and one community. Region `au`. No `set_config`. |
+| Query      | `findCommunityBySlug(sql: Sql, slug: string): Promise<{ id: string; organisationId: string; slug: string; region: string } \| null>`.                             |
+| Error      | `ImplicitOrganisationError` extends `Error`. `code` is `duplicate_organisation_slug`, `duplicate_community_slug`, or `invalid_slug`.                            |
 | Journal    | One additive entry in `packages/db/drizzle` after `0002`.                                                                                                      |
 | Roles      | `platform` can read and write. `app` and `identity` cannot.                                                                                                    |
 | Staging    | Parked. No apply.                                                                                                                                              |
+
+`sql: Sql` is from `postgres` and is the first argument of both functions. The signatures and the error are:
+
+```ts
+createImplicitOrganisation(
+  sql: Sql,
+  input: { organisationSlug: string; communitySlug: string },
+): Promise<{ organisationId: string; communityId: string }>
+
+findCommunityBySlug(
+  sql: Sql,
+  slug: string,
+): Promise<{ id: string; organisationId: string; slug: string; region: string } | null>
+
+class ImplicitOrganisationError extends Error {
+  code: "duplicate_organisation_slug" | "duplicate_community_slug" | "invalid_slug"
+}
+```
 
 ## Dependencies
 
