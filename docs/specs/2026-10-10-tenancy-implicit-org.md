@@ -1,7 +1,7 @@
 # Spec: Implicit organisation
 
 Slug: tenancy-implicit-org
-Status: draft
+Status: approved (2026-10-10, Adnan Bin Hossen)
 Architecture refs: §6.2, §6.3, §8.1, §8.2, §12.1, §12.2.1, D4. Implements the `tenancy-implicit-org` row. Depends on `packages-db` and `kernel-runtime`, both on `main`. Staging stays parked.
 
 ## Problem
@@ -81,16 +81,16 @@ The `platform` login can insert and select both tables. The `app` login and the 
 
 ## Data
 
-| Table                    | Column            | Classification | Notes                                                                                           |
-| ------------------------ | ----------------- | -------------- | ----------------------------------------------------------------------------------------------- |
-| `platform.organisations` | `id`              | `internal`     | Application-minted UUIDv7. Primary key. Not encrypted.                                          |
-| `platform.organisations` | `slug`            | `internal`     | Clear. SQL filters it. Not a person's name.                                                     |
-| `platform.organisations` | `region`          | `internal`     | Clear. SQL filters it. Only `au`.                                                               |
-| `platform.organisations` | `kind`            | `internal`     | Clear. `implicit` or `explicit`. This chunk writes `implicit` only.                             |
-| `platform.communities`   | `id`              | `internal`     | Application-minted UUIDv7. Primary key. Not encrypted.                                          |
-| `platform.communities`   | `organisation_id` | `internal`     | Clear. Parent organisation. Not named `org_id`, and not an RLS key.                             |
-| `platform.communities`   | `slug`            | `internal`     | Clear. SQL filters it. One DNS label, so it can later be `{slug}.communityhub.one`.             |
-| `platform.communities`   | `region`          | `internal`     | Clear. SQL filters it. Only `au`.                                                               |
+| Table                    | Column            | Classification | Notes                                                                               |
+| ------------------------ | ----------------- | -------------- | ----------------------------------------------------------------------------------- |
+| `platform.organisations` | `id`              | `internal`     | Application-minted UUIDv7. Primary key. Not encrypted.                              |
+| `platform.organisations` | `slug`            | `internal`     | Clear. SQL filters it. Not a person's name.                                         |
+| `platform.organisations` | `region`          | `internal`     | Clear. SQL filters it. Only `au`.                                                   |
+| `platform.organisations` | `kind`            | `internal`     | Clear. `implicit` or `explicit`. This chunk writes `implicit` only.                 |
+| `platform.communities`   | `id`              | `internal`     | Application-minted UUIDv7. Primary key. Not encrypted.                              |
+| `platform.communities`   | `organisation_id` | `internal`     | Clear. Parent organisation. Not named `org_id`, and not an RLS key.                 |
+| `platform.communities`   | `slug`            | `internal`     | Clear. SQL filters it. One DNS label, so it can later be `{slug}.communityhub.one`. |
+| `platform.communities`   | `region`          | `internal`     | Clear. SQL filters it. Only `au`.                                                   |
 
 No personal data. No minor fields. No encrypted column. No blind index.
 
@@ -104,17 +104,17 @@ Children, money, consent, retention, and analytics. No children's fields, no pay
 
 ## Contracts
 
-| Contract   | Value                                                                                                                                                          |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Package    | `@community-hub/tenancy`. Public exports are the command, the query, and `ImplicitOrganisationError`.                                                          |
-| Module     | `core.tenancy`, version 1, no events and no entitlement.                                                                                                       |
-| Tables     | `platform.organisations` and `platform.communities`, columns above.                                                                                            |
-| Command    | `createImplicitOrganisation(sql: Sql, input: { organisationSlug: string; communitySlug: string }): Promise<{ organisationId: string; communityId: string }>`. `Sql` is from `postgres`. One implicit organisation and one community. Region `au`. No `set_config`. |
-| Query      | `findCommunityBySlug(sql: Sql, slug: string): Promise<{ id: string; organisationId: string; slug: string; region: string } \| null>`.                             |
-| Error      | `ImplicitOrganisationError` extends `Error`. `code` is `duplicate_organisation_slug`, `duplicate_community_slug`, or `invalid_slug`.                            |
-| Journal    | One additive entry in `packages/db/drizzle` after `0002`.                                                                                                      |
-| Roles      | `platform` can read and write. `app` and `identity` cannot.                                                                                                    |
-| Staging    | Parked. No apply.                                                                                                                                              |
+| Contract | Value                                                                                                                                                                                                                                                              |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Package  | `@community-hub/tenancy`. Public exports are the command, the query, and `ImplicitOrganisationError`.                                                                                                                                                              |
+| Module   | `core.tenancy`, version 1, no events and no entitlement.                                                                                                                                                                                                           |
+| Tables   | `platform.organisations` and `platform.communities`, columns above.                                                                                                                                                                                                |
+| Command  | `createImplicitOrganisation(sql: Sql, input: { organisationSlug: string; communitySlug: string }): Promise<{ organisationId: string; communityId: string }>`. `Sql` is from `postgres`. One implicit organisation and one community. Region `au`. No `set_config`. |
+| Query    | `findCommunityBySlug(sql: Sql, slug: string): Promise<{ id: string; organisationId: string; slug: string; region: string } \| null>`.                                                                                                                              |
+| Error    | `ImplicitOrganisationError` extends `Error`. `code` is `duplicate_organisation_slug`, `duplicate_community_slug`, or `invalid_slug`.                                                                                                                               |
+| Journal  | One additive entry in `packages/db/drizzle` after `0002`.                                                                                                                                                                                                          |
+| Roles    | `platform` can read and write. `app` and `identity` cannot.                                                                                                                                                                                                        |
+| Staging  | Parked. No apply.                                                                                                                                                                                                                                                  |
 
 `sql: Sql` is from `postgres` and is the first argument of both functions. The signatures and the error are:
 
@@ -144,14 +144,14 @@ No new resource billed by the hour or the month. No NAT gateway, load balancer, 
 
 ## Risks
 
-| Risk                                                                              | Mitigation                                                                                                                          |
-| --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| A platform table is given `org_id` and treated as tenant-scoped                   | The column is `organisation_id`. A test fails if either table's SQL contains a column named `org_id`, RLS, or `FORCE ROW LEVEL SECURITY`. |
-| The `app` login can read the directory                                            | Default privileges stay platform-only. A test as `app` and as `identity` fails the select.                                          |
-| A second community is inserted while `kind` is still `implicit`                   | This chunk has no such command. `organisation_id` is not unique, so a later chunk can add the second community without a drop.      |
-| The command sets `app.org_id` on the platform connection                          | The repository does not call `set_config`. The session ban already fails a session-level `SET`.                                     |
-| Slugs carry a person's name into a log or a URL                                   | The columns are organisation and community identifiers. Tests use `example-parish`.                                                 |
-| Staging is unparked to try the migration                                          | The proof is the existing Docker Postgres in the db tests. Staging flags stay parked.                                               |
+| Risk                                                            | Mitigation                                                                                                                                |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| A platform table is given `org_id` and treated as tenant-scoped | The column is `organisation_id`. A test fails if either table's SQL contains a column named `org_id`, RLS, or `FORCE ROW LEVEL SECURITY`. |
+| The `app` login can read the directory                          | Default privileges stay platform-only. A test as `app` and as `identity` fails the select.                                                |
+| A second community is inserted while `kind` is still `implicit` | This chunk has no such command. `organisation_id` is not unique, so a later chunk can add the second community without a drop.            |
+| The command sets `app.org_id` on the platform connection        | The repository does not call `set_config`. The session ban already fails a session-level `SET`.                                           |
+| Slugs carry a person's name into a log or a URL                 | The columns are organisation and community identifiers. Tests use `example-parish`.                                                       |
+| Staging is unparked to try the migration                        | The proof is the existing Docker Postgres in the db tests. Staging flags stay parked.                                                     |
 
 ## Tests
 
