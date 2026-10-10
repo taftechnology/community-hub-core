@@ -42,6 +42,7 @@ Status: draft
 | ----------------------------------------------------------- | ---------------------------------------------------------------------- |
 | `pnpm-workspace.yaml`                                       | One new workspace member, `modules/core/tenancy`.                      |
 | `modules/core/tenancy/`                                     | Manifest, domain rule, schema, command, query, and their tests.        |
+| `packages/db/src/index.ts`                                  | Export `platform` so the tenancy schema can import it.                 |
 | `packages/db/drizzle.config.ts`                             | Kit reads the tenancy schema by path.                                  |
 | `packages/db/drizzle/`                                      | One new journal entry after `0002_rare_jimmy_woo`.                     |
 | `packages/db/test/tenancy-implicit-org.integration.test.ts` | Command, query, rollback, and role denial.                             |
@@ -176,6 +177,7 @@ EOF
 
 - Create: `modules/core/tenancy/db/schema.ts`
 - Create: `modules/core/tenancy/db/schema.test.ts`
+- Modify: `packages/db/src/index.ts`
 - Modify: `packages/db/drizzle.config.ts`
 - Create: the Kit journal entry under `packages/db/drizzle/` and its `meta` snapshot
 - Modify: `packages/db/drizzle/meta/_journal.json`
@@ -197,6 +199,8 @@ The same file must not match `\borg_id\b`, `ENABLE ROW LEVEL SECURITY`, `FORCE R
 
 - [ ] **Step 2: Add the schema and generate**
 
+In `packages/db/src/index.ts`, add `export { platform } from "./namespaces.js";` so that `import { platform } from "@community-hub/db"` compiles. Do not export `app` or `identity` from that file in this task.
+
 `db/schema.ts` imports `platform` from `@community-hub/db`. Both tables use `uuid("id").primaryKey()` with no default.
 
 `organisations` columns: `id`, `slug` text not null, `region` text not null, `kind` text not null. Unique `organisations_slug_unique` on `slug`. Checks: `region = 'au'`, `kind in ('implicit', 'explicit')`, and `slug` matches the pattern. Do not call `enableRLS` or `pgPolicy`.
@@ -205,7 +209,7 @@ The same file must not match `\borg_id\b`, `ENABLE ROW LEVEL SECURITY`, `FORCE R
 
 `packages/db/drizzle.config.ts` `schema` becomes an array of `./src/schema.ts` and `../../modules/core/tenancy/db/schema.ts`.
 
-From `packages/db`, run `pnpm exec drizzle-kit generate`. Commit the new SQL, the new snapshot, and the journal entry. Do not edit `0000`, `0001`, or `0002`. Do not add `FORCE ROW LEVEL SECURITY`. If the generated SQL contains `ENABLE ROW LEVEL SECURITY`, the schema called RLS. Remove that from the schema and generate again. Do not delete the line from SQL while leaving it in the schema.
+Run `pnpm --filter @community-hub/db build` before Kit generate, so the package entrypoint that exports `platform` is in `dist`. From `packages/db`, run `pnpm exec drizzle-kit generate`. Commit the new SQL, the new snapshot, and the journal entry. Do not edit `0000`, `0001`, or `0002`. Do not add `FORCE ROW LEVEL SECURITY`. If the generated SQL contains `ENABLE ROW LEVEL SECURITY`, the schema called RLS. Remove that from the schema and generate again. Do not delete the line from SQL while leaving it in the schema.
 
 - [ ] **Step 3: Pin the platform shape**
 
@@ -216,7 +220,7 @@ Add `"org_id" uuid` to the generated organisations statement. The SQL test fails
 `pnpm exec prettier --write` on the TypeScript in this task. Do not run Prettier on `.sql` or `.json` snapshots if it would reflow Kit output. Then `pnpm gate`.
 
 ```bash
-git add modules/core/tenancy/db packages/db/drizzle.config.ts packages/db/drizzle
+git add modules/core/tenancy/db packages/db/src/index.ts packages/db/drizzle.config.ts packages/db/drizzle
 git commit -m "$(cat <<'EOF'
 feat(tenancy): add organisation and community platform tables
 
