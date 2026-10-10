@@ -16,7 +16,7 @@ Status: draft
 
 ## Global Constraints
 
-- The spec is approved. Do not edit `docs/specs/2026-10-10-tenancy-implicit-org.md`.
+- The spec Status line is `draft` until the owner approves it by name.
 - Do not start Task 1 until this plan's Status line is `approved`. Do not mark this plan approved yourself.
 - Do not edit `architecture.md`. No ADR. Do not edit `apps/api`, `apps/admin`, `infra/`, or `.github/workflows/ci.yml`.
 - Do not add a column that the spec does not name. No `created_at`, `name`, `type`, `logo_url`, `public_location`, or `verified`. No `mobile_apps` and no `app_listings`.
@@ -38,21 +38,20 @@ Status: draft
 
 ## File map
 
-| File                                                        | Responsibility                                                         |
-| ----------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `pnpm-workspace.yaml`                                       | One new workspace member, `modules/core/tenancy`.                      |
-| `modules/core/tenancy/`                                     | Manifest, domain rule, schema, command, query, and their tests.        |
-| `packages/db/src/index.ts`                                  | Export `platform` so the tenancy schema can import it.                 |
-| `packages/db/drizzle.config.ts`                             | Kit reads the tenancy schema by path.                                  |
-| `packages/db/drizzle/`                                      | One new journal entry after `0002_rare_jimmy_woo`.                     |
-| `packages/db/test/tenancy-implicit-org.integration.test.ts` | Command, query, rollback, and role denial.                             |
-| `packages/db/package.json`                                  | Dev dependency on `@community-hub/tenancy` only.                       |
-| `packages/db/tsconfig.test.json`                            | Include the new integration test.                                      |
-| `docs/roadmap.md`, `AGENTS.md`                              | Catalogue. The only `AGENTS.md` edit is the repository-state sentence. |
+| File                                                                            | Responsibility                                                         |
+| ------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `pnpm-workspace.yaml`                                                           | One new workspace member, `modules/core/tenancy`.                      |
+| `modules/core/tenancy/`                                                         | Manifest, domain rule, schema, command, query, and their tests.        |
+| `packages/db/src/index.ts`                                                      | Export `platform` for runtime imports. Kit does not load this entry.   |
+| `packages/db/drizzle.config.ts`                                                 | Kit reads `packages/db/drizzle.schema.ts` only.                        |
+| `packages/db/drizzle.schema.ts`                                                 | Passes the one `platform` schema into `platformTables`.                |
+| `packages/db/drizzle/`                                                          | One new journal entry after `0002_rare_jimmy_woo`.                     |
+| `modules/core/tenancy/infrastructure/implicit-organisation.integration.test.ts` | Command, query, rollback, parsers, and role denial.                    |
+| `docs/roadmap.md`, `AGENTS.md`                                                  | Catalogue. The only `AGENTS.md` edit is the repository-state sentence. |
 
 ## Dependencies
 
-`@community-hub/tenancy` depends on `@community-hub/db` and `@community-hub/kernel` at `workspace:*`, plus the existing pins `drizzle-orm` `0.45.2` and `postgres` `3.4.9`. Dev dependencies match `@community-hub/kernel`: `typescript` `^5.8.2`, `@types/node` `^22.13.10`, `vitest` `^4.1.11`. No other dependency. `@community-hub/db` gains `@community-hub/tenancy` as a dev dependency in Task 3, not as a runtime dependency.
+`@community-hub/tenancy` depends on `@community-hub/db` and `@community-hub/kernel` at `workspace:*`, plus the existing pins `drizzle-orm` `0.45.2` and `postgres` `3.4.9`. Dev dependencies match `@community-hub/kernel`: `typescript` `^5.8.2`, `@types/node` `^22.13.10`, `vitest` `^4.1.11`. No other dependency. `@community-hub/db` does not depend on `@community-hub/tenancy`. The integration test runs in the tenancy package. Its Vitest config uses `packages/db/test/global-setup.ts` and the plaintext factories. `turbo.json` runs `@community-hub/db#test` before `@community-hub/tenancy#test`, so the two suites do not share one Docker Postgres at the same time.
 
 ## Security pins
 
@@ -63,7 +62,7 @@ These are the settings named in the spec. For each one, during the task that add
 | Invalid slug is rejected                                    | Domain test rejects `Example`           | Make `implicitPair` return that slug                                    |
 | No `org_id`, no RLS                                         | SQL test on the generated journal entry | Add `"org_id"` or `ENABLE ROW LEVEL SECURITY` to that SQL, then restore |
 | Duplicate community slug rolls back the organisation insert | Integration test                        | Insert the organisation outside `sql.begin`                             |
-| `app` cannot select                                         | Integration test                        | Add `GRANT SELECT ON platform.organisations TO app` to the journal SQL  |
+| `app` and `identity` have no schema or table privilege      | Integration test                        | Add `GRANT USAGE ON SCHEMA platform TO app` to the journal SQL          |
 | No `set_config`                                             | Source test                             | Add a `set_config` call in `infrastructure/implicit-organisation.ts`    |
 | Stored kind is `implicit`                                   | Integration test                        | Write `explicit` from the command                                       |
 
@@ -141,7 +140,7 @@ Run the tenancy test script. It fails because the files do not exist.
 
 `domain/error.ts` is the class. The constructor takes the `code`, sets `this.name` to `ImplicitOrganisationError`, and passes `code` to `super`.
 
-`domain/slug.ts` exports `implicitPair`. The slug pattern, used as a full-string match, is `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`. A failure throws `invalid_slug` before returning. The function always returns `region: "au"` and `kind: "implicit"`. It takes no region argument.
+`domain/slug.ts` exports `implicitPair`. The slug pattern, used as a full-string match, is `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`. These names are reserved in that function, not in the database check: `admin`, `api`, `app`, `au`, `auth`, `mail`, `ops`, `static`, `status`, `www`. A failure throws `invalid_slug` before returning. The function always returns `region: "au"` and `kind: "implicit"`. It takes no region argument.
 
 `module.manifest.ts` calls `defineModule` from `@community-hub/kernel/module` with the object the test expects, and exports that value as the default.
 
@@ -184,7 +183,7 @@ EOF
 
 **Interfaces:**
 
-- Consumes: the `platform` schema export from `@community-hub/db`. Do not call `pgSchema("platform")` again.
+- Consumes: the `platform` schema export from `@community-hub/db`, passed into `platformTables`. Do not call `pgSchema("platform")` again.
 - Produces: `organisations` and `communities` table objects. Constraint names `organisations_slug_unique`, `organisations_region_au`, `organisations_kind`, `organisations_slug_label`, `communities_slug_unique`, `communities_region_au`, `communities_slug_label`, and `communities_organisation_id_idx`.
 
 **Rule this must not break:** `schema-rls` still checks `app` tables only. These tables have no column named `org_id`, no policy, and no row level security. `packages/db/src` does not import tenancy.
@@ -201,15 +200,19 @@ The same file must not match `\borg_id\b`, `ENABLE ROW LEVEL SECURITY`, `FORCE R
 
 In `packages/db/src/index.ts`, add `export { platform } from "./namespaces.js";` so that `import { platform } from "@community-hub/db"` compiles. Do not export `app` or `identity` from that file in this task.
 
-`db/schema.ts` imports `platform` from `@community-hub/db`. Both tables use `uuid("id").primaryKey()` with no default.
+`db/schema.ts` exports `platformTables(platform)`. It does not import `@community-hub/db` and it does not call `pgSchema`. Both tables use `uuid("id").primaryKey()` with no default.
 
 `organisations` columns: `id`, `slug` text not null, `region` text not null, `kind` text not null. Unique `organisations_slug_unique` on `slug`. Checks: `region = 'au'`, `kind in ('implicit', 'explicit')`, and `slug` matches the pattern. Do not call `enableRLS` or `pgPolicy`.
 
 `communities` columns: `id`, `organisation_id` uuid not null references `organisations.id` with no `onDelete`, `slug` text not null, `region` text not null. Unique `communities_slug_unique` on `slug`. Index `communities_organisation_id_idx` on `organisation_id`, not unique. The same region check and slug check. No RLS.
 
-`packages/db/drizzle.config.ts` `schema` becomes an array of `./src/schema.ts` and `../../modules/core/tenancy/db/schema.ts`.
+`packages/db/drizzle.config.ts` `schema` is `./drizzle.schema.ts` only.
 
-Run `pnpm --filter @community-hub/db build` before Kit generate, so the package entrypoint that exports `platform` is in `dist`. From `packages/db`, run `pnpm exec drizzle-kit generate`. Commit the new SQL, the new snapshot, and the journal entry. Do not edit `0000`, `0001`, or `0002`. Do not add `FORCE ROW LEVEL SECURITY`. If the generated SQL contains `ENABLE ROW LEVEL SECURITY`, the schema called RLS. Remove that from the schema and generate again. Do not delete the line from SQL while leaving it in the schema.
+Kit `require()`s each schema file after it registers tsx. `@community-hub/db` is `"type": "module"`. Its `import` condition is `dist/index.js`, and that file imports `@community-hub/kernel`, which has no `require` export. A `require` condition on `.` therefore cannot point at `dist/index.js`. The removed `drizzle-platform.cjs` satisfied `require()` by calling `pgSchema("platform")` a second time. Do not add that file back, and do not add an `eslint-disable`.
+
+`packages/db/drizzle.schema.ts` is the Kit entry. It imports `platform` from `./src/namespaces.ts`, the one `pgSchema("platform")`, and calls `platformTables(platform)`. It re-exports `auditEvents` and `outbox` from `./src/schema.ts`. Kit does not load `modules/core/tenancy/db/schema.ts` as its own schema path, so it never resolves `@community-hub/db` from that file. `packages/db/src` still does not import tenancy.
+
+From `packages/db`, run `pnpm exec drizzle-kit generate`. Commit the new SQL, the new snapshot, and the journal entry. Do not edit `0000`, `0001`, or `0002`. Do not add `FORCE ROW LEVEL SECURITY`. If the generated SQL contains `ENABLE ROW LEVEL SECURITY`, the schema called RLS. Remove that from the schema and generate again. Do not delete the line from SQL while leaving it in the schema.
 
 - [ ] **Step 3: Pin the platform shape**
 
@@ -240,10 +243,10 @@ EOF
 - Create: `modules/core/tenancy/infrastructure/implicit-organisation.ts`
 - Create: `modules/core/tenancy/infrastructure/implicit-organisation.test.ts`
 - Modify: `modules/core/tenancy/public/index.ts`
-- Create: `packages/db/test/tenancy-implicit-org.integration.test.ts`
-- Modify: `packages/db/package.json`
-- Modify: `packages/db/tsconfig.test.json`
-- Modify: `pnpm-lock.yaml`
+- Create: `modules/core/tenancy/infrastructure/implicit-organisation.integration.test.ts`
+- Modify: `modules/core/tenancy/vitest.config.ts`
+- Modify: `modules/core/tenancy/tsconfig.test.json`
+- Modify: `turbo.json`
 
 **Interfaces:**
 
@@ -270,7 +273,7 @@ findCommunityBySlug(
 
 `infrastructure/implicit-organisation.test.ts` reads `implicit-organisation.ts` and fails if the text matches `set_config` or `\bSET\b`.
 
-`packages/db/test/tenancy-implicit-org.integration.test.ts` uses `.runtime.json` from the db test setup. Apply product migrations with `createPlaintextDirectSql` on `productOnlyUrl`. Then open `postgres://platform:<password>@127.0.0.1:5432/hub_product_only` with `createPlaintextPlatformSql`. Encode the password.
+`modules/core/tenancy/infrastructure/implicit-organisation.integration.test.ts` uses the db test harness. Vitest `globalSetup` is `packages/db/test/global-setup.ts`. Read `.runtime.json` from that directory. Apply product migrations with `createPlaintextDirectSql` on `productOnlyUrl`. Then open `postgres://platform:<password>@127.0.0.1:5432/hub_product_only` with `createPlaintextPlatformSql`. Encode the password. Import the plaintext factories through the `@community-hub/db/plaintext` test alias, not through `package.json` `exports`.
 
 Call `createImplicitOrganisation(sql, { organisationSlug: "example-parish", communitySlug: "example-parish" })`. The resolved ids differ. A select on `platform.organisations` shows `kind` `implicit` and `region` `au`. A select on `platform.communities` shows that `organisation_id`, slug `example-parish`, and `region` `au`.
 
@@ -282,9 +285,11 @@ A call with `second-parish` and `example-parish` throws `code` `duplicate_commun
 
 `Example` throws `invalid_slug` and does not insert.
 
-Open the same database as `app` and as `identity` with the plaintext factories. `select * from platform.organisations` throws. The driver `code` is `42501`.
+Open the same database as `app` and as `identity` with the plaintext factories. `select * from platform.organisations` throws. The driver `code` is `42501`. As the direct login, `has_schema_privilege` for `USAGE` on `platform` and `has_table_privilege` for `SELECT` on both tables are false for `app` and for `identity`.
 
-Add this test file to the `include` array in `packages/db/tsconfig.test.json`. Add `"@community-hub/tenancy": "workspace:*"` to `packages/db` `devDependencies`. Run `pnpm install`.
+After both functions run, `sql.options.parsers` is unchanged. Snapshot the parsers object before the calls and compare it after.
+
+Do not add `@community-hub/tenancy` to `packages/db`. `turbo.json` task `@community-hub/tenancy#test` depends on `@community-hub/db#test`.
 
 The integration test fails because the functions are not exported.
 
@@ -296,7 +301,7 @@ A driver error with `code` `"23505"` and `constraint_name` `organisations_slug_u
 
 `findCommunityBySlug` selects `id`, `organisation_id`, `slug`, and `region` where `slug` matches. It returns that object or `null`. It does not select `kind`.
 
-Use Drizzle against the `Sql` the caller passed. Do not call `createPlatformSql`, `createPlaintextPlatformSql`, or `set_config`.
+Write the two inserts and the select as `postgres` tagged templates on the `Sql` the caller passed. Do not call `drizzle()`. Do not assign `client.options`. Do not cast the transaction. Do not call `createPlatformSql`, `createPlaintextPlatformSql`, or `set_config`.
 
 `public/index.ts` exports the two functions and `ImplicitOrganisationError`.
 
@@ -304,7 +309,7 @@ Use Drizzle against the `Sql` the caller passed. Do not call `createPlatformSql`
 
 Insert the organisation outside `sql.begin`, then insert the community inside it. The duplicate community slug test fails because `second-parish` remains. Restore the single transaction.
 
-Add `GRANT SELECT ON TABLE platform.organisations TO app` to the journal SQL. The `app` test fails. Restore the SQL.
+Add `GRANT USAGE ON SCHEMA platform TO app` to the journal SQL. The privilege test fails. Restore the SQL.
 
 Add `set_config("app.org_id", "00000000-0000-0000-0000-000000000000", true)` in the infrastructure file. The source test fails. Restore the file.
 
@@ -315,7 +320,7 @@ Write `kind` `explicit` in the insert. The integration test fails. Restore `impl
 `pnpm exec prettier --write` on the files in this task, then `pnpm gate`.
 
 ```bash
-git add modules/core/tenancy/infrastructure modules/core/tenancy/public packages/db/test/tenancy-implicit-org.integration.test.ts packages/db/package.json packages/db/tsconfig.test.json pnpm-lock.yaml
+git add modules/core/tenancy/infrastructure modules/core/tenancy/public modules/core/tenancy/vitest.config.ts modules/core/tenancy/tsconfig.test.json turbo.json
 git commit -m "$(cat <<'EOF'
 feat(tenancy): create an implicit organisation and one community
 

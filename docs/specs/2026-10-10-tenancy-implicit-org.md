@@ -14,7 +14,7 @@ The `platform` schema exists and has no organisation or community rows. A later 
 
 - `modules/core/tenancy`, package `@community-hub/tenancy`. `pnpm-workspace.yaml` gains the line `modules/core/tenancy`. No other workspace glob.
 - `module.manifest.ts` calls `defineModule` with `key` `core.tenancy`, `version` 1, empty `requires`, `publishes`, `subscribes`, and `ports`. No `entitlement`, `features`, `permissions`, or `website`. `dataClasses` lists every column below as `internal`.
-- Two tables in the `platform` schema, contributed from `modules/core/tenancy/db/schema.ts`. `packages/db` keeps the only product journal. `packages/db/drizzle.config.ts` adds that schema file by path. `packages/db/src` does not import `@community-hub/tenancy`.
+- Two tables in the `platform` schema, contributed from `modules/core/tenancy/db/schema.ts` as `platformTables(platform)`. That function does not call `pgSchema`. `packages/db` keeps the only product journal. `packages/db/drizzle.config.ts` points Kit at `packages/db/drizzle.schema.ts`. That file imports `platform` from `packages/db/src/namespaces.ts`, the one `pgSchema("platform")`, and calls `platformTables`. `packages/db/src` does not import `@community-hub/tenancy`.
 - `platform.organisations`: `id` uuid not null primary key, `slug` text not null, `region` text not null, `kind` text not null. Unique on `slug`.
 - `platform.communities`: `id` uuid not null primary key, `organisation_id` uuid not null, `slug` text not null, `region` text not null. Unique on `slug`. `organisation_id` references `platform.organisations(id)` with no `ON DELETE CASCADE`. An index on `organisation_id` is not unique.
 - Neither table has a column named `org_id`. Neither enables row level security nor `FORCE ROW LEVEL SECURITY`. Neither has a policy. `schema-rls` is not changed. It still checks `app` tables only.
@@ -73,7 +73,7 @@ findCommunityBySlug(
 
 `createImplicitOrganisation(sql, { organisationSlug: "example-parish", communitySlug: "example-parish" })` resolves to `{ organisationId, communityId }` and inserts one organisation with `kind = 'implicit'` and `region = 'au'`, and one community with that `organisation_id` and `region = 'au'`. The two ids differ. Both slugs may be the same string. They are unique inside their own table, not across the two tables.
 
-`example-parish` is accepted. `Example`, `a_b`, `-ab`, `ab-`, an empty string, and a 64-character label are rejected with `invalid_slug` before any insert. A second call with the same organisation slug rejects with `duplicate_organisation_slug` and leaves one organisation row. A second call with a new organisation slug and the same community slug rejects with `duplicate_community_slug` and does not insert the second organisation.
+`example-parish` is accepted. `Example`, `a_b`, `-ab`, `ab-`, an empty string, and a 64-character label are rejected with `invalid_slug` before any insert. These labels are also rejected with `invalid_slug`, in `domain/slug.ts` and not in the database check: `admin`, `api`, `app`, `au`, `auth`, `mail`, `ops`, `static`, `status`, `www`. A second call with the same organisation slug rejects with `duplicate_organisation_slug` and leaves one organisation row. A second call with a new organisation slug and the same community slug rejects with `duplicate_community_slug` and does not insert the second organisation.
 
 `findCommunityBySlug(sql, "example-parish")` resolves to `{ id, organisationId, slug, region }` with `region` `au`. An unknown slug resolves to `null`.
 
@@ -136,7 +136,7 @@ class ImplicitOrganisationError extends Error {
 
 ## Dependencies
 
-`@community-hub/tenancy` depends on `@community-hub/db` and `@community-hub/kernel`. It does not depend on `@community-hub/crypto`. No new third-party package. `@community-hub/db` does not gain a runtime dependency on tenancy. Its integration test may import the tenancy public surface, as a dev dependency only.
+`@community-hub/tenancy` depends on `@community-hub/db` and `@community-hub/kernel`. It does not depend on `@community-hub/crypto`. No new third-party package. `@community-hub/db` does not depend on tenancy. The integration test lives in the tenancy package and uses the db Docker harness.
 
 ## Cost
 
@@ -156,10 +156,15 @@ No new resource billed by the hour or the month. No NAT gateway, load balancer, 
 ## Tests
 
 - Domain tests, no database. `example-parish` is valid. The rejected spellings under Behaviour throw `invalid_slug`. The same slug is allowed for both arguments.
-- Integration, in the existing `@community-hub/db` Docker Postgres, one database, not a second compose file. `createImplicitOrganisation` inserts one row in each table, both with `region` `au` and the organisation `kind` `implicit`. The two ids differ. A duplicate organisation slug rolls back. A duplicate community slug rolls back, including the organisation insert from that call. `findCommunityBySlug` returns the four fields, and an unknown slug returns null.
-- The same test connects as `platform` and succeeds, then as `app` and as `identity` and is denied. It does not call `set_config`.
+- Integration, in the existing `@community-hub/db` Docker Postgres, one database, not a second compose file. The test file is `modules/core/tenancy/infrastructure/implicit-organisation.integration.test.ts`. `createImplicitOrganisation` inserts one row in each table, both with `region` `au` and the organisation `kind` `implicit`. The two ids differ. A duplicate organisation slug rolls back. A duplicate community slug rolls back, including the organisation insert from that call. `findCommunityBySlug` returns the four fields, and an unknown slug returns null. `sql.options.parsers` is unchanged after both functions run.
+- The same test connects as `platform` and succeeds, then as `app` and as `identity` and is denied. `has_schema_privilege` and `has_table_privilege` are false for `app` and for `identity`, on both tables. It does not call `set_config`.
 - The generated SQL for both tables has no `org_id` column, no `ENABLE ROW LEVEL SECURITY`, and no `FORCE ROW LEVEL SECURITY`. `schema-rls` still passes.
 - A source check fails if `modules/core/tenancy` imports `@community-hub/crypto`. The existing ESLint ban stays the must-fail, including `import type`.
+
+## Question for the owner
+
+- The slug check allows a minimum length of 1. Should the minimum be longer?
+- Reserved names rejected in `domain/slug.ts`, not in the database check, are `admin`, `api`, `app`, `au`, `auth`, `mail`, `ops`, `static`, `status`, and `www`. Are any other names reserved?
 
 ## Out-of-band
 
