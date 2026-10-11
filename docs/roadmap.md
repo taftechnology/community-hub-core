@@ -21,8 +21,8 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 |              |                                                                   |
 | ------------ | ----------------------------------------------------------------- |
 | Phase        | 1 — Core platform                                                 |
-| Last shipped | `service-image-runtime-base`                                      |
-| Next chunk   | `identity-otp`                                                    |
+| Last shipped | `identity-otp`                                                    |
+| Next chunk   | `people-households`                                               |
 | Phase 0      | 24 rows: 23 done, 1 superseded (`api-au-hostname`), 0 not started |
 | Later phases | not started                                                       |
 
@@ -94,7 +94,7 @@ Architecture: monorepo, CI, Terraform for AWS in `ap-southeast-2`, kernel, db wi
 | done       | `kms-mrk-replica`            | A replica of the envelope key in `ap-southeast-4`, not a database backup. Spec `docs/specs/2026-10-07-kms-mrk-replica.md`.                                                                                                                                                                                                                                                                                                                                                         |
 | done       | `service-image-runtime-base` | The service image final stage has no package manager. `gnutls28` is not in the runtime. Spec `docs/specs/2026-10-10-service-image-runtime-base.md`.                                                                                                                                                                                                                                                                                                                                |
 
-Next is `identity-otp`.
+Next is `people-households`.
 
 SQS, EventBridge, file storage, and the admin static-file distribution are not rows here. Each waits for the first chunk that uses it.
 
@@ -112,7 +112,7 @@ Vertical slices. Nav items appear in the frozen order (see [Admin navigation](#a
 | ----------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | done        | `admin-shell`          | The shell is static, Dashboard only, and makes no data call. Spec `docs/specs/2026-10-07-admin-shell.md`.                                                             |
 | done        | `tenancy-implicit-org` | Organisation and community rows in the `platform` schema. IDs, slugs, and region. Not a separate control plane. Spec `docs/specs/2026-10-10-tenancy-implicit-org.md`. |
-| not started | `identity-otp`         | The regional service. OTP and passkeys as designed. No email on a gateway.                                                                                            |
+| done        | `identity-otp`         | The regional service. OTP and passkeys as designed. No email on a gateway. Spec `docs/specs/2026-10-11-identity-otp.md`.                                              |
 | not started | `people-households`    | Person, Household, GuardianLink, `is_minor`. Tags + activity log land here.                                                                                           |
 | not started | `access-roles`         | Settings → Users & Roles.                                                                                                                                             |
 | not started | `entitlements-plans`   | Plans and allocations in the `platform` schema. Not a D1 control plane. Community toggles; nav hide/show. How a request sees them is Q14.                             |
@@ -237,7 +237,7 @@ From architecture §26. Do not invent answers in a spec.
 | Q1  | Recurring giving, refunds, GivingJar onboard                                                                                   |
 | Q2  | Phase 4 Jellycube vs thin renderer; contract freeze row in Phase 2                                                             |
 | Q13 | Closed for forms, donations, and RSVPs: they post to the Sydney hostname. Which account serves Jellycube sites is not decided. |
-| Q3  | Identity library (Phase 1 `identity-otp`)                                                                                      |
+| Q3  | Closed by ADR 0011. There is no identity library.                                                                              |
 | Q8  | Plan contents and pricing (entitlements)                                                                                       |
 | Q9  | EmailProvider (Settings → Email Settings)                                                                                      |
 | Q12 | Closed. Feature flags are `platform` tables. There is no vendor.                                                               |
@@ -246,9 +246,7 @@ From architecture §26. Do not invent answers in a spec.
 
 ## Open items
 
-Password re-read. The first chunk that checks out `createAppSql`, `createIdentitySql`, or `createPlatformSql` to serve a request re-reads `AWSCURRENT` and `AWSPREVIOUS` after an authentication failure, retries the new connection once, leaves running connections up, and logs neither the password nor the secret string. That same chunk adds pooled checkout of `createAppSql`, `createIdentitySql`, and `createPlatformSql`. No row is that chunk yet.
-
-Whether startup should prove the database or KMS is decided by the first chunk that serves a route which needs either one. A cache of unwrapped organisation keys is decided by the first chunk that unwraps one.
+Startup does not prove the database or KMS, `GET /health` opens neither, and a route that needs them fails that request, decided in `identity-otp`. A cache of unwrapped organisation keys is decided by the first chunk that unwraps one.
 
 This image has not run on Fargate. The next chunk that unparks staging re-runs the health check, the `/tmp` write one-off, and the ops task before the service is relied on.
 
@@ -256,7 +254,7 @@ This image has not run on Fargate. The next chunk that unparks staging re-runs t
 
 ## Next spec
 
-The next approved chunk on this list is **identity-otp**.
+The next approved chunk on this list is **people-households**.
 
 ---
 
