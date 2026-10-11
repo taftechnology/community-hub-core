@@ -21,6 +21,7 @@ import {
   type SessionTokens,
 } from "@community-hub/identity";
 import type { GateRoute } from "./gate.js";
+import type { Checkout } from "./checkout.js";
 
 type IdentitySql = Parameters<typeof startEmailOtp>[0];
 type IdentityKms = Parameters<typeof startEmailOtp>[1];
@@ -28,7 +29,7 @@ type IdentityKms = Parameters<typeof startEmailOtp>[1];
 export type AuthLog = (message: string, fields: Record<string, unknown>) => void;
 
 export type AuthDeps = {
-  sql: IdentitySql;
+  checkout: Checkout<IdentitySql>;
   kms: IdentityKms;
   keyArn: string;
   mail: OtpMail;
@@ -123,6 +124,10 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
     return undefined;
   }
 
+  function identity<T>(run: (sql: IdentitySql) => Promise<T>): Promise<T> {
+    return deps.checkout("identity", run);
+  }
+
   return [
     {
       method: "POST",
@@ -138,10 +143,12 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
           return empty(400);
         }
         try {
-          await startEmailOtp(deps.sql, deps.kms, deps.keyArn, deps.mail, {
-            email: body.email,
-            now: deps.now(),
-          });
+          await identity((sql) =>
+            startEmailOtp(sql, deps.kms, deps.keyArn, deps.mail, {
+              email: body.email,
+              now: deps.now(),
+            }),
+          );
         } catch (error) {
           const response = statusFor(error);
           if (response !== undefined) {
@@ -165,11 +172,13 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
         if (body === undefined) {
           return empty(400);
         }
-        const session = await verifyEmailOtp(deps.sql, deps.kms, deps.keyArn, {
-          email: body.email,
-          code: body.code,
-          now: deps.now(),
-        });
+        const session = await identity((sql) =>
+          verifyEmailOtp(sql, deps.kms, deps.keyArn, {
+            email: body.email,
+            code: body.code,
+            now: deps.now(),
+          }),
+        );
         return session === null ? empty(401) : tokens(session);
       },
     },
@@ -190,19 +199,23 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
         if (token === undefined) {
           return empty(401);
         }
-        const session = await readSession(deps.sql, deps.kms, deps.keyArn, {
-          accessToken: token,
-          now: deps.now(),
-        });
+        const session = await identity((sql) =>
+          readSession(sql, deps.kms, deps.keyArn, {
+            accessToken: token,
+            now: deps.now(),
+          }),
+        );
         if (session === null) {
           return empty(401);
         }
         try {
-          const options = await beginPasskeyRegistration(deps.sql, {
-            userId: session.userId,
-            rpId: deps.authHostname,
-            now: deps.now(),
-          });
+          const options = await identity((sql) =>
+            beginPasskeyRegistration(sql, {
+              userId: session.userId,
+              rpId: deps.authHostname,
+              now: deps.now(),
+            }),
+          );
           return Response.json({
             challenge: base64url(options.challenge),
             rp: options.rp,
@@ -241,21 +254,25 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
         if (token === undefined) {
           return empty(401);
         }
-        const session = await readSession(deps.sql, deps.kms, deps.keyArn, {
-          accessToken: token,
-          now: deps.now(),
-        });
+        const session = await identity((sql) =>
+          readSession(sql, deps.kms, deps.keyArn, {
+            accessToken: token,
+            now: deps.now(),
+          }),
+        );
         if (session === null) {
           return empty(401);
         }
         try {
-          await finishPasskeyRegistration(deps.sql, {
-            userId: session.userId,
-            rpId: deps.authHostname,
-            now: deps.now(),
-            clientDataJSON: bytesFrom(body.clientDataJSON),
-            attestationObject: bytesFrom(body.attestationObject),
-          });
+          await identity((sql) =>
+            finishPasskeyRegistration(sql, {
+              userId: session.userId,
+              rpId: deps.authHostname,
+              now: deps.now(),
+              clientDataJSON: bytesFrom(body.clientDataJSON),
+              attestationObject: bytesFrom(body.attestationObject),
+            }),
+          );
         } catch (error) {
           const response = statusFor(error);
           if (response !== undefined) {
@@ -279,10 +296,12 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
         if (body === undefined) {
           return empty(400);
         }
-        const options = await beginPasskeyAuthentication(deps.sql, {
-          rpId: deps.authHostname,
-          now: deps.now(),
-        });
+        const options = await identity((sql) =>
+          beginPasskeyAuthentication(sql, {
+            rpId: deps.authHostname,
+            now: deps.now(),
+          }),
+        );
         return Response.json({
           challenge: base64url(options.challenge),
           rpId: options.rpId,
@@ -302,14 +321,16 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
         if (body === undefined) {
           return empty(400);
         }
-        const session = await finishPasskeyAuthentication(deps.sql, deps.kms, deps.keyArn, {
-          rpId: deps.authHostname,
-          now: deps.now(),
-          credentialId: bytesFrom(body.credentialId),
-          clientDataJSON: bytesFrom(body.clientDataJSON),
-          authenticatorData: bytesFrom(body.authenticatorData),
-          signature: bytesFrom(body.signature),
-        });
+        const session = await identity((sql) =>
+          finishPasskeyAuthentication(sql, deps.kms, deps.keyArn, {
+            rpId: deps.authHostname,
+            now: deps.now(),
+            credentialId: bytesFrom(body.credentialId),
+            clientDataJSON: bytesFrom(body.clientDataJSON),
+            authenticatorData: bytesFrom(body.authenticatorData),
+            signature: bytesFrom(body.signature),
+          }),
+        );
         return session === null ? empty(401) : tokens(session);
       },
     },
@@ -326,10 +347,12 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
         if (body === undefined) {
           return empty(400);
         }
-        const session = await refreshSession(deps.sql, deps.kms, deps.keyArn, {
-          refreshToken: body.refreshToken,
-          now: deps.now(),
-        });
+        const session = await identity((sql) =>
+          refreshSession(sql, deps.kms, deps.keyArn, {
+            refreshToken: body.refreshToken,
+            now: deps.now(),
+          }),
+        );
         return session === null ? empty(401) : tokens(session);
       },
     },

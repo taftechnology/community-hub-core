@@ -2,15 +2,23 @@ import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
 import { pathToFileURL } from "node:url";
 import { KMSClient } from "@aws-sdk/client-kms";
+import { SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import type { KmsPort } from "@community-hub/crypto";
-import { createIdentitySql } from "@community-hub/db";
+import {
+  createAppSql,
+  createIdentitySql,
+  createPlatformSql,
+  type SqlTarget,
+} from "@community-hub/db";
 import { rejectingOtpMail } from "@community-hub/identity";
 import { healthRequest } from "@community-hub/kernel";
 
 import { authRoutes, type AuthDeps } from "./auth-routes.js";
+import { createCheckout } from "./checkout.js";
 import { readServiceEnv, IMAGE_CERT_PATH, type ServiceEnv } from "./env.js";
 import { RoutesRejected, type GateRoute } from "./gate.js";
 import { createAwsKmsPort } from "./kms/aws-kms-adapter.js";
+import { secretsManagerReader } from "./secrets.js";
 import { startServer } from "./server.js";
 
 let current: Server | undefined;
@@ -67,34 +75,53 @@ const healthRoute: GateRoute = {
   handle: healthRequest,
 };
 
+function target(env: ServiceEnv, pem: string, user: string, password: string): SqlTarget {
+  return {
+    host: env.PGHOST,
+    port: env.PGPORT,
+    database: env.PGDATABASE,
+    user,
+    password,
+    ca: pem,
+  };
+}
+
 function authDeps(env: ServiceEnv, pem: string): AuthDeps {
-  let opened: { sql: AuthDeps["sql"]; kms: KmsPort } | undefined;
-  function open(): { sql: AuthDeps["sql"]; kms: KmsPort } {
-    opened ??= {
-      sql: createIdentitySql({
-        host: env.PGHOST,
-        port: env.PGPORT,
-        database: env.PGDATABASE,
-        user: env.PGUSER_IDENTITY,
-        password: env.PGPASSWORD_IDENTITY,
-        ca: pem,
-      }),
-      kms: createAwsKmsPort({
+  const checkout = createCheckout({
+    passwords: {
+      app: env.PGPASSWORD_APP,
+      identity: env.PGPASSWORD_IDENTITY,
+      platform: env.PGPASSWORD_PLATFORM,
+    },
+    arns: {
+      app: env.APP_SECRET_ARN,
+      identity: env.IDENTITY_SECRET_ARN,
+      platform: env.PLATFORM_SECRET_ARN,
+    },
+    open: {
+      app: (password) => createAppSql(target(env, pem, env.PGUSER_APP, password)),
+      identity: (password) => createIdentitySql(target(env, pem, env.PGUSER_IDENTITY, password)),
+      platform: (password) => createPlatformSql(target(env, pem, env.PGUSER_PLATFORM, password)),
+    },
+    readSecret: secretsManagerReader(
+      new SecretsManagerClient({ region: env.AWS_REGION }) as Parameters<
+        typeof secretsManagerReader
+      >[0],
+    ),
+    log: () => undefined,
+  });
+  let kms: KmsPort | undefined;
+  return {
+    checkout,
+    get kms() {
+      kms ??= createAwsKmsPort({
         client: new KMSClient({ region: env.AWS_REGION, maxAttempts: 1 }) as Parameters<
           typeof createAwsKmsPort
         >[0]["client"],
         keyArn: env.ENVELOPE_KEY_ARN,
         info: () => undefined,
-      }),
-    };
-    return opened;
-  }
-  return {
-    get sql() {
-      return open().sql;
-    },
-    get kms() {
-      return open().kms;
+      });
+      return kms;
     },
     keyArn: env.ENVELOPE_KEY_ARN,
     mail: rejectingOtpMail,

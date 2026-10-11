@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-kms": "^3.758.0",
+    "@aws-sdk/client-secrets-manager": "^3.758.0",
     "@community-hub/contracts": "workspace:*",
     "@community-hub/crypto": "workspace:*",
     "@community-hub/db": "workspace:*",

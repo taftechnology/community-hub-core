@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 const identity = vi.hoisted(() => ({
@@ -26,7 +27,7 @@ const API_HOSTNAME = "au.api.example.test";
 
 function deps(log: AuthDeps["log"] = () => undefined): AuthDeps {
   return {
-    sql: {} as AuthDeps["sql"],
+    checkout: (_role, run) => run({} as never),
     kms: {} as AuthDeps["kms"],
     keyArn: "arn:aws:kms:ap-southeast-2:123456789012:key/mrk-example",
     mail: { send: () => Promise.resolve() },
@@ -72,6 +73,10 @@ describe("auth routes", () => {
       "POST /v1/auth/session/refresh",
     ]);
     expect(routes.every((item) => item.surface === "tenant")).toBe(true);
+    const source = readFileSync(new URL("./auth-routes.ts", import.meta.url), "utf8");
+    expect(source).toContain('checkout("identity"');
+    expect(source).not.toContain('checkout("app"');
+    expect(source).not.toContain('checkout("platform"');
   });
 
   it("starts on the auth hostname and hides the address from the logger", async () => {
