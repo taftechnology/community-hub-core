@@ -136,42 +136,31 @@ export async function verifyEmailOtp(
   const emailBidx = await hmac(bidx, "identity.users.email", new TextEncoder().encode(email));
   const codeHash = await hmac(bidx, "identity.otp", new TextEncoder().encode(input.code));
   const now = input.now.toISOString();
-  const consumed = await sql<{ id: string }[]>`
+  const decided = await sql<{ matched: boolean }[]>`
     update identity.otp_challenges
-    set consumed_at = ${now}::timestamptz
+    set
+      attempts = case
+        when code_hash = ${codeHash} then attempts
+        else attempts + 1
+      end,
+      consumed_at = case
+        when code_hash = ${codeHash} then ${now}::timestamptz
+        when attempts + 1 >= 5 then ${now}::timestamptz
+        else consumed_at
+      end
     where id = (
-      select id from identity.otp_challenges
+      select id
+      from identity.otp_challenges
       where email_bidx = ${emailBidx}
         and consumed_at is null
         and expires_at >= ${now}::timestamptz
         and attempts < 5
-        and code_hash = ${codeHash}
       limit 1
       for update
     )
-    and consumed_at is null
-    returning id
+    returning (code_hash = ${codeHash}) as matched
   `;
-  if (consumed[0] === undefined) {
-    await sql`
-      update identity.otp_challenges
-      set attempts = attempts + 1,
-          consumed_at = case
-            when attempts + 1 >= 5 then ${now}::timestamptz
-            else consumed_at
-          end
-      where id = (
-        select id from identity.otp_challenges
-        where email_bidx = ${emailBidx}
-          and consumed_at is null
-          and expires_at >= ${now}::timestamptz
-          and attempts < 5
-          and code_hash <> ${codeHash}
-        limit 1
-        for update
-      )
-      and consumed_at is null
-    `;
+  if (decided[0]?.matched !== true) {
     return null;
   }
   const existing = await sql<{ id: string }[]>`

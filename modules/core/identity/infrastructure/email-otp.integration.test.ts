@@ -42,6 +42,17 @@ function uuidToBytes(uuid: string): Uint8Array {
   return out;
 }
 
+function wrongCodes(right: string, count: number): string[] {
+  const codes: string[] = [];
+  for (let value = 0; codes.length < count && value < 100_000_000; value += 1) {
+    const code = value.toString().padStart(8, "0");
+    if (code !== right) {
+      codes.push(code);
+    }
+  }
+  return codes;
+}
+
 class MemoryMail implements OtpMail {
   last: { to: string; code: string } | undefined;
   sends = 0;
@@ -265,6 +276,46 @@ describe("email one-time code", () => {
       await sql.end({ timeout: 1 });
     }
   });
+
+  it("keeps the attempt cap when the right code races 300 wrong codes", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const mail = new MemoryMail();
+    const kms = createLocalKmsPort();
+    const sql = postgres(identityUrl(loadRuntime()), {
+      max: 80,
+      prepare: true,
+      onnotice: () => undefined,
+    });
+    try {
+      for (let trial = 0; trial < 20; trial += 1) {
+        await clearIdentity(sql);
+        await startEmailOtp(sql, kms, KEY_ARN, mail, { email: "ada@example.com", now });
+        const code = mail.last?.code ?? "";
+        const wrongs = wrongCodes(code, 300);
+        const results = await Promise.all([
+          ...wrongs.map((guess) =>
+            verifyEmailOtp(sql, kms, KEY_ARN, { email: "ada@example.com", code: guess, now }),
+          ),
+          verifyEmailOtp(sql, kms, KEY_ARN, { email: "ada@example.com", code, now }),
+        ]);
+        const sessions = results.filter((result) => result !== null);
+        const rows = await sql<{ consumed_at: Date | null; attempts: number }[]>`
+          select consumed_at, attempts from identity.otp_challenges
+        `;
+        const row = rows[0];
+        expect(row?.consumed_at).not.toBeNull();
+        if (sessions.length > 0) {
+          expect(sessions).toHaveLength(1);
+          expect(Number(row?.attempts)).toBeLessThanOrEqual(4);
+        } else {
+          expect(Number(row?.attempts)).toBe(5);
+        }
+      }
+    } finally {
+      await clearIdentity(sql);
+      await sql.end({ timeout: 1 });
+    }
+  }, 120_000);
 
   it("returns one session when the right code is verified twice in parallel", async () => {
     const now = new Date("2026-10-11T00:00:00.000Z");
