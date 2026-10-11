@@ -1,8 +1,10 @@
+import type { KmsPort } from "@community-hub/crypto";
 import { newId } from "@community-hub/db";
 import type { Sql } from "postgres";
 
 import { decodeCbor, decodeCoseEc2 } from "../domain/cbor.js";
 import { IdentityError } from "../domain/error.js";
+import { createSession, type SessionTokens } from "./session.js";
 
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
 const UP = 0x01;
@@ -135,6 +137,8 @@ export async function beginPasskeyAuthentication(
 
 export async function finishPasskeyAuthentication(
   sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
   input: {
     rpId: string;
     now: Date;
@@ -143,7 +147,7 @@ export async function finishPasskeyAuthentication(
     authenticatorData: Uint8Array;
     signature: Uint8Array;
   },
-): Promise<{ userId: string } | null> {
+): Promise<SessionTokens | null> {
   try {
     const credentials = await sql<
       { id: string; user_id: string; cose_key: Uint8Array; sign_count: number | string }[]
@@ -203,7 +207,7 @@ export async function finishPasskeyAuthentication(
         where id = ${credential.id}
       `;
     });
-    return { userId: credential.user_id };
+    return createSession(sql, kms, keyArn, { userId: credential.user_id, now: input.now });
   } catch (error) {
     if (error instanceof IdentityError && error.code === "invalid_ceremony") {
       return null;

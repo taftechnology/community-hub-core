@@ -8,6 +8,7 @@ import { IdentityError } from "../domain/error.js";
 import type { OtpMail } from "../domain/otp-mail.js";
 import { ensureIdentityKey } from "./identity-key.js";
 import { insertIdentityUser } from "./identity-user.js";
+import { createSession, type SessionTokens } from "./session.js";
 
 const CONTEXT = { key_kind: "identity", region: "au", key_version: "1" } as const;
 const TEN_MINUTES_MS = 10 * 60 * 1000;
@@ -105,7 +106,7 @@ export async function verifyEmailOtp(
   kms: KmsPort,
   keyArn: string,
   input: { email: string; code: string; now: Date },
-): Promise<{ userId: string } | null> {
+): Promise<SessionTokens | null> {
   let email: string;
   try {
     email = normaliseEmail(input.email);
@@ -163,10 +164,11 @@ export async function verifyEmailOtp(
   `;
   const found = existing[0];
   if (found !== undefined) {
-    return { userId: found.id };
+    return createSession(sql, kms, keyArn, { userId: found.id, now: input.now });
   }
   try {
-    return await insertIdentityUser(sql, kms, keyArn, { email });
+    const created = await insertIdentityUser(sql, kms, keyArn, { email });
+    return createSession(sql, kms, keyArn, { userId: created.userId, now: input.now });
   } catch (error) {
     if (!isUsersEmailConflict(error)) {
       throw error;
@@ -175,6 +177,8 @@ export async function verifyEmailOtp(
       select id from identity.users where email_bidx = ${emailBidx}
     `;
     const winner = again[0];
-    return winner === undefined ? null : { userId: winner.id };
+    return winner === undefined
+      ? null
+      : createSession(sql, kms, keyArn, { userId: winner.id, now: input.now });
   }
 }

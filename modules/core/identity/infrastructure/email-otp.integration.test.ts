@@ -114,7 +114,19 @@ describe("email one-time code", () => {
         code: mail.last?.code ?? "",
         now,
       });
-      expect(verified).toEqual({ userId: expect.any(String) });
+      expect(verified).toMatchObject({ userId: expect.any(String), expiresIn: 900 });
+      expect(verified?.accessToken.includes("=")).toBe(false);
+      expect(verified?.refreshToken.includes("=")).toBe(false);
+      const session = await sql<{ access_hash: Uint8Array; refresh_hash: Uint8Array }[]>`
+        select access_hash, refresh_hash from identity.sessions
+      `;
+      expect(session).toHaveLength(1);
+      const accessHash = Buffer.from(session[0]?.access_hash ?? []);
+      const refreshHash = Buffer.from(session[0]?.refresh_hash ?? []);
+      expect(accessHash.equals(Buffer.from(verified?.accessToken ?? "", "base64url"))).toBe(false);
+      expect(refreshHash.equals(Buffer.from(verified?.refreshToken ?? "", "base64url"))).toBe(
+        false,
+      );
       const again = await verifyEmailOtp(sql, kms, KEY_ARN, {
         email: "ada@example.com",
         code: mail.last?.code ?? "",

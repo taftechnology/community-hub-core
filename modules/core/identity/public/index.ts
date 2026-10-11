@@ -8,3 +8,4 @@ export {
   finishPasskeyAuthentication,
   finishPasskeyRegistration,
 } from "../infrastructure/passkey.js";
+export { readSession, refreshSession, type SessionTokens } from "../infrastructure/session.js";

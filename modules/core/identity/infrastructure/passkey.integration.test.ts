@@ -263,7 +263,7 @@ describe("passkeys", () => {
       const authData = authenticatorData({ rpId: RP_ID, signCount: 1 });
       const client = clientData("webauthn.get", options.challenge, ORIGIN);
       const signature = await key.sign(concat([authData, await sha256(client)]));
-      const verified = await finishPasskeyAuthentication(sql, {
+      const verified = await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
         rpId: RP_ID,
         now,
         credentialId,
@@ -271,7 +271,7 @@ describe("passkeys", () => {
         authenticatorData: authData,
         signature,
       });
-      expect(verified).toEqual({ userId: created.userId });
+      expect(verified).toMatchObject({ userId: created.userId, expiresIn: 900 });
       const counts = await sql<{ sign_count: number | string }[]>`
         select sign_count from identity.passkey_credentials
       `;
@@ -284,7 +284,7 @@ describe("passkeys", () => {
       const badData = authenticatorData({ rpId: RP_ID, signCount: 2 });
       const badClient = clientData("webauthn.get", badOrigin.challenge, "https://evil.example");
       expect(
-        await finishPasskeyAuthentication(sql, {
+        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
           rpId: RP_ID,
           now,
           credentialId,
@@ -302,7 +302,7 @@ describe("passkeys", () => {
       const staleData = authenticatorData({ rpId: RP_ID, signCount: 3 });
       const staleClient = clientData("webauthn.get", stale.challenge, ORIGIN);
       expect(
-        await finishPasskeyAuthentication(sql, {
+        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
           rpId: RP_ID,
           now: new Date(now.getTime() + 5 * 60 * 1000 + 1),
           credentialId,
@@ -317,7 +317,7 @@ describe("passkeys", () => {
       const heldData = authenticatorData({ rpId: RP_ID, signCount: 2 });
       const heldClient = clientData("webauthn.get", held.challenge, ORIGIN);
       expect(
-        await finishPasskeyAuthentication(sql, {
+        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
           rpId: RP_ID,
           now,
           credentialId,
@@ -351,7 +351,7 @@ describe("passkeys", () => {
       const zeroData = authenticatorData({ rpId: RP_ID, signCount: 0 });
       const zeroClient = clientData("webauthn.get", zeroOptions.challenge, ORIGIN);
       expect(
-        await finishPasskeyAuthentication(sql, {
+        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
           rpId: RP_ID,
           now,
           credentialId: zeroId,
@@ -359,7 +359,7 @@ describe("passkeys", () => {
           authenticatorData: zeroData,
           signature: await key.sign(concat([zeroData, await sha256(zeroClient)])),
         }),
-      ).toEqual({ userId: created.userId });
+      ).toMatchObject({ userId: created.userId, expiresIn: 900 });
     });
   });
 });
