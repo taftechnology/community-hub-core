@@ -13,3 +13,4 @@ export { PeopleError } from "../domain/error.js";
 export { ensureCommunityKey, ensureOrganisationKey } from "../infrastructure/keys.js";
 export { createHousehold, readHousehold } from "../infrastructure/household.js";
 export { createPerson, readPerson } from "../infrastructure/person.js";
+export { linkGuardian, unlinkGuardian } from "../infrastructure/guardian.js";
