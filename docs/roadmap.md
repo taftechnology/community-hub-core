@@ -21,8 +21,8 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 |              |                                                                   |
 | ------------ | ----------------------------------------------------------------- |
 | Phase        | 1 — Core platform                                                 |
-| Last shipped | `identity-otp`                                                    |
-| Next chunk   | `people-households`                                               |
+| Last shipped | `people-households`                                               |
+| Next chunk   | `access-roles`                                                    |
 | Phase 0      | 24 rows: 23 done, 1 superseded (`api-au-hostname`), 0 not started |
 | Later phases | not started                                                       |
 
@@ -94,7 +94,7 @@ Architecture: monorepo, CI, Terraform for AWS in `ap-southeast-2`, kernel, db wi
 | done       | `kms-mrk-replica`            | A replica of the envelope key in `ap-southeast-4`, not a database backup. Spec `docs/specs/2026-10-07-kms-mrk-replica.md`.                                                                                                                                                                                                                                                                                                                                                         |
 | done       | `service-image-runtime-base` | The service image final stage has no package manager. `gnutls28` is not in the runtime. Spec `docs/specs/2026-10-10-service-image-runtime-base.md`.                                                                                                                                                                                                                                                                                                                                |
 
-Next is `people-households`.
+Next is `access-roles`.
 
 SQS, EventBridge, file storage, and the admin static-file distribution are not rows here. Each waits for the first chunk that uses it.
 
@@ -113,7 +113,7 @@ Vertical slices. Nav items appear in the frozen order (see [Admin navigation](#a
 | done        | `admin-shell`          | The shell is static, Dashboard only, and makes no data call. Spec `docs/specs/2026-10-07-admin-shell.md`.                                                             |
 | done        | `tenancy-implicit-org` | Organisation and community rows in the `platform` schema. IDs, slugs, and region. Not a separate control plane. Spec `docs/specs/2026-10-10-tenancy-implicit-org.md`. |
 | done        | `identity-otp`         | The regional service. OTP and passkeys as designed. No email on a gateway. Spec `docs/specs/2026-10-11-identity-otp.md`.                                              |
-| not started | `people-households`    | Person, Household, GuardianLink, `is_minor`. Tags + activity log land here.                                                                                           |
+| done        | `people-households`    | Person, Household, GuardianLink, `is_minor`. Tags + activity log land here. Spec `docs/specs/2026-10-11-people-households.md`.                                        |
 | not started | `access-roles`         | Settings → Users & Roles.                                                                                                                                             |
 | not started | `entitlements-plans`   | Plans and allocations in the `platform` schema. Not a D1 control plane. Community toggles; nav hide/show. How a request sees them is Q14.                             |
 | not started | `stripe-billing`       | Our subscriptions. Webhooks on the Sydney hostname. The regional service does the work. Not `exec`. Not GivingJar.                                                    |
@@ -246,7 +246,7 @@ From architecture §26. Do not invent answers in a spec.
 
 ## Open items
 
-Startup does not prove the database or KMS, `GET /health` opens neither, and a route that needs them fails that request, decided in `identity-otp`. A cache of unwrapped organisation keys is decided by the first chunk that unwraps one.
+Startup does not prove the database or KMS, `GET /health` opens neither, and a route that needs them fails that request, decided in `identity-otp`. Unwrapped organisation keys are not cached; each operation unwraps and drops them, decided in `people-households`.
 
 This image has not run on Fargate. The next chunk that unparks staging re-runs the health check, the `/tmp` write one-off, and the ops task before the service is relied on.
 
@@ -254,7 +254,7 @@ This image has not run on Fargate. The next chunk that unparks staging re-runs t
 
 ## Next spec
 
-The next approved chunk on this list is **people-households**.
+The next approved chunk on this list is **access-roles**.
 
 ---
 

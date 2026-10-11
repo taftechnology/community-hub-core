@@ -737,7 +737,7 @@ AWS KMS (Sydney)  ── wraps ──►  Organisation key
 ```
 
 - **Application-layer encryption** in the service before data reaches Postgres. Database operators and backups see ciphertext.
-- **Unwrapped keys** are not logged. A short-lived in-memory cache of unwrapped organisation keys is an open item for the service chunk, not a decision.
+- **Unwrapped keys** are not logged. Unwrapped organisation, community, and household keys are not cached; the operation that needs one unwraps it and drops it; decided in `people-households`.
 - **Search** uses HMAC-SHA-256 blind indexes. Adult `people.*` indexes are community-scoped. `identity.users.email` uses the region's identity key. A minor's `confidential-blind` indexes use the household key, so they die with household-key destruction.
 - **Deletion by key destruction:** erasing a household destroys its household key, making restricted copies (including backups and restricted files) unreadable. **The payment ledger is not encrypted with the household key.** DGR and tax-retention rows stay readable; the donor person link may become unlinkable.
 - **Transport:** minimum TLS 1.2 at the API. The hop from API Gateway to the task is plain HTTP inside the VPC. TLS to Postgres is `verify-full` against the RDS certificate bundle. Storage is encrypted at rest (RDS and S3 with KMS). The Cloudflare Tunnel path was superseded by ADR 0009.
