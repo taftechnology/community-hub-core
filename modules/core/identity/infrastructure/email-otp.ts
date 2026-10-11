@@ -123,42 +123,44 @@ export async function verifyEmailOtp(
   const emailBidx = await hmac(bidx, "identity.users.email", new TextEncoder().encode(email));
   const codeHash = await hmac(bidx, "identity.otp", new TextEncoder().encode(input.code));
   const now = input.now.toISOString();
-  const open = await sql<{ id: string; attempts: number }[]>`
-    select id, attempts from identity.otp_challenges
-    where email_bidx = ${emailBidx}
-      and consumed_at is null
-      and expires_at >= ${now}::timestamptz
-  `;
-  const row = open[0];
-  if (row === undefined || row.attempts >= 5) {
-    return null;
-  }
-  const matched = await sql<{ id: string }[]>`
-    select id from identity.otp_challenges
-    where id = ${row.id} and code_hash = ${codeHash}
-  `;
-  if (matched.length === 0) {
-    const attempts = row.attempts + 1;
-    if (attempts >= 5) {
-      await sql`
-        update identity.otp_challenges
-        set attempts = ${attempts}, consumed_at = ${now}::timestamptz
-        where id = ${row.id}
-      `;
-    } else {
-      await sql`
-        update identity.otp_challenges
-        set attempts = ${attempts}
-        where id = ${row.id}
-      `;
-    }
-    return null;
-  }
-  await sql`
+  const consumed = await sql<{ id: string }[]>`
     update identity.otp_challenges
     set consumed_at = ${now}::timestamptz
-    where id = ${row.id}
+    where id = (
+      select id from identity.otp_challenges
+      where email_bidx = ${emailBidx}
+        and consumed_at is null
+        and expires_at >= ${now}::timestamptz
+        and attempts < 5
+        and code_hash = ${codeHash}
+      limit 1
+      for update
+    )
+    and consumed_at is null
+    returning id
   `;
+  if (consumed[0] === undefined) {
+    await sql`
+      update identity.otp_challenges
+      set attempts = attempts + 1,
+          consumed_at = case
+            when attempts + 1 >= 5 then ${now}::timestamptz
+            else consumed_at
+          end
+      where id = (
+        select id from identity.otp_challenges
+        where email_bidx = ${emailBidx}
+          and consumed_at is null
+          and expires_at >= ${now}::timestamptz
+          and attempts < 5
+          and code_hash <> ${codeHash}
+        limit 1
+        for update
+      )
+      and consumed_at is null
+    `;
+    return null;
+  }
   const existing = await sql<{ id: string }[]>`
     select id from identity.users where email_bidx = ${emailBidx}
   `;

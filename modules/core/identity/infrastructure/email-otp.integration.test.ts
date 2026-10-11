@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import postgres from "postgres";
 import { blindIndex, decrypt, deriveKeys, unwrapKmsRoot } from "@community-hub/crypto";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import { applyProductMigrations } from "@community-hub/db";
@@ -230,4 +231,93 @@ describe("email one-time code", () => {
       expect(after).toEqual(before);
     });
   });
+
+  it("counts forty parallel wrong guesses and then rejects the right code", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const mail = new MemoryMail();
+    const kms = createLocalKmsPort();
+    const sql = postgres(identityUrl(loadRuntime()), {
+      max: 40,
+      prepare: true,
+      onnotice: () => undefined,
+    });
+    try {
+      await clearIdentity(sql);
+      await startEmailOtp(sql, kms, KEY_ARN, mail, { email: "ada@example.com", now });
+      const code = mail.last?.code ?? "";
+      const wrong = code === "00000000" ? "11111111" : "00000000";
+      const results = await Promise.all(
+        Array.from({ length: 40 }, () =>
+          verifyEmailOtp(sql, kms, KEY_ARN, { email: "ada@example.com", code: wrong, now }),
+        ),
+      );
+      expect(results.every((result) => result === null)).toBe(true);
+      const consumed = await sql<{ consumed_at: Date | null; attempts: number }[]>`
+        select consumed_at, attempts from identity.otp_challenges
+      `;
+      expect(consumed[0]?.attempts).toBe(5);
+      expect(consumed[0]?.consumed_at).not.toBeNull();
+      expect(
+        await verifyEmailOtp(sql, kms, KEY_ARN, { email: "ada@example.com", code, now }),
+      ).toBeNull();
+    } finally {
+      await clearIdentity(sql);
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("returns one session when the right code is verified twice in parallel", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const mail = new MemoryMail();
+    const kms = createLocalKmsPort();
+    const runtime = loadRuntime();
+    const url = identityUrl(runtime);
+    const holder = postgres(url, { max: 1, prepare: true, onnotice: () => undefined });
+    const sql = postgres(url, { max: 4, prepare: true, onnotice: () => undefined });
+    const observer = createPlaintextDirectSql(runtime.productOnlyUrl);
+    let pending: Promise<Awaited<ReturnType<typeof verifyEmailOtp>>[]> = Promise.resolve([]);
+    try {
+      await clearIdentity(sql);
+      await startEmailOtp(sql, kms, KEY_ARN, mail, { email: "ada@example.com", now });
+      const code = mail.last?.code ?? "";
+      let locked: () => void = () => undefined;
+      const lockHeld = new Promise<void>((resolve) => {
+        locked = resolve;
+      });
+      const gate = holder.begin(async (tx) => {
+        await tx`select id from identity.otp_challenges for update`;
+        locked();
+        const started = Date.now();
+        while (Date.now() - started < 5_000) {
+          const waiting = await observer<{ n: number }[]>`
+            select count(*)::int as n
+            from pg_stat_activity
+            where datname = current_database()
+              and state = 'active'
+              and wait_event_type = 'Lock'
+              and query like '%update identity.otp_challenges%'
+          `;
+          if ((waiting[0]?.n ?? 0) >= 2) {
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 15));
+        }
+        throw new Error("verifications did not wait on the challenge");
+      });
+      await lockHeld;
+      pending = Promise.all([
+        verifyEmailOtp(sql, kms, KEY_ARN, { email: "ada@example.com", code, now }),
+        verifyEmailOtp(sql, kms, KEY_ARN, { email: "ada@example.com", code, now }),
+      ]);
+      await gate;
+      const results = await pending;
+      expect(results.filter((result) => result !== null)).toHaveLength(1);
+    } finally {
+      await pending.catch(() => undefined);
+      await clearIdentity(sql);
+      await sql.end({ timeout: 1 });
+      await holder.end({ timeout: 1 });
+      await observer.end({ timeout: 1 });
+    }
+  }, 15_000);
 });
