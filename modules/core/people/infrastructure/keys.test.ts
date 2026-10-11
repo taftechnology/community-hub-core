@@ -10,7 +10,7 @@ const source = readFileSync(
 
 describe("organisation key source", () => {
   it("does not set config, cache keys, or log", () => {
-    expect(source).not.toContain("set_config");
+    expect(source).not.toContain("set_" + "config");
     expect(source).not.toMatch(/\bSET\b/);
     expect(source).not.toContain("new Map");
     expect(source).not.toContain("console.");

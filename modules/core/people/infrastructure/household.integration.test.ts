@@ -93,14 +93,17 @@ describe("household create and read", () => {
           expect(missing).toBeNull();
 
           const audits = await tx<
-            { action: string; actor_kind: string; actor_id: string | null }[]
+            { action: string; actor_kind: string; actor_id: string | null; seq: string }[]
           >`
-            select action, actor_kind, actor_id::text as actor_id
+            select action, actor_kind, actor_id::text as actor_id, seq::text as seq
             from app.audit_events
             where ${created.householdId}::uuid = any(target_ids)
-            order by seq
           `;
-          expect(audits).toEqual([
+          expect(
+            [...audits]
+              .sort((left, right) => Number(left.seq) - Number(right.seq))
+              .map(({ action, actor_kind, actor_id }) => ({ action, actor_kind, actor_id })),
+          ).toEqual([
             { action: "people.household.created", actor_kind: "system", actor_id: null },
             { action: "people.household.read", actor_kind: "system", actor_id: null },
           ]);
