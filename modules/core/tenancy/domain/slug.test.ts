@@ -66,4 +66,25 @@ describe("implicitPair", () => {
       }
     }
   });
+
+  it("rejects a missing slug with invalid_slug", () => {
+    const missingOrganisation = { communitySlug: "example-parish" } as {
+      organisationSlug: string;
+      communitySlug: string;
+    };
+    const missingCommunity = { organisationSlug: "example-parish" } as {
+      organisationSlug: string;
+      communitySlug: string;
+    };
+    for (const input of [missingOrganisation, missingCommunity]) {
+      let caught: unknown;
+      try {
+        implicitPair(input);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(ImplicitOrganisationError);
+      expect((caught as ImplicitOrganisationError).code).toBe("invalid_slug");
+    }
+  });
 });

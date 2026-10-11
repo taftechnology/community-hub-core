@@ -11,6 +11,8 @@ import {
   createPlaintextPlatformSql,
 } from "@community-hub/db/plaintext";
 
+import type { Sql } from "postgres";
+
 import { createImplicitOrganisation, findCommunityBySlug } from "../public/index.js";
 
 type Runtime = {
@@ -268,6 +270,15 @@ describe("implicit organisation", () => {
       await direct`delete from platform.organisations where id = ${organisationId}`;
       await direct.end({ timeout: 1 });
     }
+  });
+
+  it("returns null for an invalid slug without querying", async () => {
+    const sql = (() => {
+      throw new Error("database was queried");
+    }) as unknown as Sql;
+    await expect(findCommunityBySlug(sql, "Example")).resolves.toBeNull();
+    await expect(findCommunityBySlug(sql, "")).resolves.toBeNull();
+    await expect(findCommunityBySlug(sql, "ab")).resolves.toBeNull();
   });
 
   it("leaves the caller's timestamp parsers unchanged", async () => {
