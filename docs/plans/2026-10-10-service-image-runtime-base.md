@@ -48,7 +48,7 @@ These are the settings named in the spec. During Task 1, after the image test is
 | Runtime user is `node`                    | `expect(config?.User).toBe("node")`            | Delete the final stage's `USER node` line                                                            |
 | Entrypoint is empty                       | `expect(config?.Entrypoint ?? []).toEqual([])` | Delete the final stage's `ENTRYPOINT []` line, so the distroless entrypoint `/nodejs/bin/node` stays |
 | `/tmp` is uid 1000, gid 1000, mode `1777` | The new `/tmp` stat assertion                  | Delete the `withtmp` `RUN` line                                                                      |
-| `node` is on `PATH`                       | `docker run` of `node /app/probe.js`           | Change `ENV PATH` so it does not start with `/nodejs/bin`                                            |
+| `node` is on `PATH`                       | the image test                                 | Change `ENV PATH` so it does not start with `/nodejs/bin`                                            |
 | Package set is the 14 names               | The package-directory assertion                | Remove `zlib1g` from the expected array in `apps/api/src/image.test.ts`                              |
 
 ## Dockerfile
@@ -196,7 +196,7 @@ If `trivy` is on `PATH`, run `trivy --version` and `trivy image --scanners vuln 
 - [ ] **Step 8: Gate, then commit**
 
 ```bash
-pnpm exec prettier --write apps/api/src/image.test.ts apps/api/Dockerfile
+pnpm exec prettier --write apps/api/src/image.test.ts
 pnpm gate
 ```
 
@@ -227,11 +227,11 @@ EOF
 **Interfaces:**
 
 - Consumes: the approved spec's catalogue paragraph.
-- Produces: Phase 0 counts `24 rows: 23 done, 1 superseded`, next chunk still `identity-otp`, and the Fargate sentence in open items.
+- Produces: Phase 0 counts `24 rows: 23 done, 1 superseded`, last shipped `service-image-runtime-base`, next chunk still `identity-otp`, and the Fargate sentence in open items.
 
 - [ ] **Step 1: Update the roadmap**
 
-In the snapshot table, change the Phase 0 cell from 23 rows and 22 done to 24 rows and 23 done. The superseded name stays `api-au-hostname`. The not-started count stays 0. Leave `Last shipped` as `tenancy-implicit-org`. Leave `Next chunk` as `identity-otp`.
+In the snapshot table, change the Phase 0 cell from 23 rows and 22 done to 24 rows and 23 done. The superseded name stays `api-au-hostname`. The not-started count stays 0. Set `Last shipped` to `service-image-runtime-base`. Leave `Next chunk` as `identity-otp`.
 
 After the `kms-mrk-replica` row, add a done row `service-image-runtime-base`. The what cell is: The service image final stage has no package manager. `gnutls28` is not in the runtime. Spec `docs/specs/2026-10-10-service-image-runtime-base.md`.
 
