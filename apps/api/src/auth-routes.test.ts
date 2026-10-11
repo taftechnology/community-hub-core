@@ -139,12 +139,50 @@ describe("auth routes", () => {
       }),
     );
     expect(verified.status).toBe(200);
+    expect(verified.headers.get("cache-control")).toBe("no-store");
     expect(await verified.json()).toEqual({
       userId: "user-1",
       accessToken: "access-token",
       refreshToken: "refresh-token",
       expiresIn: 900,
     });
+  });
+
+  it("rejects a body whose content-type is not json", async () => {
+    identity.startEmailOtp.mockClear();
+    const headers = new Headers({
+      "content-type": "text/plain",
+      "x-community-hub-hostname": AUTH_HOSTNAME,
+    });
+    const response = await route("/v1/auth/email-otp/start").handle(
+      new Request("http://127.0.0.1/v1/auth/email-otp/start", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ email: "ada@example.com" }),
+      }),
+    );
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("");
+    expect(identity.startEmailOtp).not.toHaveBeenCalled();
+  });
+
+  it("rejects register and verify when the bearer is missing or invalid", async () => {
+    identity.readSession.mockClear();
+    identity.finishPasskeyRegistration.mockClear();
+    for (const path of ["/v1/auth/passkey/register/options", "/v1/auth/passkey/register/verify"]) {
+      for (const authorization of [undefined, "Basic abc", "Bearer"]) {
+        const body = path.endsWith("/verify")
+          ? { clientDataJSON: "YQ", attestationObject: "YQ" }
+          : {};
+        const response = await route(path).handle(
+          request(path, AUTH_HOSTNAME, body, authorization),
+        );
+        expect(response.status).toBe(401);
+        expect(await response.text()).toBe("");
+      }
+    }
+    expect(identity.readSession).not.toHaveBeenCalled();
+    expect(identity.finishPasskeyRegistration).not.toHaveBeenCalled();
   });
 
   it("returns 401 for register options without a bearer token", async () => {
@@ -155,6 +193,33 @@ describe("auth routes", () => {
     expect(response.status).toBe(401);
     expect(await response.text()).toBe("");
     expect(identity.beginPasskeyRegistration).not.toHaveBeenCalled();
+  });
+
+  it("sends no-store on passkey and refresh token responses", async () => {
+    const session = {
+      userId: "user-1",
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresIn: 900 as const,
+    };
+    identity.finishPasskeyAuthentication.mockResolvedValueOnce(session);
+    const authenticated = await route("/v1/auth/passkey/authenticate/verify").handle(
+      request("/v1/auth/passkey/authenticate/verify", AUTH_HOSTNAME, {
+        credentialId: "YQ",
+        clientDataJSON: "YQ",
+        authenticatorData: "YQ",
+        signature: "YQ",
+      }),
+    );
+    expect(authenticated.status).toBe(200);
+    expect(authenticated.headers.get("cache-control")).toBe("no-store");
+
+    identity.refreshSession.mockResolvedValueOnce(session);
+    const refreshed = await route("/v1/auth/session/refresh").handle(
+      request("/v1/auth/session/refresh", AUTH_HOSTNAME, { refreshToken: "refresh-token" }),
+    );
+    expect(refreshed.status).toBe(200);
+    expect(refreshed.headers.get("cache-control")).toBe("no-store");
   });
 
   it("returns 503 with an empty body when mail is unavailable", async () => {

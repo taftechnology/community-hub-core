@@ -77,4 +77,44 @@ describe("cbor", () => {
     );
     expect(() => decodeCoseEc2(wrongAlg)).toThrow(IdentityError);
   });
+
+  it("rejects trailing bytes, a wrong map size, a wrong curve, and a short x", () => {
+    const encoded = encodeCbor(1);
+    const trailing = new Uint8Array(encoded.byteLength + 1);
+    trailing.set(encoded);
+    trailing[encoded.byteLength] = 0xff;
+    expect(() => decodeCbor(trailing)).toThrow(IdentityError);
+
+    const x = new Uint8Array(32).fill(1);
+    const y = new Uint8Array(32).fill(2);
+    const base = [
+      [1, 2],
+      [3, -7],
+      [-1, 1],
+      [-2, x],
+      [-3, y],
+    ] as const;
+    const oversized = encodeCbor(new Map<Cbor, Cbor>([...base, [4, 0]]));
+    expect(() => decodeCoseEc2(oversized)).toThrow(IdentityError);
+    const curve = encodeCbor(
+      new Map<Cbor, Cbor>([
+        [1, 2],
+        [3, -7],
+        [-1, 2],
+        [-2, x],
+        [-3, y],
+      ]),
+    );
+    expect(() => decodeCoseEc2(curve)).toThrow(IdentityError);
+    const shortX = encodeCbor(
+      new Map<Cbor, Cbor>([
+        [1, 2],
+        [3, -7],
+        [-1, 1],
+        [-2, x.slice(0, 31)],
+        [-3, y],
+      ]),
+    );
+    expect(() => decodeCoseEc2(shortX)).toThrow(IdentityError);
+  });
 });

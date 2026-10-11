@@ -2,7 +2,13 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
-import { blindIndex, decrypt, deriveKeys, unwrapKmsRoot } from "@community-hub/crypto";
+import {
+  blindIndex,
+  decrypt,
+  deriveKeys,
+  unwrapKmsRoot,
+  type KmsPort,
+} from "@community-hub/crypto";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import { applyProductMigrations } from "@community-hub/db";
 import { createPlaintextDirectSql, createPlaintextIdentitySql } from "@community-hub/db/plaintext";
@@ -40,6 +46,31 @@ function uuidToBytes(uuid: string): Uint8Array {
     out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   }
   return out;
+}
+
+function delayedKms(inner: KmsPort, delayMs: number): KmsPort {
+  const wait = () => new Promise((resolve) => setTimeout(resolve, delayMs));
+  return {
+    async generateDataKey(keyId, context) {
+      await wait();
+      return inner.generateDataKey(keyId, context);
+    },
+    async decrypt(keyId, blob, context) {
+      await wait();
+      return inner.decrypt(keyId, blob, context);
+    },
+  };
+}
+
+function wrongCodes(right: string, count: number): string[] {
+  const codes: string[] = [];
+  for (let value = 0; codes.length < count && value < 100_000_000; value += 1) {
+    const code = value.toString().padStart(8, "0");
+    if (code !== right) {
+      codes.push(code);
+    }
+  }
+  return codes;
 }
 
 class MemoryMail implements OtpMail {
@@ -266,6 +297,44 @@ describe("email one-time code", () => {
     }
   });
 
+  it("keeps the attempt cap when the right code is submitted after nineteen wrong codes", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const mail = new MemoryMail();
+    const kms = delayedKms(createLocalKmsPort(), 5);
+    const sql = postgres(identityUrl(loadRuntime()), {
+      max: 4,
+      prepare: true,
+      onnotice: () => undefined,
+    });
+    try {
+      for (let trial = 0; trial < 20; trial += 1) {
+        await clearIdentity(sql);
+        await startEmailOtp(sql, kms, KEY_ARN, mail, { email: "ada@example.com", now });
+        const code = mail.last?.code ?? "";
+        const wrongs = wrongCodes(code, 19);
+        const wrongPending = wrongs.map((guess) =>
+          verifyEmailOtp(sql, kms, KEY_ARN, { email: "ada@example.com", code: guess, now }),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        const rightPending = verifyEmailOtp(sql, kms, KEY_ARN, {
+          email: "ada@example.com",
+          code,
+          now,
+        });
+        const results = await Promise.all([...wrongPending, rightPending]);
+        expect(results.every((result) => result === null)).toBe(true);
+        const rows = await sql<{ consumed_at: Date | null; attempts: number }[]>`
+          select consumed_at, attempts from identity.otp_challenges
+        `;
+        expect(rows[0]?.consumed_at).not.toBeNull();
+        expect(Number(rows[0]?.attempts)).toBe(5);
+      }
+    } finally {
+      await clearIdentity(sql);
+      await sql.end({ timeout: 1 });
+    }
+  }, 120_000);
+
   it("returns one session when the right code is verified twice in parallel", async () => {
     const now = new Date("2026-10-11T00:00:00.000Z");
     const mail = new MemoryMail();
@@ -320,6 +389,35 @@ describe("email one-time code", () => {
       await observer.end({ timeout: 1 });
     }
   }, 15_000);
+
+  it("sends at most five mails when sixty starts race one address", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const mail = new MemoryMail();
+    const kms = createLocalKmsPort();
+    const sql = postgres(identityUrl(loadRuntime()), {
+      max: 60,
+      prepare: true,
+      onnotice: () => undefined,
+    });
+    try {
+      await clearIdentity(sql);
+      await Promise.all(
+        Array.from({ length: 60 }, () =>
+          startEmailOtp(sql, kms, KEY_ARN, mail, { email: "ada@example.com", now }),
+        ),
+      );
+      expect(mail.sends).toBeLessThanOrEqual(5);
+      const open = await sql<{ n: number }[]>`
+        select count(*)::int as n
+        from identity.otp_challenges
+        where consumed_at is null
+      `;
+      expect(Number(open[0]?.n)).toBeLessThanOrEqual(1);
+    } finally {
+      await clearIdentity(sql);
+      await sql.end({ timeout: 1 });
+    }
+  }, 30_000);
 
   it("creates at most five codes for an address in sixty minutes", async () => {
     const now = new Date("2026-10-11T00:00:00.000Z");

@@ -17,6 +17,7 @@ export function createCheckout<TSql>(options: {
   log: (message: string, fields: Record<string, unknown>) => void;
 }): Checkout<TSql> {
   const live = new Map<Role, Live<TSql>>();
+  const refreshing = new Map<Role, Promise<string | undefined>>();
 
   return async function checkout<T>(role: Role, run: (sql: TSql) => Promise<T>): Promise<T> {
     const current = live.get(role) ?? remember(role, options.passwords[role]);
@@ -26,28 +27,70 @@ export function createCheckout<TSql>(options: {
       if (sqlState(error) !== "28P01") {
         throw error;
       }
-      const currentSecret = await options.readSecret(options.arns[role], "AWSCURRENT");
-      const previousSecret = await options.readSecret(options.arns[role], "AWSPREVIOUS");
-      const password =
-        currentSecret !== current.password
-          ? currentSecret
-          : previousSecret !== current.password
-            ? previousSecret
-            : undefined;
+      const password = await sharedSecret(role, current.password);
       if (password === undefined) {
         throw error;
       }
-      const replacement = { sql: options.open[role](password), password };
-      const result = await run(replacement.sql);
+      const installed = live.get(role);
+      if (installed !== undefined && installed.password === password) {
+        return run(installed.sql);
+      }
+      const replacement: Live<TSql> = { sql: options.open[role](password), password };
+      const raced = live.get(role);
+      if (raced !== undefined && raced.password === password) {
+        await endPool(replacement.sql);
+        return run(raced.sql);
+      }
       live.set(role, replacement);
-      return result;
+      try {
+        return await run(replacement.sql);
+      } catch (retryError) {
+        if (sqlState(retryError) !== "28P01") {
+          throw retryError;
+        }
+        if (live.get(role)?.sql === replacement.sql) {
+          live.set(role, current);
+        }
+        await endPool(replacement.sql);
+        throw retryError;
+      }
     }
   };
+
+  function sharedSecret(role: Role, used: string): Promise<string | undefined> {
+    const existing = refreshing.get(role);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const flight = readPassword(role, used).finally(() => {
+      refreshing.delete(role);
+    });
+    refreshing.set(role, flight);
+    return flight;
+  }
+
+  async function readPassword(role: Role, used: string): Promise<string | undefined> {
+    const currentSecret = await options.readSecret(options.arns[role], "AWSCURRENT");
+    const previousSecret = await options.readSecret(options.arns[role], "AWSPREVIOUS");
+    if (currentSecret !== used) {
+      return currentSecret;
+    }
+    if (previousSecret !== used) {
+      return previousSecret;
+    }
+    return undefined;
+  }
 
   function remember(role: Role, password: string): Live<TSql> {
     const opened = { sql: options.open[role](password), password };
     live.set(role, opened);
     return opened;
+  }
+}
+
+async function endPool(sql: unknown): Promise<void> {
+  if (typeof sql === "object" && sql !== null && "end" in sql && typeof sql.end === "function") {
+    await sql.end();
   }
 }
 

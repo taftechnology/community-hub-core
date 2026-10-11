@@ -95,12 +95,15 @@ function bytesFrom(value: string): Uint8Array {
 }
 
 function tokens(value: SessionTokens): Response {
-  return Response.json({
-    userId: value.userId,
-    accessToken: value.accessToken,
-    refreshToken: value.refreshToken,
-    expiresIn: value.expiresIn,
-  });
+  return Response.json(
+    {
+      userId: value.userId,
+      accessToken: value.accessToken,
+      refreshToken: value.refreshToken,
+      expiresIn: value.expiresIn,
+    },
+    { headers: { "cache-control": "no-store" } },
+  );
 }
 
 function statusFor(error: unknown): Response | undefined {
