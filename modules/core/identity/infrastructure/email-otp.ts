@@ -81,21 +81,24 @@ export async function startEmailOtp(
   const bidx = await bidxKey(sql, kms, keyArn);
   const emailBidx = await hmac(bidx, "identity.users.email", new TextEncoder().encode(email));
   const windowStart = new Date(input.now.getTime() - HOUR_MS + TEN_MINUTES_MS).toISOString();
-  const recent = await sql<{ n: number }[]>`
-    select count(*)::int as n
-    from identity.otp_challenges
-    where email_bidx = ${emailBidx}
-      and expires_at > ${windowStart}::timestamptz
-  `;
-  if ((recent[0]?.n ?? 0) >= CODES_PER_HOUR) {
-    return;
-  }
   const code = eightDigits();
   const codeHash = await hmac(bidx, "identity.otp", new TextEncoder().encode(code));
   const challengeId = newId();
   const expiresAt = new Date(input.now.getTime() + TEN_MINUTES_MS).toISOString();
   const now = input.now.toISOString();
-  await sql.begin(async (tx) => {
+  const inserted = await sql.begin(async (tx) => {
+    await tx`
+      select pg_advisory_xact_lock(hashtextextended('otp:' || encode(${emailBidx}, 'hex'), 0))
+    `;
+    const recent = await tx<{ n: number }[]>`
+      select count(*)::int as n
+      from identity.otp_challenges
+      where email_bidx = ${emailBidx}
+        and expires_at > ${windowStart}::timestamptz
+    `;
+    if ((recent[0]?.n ?? 0) >= CODES_PER_HOUR) {
+      return false;
+    }
     await tx`
       update identity.otp_challenges
       set consumed_at = ${now}::timestamptz
@@ -105,7 +108,11 @@ export async function startEmailOtp(
       insert into identity.otp_challenges (id, email_bidx, code_hash, attempts, expires_at)
       values (${challengeId}, ${emailBidx}, ${codeHash}, 0, ${expiresAt}::timestamptz)
     `;
+    return true;
   });
+  if (!inserted) {
+    return;
+  }
   try {
     await mail.send({ to: email, code });
   } catch (error) {

@@ -372,6 +372,35 @@ describe("email one-time code", () => {
     }
   }, 15_000);
 
+  it("sends at most five mails when sixty starts race one address", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const mail = new MemoryMail();
+    const kms = createLocalKmsPort();
+    const sql = postgres(identityUrl(loadRuntime()), {
+      max: 60,
+      prepare: true,
+      onnotice: () => undefined,
+    });
+    try {
+      await clearIdentity(sql);
+      await Promise.all(
+        Array.from({ length: 60 }, () =>
+          startEmailOtp(sql, kms, KEY_ARN, mail, { email: "ada@example.com", now }),
+        ),
+      );
+      expect(mail.sends).toBeLessThanOrEqual(5);
+      const open = await sql<{ n: number }[]>`
+        select count(*)::int as n
+        from identity.otp_challenges
+        where consumed_at is null
+      `;
+      expect(Number(open[0]?.n)).toBeLessThanOrEqual(1);
+    } finally {
+      await clearIdentity(sql);
+      await sql.end({ timeout: 1 });
+    }
+  }, 30_000);
+
   it("creates at most five codes for an address in sixty minutes", async () => {
     const now = new Date("2026-10-11T00:00:00.000Z");
     const mail = new MemoryMail();
