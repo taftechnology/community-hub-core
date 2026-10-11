@@ -42,7 +42,6 @@ Status: draft
 | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | `pnpm-workspace.yaml`                                                           | One new workspace member, `modules/core/tenancy`.                      |
 | `modules/core/tenancy/`                                                         | Manifest, domain rule, schema, command, query, and their tests.        |
-| `packages/db/src/index.ts`                                                      | Export `platform` for runtime imports. Kit does not load this entry.   |
 | `packages/db/drizzle.config.ts`                                                 | Kit reads `packages/db/drizzle.schema.ts` only.                        |
 | `packages/db/drizzle.schema.ts`                                                 | Passes the one `platform` schema into `platformTables`.                |
 | `packages/db/drizzle/`                                                          | One new journal entry after `0002_rare_jimmy_woo`.                     |
