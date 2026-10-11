@@ -103,6 +103,29 @@ describe("checkout", () => {
     expect(opened).toHaveLength(1);
   });
 
+  it("keeps the replacement pool when the retry fails with an ordinary error", async () => {
+    const { checkout, opened, readSecret } = harness({ current: "rotated-secret" });
+    let attempts = 0;
+    await expect(
+      checkout("identity", async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw denied("28P01");
+        }
+        throw new Error("ordinary");
+      }),
+    ).rejects.toThrow("ordinary");
+    expect(opened).toHaveLength(2);
+    expect(opened[1]?.sql.end).not.toHaveBeenCalled();
+    const reads = readSecret.mock.calls.length;
+    await checkout("identity", async (sql) => {
+      expect(sql).toBe(opened[1]?.sql);
+    });
+    expect(readSecret).toHaveBeenCalledTimes(reads);
+    expect(opened[1]?.sql.end).not.toHaveBeenCalled();
+    expect(opened).toHaveLength(2);
+  });
+
   it("rejects a second auth failure without opening a third pool", async () => {
     const { checkout, opened } = harness({ current: "rotated-secret" });
     await expect(

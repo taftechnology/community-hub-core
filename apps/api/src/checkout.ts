@@ -45,6 +45,9 @@ export function createCheckout<TSql>(options: {
       try {
         return await run(replacement.sql);
       } catch (retryError) {
+        if (sqlState(retryError) !== "28P01") {
+          throw retryError;
+        }
         if (live.get(role)?.sql === replacement.sql) {
           live.set(role, current);
         }
