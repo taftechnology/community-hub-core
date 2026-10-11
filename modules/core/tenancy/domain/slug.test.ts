@@ -51,16 +51,19 @@ describe("implicitPair", () => {
     "status",
     "support",
     "www",
-  ])("rejects %j", (slug) => {
-    expect(() => implicitPair({ organisationSlug: slug, communitySlug: "example-parish" })).toThrow(
-      ImplicitOrganisationError,
-    );
-    try {
-      implicitPair({ organisationSlug: slug, communitySlug: "example-parish" });
-    } catch (error) {
-      expect(error).toBeInstanceOf(ImplicitOrganisationError);
-      expect(error).toBeInstanceOf(Error);
-      expect((error as ImplicitOrganisationError).code).toBe("invalid_slug");
+  ])("rejects %j for either slug", (slug) => {
+    for (const input of [
+      { organisationSlug: slug, communitySlug: "example-parish" },
+      { organisationSlug: "example-parish", communitySlug: slug },
+    ]) {
+      expect(() => implicitPair(input)).toThrow(ImplicitOrganisationError);
+      try {
+        implicitPair(input);
+      } catch (error) {
+        expect(error).toBeInstanceOf(ImplicitOrganisationError);
+        expect(error).toBeInstanceOf(Error);
+        expect((error as ImplicitOrganisationError).code).toBe("invalid_slug");
+      }
     }
   });
 });
