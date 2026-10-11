@@ -10,7 +10,7 @@ Spec: docs/specs/2026-10-10-service-image-runtime-base.md
 
 **Tech Stack:** The existing Dockerfile, Node 24, Docker BuildKit, Vitest. No new package.
 
-Status: draft
+Status: approved (2026-10-10, Abdus)
 
 **Branch:** `fix/2026-10-10-service-image-runtime-base` · one PR · 2 tasks, one commit each
 
