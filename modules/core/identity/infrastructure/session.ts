@@ -16,14 +16,6 @@ export type SessionTokens = {
   expiresIn: 900;
 };
 
-type RefreshRow = {
-  id: string;
-  user_id: string;
-  refresh_family: string;
-  replaced_by: string | null;
-  revoked_at: string | null;
-};
-
 export async function createSession(
   sql: Sql,
   kms: KmsPort,
@@ -84,28 +76,24 @@ export async function refreshSession(
   const bidx = await bidxKey(sql, kms, keyArn);
   const refreshHash = await hmac(bidx, "identity.refresh", raw);
   const now = input.now.toISOString();
-  const rows = await sql<RefreshRow[]>`
-    select id, user_id, refresh_family, replaced_by, revoked_at
-    from identity.sessions
-    where refresh_hash = ${refreshHash}
-      and refresh_expires_at > ${now}::timestamptz
-  `;
-  const row = rows[0];
-  if (row === undefined) {
-    return null;
-  }
-  if (row.replaced_by !== null) {
-    await revokeFamily(sql, row.refresh_family, now);
-    return null;
-  }
-  if (row.revoked_at !== null) {
-    return null;
-  }
   const minted = await mint(sql, kms, keyArn);
   const successorId = newId();
   const accessExpires = new Date(input.now.getTime() + ACCESS_MS).toISOString();
   const refreshExpires = new Date(input.now.getTime() + REFRESH_MS).toISOString();
-  await sql.begin(async (tx) => {
+  const claimed = await sql.begin(async (tx) => {
+    const rows = await tx<{ id: string; user_id: string; refresh_family: string }[]>`
+      update identity.sessions
+      set replaced_by = ${successorId}, revoked_at = ${now}::timestamptz
+      where refresh_hash = ${refreshHash}
+        and refresh_expires_at > ${now}::timestamptz
+        and replaced_by is null
+        and revoked_at is null
+      returning id, user_id, refresh_family
+    `;
+    const row = rows[0];
+    if (row === undefined) {
+      return null;
+    }
     await tx`
       insert into identity.sessions (
         id, user_id, refresh_family, access_hash, refresh_hash, access_expires_at, refresh_expires_at
@@ -120,18 +108,27 @@ export async function refreshSession(
         ${refreshExpires}::timestamptz
       )
     `;
-    await tx`
-      update identity.sessions
-      set replaced_by = ${successorId}, revoked_at = ${now}::timestamptz
-      where id = ${row.id}
-    `;
+    return row;
   });
-  return {
-    userId: row.user_id,
-    accessToken: minted.accessToken,
-    refreshToken: minted.refreshToken,
-    expiresIn: 900,
-  };
+  if (claimed !== null) {
+    return {
+      userId: claimed.user_id,
+      accessToken: minted.accessToken,
+      refreshToken: minted.refreshToken,
+      expiresIn: 900,
+    };
+  }
+  const existing = await sql<{ refresh_family: string; replaced_by: string | null }[]>`
+    select refresh_family, replaced_by
+    from identity.sessions
+    where refresh_hash = ${refreshHash}
+      and refresh_expires_at > ${now}::timestamptz
+  `;
+  const missed = existing[0];
+  if (missed !== undefined && missed.replaced_by !== null) {
+    await revokeFamily(sql, missed.refresh_family, now);
+  }
+  return null;
 }
 
 async function revokeFamily(sql: Sql, refreshFamily: string, now: string): Promise<void> {
