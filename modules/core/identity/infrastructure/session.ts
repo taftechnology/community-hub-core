@@ -80,7 +80,6 @@ export async function refreshSession(
     select refresh_family
     from identity.sessions
     where refresh_hash = ${refreshHash}
-      and refresh_expires_at > ${now}::timestamptz
   `;
   const family = located[0]?.refresh_family;
   if (family === undefined) {

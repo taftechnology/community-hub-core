@@ -178,6 +178,39 @@ describe("sessions", () => {
     }
   });
 
+  it("returns null and creates no row when a refresh token is past refresh_expires_at", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const later = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000 + 1);
+    const mail = new MemoryMail();
+    const kms = createLocalKmsPort();
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      await clearIdentity(sql);
+      await startEmailOtp(sql, kms, KEY_ARN, mail, { email: "ada@example.com", now });
+      const opened = await verifyEmailOtp(sql, kms, KEY_ARN, {
+        email: "ada@example.com",
+        code: mail.last?.code ?? "",
+        now,
+      });
+      if (opened === null) {
+        throw new Error("session was not opened");
+      }
+      const before = await sql<{ n: number }[]>`
+        select count(*)::int as n from identity.sessions
+      `;
+      expect(
+        await refreshSession(sql, kms, KEY_ARN, { refreshToken: opened.refreshToken, now: later }),
+      ).toBeNull();
+      const after = await sql<{ n: number }[]>`
+        select count(*)::int as n from identity.sessions
+      `;
+      expect(after).toEqual(before);
+    } finally {
+      await clearIdentity(sql);
+      await sql.end({ timeout: 1 });
+    }
+  });
+
   it("returns one session when one refresh token is presented twice in parallel", async () => {
     const now = new Date("2026-10-11T00:00:00.000Z");
     const mail = new MemoryMail();
