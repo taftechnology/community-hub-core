@@ -2,6 +2,7 @@ import { createHash, generateKeyPairSync, sign as signDer } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import postgres from "postgres";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import { applyProductMigrations } from "@community-hub/db";
 import { createPlaintextDirectSql, createPlaintextIdentitySql } from "@community-hub/db/plaintext";
@@ -425,4 +426,95 @@ describe("passkeys", () => {
       ).toBeNull();
     });
   });
+
+  it("returns one session when one assertion is finished twice in parallel", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const kms = createLocalKmsPort();
+    const key = await signer();
+    const credentialId = new Uint8Array(16).fill(5);
+    const runtime = loadRuntime();
+    const url = identityUrl(runtime);
+    const holder = postgres(url, { max: 1, prepare: true, onnotice: () => undefined });
+    const sql = postgres(url, { max: 4, prepare: true, onnotice: () => undefined });
+    const observer = createPlaintextDirectSql(runtime.productOnlyUrl);
+    let pending: Promise<Awaited<ReturnType<typeof finishPasskeyAuthentication>>[]> =
+      Promise.resolve([]);
+    try {
+      await clearIdentity(sql);
+      const created = await insertIdentityUser(sql, kms, KEY_ARN, { email: "ada@example.com" });
+      const registration = await beginPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+      });
+      await finishPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+        clientDataJSON: clientData("webauthn.create", registration.challenge, ORIGIN),
+        attestationObject: attestationObject(
+          authenticatorData({
+            rpId: RP_ID,
+            signCount: 0,
+            credentialId,
+            cose: coseKey(key.x, key.y),
+          }),
+        ),
+      });
+      const options = await beginPasskeyAuthentication(sql, { rpId: RP_ID, now });
+      const authData = authenticatorData({ rpId: RP_ID, signCount: 1 });
+      const client = clientData("webauthn.get", options.challenge, ORIGIN);
+      const signature = await key.sign(concat([authData, await sha256(client)]));
+      const input = {
+        rpId: RP_ID,
+        now,
+        credentialId,
+        clientDataJSON: client,
+        authenticatorData: authData,
+        signature,
+      };
+      let locked: () => void = () => undefined;
+      const lockHeld = new Promise<void>((resolve) => {
+        locked = resolve;
+      });
+      const gate = holder.begin(async (tx) => {
+        await tx`
+          select id from identity.passkey_challenges
+          where kind = 'authenticate'
+          for update
+        `;
+        locked();
+        const started = Date.now();
+        while (Date.now() - started < 5_000) {
+          const waiting = await observer<{ n: number }[]>`
+            select count(*)::int as n
+            from pg_stat_activity
+            where datname = current_database()
+              and state = 'active'
+              and wait_event_type = 'Lock'
+              and query like '%update identity.passkey_challenges%'
+          `;
+          if ((waiting[0]?.n ?? 0) >= 2) {
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 15));
+        }
+        throw new Error("assertions did not wait on the challenge");
+      });
+      await lockHeld;
+      pending = Promise.all([
+        finishPasskeyAuthentication(sql, kms, KEY_ARN, input),
+        finishPasskeyAuthentication(sql, kms, KEY_ARN, input),
+      ]);
+      await gate;
+      const results = await pending;
+      expect(results.filter((result) => result !== null)).toHaveLength(1);
+    } finally {
+      await pending.catch(() => undefined);
+      await clearIdentity(sql);
+      await sql.end({ timeout: 1 });
+      await holder.end({ timeout: 1 });
+      await observer.end({ timeout: 1 });
+    }
+  }, 15_000);
 });

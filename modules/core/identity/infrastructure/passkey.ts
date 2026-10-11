@@ -97,11 +97,16 @@ export async function finishPasskeyRegistration(
   decodeCoseEc2(auth.coseKey);
   try {
     await sql.begin(async (tx) => {
-      await tx`
+      const consumed = await tx<{ id: string }[]>`
         update identity.passkey_challenges
         set consumed_at = ${now}::timestamptz
         where id = ${row.id}
+          and consumed_at is null
+        returning id
       `;
+      if (consumed[0] === undefined) {
+        throw new IdentityError("invalid_ceremony");
+      }
       await tx`
         insert into identity.passkey_credentials (id, user_id, credential_id, cose_key, sign_count)
         values (
@@ -195,18 +200,27 @@ export async function finishPasskeyAuthentication(
     if (!signCountAccepted(stored, auth.signCount)) {
       return null;
     }
-    await sql.begin(async (tx) => {
-      await tx`
+    const consumed = await sql.begin(async (tx) => {
+      const updated = await tx<{ id: string }[]>`
         update identity.passkey_challenges
         set consumed_at = ${now}::timestamptz
         where id = ${row.id}
+          and consumed_at is null
+        returning id
       `;
+      if (updated[0] === undefined) {
+        return false;
+      }
       await tx`
         update identity.passkey_credentials
         set sign_count = ${auth.signCount}
         where id = ${credential.id}
       `;
+      return true;
     });
+    if (!consumed) {
+      return null;
+    }
     return createSession(sql, kms, keyArn, { userId: credential.user_id, now: input.now });
   } catch (error) {
     if (error instanceof IdentityError && error.code === "invalid_ceremony") {
