@@ -1,7 +1,7 @@
 # Spec: People and households
 
 Slug: people-households
-Status: draft
+Status: approved (2026-10-11, Adnan Bin Hossen)
 Architecture refs: §8.1, §8.2, §8.3, §9, §11.2, §12.1, §12.2, §12.2.1, §12.3, D8. Implements the `people-households` row. Depends on `packages-crypto`, `packages-db`, `kernel-runtime`, `audit-log`, `tenancy-implicit-org`, and `identity-otp`, all on `main`. Staging stays parked.
 
 ## Problem
