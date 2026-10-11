@@ -3,6 +3,7 @@ import { deriveKeys, unwrapKmsRoot, type KmsPort } from "@community-hub/crypto";
 import { newId } from "@community-hub/db";
 import type { Sql } from "postgres";
 
+import { eightDigitsFrom } from "../domain/digits.js";
 import { normaliseEmail } from "../domain/email.js";
 import { IdentityError } from "../domain/error.js";
 import type { OtpMail } from "../domain/otp-mail.js";
@@ -16,9 +17,9 @@ const HOUR_MS = 60 * 60 * 1000;
 const CODES_PER_HOUR = 5;
 
 function eightDigits(): string {
-  const bytes = new Uint8Array(8);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (byte) => String(byte % 10)).join("");
+  return eightDigitsFrom((bytes) => {
+    crypto.getRandomValues(bytes);
+  });
 }
 
 async function hmac(
