@@ -1,6 +1,7 @@
 import { identityTables } from "../../modules/core/identity/db/schema.js";
+import { peopleTables } from "../../modules/core/people/db/schema.js";
 import { platformTables } from "../../modules/core/tenancy/db/schema.js";
-import { identity, platform } from "./src/namespaces.js";
+import { app as appNamespace, identity, platform } from "./src/namespaces.js";
 
 export { auditEvents, app, identity, platform, outbox } from "./src/schema.js";
 
@@ -17,3 +18,15 @@ export const otpChallenges = identityRows.otpChallenges;
 export const passkeyCredentials = identityRows.passkeyCredentials;
 export const passkeyChallenges = identityRows.passkeyChallenges;
 export const identitySessions = identityRows.sessions;
+
+const peopleRows = peopleTables(appNamespace);
+
+export const organisationKeys = peopleRows.organisationKeys;
+export const communityKeys = peopleRows.communityKeys;
+export const householdKeys = peopleRows.householdKeys;
+export const households = peopleRows.households;
+export const persons = peopleRows.persons;
+export const guardianLinks = peopleRows.guardianLinks;
+export const personTags = peopleRows.personTags;
+export const personTagLinks = peopleRows.personTagLinks;
+export const personActivity = peopleRows.personActivity;

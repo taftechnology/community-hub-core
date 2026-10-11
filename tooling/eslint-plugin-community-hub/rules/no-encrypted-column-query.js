@@ -21,6 +21,8 @@ import {
 const SELECT_LIKE = new Set(["select", "returning", "values", "set"]);
 const CONFLICT = new Set(["onConflictDoNothing", "onConflictDoUpdate"]);
 const CRYPTO_VALUE_CALLEES = new Set(["decrypt", "encrypt", "blindIndex", "insertEncrypted"]);
+const COLUMN_CONSTRUCTORS = new Set(["encryptedColumn", "blindIndexColumn"]);
+const TABLE_DEFINITIONS = new Set(["table", "pgTable"]);
 
 function isBannedExecuteArg(node, services, checker) {
   if (!node) {
@@ -84,6 +86,9 @@ function isAllowed(node, classification, services, checker, filename) {
     return false;
   }
   const name = getCalleeName(enclosing);
+  if (TABLE_DEFINITIONS.has(name) && COLUMN_CONSTRUCTORS.has(getCalleeName(node))) {
+    return true;
+  }
   if (CRYPTO_VALUE_CALLEES.has(name)) {
     return true;
   }

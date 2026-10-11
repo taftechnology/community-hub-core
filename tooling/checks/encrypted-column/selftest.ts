@@ -22,6 +22,7 @@ type Hit = { ruleId: string | null; message: string; line: number; fatal?: boole
 
 const mustFail: { file: string; ruleId: string; count: number }[] = [
   { file: "fail/order-by.ts", ruleId: QUERY, count: 2 },
+  { file: "fail/order-by-constructor.ts", ruleId: QUERY, count: 1 },
   { file: "fail/group-by.ts", ruleId: QUERY, count: 2 },
   { file: "fail/asc-desc.ts", ruleId: QUERY, count: 2 },
   { file: "fail/aggregates.ts", ruleId: QUERY, count: 3 },
@@ -93,6 +94,7 @@ const mustPass = [
   "pass/eq-bidx.ts",
   "pass/inarray-bidx.ts",
   "pass/index-bidx.ts",
+  "pass/define-table.ts",
   "pass/on-conflict-bidx.ts",
   "pass/execute-sql.ts",
   "pass/hold-ciphertext.ts",
