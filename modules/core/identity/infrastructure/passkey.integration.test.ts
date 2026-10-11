@@ -519,4 +519,109 @@ describe("passkeys", () => {
       await observer.end({ timeout: 1 });
     }
   }, 15_000);
+
+  it("rejects an off-curve point and a credential id longer than 1023 bytes", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const kms = createLocalKmsPort();
+    const offCurve = new Uint8Array(32).fill(1);
+    await withSql(async (sql) => {
+      const created = await insertIdentityUser(sql, kms, KEY_ARN, { email: "ada@example.com" });
+      const options = await beginPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+      });
+      await expect(
+        finishPasskeyRegistration(sql, {
+          userId: created.userId,
+          rpId: RP_ID,
+          now,
+          clientDataJSON: clientData("webauthn.create", options.challenge, ORIGIN),
+          attestationObject: attestationObject(
+            authenticatorData({
+              rpId: RP_ID,
+              signCount: 0,
+              credentialId: new Uint8Array(16).fill(2),
+              cose: coseKey(offCurve, offCurve),
+            }),
+          ),
+        }),
+      ).rejects.toMatchObject({ code: "invalid_ceremony" });
+      const stored = await sql<{ n: number }[]>`
+        select count(*)::int as n from identity.passkey_credentials
+      `;
+      expect(stored).toEqual([{ n: 0 }]);
+
+      const again = await beginPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+      });
+      const key = await signer();
+      await expect(
+        finishPasskeyRegistration(sql, {
+          userId: created.userId,
+          rpId: RP_ID,
+          now,
+          clientDataJSON: clientData("webauthn.create", again.challenge, ORIGIN),
+          attestationObject: attestationObject(
+            authenticatorData({
+              rpId: RP_ID,
+              signCount: 0,
+              credentialId: new Uint8Array(1024).fill(3),
+              cose: coseKey(key.x, key.y),
+            }),
+          ),
+        }),
+      ).rejects.toMatchObject({ code: "invalid_ceremony" });
+      const after = await sql<{ n: number }[]>`
+        select count(*)::int as n from identity.passkey_credentials
+      `;
+      expect(after).toEqual([{ n: 0 }]);
+
+      expect(
+        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+          rpId: RP_ID,
+          now,
+          credentialId: new Uint8Array(1024).fill(3),
+          clientDataJSON: clientData("webauthn.get", new Uint8Array(32), ORIGIN),
+          authenticatorData: authenticatorData({ rpId: RP_ID, signCount: 1 }),
+          signature: Uint8Array.of(0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01),
+        }),
+      ).toBeNull();
+    });
+  });
+
+  it("returns null when a stored passkey cannot be imported", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const kms = createLocalKmsPort();
+    const offCurve = new Uint8Array(32).fill(1);
+    const credentialId = new Uint8Array(16).fill(8);
+    await withSql(async (sql) => {
+      const created = await insertIdentityUser(sql, kms, KEY_ARN, { email: "ada@example.com" });
+      await sql`
+        insert into identity.passkey_credentials (id, user_id, credential_id, cose_key, sign_count)
+        values (
+          ${crypto.randomUUID()},
+          ${created.userId},
+          ${credentialId},
+          ${coseKey(offCurve, offCurve)},
+          0
+        )
+      `;
+      const options = await beginPasskeyAuthentication(sql, { rpId: RP_ID, now });
+      const authData = authenticatorData({ rpId: RP_ID, signCount: 1 });
+      const client = clientData("webauthn.get", options.challenge, ORIGIN);
+      await expect(
+        finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+          rpId: RP_ID,
+          now,
+          credentialId,
+          clientDataJSON: client,
+          authenticatorData: authData,
+          signature: Uint8Array.of(0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01),
+        }),
+      ).resolves.toBeNull();
+    });
+  });
 });
