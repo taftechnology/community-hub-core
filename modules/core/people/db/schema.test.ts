@@ -66,6 +66,28 @@ function indexedColumns(statement: string): string[] {
   return [...on[1].matchAll(/"([^"]+)"/g)].map((match) => match[1] ?? "");
 }
 
+function normalise(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function expectedPredicate(table: string): string {
+  const org = `"app"."${table}"."org_id" = current_setting('app.org_id')::uuid`;
+  if (table === "organisation_keys") {
+    return org;
+  }
+  return `${org} and "app"."${table}"."community_id" = current_setting('app.community_id')::uuid`;
+}
+
+function policyStatements(sql: string, table: string): string[] {
+  return sql
+    .split("--> statement-breakpoint")
+    .map((statement) => normalise(statement))
+    .filter(
+      (statement) =>
+        statement.startsWith(`CREATE POLICY `) && statement.includes(` ON "app"."${table}" `),
+    );
+}
+
 describe("people app tables", () => {
   it("forces row level security and keeps organisation keys free of community_id", () => {
     const sql = peopleSql();
@@ -75,22 +97,6 @@ describe("people app tables", () => {
     expect(sql.match(/FORCE ROW LEVEL SECURITY/g)).toHaveLength(TABLES.length);
     expect(sql).toContain("current_setting('app.org_id')");
     expect(sql).toContain("current_setting('app.community_id')");
-    const communityPolicies = sql
-      .split("--> statement-breakpoint")
-      .map((statement) => statement.trim())
-      .filter((statement) => statement.includes('CREATE POLICY "community_isolation"'));
-    expect(communityPolicies).toHaveLength(TABLES.length - 1);
-    for (const statement of communityPolicies) {
-      const splitAt = statement.indexOf(" WITH CHECK ");
-      expect(splitAt).toBeGreaterThan(0);
-      const using = statement.slice(0, splitAt);
-      const check = statement.slice(splitAt + " WITH CHECK ".length);
-      expect(using).toContain("USING (");
-      for (const clause of [using, check]) {
-        expect(clause).toContain(`"org_id" = current_setting('app.org_id')`);
-        expect(clause).toContain(`"community_id" = current_setting('app.community_id')`);
-      }
-    }
     expect(createBody(sql, "organisation_keys")).not.toContain("community_id");
     for (const table of TABLES) {
       if (table === "organisation_keys") {
@@ -110,6 +116,28 @@ describe("people app tables", () => {
       for (const column of indexedColumns(statement)) {
         expect(CIPHERTEXT.has(column)).toBe(false);
       }
+    }
+  });
+
+  it("pins every policy's USING and WITH CHECK to the exact tenant predicate", () => {
+    const sql = peopleSql();
+    const allPolicies = sql
+      .split("--> statement-breakpoint")
+      .map((statement) => normalise(statement))
+      .filter((statement) => statement.startsWith("CREATE POLICY "));
+    expect(allPolicies).toHaveLength(TABLES.length);
+    for (const table of TABLES) {
+      const statements = policyStatements(sql, table);
+      expect(statements, table).toHaveLength(1);
+      const name = table === "organisation_keys" ? "tenant_isolation" : "community_isolation";
+      const match = (statements[0] ?? "").match(
+        new RegExp(
+          `^CREATE POLICY "${name}" ON "app"\\."${table}" AS PERMISSIVE FOR ALL TO public USING \\((.*?)\\) WITH CHECK \\((.*)\\);?$`,
+        ),
+      );
+      expect(match, `${table} policy shape`).not.toBeNull();
+      expect(match?.[1], `${table} USING`).toBe(expectedPredicate(table));
+      expect(match?.[2], `${table} WITH CHECK`).toBe(expectedPredicate(table));
     }
   });
 });
