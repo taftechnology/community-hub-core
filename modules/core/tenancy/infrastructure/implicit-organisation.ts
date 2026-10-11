@@ -2,7 +2,7 @@ import { newId } from "@community-hub/db";
 import type { Sql } from "postgres";
 
 import { ImplicitOrganisationError, type ImplicitOrganisationCode } from "../domain/error.js";
-import { implicitPair } from "../domain/slug.js";
+import { implicitPair, isSlug } from "../domain/slug.js";
 
 function duplicateCode(error: unknown): ImplicitOrganisationCode | undefined {
   const seen = new Set<unknown>();
@@ -54,6 +54,9 @@ export async function findCommunityBySlug(
   sql: Sql,
   slug: string,
 ): Promise<{ id: string; organisationId: string; slug: string; region: string } | null> {
+  if (!isSlug(slug)) {
+    return null;
+  }
   const rows = await sql<{ id: string; organisation_id: string; slug: string; region: string }[]>`
     select id, organisation_id, slug, region
     from platform.communities

@@ -25,8 +25,10 @@ const RESERVED = new Set([
   "www",
 ]);
 
-function accepted(slug: string): boolean {
-  return slug.length >= MIN_LENGTH && SLUG.test(slug) && !RESERVED.has(slug);
+export function isSlug(slug: unknown): slug is string {
+  return (
+    typeof slug === "string" && slug.length >= MIN_LENGTH && SLUG.test(slug) && !RESERVED.has(slug)
+  );
 }
 
 export function implicitPair(input: { organisationSlug: string; communitySlug: string }): {
@@ -35,7 +37,7 @@ export function implicitPair(input: { organisationSlug: string; communitySlug: s
   region: "au";
   kind: "implicit";
 } {
-  if (!accepted(input.organisationSlug) || !accepted(input.communitySlug)) {
+  if (!isSlug(input.organisationSlug) || !isSlug(input.communitySlug)) {
     throw new ImplicitOrganisationError("invalid_slug");
   }
   return {
