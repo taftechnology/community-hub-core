@@ -308,7 +308,8 @@ async function verifyEs256(
   data: Uint8Array,
   signature: Uint8Array,
 ): Promise<boolean> {
-  if (signature.byteLength !== 64) {
+  const raw = derSignatureToRaw(signature);
+  if (raw === null) {
     return false;
   }
   const { x, y } = decodeCoseEc2(coseKey);
@@ -328,12 +329,68 @@ async function verifyEs256(
     return await crypto.subtle.verify(
       { name: "ECDSA", hash: "SHA-256" },
       key,
-      copyBytes(signature),
+      copyBytes(raw),
       copyBytes(data),
     );
   } catch {
     return false;
   }
+}
+
+function derSignatureToRaw(signature: Uint8Array): Uint8Array | null {
+  if (signature.byteLength < 8 || signature[0] !== 0x30) {
+    return null;
+  }
+  const sequenceLength = signature[1];
+  if (sequenceLength === undefined || sequenceLength >= 0x80) {
+    return null;
+  }
+  if (signature.byteLength !== 2 + sequenceLength) {
+    return null;
+  }
+  const r = readDerInteger(signature, 2);
+  if (r === null) {
+    return null;
+  }
+  const s = readDerInteger(signature, r.next);
+  if (s === null || s.next !== signature.byteLength) {
+    return null;
+  }
+  const raw = new Uint8Array(64);
+  raw.set(r.value, 32 - r.value.byteLength);
+  raw.set(s.value, 64 - s.value.byteLength);
+  return raw;
+}
+
+function readDerInteger(
+  bytes: Uint8Array,
+  offset: number,
+): { value: Uint8Array; next: number } | null {
+  if (bytes[offset] !== 0x02) {
+    return null;
+  }
+  const length = bytes[offset + 1];
+  if (length === undefined || length === 0 || length >= 0x80) {
+    return null;
+  }
+  const start = offset + 2;
+  const end = start + length;
+  if (end > bytes.byteLength) {
+    return null;
+  }
+  let value = bytes.subarray(start, end);
+  if (value[0] === 0x00) {
+    value = value.subarray(1);
+    if (value.byteLength === 0 || (value[0] ?? 0) < 0x80) {
+      return null;
+    }
+  } else if ((value[0] ?? 0) >= 0x80) {
+    return null;
+  }
+  if (value.byteLength > 32) {
+    return null;
+  }
+  return { value, next: end };
 }
 
 async function sha256(bytes: Uint8Array): Promise<Uint8Array> {

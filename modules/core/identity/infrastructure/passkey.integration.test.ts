@@ -1,4 +1,4 @@
-import { createHash, generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync, sign as signDer } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -111,6 +111,7 @@ async function signer(): Promise<{
   x: Uint8Array;
   y: Uint8Array;
   sign: (data: Uint8Array) => Promise<Uint8Array>;
+  signRaw: (data: Uint8Array) => Promise<Uint8Array>;
 }> {
   const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
   const jwk = publicKey.export({ format: "jwk" });
@@ -125,6 +126,8 @@ async function signer(): Promise<{
     x: new Uint8Array(Buffer.from(jwk.x ?? "", "base64url")),
     y: new Uint8Array(Buffer.from(jwk.y ?? "", "base64url")),
     sign: async (data) =>
+      new Uint8Array(signDer("sha256", Buffer.from(data), { key: privateKey, dsaEncoding: "der" })),
+    signRaw: async (data) =>
       new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, webKey, data)),
   };
 }
@@ -360,6 +363,66 @@ describe("passkeys", () => {
           signature: await key.sign(concat([zeroData, await sha256(zeroClient)])),
         }),
       ).toMatchObject({ userId: created.userId, expiresIn: 900 });
+    });
+  });
+
+  it("rejects a malformed DER signature and a raw 64-byte signature", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const kms = createLocalKmsPort();
+    const key = await signer();
+    const credentialId = new Uint8Array(16).fill(3);
+    await withSql(async (sql) => {
+      const created = await insertIdentityUser(sql, kms, KEY_ARN, { email: "ada@example.com" });
+      const registration = await beginPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+      });
+      await finishPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+        clientDataJSON: clientData("webauthn.create", registration.challenge, ORIGIN),
+        attestationObject: attestationObject(
+          authenticatorData({
+            rpId: RP_ID,
+            signCount: 0,
+            credentialId,
+            cose: coseKey(key.x, key.y),
+          }),
+        ),
+      });
+
+      const malformed = await beginPasskeyAuthentication(sql, { rpId: RP_ID, now });
+      const malformedData = authenticatorData({ rpId: RP_ID, signCount: 1 });
+      const malformedClient = clientData("webauthn.get", malformed.challenge, ORIGIN);
+      const der = await key.sign(concat([malformedData, await sha256(malformedClient)]));
+      expect(
+        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+          rpId: RP_ID,
+          now,
+          credentialId,
+          clientDataJSON: malformedClient,
+          authenticatorData: malformedData,
+          signature: concat([der, Uint8Array.of(0xff)]),
+        }),
+      ).toBeNull();
+
+      const raw = await beginPasskeyAuthentication(sql, { rpId: RP_ID, now });
+      const rawData = authenticatorData({ rpId: RP_ID, signCount: 1 });
+      const rawClient = clientData("webauthn.get", raw.challenge, ORIGIN);
+      const rawSignature = await key.signRaw(concat([rawData, await sha256(rawClient)]));
+      expect(rawSignature.byteLength).toBe(64);
+      expect(
+        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+          rpId: RP_ID,
+          now,
+          credentialId,
+          clientDataJSON: rawClient,
+          authenticatorData: rawData,
+          signature: rawSignature,
+        }),
+      ).toBeNull();
     });
   });
 });
