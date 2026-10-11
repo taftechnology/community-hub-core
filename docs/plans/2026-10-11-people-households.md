@@ -10,7 +10,7 @@ Spec: docs/specs/2026-10-11-people-households.md
 
 **Tech Stack:** TypeScript, Drizzle ORM `0.45.2`, `postgres` `3.4.9`, Vitest, Node 24, Docker `postgres:17`, `@community-hub/crypto`. No new third-party package.
 
-Status: draft
+Status: approved (2026-10-11, Adnan Bin Hossen)
 
 **Branch:** `feat/2026-10-11-people-households` · one PR · 8 tasks, one commit each
 
