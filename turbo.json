@@ -13,6 +13,9 @@
     "test": {
       "dependsOn": ["^build"]
     },
+    "@community-hub/tenancy#test": {
+      "dependsOn": ["^build", "@community-hub/db#test"]
+    },
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**"]
