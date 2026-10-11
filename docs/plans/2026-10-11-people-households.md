@@ -14,6 +14,18 @@ Status: approved (2026-10-11, Adnan Bin Hossen)
 
 **Branch:** `feat/2026-10-11-people-households` · one PR · 8 tasks, one commit each
 
+## Review decisions
+
+These owner decisions land on the same branch, after the eight tasks. The spec's Behaviour, Data, Contracts, Tests, and Catalogue sections match them.
+
+- `PersonInput` gains `declaredAdult: boolean`. A missing date of birth is still a minor unless the caller declares the person an adult. `app.persons.age_basis` is text, not null, clear, classification `confidential-queryable`: `date_of_birth`, `declared_adult`, or `unknown`. A present date of birth sets `is_minor` from the date and `age_basis` to `date_of_birth`. `declaredAdult` true against a date under 18 throws `invalid_declaration` and writes nothing. A null date with `declaredAdult` true stores `is_minor` false, `age_basis` `declared_adult`, clear names, and the community key. A null date with `declaredAdult` false stores `is_minor` true and `age_basis` `unknown`. Database checks reject any other `age_basis`, a `date_of_birth` basis without a date of birth, `declared_adult` with `is_minor` true, and `unknown` with `is_minor` false. `readPerson` returns `ageBasis`. The manifest lists the column.
+- `createPerson` returns `{ personId, isMinor }`.
+- A create or a read of one person calls KMS Decrypt once when the keys already exist. The person path unwraps the organisation root once and reuses it for the community wrap.
+- `app.person_activity` has a non-unique index on `(org_id, person_id)`. Migration `0005` is regenerated from the schema, including `age_basis` and its checks, then the hand-added `FORCE ROW LEVEL SECURITY` and `REVOKE` statements are applied again.
+- Architecture §6.3: a community-scoped `app` table's policy requires both `org_id` and `community_id` to match the transaction's settings. Organisation-level tables require `org_id` only. A read path across communities for organisation-level staff is added by a later chunk as an explicit policy, when the first organisation with more than one community needs it. No ADR.
+- Architecture §12.2 keeps the cache as an open item. The roadmap says unwrapped keys are not cached today; reusing them within one request is the intended direction, and the choice is made when the first list screen can be measured.
+- The roadmap open items also say `is_minor` is written once. Before any customer data is imported, a later chunk adds a daily job in the regional service that selects minors whose `birthday_md` is today, decrypts the date of birth, and moves those who have turned 18 to the community key and the clear name columns. A person whose `age_basis` is `unknown` does not age out.
+
 ## Global Constraints
 
 - The spec Status line is `approved (2026-10-11, Adnan Bin Hossen)`. Do not edit the spec.
@@ -551,13 +563,15 @@ EOF
 **Interfaces:**
 
 - Consumes: the seven commits above. This task does not change runtime code.
-- Produces: the Phase 1 row done, the next chunk `access-roles`, and the cache sentence closed.
+- Produces: the Phase 1 row done, the next chunk `access-roles`, and the cache left open. Review decisions above replace the cache-closing wording in this task.
 
 **Rule this must not break:** Phase 0 stays `24 rows: 23 done, 1 superseded (api-au-hostname), 0 not started`. Later phases stay `not started`. The startup sentence from `identity-otp` stays. The Fargate sentence stays. The only `AGENTS.md` edit is the repository-state sentence.
 
 - [ ] **Step 1: Record the catalogue**
 
-In `architecture.md` §12.2, keep `Unwrapped keys are not logged.` Replace the following sentence, the one that calls a short-lived cache an open item, with: unwrapped organisation, community, and household keys are not cached; the operation that needs one unwraps it and drops it; decided in `people-households`. Edit no other architecture section.
+In `architecture.md` §6.3, replace the sentence that calls `community_id` scoping a soft boundary. A community-scoped `app` table's policy requires both `org_id` and `community_id` to match the transaction's settings. Organisation-level tables require `org_id` only. A read path across communities for organisation-level staff is added by a later chunk as an explicit policy, when the first organisation with more than one community needs it. No ADR.
+
+In `architecture.md` §12.2, keep both sentences: unwrapped keys are not logged, and a short-lived in-memory cache of unwrapped organisation keys is an open item for the service chunk, not a decision.
 
 In `docs/roadmap.md`:
 
@@ -565,7 +579,8 @@ In `docs/roadmap.md`:
 - The sentence under the Phase 0 table becomes: Next is `access-roles`.
 - The Phase 1 row for `people-households` becomes `done`. Keep the existing What sentence and append `Spec `docs/specs/2026-10-11-people-households.md`.`
 - The Next spec section names `access-roles`.
-- In the open-items paragraph, keep the startup sentence. Replace the cache sentence with: unwrapped organisation keys are not cached; each operation unwraps and drops them, decided in `people-households`.
+- In the open-items paragraph, keep the startup sentence. The cache sentence is: unwrapped keys are not cached today; reusing them within one request is the intended direction, and the choice is made when the first list screen can be measured.
+- Add the turning-18 open item: `is_minor` is written once. Before any customer data is imported, a later chunk adds a daily job in the regional service that selects minors whose `birthday_md` is today, decrypts the date of birth, and moves those who have turned 18 to the community key and the clear name columns. A person whose `age_basis` is `unknown` does not age out.
 
 In `AGENTS.md`, in the repository-state cell, replace the next-chunk name `people-households` with `access-roles`. Leave the Phase 0 counts and the rest of that cell unchanged.
 
@@ -578,7 +593,7 @@ git add architecture.md docs/roadmap.md AGENTS.md
 git commit -m "$(cat <<'EOF'
 docs(roadmap): mark people-households done
 
-Unwrapped organisation keys are not cached. The next chunk is access-roles.
+The key cache stays open. The next chunk is access-roles.
 
 Refs: docs/plans/2026-10-11-people-households.md task 8
 EOF
