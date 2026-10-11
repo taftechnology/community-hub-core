@@ -99,7 +99,7 @@ These are the settings named in the spec. For each one, during the task that add
 
 `implicitPair({ organisationSlug: "example-parish", communitySlug: "example-parish" })` returns both slugs, `region` `"au"`, and `kind` `"implicit"`. The same slug for both arguments is valid.
 
-These throw `ImplicitOrganisationError` and `code` `"invalid_slug"`: `Example`, `a_b`, `-ab`, `ab-`, `""`, and `"a".repeat(64)`. `"a".repeat(63)` and `"a"` are valid. Assert `error instanceof ImplicitOrganisationError` and `error instanceof Error`.
+These throw `ImplicitOrganisationError` and `code` `"invalid_slug"`: `Example`, `a_b`, `-ab`, `ab-`, `""`, `"ab"`, and `"a".repeat(64)`. `"a".repeat(63)` and `"abc"` are valid. A label shorter than 3 characters is rejected. These reserved names are also rejected: `admin`, `api`, `app`, `assets`, `au`, `auth`, `billing`, `cdn`, `docs`, `help`, `login`, `mail`, `ops`, `portal`, `staging`, `static`, `status`, `support`, `www`. Assert `error instanceof ImplicitOrganisationError` and `error instanceof Error`.
 
 `domain/manifest.test.ts` imports the manifest. It equals:
 
@@ -140,7 +140,7 @@ Run the tenancy test script. It fails because the files do not exist.
 
 `domain/error.ts` is the class. The constructor takes the `code`, sets `this.name` to `ImplicitOrganisationError`, and passes `code` to `super`.
 
-`domain/slug.ts` exports `implicitPair`. The slug pattern, used as a full-string match, is `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`. These names are reserved in that function, not in the database check: `admin`, `api`, `app`, `au`, `auth`, `mail`, `ops`, `static`, `status`, `www`. A failure throws `invalid_slug` before returning. The function always returns `region: "au"` and `kind: "implicit"`. It takes no region argument.
+`domain/slug.ts` exports `implicitPair`. The slug pattern, used as a full-string match, is `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`. The domain also rejects a slug shorter than 3 characters. These names are reserved in that function, not in the database check: `admin`, `api`, `app`, `assets`, `au`, `auth`, `billing`, `cdn`, `docs`, `help`, `login`, `mail`, `ops`, `portal`, `staging`, `static`, `status`, `support`, `www`. The database check is not changed. A failure throws `invalid_slug` before returning. The function always returns `region: "au"` and `kind: "implicit"`. It takes no region argument.
 
 `module.manifest.ts` calls `defineModule` from `@community-hub/kernel/module` with the object the test expects, and exports that value as the default.
 

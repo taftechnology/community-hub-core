@@ -15,9 +15,9 @@ describe("implicitPair", () => {
     });
   });
 
-  it("accepts a single character and a 63-character label", () => {
-    expect(implicitPair({ organisationSlug: "a", communitySlug: "a".repeat(63) })).toMatchObject({
-      organisationSlug: "a",
+  it("accepts a 3-character label and a 63-character label", () => {
+    expect(implicitPair({ organisationSlug: "abc", communitySlug: "a".repeat(63) })).toMatchObject({
+      organisationSlug: "abc",
       communitySlug: "a".repeat(63),
       region: "au",
       kind: "implicit",
@@ -30,16 +30,26 @@ describe("implicitPair", () => {
     "-ab",
     "ab-",
     "",
+    "ab",
     "a".repeat(64),
     "admin",
     "api",
     "app",
+    "assets",
     "au",
     "auth",
+    "billing",
+    "cdn",
+    "docs",
+    "help",
+    "login",
     "mail",
     "ops",
+    "portal",
+    "staging",
     "static",
     "status",
+    "support",
     "www",
   ])("rejects %j", (slug) => {
     expect(() => implicitPair({ organisationSlug: slug, communitySlug: "example-parish" })).toThrow(

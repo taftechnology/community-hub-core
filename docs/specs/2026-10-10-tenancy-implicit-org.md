@@ -73,7 +73,7 @@ findCommunityBySlug(
 
 `createImplicitOrganisation(sql, { organisationSlug: "example-parish", communitySlug: "example-parish" })` resolves to `{ organisationId, communityId }` and inserts one organisation with `kind = 'implicit'` and `region = 'au'`, and one community with that `organisation_id` and `region = 'au'`. The two ids differ. Both slugs may be the same string. They are unique inside their own table, not across the two tables.
 
-`example-parish` is accepted. `Example`, `a_b`, `-ab`, `ab-`, an empty string, and a 64-character label are rejected with `invalid_slug` before any insert. These labels are also rejected with `invalid_slug`, in `domain/slug.ts` and not in the database check: `admin`, `api`, `app`, `au`, `auth`, `mail`, `ops`, `static`, `status`, `www`. A second call with the same organisation slug rejects with `duplicate_organisation_slug` and leaves one organisation row. A second call with a new organisation slug and the same community slug rejects with `duplicate_community_slug` and does not insert the second organisation.
+`example-parish` is accepted. The minimum length is 3, so a 2-character label is rejected with `invalid_slug`. `Example`, `a_b`, `-ab`, `ab-`, an empty string, and a 64-character label are rejected with `invalid_slug` before any insert. These labels are also rejected with `invalid_slug`, in `domain/slug.ts` and not in the database check: `admin`, `api`, `app`, `assets`, `au`, `auth`, `billing`, `cdn`, `docs`, `help`, `login`, `mail`, `ops`, `portal`, `staging`, `static`, `status`, `support`, `www`. The database check stays `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`. A second call with the same organisation slug rejects with `duplicate_organisation_slug` and leaves one organisation row. A second call with a new organisation slug and the same community slug rejects with `duplicate_community_slug` and does not insert the second organisation.
 
 `findCommunityBySlug(sql, "example-parish")` resolves to `{ id, organisationId, slug, region }` with `region` `au`. An unknown slug resolves to `null`.
 
@@ -160,11 +160,6 @@ No new resource billed by the hour or the month. No NAT gateway, load balancer, 
 - The same test connects as `platform` and succeeds, then as `app` and as `identity` and is denied. `has_schema_privilege` and `has_table_privilege` are false for `app` and for `identity`, on both tables. It does not call `set_config`.
 - The generated SQL for both tables has no `org_id` column, no `ENABLE ROW LEVEL SECURITY`, and no `FORCE ROW LEVEL SECURITY`. `schema-rls` still passes.
 - A source check fails if `modules/core/tenancy` imports `@community-hub/crypto`. The existing ESLint ban stays the must-fail, including `import type`.
-
-## Question for the owner
-
-- The slug check allows a minimum length of 1. Should the minimum be longer?
-- Reserved names rejected in `domain/slug.ts`, not in the database check, are `admin`, `api`, `app`, `au`, `auth`, `mail`, `ops`, `static`, `status`, and `www`. Are any other names reserved?
 
 ## Out-of-band
 
