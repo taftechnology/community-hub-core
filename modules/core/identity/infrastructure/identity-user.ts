@@ -5,16 +5,11 @@ import {
   unwrapKmsRoot,
   type KmsPort,
 } from "@community-hub/crypto";
-import { insertEncrypted, newId } from "@community-hub/db";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { pgSchema } from "drizzle-orm/pg-core";
+import { newId } from "@community-hub/db";
 import type { Sql } from "postgres";
 
-import { identityTables } from "../db/schema.js";
 import { normaliseEmail } from "../domain/email.js";
 import { ensureIdentityKey } from "./identity-key.js";
-
-const users = identityTables(pgSchema("identity")).users;
 
 const CONTEXT = { key_kind: "identity", region: "au", key_version: "1" } as const;
 
@@ -52,11 +47,9 @@ export async function insertIdentityUser(
     region: "au",
   });
   const emailBidx = await blindIndex(bidx, "identity.users.email", new TextEncoder().encode(email));
-  await insertEncrypted(drizzle(sql), users, {
-    id: userId,
-    region: "au",
-    email: ciphertext,
-    emailBidx,
-  });
+  await sql`
+    insert into identity.users (id, region, email, email_bidx)
+    values (${userId}, 'au', ${ciphertext}, ${emailBidx})
+  `;
   return { userId };
 }

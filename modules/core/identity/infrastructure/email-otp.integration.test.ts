@@ -348,4 +348,21 @@ describe("email one-time code", () => {
       expect(mail.sends).toBe(7);
     });
   });
+
+  it("leaves the caller's timestamp parsers unchanged", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const mail = new MemoryMail();
+    const kms = createLocalKmsPort();
+    await withSql(async (sql) => {
+      await sql`select now(), ${"example"}::text, ${"00000000-0000-0000-0000-000000000000"}::uuid`;
+      const parsers = { ...sql.options.parsers };
+      await startEmailOtp(sql, kms, KEY_ARN, mail, { email: "ada@example.com", now });
+      await verifyEmailOtp(sql, kms, KEY_ARN, {
+        email: "ada@example.com",
+        code: mail.last?.code ?? "",
+        now,
+      });
+      expect({ ...sql.options.parsers }).toEqual(parsers);
+    });
+  });
 });
