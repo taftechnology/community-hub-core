@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { blindIndex, decrypt, type Ciphertext } from "@community-hub/crypto";
+import { blindIndex, decrypt, type Ciphertext, type KmsPort } from "@community-hub/crypto";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import { applyProductMigrations, newId, withAppTransaction } from "@community-hub/db";
 import {
@@ -735,6 +735,67 @@ describe("person create and read", () => {
             new TextEncoder().encode("ada.home@example.com"),
           );
           expect(Array.from(storedIndex)).toEqual(Array.from(communityIndex));
+        }),
+      );
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
+
+  it("decrypts the organisation key once when the keys already exist", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const organisationId = newId();
+    const communityId = newId();
+    const inner = createLocalKmsPort();
+    let decrypts = 0;
+    const counting: KmsPort = {
+      generateDataKey: (keyId, context) => inner.generateDataKey(keyId, context),
+      decrypt: async (keyId, blob, context) => {
+        decrypts += 1;
+        return inner.decrypt(keyId, blob, context);
+      },
+    };
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, 'one-unwrap-parish', 'au', 'implicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, 'one-unwrap-parish', 'au')
+        `;
+      });
+
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          await createHousehold(tx, inner, KEY_ARN, {
+            now: NOW,
+            label: null,
+            actorUserId: null,
+          });
+          decrypts = 0;
+          const created = await createPerson(tx, counting, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId: null,
+            dateOfBirth: "2008-10-11",
+            givenName: "Ada",
+            familyName: "Example",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          expect(decrypts).toBe(1);
+          decrypts = 0;
+          await readPerson(tx, counting, KEY_ARN, {
+            personId: created.personId,
+            actorUserId: null,
+          });
+          expect(decrypts).toBe(1);
         }),
       );
     } finally {

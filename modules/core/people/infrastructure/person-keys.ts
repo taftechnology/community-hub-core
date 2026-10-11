@@ -1,10 +1,10 @@
 import type { webcrypto } from "node:crypto";
 
-import { deriveKeys, unwrapKey, unwrapKmsRoot, type KmsPort } from "@community-hub/crypto";
+import { deriveKeys, unwrapKey, type KmsPort } from "@community-hub/crypto";
 import { appendAuditEvent, type AppTransaction } from "@community-hub/db";
 
 import { PeopleError } from "../domain/error.js";
-import { ensureCommunityKey } from "./keys.js";
+import { openCommunityHkdf } from "./keys.js";
 
 export type PersonFieldKeys = {
   enc: webcrypto.CryptoKey;
@@ -21,58 +21,12 @@ function uuidToBytes(uuid: string): Uint8Array {
   return out;
 }
 
-async function setting(
-  tx: AppTransaction,
-  name: "app.org_id" | "app.community_id",
-): Promise<string> {
-  const rows = await tx<{ value: string }[]>`
-    select current_setting(${name}) as value
-  `;
-  const value = rows[0]?.value;
-  if (value === undefined || value.length === 0) {
-    throw new Error("tenant setting is missing");
-  }
-  return value;
-}
-
 async function communityRoot(
   tx: AppTransaction,
   kms: KmsPort,
   keyArn: string,
 ): Promise<{ hkdf: webcrypto.CryptoKey; keyId: string }> {
-  const { keyId } = await ensureCommunityKey(tx, kms, keyArn);
-  const communities = await tx<{ id: string; wrapped: Uint8Array; parent_key_id: string }[]>`
-    select id::text as id, wrapped, parent_key_id::text as parent_key_id
-    from app.community_keys
-    where id = ${keyId}::uuid
-  `;
-  const community = communities[0];
-  if (community === undefined) {
-    throw new Error("community key is missing");
-  }
-  const organisations = await tx<{ wrapped: Uint8Array }[]>`
-    select wrapped from app.organisation_keys where id = ${community.parent_key_id}::uuid
-  `;
-  const organisation = organisations[0];
-  if (organisation === undefined) {
-    throw new Error("organisation key is missing");
-  }
-  const orgId = await setting(tx, "app.org_id");
-  const orgHkdfKey = await unwrapKmsRoot(kms, keyArn, organisation.wrapped, {
-    key_kind: "org",
-    org_id: orgId,
-    key_version: "1",
-  });
-  const { wrap: orgWrap } = await deriveKeys(orgHkdfKey);
-  const communityId = await setting(tx, "app.community_id");
-  const hkdf = await unwrapKey(community.wrapped, orgWrap, {
-    tag: "chub/wrap/v1",
-    childKind: "community",
-    childId: uuidToBytes(communityId),
-    childKeyId: uuidToBytes(community.id),
-    parentKeyId: uuidToBytes(community.parent_key_id),
-  });
-  return { hkdf, keyId: community.id };
+  return openCommunityHkdf(tx, kms, keyArn);
 }
 
 export async function communityFieldKeys(

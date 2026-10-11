@@ -1,3 +1,5 @@
+import type { webcrypto } from "node:crypto";
+
 import {
   deriveKeys,
   generateAndWrap,
@@ -111,68 +113,81 @@ export async function ensureOrganisationKey(
   return { keyId: id };
 }
 
-export async function ensureCommunityKey(
+export async function openCommunityHkdf(
   tx: AppTransaction,
   kms: KmsPort,
   keyArn: string,
-): Promise<{ keyId: string }> {
+): Promise<{ keyId: string; hkdf: webcrypto.CryptoKey }> {
   const { keyId: parentKeyId } = await ensureOrganisationKey(tx, kms, keyArn);
   const organisation = await selectOrganisationKey(tx);
   if (organisation === undefined) {
     throw new Error("organisation key is missing");
   }
   const orgId = await setting(tx, "app.org_id");
-  const hkdfKey = await unwrapKmsRoot(
+  const orgHkdf = await unwrapKmsRoot(
     kms,
     keyArn,
     organisation.wrapped,
     organisationContext(orgId),
   );
-  const { wrap } = await deriveKeys(hkdfKey);
+  const { wrap } = await deriveKeys(orgHkdf);
+  const communityId = await setting(tx, "app.community_id");
+  let community = await selectCommunityKey(tx);
+  if (community === undefined) {
+    const id = newId();
+    const { blob } = await generateAndWrap(wrap, {
+      tag: "chub/wrap/v1",
+      childKind: "community",
+      childId: uuidToBytes(communityId),
+      childKeyId: uuidToBytes(id),
+      parentKeyId: uuidToBytes(parentKeyId),
+    });
+    try {
+      await tx.savepoint("community_key", async (sp) => {
+        await sp`
+          insert into app.community_keys (
+            id, org_id, community_id, wrapped, key_version, parent_key_id
+          ) values (
+            ${id}::uuid,
+            current_setting('app.org_id')::uuid,
+            current_setting('app.community_id')::uuid,
+            ${blob},
+            '1',
+            ${parentKeyId}::uuid
+          )
+        `;
+      });
+      community = { id, wrapped: blob };
+    } catch (error) {
+      if (!isUniqueViolation(error)) {
+        throw error;
+      }
+      const winner = await selectCommunityKey(tx);
+      if (winner === undefined) {
+        throw error;
+      }
+      community = winner;
+    }
+  }
+  const hkdf = await unwrapKey(community.wrapped, wrap, {
+    tag: "chub/wrap/v1",
+    childKind: "community",
+    childId: uuidToBytes(communityId),
+    childKeyId: uuidToBytes(community.id),
+    parentKeyId: uuidToBytes(parentKeyId),
+  });
+  return { keyId: community.id, hkdf };
+}
+
+export async function ensureCommunityKey(
+  tx: AppTransaction,
+  kms: KmsPort,
+  keyArn: string,
+): Promise<{ keyId: string }> {
   const existing = await selectCommunityKey(tx);
   if (existing !== undefined) {
     return { keyId: existing.id };
   }
-  const id = newId();
-  const communityId = await setting(tx, "app.community_id");
-  const { blob } = await generateAndWrap(wrap, {
-    tag: "chub/wrap/v1",
-    childKind: "community",
-    childId: uuidToBytes(communityId),
-    childKeyId: uuidToBytes(id),
-    parentKeyId: uuidToBytes(parentKeyId),
-  });
-  try {
-    await tx.savepoint("community_key", async (sp) => {
-      await sp`
-        insert into app.community_keys (
-          id, org_id, community_id, wrapped, key_version, parent_key_id
-        ) values (
-          ${id}::uuid,
-          current_setting('app.org_id')::uuid,
-          current_setting('app.community_id')::uuid,
-          ${blob},
-          '1',
-          ${parentKeyId}::uuid
-        )
-      `;
-    });
-  } catch (error) {
-    if (!isUniqueViolation(error)) {
-      throw error;
-    }
-    const winner = await selectCommunityKey(tx);
-    if (winner === undefined) {
-      throw error;
-    }
-    await unwrapKey(winner.wrapped, wrap, {
-      tag: "chub/wrap/v1",
-      childKind: "community",
-      childId: uuidToBytes(communityId),
-      childKeyId: uuidToBytes(winner.id),
-      parentKeyId: uuidToBytes(parentKeyId),
-    });
-    return { keyId: winner.id };
-  }
-  return { keyId: id };
+  const { keyId } = await openCommunityHkdf(tx, kms, keyArn);
+  return { keyId };
 }
