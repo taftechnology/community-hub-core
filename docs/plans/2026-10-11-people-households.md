@@ -39,15 +39,15 @@ Status: approved (2026-10-11, Adnan Bin Hossen)
 
 ## File map
 
-| File                                                        | Responsibility                                                              |
-| ----------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `pnpm-workspace.yaml`                                       | One new workspace member, `modules/core/people`.                            |
-| `turbo.json`                                                | `@community-hub/people#test` after the identity test.                       |
-| `modules/core/people/`                                      | Manifest, domain rules, schema, keys, persons, guardians, tags, and tests. |
-| `packages/db/drizzle.schema.ts`                             | Passes the one `app` schema into `peopleTables`.                            |
-| `packages/db/drizzle/`                                      | One new journal entry after `0004_solid_the_twelve`.                        |
-| `packages/db/src/audit-append.ts`                           | Accepts `OrgTransaction \| AppTransaction`.                                 |
-| `architecture.md`, `docs/roadmap.md`, `AGENTS.md`           | The sentences the spec names.                                               |
+| File                                              | Responsibility                                                             |
+| ------------------------------------------------- | -------------------------------------------------------------------------- |
+| `pnpm-workspace.yaml`                             | One new workspace member, `modules/core/people`.                           |
+| `turbo.json`                                      | `@community-hub/people#test` after the identity test.                      |
+| `modules/core/people/`                            | Manifest, domain rules, schema, keys, persons, guardians, tags, and tests. |
+| `packages/db/drizzle.schema.ts`                   | Passes the one `app` schema into `peopleTables`.                           |
+| `packages/db/drizzle/`                            | One new journal entry after `0004_solid_the_twelve`.                       |
+| `packages/db/src/audit-append.ts`                 | Accepts `OrgTransaction \| AppTransaction`.                                |
+| `architecture.md`, `docs/roadmap.md`, `AGENTS.md` | The sentences the spec names.                                              |
 
 ## Dependencies
 
@@ -59,32 +59,32 @@ Status: approved (2026-10-11, Adnan Bin Hossen)
 
 These are the settings named in the spec. For each one, during the task that adds the test, change the source once, see that test fail, restore the source, and report the failure. The report is session scratch. The weakened tree is never committed.
 
-| Setting                                              | Task | Test                                      | Source change that must fail it                                      |
-| ---------------------------------------------------- | ---- | ----------------------------------------- | -------------------------------------------------------------------- |
-| `organisation_keys` has no `community_id`            | 1    | SQL test on the new journal file          | Add `"community_id" uuid` to that table's `CREATE TABLE`            |
-| Community tables name `app.community_id` in the policy | 1  | SQL test                                  | Remove `app.community_id` from the `persons` policy                  |
-| `FORCE ROW LEVEL SECURITY`                           | 1    | SQL test                                  | Delete one `FORCE ROW LEVEL SECURITY` statement                     |
-| `app` cannot update or delete `persons`              | 1    | `has_table_privilege`                     | Delete the `REVOKE UPDATE, DELETE` for `app.persons`                 |
-| `identity` cannot select `persons`                   | 1    | Privilege test                            | Add `GRANT SELECT ON app.persons TO identity`                       |
-| No website collection                                | 1    | Manifest test                             | Add `website: { collections: ["people.persons"] }`                   |
-| No entitlement                                           | 1    | Manifest test                             | Add `entitlement: "people.households"`                               |
-| No import of tenancy or identity                     | 1    | Source scan                               | Import `@community-hub/tenancy` from `public/index.ts`               |
-| Staging stays parked                                 | 1    | Tfvars test                               | Set `enable_database = true` in `staging.tfvars`                    |
-| No `set_config`                                      | 2    | Source scan                               | Add a `set_config` call in `infrastructure/keys.ts`                  |
-| No key cache and no log of a name                    | 2    | Source scan                               | Add `const keyCache = new Map()` in `infrastructure/keys.ts`         |
-| KMS context is only the three allowed keys           | 2    | Integration test                          | Add `email: "ada@example.com"` to the organisation KMS context       |
-| Unique insert uses a savepoint                       | 2    | Overlapping `ensureOrganisationKey`       | Insert on `tx` instead of `tx.savepoint`                            |
-| A minor's clear names are null                       | 4    | Integration select                        | Write `given_name` for the minor                                    |
-| A minor email index is not the community index       | 4    | Community-key lookup                      | Compute the minor index with the community `bidx` key               |
-| An adult email uses the community key                | 4    | Decrypt with the community `enc` key      | Encrypt that email with `crypto.subtle.generateKey` for AES-GCM     |
-| Ciphertext is not filtered                           | 4    | Source scan of `infrastructure/`          | Add `where email =` in `infrastructure/person.ts`                    |
-| A second tenant cannot select the person             | 4    | Cross-tenant select                       | Change the `persons` policy `USING` to `true`                        |
-| `readPerson` appends one audit row                   | 4    | Count of `people.person.read`             | Call `appendAuditEvent` a second time inside `readPerson`            |
-| `createPerson` appends in the same transaction       | 4    | Duplicate email leaves one created audit  | Remove the `appendAuditEvent` call from `createPerson`               |
-| A guardian cannot be the child                       | 5    | `invalid_guardian`                        | Skip the `is_minor` check                                            |
-| Activity objects have no name, email, or phone       | 6    | `Object.keys` on each activity row        | Add `givenName: "Ada"` to the returned object                        |
-| Adult and minor field keys are not interchangeable   | 7    | Decrypt across the two keys               | Return the community `enc` key for a minor                           |
-| `openPersonFieldKeys` appends one audit row          | 7    | Count of `people.person.read`             | Append again inside the internal helper                              |
+| Setting                                                | Task | Test                                     | Source change that must fail it                                 |
+| ------------------------------------------------------ | ---- | ---------------------------------------- | --------------------------------------------------------------- |
+| `organisation_keys` has no `community_id`              | 1    | SQL test on the new journal file         | Add `"community_id" uuid` to that table's `CREATE TABLE`        |
+| Community tables name `app.community_id` in the policy | 1    | SQL test                                 | Remove `app.community_id` from the `persons` policy             |
+| `FORCE ROW LEVEL SECURITY`                             | 1    | SQL test                                 | Delete one `FORCE ROW LEVEL SECURITY` statement                 |
+| `app` cannot update or delete `persons`                | 1    | `has_table_privilege`                    | Delete the `REVOKE UPDATE, DELETE` for `app.persons`            |
+| `identity` cannot select `persons`                     | 1    | Privilege test                           | Add `GRANT SELECT ON app.persons TO identity`                   |
+| No website collection                                  | 1    | Manifest test                            | Add `website: { collections: ["people.persons"] }`              |
+| No entitlement                                         | 1    | Manifest test                            | Add `entitlement: "people.households"`                          |
+| No import of tenancy or identity                       | 1    | Source scan                              | Import `@community-hub/tenancy` from `public/index.ts`          |
+| Staging stays parked                                   | 1    | Tfvars test                              | Set `enable_database = true` in `staging.tfvars`                |
+| No `set_config`                                        | 2    | Source scan                              | Add a `set_config` call in `infrastructure/keys.ts`             |
+| No key cache and no log of a name                      | 2    | Source scan                              | Add `const keyCache = new Map()` in `infrastructure/keys.ts`    |
+| KMS context is only the three allowed keys             | 2    | Integration test                         | Add `email: "ada@example.com"` to the organisation KMS context  |
+| Unique insert uses a savepoint                         | 2    | Overlapping `ensureOrganisationKey`      | Insert on `tx` instead of `tx.savepoint`                        |
+| A minor's clear names are null                         | 4    | Integration select                       | Write `given_name` for the minor                                |
+| A minor email index is not the community index         | 4    | Community-key lookup                     | Compute the minor index with the community `bidx` key           |
+| An adult email uses the community key                  | 4    | Decrypt with the community `enc` key     | Encrypt that email with `crypto.subtle.generateKey` for AES-GCM |
+| Ciphertext is not filtered                             | 4    | Source scan of `infrastructure/`         | Add `where email =` in `infrastructure/person.ts`               |
+| A second tenant cannot select the person               | 4    | Cross-tenant select                      | Change the `persons` policy `USING` to `true`                   |
+| `readPerson` appends one audit row                     | 4    | Count of `people.person.read`            | Call `appendAuditEvent` a second time inside `readPerson`       |
+| `createPerson` appends in the same transaction         | 4    | Duplicate email leaves one created audit | Remove the `appendAuditEvent` call from `createPerson`          |
+| A guardian cannot be the child                         | 5    | `invalid_guardian`                       | Skip the `is_minor` check                                       |
+| Activity objects have no name, email, or phone         | 6    | `Object.keys` on each activity row       | Add `givenName: "Ada"` to the returned object                   |
+| Adult and minor field keys are not interchangeable     | 7    | Decrypt across the two keys              | Return the community `enc` key for a minor                      |
+| `openPersonFieldKeys` appends one audit row            | 7    | Count of `people.person.read`            | Append again inside the internal helper                         |
 
 ---
 

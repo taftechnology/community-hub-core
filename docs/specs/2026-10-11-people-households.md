@@ -137,69 +137,69 @@ Architecture §12.2, the sentence that a short-lived cache of unwrapped organisa
 
 Primary key of every table except `app.person_tag_links` is `(org_id, id)`. `app.person_tag_links` primary key is `(org_id, person_id, tag_id)`.
 
-| Table                    | Column                   | Classification           | Notes                                                                                          |
-| ------------------------ | ------------------------ | ------------------------ | ---------------------------------------------------------------------------------------------- |
-| `app.organisation_keys`  | `id`                     | `internal`               | UUIDv7. Also the KMS key id in this row's blob.                                                |
-| `app.organisation_keys`  | `org_id`                 | `internal`               | Unique. From `current_setting('app.org_id')`. No `community_id`.                               |
-| `app.organisation_keys`  | `wrapped`                | `internal`               | KMS blob. Not a personal field.                                                                |
-| `app.organisation_keys`  | `key_version`            | `internal`               | The text `1`.                                                                                  |
-| `app.community_keys`     | `id`                     | `internal`               | UUIDv7. `child_key_id` in the wrap AAD.                                                        |
-| `app.community_keys`     | `org_id`                 | `internal`               | From the setting.                                                                              |
-| `app.community_keys`     | `community_id`           | `internal`               | Unique. From `current_setting('app.community_id')`.                                            |
-| `app.community_keys`     | `wrapped`                | `internal`               | Application wrap under the organisation key.                                                   |
-| `app.community_keys`     | `key_version`            | `internal`               | The text `1`.                                                                                  |
-| `app.community_keys`     | `parent_key_id`          | `internal`               | The organisation key row id.                                                                   |
-| `app.household_keys`     | `id`                     | `internal`               | UUIDv7.                                                                                        |
-| `app.household_keys`     | `org_id`                 | `internal`               | From the setting.                                                                              |
-| `app.household_keys`     | `community_id`           | `internal`               | From the setting.                                                                              |
-| `app.household_keys`     | `household_id`           | `internal`               | Unique. References `app.households (org_id, id)`.                                              |
-| `app.household_keys`     | `wrapped`                | `internal`               | Application wrap under the community key.                                                      |
-| `app.household_keys`     | `key_version`            | `internal`               | The text `1`.                                                                                  |
-| `app.household_keys`     | `parent_key_id`          | `internal`               | The community key row id.                                                                      |
-| `app.households`         | `id`                     | `internal`               | UUIDv7.                                                                                        |
-| `app.households`         | `org_id`                 | `internal`               | From the setting.                                                                              |
-| `app.households`         | `community_id`           | `internal`               | From the setting.                                                                              |
-| `app.households`         | `label`                  | `restricted`             | Ciphertext or null. Label `people.household_label`. Not filtered.                              |
-| `app.persons`            | `id`                     | `internal`               | UUIDv7. Minted before encrypt.                                                                 |
-| `app.persons`            | `org_id`                 | `internal`               | From the setting.                                                                              |
-| `app.persons`            | `community_id`           | `internal`               | From the setting.                                                                              |
-| `app.persons`            | `household_id`           | `internal`               | Null only when `is_minor` is false. References `app.households (org_id, id)`.                 |
-| `app.persons`            | `is_minor`               | `confidential-queryable` | Clear boolean. Equality filter is allowed. Not encrypted.                                      |
-| `app.persons`            | `birthday_md`            | `confidential-queryable` | Clear smallint or null. `month * 100 + day`. Not encrypted.                                    |
-| `app.persons`            | `given_name`             | `internal`               | Clear. Null when `is_minor` is true. Not a minor's name.                                       |
-| `app.persons`            | `family_name`            | `internal`               | Clear. Null when `is_minor` is true.                                                           |
-| `app.persons`            | `given_name_restricted`  | `restricted`             | Ciphertext. Label `people.given_name`. Null when `is_minor` is false. Not filtered.            |
-| `app.persons`            | `family_name_restricted` | `restricted`             | Ciphertext. Label `people.family_name`. Null when `is_minor` is false. Not filtered.           |
-| `app.persons`            | `date_of_birth`          | `restricted`             | Ciphertext or null. Label `people.date_of_birth`. Not filtered.                                 |
-| `app.persons`            | `email`                  | `confidential-blind`     | Ciphertext or null. Label `people.email`. Not filtered.                                         |
-| `app.persons`            | `email_bidx`             | `confidential-blind`     | 32-byte blind index or null. Equality only.                                                    |
-| `app.persons`            | `phone`                  | `confidential-blind`     | Ciphertext or null. Label `people.phone`. Not filtered.                                         |
-| `app.persons`            | `phone_bidx`             | `confidential-blind`     | 32-byte blind index or null. Equality only.                                                    |
-| `app.guardian_links`     | `id`                     | `internal`               | UUIDv7.                                                                                        |
-| `app.guardian_links`     | `org_id`                 | `internal`               | From the setting.                                                                              |
-| `app.guardian_links`     | `community_id`           | `internal`               | From the setting.                                                                              |
-| `app.guardian_links`     | `household_id`           | `internal`               | References `app.households (org_id, id)`.                                                      |
-| `app.guardian_links`     | `guardian_person_id`     | `internal`               | References `app.persons (org_id, id)`.                                                         |
-| `app.guardian_links`     | `child_person_id`        | `internal`               | References `app.persons (org_id, id)`.                                                         |
-| `app.guardian_links`     | `consent`                | `internal`               | Boolean. Not personal data.                                                                    |
-| `app.guardian_links`     | `pickup`                 | `internal`               | Boolean.                                                                                       |
-| `app.guardian_links`     | `view`                   | `internal`               | Boolean.                                                                                       |
-| `app.guardian_links`     | `manage`                 | `internal`               | Boolean.                                                                                       |
-| `app.person_tags`        | `id`                     | `internal`               | UUIDv7.                                                                                        |
-| `app.person_tags`        | `org_id`                 | `internal`               | From the setting.                                                                              |
-| `app.person_tags`        | `community_id`           | `internal`               | From the setting.                                                                              |
-| `app.person_tags`        | `label`                  | `internal`               | Clear category. Unique per community. Not a person's name.                                     |
-| `app.person_tag_links`   | `org_id`                 | `internal`               | From the setting.                                                                              |
-| `app.person_tag_links`   | `community_id`           | `internal`               | From the setting.                                                                              |
-| `app.person_tag_links`   | `person_id`              | `internal`               | References `app.persons (org_id, id)`.                                                         |
-| `app.person_tag_links`   | `tag_id`                 | `internal`               | References `app.person_tags (org_id, id)`.                                                     |
-| `app.person_activity`    | `id`                     | `internal`               | UUIDv7.                                                                                        |
-| `app.person_activity`    | `org_id`                 | `internal`               | From the setting.                                                                              |
-| `app.person_activity`    | `community_id`           | `internal`               | From the setting.                                                                              |
-| `app.person_activity`    | `person_id`              | `internal`               | References `app.persons (org_id, id)`.                                                         |
-| `app.person_activity`    | `actor_user_id`          | `internal`               | UUID or null. No foreign key to `identity.users`.                                             |
-| `app.person_activity`    | `kind`                   | `internal`               | One of the five kinds.                                                                         |
-| `app.person_activity`    | `occurred_at`            | `internal`               | `timestamptz`. The command's `now`.                                                            |
+| Table                   | Column                   | Classification           | Notes                                                                                |
+| ----------------------- | ------------------------ | ------------------------ | ------------------------------------------------------------------------------------ |
+| `app.organisation_keys` | `id`                     | `internal`               | UUIDv7. Also the KMS key id in this row's blob.                                      |
+| `app.organisation_keys` | `org_id`                 | `internal`               | Unique. From `current_setting('app.org_id')`. No `community_id`.                     |
+| `app.organisation_keys` | `wrapped`                | `internal`               | KMS blob. Not a personal field.                                                      |
+| `app.organisation_keys` | `key_version`            | `internal`               | The text `1`.                                                                        |
+| `app.community_keys`    | `id`                     | `internal`               | UUIDv7. `child_key_id` in the wrap AAD.                                              |
+| `app.community_keys`    | `org_id`                 | `internal`               | From the setting.                                                                    |
+| `app.community_keys`    | `community_id`           | `internal`               | Unique. From `current_setting('app.community_id')`.                                  |
+| `app.community_keys`    | `wrapped`                | `internal`               | Application wrap under the organisation key.                                         |
+| `app.community_keys`    | `key_version`            | `internal`               | The text `1`.                                                                        |
+| `app.community_keys`    | `parent_key_id`          | `internal`               | The organisation key row id.                                                         |
+| `app.household_keys`    | `id`                     | `internal`               | UUIDv7.                                                                              |
+| `app.household_keys`    | `org_id`                 | `internal`               | From the setting.                                                                    |
+| `app.household_keys`    | `community_id`           | `internal`               | From the setting.                                                                    |
+| `app.household_keys`    | `household_id`           | `internal`               | Unique. References `app.households (org_id, id)`.                                    |
+| `app.household_keys`    | `wrapped`                | `internal`               | Application wrap under the community key.                                            |
+| `app.household_keys`    | `key_version`            | `internal`               | The text `1`.                                                                        |
+| `app.household_keys`    | `parent_key_id`          | `internal`               | The community key row id.                                                            |
+| `app.households`        | `id`                     | `internal`               | UUIDv7.                                                                              |
+| `app.households`        | `org_id`                 | `internal`               | From the setting.                                                                    |
+| `app.households`        | `community_id`           | `internal`               | From the setting.                                                                    |
+| `app.households`        | `label`                  | `restricted`             | Ciphertext or null. Label `people.household_label`. Not filtered.                    |
+| `app.persons`           | `id`                     | `internal`               | UUIDv7. Minted before encrypt.                                                       |
+| `app.persons`           | `org_id`                 | `internal`               | From the setting.                                                                    |
+| `app.persons`           | `community_id`           | `internal`               | From the setting.                                                                    |
+| `app.persons`           | `household_id`           | `internal`               | Null only when `is_minor` is false. References `app.households (org_id, id)`.        |
+| `app.persons`           | `is_minor`               | `confidential-queryable` | Clear boolean. Equality filter is allowed. Not encrypted.                            |
+| `app.persons`           | `birthday_md`            | `confidential-queryable` | Clear smallint or null. `month * 100 + day`. Not encrypted.                          |
+| `app.persons`           | `given_name`             | `internal`               | Clear. Null when `is_minor` is true. Not a minor's name.                             |
+| `app.persons`           | `family_name`            | `internal`               | Clear. Null when `is_minor` is true.                                                 |
+| `app.persons`           | `given_name_restricted`  | `restricted`             | Ciphertext. Label `people.given_name`. Null when `is_minor` is false. Not filtered.  |
+| `app.persons`           | `family_name_restricted` | `restricted`             | Ciphertext. Label `people.family_name`. Null when `is_minor` is false. Not filtered. |
+| `app.persons`           | `date_of_birth`          | `restricted`             | Ciphertext or null. Label `people.date_of_birth`. Not filtered.                      |
+| `app.persons`           | `email`                  | `confidential-blind`     | Ciphertext or null. Label `people.email`. Not filtered.                              |
+| `app.persons`           | `email_bidx`             | `confidential-blind`     | 32-byte blind index or null. Equality only.                                          |
+| `app.persons`           | `phone`                  | `confidential-blind`     | Ciphertext or null. Label `people.phone`. Not filtered.                              |
+| `app.persons`           | `phone_bidx`             | `confidential-blind`     | 32-byte blind index or null. Equality only.                                          |
+| `app.guardian_links`    | `id`                     | `internal`               | UUIDv7.                                                                              |
+| `app.guardian_links`    | `org_id`                 | `internal`               | From the setting.                                                                    |
+| `app.guardian_links`    | `community_id`           | `internal`               | From the setting.                                                                    |
+| `app.guardian_links`    | `household_id`           | `internal`               | References `app.households (org_id, id)`.                                            |
+| `app.guardian_links`    | `guardian_person_id`     | `internal`               | References `app.persons (org_id, id)`.                                               |
+| `app.guardian_links`    | `child_person_id`        | `internal`               | References `app.persons (org_id, id)`.                                               |
+| `app.guardian_links`    | `consent`                | `internal`               | Boolean. Not personal data.                                                          |
+| `app.guardian_links`    | `pickup`                 | `internal`               | Boolean.                                                                             |
+| `app.guardian_links`    | `view`                   | `internal`               | Boolean.                                                                             |
+| `app.guardian_links`    | `manage`                 | `internal`               | Boolean.                                                                             |
+| `app.person_tags`       | `id`                     | `internal`               | UUIDv7.                                                                              |
+| `app.person_tags`       | `org_id`                 | `internal`               | From the setting.                                                                    |
+| `app.person_tags`       | `community_id`           | `internal`               | From the setting.                                                                    |
+| `app.person_tags`       | `label`                  | `internal`               | Clear category. Unique per community. Not a person's name.                           |
+| `app.person_tag_links`  | `org_id`                 | `internal`               | From the setting.                                                                    |
+| `app.person_tag_links`  | `community_id`           | `internal`               | From the setting.                                                                    |
+| `app.person_tag_links`  | `person_id`              | `internal`               | References `app.persons (org_id, id)`.                                               |
+| `app.person_tag_links`  | `tag_id`                 | `internal`               | References `app.person_tags (org_id, id)`.                                           |
+| `app.person_activity`   | `id`                     | `internal`               | UUIDv7.                                                                              |
+| `app.person_activity`   | `org_id`                 | `internal`               | From the setting.                                                                    |
+| `app.person_activity`   | `community_id`           | `internal`               | From the setting.                                                                    |
+| `app.person_activity`   | `person_id`              | `internal`               | References `app.persons (org_id, id)`.                                               |
+| `app.person_activity`   | `actor_user_id`          | `internal`               | UUID or null. No foreign key to `identity.users`.                                    |
+| `app.person_activity`   | `kind`                   | `internal`               | One of the five kinds.                                                               |
+| `app.person_activity`   | `occurred_at`            | `internal`               | `timestamptz`. The command's `now`.                                                  |
 
 Checks, exact:
 
@@ -244,17 +244,17 @@ Money, consent, retention, and analytics. No payment fields, no consent row, no 
 
 ## Contracts
 
-| Contract   | Value                                                                                                                                                          |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Package    | `@community-hub/people`. Public exports are the commands below and `PeopleError`.                                                                              |
-| Module     | `core.people`, version 1. No events, no entitlement, no permission, no website.                                                                                |
-| Keys       | Organisation key via `generateKmsRoot`. Community and household keys via `generateAndWrap`. No cache.                                                          |
-| Resolver   | `openPersonFieldKeys` returns `{ enc, bidx }` for the community key or the household key. It does not return `wrap`.                                           |
-| Audit      | `people.person.created`, `people.person.read`, `people.household.created`, `people.household.read`.                                                            |
-| Journal    | One additive entry in `packages/db/drizzle` after `0004`, plus hand-added `FORCE ROW LEVEL SECURITY` and the `REVOKE` list.                                    |
-| Roles      | `app` can insert and select. Delete only on `guardian_links` and `person_tag_links`. `identity` and `platform` cannot.                                         |
-| Staging    | Parked. No apply.                                                                                                                                              |
-| db         | `appendAuditEvent(tx: OrgTransaction \| AppTransaction, ...)`.                                                                                                |
+| Contract | Value                                                                                                                       |
+| -------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Package  | `@community-hub/people`. Public exports are the commands below and `PeopleError`.                                           |
+| Module   | `core.people`, version 1. No events, no entitlement, no permission, no website.                                             |
+| Keys     | Organisation key via `generateKmsRoot`. Community and household keys via `generateAndWrap`. No cache.                       |
+| Resolver | `openPersonFieldKeys` returns `{ enc, bidx }` for the community key or the household key. It does not return `wrap`.        |
+| Audit    | `people.person.created`, `people.person.read`, `people.household.created`, `people.household.read`.                         |
+| Journal  | One additive entry in `packages/db/drizzle` after `0004`, plus hand-added `FORCE ROW LEVEL SECURITY` and the `REVOKE` list. |
+| Roles    | `app` can insert and select. Delete only on `guardian_links` and `person_tag_links`. `identity` and `platform` cannot.      |
+| Staging  | Parked. No apply.                                                                                                           |
+| db       | `appendAuditEvent(tx: OrgTransaction \| AppTransaction, ...)`.                                                              |
 
 ```ts
 ensureOrganisationKey(tx: AppTransaction, kms: KmsPort, keyArn: string): Promise<{ keyId: string }>
@@ -287,23 +287,23 @@ No new resource billed by the hour or the month. No NAT gateway, load balancer, 
 
 ## Risks
 
-| Risk                                                                              | Mitigation                                                                                                                                          |
-| --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A minor's name is stored in the clear `given_name` column                        | The check requires that column to be null when `is_minor` is true. A test inserts a minor and selects a null clear name.                           |
-| A minor's email index is community-wide                                           | The index is computed with the household `bidx` key. A test looks up the same address with the community key and finds no row.                     |
-| Adult confidential fields are encrypted with the household key                    | The resolver test decrypts an adult email with the community key and fails with the household key.                                                 |
-| Ciphertext is filtered or ordered                                                 | Columns use `encryptedColumn` and `blindIndexColumn`. The repository uses equality on the blind index only. The encrypted-column lint stays on.    |
-| Unwrapped keys are cached or logged                                               | No module-level map. Return values are ids, clear fields, or non-extractable `CryptoKey`s. Errors carry a `code` only.                             |
-| KMS context contains a name or an email                                           | Context is `{ key_kind: "org", org_id, key_version: "1" }`. A test rejects a call that adds another key.                                            |
-| `org_id` is taken from the argument and crosses tenants                           | Inserts use `current_setting`. A second `withAppTransaction` cannot select the first tenant's person.                                              |
-| The organisation-key table is given `community_id`                                | A test fails if that table's SQL contains `community_id`.                                                                                          |
-| A community table omits `community_id` or the community predicate                 | A test fails if any new table other than `organisation_keys` lacks `community_id`, or if its policy lacks `app.community_id`.                      |
-| `FORCE ROW LEVEL SECURITY` is missing because Kit does not emit it                | The migration hand-adds it. `schema-rls` fails the journal without it.                                                                             |
-| A lost unique insert aborts the caller's transaction                              | The insert runs in a savepoint. A test runs two ensures and finds one key row.                                                                     |
-| Restricted reads skip the audit chain                                             | `readPerson`, `createPerson`, `readHousehold`, `createHousehold`, and `openPersonFieldKeys` append in the same transaction. A test reads the row. |
-| The activity row stores a name                                                    | The columns are ids, kind, and time. A test fails if a returned activity object has a name, email, or phone.                                       |
-| A website collection includes a person                                            | The manifest has no `website` key. A test fails if it gains one.                                                                                   |
-| Staging is unparked                                                               | The proof is the existing Docker Postgres. Staging flags stay parked.                                                                              |
+| Risk                                                               | Mitigation                                                                                                                                        |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A minor's name is stored in the clear `given_name` column          | The check requires that column to be null when `is_minor` is true. A test inserts a minor and selects a null clear name.                          |
+| A minor's email index is community-wide                            | The index is computed with the household `bidx` key. A test looks up the same address with the community key and finds no row.                    |
+| Adult confidential fields are encrypted with the household key     | The resolver test decrypts an adult email with the community key and fails with the household key.                                                |
+| Ciphertext is filtered or ordered                                  | Columns use `encryptedColumn` and `blindIndexColumn`. The repository uses equality on the blind index only. The encrypted-column lint stays on.   |
+| Unwrapped keys are cached or logged                                | No module-level map. Return values are ids, clear fields, or non-extractable `CryptoKey`s. Errors carry a `code` only.                            |
+| KMS context contains a name or an email                            | Context is `{ key_kind: "org", org_id, key_version: "1" }`. A test rejects a call that adds another key.                                          |
+| `org_id` is taken from the argument and crosses tenants            | Inserts use `current_setting`. A second `withAppTransaction` cannot select the first tenant's person.                                             |
+| The organisation-key table is given `community_id`                 | A test fails if that table's SQL contains `community_id`.                                                                                         |
+| A community table omits `community_id` or the community predicate  | A test fails if any new table other than `organisation_keys` lacks `community_id`, or if its policy lacks `app.community_id`.                     |
+| `FORCE ROW LEVEL SECURITY` is missing because Kit does not emit it | The migration hand-adds it. `schema-rls` fails the journal without it.                                                                            |
+| A lost unique insert aborts the caller's transaction               | The insert runs in a savepoint. A test runs two ensures and finds one key row.                                                                    |
+| Restricted reads skip the audit chain                              | `readPerson`, `createPerson`, `readHousehold`, `createHousehold`, and `openPersonFieldKeys` append in the same transaction. A test reads the row. |
+| The activity row stores a name                                     | The columns are ids, kind, and time. A test fails if a returned activity object has a name, email, or phone.                                      |
+| A website collection includes a person                             | The manifest has no `website` key. A test fails if it gains one.                                                                                  |
+| Staging is unparked                                                | The proof is the existing Docker Postgres. Staging flags stay parked.                                                                             |
 
 ## Tests
 
