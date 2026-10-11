@@ -1,0 +1,52 @@
+import { describe, expect, it } from "vitest";
+
+import identityModule from "../module.manifest.js";
+
+describe("core.identity manifest", () => {
+  it("declares every identity column and nothing else", () => {
+    expect(identityModule).toEqual({
+      key: "core.identity",
+      version: 1,
+      requires: [],
+      publishes: [],
+      subscribes: [],
+      ports: [],
+      dataClasses: {
+        "users.id": "internal",
+        "users.region": "internal",
+        "users.email": "confidential-blind",
+        "users.email_bidx": "confidential-blind",
+        "identity_keys.id": "internal",
+        "identity_keys.region": "internal",
+        "identity_keys.wrapped": "internal",
+        "identity_keys.key_version": "internal",
+        "otp_challenges.id": "internal",
+        "otp_challenges.email_bidx": "confidential-blind",
+        "otp_challenges.code_hash": "internal",
+        "otp_challenges.attempts": "internal",
+        "otp_challenges.expires_at": "internal",
+        "otp_challenges.consumed_at": "internal",
+        "passkey_credentials.id": "internal",
+        "passkey_credentials.user_id": "internal",
+        "passkey_credentials.credential_id": "internal",
+        "passkey_credentials.cose_key": "internal",
+        "passkey_credentials.sign_count": "internal",
+        "passkey_challenges.id": "internal",
+        "passkey_challenges.user_id": "internal",
+        "passkey_challenges.kind": "internal",
+        "passkey_challenges.challenge": "internal",
+        "passkey_challenges.expires_at": "internal",
+        "passkey_challenges.consumed_at": "internal",
+        "sessions.id": "internal",
+        "sessions.user_id": "internal",
+        "sessions.refresh_family": "internal",
+        "sessions.access_hash": "internal",
+        "sessions.refresh_hash": "internal",
+        "sessions.access_expires_at": "internal",
+        "sessions.refresh_expires_at": "internal",
+        "sessions.replaced_by": "internal",
+        "sessions.revoked_at": "internal",
+      },
+    });
+  });
+});

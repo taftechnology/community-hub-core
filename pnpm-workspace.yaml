@@ -3,3 +3,4 @@ packages:
   - "apps/*"
   - "tooling/checks/*"
   - "modules/core/tenancy"
+  - "modules/core/identity"
