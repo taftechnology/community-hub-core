@@ -246,7 +246,7 @@ From architecture §26. Do not invent answers in a spec.
 
 ## Open items
 
-Startup does not prove the database or KMS, `GET /health` opens neither, and a route that needs them fails that request, decided in `identity-otp`. Unwrapped organisation keys are not cached; each operation unwraps and drops them, decided in `people-households`.
+Startup does not prove the database or KMS, `GET /health` opens neither, and a route that needs them fails that request, decided in `identity-otp`. Unwrapped keys are not cached today; reusing them within one request is the intended direction, and the choice is made when the first list screen can be measured.
 
 This image has not run on Fargate. The next chunk that unparks staging re-runs the health check, the `/tmp` write one-off, and the ops task before the service is relied on.
 
