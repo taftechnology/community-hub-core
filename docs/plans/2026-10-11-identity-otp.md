@@ -10,7 +10,7 @@ Spec: docs/specs/2026-10-11-identity-otp.md
 
 **Tech Stack:** TypeScript, Drizzle ORM `0.45.2`, `postgres` `3.4.9`, Zod `4.6.5`, Vitest, Node 24, Docker `postgres:17`, `@aws-sdk/client-secrets-manager`. No identity library and no WebAuthn library.
 
-Status: draft
+Status: approved (2026-10-11, Adnan Bin Hossen)
 
 **Branch:** `feat/2026-10-11-identity-otp` · one PR · 7 tasks, one commit each
 
