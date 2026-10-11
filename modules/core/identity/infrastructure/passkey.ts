@@ -367,7 +367,7 @@ function derSignatureToRaw(signature: Uint8Array): Uint8Array | null {
     return null;
   }
   const s = readDerInteger(signature, r.next);
-  if (s === null || s.next !== signature.byteLength) {
+  if (s === null || s.next !== 2 + sequenceLength) {
     return null;
   }
   const raw = new Uint8Array(64);

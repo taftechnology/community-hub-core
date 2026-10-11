@@ -398,6 +398,8 @@ describe("passkeys", () => {
       const malformedData = authenticatorData({ rpId: RP_ID, signCount: 1 });
       const malformedClient = clientData("webauthn.get", malformed.challenge, ORIGIN);
       const der = await key.sign(concat([malformedData, await sha256(malformedClient)]));
+      const trailing = concat([der, Uint8Array.of(0xff)]);
+      expect(trailing.byteLength).toBe(der.byteLength + 1);
       expect(
         await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
           rpId: RP_ID,
@@ -405,7 +407,7 @@ describe("passkeys", () => {
           credentialId,
           clientDataJSON: malformedClient,
           authenticatorData: malformedData,
-          signature: concat([der, Uint8Array.of(0xff)]),
+          signature: trailing,
         }),
       ).toBeNull();
 
