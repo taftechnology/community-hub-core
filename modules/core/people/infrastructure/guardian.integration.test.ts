@@ -195,4 +195,140 @@ describe("guardian links", () => {
       await app.end({ timeout: 1 });
     }
   });
+
+  it("rejects a minor guardian and a household that does not match", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const organisationId = newId();
+    const communityId = newId();
+    const kms = createLocalKmsPort();
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, 'guardian-rule-parish', 'au', 'implicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, 'guardian-rule-parish', 'au')
+        `;
+      });
+
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const home = await createHousehold(tx, kms, KEY_ARN, {
+            now: NOW,
+            label: null,
+            actorUserId: null,
+          });
+          const other = await createHousehold(tx, kms, KEY_ARN, {
+            now: NOW,
+            label: null,
+            actorUserId: null,
+          });
+          const adult = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId: home.householdId,
+            dateOfBirth: "2008-10-11",
+            givenName: "Ada",
+            familyName: "Example",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          const child = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId: home.householdId,
+            dateOfBirth: null,
+            givenName: "Ned",
+            familyName: "Example",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          const minorGuardian = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId: home.householdId,
+            dateOfBirth: null,
+            givenName: "Bea",
+            familyName: "Example",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          const otherChild = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId: other.householdId,
+            dateOfBirth: null,
+            givenName: "Cara",
+            familyName: "Example",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+
+          await expect(
+            linkGuardian(tx, {
+              now: NOW,
+              householdId: home.householdId,
+              guardianPersonId: minorGuardian.personId,
+              childPersonId: child.personId,
+              consent: true,
+              pickup: false,
+              view: false,
+              manage: false,
+              actorUserId: null,
+            }),
+          ).rejects.toMatchObject({ code: "invalid_guardian" });
+
+          await expect(
+            linkGuardian(tx, {
+              now: NOW,
+              householdId: other.householdId,
+              guardianPersonId: adult.personId,
+              childPersonId: otherChild.personId,
+              consent: true,
+              pickup: false,
+              view: false,
+              manage: false,
+              actorUserId: null,
+            }),
+          ).rejects.toMatchObject({ code: "invalid_guardian" });
+
+          await expect(
+            linkGuardian(tx, {
+              now: NOW,
+              householdId: other.householdId,
+              guardianPersonId: adult.personId,
+              childPersonId: child.personId,
+              consent: true,
+              pickup: false,
+              view: false,
+              manage: false,
+              actorUserId: null,
+            }),
+          ).rejects.toMatchObject({ code: "invalid_guardian" });
+
+          const links = await tx<{ n: number }[]>`
+            select count(*)::int as n from app.guardian_links
+          `;
+          expect(links).toEqual([{ n: 0 }]);
+          const activity = await tx<{ n: number }[]>`
+            select count(*)::int as n
+            from app.person_activity
+            where kind = 'guardian_linked'
+          `;
+          expect(activity).toEqual([{ n: 0 }]);
+        }),
+      );
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
 });
