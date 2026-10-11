@@ -174,7 +174,7 @@ describe("implicit organisation", () => {
       await identity.end({ timeout: 1 });
     }
 
-    const platformPrivileges = await createPlaintextDirectSql(runtime.productOnlyUrl);
+    const platformPrivileges = createPlaintextDirectSql(runtime.productOnlyUrl);
     try {
       const privileges = await platformPrivileges<
         { app_usage: boolean; identity_usage: boolean }[]
