@@ -75,13 +75,22 @@ describe("people app tables", () => {
     expect(sql.match(/FORCE ROW LEVEL SECURITY/g)).toHaveLength(TABLES.length);
     expect(sql).toContain("current_setting('app.org_id')");
     expect(sql).toContain("current_setting('app.community_id')");
-    const personsPolicy = sql
+    const communityPolicies = sql
       .split("--> statement-breakpoint")
-      .find(
-        (statement) =>
-          statement.includes('ON "app"."persons"') && statement.includes("CREATE POLICY"),
-      );
-    expect(personsPolicy).toContain("app.community_id");
+      .map((statement) => statement.trim())
+      .filter((statement) => statement.includes('CREATE POLICY "community_isolation"'));
+    expect(communityPolicies).toHaveLength(TABLES.length - 1);
+    for (const statement of communityPolicies) {
+      const splitAt = statement.indexOf(" WITH CHECK ");
+      expect(splitAt).toBeGreaterThan(0);
+      const using = statement.slice(0, splitAt);
+      const check = statement.slice(splitAt + " WITH CHECK ".length);
+      expect(using).toContain("USING (");
+      for (const clause of [using, check]) {
+        expect(clause).toContain(`"org_id" = current_setting('app.org_id')`);
+        expect(clause).toContain(`"community_id" = current_setting('app.community_id')`);
+      }
+    }
     expect(createBody(sql, "organisation_keys")).not.toContain("community_id");
     for (const table of TABLES) {
       if (table === "organisation_keys") {

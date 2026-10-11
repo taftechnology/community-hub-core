@@ -13,7 +13,7 @@ import {
 } from "@community-hub/db/plaintext";
 import { withRequest } from "@community-hub/kernel";
 
-import { createHousehold, createPerson, readPerson } from "../public/index.js";
+import { createHousehold, createPerson, createTag, readPerson } from "../public/index.js";
 import { communityFieldKeys, householdFieldKeys } from "./person-keys.js";
 
 type Runtime = {
@@ -489,6 +489,79 @@ describe("person create and read", () => {
           );
           expect(new TextDecoder().decode(emailPlain)).toBe("bea@example.com");
         }),
+      );
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
+
+  it("hides a community's people from another community in the same organisation", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const organisationId = newId();
+    const communityId = newId();
+    const otherCommunityId = newId();
+    const kms = createLocalKmsPort();
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, 'two-community-parish', 'au', 'explicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, 'north-parish', 'au')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${otherCommunityId}, ${organisationId}, 'south-parish', 'au')
+        `;
+      });
+
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          await createHousehold(tx, kms, KEY_ARN, {
+            now: NOW,
+            label: null,
+            actorUserId: null,
+          });
+          await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId: null,
+            dateOfBirth: "2008-10-11",
+            givenName: "Ada",
+            familyName: "Example",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          await createTag(tx, { label: "Choir" });
+          const seen = await tx<{ persons: number; households: number; tags: number }[]>`
+            select
+              (select count(*)::int from app.persons) as persons,
+              (select count(*)::int from app.households) as households,
+              (select count(*)::int from app.person_tags) as tags
+          `;
+          expect(seen).toEqual([{ persons: 1, households: 1, tags: 1 }]);
+        }),
+      );
+
+      await withAppTransaction(
+        app,
+        { orgId: organisationId, communityId: otherCommunityId },
+        async (tx) => {
+          const persons = await tx<{ id: string }[]>`select id::text as id from app.persons`;
+          const households = await tx<{ id: string }[]>`
+            select id::text as id from app.households
+          `;
+          const tags = await tx<{ id: string }[]>`select id::text as id from app.person_tags`;
+          expect(persons).toEqual([]);
+          expect(households).toEqual([]);
+          expect(tags).toEqual([]);
+        },
       );
     } finally {
       await platform.end({ timeout: 1 });
