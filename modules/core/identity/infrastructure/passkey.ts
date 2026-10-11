@@ -1,3 +1,4 @@
+import type { webcrypto } from "node:crypto";
 import type { KmsPort } from "@community-hub/crypto";
 import { newId } from "@community-hub/db";
 import type { Sql } from "postgres";
@@ -7,6 +8,7 @@ import { IdentityError } from "../domain/error.js";
 import { createSession, type SessionTokens } from "./session.js";
 
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
+const MAX_CREDENTIAL_ID_BYTES = 1023;
 const UP = 0x01;
 const AT = 0x40;
 
@@ -94,7 +96,18 @@ export async function finishPasskeyRegistration(
   if (auth.credentialId === null || auth.coseKey === null) {
     throw new IdentityError("invalid_ceremony");
   }
-  decodeCoseEc2(auth.coseKey);
+  if (auth.credentialId.byteLength > MAX_CREDENTIAL_ID_BYTES) {
+    throw new IdentityError("invalid_ceremony");
+  }
+  const point = decodeCoseEc2(auth.coseKey);
+  try {
+    await importP256(point.x, point.y);
+  } catch (error) {
+    if (error instanceof IdentityError) {
+      throw error;
+    }
+    throw new IdentityError("invalid_ceremony");
+  }
   try {
     await sql.begin(async (tx) => {
       const consumed = await tx<{ id: string }[]>`
@@ -153,6 +166,9 @@ export async function finishPasskeyAuthentication(
     signature: Uint8Array;
   },
 ): Promise<SessionTokens | null> {
+  if (input.credentialId.byteLength > MAX_CREDENTIAL_ID_BYTES) {
+    return null;
+  }
   try {
     const credentials = await sql<
       { id: string; user_id: string; cose_key: Uint8Array; sign_count: number | string }[]
@@ -303,6 +319,9 @@ function parseAuthenticatorData(bytes: Uint8Array): {
     throw new IdentityError("invalid_ceremony");
   }
   const credentialLength = view.getUint16(53);
+  if (credentialLength > MAX_CREDENTIAL_ID_BYTES) {
+    throw new IdentityError("invalid_ceremony");
+  }
   const credentialStart = 55;
   const credentialEnd = credentialStart + credentialLength;
   if (credentialEnd > bytes.byteLength) {
@@ -317,17 +336,8 @@ function parseAuthenticatorData(bytes: Uint8Array): {
   };
 }
 
-async function verifyEs256(
-  coseKey: Uint8Array,
-  data: Uint8Array,
-  signature: Uint8Array,
-): Promise<boolean> {
-  const raw = derSignatureToRaw(signature);
-  if (raw === null) {
-    return false;
-  }
-  const { x, y } = decodeCoseEc2(coseKey);
-  const key = await crypto.subtle.importKey(
+async function importP256(x: Uint8Array, y: Uint8Array): Promise<webcrypto.CryptoKey> {
+  return crypto.subtle.importKey(
     "jwk",
     {
       kty: "EC",
@@ -339,6 +349,24 @@ async function verifyEs256(
     false,
     ["verify"],
   );
+}
+
+async function verifyEs256(
+  coseKey: Uint8Array,
+  data: Uint8Array,
+  signature: Uint8Array,
+): Promise<boolean> {
+  const raw = derSignatureToRaw(signature);
+  if (raw === null) {
+    return false;
+  }
+  const { x, y } = decodeCoseEc2(coseKey);
+  let key: webcrypto.CryptoKey;
+  try {
+    key = await importP256(x, y);
+  } catch {
+    return false;
+  }
   try {
     return await crypto.subtle.verify(
       { name: "ECDSA", hash: "SHA-256" },

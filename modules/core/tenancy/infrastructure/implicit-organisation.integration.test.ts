@@ -11,6 +11,8 @@ import {
   createPlaintextPlatformSql,
 } from "@community-hub/db/plaintext";
 
+import type { Sql } from "postgres";
+
 import { createImplicitOrganisation, findCommunityBySlug } from "../public/index.js";
 
 type Runtime = {
@@ -173,6 +175,110 @@ describe("implicit organisation", () => {
     } finally {
       await identity.end({ timeout: 1 });
     }
+
+    const platformPrivileges = createPlaintextDirectSql(runtime.productOnlyUrl);
+    try {
+      const privileges = await platformPrivileges<
+        { app_usage: boolean; identity_usage: boolean }[]
+      >`
+        select
+          has_schema_privilege('platform', 'app', 'USAGE') as app_usage,
+          has_schema_privilege('platform', 'identity', 'USAGE') as identity_usage
+      `;
+      expect(privileges).toEqual([{ app_usage: false, identity_usage: false }]);
+    } finally {
+      await platformPrivileges.end({ timeout: 1 });
+    }
+
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    try {
+      await expect(platform`select id from app.outbox`).rejects.toMatchObject({ code: "42501" });
+      await expect(platform`select id from identity.users`).rejects.toMatchObject({
+        code: "42501",
+      });
+    } finally {
+      await platform.end({ timeout: 1 });
+    }
+  });
+
+  it("refuses a direct insert that breaks a tenancy rule", async () => {
+    const direct = createPlaintextDirectSql(loadRuntime().productOnlyUrl);
+    const organisationId = "00000000-0000-4000-8000-000000000010";
+    try {
+      await expect(
+        direct`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (
+            '00000000-0000-4000-8000-000000000011',
+            '00000000-0000-4000-8000-000000000099',
+            'orphan-parish',
+            'au'
+          )
+        `,
+      ).rejects.toMatchObject({ code: "23503" });
+
+      await expect(
+        direct`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, 'region-parish', 'us', 'implicit')
+        `,
+      ).rejects.toMatchObject({ code: "23514" });
+
+      await direct`
+        insert into platform.organisations (id, slug, region, kind)
+        values (${organisationId}, 'direct-parish', 'au', 'implicit')
+      `;
+      await expect(
+        direct`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (
+            '00000000-0000-4000-8000-000000000012',
+            ${organisationId},
+            'direct-parish',
+            'nz'
+          )
+        `,
+      ).rejects.toMatchObject({ code: "23514" });
+
+      await expect(
+        direct`
+          insert into platform.organisations (id, slug, region, kind)
+          values ('00000000-0000-4000-8000-000000000013', 'kind-parish', 'au', 'other')
+        `,
+      ).rejects.toMatchObject({ code: "23514" });
+
+      await expect(
+        direct`
+          insert into platform.organisations (id, slug, region, kind)
+          values ('00000000-0000-4000-8000-000000000014', 'Bad', 'au', 'explicit')
+        `,
+      ).rejects.toMatchObject({ code: "23514" });
+
+      await expect(
+        direct`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (
+            '00000000-0000-4000-8000-000000000015',
+            ${organisationId},
+            '-bad',
+            'au'
+          )
+        `,
+      ).rejects.toMatchObject({ code: "23514" });
+    } finally {
+      await direct`delete from platform.communities where organisation_id = ${organisationId}`;
+      await direct`delete from platform.organisations where id = ${organisationId}`;
+      await direct.end({ timeout: 1 });
+    }
+  });
+
+  it("returns null for an invalid slug without querying", async () => {
+    const sql = (() => {
+      throw new Error("database was queried");
+    }) as unknown as Sql;
+    await expect(findCommunityBySlug(sql, "Example")).resolves.toBeNull();
+    await expect(findCommunityBySlug(sql, "")).resolves.toBeNull();
+    await expect(findCommunityBySlug(sql, "ab")).resolves.toBeNull();
   });
 
   it("leaves the caller's timestamp parsers unchanged", async () => {

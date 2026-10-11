@@ -83,10 +83,11 @@ function authenticatorData(input: {
   signCount: number;
   credentialId?: Uint8Array;
   cose?: Uint8Array;
+  flags?: number;
 }): Uint8Array {
   const rpIdHash = new Uint8Array(createHash("sha256").update(Buffer.from(input.rpId)).digest());
   const attested = input.credentialId !== undefined && input.cose !== undefined;
-  const flags = attested ? 0x41 : 0x01;
+  const flags = input.flags ?? (attested ? 0x41 : 0x01);
   const count = new Uint8Array(4);
   new DataView(count.buffer).setUint32(0, input.signCount);
   const parts: Uint8Array[] = [rpIdHash, Uint8Array.of(flags), count];
@@ -96,6 +97,23 @@ function authenticatorData(input: {
     parts.push(new Uint8Array(16), length, input.credentialId, input.cose);
   }
   return concat(parts);
+}
+
+function derInteger(value: Uint8Array): Uint8Array {
+  return concat([Uint8Array.of(0x02, value.byteLength), value]);
+}
+
+function encodeDer(r: Uint8Array, s: Uint8Array): Uint8Array {
+  const body = concat([derInteger(r), derInteger(s)]);
+  return concat([Uint8Array.of(0x30, body.byteLength), body]);
+}
+
+function splitDer(der: Uint8Array): { r: Uint8Array; s: Uint8Array } {
+  const rLength = der[3] ?? 0;
+  const r = der.slice(4, 4 + rLength);
+  const sLength = der[4 + rLength + 1] ?? 0;
+  const sStart = 4 + rLength + 2;
+  return { r, s: der.slice(sStart, sStart + sLength) };
 }
 
 function attestationObject(authData: Uint8Array): Uint8Array {
@@ -519,4 +537,467 @@ describe("passkeys", () => {
       await observer.end({ timeout: 1 });
     }
   }, 15_000);
+
+  it("rejects an off-curve point and a credential id longer than 1023 bytes", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const kms = createLocalKmsPort();
+    const offCurve = new Uint8Array(32).fill(1);
+    await withSql(async (sql) => {
+      const created = await insertIdentityUser(sql, kms, KEY_ARN, { email: "ada@example.com" });
+      const options = await beginPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+      });
+      await expect(
+        finishPasskeyRegistration(sql, {
+          userId: created.userId,
+          rpId: RP_ID,
+          now,
+          clientDataJSON: clientData("webauthn.create", options.challenge, ORIGIN),
+          attestationObject: attestationObject(
+            authenticatorData({
+              rpId: RP_ID,
+              signCount: 0,
+              credentialId: new Uint8Array(16).fill(2),
+              cose: coseKey(offCurve, offCurve),
+            }),
+          ),
+        }),
+      ).rejects.toMatchObject({ code: "invalid_ceremony" });
+      const stored = await sql<{ n: number }[]>`
+        select count(*)::int as n from identity.passkey_credentials
+      `;
+      expect(stored).toEqual([{ n: 0 }]);
+
+      const again = await beginPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+      });
+      const key = await signer();
+      await expect(
+        finishPasskeyRegistration(sql, {
+          userId: created.userId,
+          rpId: RP_ID,
+          now,
+          clientDataJSON: clientData("webauthn.create", again.challenge, ORIGIN),
+          attestationObject: attestationObject(
+            authenticatorData({
+              rpId: RP_ID,
+              signCount: 0,
+              credentialId: new Uint8Array(1024).fill(3),
+              cose: coseKey(key.x, key.y),
+            }),
+          ),
+        }),
+      ).rejects.toMatchObject({ code: "invalid_ceremony" });
+      const after = await sql<{ n: number }[]>`
+        select count(*)::int as n from identity.passkey_credentials
+      `;
+      expect(after).toEqual([{ n: 0 }]);
+
+      expect(
+        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+          rpId: RP_ID,
+          now,
+          credentialId: new Uint8Array(1024).fill(3),
+          clientDataJSON: clientData("webauthn.get", new Uint8Array(32), ORIGIN),
+          authenticatorData: authenticatorData({ rpId: RP_ID, signCount: 1 }),
+          signature: Uint8Array.of(0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01),
+        }),
+      ).toBeNull();
+    });
+  });
+
+  it("returns null when a stored passkey cannot be imported", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const kms = createLocalKmsPort();
+    const offCurve = new Uint8Array(32).fill(1);
+    const credentialId = new Uint8Array(16).fill(8);
+    await withSql(async (sql) => {
+      const created = await insertIdentityUser(sql, kms, KEY_ARN, { email: "ada@example.com" });
+      await sql`
+        insert into identity.passkey_credentials (id, user_id, credential_id, cose_key, sign_count)
+        values (
+          ${crypto.randomUUID()},
+          ${created.userId},
+          ${credentialId},
+          ${coseKey(offCurve, offCurve)},
+          0
+        )
+      `;
+      const options = await beginPasskeyAuthentication(sql, { rpId: RP_ID, now });
+      const authData = authenticatorData({ rpId: RP_ID, signCount: 1 });
+      const client = clientData("webauthn.get", options.challenge, ORIGIN);
+      await expect(
+        finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+          rpId: RP_ID,
+          now,
+          credentialId,
+          clientDataJSON: client,
+          authenticatorData: authData,
+          signature: Uint8Array.of(0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01),
+        }),
+      ).resolves.toBeNull();
+    });
+  });
+
+  it("rejects each registration check that the ceremony requires", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const kms = createLocalKmsPort();
+    const key = await signer();
+    await withSql(async (sql) => {
+      const created = await insertIdentityUser(sql, kms, KEY_ARN, { email: "ada@example.com" });
+      const cases: Array<(challenge: Uint8Array) => { client: Uint8Array; object: Uint8Array }> = [
+        (challenge) => ({
+          client: clientData("webauthn.create", challenge, "https://evil.example"),
+          object: attestationObject(
+            authenticatorData({
+              rpId: RP_ID,
+              signCount: 0,
+              credentialId: new Uint8Array(16).fill(1),
+              cose: coseKey(key.x, key.y),
+            }),
+          ),
+        }),
+        (challenge) => ({
+          client: clientData("webauthn.get", challenge, ORIGIN),
+          object: attestationObject(
+            authenticatorData({
+              rpId: RP_ID,
+              signCount: 0,
+              credentialId: new Uint8Array(16).fill(1),
+              cose: coseKey(key.x, key.y),
+            }),
+          ),
+        }),
+        (challenge) => ({
+          client: clientData("webauthn.create", challenge, ORIGIN),
+          object: attestationObject(
+            authenticatorData({
+              rpId: "other.example.test",
+              signCount: 0,
+              credentialId: new Uint8Array(16).fill(1),
+              cose: coseKey(key.x, key.y),
+            }),
+          ),
+        }),
+        (challenge) => ({
+          client: clientData("webauthn.create", challenge, ORIGIN),
+          object: attestationObject(
+            authenticatorData({
+              rpId: RP_ID,
+              signCount: 0,
+              credentialId: new Uint8Array(16).fill(1),
+              cose: coseKey(key.x, key.y),
+              flags: 0x40,
+            }),
+          ),
+        }),
+        (challenge) => ({
+          client: clientData("webauthn.create", challenge, ORIGIN),
+          object: encodeCbor(
+            new Map<Cbor, Cbor>([
+              ["fmt", "packed"],
+              ["attStmt", new Map<Cbor, Cbor>()],
+              [
+                "authData",
+                authenticatorData({
+                  rpId: RP_ID,
+                  signCount: 0,
+                  credentialId: new Uint8Array(16).fill(1),
+                  cose: coseKey(key.x, key.y),
+                }),
+              ],
+            ]),
+          ),
+        }),
+        (challenge) => ({
+          client: clientData("webauthn.create", challenge, ORIGIN),
+          object: encodeCbor(
+            new Map<Cbor, Cbor>([
+              ["fmt", "none"],
+              ["attStmt", new Map<Cbor, Cbor>([["alg", -7]])],
+              [
+                "authData",
+                authenticatorData({
+                  rpId: RP_ID,
+                  signCount: 0,
+                  credentialId: new Uint8Array(16).fill(1),
+                  cose: coseKey(key.x, key.y),
+                }),
+              ],
+            ]),
+          ),
+        }),
+        (challenge) => ({
+          client: clientData("webauthn.create", challenge, ORIGIN),
+          object: attestationObject(
+            authenticatorData({
+              rpId: RP_ID,
+              signCount: 0,
+              credentialId: new Uint8Array(16).fill(1),
+              cose: encodeCbor(
+                new Map<Cbor, Cbor>([
+                  [1, 2],
+                  [3, -8],
+                  [-1, 1],
+                  [-2, key.x],
+                  [-3, key.y],
+                ]),
+              ),
+            }),
+          ),
+        }),
+      ];
+      for (const [index, build] of cases.entries()) {
+        const options = await beginPasskeyRegistration(sql, {
+          userId: created.userId,
+          rpId: RP_ID,
+          now,
+        });
+        const built = build(options.challenge);
+        await expect(
+          finishPasskeyRegistration(sql, {
+            userId: created.userId,
+            rpId: RP_ID,
+            now,
+            clientDataJSON: built.client,
+            attestationObject: built.object,
+          }),
+        ).rejects.toMatchObject({ code: "invalid_ceremony" });
+        const stored = await sql<{ n: number }[]>`
+          select count(*)::int as n from identity.passkey_credentials
+        `;
+        expect(stored, `case ${index}`).toEqual([{ n: 0 }]);
+      }
+
+      const expired = await beginPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+      });
+      await expect(
+        finishPasskeyRegistration(sql, {
+          userId: created.userId,
+          rpId: RP_ID,
+          now: new Date(now.getTime() + 5 * 60 * 1000 + 1),
+          clientDataJSON: clientData("webauthn.create", expired.challenge, ORIGIN),
+          attestationObject: attestationObject(
+            authenticatorData({
+              rpId: RP_ID,
+              signCount: 0,
+              credentialId: new Uint8Array(16).fill(1),
+              cose: coseKey(key.x, key.y),
+            }),
+          ),
+        }),
+      ).rejects.toMatchObject({ code: "invalid_ceremony" });
+    });
+  });
+
+  it("rejects each authentication check that the ceremony requires", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const kms = createLocalKmsPort();
+    const key = await signer();
+    const credentialId = new Uint8Array(16).fill(6);
+    await withSql(async (sql) => {
+      const created = await insertIdentityUser(sql, kms, KEY_ARN, { email: "ada@example.com" });
+      const registration = await beginPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+      });
+      await finishPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+        clientDataJSON: clientData("webauthn.create", registration.challenge, ORIGIN),
+        attestationObject: attestationObject(
+          authenticatorData({
+            rpId: RP_ID,
+            signCount: 0,
+            credentialId,
+            cose: coseKey(key.x, key.y),
+          }),
+        ),
+      });
+
+      const typed = await beginPasskeyAuthentication(sql, { rpId: RP_ID, now });
+      const typedData = authenticatorData({ rpId: RP_ID, signCount: 1 });
+      const typedClient = clientData("webauthn.create", typed.challenge, ORIGIN);
+      expect(
+        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+          rpId: RP_ID,
+          now,
+          credentialId,
+          clientDataJSON: typedClient,
+          authenticatorData: typedData,
+          signature: await key.sign(concat([typedData, await sha256(typedClient)])),
+        }),
+      ).toBeNull();
+
+      const hashed = await beginPasskeyAuthentication(sql, { rpId: RP_ID, now });
+      const hashedData = authenticatorData({ rpId: "other.example.test", signCount: 1 });
+      const hashedClient = clientData("webauthn.get", hashed.challenge, ORIGIN);
+      expect(
+        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+          rpId: RP_ID,
+          now,
+          credentialId,
+          clientDataJSON: hashedClient,
+          authenticatorData: hashedData,
+          signature: await key.sign(concat([hashedData, await sha256(hashedClient)])),
+        }),
+      ).toBeNull();
+
+      const present = await beginPasskeyAuthentication(sql, { rpId: RP_ID, now });
+      const presentData = authenticatorData({ rpId: RP_ID, signCount: 1, flags: 0x00 });
+      const presentClient = clientData("webauthn.get", present.challenge, ORIGIN);
+      expect(
+        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+          rpId: RP_ID,
+          now,
+          credentialId,
+          clientDataJSON: presentClient,
+          authenticatorData: presentData,
+          signature: await key.sign(concat([presentData, await sha256(presentClient)])),
+        }),
+      ).toBeNull();
+
+      const length = await beginPasskeyAuthentication(sql, { rpId: RP_ID, now });
+      const lengthData = concat([
+        authenticatorData({ rpId: RP_ID, signCount: 1 }),
+        Uint8Array.of(0x00),
+      ]);
+      expect(lengthData.byteLength).toBe(38);
+      const lengthClient = clientData("webauthn.get", length.challenge, ORIGIN);
+      expect(
+        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+          rpId: RP_ID,
+          now,
+          credentialId,
+          clientDataJSON: lengthClient,
+          authenticatorData: lengthData,
+          signature: await key.sign(concat([lengthData, await sha256(lengthClient)])),
+        }),
+      ).toBeNull();
+    });
+  });
+
+  it("rejects a DER integer that is non-minimal, negative, too long, or short of the sequence end", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const kms = createLocalKmsPort();
+    await withSql(async (sql) => {
+      const created = await insertIdentityUser(sql, kms, KEY_ARN, { email: "ada@example.com" });
+      const options = await beginPasskeyAuthentication(sql, { rpId: RP_ID, now });
+      const authData = authenticatorData({ rpId: RP_ID, signCount: 1 });
+      const client = clientData("webauthn.get", options.challenge, ORIGIN);
+      const payload = concat([authData, await sha256(client)]);
+      let padded: { key: Awaited<ReturnType<typeof signer>>; der: Uint8Array } | undefined;
+      let bare: { key: Awaited<ReturnType<typeof signer>>; der: Uint8Array } | undefined;
+      for (
+        let attempt = 0;
+        attempt < 40 && (padded === undefined || bare === undefined);
+        attempt += 1
+      ) {
+        const key = await signer();
+        const der = await key.sign(payload);
+        const parts = splitDer(der);
+        if (padded === undefined && parts.s[0] === 0x00) {
+          padded = { key, der };
+        }
+        const first = parts.r[0] ?? 0;
+        if (bare === undefined && first > 0 && first < 0x80) {
+          bare = { key, der };
+        }
+      }
+      if (padded === undefined || bare === undefined) {
+        throw new Error("signer did not produce both integer shapes");
+      }
+
+      async function register(key: Awaited<ReturnType<typeof signer>>, id: Uint8Array) {
+        const registration = await beginPasskeyRegistration(sql, {
+          userId: created.userId,
+          rpId: RP_ID,
+          now,
+        });
+        await finishPasskeyRegistration(sql, {
+          userId: created.userId,
+          rpId: RP_ID,
+          now,
+          clientDataJSON: clientData("webauthn.create", registration.challenge, ORIGIN),
+          attestationObject: attestationObject(
+            authenticatorData({
+              rpId: RP_ID,
+              signCount: 0,
+              credentialId: id,
+              cose: coseKey(key.x, key.y),
+            }),
+          ),
+        });
+      }
+
+      const negativeId = new Uint8Array(16).fill(11);
+      await register(padded.key, negativeId);
+      const negativeParts = splitDer(padded.der);
+      const negative = encodeDer(negativeParts.r, negativeParts.s.subarray(1));
+      expect(
+        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+          rpId: RP_ID,
+          now,
+          credentialId: negativeId,
+          clientDataJSON: client,
+          authenticatorData: authData,
+          signature: negative,
+        }),
+      ).toBeNull();
+
+      const minimalId = new Uint8Array(16).fill(12);
+      await register(bare.key, minimalId);
+      const minimalParts = splitDer(bare.der);
+      const minimal = encodeDer(concat([Uint8Array.of(0x00), minimalParts.r]), minimalParts.s);
+      expect(
+        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+          rpId: RP_ID,
+          now,
+          credentialId: minimalId,
+          clientDataJSON: client,
+          authenticatorData: authData,
+          signature: minimal,
+        }),
+      ).toBeNull();
+
+      const trailingId = new Uint8Array(16).fill(13);
+      await register(padded.key, trailingId);
+      const inside = concat([padded.der, Uint8Array.of(0x00)]);
+      const length = inside[1] ?? 0;
+      inside[1] = length + 1;
+      expect(
+        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+          rpId: RP_ID,
+          now,
+          credentialId: trailingId,
+          clientDataJSON: client,
+          authenticatorData: authData,
+          signature: inside,
+        }),
+      ).toBeNull();
+
+      const longId = new Uint8Array(16).fill(14);
+      await register(padded.key, longId);
+      const longS = encodeDer(Uint8Array.of(0x01), new Uint8Array(33).fill(0x01));
+      await expect(
+        finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+          rpId: RP_ID,
+          now,
+          credentialId: longId,
+          clientDataJSON: client,
+          authenticatorData: authData,
+          signature: longS,
+        }),
+      ).resolves.toBeNull();
+    });
+  });
 });

@@ -103,6 +103,29 @@ describe("checkout", () => {
     expect(opened).toHaveLength(1);
   });
 
+  it("keeps the replacement pool when the retry fails with an ordinary error", async () => {
+    const { checkout, opened, readSecret } = harness({ current: "rotated-secret" });
+    let attempts = 0;
+    await expect(
+      checkout("identity", async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw denied("28P01");
+        }
+        throw new Error("ordinary");
+      }),
+    ).rejects.toThrow("ordinary");
+    expect(opened).toHaveLength(2);
+    expect(opened[1]?.sql.end).not.toHaveBeenCalled();
+    const reads = readSecret.mock.calls.length;
+    await checkout("identity", async (sql) => {
+      expect(sql).toBe(opened[1]?.sql);
+    });
+    expect(readSecret).toHaveBeenCalledTimes(reads);
+    expect(opened[1]?.sql.end).not.toHaveBeenCalled();
+    expect(opened).toHaveLength(2);
+  });
+
   it("rejects a second auth failure without opening a third pool", async () => {
     const { checkout, opened } = harness({ current: "rotated-secret" });
     await expect(
@@ -127,6 +150,34 @@ describe("checkout", () => {
     ).rejects.toMatchObject({ code: "08006" });
     expect(readSecret).not.toHaveBeenCalled();
     expect(opened).toHaveLength(1);
+  });
+
+  it("re-reads one role once when twenty requests fail auth together", async () => {
+    const { checkout, opened, readSecret } = harness({ current: "rotated-secret" });
+    let attempts = 0;
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () =>
+        checkout("identity", async () => {
+          attempts += 1;
+          if (attempts <= 20) {
+            throw denied("28P01");
+          }
+          return "ok";
+        }),
+      ),
+    );
+    expect(results).toEqual(Array.from({ length: 20 }, () => "ok"));
+    expect(readSecret).toHaveBeenCalledTimes(2);
+    const replacements = opened.filter((pool) => pool.password === "rotated-secret");
+    const kept = replacements.filter((pool) => pool.sql.end.mock.calls.length === 0);
+    expect(kept).toHaveLength(1);
+    for (const pool of replacements) {
+      if (pool.sql !== kept[0]?.sql) {
+        expect(pool.sql.end).toHaveBeenCalled();
+      }
+    }
+    expect(opened[0]?.sql.end).not.toHaveBeenCalled();
+    expect(opened.filter((pool) => pool.sql.end.mock.calls.length === 0)).toHaveLength(2);
   });
 
   it("keeps the marker password out of the error and the log", async () => {

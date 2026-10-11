@@ -6,7 +6,7 @@
   "scripts": {
     "lint": "eslint .",
     "typecheck": "tsc --build && tsc --noEmit -p tsconfig.test.json",
-    "test": "vitest run --config vitest.config.ts",
+    "test": "vitest run --config vitest.config.ts && vitest run --config vitest.integration.config.ts",
     "build": "tsc --build"
   },
   "dependencies": {
