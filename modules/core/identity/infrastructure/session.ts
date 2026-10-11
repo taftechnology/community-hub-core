@@ -76,11 +76,24 @@ export async function refreshSession(
   const bidx = await bidxKey(sql, kms, keyArn);
   const refreshHash = await hmac(bidx, "identity.refresh", raw);
   const now = input.now.toISOString();
+  const located = await sql<{ refresh_family: string }[]>`
+    select refresh_family
+    from identity.sessions
+    where refresh_hash = ${refreshHash}
+      and refresh_expires_at > ${now}::timestamptz
+  `;
+  const family = located[0]?.refresh_family;
+  if (family === undefined) {
+    return null;
+  }
   const minted = await mint(sql, kms, keyArn);
   const successorId = newId();
   const accessExpires = new Date(input.now.getTime() + ACCESS_MS).toISOString();
   const refreshExpires = new Date(input.now.getTime() + REFRESH_MS).toISOString();
   const claimed = await sql.begin(async (tx) => {
+    await tx`
+      select pg_advisory_xact_lock(hashtextextended('family:' || ${family}::text, 0))
+    `;
     const rows = await tx<{ id: string; user_id: string; refresh_family: string }[]>`
       update identity.sessions
       set replaced_by = ${successorId}, revoked_at = ${now}::timestamptz
@@ -91,53 +104,48 @@ export async function refreshSession(
       returning id, user_id, refresh_family
     `;
     const row = rows[0];
-    if (row === undefined) {
-      return null;
+    if (row !== undefined) {
+      await tx`
+        insert into identity.sessions (
+          id, user_id, refresh_family, access_hash, refresh_hash, access_expires_at, refresh_expires_at
+        )
+        values (
+          ${successorId},
+          ${row.user_id},
+          ${row.refresh_family},
+          ${minted.accessHash},
+          ${minted.refreshHash},
+          ${accessExpires}::timestamptz,
+          ${refreshExpires}::timestamptz
+        )
+      `;
+      return row;
     }
-    await tx`
-      insert into identity.sessions (
-        id, user_id, refresh_family, access_hash, refresh_hash, access_expires_at, refresh_expires_at
-      )
-      values (
-        ${successorId},
-        ${row.user_id},
-        ${row.refresh_family},
-        ${minted.accessHash},
-        ${minted.refreshHash},
-        ${accessExpires}::timestamptz,
-        ${refreshExpires}::timestamptz
-      )
+    const existing = await tx<{ replaced_by: string | null }[]>`
+      select replaced_by
+      from identity.sessions
+      where refresh_hash = ${refreshHash}
+        and refresh_expires_at > ${now}::timestamptz
     `;
-    return row;
+    if (existing[0]?.replaced_by != null) {
+      await tx`
+        update identity.sessions
+        set revoked_at = ${now}::timestamptz
+        where refresh_family = ${family}
+          and revoked_at is null
+      `;
+    }
+    return null;
   });
-  if (claimed !== null) {
-    return {
-      userId: claimed.user_id,
-      accessToken: minted.accessToken,
-      refreshToken: minted.refreshToken,
-      expiresIn: 900,
-    };
+  if (claimed === null) {
+    return null;
   }
-  const existing = await sql<{ refresh_family: string; replaced_by: string | null }[]>`
-    select refresh_family, replaced_by
-    from identity.sessions
-    where refresh_hash = ${refreshHash}
-      and refresh_expires_at > ${now}::timestamptz
-  `;
-  const missed = existing[0];
-  if (missed !== undefined && missed.replaced_by !== null) {
-    await revokeFamily(sql, missed.refresh_family, now);
-  }
-  return null;
-}
-
-async function revokeFamily(sql: Sql, refreshFamily: string, now: string): Promise<void> {
-  await sql`
-    update identity.sessions
-    set revoked_at = ${now}::timestamptz
-    where refresh_family = ${refreshFamily}
-      and revoked_at is null
-  `;
+  return {
+    userId: claimed.user_id,
+    accessToken: minted.accessToken,
+    refreshToken: minted.refreshToken,
+    expiresIn: 900,
+  };
 }
 
 async function mint(
