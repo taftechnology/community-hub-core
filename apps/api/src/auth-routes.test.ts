@@ -139,6 +139,7 @@ describe("auth routes", () => {
       }),
     );
     expect(verified.status).toBe(200);
+    expect(verified.headers.get("cache-control")).toBe("no-store");
     expect(await verified.json()).toEqual({
       userId: "user-1",
       accessToken: "access-token",
@@ -155,6 +156,33 @@ describe("auth routes", () => {
     expect(response.status).toBe(401);
     expect(await response.text()).toBe("");
     expect(identity.beginPasskeyRegistration).not.toHaveBeenCalled();
+  });
+
+  it("sends no-store on passkey and refresh token responses", async () => {
+    const session = {
+      userId: "user-1",
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresIn: 900 as const,
+    };
+    identity.finishPasskeyAuthentication.mockResolvedValueOnce(session);
+    const authenticated = await route("/v1/auth/passkey/authenticate/verify").handle(
+      request("/v1/auth/passkey/authenticate/verify", AUTH_HOSTNAME, {
+        credentialId: "YQ",
+        clientDataJSON: "YQ",
+        authenticatorData: "YQ",
+        signature: "YQ",
+      }),
+    );
+    expect(authenticated.status).toBe(200);
+    expect(authenticated.headers.get("cache-control")).toBe("no-store");
+
+    identity.refreshSession.mockResolvedValueOnce(session);
+    const refreshed = await route("/v1/auth/session/refresh").handle(
+      request("/v1/auth/session/refresh", AUTH_HOSTNAME, { refreshToken: "refresh-token" }),
+    );
+    expect(refreshed.status).toBe(200);
+    expect(refreshed.headers.get("cache-control")).toBe("no-store");
   });
 
   it("returns 503 with an empty body when mail is unavailable", async () => {
