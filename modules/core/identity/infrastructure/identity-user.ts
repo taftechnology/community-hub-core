@@ -47,9 +47,12 @@ export async function insertIdentityUser(
     region: "au",
   });
   const emailBidx = await blindIndex(bidx, "identity.users.email", new TextEncoder().encode(email));
+  // A tagged template cannot take the branded values. The insert stores the bytes.
+  const emailBytes: Uint8Array = ciphertext;
+  const emailIndex: Uint8Array = emailBidx;
   await sql`
     insert into identity.users (id, region, email, email_bidx)
-    values (${userId}, 'au', ${ciphertext}, ${emailBidx})
+    values (${userId}, 'au', ${emailBytes}, ${emailIndex})
   `;
   return { userId };
 }
