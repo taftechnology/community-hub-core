@@ -641,6 +641,92 @@ describe("person create and read", () => {
     }
   });
 
+  it("rejects a household that belongs to another community of the same organisation", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const organisationId = newId();
+    const communityId = newId();
+    const otherCommunityId = newId();
+    const kms = createLocalKmsPort();
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, 'household-scope-parish', 'au', 'explicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, 'household-scope-north', 'au')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${otherCommunityId}, ${organisationId}, 'household-scope-south', 'au')
+        `;
+      });
+
+      const householdId = await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const created = await createHousehold(tx, kms, KEY_ARN, {
+            now: NOW,
+            label: null,
+            actorUserId: null,
+          });
+          return created.householdId;
+        }),
+      );
+
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(
+          app,
+          { orgId: organisationId, communityId: otherCommunityId },
+          async (tx) => {
+            await expect(
+              createPerson(tx, kms, KEY_ARN, {
+                now: NOW,
+                declaredAdult: false,
+                householdId,
+                dateOfBirth: "2008-10-11",
+                givenName: "Ada",
+                familyName: "Example",
+                email: null,
+                phone: null,
+                actorUserId: null,
+              }),
+            ).rejects.toMatchObject({ code: "not_found" });
+            await expect(
+              createPerson(tx, kms, KEY_ARN, {
+                now: NOW,
+                declaredAdult: false,
+                householdId,
+                dateOfBirth: null,
+                givenName: "Ned",
+                familyName: "Example",
+                email: null,
+                phone: null,
+                actorUserId: null,
+              }),
+            ).rejects.toMatchObject({ code: "not_found" });
+            const written = await tx<{ n: number }[]>`
+              select count(*)::int as n from app.persons
+            `;
+            expect(written).toEqual([{ n: 0 }]);
+          },
+        ),
+      );
+
+      const home = await withAppTransaction(
+        app,
+        { orgId: organisationId, communityId },
+        (tx) => tx<{ n: number }[]>`select count(*)::int as n from app.persons`,
+      );
+      expect(home).toEqual([{ n: 0 }]);
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
+
   it("rejects a direct insert that breaks an age-basis check", async () => {
     const direct = createPlaintextDirectSql(loadRuntime().productOnlyUrl);
     const orgId = newId();
