@@ -1,7 +1,7 @@
 # Spec: Service image runtime base
 
 Slug: service-image-runtime-base
-Status: draft
+Status: approved (2026-10-10, Abdus)
 Architecture refs: §7.3, §23.2, ADR 0009. The final stage named in `docs/specs/2026-10-05-regional-service.md` changes. That spec stays. Depends on `image-publish`, which is on `main`. Staging stays parked.
 
 ## Problem
