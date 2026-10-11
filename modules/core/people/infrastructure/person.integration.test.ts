@@ -628,6 +628,46 @@ describe("person create and read", () => {
       await direct.end({ timeout: 1 });
     }
   });
+
+  it("rejects a clear name on a minor and a restricted name on an adult", async () => {
+    const direct = createPlaintextDirectSql(loadRuntime().productOnlyUrl);
+    const orgId = newId();
+    const communityId = newId();
+    const householdId = newId();
+    const name = new Uint8Array([1]);
+    try {
+      await direct`
+        insert into app.households (id, org_id, community_id, label)
+        values (${householdId}::uuid, ${orgId}::uuid, ${communityId}::uuid, null)
+      `;
+      await expect(
+        direct`
+          insert into app.persons (
+            id, org_id, community_id, household_id, is_minor, age_basis,
+            given_name, given_name_restricted, family_name_restricted
+          ) values (
+            ${newId()}::uuid, ${orgId}::uuid, ${communityId}::uuid, ${householdId}::uuid,
+            true, 'unknown', 'Ada', ${name}, ${name}
+          )
+        `,
+      ).rejects.toMatchObject({ code: "23514" });
+      await expect(
+        direct`
+          insert into app.persons (
+            id, org_id, community_id, is_minor, age_basis,
+            given_name, family_name, given_name_restricted
+          ) values (
+            ${newId()}::uuid, ${orgId}::uuid, ${communityId}::uuid,
+            false, 'declared_adult', 'Ada', 'Example', ${name}
+          )
+        `,
+      ).rejects.toMatchObject({ code: "23514" });
+    } finally {
+      await direct`delete from app.persons where org_id = ${orgId}::uuid`;
+      await direct`delete from app.households where id = ${householdId}::uuid`;
+      await direct.end({ timeout: 1 });
+    }
+  });
 });
 
 function uuidBytes(uuid: string): Uint8Array {
