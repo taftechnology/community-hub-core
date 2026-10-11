@@ -222,7 +222,7 @@ create policy org_isolation on <table>
 
 - The application connects as a role **without** `BYPASSRLS`.
 - Organisation-scoped requests open a transaction and run `SELECT set_config('app.org_id', $1, true)` and the same for `app.community_id` (bound parameters). Session-level `SET` / `set_config(..., false)` is forbidden. **Identity-schema work uses the identity role and does not set `app.org_id`. Platform-schema work uses the platform role and does not set `app.org_id`.**
-- `community_id` scoping is enforced by `packages/db` query helpers and verified by tests. It is a soft boundary because organisation-level staff may legitimately query across communities.
+- A community-scoped `app` table's policy requires both `org_id` and `community_id` to match the transaction's settings. Organisation-level tables require `org_id` only. A read path across communities for organisation-level staff is added by a later chunk as an explicit policy, when the first organisation with more than one community needs it.
 
 **Not every table is organisation-scoped.** There are three categories, and each table declares which it is:
 
