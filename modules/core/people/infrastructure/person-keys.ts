@@ -1,7 +1,7 @@
 import type { webcrypto } from "node:crypto";
 
 import { deriveKeys, unwrapKey, unwrapKmsRoot, type KmsPort } from "@community-hub/crypto";
-import type { AppTransaction } from "@community-hub/db";
+import { appendAuditEvent, type AppTransaction } from "@community-hub/db";
 
 import { PeopleError } from "../domain/error.js";
 import { ensureCommunityKey } from "./keys.js";
@@ -127,5 +127,47 @@ export async function derivePersonFieldKeys(
     return { enc: keys.enc, bidx: keys.bidx };
   }
   const keys = await communityFieldKeys(tx, kms, keyArn);
+  return { enc: keys.enc, bidx: keys.bidx };
+}
+
+const PERSON_READ = "people.person.read";
+
+function actor(actorUserId: string | null): {
+  actorKind: "system" | "user";
+  actorId: string | null;
+} {
+  if (actorUserId === null) {
+    return { actorKind: "system", actorId: null };
+  }
+  return { actorKind: "user", actorId: actorUserId };
+}
+
+export async function openPersonFieldKeys(
+  tx: AppTransaction,
+  kms: KmsPort,
+  keyArn: string,
+  input: { personId: string; actorUserId: string | null },
+): Promise<{ enc: webcrypto.CryptoKey; bidx: webcrypto.CryptoKey } | null> {
+  const rows = await tx<{ is_minor: boolean; household_id: string | null }[]>`
+    select is_minor, household_id::text as household_id
+    from app.persons
+    where id = ${input.personId}::uuid
+  `;
+  const row = rows[0];
+  if (row === undefined) {
+    return null;
+  }
+  const keys = await derivePersonFieldKeys(tx, kms, keyArn, {
+    isMinor: row.is_minor,
+    householdId: row.household_id,
+  });
+  const recorded = actor(input.actorUserId);
+  await appendAuditEvent(tx, {
+    actorKind: recorded.actorKind,
+    actorId: recorded.actorId,
+    action: PERSON_READ,
+    purpose: PERSON_READ,
+    targetIds: [input.personId],
+  });
   return { enc: keys.enc, bidx: keys.bidx };
 }
