@@ -62,4 +62,6 @@ CREATE TABLE "identity"."passkey_credentials" (
 );
 --> statement-breakpoint
 ALTER TABLE "identity"."sessions" ADD CONSTRAINT "sessions_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "identity"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "identity"."passkey_credentials" ADD CONSTRAINT "passkey_credentials_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "identity"."users"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "identity"."passkey_credentials" ADD CONSTRAINT "passkey_credentials_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "identity"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "sessions_refresh_family_idx" ON "identity"."sessions" USING btree ("refresh_family");--> statement-breakpoint
+CREATE INDEX "otp_challenges_email_bidx_idx" ON "identity"."otp_challenges" USING btree ("email_bidx");

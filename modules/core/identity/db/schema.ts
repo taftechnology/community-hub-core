@@ -3,6 +3,7 @@ import {
   bigint,
   check,
   customType,
+  index,
   integer,
   text,
   timestamp,
@@ -60,7 +61,10 @@ export function identityTables(identity: PgSchema) {
       expiresAt: tz("expires_at").notNull(),
       consumedAt: tz("consumed_at"),
     },
-    (t) => [check("otp_challenges_attempts", sql`${t.attempts} >= 0 and ${t.attempts} <= 5`)],
+    (t) => [
+      check("otp_challenges_attempts", sql`${t.attempts} >= 0 and ${t.attempts} <= 5`),
+      index("otp_challenges_email_bidx_idx").on(t.emailBidx),
+    ],
   );
 
   const passkeyCredentials = identity.table(
@@ -114,6 +118,7 @@ export function identityTables(identity: PgSchema) {
     (t) => [
       unique("sessions_access_hash_unique").on(t.accessHash),
       unique("sessions_refresh_hash_unique").on(t.refreshHash),
+      index("sessions_refresh_family_idx").on(t.refreshFamily),
     ],
   );
 

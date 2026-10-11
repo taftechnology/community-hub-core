@@ -1,5 +1,5 @@
 {
-  "id": "1c3b30b2-28a2-45b2-8772-1d320be9e99b",
+  "id": "312c356a-996a-41ab-b78a-b25e0aae06ea",
   "prevId": "4c3b99c0-7c41-46c7-88d7-be88700b3809",
   "version": "7",
   "dialect": "postgresql",
@@ -354,7 +354,23 @@
           "notNull": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "sessions_refresh_family_idx": {
+          "name": "sessions_refresh_family_idx",
+          "columns": [
+            {
+              "expression": "refresh_family",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "sessions_user_id_users_id_fk": {
           "name": "sessions_user_id_users_id_fk",
@@ -541,7 +557,23 @@
           "notNull": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "otp_challenges_email_bidx_idx": {
+          "name": "otp_challenges_email_bidx_idx",
+          "columns": [
+            {
+              "expression": "email_bidx",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},

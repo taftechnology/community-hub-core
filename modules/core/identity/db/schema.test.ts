@@ -47,5 +47,12 @@ describe("identity tables", () => {
     expect(sql).not.toContain("FORCE ROW LEVEL SECURITY");
     expect(sql).not.toContain("ON DELETE CASCADE");
     expect(sql).not.toContain("DEFAULT");
+    expect(sql).toContain(
+      'CREATE INDEX "otp_challenges_email_bidx_idx" ON "identity"."otp_challenges" USING btree ("email_bidx")',
+    );
+    expect(sql).toContain(
+      'CREATE INDEX "sessions_refresh_family_idx" ON "identity"."sessions" USING btree ("refresh_family")',
+    );
+    expect(sql).not.toContain("CREATE UNIQUE INDEX");
   });
 });
