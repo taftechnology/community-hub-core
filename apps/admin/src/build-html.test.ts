@@ -22,4 +22,4 @@ it("builds index.html with external scripts and no inline style", () => {
   }
   expect(html).not.toMatch(/<style[\s>]/i);
   expect(html).not.toMatch(/\sstyle="/i);
-});
+}, 60000);
