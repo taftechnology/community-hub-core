@@ -22,6 +22,9 @@
     "@community-hub/api#test": {
       "dependsOn": ["^build", "@community-hub/identity#test"]
     },
+    "@community-hub/people#test": {
+      "dependsOn": ["^build", "@community-hub/api#test"]
+    },
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**"]

@@ -3,7 +3,7 @@ import { isAuditAction, isAuditPurpose } from "@community-hub/kernel/module";
 
 import type { AuditActorKind } from "./audit-hash.js";
 import { newId } from "./ids.js";
-import type { OrgTransaction } from "./tx.js";
+import type { AppTransaction, OrgTransaction } from "./tx.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -61,7 +61,7 @@ function assertTargetIds(targetIds: readonly string[]): void {
 }
 
 export async function appendAuditEvent(
-  tx: OrgTransaction,
+  tx: OrgTransaction | AppTransaction,
   input: {
     actorKind: AuditActorKind;
     actorId: string | null;
