@@ -668,6 +668,78 @@ describe("person create and read", () => {
       await direct.end({ timeout: 1 });
     }
   });
+
+  it("keeps an adult email on the community key inside a household", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const organisationId = newId();
+    const communityId = newId();
+    const kms = createLocalKmsPort();
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, 'adult-home-parish', 'au', 'implicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, 'adult-home-parish', 'au')
+        `;
+      });
+
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const household = await createHousehold(tx, kms, KEY_ARN, {
+            now: NOW,
+            label: null,
+            actorUserId: null,
+          });
+          const adult = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId: household.householdId,
+            dateOfBirth: "2008-10-11",
+            givenName: "Ada",
+            familyName: "Example",
+            email: "ada.home@example.com",
+            phone: null,
+            actorUserId: null,
+          });
+          const row = await tx<{ email: Uint8Array | null; email_bidx: Uint8Array | null }[]>`
+            select email, email_bidx from app.persons where id = ${adult.personId}::uuid
+          `;
+          const emailBytes = row[0]?.email;
+          const storedIndex = row[0]?.email_bidx;
+          if (emailBytes == null || storedIndex == null) {
+            throw new Error("adult email is missing");
+          }
+          const communityKeys = await communityFieldKeys(tx, kms, KEY_ARN);
+          const householdKeys = await householdFieldKeys(tx, kms, KEY_ARN, household.householdId);
+          const aad = {
+            tag: "chub/field/v1" as const,
+            label: "people.email",
+            rowId: uuidBytes(adult.personId),
+            communityId: uuidBytes(communityId),
+          };
+          const plain = await decrypt(asCiphertext(emailBytes), async () => communityKeys.enc, aad);
+          expect(new TextDecoder().decode(plain)).toBe("ada.home@example.com");
+          await expect(
+            decrypt(asCiphertext(emailBytes), async () => householdKeys.enc, aad),
+          ).rejects.toThrow();
+          const communityIndex = await blindIndex(
+            communityKeys.bidx,
+            "people.email",
+            new TextEncoder().encode("ada.home@example.com"),
+          );
+          expect(Array.from(storedIndex)).toEqual(Array.from(communityIndex));
+        }),
+      );
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
 });
 
 function uuidBytes(uuid: string): Uint8Array {
