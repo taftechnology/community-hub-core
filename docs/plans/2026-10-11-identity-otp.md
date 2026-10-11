@@ -225,7 +225,7 @@ The test fails because the functions are not exported.
 
 - [ ] **Step 2: Implement the code and the port**
 
-`startEmailOtp` follows the spec: normalise, reject `invalid_email` before `mail`, ensure the key, consume earlier challenges for that index, insert the HMAC with purpose `identity.otp`, commit, then `send`. If `send` rejects, delete that challenge row and rethrow. `expires_at` is `now` plus 10 minutes. `attempts` starts at 0. The code is eight digits from `crypto.getRandomValues`, leading zeros kept.
+`startEmailOtp` follows the spec: normalise, reject `invalid_email` before `mail`, ensure the key, consume earlier challenges for that index, insert the HMAC with purpose `identity.otp`, commit, then `send`. If `send` rejects, delete that challenge row and rethrow. `expires_at` is `now` plus 10 minutes. `attempts` starts at 0. The code is eight digits from `crypto.getRandomValues`, leading zeros kept. At most five challenges are created for one address in any 60 minutes. Over that limit the function returns without inserting a row and without calling `mail`.
 
 `verifyEmailOtp` returns `null` for an invalid address, a code that is not eight digits, a missing challenge, an expired challenge, a consumed challenge, a bad HMAC, or `attempts` already 5. A mismatch increments `attempts`. The fifth mismatch sets `consumed_at`. A match sets `consumed_at` and calls `insertIdentityUser` only when the blind index is new. It returns `{ userId }`.
 
@@ -278,7 +278,7 @@ EOF
 
 `domain/cbor.test.ts` round-trips an unsigned integer, a byte string, a text string, an array, and a map. A major type outside that set throws `IdentityError` with `code` `invalid_ceremony`.
 
-`passkey.integration.test.ts` builds the ceremony in the test with `node:crypto` `generateKeyPairSync("ec", { namedCurve: "prime256v1" })`. It signs `authenticatorData || SHA-256(clientDataJSON)` with SHA-256 ECDSA. `rpId` is `auth.example.test`. The origin is `https://auth.example.test`.
+`passkey.integration.test.ts` builds the ceremony in the test with `node:crypto` `generateKeyPairSync("ec", { namedCurve: "prime256v1" })`. It signs `authenticatorData || SHA-256(clientDataJSON)` with SHA-256 ECDSA and `dsaEncoding` `der`. A raw 64-byte signature is rejected. `rpId` is `auth.example.test`. The origin is `https://auth.example.test`. Registration options set `residentKey` to `required`.
 
 Registration options use that user's id as `name` and `displayName`, not `ada@example.com`. `alg` is `-7` only. `attestation` is `none`. Finish stores one `identity.passkey_credentials` row. A second finish with the same credential id throws `invalid_ceremony` and leaves one row.
 
@@ -288,7 +288,7 @@ The test fails because the functions are not exported.
 
 - [ ] **Step 2: Implement the ceremony**
 
-`domain/cbor.ts` decodes only the types the spec names, including the COSE EC2 key with `kty` 2, `alg` `-7`, and `crv` 1. `passkey.ts` stores the 32-byte challenge, checks client data type, origin, rpId hash, and the user-present flag, and verifies the signature with WebCrypto. Follow the spec's sign-count rule. Options put the user id in `name` and `displayName`.
+`domain/cbor.ts` decodes only the types the spec names, including the COSE EC2 key with `kty` 2, `alg` `-7`, and `crv` 1. `passkey.ts` stores the 32-byte challenge, checks client data type, origin, rpId hash, and the user-present flag, and verifies the DER signature with WebCrypto after converting it to `r||s`. Follow the spec's sign-count rule. Options put the user id in `name` and `displayName`, and `residentKey` is `required`.
 
 `public/index.ts` exports the four functions.
 
@@ -353,7 +353,7 @@ The new assertions fail because the functions still return `{ userId }` and `ref
 
 - [ ] **Step 2: Implement rotation**
 
-`session.ts` stores HMAC-SHA-256 under purposes `identity.access` and `identity.refresh`. Tokens are 32 bytes, base64url, no padding. `refresh_family` is a new id on the first session and is copied to the successor. Presenting a row with `replaced_by` set revokes every row in that family and returns `null`. A live refresh inserts the successor, then sets `replaced_by` and `revoked_at` on the presented row.
+`session.ts` stores HMAC-SHA-256 under purposes `identity.access` and `identity.refresh`. Tokens are 32 bytes, base64url, no padding. `refresh_family` is a new id on the first session and is copied to the successor. A live refresh claims the presented row in one statement that requires `replaced_by` is null, inserts the successor, and returns the new tokens. A claim that does not match, when `replaced_by` is set, revokes every row in that family and returns `null`, including when two refreshes of one token race.
 
 `verifyEmailOtp` and `finishPasskeyAuthentication` call that insert on success. `public/index.ts` exports `refreshSession`, `readSession`, and `SessionTokens`.
 
