@@ -129,6 +129,34 @@ describe("checkout", () => {
     expect(opened).toHaveLength(1);
   });
 
+  it("re-reads one role once when twenty requests fail auth together", async () => {
+    const { checkout, opened, readSecret } = harness({ current: "rotated-secret" });
+    let attempts = 0;
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () =>
+        checkout("identity", async () => {
+          attempts += 1;
+          if (attempts <= 20) {
+            throw denied("28P01");
+          }
+          return "ok";
+        }),
+      ),
+    );
+    expect(results).toEqual(Array.from({ length: 20 }, () => "ok"));
+    expect(readSecret).toHaveBeenCalledTimes(2);
+    const replacements = opened.filter((pool) => pool.password === "rotated-secret");
+    const kept = replacements.filter((pool) => pool.sql.end.mock.calls.length === 0);
+    expect(kept).toHaveLength(1);
+    for (const pool of replacements) {
+      if (pool.sql !== kept[0]?.sql) {
+        expect(pool.sql.end).toHaveBeenCalled();
+      }
+    }
+    expect(opened[0]?.sql.end).not.toHaveBeenCalled();
+    expect(opened.filter((pool) => pool.sql.end.mock.calls.length === 0)).toHaveLength(2);
+  });
+
   it("keeps the marker password out of the error and the log", async () => {
     const { checkout, logs } = harness({ current: MARKER, previous: "older-secret" });
     let caught: unknown;
