@@ -7,7 +7,7 @@ export function encodeCbor(value: Cbor): Uint8Array {
 }
 
 export function decodeCbor(bytes: Uint8Array): Cbor {
-  const read = readValue(bytes, 0);
+  const read = readValue(bytes, 0, 1);
   if (read.offset !== bytes.byteLength) {
     throw new IdentityError("invalid_ceremony");
   }
@@ -85,7 +85,11 @@ function header(major: number, value: number): Uint8Array {
   throw new IdentityError("invalid_ceremony");
 }
 
-function readValue(bytes: Uint8Array, offset: number): { value: Cbor; offset: number } {
+function readValue(
+  bytes: Uint8Array,
+  offset: number,
+  depth: number,
+): { value: Cbor; offset: number } {
   const initial = bytes[offset];
   if (initial === undefined) {
     throw new IdentityError("invalid_ceremony");
@@ -120,11 +124,16 @@ function readValue(bytes: Uint8Array, offset: number): { value: Cbor; offset: nu
     }
     return { value: text, offset: end };
   }
+  if (major === 4 || major === 5) {
+    if (depth > 4) {
+      throw new IdentityError("invalid_ceremony");
+    }
+  }
   if (major === 4) {
     const items: Cbor[] = [];
     let cursor = argument.offset;
     for (let index = 0; index < argument.value; index += 1) {
-      const item = readValue(bytes, cursor);
+      const item = readValue(bytes, cursor, depth + 1);
       items.push(item.value);
       cursor = item.offset;
     }
@@ -134,8 +143,8 @@ function readValue(bytes: Uint8Array, offset: number): { value: Cbor; offset: nu
     const map = new Map<Cbor, Cbor>();
     let cursor = argument.offset;
     for (let index = 0; index < argument.value; index += 1) {
-      const key = readValue(bytes, cursor);
-      const item = readValue(bytes, key.offset);
+      const key = readValue(bytes, cursor, depth + 1);
+      const item = readValue(bytes, key.offset, depth + 1);
       map.set(key.value, item.value);
       cursor = item.offset;
     }

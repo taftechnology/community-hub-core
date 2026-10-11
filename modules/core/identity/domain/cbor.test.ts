@@ -33,6 +33,26 @@ describe("cbor", () => {
     }
   });
 
+  it("rejects nesting deeper than four", () => {
+    let allowed: Cbor = 1;
+    for (let depth = 0; depth < 4; depth += 1) {
+      allowed = [allowed];
+    }
+    expect(decodeCbor(encodeCbor(allowed))).toEqual(allowed);
+
+    let tooDeep: Cbor = 1;
+    for (let depth = 0; depth < 5; depth += 1) {
+      tooDeep = [tooDeep];
+    }
+    expect(() => decodeCbor(encodeCbor(tooDeep))).toThrow(IdentityError);
+    try {
+      decodeCbor(encodeCbor(tooDeep));
+    } catch (error) {
+      expect(error).toBeInstanceOf(IdentityError);
+      expect(error).toMatchObject({ code: "invalid_ceremony" });
+    }
+  });
+
   it("accepts only an ES256 P-256 COSE key", () => {
     const x = new Uint8Array(32).fill(1);
     const y = new Uint8Array(32).fill(2);
