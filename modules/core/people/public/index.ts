@@ -14,3 +14,5 @@ export { ensureCommunityKey, ensureOrganisationKey } from "../infrastructure/key
 export { createHousehold, readHousehold } from "../infrastructure/household.js";
 export { createPerson, readPerson } from "../infrastructure/person.js";
 export { linkGuardian, unlinkGuardian } from "../infrastructure/guardian.js";
+export { listPersonActivity } from "../infrastructure/activity.js";
+export { attachTag, createTag, detachTag, listPersonTags } from "../infrastructure/tags.js";
