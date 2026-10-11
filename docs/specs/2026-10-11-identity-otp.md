@@ -1,7 +1,7 @@
 # Spec: Identity OTP and passkeys
 
 Slug: identity-otp
-Status: draft
+Status: approved (2026-10-11, Adnan Bin Hossen)
 Architecture refs: §6.3, §7.1, §11.1, §11.2, §12.1, §12.2, §12.2.1, §20, D9, D13. Implements the `identity-otp` row. Depends on `packages-crypto`, `packages-db`, `kernel-runtime`, and `regional-service`, all on `main`. Staging stays parked.
 
 ## Problem
