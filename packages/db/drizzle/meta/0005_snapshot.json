@@ -1,5 +1,5 @@
 {
-  "id": "2d1ba5f2-809e-48ac-9615-8e3041b05d50",
+  "id": "f4082ef3-1fd7-40b6-b44b-bf78519c8af9",
   "prevId": "312c356a-996a-41ab-b78a-b25e0aae06ea",
   "version": "7",
   "dialect": "postgresql",
@@ -1314,7 +1314,29 @@
           "notNull": true
         }
       },
-      "indexes": {},
+      "indexes": {
+        "person_activity_person_idx": {
+          "name": "person_activity_person_idx",
+          "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "person_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "person_activity_person_fk": {
           "name": "person_activity_person_fk",
@@ -1557,6 +1579,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "age_basis": {
+          "name": "age_basis",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
         "birthday_md": {
           "name": "birthday_md",
           "type": "smallint",
@@ -1749,6 +1777,22 @@
         }
       },
       "checkConstraints": {
+        "persons_age_basis": {
+          "name": "persons_age_basis",
+          "value": "\"app\".\"persons\".\"age_basis\" in ('date_of_birth', 'declared_adult', 'unknown')"
+        },
+        "persons_age_basis_dob": {
+          "name": "persons_age_basis_dob",
+          "value": "(\"app\".\"persons\".\"age_basis\" = 'date_of_birth') = (\"app\".\"persons\".\"date_of_birth\" is not null)"
+        },
+        "persons_age_basis_declared": {
+          "name": "persons_age_basis_declared",
+          "value": "\"app\".\"persons\".\"age_basis\" <> 'declared_adult' or \"app\".\"persons\".\"is_minor\" = false"
+        },
+        "persons_age_basis_unknown": {
+          "name": "persons_age_basis_unknown",
+          "value": "\"app\".\"persons\".\"age_basis\" <> 'unknown' or \"app\".\"persons\".\"is_minor\" = true"
+        },
         "persons_name_split": {
           "name": "persons_name_split",
           "value": "(\n            \"app\".\"persons\".\"is_minor\" = true\n            and \"app\".\"persons\".\"household_id\" is not null\n            and \"app\".\"persons\".\"given_name\" is null\n            and \"app\".\"persons\".\"family_name\" is null\n            and \"app\".\"persons\".\"given_name_restricted\" is not null\n            and \"app\".\"persons\".\"family_name_restricted\" is not null\n          ) or (\n            \"app\".\"persons\".\"is_minor\" = false\n            and \"app\".\"persons\".\"given_name\" is not null\n            and \"app\".\"persons\".\"family_name\" is not null\n            and \"app\".\"persons\".\"given_name_restricted\" is null\n            and \"app\".\"persons\".\"family_name_restricted\" is null\n          )"

@@ -149,6 +149,7 @@ ALTER TABLE "app"."person_activity" ADD CONSTRAINT "person_activity_person_fk" F
 ALTER TABLE "app"."person_tag_links" ADD CONSTRAINT "person_tag_links_person_fk" FOREIGN KEY ("org_id","person_id") REFERENCES "app"."persons"("org_id","id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."person_tag_links" ADD CONSTRAINT "person_tag_links_tag_fk" FOREIGN KEY ("org_id","tag_id") REFERENCES "app"."person_tags"("org_id","id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."persons" ADD CONSTRAINT "persons_household_fk" FOREIGN KEY ("org_id","household_id") REFERENCES "app"."households"("org_id","id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "person_activity_person_idx" ON "app"."person_activity" USING btree ("org_id","person_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "persons_adult_email_bidx" ON "app"."persons" USING btree ("community_id","email_bidx") WHERE "app"."persons"."is_minor" = false and "app"."persons"."email_bidx" is not null;--> statement-breakpoint
 CREATE UNIQUE INDEX "persons_minor_email_bidx" ON "app"."persons" USING btree ("household_id","email_bidx") WHERE "app"."persons"."is_minor" = true and "app"."persons"."email_bidx" is not null;--> statement-breakpoint
 CREATE UNIQUE INDEX "persons_adult_phone_bidx" ON "app"."persons" USING btree ("community_id","phone_bidx") WHERE "app"."persons"."is_minor" = false and "app"."persons"."phone_bidx" is not null;--> statement-breakpoint

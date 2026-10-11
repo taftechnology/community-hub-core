@@ -5,6 +5,7 @@ import {
   check,
   customType,
   foreignKey,
+  index,
   pgPolicy,
   primaryKey,
   smallint,
@@ -352,6 +353,7 @@ export function peopleTables(app: PgSchema) {
           foreignColumns: [persons.orgId, persons.id],
           name: "person_activity_person_fk",
         }).onDelete("restrict"),
+        index("person_activity_person_idx").on(t.orgId, t.personId),
         check(
           "person_activity_kind",
           sql`${t.kind} in ('created', 'tagged', 'untagged', 'guardian_linked', 'guardian_unlinked')`,
