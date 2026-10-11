@@ -414,6 +414,8 @@ describe("person create and read", () => {
             phone: null,
             actorUserId: null,
           });
+          expect(datedAdult).toEqual({ personId: datedAdult.personId, isMinor: false });
+          expect(unknown).toEqual({ personId: unknown.personId, isMinor: true });
 
           const datedMinorRead = await readPerson(tx, kms, KEY_ARN, {
             personId: datedMinor.personId,

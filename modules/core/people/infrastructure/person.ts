@@ -176,7 +176,7 @@ export async function createPerson(
   kms: KmsPort,
   keyArn: string,
   input: PersonInput,
-): Promise<{ personId: string }> {
+): Promise<{ personId: string; isMinor: boolean }> {
   const age = resolveAge(input.dateOfBirth, input.declaredAdult, input.now);
   const minor = age.isMinor;
   const monthDay = birthdayMd(input.dateOfBirth);
@@ -288,7 +288,7 @@ export async function createPerson(
     purpose: PERSON_CREATED,
     targetIds: [personId],
   });
-  return { personId };
+  return { personId, isMinor: minor };
 }
 
 export async function readPerson(
