@@ -111,22 +111,9 @@ function loopbackBody(id: string): { status: number; stdout: string; stderr: str
 }
 
 describe.skipIf(process.env.RUN_IMAGE_TESTS !== "1")("regional service image", () => {
-  it("ships perl-base at least 5.36.0-7+deb12u4 and an empty apt list", () => {
+  it("ships exactly the distroless package set", () => {
     ensureImage();
-    const perl = spawnSync(
-      "docker",
-      [
-        "run",
-        "--rm",
-        image,
-        "sh",
-        "-c",
-        "dpkg --compare-versions \"$(dpkg-query -W -f='${Version}' perl-base)\" ge 5.36.0-7+deb12u4",
-      ],
-      { encoding: "utf8" },
-    );
-    expect(perl.status, `${perl.stdout}${perl.stderr}`).toBe(0);
-    const lists = spawnSync(
+    const listed = spawnSync(
       "docker",
       [
         "run",
@@ -135,11 +122,70 @@ describe.skipIf(process.env.RUN_IMAGE_TESTS !== "1")("regional service image", (
         "node",
         "--input-type=module",
         "-e",
-        'import { readdirSync } from "node:fs"; const names = readdirSync("/var/lib/apt/lists"); if (names.length !== 0) { process.stderr.write(names.join("\\n")); process.exit(1); }',
+        [
+          'import { readdirSync } from "node:fs";',
+          'const names = readdirSync("/var/lib/dpkg/status.d")',
+          '.filter((name) => !name.endsWith(".md5sums"))',
+          ".sort();",
+          "process.stdout.write(JSON.stringify(names));",
+        ].join(" "),
       ],
       { encoding: "utf8" },
     );
-    expect(lists.status, lists.stderr).toBe(0);
+    expect(listed.status, listed.stderr).toBe(0);
+    expect(JSON.parse(listed.stdout)).toEqual([
+      "base-files",
+      "ca-certificates",
+      "gcc-14-base",
+      "libc6",
+      "libgcc-s1",
+      "libgomp1",
+      "libssl3t64",
+      "libstdc++6",
+      "libzstd1",
+      "media-types",
+      "netbase",
+      "tzdata",
+      "tzdata-legacy",
+      "zlib1g",
+    ]);
+  }, 600_000);
+
+  it("lets node write /tmp and records its owner and mode", () => {
+    ensureImage();
+    const write = spawnSync(
+      "docker",
+      [
+        "run",
+        "--rm",
+        "--user",
+        "node",
+        image,
+        "node",
+        "--input-type=module",
+        "-e",
+        'import { writeFileSync } from "node:fs"; writeFileSync("/tmp/write-probe", "ok");',
+      ],
+      { encoding: "utf8" },
+    );
+    expect(write.status, `${write.stdout}${write.stderr}`).toBe(0);
+    const stat = spawnSync(
+      "docker",
+      [
+        "run",
+        "--rm",
+        "--user",
+        "node",
+        image,
+        "node",
+        "--input-type=module",
+        "-e",
+        'import { statSync } from "node:fs"; const s = statSync("/tmp"); process.stdout.write(JSON.stringify({ uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 }));',
+      ],
+      { encoding: "utf8" },
+    );
+    expect(stat.status, stat.stderr).toBe(0);
+    expect(JSON.parse(stat.stdout)).toEqual({ uid: 1000, gid: 1000, mode: 0o1777 });
   }, 600_000);
 
   it("matches the ingress contract and drains an unfinished header on SIGTERM", async () => {
@@ -156,7 +202,7 @@ describe.skipIf(process.env.RUN_IMAGE_TESTS !== "1")("regional service image", (
     }>;
     const config = inspected[0]?.Config;
     expect(config?.User).toBe("node");
-    expect(config?.Entrypoint).toEqual(["docker-entrypoint.sh"]);
+    expect(config?.Entrypoint ?? []).toEqual([]);
     expect(config?.Cmd).toEqual(["node", "/app/index.js"]);
     expect(config?.Volumes).toHaveProperty("/tmp");
     const health = config?.Healthcheck?.Test ?? [];
