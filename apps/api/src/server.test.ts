@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { readServiceEnv, type ServiceEnv } from "./env.js";
 import type { GateRoute } from "./gate.js";
+import { productionRoutes } from "./index.js";
 
 const db = vi.hoisted(() => ({
   createDirectSql: vi.fn(),
@@ -100,7 +101,7 @@ describe("startServer", () => {
     expect(source).not.toContain("aws-kms-adapter");
 
     const env = envFor(18451);
-    const server = startServer({ env, routes: [health] });
+    const server = startServer({ env, routes: productionRoutes(env, pem) });
     servers.push(server);
     await listening(server);
 
@@ -352,5 +353,39 @@ describe("startServer", () => {
     const elapsed = Date.now() - marked;
     expect(elapsed).toBeGreaterThanOrEqual(40);
     expect(elapsed).toBeLessThan(150);
+  });
+
+  it("rejects a POST body over 4096 bytes without calling the handler", async () => {
+    const env = envFor(18459);
+    let calls = 0;
+    const server = startServer({
+      env,
+      routes: [
+        health,
+        {
+          method: "POST",
+          pattern: "/v1/auth/email-otp/start",
+          surface: "tenant",
+          handle: () => {
+            calls += 1;
+            return new Response(null, { status: 204 });
+          },
+        },
+      ],
+    });
+    servers.push(server);
+    await listening(server);
+
+    const response = await fetch("http://127.0.0.1:18459/v1/auth/email-otp/start", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-community-hub-hostname": "auth.au.example.test",
+      },
+      body: "a".repeat(4097),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("");
+    expect(calls).toBe(0);
   });
 });

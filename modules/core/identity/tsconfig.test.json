@@ -1,0 +1,22 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "paths": {
+      "@community-hub/crypto/testing": ["../../../packages/crypto/src/testing.ts"],
+      "@community-hub/db/plaintext": ["../../../packages/db/src/plaintext.ts"]
+    }
+  },
+  "include": [
+    "module.manifest.ts",
+    "domain/**/*.ts",
+    "public/**/*.ts",
+    "db/**/*.ts",
+    "infrastructure/**/*.ts"
+  ]
+}

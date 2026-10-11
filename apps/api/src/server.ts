@@ -16,8 +16,9 @@ export type SignalSource = {
 };
 
 const logger = createLogger();
+const POST_BODY_MAX_BYTES = 4096;
 
-function requestFrom(req: IncomingMessage): Request {
+function requestFrom(req: IncomingMessage, body?: Uint8Array): Request {
   const headers = new Headers();
   for (const [key, value] of Object.entries(req.headers)) {
     if (typeof value === "string") {
@@ -32,7 +33,22 @@ function requestFrom(req: IncomingMessage): Request {
   return new Request(`http://127.0.0.1${path}`, {
     method: req.method ?? "GET",
     headers,
+    ...(body === undefined ? {} : { body }),
   });
+}
+
+async function readPostBody(req: IncomingMessage): Promise<Uint8Array | "over"> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buf.byteLength;
+    if (size > POST_BODY_MAX_BYTES) {
+      return "over";
+    }
+    chunks.push(buf);
+  }
+  return Buffer.concat(chunks);
 }
 
 async function writeResponse(res: ServerResponse, response: Response): Promise<void> {
@@ -80,12 +96,28 @@ export function startServer(options: {
     }
     void (async () => {
       try {
+        let body: Uint8Array | undefined;
+        if (req.method === "POST") {
+          const read = await readPostBody(req);
+          if (read === "over") {
+            if (!res.headersSent && !res.writableEnded && !res.socket?.destroyed) {
+              res.writeHead(400, { "Content-Length": "0" });
+              res.end();
+            }
+            req.destroy();
+            return;
+          }
+          body = read;
+        }
         const remoteAddress = req.socket.remoteAddress ?? "";
-        const response = await gate({ request: requestFrom(req), remoteAddress });
+        const response = await gate({ request: requestFrom(req, body), remoteAddress });
         if (!res.writableEnded) {
           await writeResponse(res, response);
         }
       } catch {
+        if (res.socket?.destroyed) {
+          return;
+        }
         if (res.headersSent) {
           res.socket?.destroy();
         } else if (!res.writableEnded) {
