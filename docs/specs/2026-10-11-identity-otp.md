@@ -89,15 +89,15 @@ A session row stores HMAC-SHA-256 of the access token and of the refresh token u
 
 The auth routes are `surface: "tenant"`. The handler returns 404 with an empty body when `x-community-hub-hostname` is not the configured auth hostname. Paths:
 
-| Method | Path | Result |
-| --- | --- | --- |
-| `POST` | `/v1/auth/email-otp/start` | 204, or 400, or 503 |
-| `POST` | `/v1/auth/email-otp/verify` | 200 with tokens, or 400, or 401 |
-| `POST` | `/v1/auth/passkey/register/options` | 200 with options, or 401 |
-| `POST` | `/v1/auth/passkey/register/verify` | 204, or 400, or 401 |
-| `POST` | `/v1/auth/passkey/authenticate/options` | 200 with options, or 400 |
-| `POST` | `/v1/auth/passkey/authenticate/verify` | 200 with tokens, or 400, or 401 |
-| `POST` | `/v1/auth/session/refresh` | 200 with tokens, or 401 |
+| Method | Path                                    | Result                          |
+| ------ | --------------------------------------- | ------------------------------- |
+| `POST` | `/v1/auth/email-otp/start`              | 204, or 400, or 503             |
+| `POST` | `/v1/auth/email-otp/verify`             | 200 with tokens, or 400, or 401 |
+| `POST` | `/v1/auth/passkey/register/options`     | 200 with options, or 401        |
+| `POST` | `/v1/auth/passkey/register/verify`      | 204, or 400, or 401             |
+| `POST` | `/v1/auth/passkey/authenticate/options` | 200 with options, or 400        |
+| `POST` | `/v1/auth/passkey/authenticate/verify`  | 200 with tokens, or 400, or 401 |
+| `POST` | `/v1/auth/session/refresh`              | 200 with tokens, or 401         |
 
 `Content-Type` must be `application/json`. The body is at most 4096 bytes. A larger body, a non-JSON body, or a schema failure is 400 with an empty body. `startServer` copies that POST body onto the `Request`. It does not copy a GET body. The body is not logged.
 
@@ -131,42 +131,42 @@ D9's rationale replaces `The library remains Q3.` with `There is no identity lib
 
 ## Data
 
-| Table | Column | Classification | Notes |
-| --- | --- | --- | --- |
-| `identity.users` | `id` | `internal` | UUIDv7 primary key. Not encrypted. |
-| `identity.users` | `region` | `internal` | Clear. Only `au`. |
-| `identity.users` | `email` | `confidential-blind` | Ciphertext. Label `identity.users.email`. Not filtered. |
-| `identity.users` | `email_bidx` | `confidential-blind` | 32-byte blind index. Unique. Equality only. |
-| `identity.identity_keys` | `id` | `internal` | UUIDv7. Also the field `key_id`. |
-| `identity.identity_keys` | `region` | `internal` | Unique. Only `au`. |
-| `identity.identity_keys` | `wrapped` | `internal` | KMS blob. Not a personal field. |
-| `identity.identity_keys` | `key_version` | `internal` | The text `1`. |
-| `identity.otp_challenges` | `id` | `internal` | UUIDv7 primary key. |
-| `identity.otp_challenges` | `email_bidx` | `confidential-blind` | Equality lookup. Not unique. |
-| `identity.otp_challenges` | `code_hash` | `internal` | HMAC of the code. The code is not stored. |
-| `identity.otp_challenges` | `attempts` | `internal` | Integer, check `>= 0` and `<= 5`. |
-| `identity.otp_challenges` | `expires_at` | `internal` | Clear timestamptz. |
-| `identity.otp_challenges` | `consumed_at` | `internal` | Null until used or replaced. |
-| `identity.passkey_credentials` | `id` | `internal` | UUIDv7 primary key. |
-| `identity.passkey_credentials` | `user_id` | `internal` | References `identity.users`. Not unique. |
-| `identity.passkey_credentials` | `credential_id` | `internal` | Unique bytea. |
-| `identity.passkey_credentials` | `cose_key` | `internal` | Public key bytes. |
-| `identity.passkey_credentials` | `sign_count` | `internal` | Bigint, check `>= 0`. |
-| `identity.passkey_challenges` | `id` | `internal` | UUIDv7 primary key. |
-| `identity.passkey_challenges` | `user_id` | `internal` | Null for authentication. |
-| `identity.passkey_challenges` | `kind` | `internal` | `register` or `authenticate`. |
-| `identity.passkey_challenges` | `challenge` | `internal` | 32 bytes. Unique. |
-| `identity.passkey_challenges` | `expires_at` | `internal` | Clear timestamptz. |
-| `identity.passkey_challenges` | `consumed_at` | `internal` | Null until used. |
-| `identity.sessions` | `id` | `internal` | UUIDv7 primary key. |
-| `identity.sessions` | `user_id` | `internal` | References `identity.users`. |
-| `identity.sessions` | `refresh_family` | `internal` | UUIDv7. Not a foreign key. |
-| `identity.sessions` | `access_hash` | `internal` | Unique HMAC. |
-| `identity.sessions` | `refresh_hash` | `internal` | Unique HMAC. |
-| `identity.sessions` | `access_expires_at` | `internal` | Clear timestamptz. |
-| `identity.sessions` | `refresh_expires_at` | `internal` | Clear timestamptz. |
-| `identity.sessions` | `replaced_by` | `internal` | Null, or another session id. |
-| `identity.sessions` | `revoked_at` | `internal` | Null until rotation or reuse. |
+| Table                          | Column               | Classification       | Notes                                                   |
+| ------------------------------ | -------------------- | -------------------- | ------------------------------------------------------- |
+| `identity.users`               | `id`                 | `internal`           | UUIDv7 primary key. Not encrypted.                      |
+| `identity.users`               | `region`             | `internal`           | Clear. Only `au`.                                       |
+| `identity.users`               | `email`              | `confidential-blind` | Ciphertext. Label `identity.users.email`. Not filtered. |
+| `identity.users`               | `email_bidx`         | `confidential-blind` | 32-byte blind index. Unique. Equality only.             |
+| `identity.identity_keys`       | `id`                 | `internal`           | UUIDv7. Also the field `key_id`.                        |
+| `identity.identity_keys`       | `region`             | `internal`           | Unique. Only `au`.                                      |
+| `identity.identity_keys`       | `wrapped`            | `internal`           | KMS blob. Not a personal field.                         |
+| `identity.identity_keys`       | `key_version`        | `internal`           | The text `1`.                                           |
+| `identity.otp_challenges`      | `id`                 | `internal`           | UUIDv7 primary key.                                     |
+| `identity.otp_challenges`      | `email_bidx`         | `confidential-blind` | Equality lookup. Not unique.                            |
+| `identity.otp_challenges`      | `code_hash`          | `internal`           | HMAC of the code. The code is not stored.               |
+| `identity.otp_challenges`      | `attempts`           | `internal`           | Integer, check `>= 0` and `<= 5`.                       |
+| `identity.otp_challenges`      | `expires_at`         | `internal`           | Clear timestamptz.                                      |
+| `identity.otp_challenges`      | `consumed_at`        | `internal`           | Null until used or replaced.                            |
+| `identity.passkey_credentials` | `id`                 | `internal`           | UUIDv7 primary key.                                     |
+| `identity.passkey_credentials` | `user_id`            | `internal`           | References `identity.users`. Not unique.                |
+| `identity.passkey_credentials` | `credential_id`      | `internal`           | Unique bytea.                                           |
+| `identity.passkey_credentials` | `cose_key`           | `internal`           | Public key bytes.                                       |
+| `identity.passkey_credentials` | `sign_count`         | `internal`           | Bigint, check `>= 0`.                                   |
+| `identity.passkey_challenges`  | `id`                 | `internal`           | UUIDv7 primary key.                                     |
+| `identity.passkey_challenges`  | `user_id`            | `internal`           | Null for authentication.                                |
+| `identity.passkey_challenges`  | `kind`               | `internal`           | `register` or `authenticate`.                           |
+| `identity.passkey_challenges`  | `challenge`          | `internal`           | 32 bytes. Unique.                                       |
+| `identity.passkey_challenges`  | `expires_at`         | `internal`           | Clear timestamptz.                                      |
+| `identity.passkey_challenges`  | `consumed_at`        | `internal`           | Null until used.                                        |
+| `identity.sessions`            | `id`                 | `internal`           | UUIDv7 primary key.                                     |
+| `identity.sessions`            | `user_id`            | `internal`           | References `identity.users`.                            |
+| `identity.sessions`            | `refresh_family`     | `internal`           | UUIDv7. Not a foreign key.                              |
+| `identity.sessions`            | `access_hash`        | `internal`           | Unique HMAC.                                            |
+| `identity.sessions`            | `refresh_hash`       | `internal`           | Unique HMAC.                                            |
+| `identity.sessions`            | `access_expires_at`  | `internal`           | Clear timestamptz.                                      |
+| `identity.sessions`            | `refresh_expires_at` | `internal`           | Clear timestamptz.                                      |
+| `identity.sessions`            | `replaced_by`        | `internal`           | Null, or another session id.                            |
+| `identity.sessions`            | `revoked_at`         | `internal`           | Null until rotation or reuse.                           |
 
 No `org_id`. No minor columns. No clear email column.
 
@@ -184,16 +184,16 @@ Money, consent, retention, and analytics. No payment fields, no consent rows, an
 
 ## Contracts
 
-| Contract | Value |
-| --- | --- |
-| Package | `@community-hub/identity`. Public exports are the functions under Behaviour, `IdentityError`, `OtpMail`, and `OtpMailUnavailable`. |
-| Schemas | `@community-hub/contracts` exports Zod schemas for each JSON body in the HTTP table. |
-| Module | `core.identity`, version 1, no events and no entitlement. |
-| Mail | `send(input: { to: string; code: string }): Promise<void>`. Boot rejects. Tests keep the pair in memory. |
-| Journal | One additive entry in `packages/db/drizzle` after `0003`. |
-| Roles | `identity` can read and write. `app` and `platform` cannot. |
-| Secrets | `@aws-sdk/client-secrets-manager` in `apps/api` only. It replaces no package. It is the client for a secret the task already reads. |
-| Staging | Parked. No apply. |
+| Contract | Value                                                                                                                               |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Package  | `@community-hub/identity`. Public exports are the functions under Behaviour, `IdentityError`, `OtpMail`, and `OtpMailUnavailable`.  |
+| Schemas  | `@community-hub/contracts` exports Zod schemas for each JSON body in the HTTP table.                                                |
+| Module   | `core.identity`, version 1, no events and no entitlement.                                                                           |
+| Mail     | `send(input: { to: string; code: string }): Promise<void>`. Boot rejects. Tests keep the pair in memory.                            |
+| Journal  | One additive entry in `packages/db/drizzle` after `0003`.                                                                           |
+| Roles    | `identity` can read and write. `app` and `platform` cannot.                                                                         |
+| Secrets  | `@aws-sdk/client-secrets-manager` in `apps/api` only. It replaces no package. It is the client for a secret the task already reads. |
+| Staging  | Parked. No apply.                                                                                                                   |
 
 `IdentityError` extends `Error`. Its `code` is `invalid_email`, `email_unavailable`, or `invalid_ceremony`.
 
@@ -207,17 +207,17 @@ No new resource billed by the hour or the month. No NAT gateway, load balancer, 
 
 ## Risks
 
-| Risk | Mitigation |
-| --- | --- |
-| A clear email is stored or filtered in SQL | The column is ciphertext. Lookup uses `email_bidx`. A test decrypts with the identity AAD and fails if the SQL filters the ciphertext column. |
-| The code or the address is logged | The gate log stays method, path, and status. A test posts `ada@example.com` and a known code and fails if either string appears in a log call. |
-| The password or the secret string is logged | The checkout test uses a marker password and fails if that marker appears in a log or an error message. |
-| An auth failure opens pools without limit | One retry, then reject. The failed pool is not ended and not replaced unless the retry succeeds. |
-| A replaced refresh token stays valid | Reuse sets `revoked_at` on every row in the family. A test presents the old token twice and the second result is `null`, as is the successor. |
-| OTP verifies whether or not the user existed by a different status | Unknown and wrong codes are both `null` and HTTP 401. Start is 204 for every valid address. |
-| The `app` login reads identity rows | A test as `app` and as `platform` is denied. |
-| Mail leaves the process | The boot port rejects with no I/O. The test port keeps the message in memory. |
-| Staging is unparked to try sign-in | The proof is the existing Docker Postgres. Staging flags stay parked. |
+| Risk                                                               | Mitigation                                                                                                                                     |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| A clear email is stored or filtered in SQL                         | The column is ciphertext. Lookup uses `email_bidx`. A test decrypts with the identity AAD and fails if the SQL filters the ciphertext column.  |
+| The code or the address is logged                                  | The gate log stays method, path, and status. A test posts `ada@example.com` and a known code and fails if either string appears in a log call. |
+| The password or the secret string is logged                        | The checkout test uses a marker password and fails if that marker appears in a log or an error message.                                        |
+| An auth failure opens pools without limit                          | One retry, then reject. The failed pool is not ended and not replaced unless the retry succeeds.                                               |
+| A replaced refresh token stays valid                               | Reuse sets `revoked_at` on every row in the family. A test presents the old token twice and the second result is `null`, as is the successor.  |
+| OTP verifies whether or not the user existed by a different status | Unknown and wrong codes are both `null` and HTTP 401. Start is 204 for every valid address.                                                    |
+| The `app` login reads identity rows                                | A test as `app` and as `platform` is denied.                                                                                                   |
+| Mail leaves the process                                            | The boot port rejects with no I/O. The test port keeps the message in memory.                                                                  |
+| Staging is unparked to try sign-in                                 | The proof is the existing Docker Postgres. Staging flags stay parked.                                                                          |
 
 ## Tests
 

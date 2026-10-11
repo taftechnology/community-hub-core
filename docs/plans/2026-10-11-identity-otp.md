@@ -39,16 +39,16 @@ Status: approved (2026-10-11, Adnan Bin Hossen)
 
 ## File map
 
-| File | Responsibility |
-| --- | --- |
-| `pnpm-workspace.yaml` | One new workspace member, `modules/core/identity`. |
-| `modules/core/identity/` | Manifest, email rule, schema, key, OTP, passkeys, sessions, and their tests. |
-| `packages/db/drizzle.schema.ts` | Passes the one `identity` schema into `identityTables`. |
-| `packages/db/drizzle/` | One new journal entry after `0003_complex_leech`. |
-| `packages/contracts/` | Zod bodies for the auth routes. |
-| `apps/api/src/` | POST body, auth routes, checkout, and the secrets reader. |
-| `docs/adr/0011-in-house-identity.md` | Closes Q3. |
-| `architecture.md`, `docs/roadmap.md`, `AGENTS.md` | The sentences the spec names. |
+| File                                              | Responsibility                                                               |
+| ------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `pnpm-workspace.yaml`                             | One new workspace member, `modules/core/identity`.                           |
+| `modules/core/identity/`                          | Manifest, email rule, schema, key, OTP, passkeys, sessions, and their tests. |
+| `packages/db/drizzle.schema.ts`                   | Passes the one `identity` schema into `identityTables`.                      |
+| `packages/db/drizzle/`                            | One new journal entry after `0003_complex_leech`.                            |
+| `packages/contracts/`                             | Zod bodies for the auth routes.                                              |
+| `apps/api/src/`                                   | POST body, auth routes, checkout, and the secrets reader.                    |
+| `docs/adr/0011-in-house-identity.md`              | Closes Q3.                                                                   |
+| `architecture.md`, `docs/roadmap.md`, `AGENTS.md` | The sentences the spec names.                                                |
 
 ## Dependencies
 
@@ -60,25 +60,25 @@ Status: approved (2026-10-11, Adnan Bin Hossen)
 
 These are the settings named in the spec. For each one, during the task that adds the test, change the source once, see that test fail, restore the source, and report the failure. The report is session scratch. The weakened tree is never committed.
 
-| Setting | Task | Test | Source change that must fail it |
-| --- | --- | --- | --- |
-| No `org_id`, no RLS | 1 | SQL test on the generated journal entry | Add `"org_id"` or `ENABLE ROW LEVEL SECURITY` to that SQL, then restore |
-| `app` and `platform` have no privilege | 1 | Integration test | Add `GRANT USAGE ON SCHEMA identity TO app` to the journal SQL |
-| No `set_config` | 1 | Source test | Add a `set_config` call in `infrastructure/identity-key.ts` |
-| Ciphertext column is not filtered | 1 | Source test | Add `where email =` in `infrastructure/identity-user.ts` |
-| Wrong code and unknown address are both null | 2 | Integration test | Return a distinct code string for an unknown address |
-| Fifth mismatch consumes the challenge | 2 | Integration test | Leave `attempts` uncapped |
-| Rejecting mail deletes the challenge | 2 | Integration test | Leave the row in place when `send` rejects |
-| Bad origin is rejected | 3 | Passkey test | Skip the origin comparison |
-| A sign count that does not increase is rejected | 3 | Passkey test | Accept a new count lower than the stored count |
-| Reuse revokes the refresh family | 4 | Session test | Return the successor on the second presentation |
-| The address and the code are not logged | 5 | HTTP test | `logger.info` the email inside the start handler |
-| Body over 4096 bytes is 400 | 5 | Server test | Raise the limit to 8192 |
-| Auth hostname is required | 5 | HTTP test | Accept the API hostname |
-| `GET /health` does not check out | 5 | Server test | Call `createIdentitySql` from the health route |
-| One retry after `28P01` | 6 | Checkout test | Open a third pool when the retry also fails |
-| A non-auth error does not read secrets | 6 | Checkout test | Call the reader for every rejection |
-| The password is not logged | 6 | Checkout test | Put the password in the thrown error message |
+| Setting                                         | Task | Test                                    | Source change that must fail it                                         |
+| ----------------------------------------------- | ---- | --------------------------------------- | ----------------------------------------------------------------------- |
+| No `org_id`, no RLS                             | 1    | SQL test on the generated journal entry | Add `"org_id"` or `ENABLE ROW LEVEL SECURITY` to that SQL, then restore |
+| `app` and `platform` have no privilege          | 1    | Integration test                        | Add `GRANT USAGE ON SCHEMA identity TO app` to the journal SQL          |
+| No `set_config`                                 | 1    | Source test                             | Add a `set_config` call in `infrastructure/identity-key.ts`             |
+| Ciphertext column is not filtered               | 1    | Source test                             | Add `where email =` in `infrastructure/identity-user.ts`                |
+| Wrong code and unknown address are both null    | 2    | Integration test                        | Return a distinct code string for an unknown address                    |
+| Fifth mismatch consumes the challenge           | 2    | Integration test                        | Leave `attempts` uncapped                                               |
+| Rejecting mail deletes the challenge            | 2    | Integration test                        | Leave the row in place when `send` rejects                              |
+| Bad origin is rejected                          | 3    | Passkey test                            | Skip the origin comparison                                              |
+| A sign count that does not increase is rejected | 3    | Passkey test                            | Accept a new count lower than the stored count                          |
+| Reuse revokes the refresh family                | 4    | Session test                            | Return the successor on the second presentation                         |
+| The address and the code are not logged         | 5    | HTTP test                               | `logger.info` the email inside the start handler                        |
+| Body over 4096 bytes is 400                     | 5    | Server test                             | Raise the limit to 8192                                                 |
+| Auth hostname is required                       | 5    | HTTP test                               | Accept the API hostname                                                 |
+| `GET /health` does not check out                | 5    | Server test                             | Call `createIdentitySql` from the health route                          |
+| One retry after `28P01`                         | 6    | Checkout test                           | Open a third pool when the retry also fails                             |
+| A non-auth error does not read secrets          | 6    | Checkout test                           | Call the reader for every rejection                                     |
+| The password is not logged                      | 6    | Checkout test                           | Put the password in the thrown error message                            |
 
 ---
 
@@ -120,7 +120,7 @@ These are the settings named in the spec. For each one, during the task that add
 
 - [ ] **Step 1: Write the failing tests**
 
-`domain/email.test.ts` imports the normaliser. `Ada@Example.com` and ` ada@example.com ` become `ada@example.com`. `ada@example.com` is unchanged. These throw `IdentityError` with `code` `invalid_email`: `""`, `"ada"`, `"a da@example.com"`, `"ada@@example.com"`, `"ada@example"`, `"ada@-example.com"`, and a string containing a newline. Assert `error instanceof IdentityError` and `error instanceof Error`.
+`domain/email.test.ts` imports the normaliser. `Ada@Example.com` and `ada@example.com` become `ada@example.com`. `ada@example.com` is unchanged. These throw `IdentityError` with `code` `invalid_email`: `""`, `"ada"`, `"a da@example.com"`, `"ada@@example.com"`, `"ada@example"`, `"ada@-example.com"`, and a string containing a newline. Assert `error instanceof IdentityError` and `error instanceof Error`.
 
 `domain/manifest.test.ts` imports the manifest and expects the key, version, empty arrays, and the `dataClasses` above.
 
