@@ -43,6 +43,13 @@
       "when": 1791748886598,
       "tag": "0005_people_households",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791760960924,
+      "tag": "0006_people_org_scoped_uniques",
+      "breakpoints": true
     }
   ]
 }

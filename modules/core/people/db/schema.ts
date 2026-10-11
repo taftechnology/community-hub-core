@@ -72,7 +72,7 @@ export function peopleTables(app: PgSchema) {
       },
       (t) => [
         primaryKey({ columns: [t.orgId, t.id] }),
-        unique("community_keys_community_id_unique").on(t.communityId),
+        unique("community_keys_community_id_unique").on(t.orgId, t.communityId),
         check("community_keys_key_version", sql`${t.keyVersion} = '1'`),
         pgPolicy("community_isolation", {
           for: "all",
@@ -293,7 +293,7 @@ export function peopleTables(app: PgSchema) {
       },
       (t) => [
         primaryKey({ columns: [t.orgId, t.id] }),
-        unique("person_tags_community_label_unique").on(t.communityId, t.label),
+        unique("person_tags_community_label_unique").on(t.orgId, t.communityId, t.label),
         check("person_tags_label", sql`${t.label} ~ '^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$'`),
         pgPolicy("community_isolation", {
           for: "all",
