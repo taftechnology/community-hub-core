@@ -102,6 +102,7 @@ CREATE TABLE "app"."persons" (
 	"community_id" uuid NOT NULL,
 	"household_id" uuid,
 	"is_minor" boolean NOT NULL,
+	"age_basis" text NOT NULL,
 	"birthday_md" smallint,
 	"given_name" text,
 	"family_name" text,
@@ -113,6 +114,10 @@ CREATE TABLE "app"."persons" (
 	"phone" "bytea",
 	"phone_bidx" "bytea",
 	CONSTRAINT "persons_org_id_id_pk" PRIMARY KEY("org_id","id"),
+	CONSTRAINT "persons_age_basis" CHECK ("app"."persons"."age_basis" in ('date_of_birth', 'declared_adult', 'unknown')),
+	CONSTRAINT "persons_age_basis_dob" CHECK (("app"."persons"."age_basis" = 'date_of_birth') = ("app"."persons"."date_of_birth" is not null)),
+	CONSTRAINT "persons_age_basis_declared" CHECK ("app"."persons"."age_basis" <> 'declared_adult' or "app"."persons"."is_minor" = false),
+	CONSTRAINT "persons_age_basis_unknown" CHECK ("app"."persons"."age_basis" <> 'unknown' or "app"."persons"."is_minor" = true),
 	CONSTRAINT "persons_name_split" CHECK ((
             "app"."persons"."is_minor" = true
             and "app"."persons"."household_id" is not null

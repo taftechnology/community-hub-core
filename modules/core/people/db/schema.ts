@@ -141,6 +141,7 @@ export function peopleTables(app: PgSchema) {
         communityId: uuid("community_id").notNull(),
         householdId: uuid("household_id"),
         isMinor: boolean("is_minor").notNull(),
+        ageBasis: text("age_basis").notNull(),
         birthdayMd: smallint("birthday_md"),
         givenName: text("given_name"),
         familyName: text("family_name"),
@@ -175,6 +176,19 @@ export function peopleTables(app: PgSchema) {
         uniqueIndex("persons_minor_phone_bidx")
           .on(t.householdId, t.phoneBidx)
           .where(sql`${t.isMinor} = true and ${t.phoneBidx} is not null`),
+        check(
+          "persons_age_basis",
+          sql`${t.ageBasis} in ('date_of_birth', 'declared_adult', 'unknown')`,
+        ),
+        check(
+          "persons_age_basis_dob",
+          sql`(${t.ageBasis} = 'date_of_birth') = (${t.dateOfBirth} is not null)`,
+        ),
+        check(
+          "persons_age_basis_declared",
+          sql`${t.ageBasis} <> 'declared_adult' or ${t.isMinor} = false`,
+        ),
+        check("persons_age_basis_unknown", sql`${t.ageBasis} <> 'unknown' or ${t.isMinor} = true`),
         check(
           "persons_name_split",
           sql`(

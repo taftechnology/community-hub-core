@@ -1,5 +1,6 @@
 export type PeopleErrorCode =
   | "invalid_date"
+  | "invalid_declaration"
   | "invalid_name"
   | "invalid_email"
   | "invalid_phone"

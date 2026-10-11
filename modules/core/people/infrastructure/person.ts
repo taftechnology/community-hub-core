@@ -5,11 +5,12 @@ import { appendAuditEvent, newId, type AppTransaction } from "@community-hub/db"
 
 import { PeopleError } from "../domain/error.js";
 import {
+  type AgeBasis,
   birthdayMd,
-  isMinor,
   normaliseEmail,
   normaliseName,
   normalisePhone,
+  resolveAge,
 } from "../domain/person.js";
 import { derivePersonFieldKeys } from "./person-keys.js";
 
@@ -18,6 +19,7 @@ const PERSON_READ = "people.person.read";
 
 type PersonInput = {
   now: Date;
+  declaredAdult: boolean;
   householdId: string | null;
   dateOfBirth: string | null;
   givenName: string;
@@ -31,6 +33,7 @@ type StoredPerson = {
   id: string;
   household_id: string | null;
   is_minor: boolean;
+  age_basis: string;
   birthday_md: number | null;
   given_name: string | null;
   family_name: string | null;
@@ -52,6 +55,13 @@ function uuidToBytes(uuid: string): Uint8Array {
 
 function asCiphertext(bytes: Uint8Array): Ciphertext {
   return bytes as never;
+}
+
+function ageBasisOf(value: string): AgeBasis {
+  if (value === "date_of_birth" || value === "declared_adult" || value === "unknown") {
+    return value;
+  }
+  throw new Error("age basis is missing");
 }
 
 function actor(actorUserId: string | null): {
@@ -167,7 +177,8 @@ export async function createPerson(
   keyArn: string,
   input: PersonInput,
 ): Promise<{ personId: string }> {
-  const minor = isMinor(input.dateOfBirth, input.now);
+  const age = resolveAge(input.dateOfBirth, input.declaredAdult, input.now);
+  const minor = age.isMinor;
   const monthDay = birthdayMd(input.dateOfBirth);
   if (minor && input.householdId === null) {
     throw new PeopleError("household_required");
@@ -225,7 +236,7 @@ export async function createPerson(
     await tx.savepoint("person_insert", async (sp) => {
       await sp`
         insert into app.persons (
-          id, org_id, community_id, household_id, is_minor, birthday_md,
+          id, org_id, community_id, household_id, is_minor, age_basis, birthday_md,
           given_name, family_name, given_name_restricted, family_name_restricted,
           date_of_birth, email, email_bidx, phone, phone_bidx
         ) values (
@@ -234,6 +245,7 @@ export async function createPerson(
           current_setting('app.community_id')::uuid,
           ${input.householdId}::uuid,
           ${minor},
+          ${age.ageBasis},
           ${monthDay},
           ${clearGiven},
           ${clearFamily},
@@ -288,6 +300,7 @@ export async function readPerson(
   personId: string;
   householdId: string | null;
   isMinor: boolean;
+  ageBasis: AgeBasis;
   birthdayMd: number | null;
   givenName: string;
   familyName: string;
@@ -300,6 +313,7 @@ export async function readPerson(
       id::text as id,
       household_id::text as household_id,
       is_minor,
+      age_basis,
       birthday_md,
       given_name,
       family_name,
@@ -356,6 +370,7 @@ export async function readPerson(
     personId: row.id,
     householdId: row.household_id,
     isMinor: row.is_minor,
+    ageBasis: ageBasisOf(row.age_basis),
     birthdayMd: row.birthday_md,
     givenName,
     familyName,

@@ -8,6 +8,7 @@ import {
   normaliseName,
   normalisePhone,
   normaliseTag,
+  resolveAge,
 } from "./person.js";
 
 const SYDNEY_ELEVENTH = new Date("2026-10-11T00:00:00+11:00");
@@ -33,6 +34,30 @@ describe("person domain", () => {
     expect(isMinor("2008-02-29", new Date("2026-03-01T12:00:00+11:00"))).toBe(false);
     expect(birthdayMd("2008-10-11")).toBe(1011);
     expect(birthdayMd(null)).toBeNull();
+  });
+
+  it("keeps a missing date of birth as a minor unless the caller declares an adult", () => {
+    expect(resolveAge("2008-10-11", false, SYDNEY_ELEVENTH)).toEqual({
+      isMinor: false,
+      ageBasis: "date_of_birth",
+    });
+    expect(resolveAge("2008-10-11", true, SYDNEY_ELEVENTH)).toEqual({
+      isMinor: false,
+      ageBasis: "date_of_birth",
+    });
+    expect(resolveAge("2008-10-12", false, SYDNEY_ELEVENTH)).toEqual({
+      isMinor: true,
+      ageBasis: "date_of_birth",
+    });
+    throwsCode(() => resolveAge("2008-10-12", true, SYDNEY_ELEVENTH), "invalid_declaration");
+    expect(resolveAge(null, true, SYDNEY_ELEVENTH)).toEqual({
+      isMinor: false,
+      ageBasis: "declared_adult",
+    });
+    expect(resolveAge(null, false, SYDNEY_ELEVENTH)).toEqual({
+      isMinor: true,
+      ageBasis: "unknown",
+    });
   });
 
   it("rejects a date that is not a real past calendar day", () => {

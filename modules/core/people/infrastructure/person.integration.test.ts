@@ -88,6 +88,7 @@ describe("person create and read", () => {
           await expect(
             createPerson(tx, kms, KEY_ARN, {
               now: NOW,
+              declaredAdult: false,
               householdId: null,
               dateOfBirth: null,
               givenName: "Ned",
@@ -102,6 +103,7 @@ describe("person create and read", () => {
 
           const created = await createPerson(tx, kms, KEY_ARN, {
             now: NOW,
+            declaredAdult: false,
             householdId: null,
             dateOfBirth: "2008-10-11",
             givenName: "Ada",
@@ -113,6 +115,7 @@ describe("person create and read", () => {
           const row = await tx<
             {
               is_minor: boolean;
+              age_basis: string;
               birthday_md: number | null;
               given_name: string | null;
               family_name: string | null;
@@ -123,7 +126,7 @@ describe("person create and read", () => {
             }[]
           >`
             select
-              is_minor, birthday_md, given_name, family_name,
+              is_minor, age_basis, birthday_md, given_name, family_name,
               given_name_restricted, family_name_restricted, email, phone
             from app.persons
             where id = ${created.personId}::uuid
@@ -131,6 +134,7 @@ describe("person create and read", () => {
           expect(row).toEqual([
             {
               is_minor: false,
+              age_basis: "date_of_birth",
               birthday_md: 1011,
               given_name: "Ada",
               family_name: "Example",
@@ -177,6 +181,7 @@ describe("person create and read", () => {
             personId: created.personId,
             householdId: null,
             isMinor: false,
+            ageBasis: "date_of_birth",
             birthdayMd: 1011,
             givenName: "Ada",
             familyName: "Example",
@@ -206,6 +211,7 @@ describe("person create and read", () => {
           await expect(
             createPerson(tx, kms, KEY_ARN, {
               now: NOW,
+              declaredAdult: false,
               householdId: null,
               dateOfBirth: "2008-10-11",
               givenName: "Ada",
@@ -231,6 +237,7 @@ describe("person create and read", () => {
           });
           const minor = await createPerson(tx, kms, KEY_ARN, {
             now: NOW,
+            declaredAdult: false,
             householdId: household.householdId,
             dateOfBirth: null,
             givenName: "Ned",
@@ -242,18 +249,20 @@ describe("person create and read", () => {
           const minorRow = await tx<
             {
               is_minor: boolean;
+              age_basis: string;
               birthday_md: number | null;
               given_name: string | null;
               family_name: string | null;
               given_name_restricted: Uint8Array | null;
             }[]
           >`
-            select is_minor, birthday_md, given_name, family_name, given_name_restricted
+            select is_minor, age_basis, birthday_md, given_name, family_name, given_name_restricted
             from app.persons
             where id = ${minor.personId}::uuid
           `;
           expect(minorRow[0]).toMatchObject({
             is_minor: true,
+            age_basis: "unknown",
             birthday_md: null,
             given_name: null,
             family_name: null,
@@ -313,6 +322,237 @@ describe("person create and read", () => {
     } finally {
       await platform.end({ timeout: 1 });
       await app.end({ timeout: 1 });
+    }
+  });
+
+  it("records age basis from the date, a declaration, or an unknown birth date", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const organisationId = newId();
+    const communityId = newId();
+    const kms = createLocalKmsPort();
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, 'age-parish', 'au', 'implicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, 'age-parish', 'au')
+        `;
+      });
+
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const before = await tx<{ n: number }[]>`select count(*)::int as n from app.persons`;
+          await expect(
+            createPerson(tx, kms, KEY_ARN, {
+              now: NOW,
+              declaredAdult: true,
+              householdId: null,
+              dateOfBirth: "2008-10-12",
+              givenName: "Ned",
+              familyName: "Example",
+              email: null,
+              phone: null,
+              actorUserId: null,
+            }),
+          ).rejects.toMatchObject({ code: "invalid_declaration" });
+          const afterReject = await tx<{ n: number }[]>`
+            select count(*)::int as n from app.persons
+          `;
+          expect(afterReject).toEqual(before);
+
+          const household = await createHousehold(tx, kms, KEY_ARN, {
+            now: NOW,
+            label: null,
+            actorUserId: null,
+          });
+          const datedMinor = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId: household.householdId,
+            dateOfBirth: "2008-10-12",
+            givenName: "Ned",
+            familyName: "Example",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          const datedAdult = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId: null,
+            dateOfBirth: "2008-10-11",
+            givenName: "Ada",
+            familyName: "Example",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          const declared = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: true,
+            householdId: null,
+            dateOfBirth: null,
+            givenName: "Bea",
+            familyName: "Example",
+            email: "bea@example.com",
+            phone: null,
+            actorUserId: null,
+          });
+          const unknown = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId: household.householdId,
+            dateOfBirth: null,
+            givenName: "Cara",
+            familyName: "Example",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+
+          const datedMinorRead = await readPerson(tx, kms, KEY_ARN, {
+            personId: datedMinor.personId,
+            actorUserId: null,
+          });
+          const datedAdultRead = await readPerson(tx, kms, KEY_ARN, {
+            personId: datedAdult.personId,
+            actorUserId: null,
+          });
+          const declaredRead = await readPerson(tx, kms, KEY_ARN, {
+            personId: declared.personId,
+            actorUserId: null,
+          });
+          const unknownRead = await readPerson(tx, kms, KEY_ARN, {
+            personId: unknown.personId,
+            actorUserId: null,
+          });
+          expect(datedMinorRead).toMatchObject({
+            isMinor: true,
+            ageBasis: "date_of_birth",
+            givenName: "Ned",
+          });
+          expect(datedAdultRead).toMatchObject({
+            isMinor: false,
+            ageBasis: "date_of_birth",
+            givenName: "Ada",
+          });
+          expect(declaredRead).toMatchObject({
+            isMinor: false,
+            ageBasis: "declared_adult",
+            givenName: "Bea",
+            familyName: "Example",
+            email: "bea@example.com",
+            dateOfBirth: null,
+          });
+          expect(unknownRead).toMatchObject({
+            isMinor: true,
+            ageBasis: "unknown",
+            dateOfBirth: null,
+          });
+
+          const declaredRow = await tx<
+            {
+              given_name: string | null;
+              family_name: string | null;
+              given_name_restricted: Uint8Array | null;
+              email: Uint8Array | null;
+            }[]
+          >`
+            select given_name, family_name, given_name_restricted, email
+            from app.persons
+            where id = ${declared.personId}::uuid
+          `;
+          expect(declaredRow[0]).toMatchObject({
+            given_name: "Bea",
+            family_name: "Example",
+            given_name_restricted: null,
+          });
+          const emailBytes = declaredRow[0]?.email;
+          if (emailBytes == null) {
+            throw new Error("declared adult email is missing");
+          }
+          const communityKeys = await communityFieldKeys(tx, kms, KEY_ARN);
+          const emailPlain = await decrypt(
+            asCiphertext(emailBytes),
+            async () => communityKeys.enc,
+            {
+              tag: "chub/field/v1",
+              label: "people.email",
+              rowId: uuidBytes(declared.personId),
+              communityId: uuidBytes(communityId),
+            },
+          );
+          expect(new TextDecoder().decode(emailPlain)).toBe("bea@example.com");
+        }),
+      );
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
+
+  it("rejects a direct insert that breaks an age-basis check", async () => {
+    const direct = createPlaintextDirectSql(loadRuntime().productOnlyUrl);
+    const orgId = newId();
+    const communityId = newId();
+    const householdId = newId();
+    const name = new Uint8Array([1]);
+    try {
+      await direct`
+        insert into app.households (id, org_id, community_id, label)
+        values (${householdId}::uuid, ${orgId}::uuid, ${communityId}::uuid, null)
+      `;
+      await expect(
+        direct`
+          insert into app.persons (
+            id, org_id, community_id, household_id, is_minor, age_basis,
+            given_name_restricted, family_name_restricted
+          ) values (
+            ${newId()}::uuid, ${orgId}::uuid, ${communityId}::uuid, ${householdId}::uuid,
+            true, 'other', ${name}, ${name}
+          )
+        `,
+      ).rejects.toMatchObject({ code: "23514" });
+      await expect(
+        direct`
+          insert into app.persons (
+            id, org_id, community_id, is_minor, age_basis, given_name, family_name
+          ) values (
+            ${newId()}::uuid, ${orgId}::uuid, ${communityId}::uuid,
+            false, 'date_of_birth', 'Ada', 'Example'
+          )
+        `,
+      ).rejects.toMatchObject({ code: "23514" });
+      await expect(
+        direct`
+          insert into app.persons (
+            id, org_id, community_id, household_id, is_minor, age_basis,
+            given_name_restricted, family_name_restricted
+          ) values (
+            ${newId()}::uuid, ${orgId}::uuid, ${communityId}::uuid, ${householdId}::uuid,
+            true, 'declared_adult', ${name}, ${name}
+          )
+        `,
+      ).rejects.toMatchObject({ code: "23514" });
+      await expect(
+        direct`
+          insert into app.persons (
+            id, org_id, community_id, is_minor, age_basis, given_name, family_name
+          ) values (
+            ${newId()}::uuid, ${orgId}::uuid, ${communityId}::uuid,
+            false, 'unknown', 'Ada', 'Example'
+          )
+        `,
+      ).rejects.toMatchObject({ code: "23514" });
+    } finally {
+      await direct`delete from app.persons where org_id = ${orgId}::uuid`;
+      await direct`delete from app.households where id = ${householdId}::uuid`;
+      await direct.end({ timeout: 1 });
     }
   });
 });

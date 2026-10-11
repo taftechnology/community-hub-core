@@ -71,6 +71,26 @@ function completedYears(dob: CivilDate, today: CivilDate): number {
   return age;
 }
 
+export type AgeBasis = "date_of_birth" | "declared_adult" | "unknown";
+
+export function resolveAge(
+  dateOfBirth: string | null,
+  declaredAdult: boolean,
+  now: Date,
+): { isMinor: boolean; ageBasis: AgeBasis } {
+  if (dateOfBirth !== null) {
+    const minor = isMinor(dateOfBirth, now);
+    if (declaredAdult && minor) {
+      throw new PeopleError("invalid_declaration");
+    }
+    return { isMinor: minor, ageBasis: "date_of_birth" };
+  }
+  if (declaredAdult) {
+    return { isMinor: false, ageBasis: "declared_adult" };
+  }
+  return { isMinor: true, ageBasis: "unknown" };
+}
+
 export function isMinor(dateOfBirth: string | null, now: Date): boolean {
   if (dateOfBirth === null) {
     return true;

@@ -76,6 +76,7 @@ describe("guardian links", () => {
           });
           const adult = await createPerson(tx, kms, KEY_ARN, {
             now: NOW,
+            declaredAdult: false,
             householdId: household.householdId,
             dateOfBirth: "2008-10-11",
             givenName: "Ada",
@@ -86,6 +87,7 @@ describe("guardian links", () => {
           });
           const minor = await createPerson(tx, kms, KEY_ARN, {
             now: NOW,
+            declaredAdult: false,
             householdId: household.householdId,
             dateOfBirth: null,
             givenName: "Ned",

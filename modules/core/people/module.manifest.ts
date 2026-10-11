@@ -34,6 +34,7 @@ export default defineModule({
     "persons.community_id": "internal",
     "persons.household_id": "internal",
     "persons.is_minor": "confidential-queryable",
+    "persons.age_basis": "confidential-queryable",
     "persons.birthday_md": "confidential-queryable",
     "persons.given_name": "internal",
     "persons.family_name": "internal",

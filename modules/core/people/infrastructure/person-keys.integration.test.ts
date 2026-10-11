@@ -98,6 +98,7 @@ describe("person field keys", () => {
         withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
           const adult = await createPerson(tx, kms, KEY_ARN, {
             now: NOW,
+            declaredAdult: false,
             householdId: null,
             dateOfBirth: "2008-10-11",
             givenName: "Ada",
@@ -113,6 +114,7 @@ describe("person field keys", () => {
           });
           const minor = await createPerson(tx, kms, KEY_ARN, {
             now: NOW,
+            declaredAdult: false,
             householdId: household.householdId,
             dateOfBirth: null,
             givenName: "Ned",
