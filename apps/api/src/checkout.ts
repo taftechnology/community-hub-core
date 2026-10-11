@@ -86,12 +86,7 @@ export function createCheckout<TSql>(options: {
 }
 
 async function endPool(sql: unknown): Promise<void> {
-  if (
-    typeof sql === "object" &&
-    sql !== null &&
-    "end" in sql &&
-    typeof sql.end === "function"
-  ) {
+  if (typeof sql === "object" && sql !== null && "end" in sql && typeof sql.end === "function") {
     await sql.end();
   }
 }

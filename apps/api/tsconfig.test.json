@@ -2,7 +2,11 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "composite": false,
-    "noEmit": true
+    "noEmit": true,
+    "paths": {
+      "@community-hub/crypto/testing": ["../../packages/crypto/src/testing.ts"],
+      "@community-hub/db/plaintext": ["../../packages/db/src/plaintext.ts"]
+    }
   },
   "include": ["src/**/*.ts", "vitest.config.ts"],
   "exclude": []

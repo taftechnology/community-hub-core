@@ -151,7 +151,26 @@ describe("sessions", () => {
         await refreshSession(sql, kms, KEY_ARN, { refreshToken: opened.refreshToken, now }),
       ).toBeNull();
       expect(
+        await refreshSession(sql, kms, KEY_ARN, { refreshToken: rotated.refreshToken, now }),
+      ).toBeNull();
+      expect(
         await readSession(sql, kms, KEY_ARN, { accessToken: rotated.accessToken, now }),
+      ).toBeNull();
+
+      await startEmailOtp(sql, kms, KEY_ARN, mail, { email: "ada@example.com", now });
+      const expired = await verifyEmailOtp(sql, kms, KEY_ARN, {
+        email: "ada@example.com",
+        code: mail.last?.code ?? "",
+        now,
+      });
+      if (expired === null) {
+        throw new Error("session was not opened");
+      }
+      expect(
+        await refreshSession(sql, kms, KEY_ARN, {
+          refreshToken: expired.refreshToken,
+          now: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000 + 1),
+        }),
       ).toBeNull();
     } finally {
       await clearIdentity(sql);
