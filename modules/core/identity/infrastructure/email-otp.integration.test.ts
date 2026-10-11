@@ -320,4 +320,32 @@ describe("email one-time code", () => {
       await observer.end({ timeout: 1 });
     }
   }, 15_000);
+
+  it("creates at most five codes for an address in sixty minutes", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const mail = new MemoryMail();
+    const kms = createLocalKmsPort();
+    await withSql(async (sql) => {
+      for (let sent = 0; sent < 5; sent += 1) {
+        await startEmailOtp(sql, kms, KEY_ARN, mail, { email: "ada@example.com", now });
+      }
+      expect(mail.sends).toBe(5);
+      const before = await sql<{ n: number }[]>`
+        select count(*)::int as n from identity.otp_challenges
+      `;
+      await startEmailOtp(sql, kms, KEY_ARN, mail, { email: "ada@example.com", now });
+      expect(mail.sends).toBe(5);
+      const after = await sql<{ n: number }[]>`
+        select count(*)::int as n from identity.otp_challenges
+      `;
+      expect(after).toEqual(before);
+
+      await startEmailOtp(sql, kms, KEY_ARN, mail, { email: "other@example.com", now });
+      expect(mail.sends).toBe(6);
+
+      const later = new Date(now.getTime() + 60 * 60 * 1000);
+      await startEmailOtp(sql, kms, KEY_ARN, mail, { email: "ada@example.com", now: later });
+      expect(mail.sends).toBe(7);
+    });
+  });
 });

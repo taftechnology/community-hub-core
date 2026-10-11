@@ -12,6 +12,8 @@ import { createSession, type SessionTokens } from "./session.js";
 
 const CONTEXT = { key_kind: "identity", region: "au", key_version: "1" } as const;
 const TEN_MINUTES_MS = 10 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const CODES_PER_HOUR = 5;
 
 function eightDigits(): string {
   const bytes = new Uint8Array(8);
@@ -77,6 +79,16 @@ export async function startEmailOtp(
   const email = normaliseEmail(input.email);
   const bidx = await bidxKey(sql, kms, keyArn);
   const emailBidx = await hmac(bidx, "identity.users.email", new TextEncoder().encode(email));
+  const windowStart = new Date(input.now.getTime() - HOUR_MS + TEN_MINUTES_MS).toISOString();
+  const recent = await sql<{ n: number }[]>`
+    select count(*)::int as n
+    from identity.otp_challenges
+    where email_bidx = ${emailBidx}
+      and expires_at > ${windowStart}::timestamptz
+  `;
+  if ((recent[0]?.n ?? 0) >= CODES_PER_HOUR) {
+    return;
+  }
   const code = eightDigits();
   const codeHash = await hmac(bidx, "identity.otp", new TextEncoder().encode(code));
   const challengeId = newId();
