@@ -185,7 +185,7 @@ describe("passkeys", () => {
       expect(options.attestation).toBe("none");
       expect(options.authenticatorSelection).toEqual({
         userVerification: "preferred",
-        residentKey: "discouraged",
+        residentKey: "required",
       });
       const authData = authenticatorData({
         rpId: RP_ID,

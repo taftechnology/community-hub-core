@@ -16,7 +16,7 @@ export type PasskeyRegistrationOptions = {
   user: { id: Uint8Array; name: string; displayName: string };
   pubKeyCredParams: [{ type: "public-key"; alg: -7 }];
   attestation: "none";
-  authenticatorSelection: { userVerification: "preferred"; residentKey: "discouraged" };
+  authenticatorSelection: { userVerification: "preferred"; residentKey: "required" };
 };
 
 export type PasskeyAuthenticationOptions = {
@@ -51,7 +51,7 @@ export async function beginPasskeyRegistration(
     },
     pubKeyCredParams: [{ type: "public-key", alg: -7 }],
     attestation: "none",
-    authenticatorSelection: { userVerification: "preferred", residentKey: "discouraged" },
+    authenticatorSelection: { userVerification: "preferred", residentKey: "required" },
   };
 }
 
