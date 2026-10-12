@@ -6,20 +6,20 @@ Spec: docs/specs/2026-10-12-db-migrate-command.md
 
 **Goal:** Add `/app/db-migrate.js` to the service image. It connects as the master login, refuses to run before `db-bootstrap`, applies the product migrations through `applyProductMigrations`, and prints the tags it applied. It prints no driver text, no SQL, and no secret.
 
-**Architecture:** Nine commits. `applyProductMigrations` first returns a report. The ops environment parsing and the SQLSTATE reduction are then shared modules with their own tests. The command is next, with a unit test on a fake driver. Two integration files prove it on the shared Docker cluster and on a throwaway non-superuser TLS container. The image test, the runbook section, and the catalogue follow. No apply, no migration, no Terraform.
+**Architecture:** Ten commits. `applyProductMigrations` first returns a report. The ops environment parsing and the SQLSTATE reduction are then shared modules with their own tests. The command is next, with a unit test on a fake driver. One integration file proves it on the shared Docker cluster. The TLS test fixture is then extracted in a commit of its own, and a second integration file uses it against a throwaway non-superuser TLS container. The image test, the runbook section, and the catalogue follow. No apply, no migration, no Terraform.
 
 **Tech Stack:** TypeScript, Node 24, Vitest, Drizzle ORM `0.45.2`, `postgres` `3.4.9`, Docker `postgres:17`, `openssl`. No new dependency, so no lockfile change.
 
 Slug: db-migrate-command
 Status: draft
 
-**Branch:** `feat/2026-10-12-db-migrate-command` · one PR · 9 tasks, one commit each
+**Branch:** `feat/2026-10-12-db-migrate-command` · one PR · 10 tasks, one commit each
 
 ## Global Constraints
 
 - The spec is approved (`approved (2026-10-12, Abdus)`). Do not edit `docs/specs/2026-10-12-db-migrate-command.md`. Do not edit the draft `staging-proof-run` spec or its branch.
 - Do not start Task 1 until this plan's Status line is `approved`. Do not mark this plan approved yourself.
-- **Migration wave: none.** This chunk adds no migration and edits no file under `packages/db/drizzle/`, no snapshot, no `packages/db/sql/bootstrap.sql`. The only edits to those files are the two mutations in the Security pins table, each run once, seen to fail, and restored. They are never committed. Check `git diff --stat` for `packages/db/drizzle` and `packages/db/sql` before every commit.
+- **Migration wave: none.** This chunk adds no migration and edits no file under `packages/db/drizzle/`, no snapshot, no `packages/db/sql/bootstrap.sql`. The only edits to those files are the mutations in the Security pins table, each run once, seen to fail, and restored. They are never committed. Check `git diff --stat` for `packages/db/drizzle` and `packages/db/sql` before every commit.
 - **Infra: none.** No Terraform change, no apply, no `.github/workflows` change, no Dockerfile change. Staging stays parked: do not touch `enable_database`, `desired_count`, or `service_image`. There are no Terraform asserts in this plan, so there is no scratch probe. Do not read any `*.local.tfvars` file.
 - No dependency is added and `pnpm-lock.yaml` does not change.
 - The program writes only the lines in the spec's output table. It never reads, logs, or interpolates `error.message`, `error.query`, `error.params`, or `error.stack`. It never writes a host, a port, a database name, a user, a password, or SQL text.
@@ -28,34 +28,36 @@ Status: draft
 - Session scratch (`.superpowers/`, `*-report.md`) is never committed. A commit holds only the files its task names.
 - The agent does not apply, push an image, or merge. This chunk touches the database, tenancy (it applies the RLS migrations), and the master login. The second fresh-context review starts when the pull request opens. Leave that line open. Do not write the second review.
 - Every task runs `pnpm gate` before its commit. Format the files in that commit first: `pnpm exec prettier --write` on those paths.
+- `packages/db/package.json` `exports` points at `dist`, and `apps/api` tests and type checks run against the built package. After any change under `packages/db/src`, run `pnpm --filter @community-hub/db build` before running an `apps/api` test by hand. Until then the new exports are undefined. `pnpm gate` builds through Turbo. The steps below name the build wherever a hand run needs it.
+- Neither vitest config sets `testTimeout`, so the 5-second default applies. Every `it` in the three integration files this plan adds or edits (Tasks 1, 5 and 7) passes an explicit timeout as its third argument: 30 000 ms, and 60 000 ms for the concurrency case. The TLS file keeps `beforeAll` at 120 000 ms and `afterAll` at 30 000 ms, as `tls.integration.test.ts` does.
 - Docker Postgres is started by the `@community-hub/db` test setup. Do not add a compose file. If Docker is missing, stop and report. Do not skip an integration test.
 
 **Rollback:** Revert the merge. The command, the report, the shared modules, and the test files all go. The image already published stays in the registry and is harmless, because nothing runs the command unless a human overrides the command. There is no down-migration and none is added. A migration applied to staging is undone by the re-park, which destroys a database that holds no data.
 
-**Size:** About 1,800 changed lines. About 1,100 are test code and about 130 are moved from `tls.integration.test.ts` into the fixture. Production code is about 300 lines. The AGENTS.md guide is about 800. The spec requires these tests and splits no further, because a split would merge the command without its proof. The per-task estimates are below.
+**Size:** About 2,000 changed lines. About 1,250 are test code. About 260 are the TLS fixture move, which a diff counts twice, once as deleted from `tls.integration.test.ts` and once as added to the fixture. Production code is about 320 lines. The AGENTS.md guide is about 800. This stays one PR. The spec requires these tests, the command and its proof must merge together, and the only independent slice (the fixture extraction) is already its own commit, which a reviewer can read apart. The per-task estimates are below.
 
 ## File map
 
-| File                                                                            | Responsibility                                                                                            |
-| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `packages/db/src/migrate.ts`                                                    | `applyMigrations` and `applyProductMigrations` return `{ applied, total }`.                               |
-| `packages/db/src/index.ts`                                                      | Exports `MIGRATION_LOCK_ID` and the `MigrationReport` type.                                               |
-| `packages/db/test/database-fixture.ts`                                          | `freshDatabase`: a new database on the shared cluster, dropped by the test.                               |
-| `packages/db/test/tls-fixture.ts`                                               | Certificate generation and the throwaway TLS Postgres container, extracted from the TLS test.             |
-| `packages/db/test/migrate.integration.test.ts`                                  | Report assertions and the role-and-lock pin.                                                              |
-| `packages/db/test/tls.integration.test.ts`                                      | Uses the fixture. No assertion changes.                                                                   |
-| `packages/db/tsconfig.test.json`, `eslint.config.js`                            | Include the fixtures in the type check and in the existing test-file lint lists.                          |
-| `apps/api/src/env.ts`                                                           | Exports `text` and `portNumber`. Nothing else changes.                                                    |
-| `apps/api/src/db-ops-env.ts`                                                    | The eight ops variables and the CA read, shared by both commands.                                         |
-| `apps/api/src/db-ops-error.ts`                                                  | Reduces a caught error to a stage word and an optional SQLSTATE.                                          |
-| `apps/api/src/db-bootstrap.ts`                                                  | Uses `db-ops-env.ts`. Behaviour unchanged.                                                                |
-| `apps/api/src/db-migrate.ts`                                                    | `runDbMigrate` and the entry block. Emitted as `/app/db-migrate.js` by the existing `tsconfig.emit.json`. |
-| `apps/api/src/db-ops-env.test.ts`, `db-ops-error.test.ts`, `db-migrate.test.ts` | Unit tests on a fake driver.                                                                              |
-| `apps/api/src/db-migrate.integration.test.ts`                                   | Shared Docker cluster, plaintext, fresh database per test.                                                |
-| `apps/api/src/db-migrate-tls.integration.test.ts`                               | Own non-superuser TLS container, verify-full.                                                             |
-| `apps/api/src/image.test.ts`                                                    | `RUN_IMAGE_TESTS`-gated image assertions.                                                                 |
-| `docs/runbooks/apply-staging-au.md`                                             | Section "Apply product migrations".                                                                       |
-| `docs/roadmap.md`, `AGENTS.md`                                                  | The sentences the spec's Catalogue names.                                                                 |
+| File                                                                            | Responsibility                                                                                                                                |
+| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/db/src/migrate.ts`                                                    | `applyMigrations` and `applyProductMigrations` return `{ applied, total }`.                                                                   |
+| `packages/db/src/index.ts`                                                      | Exports `MIGRATION_LOCK_ID` and the `MigrationReport` type.                                                                                   |
+| `packages/db/test/fixtures/database-fixture.ts`                                 | `freshDatabase`: a new database on the shared cluster, dropped by the test.                                                                   |
+| `packages/db/test/fixtures/tls-fixture.ts`                                      | Certificate generation and the throwaway TLS Postgres container, extracted from the TLS test.                                                 |
+| `packages/db/test/migrate.integration.test.ts`                                  | Report assertions and the role-and-lock pin. Three existing lines change (Task 1).                                                            |
+| `packages/db/test/tls.integration.test.ts`                                      | Uses the fixture. No assertion changes.                                                                                                       |
+| `packages/db/tsconfig.test.json`                                                | Includes the two fixtures and `migrate.integration.test.ts` in the type check.                                                                |
+| `apps/api/src/env.ts`                                                           | Exports `text` and `portNumber`. Nothing else changes.                                                                                        |
+| `apps/api/src/db-ops-env.ts`                                                    | The eight ops variables and the CA read, shared by both commands.                                                                             |
+| `apps/api/src/db-ops-error.ts`                                                  | Reduces a caught error to a stage word and an optional SQLSTATE.                                                                              |
+| `apps/api/src/db-bootstrap.ts`                                                  | Uses `db-ops-env.ts`. Behaviour unchanged.                                                                                                    |
+| `apps/api/src/db-migrate.ts`                                                    | `runDbMigrate`, `runDbMigrateMain` (the backstop), and the entry block. Emitted as `/app/db-migrate.js` by the existing `tsconfig.emit.json`. |
+| `apps/api/src/db-ops-env.test.ts`, `db-ops-error.test.ts`, `db-migrate.test.ts` | Unit tests on a fake driver.                                                                                                                  |
+| `apps/api/src/db-migrate.integration.test.ts`                                   | Shared Docker cluster, plaintext, fresh database per test.                                                                                    |
+| `apps/api/src/db-migrate-tls.integration.test.ts`                               | Own non-superuser TLS container, verify-full.                                                                                                 |
+| `apps/api/src/image.test.ts`                                                    | `RUN_IMAGE_TESTS`-gated image assertions.                                                                                                     |
+| `docs/runbooks/apply-staging-au.md`                                             | Section "Apply product migrations".                                                                                                           |
+| `docs/roadmap.md`, `AGENTS.md`                                                  | The sentences the spec's Catalogue names.                                                                                                     |
 
 ## Test plumbing
 
@@ -67,9 +69,9 @@ Status: draft
 | `db-migrate-tls.integration.test.ts`                               | Same integration config                                                                               | **Its own container.** Started in `beforeAll`, removed in `afterAll`. Not the compose cluster.          |
 | `apps/api/src/image.test.ts`                                       | `apps/api/vitest.config.ts`, `RUN_IMAGE_TESTS=1`                                                      | None. Runs `docker build` and `docker run`.                                                             |
 
-- **The TLS container.** The test file owns it. The name is `ch-db-migrate-tls-` plus four random bytes in hex. It publishes `127.0.0.1::5432`, so Docker picks a free loopback port. The compose cluster uses 5432 and PgBouncer uses 6432, so it never collides. It does not share a cluster, a role, or a password with any other suite. `afterAll` stops and removes it and deletes the certificate directory, whether or not a test failed.
+- **The TLS container.** The test file owns it. The fixture takes a `namePrefix` option, and the test passes `ch-db-migrate-tls-`, so the name is that prefix plus four random bytes in hex. It publishes `127.0.0.1::5432`, so Docker picks a free loopback port. The compose cluster uses 5432 and PgBouncer uses 6432, so it never collides. It does not share a cluster, a role, or a password with any other suite. `afterAll` stops and removes it and deletes the certificate directory, whether or not a test failed.
 - **Order.** The two apps/api integration files run one after the other, because `fileParallelism` is false. The db package's Postgres tests and the people, access, identity and tenancy suites cannot run during them: `turbo.json` already has `@community-hub/api#test` depend on `@community-hub/access#test`, which depends on people, identity, tenancy and db in a chain.
-- **`turbo.json` does not change.** The new apps/api tests sit behind the existing chain. The new db tests sit inside `@community-hub/db#test`. Cache: `@community-hub/api#test` depends on `^build`, and each dependency's build hashes every tracked file in its package, so a change to a migration, to `sql/`, or to `packages/db/test` invalidates the api test hash. `eslint.config.js` is already a `globalDependencies` entry. If a reviewer finds a stale cache, stop and report. Do not add inputs speculatively.
+- **`turbo.json` does not change.** The new apps/api tests sit behind the existing chain. The new db tests sit inside `@community-hub/db#test`. Cache: `@community-hub/api#test` depends on `^build`, and each dependency's build hashes every tracked file in its package, so a change to a migration, to `sql/`, or to `packages/db/test` invalidates the api test hash. This chunk does not edit `eslint.config.js`, which is a `globalDependencies` entry and would invalidate every cache. The two fixtures sit under `packages/db/test/fixtures/`, which `eslint.config.js` already ignores globally (`**/fixtures/**`). They are not linted. Prettier and `tsc` (through `tsconfig.test.json`) still cover them. If a reviewer finds a stale cache, stop and report. Do not add inputs speculatively.
 - **CI.** The `test` job runs `pnpm test` with Docker. It starts the compose Postgres first. The TLS test pulls `postgres:17`, the image the compose file and the existing TLS test already use.
 
 ## Security pins
@@ -84,13 +86,15 @@ These are the settings the spec names in its Security pins table and its Tests s
 | Secrets stay out of the output                           | 4    | `db-migrate.test.ts`, the log-content test                                                                                    | Write `String(error)` to stderr in the `catch` of `runDbMigrate`.                                                                           |
 | TLS verify-full to the master and to each role login     | 4    | `db-migrate.test.ts`, the factory-spy test                                                                                    | Pass `ca: ""` in the master factory call.                                                                                                   |
 | Bootstrap check before the runner                        | 4    | `db-migrate.test.ts`, "no migrator row: the runner is never called"                                                           | Delete the bootstrap check, so `applyProductMigrations` is called.                                                                          |
+| A throw in a role-login check is staged and reduced      | 4    | `db-migrate.test.ts`, the role-login non-Postgres throw with a marker                                                         | Move the role-login check outside the staged `try`/`catch`, so the throw escapes.                                                           |
+| The backstop prints a stage word only                    | 4    | `db-migrate.test.ts`, the `runDbMigrateMain` rejection case                                                                   | Delete the `.catch` in `runDbMigrateMain`, or print the caught error in it.                                                                 |
 | Passwords go only where the spec says                    | 4    | `db-migrate.test.ts`, the factory-spy test                                                                                    | Pass `master` as the password of a role-login call.                                                                                         |
 | Migration record closed to other roles                   | 5    | `db-migrate.integration.test.ts`, "the record is closed"                                                                      | Add `GRANT USAGE ON SCHEMA migrator TO PUBLIC;` to `packages/db/sql/bootstrap.sql`.                                                         |
 | `FORCE ROW LEVEL SECURITY` on every `app` table          | 5    | `db-migrate.integration.test.ts`, the first success test                                                                      | In `packages/db/drizzle/0001_fuzzy_ultimatum.sql`, delete the `FORCE ROW LEVEL SECURITY` line for `app.outbox`. Restore the file.           |
 | The runner takes the advisory lock                       | 5    | `db-migrate.integration.test.ts`, the concurrency test                                                                        | Delete the `pg_advisory_lock` statement in `applyMigrations`.                                                                               |
 | One transaction for the pending set                      | 5    | `db-migrate.integration.test.ts`, "failure half-way"                                                                          | None in this repo. The behaviour is Drizzle's, and `drizzle-orm` is an exact pin (`0.45.2`). Do not run a mutation. Say so in the report.   |
-| Bootstrap check holds on a non-superuser master over TLS | 6    | `db-migrate-tls.integration.test.ts`, case 1                                                                                  | Delete the bootstrap check in `runDbMigrate`.                                                                                               |
-| The image ships the command and the migration files      | 7    | `image.test.ts`, "ships db-migrate and the product migrations"                                                                | Remove `"drizzle"` from `files` in `packages/db/package.json`. Rebuild the image. Restore the file.                                         |
+| Bootstrap check holds on a non-superuser master over TLS | 7    | `db-migrate-tls.integration.test.ts`, case 1                                                                                  | Delete the bootstrap check in `runDbMigrate`.                                                                                               |
+| The image ships the command and the migration files      | 8    | `image.test.ts`, "ships db-migrate and the product migrations"                                                                | Remove `"drizzle"` from `files` in `packages/db/package.json`. Rebuild the image. Restore the file.                                         |
 
 ---
 
@@ -100,10 +104,9 @@ These are the settings the spec names in its Security pins table and its Tests s
 
 - Modify: `packages/db/src/migrate.ts`
 - Modify: `packages/db/src/index.ts`
-- Create: `packages/db/test/database-fixture.ts`
+- Create: `packages/db/test/fixtures/database-fixture.ts`
 - Modify: `packages/db/test/migrate.integration.test.ts`
 - Modify: `packages/db/tsconfig.test.json`
-- Modify: `eslint.config.js`
 
 **Interfaces:**
 
@@ -111,19 +114,21 @@ These are the settings the spec names in its Security pins table and its Tests s
 - Produces: `freshDatabase(directUrl: string): Promise<{ name: string; url: string; drop(): Promise<void> }>`. It connects with `createPlaintextDirectSql`, creates a database named `hub_t_` plus 8 random hex characters, and returns a URL for it. `drop` runs `drop database ... with (force)`.
 - How the report is built: `preflightFromDb` already reads the applied rows under the lock in the `migrator` session. It now returns them (an empty list when `to_regclass` is null). After Drizzle `migrate` returns, `applyMigrations` reads `created_at` from the journal table again. `applied` is the `tag` of each entry in `meta/_journal.json` (read from `opts.folder`) whose `when` is in the second set and not the first, in journal order. `total` is the journal length. When `migrate` throws, nothing is returned.
 
-**Rule this must not break:** what is applied, the lock, the order, `SET ROLE`, the preflight and its three checks, and the `finally`. `applyTestMigrations` and the `drizzle-test` pairing guard are untouched. The existing two tests in `migrate.integration.test.ts` and `migrate.test.ts` pass unchanged.
+**Rule this must not break:** what is applied, the lock, the order, `SET ROLE`, the preflight and its three checks, and the `finally`. `applyTestMigrations` and the `drizzle-test` pairing guard are untouched. `migrate.test.ts` passes unchanged. The two existing tests in `migrate.integration.test.ts` keep every assertion, but three of their lines are edited (see Step 1), so they are not "unchanged".
 
 **Decisions:** `MIGRATION_LOCK_ID` is exported from the package index and not imported by relative path. A relative import of `packages/db/src` from `apps/api` would load a second copy of `migrate.ts` and pull its imports into the api type check. The constant is not secret. The report reuses the preflight's read as its "before" set instead of adding a second query, because that read is the same session under the same lock. The tests derive the tags and the count from `meta/_journal.json`, not from the literal 8, so the next migration chunk does not break them.
 
 - [ ] **Step 1: Write the failing tests**
 
-Add `packages/db/test/database-fixture.ts` first. Add its path to `include` in `packages/db/tsconfig.test.json`, and add `test/migrate.integration.test.ts` to that `include` so the new assertions are type-checked. If adding the second path surfaces an error in lines this task did not write, stop and report. Do not refactor them. In `eslint.config.js` add the glob `**/test/*-fixture.ts` to the two existing test-file lists: the `ignores` of the typed block and the `files` of the block that extends `tseslint.configs.recommended`. The existing `migrate-test.ts` entries are the precedent.
+Add `packages/db/test/fixtures/database-fixture.ts` first. Add it and `test/migrate.integration.test.ts` to `include` in `packages/db/tsconfig.test.json`, so the new assertions are type-checked (`tsconfig.test.json` lists test files one by one, and this one is not listed today). No `eslint.config.js` edit is needed: `**/fixtures/**` is already globally ignored there.
 
-In `migrate.integration.test.ts` add two tests that use `freshDatabase(runtime.directUrl)` and drop the database in `finally`.
+Adding that file to `include` makes `tsc` report TS2339 under `noUncheckedIndexedAccess` on three existing lines, because an array destructuring such as `const [{ n }] = ...` yields `{ n } | undefined`. They are the destructurings at `migrate.integration.test.ts:53` (`const [{ n }]`, the journal row count), `:61` (`const [{ rel }]`, the `__drizzle_migrations_test` check), and `:125` (`const [{ rel }]`, the `app.pwn` check). Rewrite each as `const rows = await sql<...>...` and assert `rows[0]?.n` or `rows[0]?.rel`, with the same expected values. These three are the only edits to existing lines. If `tsc` reports anything else in lines this task did not write, stop and report. Do not refactor them.
+
+In `migrate.integration.test.ts` add two tests that use `freshDatabase(runtime.directUrl)` and drop the database in `finally`. Each `it` has a 30 000 ms timeout.
 
 `applyProductMigrations reports the tags it applied`: read the tags from `meta/_journal.json`. The first run on a fresh database resolves to `{ applied: <the tags in journal order>, total: <journal length> }`. A second run on the same database resolves to `{ applied: [], total: <journal length> }`.
 
-`applyProductMigrations resets the role and frees the lock after a failure`: on a fresh database, with the superuser handle: call `runBootstrap`, then `create schema app authorization migrator` and `create table app.outbox (id int)`. `applyProductMigrations` on that same handle rejects (`0001` fails on `CREATE TABLE`). After the rejection, on the same handle: `select current_user` is not `migrator`, and `identity` and `platform` schemas do not exist. On a second connection to the same database, `select pg_try_advisory_lock(${MIGRATION_LOCK_ID})` returns true (unlock it afterwards). Import `MIGRATION_LOCK_ID` from `../src/migrate.js` in this package's own test.
+`applyProductMigrations resets the role and frees the lock after a failure`: on a fresh database, with the superuser handle: call `runBootstrap`, then `create schema app authorization migrator` and `create table app.outbox (id int)`. `applyProductMigrations` on that same handle rejects (`0001` fails on `CREATE TABLE`). After the rejection, on the same handle: `select current_user` is not `migrator`, and `identity` and `platform` schemas do not exist. On a second connection to the same database, `select pg_try_advisory_lock(${MIGRATION_LOCK_ID})` returns true (unlock it afterwards). Import `MIGRATION_LOCK_ID` from `../src/migrate.js` in this package's own test, and `freshDatabase` from `./fixtures/database-fixture.js`.
 
 - [ ] **Step 2: Run the tests and watch them fail**
 
@@ -144,7 +149,7 @@ Run the tests again. Expected: PASS. Then delete the `reset role` line in the `f
 `pnpm exec prettier --write` on the files in this task. Then `pnpm gate`.
 
 ```bash
-git add packages/db/src/migrate.ts packages/db/src/index.ts packages/db/test/database-fixture.ts packages/db/test/migrate.integration.test.ts packages/db/tsconfig.test.json eslint.config.js
+git add packages/db/src/migrate.ts packages/db/src/index.ts packages/db/test/fixtures/database-fixture.ts packages/db/test/migrate.integration.test.ts packages/db/tsconfig.test.json
 git commit -m "$(cat <<'EOF'
 feat(db): report the migrations a run applied
 
@@ -156,7 +161,7 @@ EOF
 )"
 ```
 
-**Estimate:** about 185 changed lines (migrate.ts 40, index.ts 2, fixture 30, test 110, config 3).
+**Estimate:** about 190 changed lines (migrate.ts 40, index.ts 2, fixture 30, new tests 110, the three edited lines 6, tsconfig 2).
 
 ---
 
@@ -286,12 +291,13 @@ EOF
 
 - Consumes: `createDirectSql` and `applyProductMigrations` from `@community-hub/db`, `readOpsEnv` and `loadImageCa` from `./db-ops-env.js`, `failureLine` from `./db-ops-error.js`, `sqlstate` for the role-login check.
 - Produces: `runDbMigrate(deps: { source: NodeJS.ProcessEnv; pem: string; connect: typeof createDirectSql }): Promise<{ exitCode: 0 | 1; stdout: string; stderr: string }>`. It never rejects: the whole body is in a `try`/`catch`, and every `end()` call is `.catch(() => undefined)`.
-- Produces: the entry block, the only code that touches `process`. It calls `loadImageCa()`. When that is `undefined` it writes `env\n` and exits 1. Otherwise it calls `runDbMigrate({ source: process.env, pem, connect: createDirectSql })`, writes stdout and stderr, and exits with the code. It mirrors the guard in `db-bootstrap.ts`.
+- Produces: `runDbMigrateMain(deps: { source; loadPem: () => string | undefined; connect; run?: typeof runDbMigrate }): Promise<{ exitCode; stdout; stderr }>`, the spec's top-level backstop. When `loadPem()` is `undefined` it returns `env\n`, exit 1, and never connects. Otherwise it creates `progress`, calls `run({ source, pem, connect }, progress)` (`run` defaults to `runDbMigrate`), and returns that result. A rejection from `run` is caught by the `.catch` in this function. It returns exit 1, empty stdout, and stderr equal to the stage word `progress.stage` held when the rejection happened, plus a newline, with no error text. `runDbMigrate` takes an optional second argument `progress: { stage: "env" | "connect" | "not_bootstrapped" | "migrate" }` and updates it as it advances. Its first argument is still the spec's three fields.
+- Produces: the entry block, the only code that touches `process`. It calls `runDbMigrateMain({ source: process.env, loadPem: loadImageCa, connect: createDirectSql })`, writes stdout and stderr, and exits with the code. It holds no other logic. It mirrors the guard in `db-bootstrap.ts`.
 - Order inside `runDbMigrate`, with the stage each step reports: (1) `readOpsEnv`, `undefined` is `env`. (2) Stage `connect`: call `connect` for the master with the PEM, host, port, database, user, and master password, and no `servername`. The first query is `select 1 from pg_roles where rolname = 'migrator'`. A rejection is `connect` with `sqlstate`. (3) Stage `not_bootstrapped`: no `migrator` row is `not_bootstrapped`. For each of `app`, `identity`, `platform`, in that order, call `connect` with that role as user and its own password, run `select 1`, and `end()` it. A rejection with `28P01` or `28000` from a `PostgresError` is `not_bootstrapped`. A rejection with any other error is `connect` with `sqlstate`. (4) Stage `migrate`: `applyProductMigrations(sql)`. A rejection is `migrate` with `sqlstate`. (5) Success: one `applied <tag>\n` per tag, then `done applied=<n> total=<m>\n`, exit 0, stderr empty.
 
 **Rule this must not break:** §1 rules 5 and 8. The output is exactly the spec's table. The only SQL in this file is `select 1 from pg_roles where rolname = 'migrator'` and `select 1`. No `SET`, `set_config`, or session statement is written in it, because `check:boundaries` bans that outside `migrate.ts`. The command does not call `runBootstrap`: the runner does, inside the lock.
 
-**Decision:** the unit test replaces `applyProductMigrations` with `vi.mock("@community-hub/db", ...)`, keeping the real `createDirectSql` type, so `runDbMigrate` keeps the spec's three-field contract and gains no injected runner.
+**Decisions:** the unit test replaces `applyProductMigrations` with `vi.mock("@community-hub/db", ...)`, keeping the real `createDirectSql` type, so `runDbMigrate` keeps the spec's three-field contract and gains no injected runner. The optional `run` in `runDbMigrateMain` exists only so a test can force a rejection and see the backstop. Putting the backstop and the CA wiring in `runDbMigrateMain` makes them unit-testable, and leaves the entry block as process I/O only. The unreadable-CA handling is unchanged (`loadImageCa` returns `undefined`, the result is `env`). See "Pending owner decisions".
 
 - [ ] **Step 1: Write the failing test**
 
@@ -299,34 +305,34 @@ EOF
 
 Cases, each asserting `{ exitCode, stdout, stderr }` exactly:
 
-- Each of the eight variables missing, empty, and a bad port: `env\n`, `connect` never called.
+- Each of the eight variables missing, empty, and a bad port: `env\n`, `connect` never called. The spec lists this case in `db-migrate.test.ts`, so it stays. It is one `it.each` table over the eight names and the bad ports, not eight hand-written tests, and `db-ops-env.test.ts` (Task 2) is not repeated beyond that.
 - `connect` throws synchronously: `connect\n`. `connect` returns and the `pg_roles` query rejects with `28P01`: `connect 28P01\n`. With a TLS-style error with no code, and with an `EPIPE` errno error: `connect\n`.
 - No `migrator` row: `not_bootstrapped\n`, `applyProductMigrations` never called, and the spy saw only the master target.
 - A role login rejects with `28P01`, then with `28000`: `not_bootstrapped\n`. With another `PostgresError` code: `connect <code>\n`. With an error with no code: `connect\n`. A role-login `connect` that throws a non-Postgres error whose message and a property carry the marker: `connect\n` and the marker in neither stream.
 - The runner rejects with the wrapper (`cause` code `42501`): exactly `migrate 42501\n`. With a wrapper whose `cause` has `EPIPE`: `migrate\n`. With a code two levels down: `migrate\n`. With a flat `PostgresError`-shaped error `42501`: `migrate 42501\n`. With a plain `Error`: `migrate\n`.
 - Success: the runner resolves `{ applied: [<two tags>], total: 8 }`. Stdout is two `applied` lines then `done applied=2 total=8\n`, stderr empty, exit 0. With `{ applied: [], total: 8 }`: `done applied=0 total=8\n`.
 - Every `end()` rejecting changes no result above.
+- `runDbMigrateMain`: `loadPem` returning `undefined` gives `env\n` and exit 1, and the factory spy was never called. A `run` that sets `progress.stage` to `migrate` and then rejects with an error carrying the marker in `message` and a property gives exactly `migrate\n` and the marker in neither stream. A `run` that rejects before setting a stage gives `env\n`. A `run` that resolves has its result returned as is.
 - The log-content test: for every case above, `stdout + stderr` matches `^(applied [0-9]{4}_[a-z0-9_]+\n)*done applied=[0-9]+ total=[0-9]+\n$`, or `^(env|not_bootstrapped)\n$`, or `^(connect|migrate)( [0-9A-Z]{5})?\n$`. It contains none of the planted values, and none of them is in any statement text the fake driver recorded.
 - The factory spy: the first call has the master user, the master password, `ca` equal to the injected PEM, `host` equal to `PGHOST`, and no `servername` key. The next three calls are `app`, `identity`, `platform` in that order, each with its own password and the same `ca` and `host`. The master password appears in no role call, and no role password appears in the master call.
-- The migrate stage runs after the role logins: the runner mock's first call is after the third `select 1`.
 
 - [ ] **Step 2: Run the test and watch it fail**
 
 Run: `pnpm --filter @community-hub/api exec vitest run --config vitest.config.ts src/db-migrate.test.ts`
 
-Expected: FAIL because `./db-migrate.js` does not exist.
+Expected: FAIL because `./db-migrate.js` does not exist. Run `pnpm --filter @community-hub/db build` first, because Task 1 changed the package and `vi.mock` loads its built `dist`.
 
 - [ ] **Step 3: Implement**
 
-Add `db-migrate.ts` to the interfaces above. Keep the stage in a local variable so the outer `catch` reports the stage reached. Open each role connection, run `select 1`, and close it inside its own `try`/`finally`.
+Add `db-migrate.ts` to the interfaces above. Keep the stage in `progress` so the outer `catch` and the backstop report the stage reached. Open each role connection, run `select 1`, and close it inside its own `try`/`finally`.
 
 - [ ] **Step 4: Run the test and watch it pass**
 
 Run the same command. Expected: PASS, including the log-content test.
 
-- [ ] **Step 5: Pin the four settings**
+- [ ] **Step 5: Pin the six settings**
 
-Make each change in the Security pins table for this task once, run `src/db-migrate.test.ts`, see the named test fail, and restore the file: `String(error)` into stderr, then `ca: ""` for the master, then the bootstrap check deleted, then the master password in a role call. Report the four failures.
+Make each change in the Security pins table for this task once, run `src/db-migrate.test.ts`, see the named test fail, and restore the file: `String(error)` into stderr; `ca: ""` for the master; the bootstrap check deleted; the master password in a role call; the role-login check moved outside the staged `try`/`catch` (the planted non-Postgres throw then escapes the stage); the `.catch` in `runDbMigrateMain` deleted. Report the six failures.
 
 - [ ] **Step 6: Gate and commit**
 
@@ -346,7 +352,7 @@ EOF
 )"
 ```
 
-**Estimate:** about 480 changed lines (command 150, test 330).
+**Estimate:** about 600 changed lines (command and `runDbMigrateMain` 170, test 430).
 
 ---
 
@@ -358,10 +364,12 @@ EOF
 
 **Interfaces:**
 
-- Consumes: `runDbMigrate` from `./db-migrate.js`, `MIGRATION_LOCK_ID` from `@community-hub/db`, `freshDatabase` from `../../../packages/db/test/database-fixture.js`, `createPlaintextDirectSql` from `@community-hub/db/plaintext`, and `packages/db/test/.runtime.json` (`directUrl`, `passwords`) the way `access-flow.integration.test.ts` reads it.
+- Consumes: `runDbMigrate` from `./db-migrate.js`, `MIGRATION_LOCK_ID` from `@community-hub/db`, `freshDatabase` from `../../../packages/db/test/fixtures/database-fixture.js`, `createPlaintextDirectSql` from `@community-hub/db/plaintext`, and `packages/db/test/.runtime.json` (`directUrl`, `passwords`) the way `access-flow.integration.test.ts` reads it. The cross-package relative import has a precedent: `auth-flow.integration.test.ts` imports `modules/core/identity/domain/cbor.js` by relative path.
 - A helper in the file builds `source` for a fresh database: host `127.0.0.1`, port `5432`, the new database name, user `hub`, the master password parsed from `directUrl`, and the three role passwords from `.runtime.json`. A plaintext `connect` maps a target to a `createPlaintextDirectSql` URL. `pem` is the bundle at `apps/api/certs/`, which the fake factory ignores.
 
-**Rule this must not break:** the test never drops a role, never alters a password, and never touches `hub_product_only` or `hub`. Roles are cluster-wide and other suites rely on them. Every case uses its own `freshDatabase` and drops it in `finally`.
+**Rule this must not break:** the test never drops a role, never alters a password, and never touches `hub_product_only` or `hub`. Roles are cluster-wide and other suites rely on them. Every case uses its own `freshDatabase` and drops it in `finally`. Each `it` has a 30 000 ms timeout, and the concurrency case 60 000 ms.
+
+**Cleanup contract for the concurrency case:** the `finally` block, in this order, (1) releases the lock with `pg_advisory_unlock` (a failure here is ignored), (2) ends the holder connection, (3) awaits both runs with `Promise.allSettled`, so a run still waiting for the lock finishes before the database goes, and (4) drops the database. The wait for the waiters is the bounded poll described below. A poll that reaches its ceiling throws, and the `finally` still runs.
 
 **Decision:** the "second concurrent start" in the spec is read as two runs started while the lock is held. The test waits for two ungranted advisory-lock rows, releases, and asserts that exactly one result is `applied=<total>` and the other is `applied=0`. This is stronger than a run after completion and is still not timing-based.
 
@@ -377,7 +385,9 @@ Because the command already exists, the first run is expected to pass. The RED f
 
 - [ ] **Step 2: Run the file**
 
-Run: `pnpm --filter @community-hub/api exec vitest run --config vitest.integration.config.ts src/db-migrate.integration.test.ts`
+Run `pnpm --filter @community-hub/db build` first, because the api test uses the built package and Task 1 added `MIGRATION_LOCK_ID` there. Then:
+
+`pnpm --filter @community-hub/api exec vitest run --config vitest.integration.config.ts src/db-migrate.integration.test.ts`
 
 Expected: PASS. If a case fails here, the cause is in the test or in an earlier task. Do not change a migration.
 
@@ -400,80 +410,127 @@ EOF
 )"
 ```
 
-**Estimate:** about 260 changed lines.
+**Estimate:** about 270 changed lines.
 
 ---
 
-### Task 6: Prove the command over TLS against a non-superuser master
+### Task 6: Extract the TLS fixture
+
+A pure refactor of test support, in its own commit so a reviewer can read the move apart from the new test. It adds one piece of cleanup (below) and no new assertion.
 
 **Files:**
 
-- Create: `packages/db/test/tls-fixture.ts`
+- Create: `packages/db/test/fixtures/tls-fixture.ts`
 - Modify: `packages/db/test/tls.integration.test.ts`
-- Create: `apps/api/src/db-migrate-tls.integration.test.ts`
 - Modify: `packages/db/tsconfig.test.json`
 
 **Interfaces:**
 
-- Produces in `tls-fixture.ts`: `TLS_SERVER_NAME` (the fixed test name the existing test uses), `createTlsCerts(): { dir: string; signingCa: string; otherCa: string; cleanup(): void }`, and `startTlsPostgres(opts: { certDir: string; superuser: string; password: string; database: string }): Promise<{ name: string; port: number; stop(): void }>`. The openssl steps, the `docker run` with `postgres-tls-entrypoint.sh`, the `docker port` parse, and the readiness wait move out of `tls.integration.test.ts` unchanged. `tls.integration.test.ts` calls them and keeps every test body and assertion as it is. The `**/test/*-fixture.ts` lint glob from Task 1 already covers the new file. Add `test/tls-fixture.ts` to `include` in `packages/db/tsconfig.test.json`.
-- Consumes in the new test: `runDbMigrate` from `./db-migrate.js`, `runDbBootstrap` from `./db-bootstrap.js`, `createDirectSql` and `runBootstrap` from `@community-hub/db`, `createPlaintextDirectSql` from `@community-hub/db/plaintext`, and the fixture by the relative path `../../../packages/db/test/tls-fixture.js`, the same reach `access-flow.integration.test.ts` makes for `.runtime.json`.
+- Produces in `tls-fixture.ts`: `TLS_SERVER_NAME` (the fixed test name the existing test uses), `createTlsCerts(): { dir: string; signingCa: string; otherCa: string; cleanup(): void }`, and `startTlsPostgres(opts: { certDir: string; superuser: string; password: string; database: string; namePrefix?: string }): Promise<{ name: string; port: number; stop(): void }>`. `namePrefix` defaults to `ch-db-tls-`, the prefix the existing test uses, and the name is that prefix plus four random bytes in hex.
+- The openssl steps, the `docker run` with `postgres-tls-entrypoint.sh`, the `docker port` parse, and the readiness wait move out of `tls.integration.test.ts` as they are. `tls.integration.test.ts` calls them and keeps every test body, assertion and timeout.
+- Cleanup added in the move: the fixture picks the container name before `docker run`. If the port parse or the readiness wait fails after `docker run` has started the container, `startTlsPostgres` runs `docker rm -f <name>` (ignoring its own failure) and then rethrows the original error. The existing test avoided the leak by assigning the container name before it waited, so its `afterAll` could remove it. A function that returns a handle only on success cannot rely on that. `stop()` is `docker stop` then `docker rm`, each best effort, as `afterAll` does now. The failure path has no test, because forcing readiness to fail needs a Docker fault. The reviewer reads it.
+- Add `test/fixtures/tls-fixture.ts` to `include` in `packages/db/tsconfig.test.json`. `tls.integration.test.ts` is already listed there. The fixture is under `**/fixtures/**`, so ESLint ignores it, and Prettier and `tsc` still apply.
 
-**Rule this must not break:** `tls.integration.test.ts` keeps all of its tests and assertions. `postgres-tls-entrypoint.sh` is not edited. The fixture is not copied into `apps/api`.
+**Rule this must not break:** every existing test in `tls.integration.test.ts` (the TLS, IP-host and factory-argument tests) passes with the same assertions. `postgres-tls-entrypoint.sh` is not edited. The fixture is not copied into `apps/api`.
 
-**Decisions:** the refactor and its second user are one commit, so the extraction is proven by the existing TLS tests passing and by the new file using it. The new test calls `runDbMigrate` in-process with a `connect` wrapper `(target) => createDirectSql({ ...target, servername: TLS_SERVER_NAME })`, because `IMAGE_CERT_PATH` has no override and `createDirectSql` needs a `servername` for an IP host. `createDirectSql` still verifies the certificate against the test CA. `runDbBootstrap` runs once, as setup at the start of case 3, to give the roles passwords. The spec lists it at case 5.
+- [ ] **Step 1: Run the characterisation test first**
 
-- [ ] **Step 1: Write the failing test**
+The existing tests are the test for this task. Run them before the move and note that they pass:
 
-`db-migrate-tls.integration.test.ts`: `beforeAll` (120-second timeout) creates the certificates and starts the container with the image's superuser. Through a plaintext connection as that superuser it creates a master role with `LOGIN CREATEROLE CREATEDB` and a synthetic password, and a database that master owns. It has no `rds_superuser` and is not a superuser. `afterAll` stops the container and cleans up. The six cases run in order on this one cluster, each asserting `{ exitCode, stdout, stderr }`:
+`pnpm --filter @community-hub/db exec vitest run --config vitest.config.ts test/tls.integration.test.ts`
 
-1. The empty cluster: exit 1, stderr `not_bootstrapped\n`. Afterwards no role named `migrator`, `app`, `identity`, or `platform`, no schema `migrator`, `app`, `identity`, or `platform`, and no table in the database.
-2. After `runBootstrap` as the master (roles with no passwords): exit 1, `not_bootstrapped\n`. Afterwards no `app`, `identity`, or `platform` schema and no table exist.
-3. Run `runDbBootstrap` to set the three passwords. Then pass a wrong password for one role: exit 1, `not_bootstrapped\n`, and no `app` table.
-4. A wrong master password: exit 1, `connect 28P01\n`.
-5. Correct passwords: exit 0, stdout lists the journal tags and `done applied=<n> total=<n>`. This also proves `bootstrap.sql` ran a second time as a non-superuser inside the runner.
-6. A second run: `done applied=0 total=<n>`.
+- [ ] **Step 2: Extract**
 
-- [ ] **Step 2: Run the new file and watch it fail**
+Add `tls-fixture.ts` by moving code. Change `tls.integration.test.ts` to call it. Keep `beforeAll` at 120 000 ms and `afterAll` at 30 000 ms.
 
-Run: `pnpm --filter @community-hub/api exec vitest run --config vitest.integration.config.ts src/db-migrate-tls.integration.test.ts`
+- [ ] **Step 3: Run it again**
 
-Expected: FAIL because `tls-fixture.ts` does not exist.
+Run the Step 1 command. Expected: every test PASSES with no assertion edited. `git diff` of `tls.integration.test.ts` shows only removed setup lines and the new calls.
 
-- [ ] **Step 3: Extract the fixture and refactor the TLS test**
-
-Add `tls-fixture.ts` by moving code. Change `tls.integration.test.ts` to call it. Run `pnpm --filter @community-hub/db exec vitest run --config vitest.config.ts test/tls.integration.test.ts`. Expected: every existing test PASSES unchanged. These existing tests are the characterisation test for the extraction.
-
-- [ ] **Step 4: Run the new file and watch it pass**
-
-Run the Step 2 command. Expected: PASS for all six cases. If case 5 fails on a privilege error that a plain `CREATEROLE` master hits, stop and report with the SQLSTATE. Do not change `bootstrap.sql` or a migration.
-
-- [ ] **Step 5: Pin the bootstrap check**
-
-Delete the bootstrap check in `runDbMigrate`. Case 1 fails because the runner creates the roles and applies. Restore the file. Report the failure.
-
-- [ ] **Step 6: Gate and commit**
-
-`pnpm gate` type-checks the cross-package import in `apps/api`. If `tsc` or `eslint` rejects it, stop and report. Do not copy the fixture.
+- [ ] **Step 4: Gate and commit**
 
 ```bash
-git add packages/db/test/tls-fixture.ts packages/db/test/tls.integration.test.ts packages/db/tsconfig.test.json apps/api/src/db-migrate-tls.integration.test.ts
+git add packages/db/test/fixtures/tls-fixture.ts packages/db/test/tls.integration.test.ts packages/db/tsconfig.test.json
 git commit -m "$(cat <<'EOF'
-test(api): run db-migrate over TLS as a non-superuser master
+refactor(db): extract the TLS test fixture
 
-A throwaway Postgres with a CREATEROLE master and verify-full TLS hosts
-the not_bootstrapped cases and the positive run. The certificate and
-container setup is extracted from the TLS test, not copied.
+Certificate generation and the throwaway TLS Postgres container move
+out of the TLS test so a second test can use them. The fixture removes
+its own container if readiness fails.
 
 Refs: docs/plans/2026-10-12-db-migrate-command.md task 6
 EOF
 )"
 ```
 
-**Estimate:** about 460 changed lines (fixture 130 moved, TLS test 20 net edits, new test 210, config 1).
+**Estimate:** about 290 changed lines. The fixture adds about 150. `tls.integration.test.ts` loses about 115 and gains about 20. A moved line is counted once as removed and once as added, so the move is about 260 of this total. The review burden is about 150.
 
 ---
 
-### Task 7: Assert the image ships the command and the migrations
+### Task 7: Prove the command over TLS against a non-superuser master
+
+**Files:**
+
+- Create: `apps/api/src/db-migrate-tls.integration.test.ts`
+
+**Interfaces:**
+
+- Consumes: `runDbMigrate` from `./db-migrate.js`, `runDbBootstrap` from `./db-bootstrap.js`, `createDirectSql` and `runBootstrap` from `@community-hub/db`, `createPlaintextDirectSql` from `@community-hub/db/plaintext`, and the fixture by the relative path `../../../packages/db/test/fixtures/tls-fixture.js`. `auth-flow.integration.test.ts` imports `modules/core/identity/domain/cbor.js` the same way.
+- The container is started with `namePrefix: "ch-db-migrate-tls-"`.
+
+**Rule this must not break:** the fixture is used, not copied. `postgres-tls-entrypoint.sh` and `bootstrap.sql` are not edited.
+
+**Decisions:** the test calls `runDbMigrate` in-process with a `connect` wrapper `(target) => createDirectSql({ ...target, servername: TLS_SERVER_NAME })`, because `IMAGE_CERT_PATH` has no override and `createDirectSql` needs a `servername` for an IP host. `createDirectSql` still verifies the certificate against the test CA. `runDbBootstrap` runs once, as setup at the start of case 3, to give the roles passwords. The spec lists it at case 5. See "Pending owner decisions".
+
+- [ ] **Step 1: Write the failing test**
+
+`beforeAll` (120 000 ms) creates the certificates and starts the container with the image's superuser. Through a plaintext connection as that superuser it creates a master role with `LOGIN CREATEROLE CREATEDB` and a synthetic password, and a database that master owns. It has no `rds_superuser` and is not a superuser. `afterAll` (30 000 ms) stops the container and cleans up. The six cases run in order on this one cluster, each an `it` with a 30 000 ms timeout, each asserting `{ exitCode, stdout, stderr }`:
+
+1. The empty cluster: exit 1, stderr `not_bootstrapped\n`. Afterwards no role named `migrator`, `app`, `identity`, or `platform`, no schema `migrator`, `app`, `identity`, or `platform`, and no table in the database.
+2. After `runBootstrap` as the master (roles with no passwords): exit 1, `not_bootstrapped\n`. Afterwards no `app`, `identity`, or `platform` schema and no table exist.
+3. Run `runDbBootstrap` to set the three passwords. Then pass a wrong password for one role: exit 1, `not_bootstrapped\n`, and no `app` table.
+4. A wrong master password: exit 1, `connect 28P01\n`.
+5. Correct passwords: exit 0, stdout lists the journal tags and `done applied=<n> total=<n>`. This also proves `bootstrap.sql` ran a second time as a non-superuser inside the runner.
+6. A second run: `done applied=0 total=<n>`. The spec lists this case in its TLS section, so it stays. The shared-cluster second-run test (Task 5) does not replace it: that one is plaintext and a superuser.
+
+- [ ] **Step 2: Run the new file**
+
+Run `pnpm --filter @community-hub/db build` first, because Task 1 changed the package that `apps/api` resolves through `dist`. Then:
+
+`pnpm --filter @community-hub/api exec vitest run --config vitest.integration.config.ts src/db-migrate-tls.integration.test.ts`
+
+Expected: PASS. The command already exists, so there is no RED from a missing module. The RED for this task is the pin run in Step 4. A case that fails here points at the test or at an earlier task.
+
+- [ ] **Step 3: Check the cases**
+
+Expected from Step 2: all six cases pass. If case 5 fails on a privilege error that a plain `CREATEROLE` master hits, stop and report with the SQLSTATE. Do not change `bootstrap.sql` or a migration.
+
+- [ ] **Step 4: Pin the bootstrap check**
+
+Delete the bootstrap check in `runDbMigrate`. Case 1 fails because the runner creates the roles and applies. Restore the file. Report the failure.
+
+- [ ] **Step 5: Gate and commit**
+
+`pnpm gate` type-checks the cross-package import in `apps/api`. If `tsc` or `eslint` rejects it, stop and report. Do not copy the fixture.
+
+```bash
+git add apps/api/src/db-migrate-tls.integration.test.ts
+git commit -m "$(cat <<'EOF'
+test(api): run db-migrate over TLS as a non-superuser master
+
+A throwaway Postgres with a CREATEROLE master and verify-full TLS hosts
+the not_bootstrapped cases and the positive run.
+
+Refs: docs/plans/2026-10-12-db-migrate-command.md task 7
+EOF
+)"
+```
+
+**Estimate:** about 210 changed lines.
+
+---
+
+### Task 8: Assert the image ships the command and the migrations
 
 **Files:**
 
@@ -492,7 +549,7 @@ EOF
 
 - [ ] **Step 1: Write the tests**
 
-Add the two tests. They are not skipped unless `RUN_IMAGE_TESTS` is unset.
+Add the two tests. They are skipped unless `RUN_IMAGE_TESTS=1`. Give each `it` an explicit timeout of 600 000 ms, as the existing image tests have, because the first run builds the ARM image.
 
 - [ ] **Step 2: Run them**
 
@@ -514,7 +571,7 @@ test(api): assert the image ships db-migrate and the migrations
 The command, the journal and every migration file the journal names are
 in the image, and the command with no environment exits 1 with env.
 
-Refs: docs/plans/2026-10-12-db-migrate-command.md task 7
+Refs: docs/plans/2026-10-12-db-migrate-command.md task 8
 EOF
 )"
 ```
@@ -523,7 +580,7 @@ EOF
 
 ---
 
-### Task 8: The runbook section
+### Task 9: The runbook section
 
 **Files:**
 
@@ -556,7 +613,7 @@ docs(runbooks): apply the product migrations with db-migrate
 The database accepts connections only from the task security group, so
 the migrations run as a one-off ops task, as db-bootstrap does.
 
-Refs: docs/plans/2026-10-12-db-migrate-command.md task 8
+Refs: docs/plans/2026-10-12-db-migrate-command.md task 9
 EOF
 )"
 ```
@@ -565,7 +622,7 @@ EOF
 
 ---
 
-### Task 9: Catalogue
+### Task 10: Catalogue
 
 **Files:**
 
@@ -604,7 +661,7 @@ docs(roadmap): mark the db-migrate command done
 Phase 0 is 25 rows: 24 done, 1 superseded, 0 not started. Staging stays
 parked and the command has not run there.
 
-Refs: docs/plans/2026-10-12-db-migrate-command.md task 9
+Refs: docs/plans/2026-10-12-db-migrate-command.md task 10
 EOF
 )"
 ```
@@ -617,25 +674,36 @@ EOF
 
 | Task | Commit subject                                                    | Estimate   |
 | ---- | ----------------------------------------------------------------- | ---------- |
-| 1    | `feat(db): report the migrations a run applied`                   | 185        |
+| 1    | `feat(db): report the migrations a run applied`                   | 190        |
 | 2    | `refactor(api): share the ops environment parsing`                | 175        |
 | 3    | `feat(api): reduce a database error to a stage and a SQLSTATE`    | 155        |
-| 4    | `feat(api): add the db-migrate command`                           | 480        |
-| 5    | `test(api): run db-migrate on a fresh database`                   | 260        |
-| 6    | `test(api): run db-migrate over TLS as a non-superuser master`    | 460        |
-| 7    | `test(api): assert the image ships db-migrate and the migrations` | 55         |
-| 8    | `docs(runbooks): apply the product migrations with db-migrate`    | 50         |
-| 9    | `docs(roadmap): mark the db-migrate command done`                 | 6          |
-|      | **Total**                                                         | **~1,825** |
+| 4    | `feat(api): add the db-migrate command`                           | 600        |
+| 5    | `test(api): run db-migrate on a fresh database`                   | 270        |
+| 6    | `refactor(db): extract the TLS test fixture`                      | 290        |
+| 7    | `test(api): run db-migrate over TLS as a non-superuser master`    | 210        |
+| 8    | `test(api): assert the image ships db-migrate and the migrations` | 55         |
+| 9    | `docs(runbooks): apply the product migrations with db-migrate`    | 50         |
+| 10   | `docs(roadmap): mark the db-migrate command done`                 | 6          |
+|      | **Total**                                                         | **~2,000** |
+
+The total counts the Task 6 move twice, as a diff does (about 260 lines of it).
+
+## Pending owner decisions
+
+Three places where this plan departs from a spec line that the owner has not yet agreed to correct. The plan is written to the code and does what is described in Tasks 4, 5 and 7. The spec is approved and this plan does not edit it. The owner decides, separately, whether to change the spec lines below. Each has the exact spec text and a proposed one-line wording.
+
+1. **Unreadable CA bundle.** Spec, Tests, first unit bullet: "Each env variable missing, empty, or a bad port: stdout empty, stderr `env\n`, exit 1. An unreadable CA bundle: `env\n`." `runDbMigrate` takes a PEM that is already read, so this case cannot be tested inside it as written. The plan covers it with `loadImageCa` in `db-ops-env.test.ts` and with `runDbMigrateMain`'s `loadPem` returning `undefined` in `db-migrate.test.ts`. Option A, widen `runDbMigrate`'s `pem` to `string | undefined`, with `undefined` giving the stage word `env`, so the bullet is testable as written. Option B, reword the bullet to: "An unreadable CA bundle is covered by `loadImageCa` in `db-ops-env.test.ts`, which the entry block maps to `env\n`."
+2. **Concurrency.** Spec, Tests, the concurrency bullet, last sentences: "It releases the lock, waits for the command to finish, and asserts exit 0, eight rows, and `applied=8`. A second concurrent start after that applies 0." The plan starts two runs while the lock is held. Proposed wording: "Two runs started while the lock is held wait behind it; after the release exactly one applies and the other applies 0." The poll waits for two ungranted rows.
+3. **TLS case order.** Spec, Tests, non-superuser TLS cases: "(3) a wrong password for one role: exit 1, `not_bootstrapped`; ... (5) after `runDbBootstrap`: exit 0, `done applied=8 total=8`, and the second execution of `bootstrap.sql` (it runs inside the runner) succeeded as a non-superuser". A wrong role password needs passwords to exist, so `runDbBootstrap` runs at the start of case 3. Proposed wording: "(3) after `runDbBootstrap` has set the three passwords, a wrong password for one role: exit 1, `not_bootstrapped`; ... (5) correct passwords: exit 0, `done applied=8 total=8`, and the second execution of `bootstrap.sql` (it runs inside the runner) succeeded as a non-superuser".
 
 ## What the implementer must stop and ask about
 
 Stop, do not improvise, and report to the reviewer (AGENTS.md §12):
 
-- Any need to edit a migration file, a snapshot, `bootstrap.sql`, the Dockerfile, a workflow, or Terraform. The only allowed edits to the first three are the Task 5 and Task 7 mutations, restored before the commit.
-- The image assertion in Task 7 shows `drizzle/` or a `.sql` file missing from the image.
+- Any need to edit a migration file, a snapshot, `bootstrap.sql`, the Dockerfile, a workflow, or Terraform. The only allowed edits to the first three are the Task 5 and Task 8 mutations, restored before the commit.
+- The image assertion in Task 8 shows `drizzle/` or a `.sql` file missing from the image.
 - Any log line that could carry SQL text, a host, a port, a user, a database name, or a driver message. This includes a test that needs `error.message` to pass.
-- A privilege error in Task 6 that a plain `CREATEROLE` master hits. Report the SQLSTATE and the statement. Do not widen the stand-in master.
+- A privilege error in Task 7 that a plain `CREATEROLE` master hits. Report the SQLSTATE and the statement. Do not widen the stand-in master.
 - `tsc` or `eslint` rejects the cross-package fixture import in `apps/api`. Do not copy the fixture.
 - A cache or ordering problem that seems to need a `turbo.json` change.
 - The spec and the code disagree on something not listed here.
@@ -660,6 +728,6 @@ Per chunk, before requesting merge:
 - [ ] Tenant-isolation and residency suites green. Existing suites only: this chunk adds no table. The Task 5 FORCE ROW LEVEL SECURITY assertion is the new tenancy proof.
 - [ ] **Spec's behaviour verified on the staging hostname: deferred.** Staging is parked, the spec says this chunk does not unpark it, and no one runs the command here. The `staging-proof-run` chunk runs `db-migrate` on staging and records the result. This chunk's behaviour is proven by the unit, integration, TLS, and image tests above, and the spec names the one gap (RDS differs from the stand-in).
 - [ ] `architecture.md` updated if a documented decision changed. None changes. No ADR.
-- [ ] `docs/roadmap.md` updated in the same PR, last commit on this branch: this chunk **done**, snapshot current (Task 9)
+- [ ] `docs/roadmap.md` updated in the same PR, last commit on this branch: this chunk **done**, snapshot current (Task 10)
 - [ ] Reviewer agent sign-off recorded in the PR. The second independent review is required (database, tenancy, the master login) and starts when the pull request opens. The PR's second-review line stays open until it is written.
 - [ ] Session scratch cleaned up (§5): no `docs/plans/*-report.md` on disk; nothing under `.superpowers/` staged
