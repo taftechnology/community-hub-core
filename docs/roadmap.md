@@ -248,7 +248,9 @@ From architecture §26. Do not invent answers in a spec.
 
 Startup does not prove the database or KMS, `GET /health` opens neither, and a route that needs them fails that request, decided in `identity-otp`. Unwrapped keys are not cached today; reusing them within one request is the intended direction, and the choice is made when the first list screen can be measured.
 
-`is_minor` is written once. Before any customer data is imported, a later chunk adds a daily job in the regional service that selects minors whose `birthday_md` is today, decrypts the date of birth, and moves those who have turned 18 to the community key and the clear name columns. A person whose `age_basis` is `unknown` does not age out.
+`is_minor` is written once. Before any customer data is imported, a later chunk adds a daily job in the regional service that selects minors whose `birthday_md` is today, decrypts the date of birth, and moves those who have turned 18 to the community key and the clear name columns. A person whose `age_basis` is `unknown` does not age out. In a year that is not a leap year the job also selects `birthday_md` 229 on 1 March.
+
+`withAppTransaction` does not verify that a community belongs to an organisation; the first route that calls a people function derives both ids from the platform directory row for the community and never from request input.
 
 This image has not run on Fargate. The next chunk that unparks staging re-runs the health check, the `/tmp` write one-off, and the ops task before the service is relied on.
 

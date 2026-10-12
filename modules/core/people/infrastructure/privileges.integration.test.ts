@@ -29,39 +29,98 @@ beforeAll(async () => {
   }
 });
 
+const PEOPLE_TABLES = [
+  "organisation_keys",
+  "community_keys",
+  "household_keys",
+  "households",
+  "persons",
+  "guardian_links",
+  "person_tags",
+  "person_tag_links",
+  "person_activity",
+] as const;
+
+const DELETABLE = new Set(["guardian_links", "person_tag_links"]);
+
+type Privilege = "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "TRUNCATE";
+
+async function privilege(
+  sql: ReturnType<typeof createPlaintextDirectSql>,
+  role: "app" | "identity" | "platform",
+  table: string,
+  kind: Privilege,
+): Promise<boolean> {
+  const rows = await sql<{ granted: boolean }[]>`
+    select has_table_privilege(${role}, ${`app.${table}`}, ${kind}) as granted
+  `;
+  return rows[0]?.granted ?? false;
+}
+
 describe("people table privileges", () => {
-  it("lets app select persons, and not update or delete them", async () => {
+  it("gives app select and insert on every people table", async () => {
     const runtime = loadRuntime();
     const sql = createPlaintextDirectSql(runtime.productOnlyUrl);
     try {
-      const rows = await sql<
-        {
-          persons_update: boolean;
-          persons_delete: boolean;
-          guardian_delete: boolean;
-          identity_select: boolean;
-          platform_select: boolean;
-          app_select: boolean;
-        }[]
-      >`
-        select
-          has_table_privilege('app', 'app.persons', 'UPDATE') as persons_update,
-          has_table_privilege('app', 'app.persons', 'DELETE') as persons_delete,
-          has_table_privilege('app', 'app.guardian_links', 'DELETE') as guardian_delete,
-          has_table_privilege('identity', 'app.persons', 'SELECT') as identity_select,
-          has_table_privilege('platform', 'app.persons', 'SELECT') as platform_select,
-          has_table_privilege('app', 'app.persons', 'SELECT') as app_select
-      `;
-      expect(rows).toEqual([
-        {
-          persons_update: false,
-          persons_delete: false,
-          guardian_delete: true,
-          identity_select: false,
-          platform_select: false,
-          app_select: true,
-        },
-      ]);
+      const granted: Record<string, boolean> = {};
+      for (const table of PEOPLE_TABLES) {
+        granted[`${table} select`] = await privilege(sql, "app", table, "SELECT");
+        granted[`${table} insert`] = await privilege(sql, "app", table, "INSERT");
+      }
+      expect(granted).toEqual(
+        Object.fromEntries(
+          PEOPLE_TABLES.flatMap((table) => [
+            [`${table} select`, true],
+            [`${table} insert`, true],
+          ]),
+        ),
+      );
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("takes update and truncate from app everywhere, and delete except on the two link tables", async () => {
+    const runtime = loadRuntime();
+    const sql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    try {
+      const granted: Record<string, boolean> = {};
+      for (const table of PEOPLE_TABLES) {
+        for (const kind of ["UPDATE", "DELETE", "TRUNCATE"] as const) {
+          granted[`${table} ${kind.toLowerCase()}`] = await privilege(sql, "app", table, kind);
+        }
+      }
+      expect(granted).toEqual(
+        Object.fromEntries(
+          PEOPLE_TABLES.flatMap((table) => [
+            [`${table} update`, false],
+            [`${table} delete`, DELETABLE.has(table)],
+            [`${table} truncate`, false],
+          ]),
+        ),
+      );
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("gives identity and platform no select on any people table", async () => {
+    const runtime = loadRuntime();
+    const sql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    try {
+      const granted: Record<string, boolean> = {};
+      for (const role of ["identity", "platform"] as const) {
+        for (const table of PEOPLE_TABLES) {
+          granted[`${role} ${table}`] = await privilege(sql, role, table, "SELECT");
+        }
+      }
+      expect(granted).toEqual(
+        Object.fromEntries(
+          (["identity", "platform"] as const).flatMap((role) =>
+            PEOPLE_TABLES.map((table) => [`${role} ${table}`, false]),
+          ),
+        ),
+      );
     } finally {
       await sql.end({ timeout: 1 });
     }

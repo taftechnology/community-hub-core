@@ -13,7 +13,14 @@ import {
 } from "@community-hub/db/plaintext";
 import { withRequest } from "@community-hub/kernel";
 
-import { createHousehold, createPerson, createTag, readPerson } from "../public/index.js";
+import {
+  attachTag,
+  createHousehold,
+  createPerson,
+  createTag,
+  linkGuardian,
+  readPerson,
+} from "../public/index.js";
 import { communityFieldKeys, householdFieldKeys } from "./person-keys.js";
 
 type Runtime = {
@@ -29,6 +36,14 @@ const RUNTIME = path.resolve(
 const KEY_ARN = `arn:aws:kms:ap-southeast-2:123456789012:key/mrk-${"ab".repeat(16)}`;
 const REQUEST_ID = "22222222-2222-4222-8222-222222222222";
 const NOW = new Date("2026-10-11T00:00:00+11:00");
+type Counted =
+  | "persons"
+  | "households"
+  | "tags"
+  | "household_keys"
+  | "guardian_links"
+  | "person_tag_links"
+  | "person_activity";
 
 function loadRuntime(): Runtime {
   return JSON.parse(readFileSync(RUNTIME, "utf8")) as Runtime;
@@ -524,15 +539,15 @@ describe("person create and read", () => {
 
       await withRequest({ requestId: REQUEST_ID }, () =>
         withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
-          await createHousehold(tx, kms, KEY_ARN, {
+          const household = await createHousehold(tx, kms, KEY_ARN, {
             now: NOW,
             label: null,
             actorUserId: null,
           });
-          await createPerson(tx, kms, KEY_ARN, {
+          const adult = await createPerson(tx, kms, KEY_ARN, {
             now: NOW,
             declaredAdult: false,
-            householdId: null,
+            householdId: household.householdId,
             dateOfBirth: "2008-10-11",
             givenName: "Ada",
             familyName: "Example",
@@ -540,14 +555,56 @@ describe("person create and read", () => {
             phone: null,
             actorUserId: null,
           });
-          await createTag(tx, { label: "Choir" });
-          const seen = await tx<{ persons: number; households: number; tags: number }[]>`
+          const minor = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId: household.householdId,
+            dateOfBirth: null,
+            givenName: "Ned",
+            familyName: "Example",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          await linkGuardian(tx, {
+            now: NOW,
+            householdId: household.householdId,
+            guardianPersonId: adult.personId,
+            childPersonId: minor.personId,
+            consent: true,
+            pickup: false,
+            view: false,
+            manage: false,
+            actorUserId: null,
+          });
+          const tag = await createTag(tx, { label: "Choir" });
+          await attachTag(tx, {
+            now: NOW,
+            personId: adult.personId,
+            tagId: tag.tagId,
+            actorUserId: null,
+          });
+          const seen = await tx<Record<Counted, number>[]>`
             select
               (select count(*)::int from app.persons) as persons,
               (select count(*)::int from app.households) as households,
-              (select count(*)::int from app.person_tags) as tags
+              (select count(*)::int from app.person_tags) as tags,
+              (select count(*)::int from app.household_keys) as household_keys,
+              (select count(*)::int from app.guardian_links) as guardian_links,
+              (select count(*)::int from app.person_tag_links) as person_tag_links,
+              (select count(*)::int from app.person_activity) as person_activity
           `;
-          expect(seen).toEqual([{ persons: 1, households: 1, tags: 1 }]);
+          expect(seen).toEqual([
+            {
+              persons: 2,
+              households: 1,
+              tags: 1,
+              household_keys: 1,
+              guardian_links: 1,
+              person_tag_links: 1,
+              person_activity: 4,
+            },
+          ]);
         }),
       );
 
@@ -555,16 +612,115 @@ describe("person create and read", () => {
         app,
         { orgId: organisationId, communityId: otherCommunityId },
         async (tx) => {
-          const persons = await tx<{ id: string }[]>`select id::text as id from app.persons`;
-          const households = await tx<{ id: string }[]>`
-            select id::text as id from app.households
+          const seen = await tx<Record<Counted, number>[]>`
+            select
+              (select count(*)::int from app.persons) as persons,
+              (select count(*)::int from app.households) as households,
+              (select count(*)::int from app.person_tags) as tags,
+              (select count(*)::int from app.household_keys) as household_keys,
+              (select count(*)::int from app.guardian_links) as guardian_links,
+              (select count(*)::int from app.person_tag_links) as person_tag_links,
+              (select count(*)::int from app.person_activity) as person_activity
           `;
-          const tags = await tx<{ id: string }[]>`select id::text as id from app.person_tags`;
-          expect(persons).toEqual([]);
-          expect(households).toEqual([]);
-          expect(tags).toEqual([]);
+          expect(seen).toEqual([
+            {
+              persons: 0,
+              households: 0,
+              tags: 0,
+              household_keys: 0,
+              guardian_links: 0,
+              person_tag_links: 0,
+              person_activity: 0,
+            },
+          ]);
         },
       );
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
+
+  it("rejects a household that belongs to another community of the same organisation", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const organisationId = newId();
+    const communityId = newId();
+    const otherCommunityId = newId();
+    const kms = createLocalKmsPort();
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, 'household-scope-parish', 'au', 'explicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, 'household-scope-north', 'au')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${otherCommunityId}, ${organisationId}, 'household-scope-south', 'au')
+        `;
+      });
+
+      const householdId = await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const created = await createHousehold(tx, kms, KEY_ARN, {
+            now: NOW,
+            label: null,
+            actorUserId: null,
+          });
+          return created.householdId;
+        }),
+      );
+
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(
+          app,
+          { orgId: organisationId, communityId: otherCommunityId },
+          async (tx) => {
+            await expect(
+              createPerson(tx, kms, KEY_ARN, {
+                now: NOW,
+                declaredAdult: false,
+                householdId,
+                dateOfBirth: "2008-10-11",
+                givenName: "Ada",
+                familyName: "Example",
+                email: null,
+                phone: null,
+                actorUserId: null,
+              }),
+            ).rejects.toMatchObject({ code: "not_found" });
+            await expect(
+              createPerson(tx, kms, KEY_ARN, {
+                now: NOW,
+                declaredAdult: false,
+                householdId,
+                dateOfBirth: null,
+                givenName: "Ned",
+                familyName: "Example",
+                email: null,
+                phone: null,
+                actorUserId: null,
+              }),
+            ).rejects.toMatchObject({ code: "not_found" });
+            const written = await tx<{ n: number }[]>`
+              select count(*)::int as n from app.persons
+            `;
+            expect(written).toEqual([{ n: 0 }]);
+          },
+        ),
+      );
+
+      const home = await withAppTransaction(
+        app,
+        { orgId: organisationId, communityId },
+        (tx) => tx<{ n: number }[]>`select count(*)::int as n from app.persons`,
+      );
+      expect(home).toEqual([{ n: 0 }]);
     } finally {
       await platform.end({ timeout: 1 });
       await app.end({ timeout: 1 });

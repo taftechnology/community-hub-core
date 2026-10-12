@@ -78,14 +78,15 @@ export function resolveAge(
   declaredAdult: boolean,
   now: Date,
 ): { isMinor: boolean; ageBasis: AgeBasis } {
+  const declared = declaredAdult === true;
   if (dateOfBirth !== null) {
     const minor = isMinor(dateOfBirth, now);
-    if (declaredAdult && minor) {
+    if (declared && minor) {
       throw new PeopleError("invalid_declaration");
     }
     return { isMinor: minor, ageBasis: "date_of_birth" };
   }
-  if (declaredAdult) {
+  if (declared) {
     return { isMinor: false, ageBasis: "declared_adult" };
   }
   return { isMinor: true, ageBasis: "unknown" };

@@ -4,7 +4,12 @@ import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
-import { applyProductMigrations, newId, withAppTransaction } from "@community-hub/db";
+import {
+  applyProductMigrations,
+  newId,
+  withAppTransaction,
+  type AppTransaction,
+} from "@community-hub/db";
 import {
   createPlaintextAppSql,
   createPlaintextDirectSql,
@@ -46,6 +51,36 @@ beforeAll(async () => {
     await migration.end({ timeout: 1 });
   }
 });
+
+async function withTenant(
+  slug: string,
+  run: (tx: AppTransaction, kms: ReturnType<typeof createLocalKmsPort>) => Promise<void>,
+): Promise<void> {
+  const runtime = loadRuntime();
+  const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+  const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+  const organisationId = newId();
+  const communityId = newId();
+  const kms = createLocalKmsPort();
+  try {
+    await platform.begin(async (tx) => {
+      await tx`
+        insert into platform.organisations (id, slug, region, kind)
+        values (${organisationId}, ${slug}, 'au', 'implicit')
+      `;
+      await tx`
+        insert into platform.communities (id, organisation_id, slug, region)
+        values (${communityId}, ${organisationId}, ${slug}, 'au')
+      `;
+    });
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: organisationId, communityId }, (tx) => run(tx, kms)),
+    );
+  } finally {
+    await platform.end({ timeout: 1 });
+    await app.end({ timeout: 1 });
+  }
+}
 
 describe("guardian links", () => {
   it("links an adult to a minor in the same household", async () => {
@@ -330,5 +365,114 @@ describe("guardian links", () => {
       await platform.end({ timeout: 1 });
       await app.end({ timeout: 1 });
     }
+  });
+  it("rejects an adult as the child, even when both are in the named household", async () => {
+    await withTenant("guardian-adult-child-parish", async (tx, kms) => {
+      const home = await createHousehold(tx, kms, KEY_ARN, {
+        now: NOW,
+        label: null,
+        actorUserId: null,
+      });
+      const guardian = await createPerson(tx, kms, KEY_ARN, {
+        now: NOW,
+        declaredAdult: false,
+        householdId: home.householdId,
+        dateOfBirth: "2008-10-11",
+        givenName: "Ada",
+        familyName: "Example",
+        email: null,
+        phone: null,
+        actorUserId: null,
+      });
+      const adultChild = await createPerson(tx, kms, KEY_ARN, {
+        now: NOW,
+        declaredAdult: false,
+        householdId: home.householdId,
+        dateOfBirth: "2000-01-02",
+        givenName: "Ben",
+        familyName: "Example",
+        email: null,
+        phone: null,
+        actorUserId: null,
+      });
+      const stored = await tx<{ id: string; is_minor: boolean }[]>`
+        select id::text as id, is_minor from app.persons
+        where id in (${guardian.personId}::uuid, ${adultChild.personId}::uuid)
+      `;
+      expect(stored.map((row) => row.is_minor)).toEqual([false, false]);
+
+      await expect(
+        linkGuardian(tx, {
+          now: NOW,
+          householdId: home.householdId,
+          guardianPersonId: guardian.personId,
+          childPersonId: adultChild.personId,
+          consent: true,
+          pickup: false,
+          view: false,
+          manage: false,
+          actorUserId: null,
+        }),
+      ).rejects.toMatchObject({ code: "invalid_guardian" });
+      const links = await tx<{ n: number }[]>`
+        select count(*)::int as n from app.guardian_links
+      `;
+      expect(links).toEqual([{ n: 0 }]);
+    });
+  });
+
+  it("rejects a child who lives in a different household from the named one", async () => {
+    await withTenant("guardian-other-home-parish", async (tx, kms) => {
+      const home = await createHousehold(tx, kms, KEY_ARN, {
+        now: NOW,
+        label: null,
+        actorUserId: null,
+      });
+      const elsewhere = await createHousehold(tx, kms, KEY_ARN, {
+        now: NOW,
+        label: null,
+        actorUserId: null,
+      });
+      const guardian = await createPerson(tx, kms, KEY_ARN, {
+        now: NOW,
+        declaredAdult: false,
+        householdId: home.householdId,
+        dateOfBirth: "2008-10-11",
+        givenName: "Ada",
+        familyName: "Example",
+        email: null,
+        phone: null,
+        actorUserId: null,
+      });
+      const child = await createPerson(tx, kms, KEY_ARN, {
+        now: NOW,
+        declaredAdult: false,
+        householdId: elsewhere.householdId,
+        dateOfBirth: null,
+        givenName: "Cara",
+        familyName: "Example",
+        email: null,
+        phone: null,
+        actorUserId: null,
+      });
+
+      await expect(
+        linkGuardian(tx, {
+          now: NOW,
+          householdId: home.householdId,
+          guardianPersonId: guardian.personId,
+          childPersonId: child.personId,
+          consent: true,
+          pickup: false,
+          view: false,
+          manage: false,
+          actorUserId: null,
+        }),
+      ).rejects.toMatchObject({ code: "invalid_guardian" });
+      const links = await tx<{ n: number }[]>`
+        select count(*)::int as n from app.guardian_links
+      `;
+      expect(links).toEqual([{ n: 0 }]);
+    });
   });
 });

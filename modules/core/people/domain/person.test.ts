@@ -60,6 +60,13 @@ describe("person domain", () => {
     });
   });
 
+  it("treats only the boolean true as a declaration of adulthood", () => {
+    const unknown = { isMinor: true, ageBasis: "unknown" };
+    expect(resolveAge(null, "false" as never, SYDNEY_ELEVENTH)).toEqual(unknown);
+    expect(resolveAge(null, 1 as never, SYDNEY_ELEVENTH)).toEqual(unknown);
+    expect(resolveAge(null, "true" as never, SYDNEY_ELEVENTH)).toEqual(unknown);
+  });
+
   it("rejects a date that is not a real past calendar day", () => {
     throwsCode(() => isMinor("2026-02-31", SYDNEY_ELEVENTH), "invalid_date");
     throwsCode(() => isMinor("11/10/2008", SYDNEY_ELEVENTH), "invalid_date");
