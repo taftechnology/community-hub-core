@@ -1,3 +1,10 @@
+import { defineAuditAction, defineAuditPurpose } from "@community-hub/kernel/module";
+
+defineAuditAction("entitlements.permission.denied");
+defineAuditAction("entitlements.toggle.changed");
+defineAuditPurpose("entitlements.toggles.view");
+defineAuditPurpose("entitlements.toggles.manage");
+
 export { EntitlementError } from "../domain/error.js";
 export {
   allocate,

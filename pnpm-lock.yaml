@@ -122,6 +122,12 @@ importers:
       '@community-hub/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@community-hub/entitlements':
+        specifier: workspace:*
+        version: link:../../modules/core/entitlements
+      '@community-hub/entitlements-eval':
+        specifier: workspace:*
+        version: link:../../packages/entitlements-eval
       '@community-hub/identity':
         specifier: workspace:*
         version: link:../../modules/core/identity

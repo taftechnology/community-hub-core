@@ -14,6 +14,10 @@
     "./access": {
       "types": "./dist/access.d.ts",
       "import": "./dist/access.js"
+    },
+    "./entitlements": {
+      "types": "./dist/entitlements.d.ts",
+      "import": "./dist/entitlements.js"
     }
   },
   "scripts": {
