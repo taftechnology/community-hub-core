@@ -1,0 +1,2 @@
+ALTER TABLE "app"."custom_role_permissions" DROP CONSTRAINT "custom_role_permissions_permission";--> statement-breakpoint
+ALTER TABLE "app"."custom_role_permissions" ADD CONSTRAINT "custom_role_permissions_permission" CHECK ("app"."custom_role_permissions"."permission" in ('access.users.view', 'access.users.manage', 'access.roles.view', 'access.roles.manage', 'people.restricted.read', 'entitlements.view', 'entitlements.manage'));
