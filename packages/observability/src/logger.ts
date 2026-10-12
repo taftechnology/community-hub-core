@@ -22,6 +22,10 @@ export type LogFields = {
   operation?: LogOperation;
   key_kind?: LogKeyKind;
   outcome?: LogOutcome;
+  /** A thrown error's class name. Anything that is not a plain identifier is logged as `Error`. */
+  errorClass?: string;
+  /** A short upper-case error code, such as a SQLSTATE or a Node errno code. */
+  errorCode?: string;
 };
 
 type LogFieldKey = keyof LogFields;
@@ -50,10 +54,15 @@ const ALLOWED_LOG_KEYS: ReadonlySet<LogFieldKey> = new Set([
   "operation",
   "key_kind",
   "outcome",
+  "errorClass",
+  "errorCode",
 ]);
 
 const GATEWAY_REQUEST_ID = /^[A-Za-z0-9+/=_-]{1,128}$/;
 const HOSTNAME = /^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/;
+const ERROR_CLASS = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+const ERROR_CODE = /^[A-Z0-9_]{1,40}$/;
+const FALLBACK_ERROR_CLASS = "Error";
 const REASONS = new Set<LogReason>([
   "missing_hostname_header",
   "unknown_hostname",
@@ -159,6 +168,23 @@ function sanitizeFields(raw: unknown): { fields: LogFields; dropped: number } {
       case "outcome": {
         if (isOneOf(value, OUTCOMES)) {
           fields.outcome = value;
+        } else if (value !== undefined) {
+          dropped += 1;
+        }
+        break;
+      }
+      case "errorClass": {
+        if (typeof value === "string" && ERROR_CLASS.test(value)) {
+          fields.errorClass = value;
+        } else if (value !== undefined) {
+          fields.errorClass = FALLBACK_ERROR_CLASS;
+          dropped += 1;
+        }
+        break;
+      }
+      case "errorCode": {
+        if (typeof value === "string" && ERROR_CODE.test(value)) {
+          fields.errorCode = value;
         } else if (value !== undefined) {
           dropped += 1;
         }

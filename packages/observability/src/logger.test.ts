@@ -67,6 +67,97 @@ describe("createLogger", () => {
     expect(logger.getDroppedFieldCount()).toBe(6);
   });
 
+  it("passes a valid error class name and error code through", () => {
+    const lines: string[] = [];
+    const logger = createLogger({ write: (line) => lines.push(line) });
+    logger.info("request", { errorClass: "PostgresError", errorCode: "42P01" });
+    logger.info("request", { errorClass: "Error_2", errorCode: "ECONNREFUSED" });
+    logger.info("request", { errorClass: "E", errorCode: "28P01" });
+    const parsed = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(parsed[0]?.errorClass).toBe("PostgresError");
+    expect(parsed[0]?.errorCode).toBe("42P01");
+    expect(parsed[1]?.errorClass).toBe("Error_2");
+    expect(parsed[1]?.errorCode).toBe("ECONNREFUSED");
+    expect(parsed[2]?.errorClass).toBe("E");
+    expect(parsed[2]?.errorCode).toBe("28P01");
+    expect(logger.getDroppedFieldCount()).toBe(0);
+  });
+
+  it.each([
+    ["spaces", "bad name"],
+    ["an at sign", "ada@example.test"],
+    ["a double quote", 'Bad"Name'],
+    ["a single quote", "Bad'Name"],
+    ["a newline", "Bad\nName"],
+    ["a trailing newline", "Name\n"],
+    ["a leading digit", "1Name"],
+    ["a hyphen", "Bad-Name"],
+    ["a dot", "pg.Error"],
+    ["65 characters", "A".repeat(65)],
+    ["empty", ""],
+    ["a non-string", 42 as unknown as string],
+  ])("replaces an error class name with %s by Error", (_label, name) => {
+    const lines: string[] = [];
+    const logger = createLogger({ write: (line) => lines.push(line) });
+    logger.info("request", { errorClass: name });
+    const parsed = JSON.parse(lines[0] ?? "{}") as Record<string, unknown>;
+    expect(parsed.errorClass).toBe("Error");
+    if (typeof name === "string" && name !== "") {
+      expect(lines[0]).not.toContain(name);
+    }
+  });
+
+  it("accepts an error class name of exactly 64 characters", () => {
+    const lines: string[] = [];
+    const logger = createLogger({ write: (line) => lines.push(line) });
+    const name = `A${"b".repeat(63)}`;
+    logger.info("request", { errorClass: name });
+    expect((JSON.parse(lines[0] ?? "{}") as Record<string, unknown>).errorClass).toBe(name);
+  });
+
+  it.each([
+    ["spaces", "42 P01"],
+    ["an at sign", "A@B"],
+    ["a double quote", 'A"B'],
+    ["a single quote", "A'B"],
+    ["a newline", "A\nB"],
+    ["a trailing newline", "42P01\n"],
+    ["lower case", "econnrefused"],
+    ["a hyphen", "A-B"],
+    ["41 characters", "A".repeat(41)],
+    ["empty", ""],
+    ["a number", 42 as unknown as string],
+    ["an object", {} as unknown as string],
+  ])("omits an error code with %s", (_label, code) => {
+    const lines: string[] = [];
+    const logger = createLogger({ write: (line) => lines.push(line) });
+    logger.info("request", { errorCode: code });
+    const parsed = JSON.parse(lines[0] ?? "{}") as Record<string, unknown>;
+    expect("errorCode" in parsed).toBe(false);
+    if (typeof code === "string" && code !== "") {
+      expect(lines[0]).not.toContain(code);
+    }
+    expect(logger.getDroppedFieldCount()).toBe(1);
+  });
+
+  it("accepts an error code of exactly 40 characters", () => {
+    const lines: string[] = [];
+    const logger = createLogger({ write: (line) => lines.push(line) });
+    const code = "A".repeat(40);
+    logger.info("request", { errorCode: code });
+    expect((JSON.parse(lines[0] ?? "{}") as Record<string, unknown>).errorCode).toBe(code);
+  });
+
+  it("accepts the 33-character TLS code for an unknown issuer", () => {
+    const lines: string[] = [];
+    const logger = createLogger({ write: (line) => lines.push(line) });
+    logger.info("request", { errorCode: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY" });
+    expect((JSON.parse(lines[0] ?? "{}") as Record<string, unknown>).errorCode).toBe(
+      "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+    );
+    expect(logger.getDroppedFieldCount()).toBe(0);
+  });
+
   it("never throws on bad field input", () => {
     const logger = createLogger({ write: () => {} });
 

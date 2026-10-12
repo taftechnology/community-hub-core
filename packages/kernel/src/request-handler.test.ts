@@ -181,6 +181,195 @@ describe("createRequestHandler", () => {
     }
   });
 
+  describe("a thrown error", () => {
+    const MARKERS = {
+      message: "marker-message-3f9a",
+      stack: "marker-stack-71bc",
+      detail: "marker-detail-a2d4 ada@example.test",
+      hint: "marker-hint-55e0",
+      query: "marker-query-c81f select * from people",
+      parameters: "marker-parameters-09aa",
+      causeMessage: "marker-cause-message-6d12",
+      extra: "marker-extra-property-b7e3",
+    };
+
+    class StubDriverError extends Error {
+      code: unknown;
+      detail = MARKERS.detail;
+      hint = MARKERS.hint;
+      query = MARKERS.query;
+      parameters = [MARKERS.parameters];
+      extra = MARKERS.extra;
+      constructor(code: unknown, cause?: unknown) {
+        super(MARKERS.message, cause === undefined ? undefined : { cause });
+        this.name = "StubDriverError";
+        this.stack = `StubDriverError: ${MARKERS.stack}`;
+        this.code = code;
+      }
+    }
+
+    async function throwing(thrown: unknown): Promise<{
+      response: Response;
+      body: string;
+      info: ReturnType<typeof vi.fn>;
+      serialised: string;
+    }> {
+      const info = vi.fn();
+      const run = createRequestHandler({ info, pathFor }, async () => {
+        throw thrown;
+      });
+      const response = await run(new Request("https://example.test/boom"));
+      const body = await response.text();
+      return { response, body, info, serialised: JSON.stringify(info.mock.calls) };
+    }
+
+    function expectNoMarkers(serialised: string): void {
+      for (const marker of Object.values(MARKERS)) {
+        expect(serialised).not.toContain(marker);
+      }
+      expect(serialised).not.toContain("ada@example.test");
+      expect(serialised).not.toContain("select *");
+    }
+
+    it("logs the class name and code and nothing else from the error", async () => {
+      const wrapped = new Error(MARKERS.causeMessage);
+      const { response, body, info, serialised } = await throwing(
+        new StubDriverError("42P01", wrapped),
+      );
+
+      expect(response.status).toBe(500);
+      expect(body).toBe("");
+      expect(response.headers.get("content-type")).toBeNull();
+      expect(info).toHaveBeenCalledTimes(1);
+      const fields = info.mock.calls[0]![0] as Record<string, unknown>;
+      expect(fields.status).toBe(500);
+      expect(fields.errorClass).toBe("StubDriverError");
+      expect(fields.errorCode).toBe("42P01");
+      expect(Object.keys(fields).sort()).toEqual([
+        "duration",
+        "errorClass",
+        "errorCode",
+        "method",
+        "path",
+        "requestId",
+        "status",
+      ]);
+      expectNoMarkers(serialised);
+    });
+
+    it("finds the code on cause when the error has none", async () => {
+      const cause = Object.assign(new Error(MARKERS.causeMessage), { code: "28P01" });
+      const { info, serialised } = await throwing(new StubDriverError(undefined, cause));
+      const fields = info.mock.calls[0]![0] as Record<string, unknown>;
+      expect(fields.errorCode).toBe("28P01");
+      expectNoMarkers(serialised);
+    });
+
+    it("prefers the code on the error over the code on its cause", async () => {
+      const cause = Object.assign(new Error(MARKERS.causeMessage), { code: "28P01" });
+      const { info } = await throwing(new StubDriverError("42P01", cause));
+      expect((info.mock.calls[0]![0] as Record<string, unknown>).errorCode).toBe("42P01");
+    });
+
+    it("does not look for a code two levels down", async () => {
+      const deepest = Object.assign(new Error(MARKERS.causeMessage), { code: "28P01" });
+      const middle = new Error("middle", { cause: deepest });
+      const { info, serialised } = await throwing(new StubDriverError(undefined, middle));
+      const fields = info.mock.calls[0]![0] as Record<string, unknown>;
+      expect("errorCode" in fields).toBe(false);
+      expect(fields.errorClass).toBe("StubDriverError");
+      expectNoMarkers(serialised);
+    });
+
+    it("logs NonError and no marker for a thrown string", async () => {
+      const { response, info, serialised } = await throwing(`thrown ${MARKERS.message}`);
+      expect(response.status).toBe(500);
+      expect(info).toHaveBeenCalledTimes(1);
+      const fields = info.mock.calls[0]![0] as Record<string, unknown>;
+      expect(fields.errorClass).toBe("NonError");
+      expect("errorCode" in fields).toBe(false);
+      expectNoMarkers(serialised);
+    });
+
+    it("logs NonError for a thrown null or undefined", async () => {
+      for (const thrown of [null, undefined]) {
+        const { info } = await throwing(thrown);
+        const fields = info.mock.calls[0]![0] as Record<string, unknown>;
+        expect(fields.errorClass).toBe("NonError");
+        expect("errorCode" in fields).toBe(false);
+      }
+    });
+
+    it("logs Error when the class name is not a plain identifier", async () => {
+      const error = new Error(MARKERS.message);
+      error.name = `${MARKERS.message} with spaces`;
+      const { info, serialised } = await throwing(error);
+      const fields = info.mock.calls[0]![0] as Record<string, unknown>;
+      expect(fields.errorClass).toBe("Error");
+      expectNoMarkers(serialised);
+    });
+
+    it("logs Error when the class name is not a string", async () => {
+      const error = new Error(MARKERS.message);
+      (error as unknown as { name: unknown }).name = { marker: MARKERS.extra };
+      const { info, serialised } = await throwing(error);
+      expect((info.mock.calls[0]![0] as Record<string, unknown>).errorClass).toBe("Error");
+      expectNoMarkers(serialised);
+    });
+
+    it.each([
+      ["a number", 42],
+      ["an object", { marker: MARKERS.extra }],
+      ["an array", [MARKERS.extra]],
+      ["a lower-case string", "econnrefused"],
+      ["a string with spaces", `42P01 ${MARKERS.extra}`],
+      ["an over-long string", "A".repeat(41)],
+    ])("logs no code when the code is %s", async (_label, code) => {
+      const { info, serialised } = await throwing(new StubDriverError(code));
+      const fields = info.mock.calls[0]![0] as Record<string, unknown>;
+      expect("errorCode" in fields).toBe(false);
+      expect(fields.errorClass).toBe("StubDriverError");
+      expectNoMarkers(serialised);
+    });
+
+    it("logs a 33-character TLS code and a 40-character code, not a 41-character one", async () => {
+      const tls = await throwing(new StubDriverError("UNABLE_TO_GET_ISSUER_CERT_LOCALLY"));
+      expect((tls.info.mock.calls[0]![0] as Record<string, unknown>).errorCode).toBe(
+        "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+      );
+      const longest = await throwing(new StubDriverError("A".repeat(40)));
+      expect((longest.info.mock.calls[0]![0] as Record<string, unknown>).errorCode).toBe(
+        "A".repeat(40),
+      );
+    });
+
+    it("still returns 500 and logs once when reading the error throws", async () => {
+      const hostile = new Error(MARKERS.message);
+      Object.defineProperty(hostile, "code", {
+        get() {
+          throw new Error(MARKERS.causeMessage);
+        },
+      });
+      const { response, body, info, serialised } = await throwing(hostile);
+      expect(response.status).toBe(500);
+      expect(body).toBe("");
+      expect(info).toHaveBeenCalledTimes(1);
+      expectNoMarkers(serialised);
+    });
+
+    it("logs neither error field for a successful request", async () => {
+      const info = vi.fn();
+      const run = createRequestHandler(
+        { info, pathFor },
+        () => new Response(null, { status: 204 }),
+      );
+      await run(new Request("https://example.test/anything"));
+      const fields = info.mock.calls[0]![0] as Record<string, unknown>;
+      expect("errorClass" in fields).toBe(false);
+      expect("errorCode" in fields).toBe(false);
+    });
+  });
+
   it("logs pathFor and a valid gateway request id, not the URL path", async () => {
     const info = vi.fn();
     const marker = "caller-supplied-segment";
