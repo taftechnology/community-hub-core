@@ -1,5 +1,4 @@
 import {
-  bootstrapOwnerBody,
   createCustomRoleBody,
   deleteCustomRoleBody,
   grantBody,
@@ -10,7 +9,6 @@ import {
 } from "@community-hub/contracts/access";
 import {
   AccessError,
-  bootstrapOwner,
   createCustomRole,
   deleteCustomRole,
   grantRole,
@@ -378,37 +376,6 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
           }
           return listBody(directory);
         });
-        return finish(outcome, (value) => Response.json(value));
-      },
-    },
-    {
-      method: "POST",
-      pattern: "/v1/access/owner/bootstrap",
-      surface: "tenant",
-      handle: async (request) => {
-        const hidden = foreignHost(request);
-        if (hidden !== undefined) {
-          return hidden;
-        }
-        const body = await parse(request, bootstrapOwnerBody);
-        if (body === undefined) {
-          return empty(400);
-        }
-        const actor = await sessionUser(request);
-        if (actor instanceof Response) {
-          return actor;
-        }
-        const scope = await communityScope(body.communitySlug);
-        if (scope === null) {
-          return empty(404);
-        }
-        const outcome = await transact(scope, (tx) =>
-          bootstrapOwner(tx, {
-            now: deps.now(),
-            userId: actor.userId,
-            actorUserId: actor.userId,
-          }),
-        );
         return finish(outcome, (value) => Response.json(value));
       },
     },

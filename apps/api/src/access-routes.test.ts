@@ -9,7 +9,6 @@ const tenancy = vi.hoisted(() => ({
 }));
 
 const access = vi.hoisted(() => ({
-  bootstrapOwner: vi.fn(),
   grantRole: vi.fn(),
   revokeRole: vi.fn(),
   createCustomRole: vi.fn(),
@@ -115,7 +114,6 @@ describe("access routes", () => {
   beforeEach(() => {
     identity.readSession.mockReset();
     tenancy.findCommunityBySlug.mockReset();
-    access.bootstrapOwner.mockReset();
     access.grantRole.mockReset();
     db.withAppTransaction.mockReset();
     db.withAppTransaction.mockImplementation(
@@ -131,11 +129,10 @@ describe("access routes", () => {
     });
   });
 
-  it("registers eight tenant posts", () => {
+  it("registers seven tenant posts", () => {
     const routes = accessRoutes(deps());
     expect(routes.map((item) => `${item.method} ${item.pattern}`)).toEqual([
       "POST /v1/access/grants/list",
-      "POST /v1/access/owner/bootstrap",
       "POST /v1/access/grants",
       "POST /v1/access/grants/revoke",
       "POST /v1/access/custom-roles",
@@ -206,29 +203,6 @@ describe("access routes", () => {
     const bound = deps((message, fields) => {
       entries.push({ message, fields });
     });
-    access.bootstrapOwner.mockResolvedValue({
-      organisationGrantId: ORG_GRANT,
-      communityGrantId: COMMUNITY_GRANT,
-    });
-    const boot = await route("/v1/access/owner/bootstrap", bound).handle(
-      request(
-        "/v1/access/owner/bootstrap",
-        API_HOSTNAME,
-        { communitySlug: "parish" },
-        `Bearer ${TOKEN}`,
-      ),
-    );
-    expect(boot.status).toBe(200);
-    expect(await boot.json()).toEqual({
-      organisationGrantId: ORG_GRANT,
-      communityGrantId: COMMUNITY_GRANT,
-    });
-    expect(db.withAppTransaction).toHaveBeenCalledWith(
-      expect.anything(),
-      { orgId: ORG, communityId: COMMUNITY },
-      expect.any(Function),
-    );
-
     const listed = await route("/v1/access/grants/list", bound).handle(
       request(
         "/v1/access/grants/list",
@@ -289,17 +263,5 @@ describe("access routes", () => {
     );
     expect(listed.status).toBe(403);
     expect(await listed.text()).toBe("");
-
-    const boot = await route("/v1/access/owner/bootstrap").handle(
-      request(
-        "/v1/access/owner/bootstrap",
-        API_HOSTNAME,
-        { communitySlug: "missing" },
-        `Bearer ${TOKEN}`,
-      ),
-    );
-    expect(boot.status).toBe(404);
-    expect(await boot.text()).toBe("");
-    expect(access.bootstrapOwner).not.toHaveBeenCalled();
   });
 });

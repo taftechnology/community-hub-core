@@ -153,7 +153,74 @@ async function revokeInTransaction(
   }
 }
 
+async function bootstrapInTransaction(
+  runtime: Runtime,
+  scope: { orgId: string; communityId: string },
+  userId: string,
+): Promise<void> {
+  const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+  try {
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, scope, (tx) =>
+        bootstrapOwner(tx, { now: NOW, userId, actorUserId: userId }),
+      ),
+    );
+  } finally {
+    await app.end({ timeout: 1 });
+  }
+}
+
 describe("links, bootstrap, and grants", () => {
+  it("creates one owner when two bootstraps run together", async () => {
+    const runtime = loadRuntime();
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+      const organisationId = newId();
+      const communityId = newId();
+      const first = newId();
+      const second = newId();
+      const slug = `grant-boot-${attempt}`;
+      try {
+        await platform.begin(async (tx) => {
+          await tx`
+            insert into platform.organisations (id, slug, region, kind)
+            values (${organisationId}, ${slug}, 'au', 'implicit')
+          `;
+          await tx`
+            insert into platform.communities (id, organisation_id, slug, region)
+            values (${communityId}, ${organisationId}, ${slug}, 'au')
+          `;
+        });
+        const scope = { orgId: organisationId, communityId };
+        await Promise.allSettled([
+          bootstrapInTransaction(runtime, scope, first),
+          bootstrapInTransaction(runtime, scope, second),
+        ]);
+        const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+        try {
+          const counts = await withRequest({ requestId: REQUEST_ID }, () =>
+            withAppTransaction(app, scope, async (tx) => {
+              const owners = await tx<{ n: number }[]>`
+                select count(*)::int as n
+                from app.organisation_role_grants
+                where role_key = 'org_owner'
+              `;
+              const community = await tx<{ n: number }[]>`
+                select count(*)::int as n from app.community_role_grants
+              `;
+              return { owners: owners[0]?.n ?? 0, community: community[0]?.n ?? 0 };
+            }),
+          );
+          expect(counts, slug).toEqual({ owners: 1, community: 1 });
+        } finally {
+          await app.end({ timeout: 1 });
+        }
+      } finally {
+        await platform.end({ timeout: 1 });
+      }
+    }
+  }, 20_000);
+
   it("bootstraps one owner and refuses a second bootstrap", async () => {
     await withParish("grant-bootstrap", async (tx) => {
       const owner = newId();

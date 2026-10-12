@@ -162,6 +162,14 @@ async function countSettingRows(
   return rows[0]?.n ?? 0;
 }
 
+async function lockOrganisation(tx: AppTransaction): Promise<void> {
+  await tx`
+    select pg_advisory_xact_lock(
+      hashtextextended('access.org:' || current_setting('app.org_id'), 0)
+    )
+  `;
+}
+
 export async function linkUser(tx: AppTransaction, input: LinkInput): Promise<{ linkId: string }> {
   const userId = parseUuid(input.userId);
   const personId = parseUuid(input.personId);
@@ -237,6 +245,7 @@ export async function bootstrapOwner(
   if (userId !== actorUserId) {
     throw new AccessError("invalid_id");
   }
+  await lockOrganisation(tx);
   const organisationGrants = await countSettingRows(tx, "organisation");
   const communityGrants = await countSettingRows(tx, "community");
   if (organisationGrants > 0 || communityGrants > 0) {
@@ -494,11 +503,7 @@ export async function revokeRole(
       }
     }
     if (roleKey === "org_owner") {
-      await tx`
-        select pg_advisory_xact_lock(
-          hashtextextended('access.org:' || current_setting('app.org_id'), 0)
-        )
-      `;
+      await lockOrganisation(tx);
       const owners = await tx<{ n: number }[]>`
         select count(*)::int as n
         from app.organisation_role_grants

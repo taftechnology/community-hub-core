@@ -284,17 +284,7 @@ export function UsersRolesPage() {
       {directory === undefined ? null : (
         <>
           {directory.grants.length === 0 ? (
-            <>
-              <p>No role grants</p>
-              <Button
-                type="button"
-                onClick={() => {
-                  void mutate("/v1/access/owner/bootstrap", { communitySlug: slug });
-                }}
-              >
-                Become the owner
-              </Button>
-            </>
+            <p>No role grants</p>
           ) : (
             <ul>
               {directory.grants.map((grant) => (

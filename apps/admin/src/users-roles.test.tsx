@@ -133,7 +133,7 @@ it("hides custom role creation at the limit of 20", async () => {
   expect(document.body.textContent).not.toContain(EMAIL);
 });
 
-it("offers ownership when the community has no grants", async () => {
+it("shows no grants without a bootstrap control", async () => {
   sessionStorage.setItem("community-hub.access-token", TOKEN);
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
     new Response(JSON.stringify(directory(0, [])), {
@@ -147,7 +147,7 @@ it("offers ownership when the community has no grants", async () => {
   });
   fireEvent.click(screen.getByRole("button", { name: "Load" }));
   expect(await screen.findByText("No role grants")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Become the owner" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Become the owner" })).toBeNull();
 });
 
 it("shows the role errors for 403 and 409", async () => {
