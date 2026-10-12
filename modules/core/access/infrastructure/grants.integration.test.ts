@@ -785,6 +785,46 @@ describe("links, bootstrap, and grants", () => {
     });
   });
 
+  it("refuses a custom role grant to a user linked to a minor", async () => {
+    await withParish("pin-custom-minor", async (tx, kms) => {
+      const owner = newId();
+      const subject = newId();
+      await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      const desk = await createCustomRole(tx, {
+        now: NOW,
+        key: "desk",
+        permissions: ["access.users.view"],
+        actorUserId: owner,
+      });
+      const people = await householdWithPeople(tx, kms);
+      await tx`
+        insert into app.user_links (id, org_id, community_id, user_id, person_id)
+        values (
+          ${newId()}::uuid,
+          current_setting('app.org_id')::uuid,
+          current_setting('app.community_id')::uuid,
+          ${subject}::uuid,
+          ${people.minorId}::uuid
+        )
+      `;
+      await expect(
+        grantRole(tx, {
+          now: NOW,
+          userId: subject,
+          roleKey: null,
+          customRoleId: desk.customRoleId,
+          actorUserId: owner,
+        }),
+      ).rejects.toMatchObject({ code: "minor_forbidden" });
+      const grants = await tx<{ n: number }[]>`
+        select count(*)::int as n
+        from app.community_role_grants
+        where user_id = ${subject}::uuid
+      `;
+      expect(grants).toEqual([{ n: 0 }]);
+    });
+  });
+
   it("writes an audit row when a second owner is revoked", async () => {
     await withParish("pin-revoke-audit", async (tx) => {
       const owner = newId();
