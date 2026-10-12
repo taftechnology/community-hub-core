@@ -11,14 +11,13 @@ Spec: docs/specs/2026-10-12-db-migrate-command.md
 **Tech Stack:** TypeScript, Node 24, Vitest, Drizzle ORM `0.45.2`, `postgres` `3.4.9`, Docker `postgres:17`, `openssl`. No new dependency, so no lockfile change.
 
 Slug: db-migrate-command
-Status: draft
+Status: approved (2026-10-12, Abdus)
 
 **Branch:** `feat/2026-10-12-db-migrate-command` · one PR · 10 tasks, one commit each
 
 ## Global Constraints
 
-- The spec is approved (`approved (2026-10-12, Abdus)`). Do not edit `docs/specs/2026-10-12-db-migrate-command.md`. Do not edit the draft `staging-proof-run` spec or its branch.
-- Do not start Task 1 until this plan's Status line is `approved`. Do not mark this plan approved yourself.
+- The spec is approved (`approved (2026-10-12, Abdus)`). The owner corrected three of its test lines after approval, and this plan matches the corrected spec. The implementer does not edit `docs/specs/2026-10-12-db-migrate-command.md`. Do not edit the draft `staging-proof-run` spec or its branch.
 - **Migration wave: none.** This chunk adds no migration and edits no file under `packages/db/drizzle/`, no snapshot, no `packages/db/sql/bootstrap.sql`. The only edits to those files are the mutations in the Security pins table, each run once, seen to fail, and restored. They are never committed. Check `git diff --stat` for `packages/db/drizzle` and `packages/db/sql` before every commit.
 - **Infra: none.** No Terraform change, no apply, no `.github/workflows` change, no Dockerfile change. Staging stays parked: do not touch `enable_database`, `desired_count`, or `service_image`. There are no Terraform asserts in this plan, so there is no scratch probe. Do not read any `*.local.tfvars` file.
 - No dependency is added and `pnpm-lock.yaml` does not change.
@@ -34,7 +33,7 @@ Status: draft
 
 **Rollback:** Revert the merge. The command, the report, the shared modules, and the test files all go. The image already published stays in the registry and is harmless, because nothing runs the command unless a human overrides the command. There is no down-migration and none is added. A migration applied to staging is undone by the re-park, which destroys a database that holds no data.
 
-**Size:** About 2,000 changed lines. About 1,250 are test code. About 260 are the TLS fixture move, which a diff counts twice, once as deleted from `tls.integration.test.ts` and once as added to the fixture. Production code is about 320 lines. The AGENTS.md guide is about 800. This stays one PR. The spec requires these tests, the command and its proof must merge together, and the only independent slice (the fixture extraction) is already its own commit, which a reviewer can read apart. The per-task estimates are below.
+**Size:** About 2,000 changed lines. About 1,250 are test code. About 260 are the TLS fixture move, which a diff counts twice, once as deleted from `tls.integration.test.ts` and once as added to the fixture. Production code is about 320 lines. The AGENTS.md guide is about 800. This stays one PR, and the owner accepted one PR at about 2,000 changed lines. The spec requires these tests, the command and its proof must merge together, and the only independent slice (the fixture extraction) is already its own commit, which a reviewer can read apart. The per-task estimates are below.
 
 ## File map
 
@@ -182,7 +181,7 @@ EOF
 
 **Rule this must not break:** `db-bootstrap.ts` behaviour. `db-bootstrap.test.ts` and `env.test.ts` are not edited and pass. `readServiceEnv` is not changed.
 
-**Decision:** the CA read has its own function because the spec's `runDbMigrate({ source, pem, connect })` takes a PEM that is already read, so an unreadable bundle cannot be tested inside it. The entry block of the command calls `loadImageCa` and prints `env` when it is `undefined`. `db-bootstrap.ts` does not use `loadImageCa`: the spec changes it only to share parsing.
+**Decision:** the CA read has its own function so the entry block can pass `undefined` to `runDbMigrate` when the bundle is unreadable, and `runDbMigrate` then prints `env` (Task 4). `loadImageCa` has its own test here. `db-bootstrap.ts` does not use `loadImageCa`: the spec changes it only to share parsing.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -290,14 +289,14 @@ EOF
 **Interfaces:**
 
 - Consumes: `createDirectSql` and `applyProductMigrations` from `@community-hub/db`, `readOpsEnv` and `loadImageCa` from `./db-ops-env.js`, `failureLine` from `./db-ops-error.js`, `sqlstate` for the role-login check.
-- Produces: `runDbMigrate(deps: { source: NodeJS.ProcessEnv; pem: string; connect: typeof createDirectSql }): Promise<{ exitCode: 0 | 1; stdout: string; stderr: string }>`. It never rejects: the whole body is in a `try`/`catch`, and every `end()` call is `.catch(() => undefined)`.
-- Produces: `runDbMigrateMain(deps: { source; loadPem: () => string | undefined; connect; run?: typeof runDbMigrate }): Promise<{ exitCode; stdout; stderr }>`, the spec's top-level backstop. When `loadPem()` is `undefined` it returns `env\n`, exit 1, and never connects. Otherwise it creates `progress`, calls `run({ source, pem, connect }, progress)` (`run` defaults to `runDbMigrate`), and returns that result. A rejection from `run` is caught by the `.catch` in this function. It returns exit 1, empty stdout, and stderr equal to the stage word `progress.stage` held when the rejection happened, plus a newline, with no error text. `runDbMigrate` takes an optional second argument `progress: { stage: "env" | "connect" | "not_bootstrapped" | "migrate" }` and updates it as it advances. Its first argument is still the spec's three fields.
-- Produces: the entry block, the only code that touches `process`. It calls `runDbMigrateMain({ source: process.env, loadPem: loadImageCa, connect: createDirectSql })`, writes stdout and stderr, and exits with the code. It holds no other logic. It mirrors the guard in `db-bootstrap.ts`.
-- Order inside `runDbMigrate`, with the stage each step reports: (1) `readOpsEnv`, `undefined` is `env`. (2) Stage `connect`: call `connect` for the master with the PEM, host, port, database, user, and master password, and no `servername`. The first query is `select 1 from pg_roles where rolname = 'migrator'`. A rejection is `connect` with `sqlstate`. (3) Stage `not_bootstrapped`: no `migrator` row is `not_bootstrapped`. For each of `app`, `identity`, `platform`, in that order, call `connect` with that role as user and its own password, run `select 1`, and `end()` it. A rejection with `28P01` or `28000` from a `PostgresError` is `not_bootstrapped`. A rejection with any other error is `connect` with `sqlstate`. (4) Stage `migrate`: `applyProductMigrations(sql)`. A rejection is `migrate` with `sqlstate`. (5) Success: one `applied <tag>\n` per tag, then `done applied=<n> total=<m>\n`, exit 0, stderr empty.
+- Produces: `runDbMigrate(deps: { source: NodeJS.ProcessEnv; pem: string | undefined; connect: typeof createDirectSql }, progress?): Promise<{ exitCode: 0 | 1; stdout: string; stderr: string }>`. `pem` is `undefined` when the CA bundle is unreadable, and that gives the stage word `env` (stderr `env\n`, exit 1) with no connection made. It never rejects: the whole body is in a `try`/`catch`, and every `end()` call is `.catch(() => undefined)`.
+- Produces: `runDbMigrateMain(deps: { source; pem: string | undefined; connect; run?: typeof runDbMigrate }): Promise<{ exitCode; stdout; stderr }>`, the spec's top-level backstop. It creates `progress`, calls `run({ source, pem, connect }, progress)` (`run` defaults to `runDbMigrate`), and returns that result. A rejection from `run` is caught by the `.catch` in this function. It returns exit 1, empty stdout, and stderr equal to the stage word `progress.stage` held when the rejection happened, plus a newline, with no error text. `runDbMigrate` takes an optional second argument `progress: { stage: "env" | "connect" | "not_bootstrapped" | "migrate" }` and updates it as it advances. Its first argument is the spec's three fields.
+- Produces: the entry block, the only code that touches `process`. It calls `runDbMigrateMain({ source: process.env, pem: loadImageCa(), connect: createDirectSql })`, writes stdout and stderr, and exits with the code. `loadImageCa` returns `undefined` rather than throwing, so nothing in the entry block can reject before the backstop. It holds no other logic. It mirrors the guard in `db-bootstrap.ts`.
+- Order inside `runDbMigrate`, with the stage each step reports: (1) `pem` `undefined`, or `readOpsEnv` returning `undefined`, is `env`. (2) Stage `connect`: call `connect` for the master with the PEM, host, port, database, user, and master password, and no `servername`. The first query is `select 1 from pg_roles where rolname = 'migrator'`. A rejection is `connect` with `sqlstate`. (3) Stage `not_bootstrapped`: no `migrator` row is `not_bootstrapped`. For each of `app`, `identity`, `platform`, in that order, call `connect` with that role as user and its own password, run `select 1`, and `end()` it. A rejection with `28P01` or `28000` from a `PostgresError` is `not_bootstrapped`. A rejection with any other error is `connect` with `sqlstate`. (4) Stage `migrate`: `applyProductMigrations(sql)`. A rejection is `migrate` with `sqlstate`. (5) Success: one `applied <tag>\n` per tag, then `done applied=<n> total=<m>\n`, exit 0, stderr empty.
 
 **Rule this must not break:** §1 rules 5 and 8. The output is exactly the spec's table. The only SQL in this file is `select 1 from pg_roles where rolname = 'migrator'` and `select 1`. No `SET`, `set_config`, or session statement is written in it, because `check:boundaries` bans that outside `migrate.ts`. The command does not call `runBootstrap`: the runner does, inside the lock.
 
-**Decisions:** the unit test replaces `applyProductMigrations` with `vi.mock("@community-hub/db", ...)`, keeping the real `createDirectSql` type, so `runDbMigrate` keeps the spec's three-field contract and gains no injected runner. The optional `run` in `runDbMigrateMain` exists only so a test can force a rejection and see the backstop. Putting the backstop and the CA wiring in `runDbMigrateMain` makes them unit-testable, and leaves the entry block as process I/O only. The unreadable-CA handling is unchanged (`loadImageCa` returns `undefined`, the result is `env`). See "Pending owner decisions".
+**Decisions:** the unit test replaces `applyProductMigrations` with `vi.mock("@community-hub/db", ...)`, keeping the real `createDirectSql` type, so `runDbMigrate` keeps the spec's three-field contract and gains no injected runner. The optional `run` in `runDbMigrateMain` exists only so a test can force a rejection and see the backstop. Putting the backstop in `runDbMigrateMain` makes it unit-testable and leaves the entry block as process I/O only. The unreadable-bundle case is tested in `db-migrate.test.ts` as the spec says, by passing `pem: undefined`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -305,14 +304,14 @@ EOF
 
 Cases, each asserting `{ exitCode, stdout, stderr }` exactly:
 
-- Each of the eight variables missing, empty, and a bad port: `env\n`, `connect` never called. The spec lists this case in `db-migrate.test.ts`, so it stays. It is one `it.each` table over the eight names and the bad ports, not eight hand-written tests, and `db-ops-env.test.ts` (Task 2) is not repeated beyond that.
+- Each of the eight variables missing, empty, and a bad port, and `pem` `undefined` (an unreadable CA bundle): `env\n`, `connect` never called. The spec lists this case in `db-migrate.test.ts`, so it stays. It is one `it.each` table over the eight names and the bad ports, not eight hand-written tests, and `db-ops-env.test.ts` (Task 2) is not repeated beyond that. `loadImageCa`'s own read-failure test stays in `db-ops-env.test.ts`.
 - `connect` throws synchronously: `connect\n`. `connect` returns and the `pg_roles` query rejects with `28P01`: `connect 28P01\n`. With a TLS-style error with no code, and with an `EPIPE` errno error: `connect\n`.
 - No `migrator` row: `not_bootstrapped\n`, `applyProductMigrations` never called, and the spy saw only the master target.
 - A role login rejects with `28P01`, then with `28000`: `not_bootstrapped\n`. With another `PostgresError` code: `connect <code>\n`. With an error with no code: `connect\n`. A role-login `connect` that throws a non-Postgres error whose message and a property carry the marker: `connect\n` and the marker in neither stream.
 - The runner rejects with the wrapper (`cause` code `42501`): exactly `migrate 42501\n`. With a wrapper whose `cause` has `EPIPE`: `migrate\n`. With a code two levels down: `migrate\n`. With a flat `PostgresError`-shaped error `42501`: `migrate 42501\n`. With a plain `Error`: `migrate\n`.
 - Success: the runner resolves `{ applied: [<two tags>], total: 8 }`. Stdout is two `applied` lines then `done applied=2 total=8\n`, stderr empty, exit 0. With `{ applied: [], total: 8 }`: `done applied=0 total=8\n`.
 - Every `end()` rejecting changes no result above.
-- `runDbMigrateMain`: `loadPem` returning `undefined` gives `env\n` and exit 1, and the factory spy was never called. A `run` that sets `progress.stage` to `migrate` and then rejects with an error carrying the marker in `message` and a property gives exactly `migrate\n` and the marker in neither stream. A `run` that rejects before setting a stage gives `env\n`. A `run` that resolves has its result returned as is.
+- `runDbMigrateMain`: a `run` that sets `progress.stage` to `migrate` and then rejects with an error carrying the marker in `message` and a property gives exactly `migrate\n` and the marker in neither stream. A `run` that rejects before setting a stage gives `env\n`. A `run` that resolves has its result returned as is. With the default `run` and `pem` `undefined`, the result is `env\n`.
 - The log-content test: for every case above, `stdout + stderr` matches `^(applied [0-9]{4}_[a-z0-9_]+\n)*done applied=[0-9]+ total=[0-9]+\n$`, or `^(env|not_bootstrapped)\n$`, or `^(connect|migrate)( [0-9A-Z]{5})?\n$`. It contains none of the planted values, and none of them is in any statement text the fake driver recorded.
 - The factory spy: the first call has the master user, the master password, `ca` equal to the injected PEM, `host` equal to `PGHOST`, and no `servername` key. The next three calls are `app`, `identity`, `platform` in that order, each with its own password and the same `ca` and `host`. The master password appears in no role call, and no role password appears in the master call.
 
@@ -371,7 +370,7 @@ EOF
 
 **Cleanup contract for the concurrency case:** the `finally` block, in this order, (1) releases the lock with `pg_advisory_unlock` (a failure here is ignored), (2) ends the holder connection, (3) awaits both runs with `Promise.allSettled`, so a run still waiting for the lock finishes before the database goes, and (4) drops the database. The wait for the waiters is the bounded poll described below. A poll that reaches its ceiling throws, and the `finally` still runs.
 
-**Decision:** the "second concurrent start" in the spec is read as two runs started while the lock is held. The test waits for two ungranted advisory-lock rows, releases, and asserts that exactly one result is `applied=<total>` and the other is `applied=0`. This is stronger than a run after completion and is still not timing-based.
+**Concurrency (as the spec says):** two runs are started while the lock is held and wait behind it. The test waits for two ungranted advisory-lock rows, releases, and asserts that exactly one result is `applied=<total>` and the other is `applied=0`. The wait is a state, not a delay.
 
 - [ ] **Step 1: Write the tests**
 
@@ -480,7 +479,7 @@ EOF
 
 **Rule this must not break:** the fixture is used, not copied. `postgres-tls-entrypoint.sh` and `bootstrap.sql` are not edited.
 
-**Decisions:** the test calls `runDbMigrate` in-process with a `connect` wrapper `(target) => createDirectSql({ ...target, servername: TLS_SERVER_NAME })`, because `IMAGE_CERT_PATH` has no override and `createDirectSql` needs a `servername` for an IP host. `createDirectSql` still verifies the certificate against the test CA. `runDbBootstrap` runs once, as setup at the start of case 3, to give the roles passwords. The spec lists it at case 5. See "Pending owner decisions".
+**Decisions:** the test calls `runDbMigrate` in-process with a `connect` wrapper `(target) => createDirectSql({ ...target, servername: TLS_SERVER_NAME })`, because `IMAGE_CERT_PATH` has no override and `createDirectSql` needs a `servername` for an IP host. `createDirectSql` still verifies the certificate against the test CA. `runDbBootstrap` runs once, as setup at the start of case 3, to give the roles passwords, as the spec's case 3 says.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -633,14 +632,14 @@ EOF
 
 - Consumes: the Phase 0 table, the Where we are table, and the repository-state cell, as they are on `main` at `8fc42c0`. Phase 0 is 24 rows (23 done, 1 superseded `api-au-hostname`, 0 not started).
 - Produces: a new last Phase 0 row `db-migrate-command`, after `service-image-runtime-base`, status **done**, linking `docs/specs/2026-10-12-db-migrate-command.md`. The row says the image gains `/app/db-migrate.js`, which applies the product migrations as the master login, refuses to run before `db-bootstrap`, and prints the tags it applied, and that it has not been run on staging.
-- Where we are: last shipped `db-migrate-command`. Phase 0 becomes `25 rows: 24 done, 1 superseded (`api-au-hostname`), 0 not started`. Next chunk and the sentence under the Phase 0 table (`Next is entitlements-plans.`) and the Next spec section stay as they are.
-- `AGENTS.md`: in the repository-state cell, `Phase 0: 25 rows, 24 done, 1 superseded (`api-au-hostname`), 0 not started.` Nothing else in that cell or in the file changes.
+- Where we are: last shipped `db-migrate-command`. Phase 0 becomes `25 rows: 24 done, 1 superseded (`api-au-hostname`), 0 not started`. The next chunk is `staging-proof-run`, not `entitlements-plans`. Change it in three places in `docs/roadmap.md`: the Next chunk cell, the sentence under the Phase 0 table (`Next is staging-proof-run.`), and the Next spec section (`The next approved chunk on this list is **staging-proof-run**.`). `staging-proof-run` has no row on `main` yet, and this task does not add one. The `staging-proof-run` branch adds its own row.
+- `AGENTS.md`: in the repository-state cell, `Phase 0: 25 rows, 24 done, 1 superseded (`api-au-hostname`), 0 not started. Next is `staging-proof-run`.` Nothing else in that cell or in the file changes.
 
 **Rule this must not break:** the open item "This image has not run on Fargate" stays for the proof run to replace. `architecture.md` is not edited. Re-derive the counts from `docs/roadmap.md` on `origin/main` before writing: `staging-proof-run` is a draft and adds no row on `main`. If `main` has moved and a Phase 0 row has been added, recompute and say so in the report.
 
-- [ ] **Step 1: Edit the three places**
+- [ ] **Step 1: Edit the catalogue**
 
-Add the row, update the two table cells, and update the repository-state cell. Run `pnpm exec prettier --write docs/roadmap.md AGENTS.md`, because the header table cell changes.
+Add the row, update the Last shipped, Next chunk and Phase 0 cells, update the Phase 0 sentence and the Next spec section, and update the repository-state cell. Run `pnpm exec prettier --write docs/roadmap.md AGENTS.md`, because the header table cell changes.
 
 - [ ] **Step 2: Clean up the session scratch**
 
@@ -687,14 +686,6 @@ EOF
 |      | **Total**                                                         | **~2,000** |
 
 The total counts the Task 6 move twice, as a diff does (about 260 lines of it).
-
-## Pending owner decisions
-
-Three places where this plan departs from a spec line that the owner has not yet agreed to correct. The plan is written to the code and does what is described in Tasks 4, 5 and 7. The spec is approved and this plan does not edit it. The owner decides, separately, whether to change the spec lines below. Each has the exact spec text and a proposed one-line wording.
-
-1. **Unreadable CA bundle.** Spec, Tests, first unit bullet: "Each env variable missing, empty, or a bad port: stdout empty, stderr `env\n`, exit 1. An unreadable CA bundle: `env\n`." `runDbMigrate` takes a PEM that is already read, so this case cannot be tested inside it as written. The plan covers it with `loadImageCa` in `db-ops-env.test.ts` and with `runDbMigrateMain`'s `loadPem` returning `undefined` in `db-migrate.test.ts`. Option A, widen `runDbMigrate`'s `pem` to `string | undefined`, with `undefined` giving the stage word `env`, so the bullet is testable as written. Option B, reword the bullet to: "An unreadable CA bundle is covered by `loadImageCa` in `db-ops-env.test.ts`, which the entry block maps to `env\n`."
-2. **Concurrency.** Spec, Tests, the concurrency bullet, last sentences: "It releases the lock, waits for the command to finish, and asserts exit 0, eight rows, and `applied=8`. A second concurrent start after that applies 0." The plan starts two runs while the lock is held. Proposed wording: "Two runs started while the lock is held wait behind it; after the release exactly one applies and the other applies 0." The poll waits for two ungranted rows.
-3. **TLS case order.** Spec, Tests, non-superuser TLS cases: "(3) a wrong password for one role: exit 1, `not_bootstrapped`; ... (5) after `runDbBootstrap`: exit 0, `done applied=8 total=8`, and the second execution of `bootstrap.sql` (it runs inside the runner) succeeded as a non-superuser". A wrong role password needs passwords to exist, so `runDbBootstrap` runs at the start of case 3. Proposed wording: "(3) after `runDbBootstrap` has set the three passwords, a wrong password for one role: exit 1, `not_bootstrapped`; ... (5) correct passwords: exit 0, `done applied=8 total=8`, and the second execution of `bootstrap.sql` (it runs inside the runner) succeeded as a non-superuser".
 
 ## What the implementer must stop and ask about
 
