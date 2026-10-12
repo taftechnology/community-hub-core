@@ -21,9 +21,9 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 |              |                                                                   |
 | ------------ | ----------------------------------------------------------------- |
 | Phase        | 1 — Core platform                                                 |
-| Last shipped | `access-roles`                                                    |
-| Next chunk   | `entitlements-plans`                                              |
-| Phase 0      | 24 rows: 23 done, 1 superseded (`api-au-hostname`), 0 not started |
+| Last shipped | `db-migrate-command`                                              |
+| Next chunk   | `staging-proof-run`                                               |
+| Phase 0      | 25 rows: 24 done, 1 superseded (`api-au-hostname`), 0 not started |
 | Later phases | not started                                                       |
 
 Update the snapshot and the row in the **same PR**, last commit on the chunk branch, before the PR opens. Do not defer to a follow-up chore after merge. Do not put implementer reports here ([AGENTS.md](../AGENTS.md) §5).
@@ -93,8 +93,9 @@ Architecture: monorepo, CI, Terraform for AWS in `ap-southeast-2`, kernel, db wi
 | done       | `image-publish`              | CI builds, tests, and pushes by digest through a GitHub OIDC role scoped to this one repository. A pull request still does not push. A push to `main` publishes the digest. Spec `docs/specs/2026-10-06-image-publish.md`.                                                                                                                                                                                                                                                         |
 | done       | `kms-mrk-replica`            | A replica of the envelope key in `ap-southeast-4`, not a database backup. Spec `docs/specs/2026-10-07-kms-mrk-replica.md`.                                                                                                                                                                                                                                                                                                                                                         |
 | done       | `service-image-runtime-base` | The service image final stage has no package manager. `gnutls28` is not in the runtime. Spec `docs/specs/2026-10-10-service-image-runtime-base.md`.                                                                                                                                                                                                                                                                                                                                |
+| done       | `db-migrate-command`         | The image gains `/app/db-migrate.js`, which applies the product migrations as the master login, refuses to run before `db-bootstrap`, and prints the tags it applied. It has not been run on staging. Spec `docs/specs/2026-10-12-db-migrate-command.md`.                                                                                                                                                                                                                          |
 
-Next is `entitlements-plans`.
+Next is `staging-proof-run`.
 
 SQS, EventBridge, file storage, and the admin static-file distribution are not rows here. Each waits for the first chunk that uses it.
 
@@ -258,7 +259,7 @@ This image has not run on Fargate. The next chunk that unparks staging re-runs t
 
 ## Next spec
 
-The next approved chunk on this list is **entitlements-plans**.
+The next approved chunk on this list is **staging-proof-run**.
 
 ---
 
