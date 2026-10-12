@@ -113,6 +113,8 @@ type Outcome = {
   deps: DbMigrateDeps;
   targets: SqlTarget[];
   connections: Sql[];
+  /** How many times end() was called on each connection, in creation order. */
+  ends: number[];
   statements: string[];
   run(): Promise<DbMigrateResult>;
 };
@@ -127,10 +129,13 @@ function joinQuery(strings: TemplateStringsArray, values: readonly unknown[]): s
 function harness(scenario: Scenario = {}): Outcome {
   const targets: SqlTarget[] = [];
   const connections: Sql[] = [];
+  const ends: number[] = [];
   const statements: string[] = [];
   const env = scenario.env ?? source();
 
   function fakeSql(user: string): Sql {
+    const index = ends.length;
+    ends.push(0);
     const rejection = scenario.queryRejects?.[user];
     const sql = Object.assign(
       (strings: TemplateStringsArray, ...values: unknown[]) => {
@@ -145,10 +150,12 @@ function harness(scenario: Scenario = {}): Outcome {
         return Promise.resolve([{ one: 1 }]);
       },
       {
-        end: () =>
-          scenario.endRejects === true
+        end: () => {
+          ends[index] = (ends[index] ?? 0) + 1;
+          return scenario.endRejects === true
             ? Promise.reject(new Error(`${MARKER} end ${SQL_TEXT}`))
-            : Promise.resolve(),
+            : Promise.resolve();
+        },
       },
     );
     return sql as unknown as Sql;
@@ -181,6 +188,7 @@ function harness(scenario: Scenario = {}): Outcome {
     deps,
     targets,
     connections,
+    ends,
     statements,
     async run() {
       const result = await runDbMigrate(deps);
@@ -195,6 +203,8 @@ function harness(scenario: Scenario = {}): Outcome {
       if (result.exitCode === 1) {
         expect(result.stdout).toBe("");
       }
+      // Every connection the factory returned is ended exactly once, on every path.
+      expect(ends).toEqual(connections.map(() => 1));
       return result;
     },
   };
@@ -240,8 +250,9 @@ describe("runDbMigrate connect stage", () => {
   });
 
   it("a rejected first query with a PostgresError keeps its SQLSTATE", async () => {
-    const { run } = harness({ queryRejects: { [USER]: pgError("28P01") } });
+    const { ends, run } = harness({ queryRejects: { [USER]: pgError("28P01") } });
     expect(await run()).toEqual(failure("connect 28P01\n"));
+    expect(ends).toEqual([1]);
   });
 
   it("a TLS-style error and an errno code are the bare word", async () => {
@@ -256,8 +267,9 @@ describe("runDbMigrate connect stage", () => {
 
 describe("runDbMigrate bootstrap check", () => {
   it("no migrator row: not_bootstrapped, and the runner is never called", async () => {
-    const { targets, run } = harness({ noMigratorRow: true });
+    const { targets, ends, run } = harness({ noMigratorRow: true });
     expect(await run()).toEqual(failure("not_bootstrapped\n"));
+    expect(ends).toEqual([1]);
     expect(vi.mocked(applyProductMigrations)).not.toHaveBeenCalled();
     expect(targets.map((target) => target.user)).toEqual([USER]);
   });
@@ -270,8 +282,11 @@ describe("runDbMigrate bootstrap check", () => {
     ["identity", "28000"],
     ["platform", "28000"],
   ])("a refused login for %s (%s): not_bootstrapped", async (role, code) => {
-    const { run } = harness({ queryRejects: { [role]: pgError(code) } });
+    const { ends, run } = harness({ queryRejects: { [role]: pgError(code) } });
     expect(await run()).toEqual(failure("not_bootstrapped\n"));
+    expect(ends).toEqual(
+      Array.from({ length: 2 + ["app", "identity", "platform"].indexOf(role) }, () => 1),
+    );
     expect(vi.mocked(applyProductMigrations)).not.toHaveBeenCalled();
   });
 
@@ -301,8 +316,9 @@ describe("runDbMigrate bootstrap check", () => {
 
 describe("runDbMigrate runner", () => {
   it("prints the SQLSTATE of the cause of a drizzle wrapper and nothing else", async () => {
-    const { run } = harness({ runner: { reject: drizzleWrapper(pgError("42501")) } });
+    const { ends, run } = harness({ runner: { reject: drizzleWrapper(pgError("42501")) } });
     expect(await run()).toEqual(failure("migrate 42501\n"));
+    expect(ends).toEqual([1, 1, 1, 1]);
   });
 
   it("an errno code in the cause is the bare word", async () => {
@@ -329,10 +345,12 @@ describe("runDbMigrate runner", () => {
 
 describe("runDbMigrate success", () => {
   it("prints each applied tag and the counts", async () => {
-    const { run } = harness({
+    const { ends, run } = harness({
       runner: { applied: ["0006_people_org_scoped_uniques", "0007_fast_gorilla_man"], total: 8 },
     });
-    expect(await run()).toEqual({
+    const result = await run();
+    expect(ends).toEqual([1, 1, 1, 1]);
+    expect(result).toEqual({
       exitCode: 0,
       stdout:
         "applied 0006_people_org_scoped_uniques\napplied 0007_fast_gorilla_man\ndone applied=2 total=8\n",
@@ -459,6 +477,24 @@ describe("runDbMigrateMain", () => {
     };
     const run = vi.fn(async () => resolved);
     expect(await runDbMigrateMain({ ...base(), run })).toBe(resolved);
+  });
+
+  it("ends every connection when the default run succeeds", async () => {
+    const { deps, ends } = harness({ runner: { applied: [], total: 8 } });
+    const result = await runDbMigrateMain({ ...deps });
+    expect(result).toEqual({ exitCode: 0, stdout: "done applied=0 total=8\n", stderr: "" });
+    expect(ends).toEqual([1, 1, 1, 1]);
+  });
+
+  it("ends every connection even when the caller of the run rejects afterwards", async () => {
+    const { deps, ends } = harness({ runner: { applied: [], total: 8 } });
+    const run = async (inner: DbMigrateDeps, progress?: Progress) => {
+      await runDbMigrate(inner, progress);
+      throw new Error(MARKER);
+    };
+    const result = await runDbMigrateMain({ ...deps, run });
+    expect(result).toEqual(failure("migrate\n"));
+    expect(ends).toEqual([1, 1, 1, 1]);
   });
 
   it("with the default run and no CA bundle, prints env", async () => {

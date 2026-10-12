@@ -184,6 +184,8 @@ describe("db-migrate on a fresh database", () => {
 
         const deadline = Date.now() + 20_000;
         for (;;) {
+          // Filter by database: other suites share this cluster, and advisory
+          // locks are per database, so only this test's database counts.
           const waiting = await holder<{ n: number }[]>`
             select count(*)::int as n
             from pg_locks l
