@@ -8,14 +8,25 @@ const tenancy = vi.hoisted(() => ({
   findCommunityBySlug: vi.fn(),
 }));
 
-const access = vi.hoisted(() => ({
-  grantRole: vi.fn(),
-  revokeRole: vi.fn(),
-  createCustomRole: vi.fn(),
-  deleteCustomRole: vi.fn(),
-  linkUser: vi.fn(),
-  unlinkUser: vi.fn(),
-}));
+const access = vi.hoisted(() => {
+  class AccessError extends Error {
+    readonly code: string;
+    constructor(code: string) {
+      super(code);
+      this.name = "AccessError";
+      this.code = code;
+    }
+  }
+  return {
+    AccessError,
+    grantRole: vi.fn(),
+    revokeRole: vi.fn(),
+    createCustomRole: vi.fn(),
+    deleteCustomRole: vi.fn(),
+    linkUser: vi.fn(),
+    unlinkUser: vi.fn(),
+  };
+});
 
 const db = vi.hoisted(() => ({
   withAppTransaction: vi.fn(),
@@ -30,17 +41,15 @@ vi.mock("@community-hub/identity", async () => {
 
 vi.mock("@community-hub/tenancy", () => tenancy);
 
-vi.mock("@community-hub/access", () => {
-  class AccessError extends Error {
-    readonly code: string;
-    constructor(code: string) {
-      super(code);
-      this.name = "AccessError";
-      this.code = code;
-    }
-  }
-  return { AccessError, ...access };
-});
+vi.mock("@community-hub/access", () => ({
+  AccessError: access.AccessError,
+  grantRole: access.grantRole,
+  revokeRole: access.revokeRole,
+  createCustomRole: access.createCustomRole,
+  deleteCustomRole: access.deleteCustomRole,
+  linkUser: access.linkUser,
+  unlinkUser: access.unlinkUser,
+}));
 
 vi.mock("@community-hub/db", async () => {
   const actual = await vi.importActual<typeof import("@community-hub/db")>("@community-hub/db");
@@ -63,10 +72,14 @@ const ORG_GRANT = "00000000-0000-4000-8000-000000000020";
 const COMMUNITY_GRANT = "00000000-0000-4000-8000-000000000021";
 
 let grantsVisible = true;
+let directoryMode: "owner" | "billing" = "owner";
 
 function fakeTx(strings: TemplateStringsArray): unknown[] {
   const text = strings.join(" ");
-  if (!grantsVisible) {
+  if (!grantsVisible || directoryMode === "billing") {
+    if (directoryMode === "billing" && text.includes("app.organisation_role_grants")) {
+      return [{ grant_id: ORG_GRANT, user_id: USER, role_key: "org_billing" }];
+    }
     return [];
   }
   if (text.includes("app.organisation_role_grants")) {
@@ -123,9 +136,12 @@ function route(path: string, bound: AccessDeps = deps()) {
 describe("access routes", () => {
   beforeEach(() => {
     grantsVisible = true;
+    directoryMode = "owner";
     identity.readSession.mockReset();
     tenancy.findCommunityBySlug.mockReset();
     access.grantRole.mockReset();
+    access.linkUser.mockReset();
+    access.unlinkUser.mockReset();
     db.withAppTransaction.mockReset();
     db.appendAuditEvent.mockReset();
     db.withAppTransaction.mockImplementation(
@@ -314,5 +330,76 @@ describe("access routes", () => {
     expect(missing.status).toBe(403);
     expect(await absent.text()).toBe(await missing.text());
     expect(await missing.text()).toBe("");
+  });
+
+  it("refuses a link and an unlink when the caller cannot manage users", async () => {
+    directoryMode = "billing";
+    const linked = await route("/v1/access/user-links").handle(
+      request(
+        "/v1/access/user-links",
+        API_HOSTNAME,
+        {
+          communitySlug: "parish",
+          userId: "00000000-0000-4000-8000-000000000030",
+          personId: "00000000-0000-4000-8000-000000000031",
+        },
+        `Bearer ${TOKEN}`,
+      ),
+    );
+    expect(linked.status).toBe(403);
+    expect(await linked.text()).toBe("");
+    expect(access.linkUser).not.toHaveBeenCalled();
+    const unlinked = await route("/v1/access/user-links/delete").handle(
+      request(
+        "/v1/access/user-links/delete",
+        API_HOSTNAME,
+        { communitySlug: "parish", userId: "00000000-0000-4000-8000-000000000030" },
+        `Bearer ${TOKEN}`,
+      ),
+    );
+    expect(unlinked.status).toBe(403);
+    expect(await unlinked.text()).toBe("");
+    expect(access.unlinkUser).not.toHaveBeenCalled();
+  });
+
+  it("maps a forbidden grant to an empty 403 and takes the actor from the session", async () => {
+    const subject = "00000000-0000-4000-8000-000000000030";
+    access.grantRole.mockResolvedValue({ grantId: ORG_GRANT, scope: "community" });
+    const granted = await route("/v1/access/grants").handle(
+      request(
+        "/v1/access/grants",
+        API_HOSTNAME,
+        { communitySlug: "parish", userId: subject, roleKey: "member" },
+        `Bearer ${TOKEN}`,
+      ),
+    );
+    expect(granted.status).toBe(200);
+    expect(access.grantRole).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ actorUserId: USER, userId: subject }),
+    );
+    access.grantRole.mockReset();
+    access.grantRole.mockRejectedValue(new access.AccessError("forbidden"));
+    const refused = await route("/v1/access/grants").handle(
+      request(
+        "/v1/access/grants",
+        API_HOSTNAME,
+        { communitySlug: "parish", userId: subject, roleKey: "member" },
+        `Bearer ${TOKEN}`,
+      ),
+    );
+    expect(refused.status).toBe(403);
+    expect(await refused.text()).toBe("");
+    access.grantRole.mockReset();
+    const planted = await route("/v1/access/grants").handle(
+      request(
+        "/v1/access/grants",
+        API_HOSTNAME,
+        { communitySlug: "parish", userId: subject, roleKey: "member", actorUserId: subject },
+        `Bearer ${TOKEN}`,
+      ),
+    );
+    expect(planted.status).toBe(400);
+    expect(access.grantRole).not.toHaveBeenCalled();
   });
 });

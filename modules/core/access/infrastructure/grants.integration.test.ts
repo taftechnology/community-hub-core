@@ -634,4 +634,182 @@ describe("links, bootstrap, and grants", () => {
       await app.end({ timeout: 1 });
     }
   });
+
+  it("refuses role changes from an actor who lacks access.roles.manage", async () => {
+    await withParish("pin-manage", async (tx) => {
+      const owner = newId();
+      const coordinator = newId();
+      const memberUser = newId();
+      await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      await grantRole(tx, {
+        now: NOW,
+        userId: coordinator,
+        roleKey: "volunteer_coordinator",
+        customRoleId: null,
+        actorUserId: owner,
+      });
+      const member = await grantRole(tx, {
+        now: NOW,
+        userId: memberUser,
+        roleKey: "member",
+        customRoleId: null,
+        actorUserId: owner,
+      });
+      const viewers = await createCustomRole(tx, {
+        now: NOW,
+        key: "viewers",
+        permissions: ["access.users.view"],
+        actorUserId: owner,
+      });
+      await expect(
+        grantRole(tx, {
+          now: NOW,
+          userId: newId(),
+          roleKey: "member",
+          customRoleId: null,
+          actorUserId: coordinator,
+        }),
+      ).rejects.toMatchObject({ code: "forbidden" });
+      await expect(
+        grantRole(tx, {
+          now: NOW,
+          userId: newId(),
+          roleKey: null,
+          customRoleId: viewers.customRoleId,
+          actorUserId: coordinator,
+        }),
+      ).rejects.toMatchObject({ code: "forbidden" });
+      await expect(
+        createCustomRole(tx, {
+          now: NOW,
+          key: "desk",
+          permissions: ["access.users.view"],
+          actorUserId: coordinator,
+        }),
+      ).rejects.toMatchObject({ code: "forbidden" });
+      await expect(
+        revokeRole(tx, {
+          now: NOW,
+          grantId: member.grantId,
+          scope: "community",
+          actorUserId: coordinator,
+        }),
+      ).rejects.toMatchObject({ code: "forbidden" });
+      const still = await tx<{ n: number }[]>`
+        select count(*)::int as n
+        from app.community_role_grants
+        where id = ${member.grantId}::uuid
+      `;
+      expect(still).toEqual([{ n: 1 }]);
+    });
+  });
+
+  it("refuses a role whose permissions the actor does not hold", async () => {
+    await withParish("pin-hold", async (tx) => {
+      const owner = newId();
+      const holder = newId();
+      await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      const desk = await createCustomRole(tx, {
+        now: NOW,
+        key: "desk",
+        permissions: ["access.roles.manage"],
+        actorUserId: owner,
+      });
+      const viewers = await createCustomRole(tx, {
+        now: NOW,
+        key: "viewers",
+        permissions: ["access.users.view"],
+        actorUserId: owner,
+      });
+      await grantRole(tx, {
+        now: NOW,
+        userId: holder,
+        roleKey: null,
+        customRoleId: desk.customRoleId,
+        actorUserId: owner,
+      });
+      await expect(
+        grantRole(tx, {
+          now: NOW,
+          userId: newId(),
+          roleKey: "community_admin",
+          customRoleId: null,
+          actorUserId: holder,
+        }),
+      ).rejects.toMatchObject({ code: "forbidden" });
+      await expect(
+        grantRole(tx, {
+          now: NOW,
+          userId: newId(),
+          roleKey: null,
+          customRoleId: viewers.customRoleId,
+          actorUserId: holder,
+        }),
+      ).rejects.toMatchObject({ code: "forbidden" });
+      await expect(
+        createCustomRole(tx, {
+          now: NOW,
+          key: "readers",
+          permissions: ["access.users.view"],
+          actorUserId: holder,
+        }),
+      ).rejects.toMatchObject({ code: "forbidden" });
+    });
+  });
+
+  it("refuses a grant to a user linked to a minor", async () => {
+    await withParish("pin-minor", async (tx, kms) => {
+      const owner = newId();
+      const subject = newId();
+      await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      const people = await householdWithPeople(tx, kms);
+      await tx`
+        insert into app.user_links (id, org_id, community_id, user_id, person_id)
+        values (
+          ${newId()}::uuid,
+          current_setting('app.org_id')::uuid,
+          current_setting('app.community_id')::uuid,
+          ${subject}::uuid,
+          ${people.minorId}::uuid
+        )
+      `;
+      await expect(
+        grantRole(tx, {
+          now: NOW,
+          userId: subject,
+          roleKey: "member",
+          customRoleId: null,
+          actorUserId: owner,
+        }),
+      ).rejects.toMatchObject({ code: "minor_forbidden" });
+    });
+  });
+
+  it("writes an audit row when a second owner is revoked", async () => {
+    await withParish("pin-revoke-audit", async (tx) => {
+      const owner = newId();
+      const second = newId();
+      await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      const granted = await grantRole(tx, {
+        now: NOW,
+        userId: second,
+        roleKey: "org_owner",
+        customRoleId: null,
+        actorUserId: owner,
+      });
+      await revokeRole(tx, {
+        now: NOW,
+        grantId: granted.grantId,
+        scope: "organisation",
+        actorUserId: owner,
+      });
+      const revoked = await tx<{ target_ids: string[] }[]>`
+        select target_ids::text[] as target_ids
+        from app.audit_events
+        where action = 'access.role.revoked'
+          and ${granted.grantId}::uuid = any(target_ids)
+      `;
+      expect(revoked).toEqual([{ target_ids: [granted.grantId] }]);
+    });
+  });
 });

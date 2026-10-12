@@ -96,6 +96,19 @@ describe("decide", () => {
     }
   });
 
+  it("allows a custom permission the built-in bundles do not grant", () => {
+    expect(
+      decide({
+        permission: "access.roles.manage",
+        organisationRoleKeys: [],
+        communityRoleKeys: [],
+        customPermissions: ["access.roles.manage"],
+        guardianView: false,
+        personScoped: false,
+      }),
+    ).toBe(true);
+  });
+
   it("allows a person-scoped guardian the restricted read and not role management", () => {
     const flags = { guardianView: true, personScoped: true };
     const roles = { organisationRoleKeys: [], communityRoleKeys: [] };
