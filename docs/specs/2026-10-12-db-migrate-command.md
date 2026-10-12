@@ -1,8 +1,8 @@
 # Spec: Database migrate command
 
 Slug: db-migrate-command
-Status: draft
-Architecture refs: §6.3, §7.3, §23.2, ADR 0009. Follows `docs/specs/2026-10-06-db-ops-task.md`, which added the ops task definition and `db-bootstrap.js`. This is option A of open question 1 in the draft `staging-proof-run` spec. That spec depends on this one. This spec is not edited by it and does not edit it.
+Status: approved (2026-10-12, Abdus)
+Architecture refs: §6.3, §7.3, §23.2, ADR 0009. Follows `docs/specs/2026-10-06-db-ops-task.md`, which added the ops task definition and `db-bootstrap.js`. On 2026-10-12 the owner chose a separate chunk that merges before the staging proof run, over putting this work inside the draft `staging-proof-run` spec. That spec depends on this one. This spec is not edited by it and does not edit it.
 
 ## Problem
 
