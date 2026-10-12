@@ -13,7 +13,27 @@ type InfoFields = {
   operation: Operation;
   key_kind?: KeyKind;
   outcome: Outcome;
+  /** Class name of the caught error. Set only when the outcome is `failed`. */
+  errorClass?: string;
 };
+
+const ERROR_CLASS = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+
+/**
+ * The caught error's class name and nothing else. The message can hold a key id or an ARN, so it
+ * is never read. A thrown non-Error has no class.
+ */
+function errorClassOf(error: unknown): string | undefined {
+  if (!(error instanceof Error)) {
+    return undefined;
+  }
+  try {
+    const name: unknown = error.name;
+    return typeof name === "string" && ERROR_CLASS.test(name) ? name : "Error";
+  } catch {
+    return "Error";
+  }
+}
 
 type KmsSendResponse = {
   Plaintext?: Uint8Array;
@@ -44,12 +64,20 @@ export function createAwsKmsPort(options: {
     return undefined;
   }
 
-  function report(operation: Operation, outcome: Outcome, keyKind: KeyKind | undefined): void {
-    if (keyKind === undefined) {
-      options.info({ operation, outcome });
-      return;
+  function report(
+    operation: Operation,
+    outcome: Outcome,
+    keyKind: KeyKind | undefined,
+    errorClass?: string,
+  ): void {
+    const fields: InfoFields = { operation, outcome };
+    if (keyKind !== undefined) {
+      fields.key_kind = keyKind;
     }
-    options.info({ operation, outcome, key_kind: keyKind });
+    if (outcome === "failed" && errorClass !== undefined) {
+      fields.errorClass = errorClass;
+    }
+    options.info(fields);
   }
 
   function failed(): Error {
@@ -75,7 +103,7 @@ export function createAwsKmsPort(options: {
         report(operation, "rejected", kind);
         throw failed();
       }
-      report(operation, "failed", kind);
+      report(operation, "failed", kind, errorClassOf(error));
       throw failed();
     }
     if (keyId !== options.keyArn) {
@@ -114,7 +142,12 @@ export function createAwsKmsPort(options: {
       if (error instanceof Error && error.message === "kms_failed") {
         throw error;
       }
-      report(operation, signal.aborted ? "timeout" : "failed", checked.key_kind);
+      report(
+        operation,
+        signal.aborted ? "timeout" : "failed",
+        checked.key_kind,
+        errorClassOf(error),
+      );
       throw failed();
     }
   }

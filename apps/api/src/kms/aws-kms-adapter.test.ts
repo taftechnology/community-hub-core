@@ -1,5 +1,6 @@
 import { DecryptCommand, GenerateDataKeyCommand } from "@aws-sdk/client-kms";
 import type { KmsContext } from "@community-hub/crypto";
+import { createLogger } from "@community-hub/observability";
 import { describe, expect, it, vi } from "vitest";
 
 import { createAwsKmsPort, DEFAULT_DEADLINE_MS } from "./aws-kms-adapter.js";
@@ -13,6 +14,7 @@ type Log = {
   operation: "generate_data_key" | "decrypt";
   key_kind?: "org" | "identity";
   outcome: "ok" | "rejected" | "failed" | "timeout";
+  errorClass?: string;
 };
 
 async function rejection(run: () => Promise<unknown>): Promise<Error> {
@@ -127,7 +129,160 @@ describe("createAwsKmsPort", () => {
     const error = await rejection(() => port.generateDataKey(KEY_ARN, org));
     expect(error.message).toBe("kms_failed");
     expect(sdkPlaintext.every((byte) => byte === 0)).toBe(true);
-    expect(logs).toEqual([{ operation: "generate_data_key", outcome: "failed", key_kind: "org" }]);
+    expect(logs).toEqual([
+      { operation: "generate_data_key", outcome: "failed", key_kind: "org", errorClass: "Error" },
+    ]);
+  });
+
+  describe("a failed send", () => {
+    const MARKER = "marker-sdk-message-4e7a";
+    const ARN_SHAPED = "arn:aws:kms:ap-southeast-2:210987654321:key/marker-arn-b3c9";
+
+    async function failWith(thrown: unknown): Promise<{ logs: Log[]; error: Error }> {
+      const logs: Log[] = [];
+      const port = createAwsKmsPort({
+        client: {
+          send: async () => {
+            throw thrown;
+          },
+        },
+        keyArn: KEY_ARN,
+        info: (fields) => logs.push(fields),
+      });
+      const error = await rejection(() => port.decrypt(KEY_ARN, new Uint8Array([1]), org));
+      return { logs, error };
+    }
+
+    function sdkError(name: string): Error {
+      const error = new Error(`${MARKER} ${ARN_SHAPED}`);
+      error.name = name;
+      error.stack = `${name}: ${MARKER} ${ARN_SHAPED}`;
+      return error;
+    }
+
+    it("names the SDK error class and nothing else from the error", async () => {
+      const written: string[] = [];
+      const logger = createLogger({ write: (line) => written.push(line) });
+      const port = createAwsKmsPort({
+        client: {
+          send: async () => {
+            throw sdkError("AccessDeniedException");
+          },
+        },
+        keyArn: KEY_ARN,
+        info: (fields) => {
+          logger.info("kms", fields);
+        },
+      });
+
+      const error = await rejection(() => port.decrypt(KEY_ARN, new Uint8Array([1]), org));
+
+      expect(error.message).toBe("kms_failed");
+      expect(error.cause).toBeUndefined();
+      expect(written).toHaveLength(1);
+      expect(JSON.parse(written[0] ?? "{}")).toEqual({
+        level: "info",
+        message: "kms",
+        operation: "decrypt",
+        key_kind: "org",
+        outcome: "failed",
+        errorClass: "AccessDeniedException",
+      });
+      expect(written[0]).not.toContain(MARKER);
+      expect(written[0]).not.toContain(ARN_SHAPED);
+      expect(written[0]).not.toContain("210987654321");
+      expect(logger.getDroppedFieldCount()).toBe(0);
+    });
+
+    it("hands the callback exactly the class name, not the message", async () => {
+      const { logs } = await failWith(sdkError("AccessDeniedException"));
+      expect(logs).toEqual([
+        {
+          operation: "decrypt",
+          outcome: "failed",
+          key_kind: "org",
+          errorClass: "AccessDeniedException",
+        },
+      ]);
+      expect(JSON.stringify(logs)).not.toContain(MARKER);
+      expect(JSON.stringify(logs)).not.toContain(ARN_SHAPED);
+    });
+
+    it("reports Error when the name has spaces or is not a string", async () => {
+      for (const name of [`${MARKER} with spaces`, "Bad Name", { marker: MARKER }, 42]) {
+        const thrown = new Error(MARKER);
+        (thrown as unknown as { name: unknown }).name = name;
+        const { logs, error } = await failWith(thrown);
+        expect(error.message).toBe("kms_failed");
+        expect(logs).toEqual([
+          { operation: "decrypt", outcome: "failed", key_kind: "org", errorClass: "Error" },
+        ]);
+        expect(JSON.stringify(logs)).not.toContain(MARKER);
+      }
+    });
+
+    it("reports Error when reading the name throws", async () => {
+      const thrown = new Error(MARKER);
+      Object.defineProperty(thrown, "name", {
+        get() {
+          throw new Error(MARKER);
+        },
+      });
+      const { logs, error } = await failWith(thrown);
+      expect(error.message).toBe("kms_failed");
+      expect(logs).toEqual([
+        { operation: "decrypt", outcome: "failed", key_kind: "org", errorClass: "Error" },
+      ]);
+      expect(JSON.stringify(logs)).not.toContain(MARKER);
+    });
+
+    it.each([
+      ["a string", `thrown ${MARKER}`],
+      ["null", null],
+      ["a plain object", { name: "AccessDeniedException", message: MARKER }],
+    ])("reports no class for a thrown %s", async (_label, thrown) => {
+      const { logs, error } = await failWith(thrown);
+      expect(error.message).toBe("kms_failed");
+      expect(logs).toEqual([{ operation: "decrypt", outcome: "failed", key_kind: "org" }]);
+      expect(JSON.stringify(logs)).not.toContain(MARKER);
+    });
+
+    it("carries no class on the rejected, timeout and ok paths", async () => {
+      const logs: Log[] = [];
+      const rejectedPort = createAwsKmsPort({
+        client: { send: vi.fn() },
+        keyArn: KEY_ARN,
+        info: (fields) => logs.push(fields),
+      });
+      await rejection(() => rejectedPort.decrypt("other-key", new Uint8Array([1]), org));
+
+      const timeoutPort = createAwsKmsPort({
+        client: {
+          send: (_command, sendOptions) =>
+            new Promise((_resolve, reject) => {
+              sendOptions?.abortSignal?.addEventListener("abort", () => {
+                reject(sdkError("TimeoutError"));
+              });
+            }),
+        },
+        keyArn: KEY_ARN,
+        deadlineMs: 5,
+        info: (fields) => logs.push(fields),
+      });
+      await rejection(() => timeoutPort.decrypt(KEY_ARN, new Uint8Array([1]), org));
+
+      const okPort = createAwsKmsPort({
+        client: { send: async () => ({ Plaintext: new Uint8Array(32).fill(1) }) },
+        keyArn: KEY_ARN,
+        info: (fields) => logs.push(fields),
+      });
+      await okPort.decrypt(KEY_ARN, new Uint8Array([1]), org);
+
+      expect(logs.map((line) => line.outcome)).toEqual(["rejected", "timeout", "ok"]);
+      for (const line of logs) {
+        expect("errorClass" in line).toBe(false);
+      }
+    });
   });
 
   it("times out when send rejects because the abort signal fired", async () => {
