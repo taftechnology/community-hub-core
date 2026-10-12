@@ -188,6 +188,41 @@ describe("links, bootstrap, and grants", () => {
     });
   });
 
+  it("refuses an org_admin granting themselves org_owner", async () => {
+    await withParish("grant-admin-rank", async (tx) => {
+      const owner = newId();
+      const admin = newId();
+      await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      await grantRole(tx, {
+        now: NOW,
+        userId: admin,
+        roleKey: "org_admin",
+        customRoleId: null,
+        actorUserId: owner,
+      });
+      const before = await tx<{ n: number }[]>`
+        select count(*)::int as n
+        from app.organisation_role_grants
+        where role_key = 'org_owner'
+      `;
+      await expect(
+        grantRole(tx, {
+          now: NOW,
+          userId: admin,
+          roleKey: "org_owner",
+          customRoleId: null,
+          actorUserId: admin,
+        }),
+      ).rejects.toMatchObject({ code: "forbidden" });
+      const after = await tx<{ n: number }[]>`
+        select count(*)::int as n
+        from app.organisation_role_grants
+        where role_key = 'org_owner'
+      `;
+      expect(after).toEqual(before);
+    });
+  });
+
   it("lets an owner grant staff and refuses org_owner from a community admin", async () => {
     await withParish("grant-roles", async (tx) => {
       const owner = newId();

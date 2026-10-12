@@ -67,11 +67,29 @@ export function allows(grants: ActorGrants, permission: string): boolean {
   });
 }
 
-function holdsOrganisationAdmin(grants: ActorGrants): boolean {
-  return (
-    grants.organisationRoleKeys.includes("org_owner") ||
-    grants.organisationRoleKeys.includes("org_admin")
-  );
+function holdsOrgOwner(actor: ActorGrants): boolean {
+  return actor.organisationRoleKeys.includes("org_owner");
+}
+
+function holdsOrgAdmin(actor: ActorGrants): boolean {
+  return actor.organisationRoleKeys.includes("org_admin");
+}
+
+async function assertMayGrantRole(
+  tx: AppTransaction,
+  actor: ActorGrants,
+  actorUserId: string,
+  roleKey: string,
+): Promise<void> {
+  if (roleKey === "org_owner") {
+    if (!holdsOrgOwner(actor)) {
+      await deny(tx, actorUserId);
+    }
+    return;
+  }
+  if (ORGANISATION_ROLES.has(roleKey) && !holdsOrgOwner(actor) && !holdsOrgAdmin(actor)) {
+    await deny(tx, actorUserId);
+  }
 }
 
 export async function loadActor(tx: AppTransaction, actorUserId: string): Promise<ActorGrants> {
@@ -367,9 +385,7 @@ export async function grantRole(
   if (!organisationRole && !communityRole) {
     throw new AccessError("invalid_role");
   }
-  if (organisationRole && !holdsOrganisationAdmin(actor)) {
-    await deny(tx, actorUserId);
-  }
+  await assertMayGrantRole(tx, actor, actorUserId, roleKey);
   const permissions = bundle(roleKey);
   if (permissions === null) {
     throw new AccessError("invalid_role");
