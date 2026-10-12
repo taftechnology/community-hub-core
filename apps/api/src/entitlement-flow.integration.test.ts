@@ -152,6 +152,7 @@ describe("entitlement flow", () => {
         entitlements: [{ key: "people.directory", limit: null }],
       });
       await assignPlan(platform, { organisationId, planKey, now });
+      await identity`delete from identity.identity_keys`;
       const admin = await signIn(`admin-${organisationId.slice(0, 8)}@example.com`);
       const staff = await signIn(`staff-${organisationId.slice(0, 8)}@example.com`);
       const stranger = await signIn(`none-${organisationId.slice(0, 8)}@example.com`);
@@ -310,6 +311,7 @@ describe("entitlement flow", () => {
         await identity`delete from identity.sessions where user_id = ${userId}::uuid`;
         await identity`delete from identity.users where id = ${userId}::uuid`;
       }
+      await identity`delete from identity.identity_keys`;
       await identity.end({ timeout: 1 });
       await platform.end({ timeout: 1 });
       await app.end({ timeout: 1 });
