@@ -1,19 +1,19 @@
 # Spec: Plans and entitlements
 
 Slug: entitlements-plans
-Status: draft
+Status: approved (2026-10-12, owner)
 Architecture refs: §6.3, §8.1, §10.1, §10.2, §10.3, §10.4, §11.3, §12.1, §26 Q8, Q12, Q14, Q15. Implements the `entitlements-plans` row. Depends on `tenancy-implicit-org`, `people-households`, `access-roles`, and `admin-shell`, all on `main`. Staging stays parked.
 
 ## Problem
 
-A community cannot tell which capabilities its organisation may use, or switch an allocated capability off. Architecture already stores plans, add-ons, entitlements, allocations, overrides, and feature flags in the `platform` schema, and it already names the five-step check. Q14 is still open: how a request sees those rows, and how stale a cached answer may be. The admin shell still shows Dashboard and Users & Roles with no toggle screen. Q8, plan contents and pricing, is still a product decision and is not answered here.
+A community cannot tell which capabilities its organisation may use, or switch an allocated capability off. Architecture already stores plans, add-ons, entitlements, allocations, overrides, and feature flags in the `platform` schema, and it already names the five-step check. Q14 is decided in Behaviour: a request reads those rows through an in-process cache of at most 60 seconds. The admin shell still shows Dashboard and Users & Roles with no toggle screen. Q8, plan contents and pricing, is still a product decision and is not answered here.
 
 ## Scope
 
 **In**
 
 - `modules/core/entitlements`, package `@community-hub/entitlements`. `pnpm-workspace.yaml` gains the line `modules/core/entitlements`. No other workspace glob.
-- `packages/entitlements`, package `@community-hub/entitlements-eval`. The package name is not `@community-hub/entitlements`, because that name is the module. It has no runtime dependency. It does not import `@community-hub/db`, `@community-hub/tenancy`, `@community-hub/access`, `@community-hub/people`, `@community-hub/identity`, or `@community-hub/crypto`.
+- `packages/entitlements-eval`, package `@community-hub/entitlements-eval`. The folder basename matches the package name. `@community-hub/entitlements` is the module, so this package does not use that name. It has no runtime dependency. It does not import `@community-hub/db`, `@community-hub/tenancy`, `@community-hub/access`, `@community-hub/people`, `@community-hub/identity`, or `@community-hub/crypto`. It exports `EntitlementSnapshot`, `evaluate`, and `limit`.
 - `module.manifest.ts` calls `defineModule` with `key` `core.entitlements`, `version` 1, `requires: ["core.tenancy"]`, empty `publishes`, `subscribes`, `ports`, and `features`. No `entitlement`. No `website`. `permissions` is `entitlements.view` and `entitlements.manage`, in that order. `dataClasses` lists every column in [Data](#data) as `internal`.
 - `modules/core/people/module.manifest.ts` gains `features: ["people.directory", "people.households", "people.custom_fields"]`, in that order. No other field on that manifest changes. The module still has no `entitlement` and no `website`.
 - `packages/policy` appends `entitlements.view` and `entitlements.manage` to `catalogue()`, after `people.restricted.read`. `org_owner`, `org_admin`, and `community_admin` keep the whole catalogue, so they hold both. `org_billing`, `org_auditor`, and `staff` each gain `entitlements.view` and do not gain `entitlements.manage`. `finance`, `safeguarding_officer`, `volunteer_coordinator`, `content_editor`, and `member` gain neither. A guardian check still grants only `people.restricted.read`. It does not grant either entitlements permission.
@@ -26,7 +26,7 @@ A community cannot tell which capabilities its organisation may use, or switch a
 - Grants stay the default privileges from `0000_schemas.sql`. The `platform` login receives select, insert, update, and delete. This migration does not grant these tables to `app`, `identity`, or `PUBLIC`.
 - Foreign keys stay inside `platform`. They use `ON DELETE RESTRICT`. There is no foreign key to `app` or `identity`.
 - The write functions take `sql: Sql` from `postgres` first. The caller passes a connection that is already the `platform` login. They do not open a connection, do not call `set_config`, and do not set `app.org_id` or `app.community_id`.
-- Domain code under `modules/core/entitlements/domain/` and under `packages/entitlements` imports no framework, no Drizzle, and no `@community-hub/crypto`.
+- Domain code under `modules/core/entitlements/domain/` and under `packages/entitlements-eval` imports no framework, no Drizzle, and no `@community-hub/crypto`.
 - `packages/entitlements-eval` decides availability from a snapshot the entitlements module loaded. The module reads its own tables and `platform.communities` only through `listCommunityIds`. It does not read `app` or `identity`.
 - `readSnapshot` is the Q14 read path. It is specified under Behaviour. The cache bound is 60 seconds.
 - Routes on the regional service, in `apps/api/src/entitlement-routes.ts`, surface `tenant`. The presented hostname must be the API hostname. The auth, webhooks, and ops hostnames answer 404 for these paths. `GET /health` is unchanged.
@@ -63,7 +63,7 @@ An entitlement key matches `^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$` and is at m
 
 `evaluate(snapshot, key, now)` returns `{ ok: true }` or `{ ok: false, step }`. The steps are tried in this order. The first failure is the result.
 
-1. `flag`. A feature-flag row matches when its key equals this key, and each target that is not null equals the snapshot: `organisation_id`, `community_id`, `plan_key`, `region`. A null target matches any value. `region` in this snapshot is `au`. Step 1 fails when any matching row has `enabled` false. No matching row passes.
+1. `flag`. A feature-flag row matches when its key equals this key, and each target that is not null equals the snapshot: `organisation_id`, `community_id`, `plan_key`, `region`. A null target matches any value. `region` in this snapshot is `au`. When no matching rows exist, step 1 passes. If any matching row has `enabled` false, step 1 fails.
 2. `entitlement`. The organisation's plan includes the key, or an assigned add-on includes the key, or an override for that organisation and key has `expires_at` greater than `now`. An expired override does not count. A missing plan fails this step unless an add-on or an unexpired override includes the key.
 3. `allocation`. `community_allocations` has this community and this key.
 4. `toggle`. There is no toggle row, or the toggle row has `enabled` true. A missing row means on.
@@ -185,7 +185,7 @@ Downgrades. Removing a key from a plan, failing a flag, or switching a toggle of
 | Contract | Value                                                                                                                                                                                          |
 | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Module   | `@community-hub/entitlements`, key `core.entitlements`, version 1. Requires `core.tenancy`. Permissions `entitlements.view`, `entitlements.manage`. No events, no entitlement key, no website. |
-| Eval     | `@community-hub/entitlements-eval`. Exports `evaluate` and `limit`. No database.                                                                                                               |
+| Eval     | `@community-hub/entitlements-eval` in `packages/entitlements-eval`. Exports `EntitlementSnapshot`, `evaluate`, and `limit`. No database.                                                       |
 | People   | `features` is the three strings in the order above. Nothing else on that manifest changes.                                                                                                     |
 | Policy   | `catalogue()` ends with the two new permissions. Bundles change only as Behaviour says.                                                                                                        |
 | Access   | `holdsPermission(tx, userId, permission): Promise<boolean>`. Read only.                                                                                                                        |
@@ -241,6 +241,7 @@ In `AGENTS.md`, the repository-state cell names `stripe-billing` as next. The Ph
 
 `architecture.md` changes only these sentences:
 
+- §8.1 packages tree: `entitlements/` becomes `entitlements-eval/`. The comment stays the snapshot reader, `entitled()`, and `limit()`.
 - §6.3 owner cell for region-scoped platform: directory rows stay `core/tenancy`. Plans, add-ons, entitlements, allocations, overrides, community toggles, and feature flags are `core/entitlements`. No other module may query the schema.
 - §6.3 CI sentence: a module outside `core/tenancy` and `core/entitlements` must not reference the `platform` schema. The identity clause stays.
 - §10.1 Allocation stored-in cell: `platform.community_allocations`. The open Q14 pointer goes.
