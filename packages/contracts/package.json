@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/auth.d.ts",
       "import": "./dist/auth.js"
+    },
+    "./access": {
+      "types": "./dist/access.d.ts",
+      "import": "./dist/access.js"
     }
   },
   "scripts": {

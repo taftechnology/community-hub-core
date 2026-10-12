@@ -14,6 +14,7 @@ import { rejectingOtpMail } from "@community-hub/identity";
 import { healthRequest } from "@community-hub/kernel";
 
 import { authRoutes, type AuthDeps } from "./auth-routes.js";
+import { accessRoutes, type AccessDeps } from "./access-routes.js";
 import { createCheckout } from "./checkout.js";
 import { readServiceEnv, IMAGE_CERT_PATH, type ServiceEnv } from "./env.js";
 import { RoutesRejected, type GateRoute } from "./gate.js";
@@ -54,9 +55,10 @@ export function run(source: NodeJS.ProcessEnv, pem: string, routes: readonly Gat
     return 1;
   }
   try {
+    const bound = bindServices(read.env, pem);
     current = startServer({
       env: read.env,
-      routes: [...routes, ...authRoutes(authDeps(read.env, pem))],
+      routes: [...routes, ...authRoutes(bound.auth), ...accessRoutes(bound.access)],
     });
   } catch (error) {
     if (error instanceof RoutesRejected) {
@@ -86,7 +88,7 @@ function target(env: ServiceEnv, pem: string, user: string, password: string): S
   };
 }
 
-function authDeps(env: ServiceEnv, pem: string): AuthDeps {
+function bindServices(env: ServiceEnv, pem: string): { auth: AuthDeps; access: AccessDeps } {
   const checkout = createCheckout({
     passwords: {
       app: env.PGPASSWORD_APP,
@@ -111,7 +113,7 @@ function authDeps(env: ServiceEnv, pem: string): AuthDeps {
     log: () => undefined,
   });
   let kms: KmsPort | undefined;
-  return {
+  const shared = {
     checkout,
     get kms() {
       kms ??= createAwsKmsPort({
@@ -124,15 +126,37 @@ function authDeps(env: ServiceEnv, pem: string): AuthDeps {
       return kms;
     },
     keyArn: env.ENVELOPE_KEY_ARN,
-    mail: rejectingOtpMail,
     now: () => new Date(),
-    authHostname: env.AUTH_HOSTNAME,
     log: () => undefined,
+  };
+  return {
+    auth: {
+      checkout: shared.checkout,
+      get kms() {
+        return shared.kms;
+      },
+      keyArn: shared.keyArn,
+      mail: rejectingOtpMail,
+      now: shared.now,
+      authHostname: env.AUTH_HOSTNAME,
+      log: shared.log,
+    },
+    access: {
+      checkout: shared.checkout,
+      get kms() {
+        return shared.kms;
+      },
+      keyArn: shared.keyArn,
+      now: shared.now,
+      apiHostname: env.API_HOSTNAME,
+      log: shared.log,
+    },
   };
 }
 
 export function productionRoutes(env: ServiceEnv, pem: string): readonly GateRoute[] {
-  return [healthRoute, ...authRoutes(authDeps(env, pem))];
+  const bound = bindServices(env, pem);
+  return [healthRoute, ...authRoutes(bound.auth), ...accessRoutes(bound.access)];
 }
 
 const entry = process.argv[1];
