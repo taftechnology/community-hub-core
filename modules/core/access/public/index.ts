@@ -16,5 +16,13 @@ defineAuditAction("access.user.unlinked");
 defineAuditPurpose("access.user.unlinked");
 defineAuditAction("access.permission.denied");
 defineAuditPurpose("access.permission.denied");
+defineAuditPurpose("access.roles.manage");
 
 export { AccessError } from "../domain/error.js";
+export {
+  bootstrapOwner,
+  grantRole,
+  linkUser,
+  revokeRole,
+  unlinkUser,
+} from "../infrastructure/grants.js";
