@@ -1,0 +1,52 @@
+import { describe, expect, it } from "vitest";
+
+import entitlementsModule from "../module.manifest.js";
+
+describe("core.entitlements manifest", () => {
+  it("declares the platform columns and the two permissions", () => {
+    expect(entitlementsModule).toEqual({
+      key: "core.entitlements",
+      version: 1,
+      requires: ["core.tenancy"],
+      publishes: [],
+      subscribes: [],
+      ports: [],
+      features: [],
+      permissions: ["entitlements.view", "entitlements.manage"],
+      dataClasses: {
+        "plans.id": "internal",
+        "plans.key": "internal",
+        "plan_entitlements.plan_id": "internal",
+        "plan_entitlements.entitlement_key": "internal",
+        "plan_entitlements.limit_value": "internal",
+        "add_ons.id": "internal",
+        "add_ons.key": "internal",
+        "add_on_entitlements.add_on_id": "internal",
+        "add_on_entitlements.entitlement_key": "internal",
+        "add_on_entitlements.limit_value": "internal",
+        "organisation_plans.organisation_id": "internal",
+        "organisation_plans.plan_id": "internal",
+        "organisation_add_ons.organisation_id": "internal",
+        "organisation_add_ons.add_on_id": "internal",
+        "community_allocations.community_id": "internal",
+        "community_allocations.entitlement_key": "internal",
+        "community_toggles.community_id": "internal",
+        "community_toggles.entitlement_key": "internal",
+        "community_toggles.enabled": "internal",
+        "entitlement_overrides.id": "internal",
+        "entitlement_overrides.organisation_id": "internal",
+        "entitlement_overrides.entitlement_key": "internal",
+        "entitlement_overrides.expires_at": "internal",
+        "feature_flags.id": "internal",
+        "feature_flags.key": "internal",
+        "feature_flags.enabled": "internal",
+        "feature_flags.organisation_id": "internal",
+        "feature_flags.community_id": "internal",
+        "feature_flags.plan_key": "internal",
+        "feature_flags.region": "internal",
+      },
+    });
+    expect(entitlementsModule).not.toHaveProperty("website");
+    expect(entitlementsModule).not.toHaveProperty("entitlement");
+  });
+});

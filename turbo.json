@@ -23,8 +23,11 @@
     "@community-hub/identity#test": {
       "dependsOn": ["^build", "@community-hub/db#test", "@community-hub/tenancy#test"]
     },
+    "@community-hub/entitlements#test": {
+      "dependsOn": ["^build", "@community-hub/tenancy#test", "@community-hub/access#test"]
+    },
     "@community-hub/api#test": {
-      "dependsOn": ["^build", "@community-hub/access#test"]
+      "dependsOn": ["^build", "@community-hub/entitlements#test"]
     },
     "@community-hub/people#test": {
       "dependsOn": ["^build", "@community-hub/identity#test"]
