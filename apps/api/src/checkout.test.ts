@@ -12,14 +12,26 @@ function denied(code: string): Error {
   return Object.assign(new Error("denied"), { code });
 }
 
-function harness(input?: { current?: string; previous?: string }) {
+function harness(input?: {
+  current?: string;
+  previous?: string;
+  currentError?: Error;
+  previousError?: Error;
+}) {
   const opened: Array<{ role: Role; password: string; sql: FakeSql }> = [];
   const logs: unknown[] = [];
-  const readSecret = vi.fn(async (_arn: string, stage: "AWSCURRENT" | "AWSPREVIOUS") =>
-    stage === "AWSCURRENT"
-      ? (input?.current ?? "current-secret")
-      : (input?.previous ?? "previous-secret"),
-  );
+  const readSecret = vi.fn(async (_arn: string, stage: "AWSCURRENT" | "AWSPREVIOUS") => {
+    if (stage === "AWSCURRENT") {
+      if (input?.currentError !== undefined) {
+        throw input.currentError;
+      }
+      return input?.current ?? "current-secret";
+    }
+    if (input?.previousError !== undefined) {
+      throw input.previousError;
+    }
+    return input?.previous ?? "previous-secret";
+  });
   function open(role: Role) {
     return (password: string) => {
       const sql: FakeSql = { end: vi.fn(async () => undefined) };
@@ -100,6 +112,61 @@ describe("checkout", () => {
       }),
     ).rejects.toMatchObject({ code: "28P01" });
     expect(readSecret).toHaveBeenCalledTimes(2);
+    expect(opened).toHaveLength(1);
+  });
+
+  it("surfaces the database error when the secret has no previous version", async () => {
+    const original = denied("28P01");
+    const missing = Object.assign(new Error("no previous version"), {
+      name: "ResourceNotFoundException",
+    });
+    const { checkout, opened, readSecret } = harness({
+      current: "pw-identity",
+      previousError: missing,
+    });
+    let caught: unknown;
+    try {
+      await checkout("identity", async () => {
+        throw original;
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBe(original);
+    expect(readSecret.mock.calls).toEqual([
+      ["arn-identity", "AWSCURRENT"],
+      ["arn-identity", "AWSPREVIOUS"],
+    ]);
+    expect(opened).toHaveLength(1);
+    expect(opened[0]?.sql.end).not.toHaveBeenCalled();
+    await checkout("identity", async (sql) => {
+      expect(sql).toBe(opened[0]?.sql);
+    });
+    expect(opened).toHaveLength(1);
+  });
+
+  it("still throws the secrets error when the previous read fails but the current secret differs", async () => {
+    const missing = Object.assign(new Error("no previous version"), {
+      name: "ResourceNotFoundException",
+    });
+    const { checkout, opened } = harness({ current: "rotated-secret", previousError: missing });
+    await expect(
+      checkout("identity", async () => {
+        throw denied("28P01");
+      }),
+    ).rejects.toBe(missing);
+    expect(opened).toHaveLength(1);
+  });
+
+  it("throws the secrets error when the current read fails and does not read the previous", async () => {
+    const refused = Object.assign(new Error("access refused"), { name: "AccessDeniedException" });
+    const { checkout, opened, readSecret } = harness({ currentError: refused });
+    await expect(
+      checkout("identity", async () => {
+        throw denied("28P01");
+      }),
+    ).rejects.toBe(refused);
+    expect(readSecret.mock.calls).toEqual([["arn-identity", "AWSCURRENT"]]);
     expect(opened).toHaveLength(1);
   });
 
