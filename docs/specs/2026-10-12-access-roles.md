@@ -70,19 +70,19 @@ The catalogue is these five strings, in this order:
 
 Built-in bundles:
 
-| Role                      | Scope        | Permissions                                                                 |
-| ------------------------- | ------------ | --------------------------------------------------------------------------- |
-| `org_owner`               | organisation | all five                                                                    |
-| `org_admin`               | organisation | all five                                                                    |
-| `org_billing`             | organisation | `access.users.view`                                                         |
-| `org_auditor`             | organisation | `access.users.view`, `access.roles.view`                                    |
-| `community_admin`         | community    | all five                                                                    |
-| `staff`                   | community    | `access.users.view`, `access.roles.view`                                    |
-| `finance`                 | community    | none                                                                        |
-| `safeguarding_officer`    | community    | `people.restricted.read`, `access.users.view`                               |
-| `volunteer_coordinator`   | community    | `access.users.view`                                                         |
-| `content_editor`          | community    | none                                                                        |
-| `member`                  | community    | none                                                                        |
+| Role                    | Scope        | Permissions                                   |
+| ----------------------- | ------------ | --------------------------------------------- |
+| `org_owner`             | organisation | all five                                      |
+| `org_admin`             | organisation | all five                                      |
+| `org_billing`           | organisation | `access.users.view`                           |
+| `org_auditor`           | organisation | `access.users.view`, `access.roles.view`      |
+| `community_admin`       | community    | all five                                      |
+| `staff`                 | community    | `access.users.view`, `access.roles.view`      |
+| `finance`               | community    | none                                          |
+| `safeguarding_officer`  | community    | `people.restricted.read`, `access.users.view` |
+| `volunteer_coordinator` | community    | `access.users.view`                           |
+| `content_editor`        | community    | none                                          |
+| `member`                | community    | none                                          |
 
 `bundle(roleKey)` returns that list, or `null` when `roleKey` is not one of those eleven. `decide` ignores a key whose bundle is `null`.
 
@@ -148,16 +148,16 @@ The community slug is a field in the JSON body. It is not a path segment and not
 
 `AccessError` maps as follows. `forbidden` is 403. `not_found` is 404. `already_bootstrapped`, `duplicate_grant`, `duplicate_role`, `duplicate_link`, `last_owner`, `limit_reached`, `role_in_use`, and `minor_forbidden` are 409. `invalid_id`, `invalid_role`, and `invalid_permission` are 400. Every error body is empty. A 200 body is JSON and contains ids, role keys, scopes, and permission strings only.
 
-| Route                              | Permission              | Body                                                                 | Success                                                                 |
-| ---------------------------------- | ----------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `POST /v1/access/grants/list`      | `access.roles.view`     | `{ communitySlug }`                                                  | `{ grants, customRoles, catalogue, builtIn, userLinks }`                |
-| `POST /v1/access/owner/bootstrap`  | none                    | `{ communitySlug }`                                                  | `{ organisationGrantId, communityGrantId }`                             |
-| `POST /v1/access/grants`           | `access.roles.manage`   | `{ communitySlug, userId, roleKey }` or `{ communitySlug, userId, customRoleId }` | `{ grantId, scope }`                                          |
-| `POST /v1/access/grants/revoke`    | `access.roles.manage`   | `{ communitySlug, grantId, scope }`                                  | empty 200                                                               |
-| `POST /v1/access/custom-roles`     | `access.roles.manage`   | `{ communitySlug, key, permissions }`                                | `{ customRoleId }`                                                      |
-| `POST /v1/access/custom-roles/delete` | `access.roles.manage` | `{ communitySlug, customRoleId }`                                    | empty 200                                                               |
-| `POST /v1/access/user-links`       | `access.users.manage`   | `{ communitySlug, userId, personId }`                                | `{ linkId }`                                                            |
-| `POST /v1/access/user-links/delete`| `access.users.manage`   | `{ communitySlug, userId }`                                          | empty 200                                                               |
+| Route                                 | Permission            | Body                                                                              | Success                                                  |
+| ------------------------------------- | --------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `POST /v1/access/grants/list`         | `access.roles.view`   | `{ communitySlug }`                                                               | `{ grants, customRoles, catalogue, builtIn, userLinks }` |
+| `POST /v1/access/owner/bootstrap`     | none                  | `{ communitySlug }`                                                               | `{ organisationGrantId, communityGrantId }`              |
+| `POST /v1/access/grants`              | `access.roles.manage` | `{ communitySlug, userId, roleKey }` or `{ communitySlug, userId, customRoleId }` | `{ grantId, scope }`                                     |
+| `POST /v1/access/grants/revoke`       | `access.roles.manage` | `{ communitySlug, grantId, scope }`                                               | empty 200                                                |
+| `POST /v1/access/custom-roles`        | `access.roles.manage` | `{ communitySlug, key, permissions }`                                             | `{ customRoleId }`                                       |
+| `POST /v1/access/custom-roles/delete` | `access.roles.manage` | `{ communitySlug, customRoleId }`                                                 | empty 200                                                |
+| `POST /v1/access/user-links`          | `access.users.manage` | `{ communitySlug, userId, personId }`                                             | `{ linkId }`                                             |
+| `POST /v1/access/user-links/delete`   | `access.users.manage` | `{ communitySlug, userId }`                                                       | empty 200                                                |
 
 `grants` entries are `{ grantId, scope, userId, roleKey, customRoleId, customRoleKey }`. `roleKey` is null on a custom grant. `customRoleId` and `customRoleKey` are null on a built-in grant. `customRoles` entries are `{ customRoleId, key, permissions }`. `builtIn` entries are `{ roleKey, scope, permissions }`, all eleven, in the table order above. `userLinks` entries are `{ userId, personId }`. `catalogue` is the five strings.
 
@@ -197,31 +197,31 @@ No ADR. `architecture.md` is not edited.
 
 Primary key of `app.organisation_role_grants`, `app.community_role_grants`, `app.custom_roles`, and `app.user_links` is `(org_id, id)`. Primary key of `app.custom_role_permissions` is `(org_id, custom_role_id, permission)`.
 
-| Table                            | Column           | Classification | Notes                                                                                          |
-| -------------------------------- | ---------------- | -------------- | ---------------------------------------------------------------------------------------------- |
-| `app.organisation_role_grants`   | `id`             | `internal`     | UUIDv7. No `community_id`.                                                                     |
-| `app.organisation_role_grants`   | `org_id`         | `internal`     | From `current_setting('app.org_id')`.                                                          |
-| `app.organisation_role_grants`   | `user_id`        | `internal`     | UUID. No foreign key to `identity.users`.                                                      |
-| `app.organisation_role_grants`   | `role_key`       | `internal`     | One of the four organisation roles. Clear. Not personal data.                                  |
-| `app.community_role_grants`      | `id`             | `internal`     | UUIDv7.                                                                                        |
-| `app.community_role_grants`      | `org_id`         | `internal`     | From the setting.                                                                              |
-| `app.community_role_grants`      | `community_id`   | `internal`     | From the setting.                                                                              |
-| `app.community_role_grants`      | `user_id`        | `internal`     | UUID. No foreign key to `identity.users`.                                                      |
-| `app.community_role_grants`      | `role_key`       | `internal`     | A community built-in key, or null when `custom_role_id` is set.                                |
-| `app.community_role_grants`      | `custom_role_id` | `internal`     | Null when `role_key` is set. References `app.custom_roles (org_id, id)`.                       |
-| `app.custom_roles`               | `id`             | `internal`     | UUIDv7.                                                                                        |
-| `app.custom_roles`               | `org_id`         | `internal`     | From the setting.                                                                              |
-| `app.custom_roles`               | `community_id`   | `internal`     | From the setting.                                                                              |
-| `app.custom_roles`               | `key`            | `internal`     | Clear category. Unique per community. Not a person's name.                                     |
-| `app.custom_role_permissions`    | `org_id`         | `internal`     | From the setting.                                                                              |
-| `app.custom_role_permissions`    | `community_id`   | `internal`     | From the setting.                                                                              |
-| `app.custom_role_permissions`    | `custom_role_id` | `internal`     | References `app.custom_roles (org_id, id)`.                                                    |
-| `app.custom_role_permissions`    | `permission`     | `internal`     | One of the five catalogue strings. Clear. SQL may filter it. Not encrypted.                   |
-| `app.user_links`                 | `id`             | `internal`     | UUIDv7.                                                                                        |
-| `app.user_links`                 | `org_id`         | `internal`     | From the setting.                                                                              |
-| `app.user_links`                 | `community_id`   | `internal`     | From the setting.                                                                              |
-| `app.user_links`                 | `user_id`        | `internal`     | UUID. No foreign key to `identity.users`.                                                      |
-| `app.user_links`                 | `person_id`      | `internal`     | References `app.persons (org_id, id)`.                                                         |
+| Table                          | Column           | Classification | Notes                                                                       |
+| ------------------------------ | ---------------- | -------------- | --------------------------------------------------------------------------- |
+| `app.organisation_role_grants` | `id`             | `internal`     | UUIDv7. No `community_id`.                                                  |
+| `app.organisation_role_grants` | `org_id`         | `internal`     | From `current_setting('app.org_id')`.                                       |
+| `app.organisation_role_grants` | `user_id`        | `internal`     | UUID. No foreign key to `identity.users`.                                   |
+| `app.organisation_role_grants` | `role_key`       | `internal`     | One of the four organisation roles. Clear. Not personal data.               |
+| `app.community_role_grants`    | `id`             | `internal`     | UUIDv7.                                                                     |
+| `app.community_role_grants`    | `org_id`         | `internal`     | From the setting.                                                           |
+| `app.community_role_grants`    | `community_id`   | `internal`     | From the setting.                                                           |
+| `app.community_role_grants`    | `user_id`        | `internal`     | UUID. No foreign key to `identity.users`.                                   |
+| `app.community_role_grants`    | `role_key`       | `internal`     | A community built-in key, or null when `custom_role_id` is set.             |
+| `app.community_role_grants`    | `custom_role_id` | `internal`     | Null when `role_key` is set. References `app.custom_roles (org_id, id)`.    |
+| `app.custom_roles`             | `id`             | `internal`     | UUIDv7.                                                                     |
+| `app.custom_roles`             | `org_id`         | `internal`     | From the setting.                                                           |
+| `app.custom_roles`             | `community_id`   | `internal`     | From the setting.                                                           |
+| `app.custom_roles`             | `key`            | `internal`     | Clear category. Unique per community. Not a person's name.                  |
+| `app.custom_role_permissions`  | `org_id`         | `internal`     | From the setting.                                                           |
+| `app.custom_role_permissions`  | `community_id`   | `internal`     | From the setting.                                                           |
+| `app.custom_role_permissions`  | `custom_role_id` | `internal`     | References `app.custom_roles (org_id, id)`.                                 |
+| `app.custom_role_permissions`  | `permission`     | `internal`     | One of the five catalogue strings. Clear. SQL may filter it. Not encrypted. |
+| `app.user_links`               | `id`             | `internal`     | UUIDv7.                                                                     |
+| `app.user_links`               | `org_id`         | `internal`     | From the setting.                                                           |
+| `app.user_links`               | `community_id`   | `internal`     | From the setting.                                                           |
+| `app.user_links`               | `user_id`        | `internal`     | UUID. No foreign key to `identity.users`.                                   |
+| `app.user_links`               | `person_id`      | `internal`     | References `app.persons (org_id, id)`.                                      |
 
 Checks, exact:
 
@@ -261,20 +261,20 @@ Money, consent, retention, and analytics. No payment fields, no consent row, no 
 
 ## Contracts
 
-| Contract | Value |
-| -------- | ----- |
-| Package  | `@community-hub/access`. Public exports are the commands below, `readPersonForActor`, and `AccessError`. |
-| Policy   | `@community-hub/policy` exports `catalogue`, `bundle`, and `decide`. |
-| Module   | `core.access`, version 1. Requires `core.people`. Four access permissions. No events, no entitlement, no website. |
-| People   | `core.people` gains `people.restricted.read`. New exports `personIsMinor` and `hasGuardianView`. |
-| Audit    | The eight names under Rules touched. |
-| Journal  | One additive entry in `packages/db/drizzle` after `0006`, plus hand-added `FORCE ROW LEVEL SECURITY` and the `REVOKE` list. |
-| HTTP     | The eight `POST` routes under Behaviour. Empty error bodies. |
-| Contracts | `@community-hub/contracts/access`. The `.` export stays the auth schemas. |
-| Admin    | Settings → Users & Roles, plus `/sign-in`. Token in `sessionStorage` under `community-hub.access-token`. |
-| Header   | `connect-src` adds the API origin and the auth origin on the existing policy. |
-| Staging  | Parked. The agent does not apply. |
-| Roles    | `app` can insert, select, and delete. It cannot update or truncate. `identity` and `platform` cannot. |
+| Contract  | Value                                                                                                                       |
+| --------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Package   | `@community-hub/access`. Public exports are the commands below, `readPersonForActor`, and `AccessError`.                    |
+| Policy    | `@community-hub/policy` exports `catalogue`, `bundle`, and `decide`.                                                        |
+| Module    | `core.access`, version 1. Requires `core.people`. Four access permissions. No events, no entitlement, no website.           |
+| People    | `core.people` gains `people.restricted.read`. New exports `personIsMinor` and `hasGuardianView`.                            |
+| Audit     | The eight names under Rules touched.                                                                                        |
+| Journal   | One additive entry in `packages/db/drizzle` after `0006`, plus hand-added `FORCE ROW LEVEL SECURITY` and the `REVOKE` list. |
+| HTTP      | The eight `POST` routes under Behaviour. Empty error bodies.                                                                |
+| Contracts | `@community-hub/contracts/access`. The `.` export stays the auth schemas.                                                   |
+| Admin     | Settings → Users & Roles, plus `/sign-in`. Token in `sessionStorage` under `community-hub.access-token`.                    |
+| Header    | `connect-src` adds the API origin and the auth origin on the existing policy.                                               |
+| Staging   | Parked. The agent does not apply.                                                                                           |
+| Roles     | `app` can insert, select, and delete. It cannot update or truncate. `identity` and `platform` cannot.                       |
 
 ```ts
 decide(input: DecideInput): boolean
@@ -308,22 +308,22 @@ No new resource billed by the hour or the month. The response-headers policy alr
 
 ## Risks
 
-| Risk | Mitigation |
-| ---- | ---------- |
-| A minor is linked to a user or granted a role | `personIsMinor` true is `minor_forbidden`. A test links an adult and rejects a minor. |
-| `people.restricted.read` decrypts before the check | `readPersonForActor` throws `forbidden` before `readPerson`. A test shows no `people.person.read` row on that path. |
-| A guardian reads every child | `decide` is person-scoped. A test allows the linked child and denies another person. |
-| A community admin grants `org_owner` | Organisation roles require `org_owner` or `org_admin` on the actor. A test expects `forbidden` and no row. |
-| The last owner is revoked | `last_owner` leaves the row. A test revokes a second owner and fails on the last one. |
-| Custom roles exceed the limit or escape the catalogue | The twenty-first key is `limit_reached`. A permission outside the five strings is `invalid_permission`. The check constraint lists the five strings. |
-| `org_id` is taken from the request body | The route uses `findCommunityBySlug`. A test sends a different organisation id in the JSON and still writes the directory pair. An extra key is 400. |
-| Another tenant sees the grants | A second `withAppTransaction` selects nothing. `identity` and `platform` cannot select. |
-| `app.organisation_role_grants` gains `community_id` | A test fails if that table's SQL contains `community_id`. |
-| A community table omits `community_id` or the community predicate | A test fails if any new table other than `organisation_role_grants` lacks `community_id`, or if its policy lacks `app.community_id`. |
-| The settings page shows a name or an email | The list type has no name field. A test fails if the rendered page includes the fixture email. |
-| The admin stores the address or the code | `sessionStorage` is asserted to hold only `community-hub.access-token`. |
-| `connect-src` stays `'self'` only, so the browser cannot call the API | The header string in Terraform and its test include the two origins. |
-| Staging is unparked | The proof is the existing Docker Postgres and the admin unit tests. Staging flags stay parked. The agent does not apply. |
+| Risk                                                                  | Mitigation                                                                                                                                           |
+| --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A minor is linked to a user or granted a role                         | `personIsMinor` true is `minor_forbidden`. A test links an adult and rejects a minor.                                                                |
+| `people.restricted.read` decrypts before the check                    | `readPersonForActor` throws `forbidden` before `readPerson`. A test shows no `people.person.read` row on that path.                                  |
+| A guardian reads every child                                          | `decide` is person-scoped. A test allows the linked child and denies another person.                                                                 |
+| A community admin grants `org_owner`                                  | Organisation roles require `org_owner` or `org_admin` on the actor. A test expects `forbidden` and no row.                                           |
+| The last owner is revoked                                             | `last_owner` leaves the row. A test revokes a second owner and fails on the last one.                                                                |
+| Custom roles exceed the limit or escape the catalogue                 | The twenty-first key is `limit_reached`. A permission outside the five strings is `invalid_permission`. The check constraint lists the five strings. |
+| `org_id` is taken from the request body                               | The route uses `findCommunityBySlug`. A test sends a different organisation id in the JSON and still writes the directory pair. An extra key is 400. |
+| Another tenant sees the grants                                        | A second `withAppTransaction` selects nothing. `identity` and `platform` cannot select.                                                              |
+| `app.organisation_role_grants` gains `community_id`                   | A test fails if that table's SQL contains `community_id`.                                                                                            |
+| A community table omits `community_id` or the community predicate     | A test fails if any new table other than `organisation_role_grants` lacks `community_id`, or if its policy lacks `app.community_id`.                 |
+| The settings page shows a name or an email                            | The list type has no name field. A test fails if the rendered page includes the fixture email.                                                       |
+| The admin stores the address or the code                              | `sessionStorage` is asserted to hold only `community-hub.access-token`.                                                                              |
+| `connect-src` stays `'self'` only, so the browser cannot call the API | The header string in Terraform and its test include the two origins.                                                                                 |
+| Staging is unparked                                                   | The proof is the existing Docker Postgres and the admin unit tests. Staging flags stay parked. The agent does not apply.                             |
 
 ## Tests
 
