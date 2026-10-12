@@ -175,6 +175,16 @@ export function createGate(options: {
       return new Response(null, { status: 404 });
     }
 
+    if (request.method === "OPTIONS" && (header === known.api || header === known.auth)) {
+      await releaseUnreadBody(request);
+      options.info("request", {
+        method: request.method,
+        path: pathname,
+        status: 204,
+      });
+      return new Response(null, { status: 204 });
+    }
+
     return kernel(request);
   };
 }

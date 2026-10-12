@@ -173,6 +173,89 @@ describe("createGate", () => {
     expect(JSON.stringify(lines)).not.toContain("203.0.113.9");
   });
 
+  it("answers OPTIONS on the api and auth hostnames and leaves POST alone", async () => {
+    const lines: Line[] = [];
+    const role = vi.fn(() => new Response("granted", { status: 200 }));
+    const signIn = vi.fn(() => new Response(null, { status: 204 }));
+    const gate = createGate({
+      hostnames: HOSTS,
+      routes: [
+        {
+          method: "POST",
+          pattern: "/v1/access/grants",
+          surface: "tenant",
+          handle: (request) => {
+            role(request);
+            return new Response("granted", { status: 200 });
+          },
+        },
+        {
+          method: "POST",
+          pattern: "/v1/auth/email-otp/start",
+          surface: "tenant",
+          handle: (request) => {
+            signIn(request);
+            return new Response(null, { status: 204 });
+          },
+        },
+      ],
+      info: (_message, fields) => {
+        lines.push(fields as unknown as Line);
+      },
+    });
+
+    const roleOptions = await call(
+      gate,
+      "10.0.0.8",
+      "au.api.example.test",
+      "OPTIONS",
+      "/v1/access/grants",
+    );
+    expect(roleOptions.status).toBe(204);
+    expect(await roleOptions.text()).toBe("");
+    expect(roleOptions.headers.get("access-control-allow-origin")).toBeNull();
+    expect(roleOptions.headers.get("access-control-allow-methods")).toBeNull();
+    expect(roleOptions.headers.get("access-control-allow-headers")).toBeNull();
+    expect(roleOptions.headers.get("access-control-allow-credentials")).toBeNull();
+    expect(role).not.toHaveBeenCalled();
+
+    const signInOptions = await call(
+      gate,
+      "10.0.0.8",
+      "auth.au.example.test",
+      "OPTIONS",
+      "/v1/auth/email-otp/start",
+    );
+    expect(signInOptions.status).toBe(204);
+    expect(await signInOptions.text()).toBe("");
+    expect(signIn).not.toHaveBeenCalled();
+
+    const unknown = await call(gate, "10.0.0.8", "evil.example", "OPTIONS", "/v1/access/grants");
+    expect(unknown.status).toBe(404);
+    expect(lines.some((line) => line.reason === "unknown_hostname")).toBe(true);
+
+    const rolePost = await call(
+      gate,
+      "10.0.0.8",
+      "au.api.example.test",
+      "POST",
+      "/v1/access/grants",
+    );
+    expect(rolePost.status).toBe(200);
+    expect(await rolePost.text()).toBe("granted");
+    expect(role).toHaveBeenCalledOnce();
+
+    const signInPost = await call(
+      gate,
+      "10.0.0.8",
+      "auth.au.example.test",
+      "POST",
+      "/v1/auth/email-otp/start",
+    );
+    expect(signInPost.status).toBe(204);
+    expect(signIn).toHaveBeenCalledOnce();
+  });
+
   it("does not read a 1 MiB refused body", async () => {
     const { gate, lines } = setup();
     let reads = 0;
