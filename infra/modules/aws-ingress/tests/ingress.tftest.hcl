@@ -126,6 +126,18 @@ run "staging_unset" {
 
   assert {
     condition = (
+      length(aws_apigatewayv2_api.tenant.cors_configuration) == 1 &&
+      aws_apigatewayv2_api.tenant.cors_configuration[0].allow_credentials == false &&
+      join(",", tolist(aws_apigatewayv2_api.tenant.cors_configuration[0].allow_origins)) == "https://admin.communityhub-staging.net" &&
+      join(",", sort(tolist(aws_apigatewayv2_api.tenant.cors_configuration[0].allow_methods))) == "GET,OPTIONS,POST" &&
+      join(",", sort(tolist(aws_apigatewayv2_api.tenant.cors_configuration[0].allow_headers))) == "authorization,content-type" &&
+      length(aws_apigatewayv2_api.ops.cors_configuration) == 0
+    )
+    error_message = "tenant CORS allows the admin origin, GET, POST, and OPTIONS, and the authorization and content-type headers, without credentials"
+  }
+
+  assert {
+    condition = (
       aws_apigatewayv2_integration.tenant.integration_uri == "arn:aws:servicediscovery:ap-southeast-2:123456789012:service/srv-mock" &&
       aws_apigatewayv2_integration.ops.integration_uri == "arn:aws:servicediscovery:ap-southeast-2:123456789012:service/srv-mock" &&
       aws_apigatewayv2_integration.tenant.connection_id == "vpclink-mock" &&
