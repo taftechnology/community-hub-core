@@ -24,14 +24,23 @@ const ERROR_CLASS = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
  * is never read. A thrown non-Error has no class.
  */
 function errorClassOf(error: unknown): string | undefined {
-  if (!(error instanceof Error)) {
-    return undefined;
-  }
   try {
+    if (!(error instanceof Error)) {
+      return undefined;
+    }
     const name: unknown = error.name;
     return typeof name === "string" && ERROR_CLASS.test(name) ? name : "Error";
   } catch {
     return "Error";
+  }
+}
+
+/** True for the adapter's own kms_failed. Inspecting a hostile caught value must not throw. */
+function isOwnFailure(error: unknown): boolean {
+  try {
+    return error instanceof Error && error.message === "kms_failed";
+  } catch {
+    return false;
   }
 }
 
@@ -139,7 +148,7 @@ export function createAwsKmsPort(options: {
     } catch (error) {
       zero(plaintext);
       zero(blob);
-      if (error instanceof Error && error.message === "kms_failed") {
+      if (isOwnFailure(error)) {
         throw error;
       }
       report(

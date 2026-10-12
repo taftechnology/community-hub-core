@@ -236,6 +236,24 @@ describe("createAwsKmsPort", () => {
       expect(JSON.stringify(logs)).not.toContain(MARKER);
     });
 
+    it("keeps kms_failed when the caught error cannot be inspected", async () => {
+      const hostile = new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            throw new Error(MARKER);
+          },
+        },
+      );
+      const { logs, error } = await failWith(hostile);
+      expect(error.message).toBe("kms_failed");
+      expect(error.cause).toBeUndefined();
+      expect(logs).toEqual([
+        { operation: "decrypt", outcome: "failed", key_kind: "org", errorClass: "Error" },
+      ]);
+      expect(JSON.stringify(logs)).not.toContain(MARKER);
+    });
+
     it.each([
       ["a string", `thrown ${MARKER}`],
       ["null", null],
