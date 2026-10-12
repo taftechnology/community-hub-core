@@ -191,6 +191,13 @@ resource "aws_apigatewayv2_api" "tenant" {
   protocol_type                = "HTTP"
   disable_execute_api_endpoint = var.disable_execute_api_endpoint
 
+  cors_configuration {
+    allow_credentials = false
+    allow_headers     = ["authorization", "content-type"]
+    allow_methods     = ["GET", "POST", "OPTIONS"]
+    allow_origins     = ["https://admin.${var.zone_name}"]
+  }
+
   tags = {
     environment = var.environment
     project     = var.project

@@ -11,6 +11,7 @@ describe("core.people manifest", () => {
       publishes: [],
       subscribes: [],
       ports: [],
+      permissions: ["people.restricted.read"],
       dataClasses: {
         "organisation_keys.id": "internal",
         "organisation_keys.org_id": "internal",

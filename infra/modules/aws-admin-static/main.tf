@@ -1,6 +1,6 @@
 locals {
   hostname                = "admin.${var.zone_name}"
-  content_security_policy = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'"
+  content_security_policy = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self' https://au.api.${var.zone_name} https://auth.au.${var.zone_name}"
   tags = {
     environment = var.environment
     project     = var.project

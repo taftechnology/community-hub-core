@@ -395,10 +395,16 @@ jobs:
           ADMIN_PUBLISH_ROLE_ARN: ${{ secrets.ADMIN_PUBLISH_ROLE_ARN }}
           ADMIN_BUCKET: ${{ secrets.ADMIN_BUCKET }}
           ADMIN_DISTRIBUTION_ID: ${{ secrets.ADMIN_DISTRIBUTION_ID }}
+          ADMIN_API_ORIGIN: ${{ vars.ADMIN_API_ORIGIN }}
+          ADMIN_AUTH_ORIGIN: ${{ vars.ADMIN_AUTH_ORIGIN }}
         run: |
           set -euo pipefail
           if [[ -z "${ADMIN_PUBLISH_ROLE_ARN:-}" || -z "${ADMIN_BUCKET:-}" || -z "${ADMIN_DISTRIBUTION_ID:-}" ]]; then
             echo "admin publish secrets are empty" >&2
+            exit 1
+          fi
+          if [[ -z "${ADMIN_API_ORIGIN:-}" || -z "${ADMIN_AUTH_ORIGIN:-}" ]]; then
+            echo "admin publish origins are unset" >&2
             exit 1
           fi
           command -v aws >/dev/null
@@ -408,6 +414,8 @@ jobs:
           echo "::add-mask::${account_id}"
 
           pnpm install --frozen-lockfile
+          export VITE_API_ORIGIN="${ADMIN_API_ORIGIN}"
+          export VITE_AUTH_ORIGIN="${ADMIN_AUTH_ORIGIN}"
           pnpm --filter @community-hub/admin build
 
           token_file="${RUNNER_TEMP}/github-oidc-token"

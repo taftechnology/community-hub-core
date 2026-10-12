@@ -1,3 +1,4 @@
+import { accessTables, rememberPersonKey } from "../../modules/core/access/db/schema.js";
 import { identityTables } from "../../modules/core/identity/db/schema.js";
 import { peopleTables } from "../../modules/core/people/db/schema.js";
 import { platformTables } from "../../modules/core/tenancy/db/schema.js";
@@ -31,3 +32,12 @@ export const guardianLinks = peopleRows.guardianLinks;
 export const personTags = peopleRows.personTags;
 export const personTagLinks = peopleRows.personTagLinks;
 export const personActivity = peopleRows.personActivity;
+
+rememberPersonKey(persons);
+const accessRows = accessTables(appNamespace);
+
+export const organisationRoleGrants = accessRows.organisationRoleGrants;
+export const communityRoleGrants = accessRows.communityRoleGrants;
+export const customRoles = accessRows.customRoles;
+export const customRolePermissions = accessRows.customRolePermissions;
+export const userLinks = accessRows.userLinks;

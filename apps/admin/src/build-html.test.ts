@@ -9,7 +9,12 @@ it("builds index.html with external scripts and no inline style", () => {
   execFileSync("pnpm", ["exec", "vite", "build"], {
     cwd: appRoot,
     stdio: "pipe",
-    env: { ...process.env, CI: "1" },
+    env: {
+      ...process.env,
+      CI: "1",
+      VITE_API_ORIGIN: "https://au.api.example.test",
+      VITE_AUTH_ORIGIN: "https://auth.au.example.test",
+    },
   });
   const html = fs.readFileSync(path.join(appRoot, "dist/index.html"), "utf8");
   const scripts = [...html.matchAll(/<script\b([^>]*)>/gi)];
