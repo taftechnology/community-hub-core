@@ -13,6 +13,10 @@
     "test": {
       "dependsOn": ["^build"]
     },
+    "@community-hub/db#test": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/modules/core/*/db/schema.ts"]
+    },
     "@community-hub/tenancy#test": {
       "dependsOn": ["^build", "@community-hub/db#test"]
     },

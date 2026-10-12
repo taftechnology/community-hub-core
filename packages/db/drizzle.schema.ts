@@ -1,6 +1,7 @@
 import { identityTables } from "../../modules/core/identity/db/schema.js";
 import { peopleTables } from "../../modules/core/people/db/schema.js";
 import { platformTables } from "../../modules/core/tenancy/db/schema.js";
+import { blindIndexColumn, encryptedColumn } from "./src/columns.js";
 import { app as appNamespace, identity, platform } from "./src/namespaces.js";
 
 export { auditEvents, app, identity, platform, outbox } from "./src/schema.js";
@@ -19,7 +20,7 @@ export const passkeyCredentials = identityRows.passkeyCredentials;
 export const passkeyChallenges = identityRows.passkeyChallenges;
 export const identitySessions = identityRows.sessions;
 
-const peopleRows = peopleTables(appNamespace);
+const peopleRows = peopleTables(appNamespace, { encryptedColumn, blindIndexColumn });
 
 export const organisationKeys = peopleRows.organisationKeys;
 export const communityKeys = peopleRows.communityKeys;

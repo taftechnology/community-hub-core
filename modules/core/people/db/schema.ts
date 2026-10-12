@@ -1,4 +1,6 @@
-import { blindIndexColumn, encryptedColumn } from "@community-hub/db";
+// Type-only: drizzle-kit loads this file with require(), which cannot resolve the ESM-only
+// @community-hub/db package, so the column constructors come in as an argument instead.
+import type { blindIndexColumn, encryptedColumn } from "@community-hub/db";
 import { sql, type SQL } from "drizzle-orm";
 import {
   boolean,
@@ -36,7 +38,15 @@ function communityPredicate(orgId: PgColumn, communityId: PgColumn): SQL {
   return sql`${orgId} = current_setting('app.org_id')::uuid and ${communityId} = current_setting('app.community_id')::uuid`;
 }
 
-export function peopleTables(app: PgSchema) {
+export interface PeopleColumnConstructors {
+  readonly encryptedColumn: typeof encryptedColumn;
+  readonly blindIndexColumn: typeof blindIndexColumn;
+}
+
+export function peopleTables(
+  app: PgSchema,
+  { encryptedColumn, blindIndexColumn }: PeopleColumnConstructors,
+) {
   const organisationKeys = app
     .table(
       "organisation_keys",
