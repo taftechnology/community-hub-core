@@ -250,7 +250,14 @@ async function loadDirectory(tx: AppTransaction): Promise<Directory> {
   };
 }
 
-function listBody(directory: Directory): {
+function callerPermissions(directory: Directory, actorUserId: string): string[] {
+  return catalogue().filter((permission) => allows(directory, actorUserId, permission));
+}
+
+function listBody(
+  directory: Directory,
+  permissions: readonly string[],
+): {
   grants: GrantView[];
   customRoles: CustomRoleView[];
   catalogue: readonly string[];
@@ -260,6 +267,7 @@ function listBody(directory: Directory): {
     permissions: readonly string[];
   }[];
   userLinks: { userId: string; personId: string }[];
+  permissions: readonly string[];
 } {
   return {
     grants: directory.grants,
@@ -271,6 +279,7 @@ function listBody(directory: Directory): {
       permissions: bundle(roleKey) ?? [],
     })),
     userLinks: directory.userLinks,
+    permissions,
   };
 }
 
@@ -374,7 +383,7 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
           if (!allows(directory, actor.userId, VIEW)) {
             return deny(tx, actor.userId, VIEW);
           }
-          return listBody(directory);
+          return listBody(directory, callerPermissions(directory, actor.userId));
         });
         return finish(outcome, (value) => Response.json(value));
       },

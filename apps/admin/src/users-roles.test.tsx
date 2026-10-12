@@ -15,7 +15,7 @@ function resultIds(
   return results[bucket].map((entry) => entry.id);
 }
 
-function directory(customRoleCount: number, grants: unknown[]) {
+function directory(customRoleCount: number, grants: unknown[], permissions: string[] = []) {
   return {
     grants,
     customRoles: Array.from({ length: customRoleCount }, (_, index) => ({
@@ -32,6 +32,7 @@ function directory(customRoleCount: number, grants: unknown[]) {
       },
     ],
     userLinks: [],
+    permissions,
   };
 }
 
@@ -148,6 +149,45 @@ it("shows no grants without a bootstrap control", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Load" }));
   expect(await screen.findByText("No role grants")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Become the owner" })).toBeNull();
+});
+
+it("hides Grant, Revoke, and Delete without access.roles.manage", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(
+      JSON.stringify(directory(1, [ownerGrant], ["access.users.view", "access.users.manage"])),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ),
+  );
+  await showUsers();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Load" }));
+  expect(await screen.findByText(USER, { exact: false })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Grant" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Revoke" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete custom role" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Link" })).toBeTruthy();
+});
+
+it("hides Link without access.users.manage", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(
+      JSON.stringify(directory(1, [ownerGrant], ["access.roles.view", "access.roles.manage"])),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ),
+  );
+  await showUsers();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Load" }));
+  expect(await screen.findByRole("button", { name: "Grant" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Revoke" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Delete custom role" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Link" })).toBeNull();
 });
 
 it("shows the role errors for 403 and 409", async () => {

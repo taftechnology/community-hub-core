@@ -214,7 +214,15 @@ describe("access routes", () => {
     expect(listed.status).toBe(200);
     const body = (await listed.json()) as {
       grants: { grantId: string; roleKey: string | null }[];
+      permissions: string[];
     };
+    expect(body.permissions).toEqual([
+      "access.users.view",
+      "access.users.manage",
+      "access.roles.view",
+      "access.roles.manage",
+      "people.restricted.read",
+    ]);
     expect(body.grants).toEqual([
       {
         grantId: ORG_GRANT,
