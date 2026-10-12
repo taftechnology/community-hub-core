@@ -52,7 +52,7 @@ export type ServiceEnv = {
   PLATFORM_SECRET_ARN: string;
 };
 
-function text(source: NodeJS.ProcessEnv, key: string): string | undefined {
+export function text(source: NodeJS.ProcessEnv, key: string): string | undefined {
   const value = source[key];
   if (value === undefined || value.length === 0) {
     return undefined;
@@ -60,7 +60,7 @@ function text(source: NodeJS.ProcessEnv, key: string): string | undefined {
   return value;
 }
 
-function portNumber(value: string | undefined): number | undefined {
+export function portNumber(value: string | undefined): number | undefined {
   if (value === undefined || !/^[0-9]+$/.test(value)) {
     return undefined;
   }
