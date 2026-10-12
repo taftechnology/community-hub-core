@@ -21,8 +21,8 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 |              |                                                                   |
 | ------------ | ----------------------------------------------------------------- |
 | Phase        | 1 — Core platform                                                 |
-| Last shipped | `access-roles`                                                    |
-| Next chunk   | `entitlements-plans`                                              |
+| Last shipped | `entitlements-plans`                                              |
+| Next chunk   | `stripe-billing`                                                  |
 | Phase 0      | 24 rows: 23 done, 1 superseded (`api-au-hostname`), 0 not started |
 | Later phases | not started                                                       |
 
@@ -94,7 +94,7 @@ Architecture: monorepo, CI, Terraform for AWS in `ap-southeast-2`, kernel, db wi
 | done       | `kms-mrk-replica`            | A replica of the envelope key in `ap-southeast-4`, not a database backup. Spec `docs/specs/2026-10-07-kms-mrk-replica.md`.                                                                                                                                                                                                                                                                                                                                                         |
 | done       | `service-image-runtime-base` | The service image final stage has no package manager. `gnutls28` is not in the runtime. Spec `docs/specs/2026-10-10-service-image-runtime-base.md`.                                                                                                                                                                                                                                                                                                                                |
 
-Next is `entitlements-plans`.
+Next is `stripe-billing`.
 
 SQS, EventBridge, file storage, and the admin static-file distribution are not rows here. Each waits for the first chunk that uses it.
 
@@ -115,7 +115,7 @@ Vertical slices. Nav items appear in the frozen order (see [Admin navigation](#a
 | done        | `identity-otp`         | The regional service. OTP and passkeys as designed. No email on a gateway. Spec `docs/specs/2026-10-11-identity-otp.md`.                                              |
 | done        | `people-households`    | Person, Household, GuardianLink, `is_minor`. Tags + activity log land here. Spec `docs/specs/2026-10-11-people-households.md`.                                        |
 | done        | `access-roles`         | Settings → Users & Roles. Spec `docs/specs/2026-10-12-access-roles.md`.                                                                                               |
-| not started | `entitlements-plans`   | Plans and allocations in the `platform` schema. Not a D1 control plane. Community toggles; nav hide/show. How a request sees them is Q14.                             |
+| done        | `entitlements-plans`   | Plans and allocations in the platform schema. Community toggles; nav hide/show. Spec docs/specs/2026-10-12-entitlements-plans.md.                                     |
 | not started | `stripe-billing`       | Our subscriptions. Webhooks on the Sydney hostname. The regional service does the work. Not `exec`. Not GivingJar.                                                    |
 | not started | `ops-console`          | Routes on the regional service. Passkeys. The `platform` role has no `app` privileges. No Cloudflare Access.                                                          |
 | not started | `usage-facts`          | `core/usage` skeleton (community × feature × day). Facts grow as modules ship.                                                                                        |
@@ -258,7 +258,7 @@ This image has not run on Fargate. The next chunk that unparks staging re-runs t
 
 ## Next spec
 
-The next approved chunk on this list is **entitlements-plans**.
+The next approved chunk on this list is **stripe-billing**.
 
 ---
 
