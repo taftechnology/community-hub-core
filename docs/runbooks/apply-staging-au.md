@@ -116,6 +116,64 @@ Apply complete: 1 added, 0 changed, 8 destroyed. The follow-up plan showed no ch
 
 An operator runs the database ops task. A person does not open a master session. The database is on and `service_image` is set, because otherwise the task definition does not exist. The task uses the task security group, the staging public subnet, and a public address. The command is `["node", "/app/db-bootstrap.js"]`. Stdout is only the integer from `SHOW max_connections`. This procedure does not record a password, a connection string, or a secret ARN. There is no rotation function. The same task is how a later password change is applied.
 
+## Apply product migrations
+
+The database accepts connections only from the task security group, so a person cannot run the migrations from a laptop. The command is `/app/db-migrate.js` in the service image. It runs as a one-off ops task, as `db-bootstrap.js` does. A human runs it. An agent does not. This section adds no bastion, no public database, no NAT gateway, and no ECS Exec.
+
+### Prerequisites
+
+- Staging is unparked in a chunk whose approved spec says so.
+- The `db-bootstrap` one-off has exited 0 on this database. The command refuses to run before that and prints `not_bootstrapped`.
+- The image is the digest from the `publish` job summary, built from the `main` that contains this command. The ops task definition points at that image.
+
+### Run
+
+Run the existing ops task definition with a command override. `entryPoint` is not set. Use the task security group, the staging public subnet, and a public address. The override sets only `command`. In zsh write `${VAR}:text`, not `$VAR:text`.
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${OPS_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides '{"containerOverrides":[{"name":"db-ops","command":["node","/app/db-migrate.js"]}]}' \
+      --query 'tasks[0].taskArn' --output text)
+    aws ecs wait tasks-stopped --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN}
+    aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN} \
+      --query 'tasks[0].containers[0].exitCode' --output text
+    aws logs get-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} \
+      --log-stream-name ${LOG_STREAM} --query 'events[].message' --output text
+
+`${LOG_GROUP}` is the service log group. `${LOG_STREAM}` is the stream with prefix `db-ops` for this task. The task writes only the lines below. It never writes a host, a port, a database name, a user, a password, SQL text, or a driver message.
+
+### Results
+
+| Exit | Stdout                                                           | Stderr               | Meaning and what to do                                                                                                                                                                                                                                                                                |
+| ---- | ---------------------------------------------------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | `applied <tag>` per migration, then `done applied=<n> total=<m>` | empty                | Those migrations are now applied.                                                                                                                                                                                                                                                                     |
+| 0    | `done applied=0 total=<m>`                                       | empty                | Nothing to apply. The database already has every migration in this image.                                                                                                                                                                                                                             |
+| 1    | empty                                                            | `env`                | An environment variable is missing or malformed, or the image's CA bundle could not be read. Check the ops task definition.                                                                                                                                                                           |
+| 1    | empty                                                            | `connect`            | The master connection failed with no database error: a network, DNS or TLS problem. Check the task security group and the subnet.                                                                                                                                                                     |
+| 1    | empty                                                            | `connect 28P01`      | The master password was refused.                                                                                                                                                                                                                                                                      |
+| 1    | empty                                                            | `connect <SQLSTATE>` | The master connection or a role login failed with that database error code.                                                                                                                                                                                                                           |
+| 1    | empty                                                            | `not_bootstrapped`   | A role is missing, or a role login was refused. A wrong role password gives the same word. Run `db-bootstrap`, then run this again.                                                                                                                                                                   |
+| 1    | empty                                                            | `migrate <SQLSTATE>` | A migration or the runner's own SQL failed with that database error code. Nothing from this run is applied.                                                                                                                                                                                           |
+| 1    | empty                                                            | `migrate`            | One of the runner's own checks failed: a changed migration file, a journal entry older than an applied one, a lost session, or a connection dropped mid-run. There is no code and no message. For a check, the image is older or different from the database. Run it again if the connection dropped. |
+
+A failed run applies nothing from that run. The pending set is one transaction. Migrations committed by an earlier run stay. The failing migration is not named. The code is the only evidence of which statement failed. Fix the cause and run the command again.
+
+### Waiting
+
+A second run waits for the first to release the migration lock, with no bound. If the first task hangs, stop it. Stopping it closes its connection and releases the lock.
+
+### Re-park
+
+If the cause cannot be fixed inside the unpark window, re-park. That destroys a staging database that holds no data. There is no down-migration and none is added.
+
+### Evidence
+
+The journal table records each file's `when` value, not the time it ran. The ECS task's stop time and the log stream are the record of a run. Copy the exit code and the lines into the evidence of the chunk that ran it.
+
 ## First running task
 
 Both applies used `feat/2026-10-06-first-running-task` at `ba881554b5ca7d72d3faabbf9994f464df490f38`, profile ch-admin. `service_image` stayed in the gitignored file. The ops task ran `db-bootstrap.js`. A person did not open a master session.
