@@ -41,10 +41,17 @@ it("renders Dashboard and Users & Roles from the frozen labels", () => {
 
   const nav = screen.getByRole("navigation", { name: "Admin" });
   const links = within(nav).getAllByRole("link");
-  expect(links.map((link) => link.textContent)).toEqual(["Dashboard", "Users & Roles"]);
+  expect(links.map((link) => link.textContent)).toEqual([
+    "Dashboard",
+    "Users & Roles",
+    "Module Toggles",
+  ]);
   expect(within(nav).getByRole("link", { name: "Dashboard" }).getAttribute("href")).toBe("/");
   expect(within(nav).getByRole("link", { name: "Users & Roles" }).getAttribute("href")).toBe(
     "/settings/users",
+  );
+  expect(within(nav).getByRole("link", { name: "Module Toggles" }).getAttribute("href")).toBe(
+    "/settings/modules",
   );
   expect(within(nav).getByText("Settings").tagName).not.toBe("A");
   expect(within(nav).queryByRole("link", { name: "Settings" })).toBeNull();

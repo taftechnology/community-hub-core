@@ -1,0 +1,200 @@
+import { Button } from "@community-hub/ui";
+import { type FormEvent, useState } from "react";
+import { Link } from "react-router";
+
+import { clearAccessToken, directoryOrigins, readAccessToken } from "./directory";
+
+type ModuleKey = {
+  key: string;
+  enabled: boolean;
+};
+
+type Notice = "forbidden" | "rejected" | "unavailable";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function readModules(value: unknown): { keys: ModuleKey[]; canManage: boolean } | undefined {
+  if (!isRecord(value) || !Array.isArray(value.keys)) {
+    return undefined;
+  }
+  return {
+    keys: value.keys.flatMap((item) => {
+      if (!isRecord(item) || typeof item.key !== "string" || typeof item.enabled !== "boolean") {
+        return [];
+      }
+      return [{ key: item.key, enabled: item.enabled }];
+    }),
+    canManage: value.canManage === true,
+  };
+}
+
+type Outcome = "ok" | Notice | "signed-out";
+
+function outcomeOf(response: Response | "unavailable"): Outcome {
+  if (response === "unavailable") {
+    return "unavailable";
+  }
+  if (response.status === 401) {
+    return "signed-out";
+  }
+  if (response.status === 403) {
+    return "forbidden";
+  }
+  if (response.status === 400) {
+    return "rejected";
+  }
+  if (response.status === 200) {
+    return "ok";
+  }
+  return "unavailable";
+}
+
+export function ModuleTogglesPage() {
+  const [token, setToken] = useState(() => readAccessToken());
+  const [community, setCommunity] = useState("");
+  const [slug, setSlug] = useState("");
+  const [modules, setModules] = useState<ModuleKey[] | undefined>(undefined);
+  const [canManage, setCanManage] = useState(false);
+  const [notice, setNotice] = useState<Notice | undefined>(undefined);
+  const origins = directoryOrigins();
+
+  function show(outcome: Notice | "signed-out"): void {
+    if (outcome === "signed-out") {
+      setToken(null);
+      setModules(undefined);
+      return;
+    }
+    setNotice(outcome);
+  }
+
+  async function post(path: string, body: unknown): Promise<Response | "unavailable"> {
+    if (origins === undefined || token === null) {
+      return "unavailable";
+    }
+    try {
+      const response = await fetch(`${origins.api}${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(body),
+      });
+      if (response.status === 401) {
+        clearAccessToken();
+      }
+      return response;
+    } catch {
+      return "unavailable";
+    }
+  }
+
+  async function load(communitySlug: string): Promise<void> {
+    const response = await post("/v1/entitlements/list", { communitySlug });
+    const outcome = outcomeOf(response);
+    if (outcome !== "ok" || response === "unavailable") {
+      show(outcome === "ok" ? "unavailable" : outcome);
+      return;
+    }
+    try {
+      const parsed = readModules(await response.json());
+      if (parsed === undefined) {
+        setNotice("unavailable");
+        return;
+      }
+      setNotice(undefined);
+      setSlug(communitySlug);
+      setModules(parsed.keys);
+      setCanManage(parsed.canManage);
+    } catch {
+      setNotice("unavailable");
+    }
+  }
+
+  async function turn(key: string, enabled: boolean): Promise<void> {
+    const response = await post("/v1/entitlements/toggle", {
+      communitySlug: slug,
+      key,
+      enabled,
+    });
+    const outcome = outcomeOf(response);
+    if (outcome !== "ok") {
+      show(outcome);
+      return;
+    }
+    setNotice(undefined);
+    setModules((current) => current?.map((row) => (row.key === key ? { key, enabled } : row)));
+  }
+
+  if (origins === undefined) {
+    return (
+      <>
+        <h1>Module Toggles</h1>
+        <p>Directory unavailable</p>
+      </>
+    );
+  }
+
+  if (token === null) {
+    return (
+      <>
+        <h1>Module Toggles</h1>
+        <p>Sign in required</p>
+        <Link to="/sign-in">Sign in</Link>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <h1>Module Toggles</h1>
+      <form
+        onSubmit={(event: FormEvent<HTMLFormElement>) => {
+          event.preventDefault();
+          void load(community);
+        }}
+      >
+        <label>
+          Community
+          <input
+            value={community}
+            onChange={(event) => {
+              setCommunity(event.target.value);
+            }}
+          />
+        </label>
+        <Button type="submit">Load</Button>
+      </form>
+      {notice === "forbidden" ? <p>You cannot manage modules</p> : null}
+      {notice === "rejected" ? <p>That change was rejected</p> : null}
+      {notice === "unavailable" ? <p>Directory unavailable</p> : null}
+      {modules === undefined ? null : modules.length === 0 ? (
+        <p>No modules are allocated.</p>
+      ) : (
+        <ul>
+          {modules.map((row) => (
+            <li key={row.key}>
+              {canManage ? (
+                <label>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    checked={row.enabled}
+                    onChange={(event) => {
+                      void turn(row.key, event.target.checked);
+                    }}
+                  />
+                  {row.key}
+                </label>
+              ) : (
+                row.key
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
+}
