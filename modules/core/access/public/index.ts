@@ -19,6 +19,7 @@ defineAuditPurpose("access.permission.denied");
 defineAuditPurpose("access.roles.manage");
 
 export { AccessError } from "../domain/error.js";
+export { createCustomRole, deleteCustomRole } from "../infrastructure/custom-roles.js";
 export {
   bootstrapOwner,
   grantRole,

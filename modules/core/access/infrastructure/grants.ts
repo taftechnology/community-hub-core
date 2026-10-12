@@ -28,7 +28,7 @@ type GrantInput = {
   actorUserId: string;
 };
 
-type ActorGrants = {
+export type ActorGrants = {
   organisationRoleKeys: string[];
   communityRoleKeys: string[];
   customPermissions: string[];
@@ -56,7 +56,7 @@ function uniqueViolation(error: unknown, marker: string): boolean {
   return false;
 }
 
-function allows(grants: ActorGrants, permission: string): boolean {
+export function allows(grants: ActorGrants, permission: string): boolean {
   return decide({
     permission,
     organisationRoleKeys: grants.organisationRoleKeys,
@@ -74,7 +74,7 @@ function holdsOrganisationAdmin(grants: ActorGrants): boolean {
   );
 }
 
-async function loadActor(tx: AppTransaction, actorUserId: string): Promise<ActorGrants> {
+export async function loadActor(tx: AppTransaction, actorUserId: string): Promise<ActorGrants> {
   const organisationRows = await tx<{ role_key: string }[]>`
     select role_key
     from app.organisation_role_grants
@@ -113,7 +113,7 @@ async function loadActor(tx: AppTransaction, actorUserId: string): Promise<Actor
   };
 }
 
-async function deny(tx: AppTransaction, actorUserId: string): Promise<never> {
+export async function deny(tx: AppTransaction, actorUserId: string): Promise<never> {
   await appendAuditEvent(tx, {
     actorKind: "user",
     actorId: actorUserId,
@@ -257,6 +257,92 @@ export async function bootstrapOwner(
   return { organisationGrantId, communityGrantId };
 }
 
+async function assertGrantSubjectAdult(tx: AppTransaction, userId: string): Promise<void> {
+  const linked = await tx<{ person_id: string }[]>`
+    select person_id::text as person_id
+    from app.user_links
+    where user_id = ${userId}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
+  `;
+  const personId = linked[0]?.person_id;
+  if (personId === undefined) {
+    return;
+  }
+  const minor = await personIsMinor(tx, personId);
+  if (minor === null) {
+    throw new AccessError("not_found");
+  }
+  if (minor) {
+    throw new AccessError("minor_forbidden");
+  }
+}
+
+async function grantCustomRole(
+  tx: AppTransaction,
+  userId: string,
+  actorUserId: string,
+  customRoleId: string,
+): Promise<{ grantId: string; scope: "community" }> {
+  const actor = await loadActor(tx, actorUserId);
+  if (!allows(actor, MANAGE)) {
+    await deny(tx, actorUserId);
+  }
+  const roles = await tx<{ id: string }[]>`
+    select id::text as id
+    from app.custom_roles
+    where id = ${customRoleId}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
+  `;
+  if (roles[0] === undefined) {
+    throw new AccessError("invalid_role");
+  }
+  const permissionRows = await tx<{ permission: string }[]>`
+    select permission
+    from app.custom_role_permissions
+    where custom_role_id = ${customRoleId}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
+  `;
+  for (const row of permissionRows) {
+    if (!allows(actor, row.permission)) {
+      await deny(tx, actorUserId);
+    }
+  }
+  await assertGrantSubjectAdult(tx, userId);
+  const grantId = newId();
+  try {
+    await tx.savepoint("role_grant", async (sp) => {
+      await sp`
+        insert into app.community_role_grants (
+          id, org_id, community_id, user_id, role_key, custom_role_id
+        ) values (
+          ${grantId}::uuid,
+          current_setting('app.org_id')::uuid,
+          current_setting('app.community_id')::uuid,
+          ${userId}::uuid,
+          null,
+          ${customRoleId}::uuid
+        )
+      `;
+    });
+  } catch (error) {
+    if (uniqueViolation(error, "role_grant")) {
+      throw new AccessError("duplicate_grant");
+    }
+    throw error;
+  }
+  await appendAuditEvent(tx, {
+    actorKind: "user",
+    actorId: actorUserId,
+    action: GRANTED,
+    purpose: GRANTED,
+    targetIds: [grantId],
+  });
+  return { grantId, scope: "community" };
+}
+
 export async function grantRole(
   tx: AppTransaction,
   input: GrantInput,
@@ -269,8 +355,7 @@ export async function grantRole(
     throw new AccessError("invalid_role");
   }
   if (input.customRoleId !== null) {
-    parseUuid(input.customRoleId);
-    throw new AccessError("invalid_role");
+    return grantCustomRole(tx, userId, actorUserId, parseUuid(input.customRoleId));
   }
   const roleKey = input.roleKey ?? "";
   const organisationRole = ORGANISATION_ROLES.has(roleKey);
