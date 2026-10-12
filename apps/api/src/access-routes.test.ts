@@ -19,6 +19,7 @@ const access = vi.hoisted(() => ({
 
 const db = vi.hoisted(() => ({
   withAppTransaction: vi.fn(),
+  appendAuditEvent: vi.fn(async () => undefined),
 }));
 
 vi.mock("@community-hub/identity", async () => {
@@ -43,7 +44,11 @@ vi.mock("@community-hub/access", () => {
 
 vi.mock("@community-hub/db", async () => {
   const actual = await vi.importActual<typeof import("@community-hub/db")>("@community-hub/db");
-  return { ...actual, withAppTransaction: db.withAppTransaction };
+  return {
+    ...actual,
+    withAppTransaction: db.withAppTransaction,
+    appendAuditEvent: db.appendAuditEvent,
+  };
 });
 
 import { accessRoutes, type AccessDeps } from "./access-routes.js";
@@ -57,8 +62,13 @@ const COMMUNITY = "00000000-0000-4000-8000-000000000011";
 const ORG_GRANT = "00000000-0000-4000-8000-000000000020";
 const COMMUNITY_GRANT = "00000000-0000-4000-8000-000000000021";
 
+let grantsVisible = true;
+
 function fakeTx(strings: TemplateStringsArray): unknown[] {
   const text = strings.join(" ");
+  if (!grantsVisible) {
+    return [];
+  }
   if (text.includes("app.organisation_role_grants")) {
     return [{ grant_id: ORG_GRANT, user_id: USER, role_key: "org_owner" }];
   }
@@ -112,10 +122,12 @@ function route(path: string, bound: AccessDeps = deps()) {
 
 describe("access routes", () => {
   beforeEach(() => {
+    grantsVisible = true;
     identity.readSession.mockReset();
     tenancy.findCommunityBySlug.mockReset();
     access.grantRole.mockReset();
     db.withAppTransaction.mockReset();
+    db.appendAuditEvent.mockReset();
     db.withAppTransaction.mockImplementation(
       async (_sql: unknown, _scope: unknown, fn: (tx: typeof fakeTx) => Promise<unknown>) =>
         fn(fakeTx),
@@ -271,5 +283,36 @@ describe("access routes", () => {
     );
     expect(listed.status).toBe(403);
     expect(await listed.text()).toBe("");
+  });
+
+  it("answers an unknown slug and a community with no role the same way", async () => {
+    tenancy.findCommunityBySlug.mockResolvedValue(null);
+    const missing = await route("/v1/access/grants/list").handle(
+      request(
+        "/v1/access/grants/list",
+        API_HOSTNAME,
+        { communitySlug: "missing" },
+        `Bearer ${TOKEN}`,
+      ),
+    );
+    tenancy.findCommunityBySlug.mockResolvedValue({
+      id: COMMUNITY,
+      organisationId: ORG,
+      slug: "other",
+      region: "au",
+    });
+    grantsVisible = false;
+    const absent = await route("/v1/access/grants/list").handle(
+      request(
+        "/v1/access/grants/list",
+        API_HOSTNAME,
+        { communitySlug: "other" },
+        `Bearer ${TOKEN}`,
+      ),
+    );
+    expect(absent.status).toBe(missing.status);
+    expect(missing.status).toBe(403);
+    expect(await absent.text()).toBe(await missing.text());
+    expect(await missing.text()).toBe("");
   });
 });
