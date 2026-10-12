@@ -494,6 +494,11 @@ export async function revokeRole(
       }
     }
     if (roleKey === "org_owner") {
+      await tx`
+        select pg_advisory_xact_lock(
+          hashtextextended('access.org:' || current_setting('app.org_id'), 0)
+        )
+      `;
       const owners = await tx<{ n: number }[]>`
         select count(*)::int as n
         from app.organisation_role_grants

@@ -130,6 +130,29 @@ async function householdWithPeople(
   return { adultId: adult.personId, minorId: minor.personId };
 }
 
+async function revokeInTransaction(
+  runtime: Runtime,
+  scope: { orgId: string; communityId: string },
+  grantId: string,
+  actorUserId: string,
+): Promise<void> {
+  const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+  try {
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, scope, (tx) =>
+        revokeRole(tx, {
+          now: NOW,
+          grantId,
+          scope: "organisation",
+          actorUserId,
+        }),
+      ),
+    );
+  } finally {
+    await app.end({ timeout: 1 });
+  }
+}
+
 describe("links, bootstrap, and grants", () => {
   it("bootstraps one owner and refuses a second bootstrap", async () => {
     await withParish("grant-bootstrap", async (tx) => {
@@ -353,6 +376,66 @@ describe("links, bootstrap, and grants", () => {
       );
     });
   });
+
+  it("leaves one owner when two owner revokes run together", async () => {
+    const runtime = loadRuntime();
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+      const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+      const organisationId = newId();
+      const communityId = newId();
+      const first = newId();
+      const second = newId();
+      const slug = `grant-lock-${attempt}`;
+      try {
+        await platform.begin(async (tx) => {
+          await tx`
+            insert into platform.organisations (id, slug, region, kind)
+            values (${organisationId}, ${slug}, 'au', 'implicit')
+          `;
+          await tx`
+            insert into platform.communities (id, organisation_id, slug, region)
+            values (${communityId}, ${organisationId}, ${slug}, 'au')
+          `;
+        });
+        const scope = { orgId: organisationId, communityId };
+        const boot = await withRequest({ requestId: REQUEST_ID }, () =>
+          withAppTransaction(app, scope, (tx) =>
+            bootstrapOwner(tx, { now: NOW, userId: first, actorUserId: first }),
+          ),
+        );
+        const other = await withRequest({ requestId: REQUEST_ID }, () =>
+          withAppTransaction(app, scope, (tx) =>
+            grantRole(tx, {
+              now: NOW,
+              userId: second,
+              roleKey: "org_owner",
+              customRoleId: null,
+              actorUserId: first,
+            }),
+          ),
+        );
+        await Promise.allSettled([
+          revokeInTransaction(runtime, scope, other.grantId, first),
+          revokeInTransaction(runtime, scope, boot.organisationGrantId, second),
+        ]);
+        const owners = await withRequest({ requestId: REQUEST_ID }, () =>
+          withAppTransaction(app, scope, async (tx) => {
+            const rows = await tx<{ n: number }[]>`
+              select count(*)::int as n
+              from app.organisation_role_grants
+              where role_key = 'org_owner'
+            `;
+            return rows[0]?.n ?? 0;
+          }),
+        );
+        expect(owners, slug).toBe(1);
+      } finally {
+        await platform.end({ timeout: 1 });
+        await app.end({ timeout: 1 });
+      }
+    }
+  }, 20_000);
 
   it("keeps the last organisation owner and revokes a second one", async () => {
     await withParish("grant-revoke", async (tx) => {
