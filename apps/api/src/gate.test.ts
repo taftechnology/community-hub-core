@@ -272,6 +272,20 @@ describe("createGate", () => {
     expect(JSON.stringify(lines)).not.toContain(id);
   });
 
+  it("does not answer OPTIONS on the ops or webhooks hostnames", async () => {
+    const { gate } = setup();
+    const ops = await call(gate, "10.0.0.8", "ops.au.example.test", "OPTIONS", "/v1/access/grants");
+    const webhooks = await call(
+      gate,
+      "10.0.0.8",
+      "webhooks.au.example.test",
+      "OPTIONS",
+      "/v1/access/grants",
+    );
+    expect(ops.status).not.toBe(204);
+    expect(webhooks.status).not.toBe(204);
+  });
+
   it("does not read a 1 MiB refused body", async () => {
     const { gate, lines } = setup();
     let reads = 0;
