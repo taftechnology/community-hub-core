@@ -1,7 +1,7 @@
 # Spec: Users and roles
 
 Slug: access-roles
-Status: draft
+Status: approved (2026-10-12, Adnan Bin Hossen)
 Architecture refs: §6.1, §6.3, §8.1, §8.3, §11.2, §11.3, §12.1, §12.3. Implements the `access-roles` row. Depends on `admin-shell`, `tenancy-implicit-org`, `identity-otp`, and `people-households`, all on `main`. Staging stays parked.
 
 ## Problem
