@@ -184,8 +184,8 @@ describe("createGate", () => {
           method: "POST",
           pattern: "/v1/access/grants",
           surface: "tenant",
-          handle: (request) => {
-            role(request);
+          handle: () => {
+            role();
             return new Response("granted", { status: 200 });
           },
         },
@@ -193,8 +193,8 @@ describe("createGate", () => {
           method: "POST",
           pattern: "/v1/auth/email-otp/start",
           surface: "tenant",
-          handle: (request) => {
-            signIn(request);
+          handle: () => {
+            signIn();
             return new Response(null, { status: 204 });
           },
         },
