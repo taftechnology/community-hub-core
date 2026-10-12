@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -109,6 +110,24 @@ function loopbackBody(id: string): { status: number; stdout: string; stderr: str
   );
   return { status: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
 }
+
+describe("service image build", () => {
+  it("builds policy, tenancy, people, and access before the service", () => {
+    const dockerfile = readFileSync(path.join(root, "apps/api/Dockerfile"), "utf8");
+    const build = dockerfile
+      .split("\n")
+      .find((line) => line.includes("pnpm --filter") && line.trimEnd().endsWith(" build"));
+    expect(build).toBeDefined();
+    for (const name of [
+      "@community-hub/policy",
+      "@community-hub/tenancy",
+      "@community-hub/people",
+      "@community-hub/access",
+    ]) {
+      expect(build, name).toContain(`--filter ${name}`);
+    }
+  });
+});
 
 describe.skipIf(process.env.RUN_IMAGE_TESTS !== "1")("regional service image", () => {
   it("ships exactly the distroless package set", () => {
