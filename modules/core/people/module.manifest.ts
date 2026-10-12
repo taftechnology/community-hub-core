@@ -7,6 +7,7 @@ export default defineModule({
   publishes: [],
   subscribes: [],
   ports: [],
+  features: ["people.directory", "people.households", "people.custom_fields"],
   permissions: ["people.restricted.read"],
   dataClasses: {
     "organisation_keys.id": "internal",

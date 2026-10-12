@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { bundle, catalogue, decide, type DecideInput } from "./decide.js";
 
-const viewPermissions = ["access.users.view", "access.roles.view"] as const;
+const viewPermissions = ["access.users.view", "access.roles.view", "entitlements.view"] as const;
 
 function actor(
   permission: string,
@@ -23,13 +23,15 @@ function actor(
 }
 
 describe("catalogue", () => {
-  it("lists the five permissions in order", () => {
+  it("lists the seven permissions in order", () => {
     expect(catalogue()).toEqual([
       "access.users.view",
       "access.users.manage",
       "access.roles.view",
       "access.roles.manage",
       "people.restricted.read",
+      "entitlements.view",
+      "entitlements.manage",
     ]);
   });
 });
@@ -47,8 +49,12 @@ describe("bundle", () => {
     const all = catalogue();
     expect(bundle("org_admin")).toEqual(all);
     expect(bundle("community_admin")).toEqual(all);
-    expect(bundle("org_billing")).toEqual(["access.users.view"]);
-    expect(bundle("org_auditor")).toEqual(["access.users.view", "access.roles.view"]);
+    expect(bundle("org_billing")).toEqual(["access.users.view", "entitlements.view"]);
+    expect(bundle("org_auditor")).toEqual([
+      "access.users.view",
+      "access.roles.view",
+      "entitlements.view",
+    ]);
     expect(bundle("safeguarding_officer")).toEqual(["people.restricted.read", "access.users.view"]);
     expect(bundle("volunteer_coordinator")).toEqual(["access.users.view"]);
     expect(bundle("content_editor")).toEqual([]);
@@ -70,7 +76,7 @@ describe("decide", () => {
     }
   });
 
-  it("allows staff only the two view permissions", () => {
+  it("allows staff the view permissions and not manage", () => {
     for (const permission of catalogue()) {
       expect(
         decide(
@@ -114,6 +120,8 @@ describe("decide", () => {
     const roles = { organisationRoleKeys: [], communityRoleKeys: [] };
     expect(decide(actor("people.restricted.read", roles, flags))).toBe(true);
     expect(decide(actor("access.roles.manage", roles, flags))).toBe(false);
+    expect(decide(actor("entitlements.view", roles, flags))).toBe(false);
+    expect(decide(actor("entitlements.manage", roles, flags))).toBe(false);
   });
 
   it("denies a guardian the restricted read when the call is not person-scoped", () => {

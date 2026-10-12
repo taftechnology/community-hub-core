@@ -4,6 +4,8 @@ const CATALOGUE = [
   "access.roles.view",
   "access.roles.manage",
   "people.restricted.read",
+  "entitlements.view",
+  "entitlements.manage",
 ] as const;
 
 const EMPTY: readonly string[] = [];
@@ -11,10 +13,10 @@ const EMPTY: readonly string[] = [];
 const BUNDLES: Record<string, readonly string[]> = {
   org_owner: CATALOGUE,
   org_admin: CATALOGUE,
-  org_billing: ["access.users.view"],
-  org_auditor: ["access.users.view", "access.roles.view"],
+  org_billing: ["access.users.view", "entitlements.view"],
+  org_auditor: ["access.users.view", "access.roles.view", "entitlements.view"],
   community_admin: CATALOGUE,
-  staff: ["access.users.view", "access.roles.view"],
+  staff: ["access.users.view", "access.roles.view", "entitlements.view"],
   finance: EMPTY,
   safeguarding_officer: ["people.restricted.read", "access.users.view"],
   volunteer_coordinator: ["access.users.view"],
