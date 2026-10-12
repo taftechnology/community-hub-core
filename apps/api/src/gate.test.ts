@@ -256,6 +256,22 @@ describe("createGate", () => {
     expect(signIn).toHaveBeenCalledOnce();
   });
 
+  it("logs unmatched for OPTIONS and omits an id in the path", async () => {
+    const { gate, lines } = setup();
+    const id = "00000000-0000-7000-8000-000000000001";
+    const response = await call(
+      gate,
+      "10.0.0.8",
+      "au.api.example.test",
+      "OPTIONS",
+      `/v1/people/${id}/notes`,
+    );
+    expect(response.status).toBe(204);
+    const line = lines.find((entry) => entry.method === "OPTIONS");
+    expect(line?.path).toBe("unmatched");
+    expect(JSON.stringify(lines)).not.toContain(id);
+  });
+
   it("does not read a 1 MiB refused body", async () => {
     const { gate, lines } = setup();
     let reads = 0;

@@ -179,7 +179,7 @@ export function createGate(options: {
       await releaseUnreadBody(request);
       options.info("request", {
         method: request.method,
-        path: pathname,
+        path,
         status: 204,
       });
       return new Response(null, { status: 204 });
