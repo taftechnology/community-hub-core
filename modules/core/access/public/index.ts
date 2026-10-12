@@ -17,6 +17,7 @@ defineAuditPurpose("access.user.unlinked");
 defineAuditAction("access.permission.denied");
 defineAuditPurpose("access.permission.denied");
 defineAuditPurpose("access.roles.manage");
+defineAuditPurpose("people.restricted.read");
 
 export { AccessError } from "../domain/error.js";
 export { createCustomRole, deleteCustomRole } from "../infrastructure/custom-roles.js";
@@ -27,3 +28,4 @@ export {
   revokeRole,
   unlinkUser,
 } from "../infrastructure/grants.js";
+export { readPersonForActor } from "../infrastructure/restricted-read.js";
