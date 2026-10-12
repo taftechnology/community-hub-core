@@ -399,8 +399,12 @@ jobs:
           ADMIN_AUTH_ORIGIN: ${{ vars.ADMIN_AUTH_ORIGIN }}
         run: |
           set -euo pipefail
-          if [[ -z "${ADMIN_PUBLISH_ROLE_ARN:-}" || -z "${ADMIN_BUCKET:-}" || -z "${ADMIN_DISTRIBUTION_ID:-}" || -z "${ADMIN_API_ORIGIN:-}" || -z "${ADMIN_AUTH_ORIGIN:-}" ]]; then
+          if [[ -z "${ADMIN_PUBLISH_ROLE_ARN:-}" || -z "${ADMIN_BUCKET:-}" || -z "${ADMIN_DISTRIBUTION_ID:-}" ]]; then
             echo "admin publish secrets are empty" >&2
+            exit 1
+          fi
+          if [[ -z "${ADMIN_API_ORIGIN:-}" || -z "${ADMIN_AUTH_ORIGIN:-}" ]]; then
+            echo "admin publish origins are unset" >&2
             exit 1
           fi
           command -v aws >/dev/null

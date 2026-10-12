@@ -16,7 +16,7 @@ Status: approved (2026-10-12, Adnan Bin Hossen)
 
 ## Global Constraints
 
-- The spec Status line is `approved (2026-10-12, Adnan Bin Hossen)`. Do not edit the spec.
+- The spec and this plan stay `approved (2026-10-12, Adnan Bin Hossen)`. Review fixes update both so they describe rank, the removed bootstrap route, gateway CORS, and the human applies.
 - Do not start Task 1 until this plan's Status line is `approved`. Do not mark this plan approved yourself.
 - Do not add a column, a route, a package, a permission, or a public function the spec does not name.
 - `readPerson` and `openPersonFieldKeys` stay as they are. This chunk does not change their signatures or their audit.
@@ -25,7 +25,7 @@ Status: approved (2026-10-12, Adnan Bin Hossen)
 - Access and people-fact commands take `tx: AppTransaction` first. They do not open a connection, do not call `set_config`, and do not call `sql.begin`. A unique-key race uses `tx.savepoint(name, fn)`. Raw `SAVEPOINT` SQL is not used. Audit commands run inside `withRequest`. They do not enter request context themselves.
 - One journal entry, in Task 3, after `0006_people_org_scoped_uniques`. Later tasks do not add a migration. Migration wave: expand. No drop and no change to a people table, `app.audit_events`, or `app.outbox`.
 - `org_id` and `community_id` in inserts are `current_setting(...)::uuid`, not bound parameters.
-- Staging stays parked. Do not change `enable_database`, `desired_count`, or add `service_image`. The only Terraform edit is the admin response-headers `connect-src` local and its existing test. Do not add a resource.
+- Staging stays parked. Do not change `enable_database`, `desired_count`, or add `service_image`. Terraform edits are the admin response-headers `connect-src` local and the tenant API gateway `cors_configuration`. Do not apply.
 - The agent does not apply and does not merge. Session scratch (`.superpowers/`, `*-report.md`) is never committed.
 - This chunk is authorisation and a minor's restricted read. The second fresh-context review starts when the pull request opens. Leave that line open. Do not write the second review.
 - Every task runs `pnpm gate` before its commit. Format the files in that commit first: `pnpm exec prettier --write` on those paths. A code fence inside a list item is indented so Prettier does not join the list.
@@ -312,7 +312,7 @@ EOF
 
 - Produces: `linkUser`, `unlinkUser`, `bootstrapOwner`, `grantRole`, and `revokeRole` with the spec signatures.
 - `linkUser` calls `personIsMinor`. `true` is `minor_forbidden`. `null` is `not_found`.
-- `bootstrapOwner` requires `userId === actorUserId`. It inserts `org_owner` and `community_admin` only when both grant tables are empty for this transaction's scope.
+- `bootstrapOwner` requires `userId === actorUserId`. It takes the organisation advisory lock, then inserts `org_owner` and `community_admin` only when both grant tables are empty for this transaction's scope. Two concurrent calls create one owner. There is no HTTP route.
 - `grantRole` requires `access.roles.manage` from `decide` on the actor's current grants. An organisation role also requires the actor to hold `org_owner` or `org_admin`. Every permission in the granted role must already be allowed for the actor. A linked minor is `minor_forbidden`. A user with no link skips that check.
 - `revokeRole` of the last `org_owner` is `last_owner` and leaves the row.
 - Each success appends the spec's audit name. A `forbidden` from grant or revoke appends `access.permission.denied` and writes no grant change. `already_bootstrapped` writes no audit row.
@@ -323,7 +323,7 @@ EOF
 
 Mint a tenant with `createImplicitOrganisation`. Create an adult and a minor with `createPerson`. Run inside `withRequest`.
 
-`bootstrapOwner` returns two ids and one `access.owner.bootstrapped` row. A second call throws `already_bootstrapped` and the grant count stays. `linkUser` of the adult returns a link id and writes `access.user.linked`. `linkUser` of the minor throws `minor_forbidden` and writes no link. `grantRole` of `staff` by the owner writes `access.role.granted`. `grantRole` of `org_owner` by a `community_admin` throws `forbidden`, writes `access.permission.denied`, and adds no organisation grant. Revoking the only `org_owner` throws `last_owner`. Add a second `org_owner`, revoke it, and the first remains.
+`bootstrapOwner` returns two ids and one `access.owner.bootstrapped` row. A second call throws `already_bootstrapped` and the grant count stays. Two concurrent calls leave one owner. `linkUser` of the adult returns a link id and writes `access.user.linked`. `linkUser` of the minor throws `minor_forbidden` and writes no link. `linkUser` and `unlinkUser` refuse an actor who lacks `access.users.manage`. `grantRole` of `staff` by the owner writes `access.role.granted`. Only an `org_owner` may grant `org_owner`. An `org_admin` may grant `org_admin` and anything below it, and a community-level actor may grant only community-scoped roles they are allowed to hold. `grantRole` of `org_owner` by a `community_admin` or an `org_admin` throws `forbidden`. Revoke uses that same rank rule. Revoking the only `org_owner` throws `last_owner`. The owner count takes the organisation advisory lock. Two concurrent revokes of two owners leave one owner.
 
 A second organisation's transaction selects none of the first organisation's `app.user_links` or `app.organisation_role_grants`.
 
@@ -477,11 +477,12 @@ EOF
 **Interfaces:**
 
 - Produces: one strict Zod object per request body in the spec's route table. `grantBody` is a union of the `roleKey` object and the `customRoleId` object, each strict, so a body cannot carry both and cannot carry `organisationId`.
-- Produces: `accessRoutes(deps): GateRoute[]`, eight `POST` routes, surface `tenant`.
+- Produces: `accessRoutes(deps): GateRoute[]`, seven `POST` routes, surface `tenant`. There is no bootstrap route.
 - The presented hostname must equal `deps.apiHostname`. Otherwise 404 with an empty body, before the session check.
 - `readSession` on the identity checkout. A missing or unknown token is 401 with an empty body.
 - `findCommunityBySlug` on the platform checkout. The route passes that pair to `withAppTransaction`. It does not read an organisation id or a community id from the body.
-- Unknown slug after a valid session is 403 on every route except bootstrap, which is 404.
+- Unknown slug after a valid session is 403, the same status as a community where the caller has no role.
+- List success includes `permissions`, the catalogue permissions the caller holds. The actor id comes from the session and never from the body.
 - `AccessError` maps as the spec's HTTP section. Error bodies are empty. Success JSON is the spec's shapes. List requires `access.roles.view`.
 - `productionRoutes` and `run` include `accessRoutes` after the auth routes. `GET /health` is unchanged.
 
@@ -491,7 +492,7 @@ EOF
 
 `access.test.ts` parses each success body and rejects `{ communitySlug: "ada", organisationId: "00000000-0000-4000-8000-000000000001" }` and a grant body that sets both `roleKey` and `customRoleId`.
 
-`access-routes.test.ts` follows `auth-routes.test.ts`. Use hostnames `au.api.example.test` and `auth.au.example.test`. No token is 401. A token with an extra JSON key is 400. A grant body that includes `organisationId` is 400 and inserts no grant. After bootstrap, list on the API hostname returns the owner grant. The same list on the auth hostname is 404. An unknown slug on list is 403. Bootstrap of an unknown slug is 404. Capture the log sink and fail if a recorded field contains `@` or the access token.
+`access-routes.test.ts` follows `auth-routes.test.ts`. Use hostnames `au.api.example.test` and `auth.au.example.test`. No token is 401. A token with an extra JSON key is 400. A grant body that includes `organisationId` or `actorUserId` is 400 and inserts no grant. List on the API hostname returns the owner grant and the caller's permissions. The same list on the auth hostname is 404. An unknown slug and a community where the caller has no role are both 403. Capture the log sink and fail if a recorded field contains `@` or the access token. One integration test drives list, grant, and revoke through the real server and a real database, with no mocked access module.
 
 The route tests fail because `access-routes.ts` does not exist.
 
@@ -545,9 +546,10 @@ EOF
 - `/sign-in` and `/settings/users` are routes. Both include the nav.
 - Missing `VITE_API_ORIGIN` or `VITE_AUTH_ORIGIN` shows `Directory unavailable` and does not call `fetch`.
 - The token key is `community-hub.access-token`. Sign-in posts to the auth origin paths in the spec. A 200 stores `accessToken` only and navigates to `/settings/users`. Any other status shows `Sign-in failed` and does not show the address.
-- Users & Roles without a token shows `Sign in required` and a `Sign in` link, and does not call `fetch`. Load posts `{ communitySlug }`. Empty grants show `No role grants` and `Become the owner`. That button is absent when any grant is returned. At 20 custom roles, `Create custom role` is absent and the page shows `Custom role limit reached`. A 403 shows `You cannot manage roles`. A 409 shows `That change was rejected`. The rendered text does not include a fixture email.
+- Users & Roles without a token shows `Sign in required` and a `Sign in` link, and does not call `fetch`. Load posts `{ communitySlug }`. Empty grants show `No role grants` and no bootstrap control. `Grant`, `Revoke`, and `Delete custom role` render only with `access.roles.manage`. `Link` and `Unlink` render only with `access.users.manage`. At 20 custom roles, `Create custom role` is absent and the page shows `Custom role limit reached`. A 403 shows `You cannot manage roles`. A 409 shows `That change was rejected`. The rendered text does not include a fixture email.
+- The tenant API `cors_configuration` allows `https://admin.${var.zone_name}`, methods `GET`, `POST`, and `OPTIONS`, and headers `authorization` and `content-type`, with credentials off. The ops API has no CORS configuration.
 - `content_security_policy` keeps every directive except `connect-src`. That directive becomes `'self' https://au.api.${var.zone_name} https://auth.au.${var.zone_name}`. The test zone stays `example.net`. `override_during` stays `plan`.
-- `admin-publish` reads `vars.ADMIN_API_ORIGIN` and `vars.ADMIN_AUTH_ORIGIN`, not secrets. The empty check fails the step when either is empty, without printing the values. Before `pnpm --filter @community-hub/admin build`, the step exports them as `VITE_API_ORIGIN` and `VITE_AUTH_ORIGIN`. No new `aws` command. No new checker violation id.
+- `admin-publish` reads `vars.ADMIN_API_ORIGIN` and `vars.ADMIN_AUTH_ORIGIN`. Those are repository variables, not secrets. The empty check for the publish role, bucket, and distribution stays separate from the empty check for the two origins. Neither echo prints the origin names or calls the origins secrets. Before `pnpm --filter @community-hub/admin build`, the step exports them as `VITE_API_ORIGIN` and `VITE_AUTH_ORIGIN`. No new `aws` command. No new checker violation id.
 
 **Rule this must not break:** the frozen `labels` array stays. Dashboard still does not call `fetch`. The other response headers stay. Staging tfvars stay parked. The agent does not apply.
 
@@ -641,3 +643,12 @@ EOF
 ```
 
 The access routes derive both ids from the directory. The next chunk is entitlements-plans.
+
+## Human
+
+Before merge, the repository variables `ADMIN_API_ORIGIN` and `ADMIN_AUTH_ORIGIN` must exist. They are variables, not secrets.
+
+Two applies, run by a human. The agent does not apply.
+
+1. The admin content-security policy `connect-src` in `infra/modules/aws-admin-static`.
+2. The API gateway CORS configuration in `infra/modules/aws-ingress`.

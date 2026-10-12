@@ -96,15 +96,15 @@ Built-in bundles:
 
 ### Link
 
-`linkUser(tx, input)` takes `{ now, userId, personId, actorUserId }`. `userId` and `personId` are UUIDs. Anything else is `invalid_id`.
+`linkUser(tx, input)` takes `{ now, userId, personId, actorUserId }`. `userId` and `personId` are UUIDs. Anything else is `invalid_id`. The actor must hold `access.users.manage`. Otherwise the function appends `access.permission.denied`, purpose `access.users.manage`, and throws `forbidden`. The route checks the same permission before it calls the function.
 
 `personIsMinor` null is `not_found`. `true` is `minor_forbidden`. Nothing is written. A second link of the same user or the same person in this community is `duplicate_link`. Success inserts `app.user_links` and appends `access.user.linked` with target the new link id.
 
-`unlinkUser(tx, input)` takes `{ now, userId, actorUserId }`. A missing link is `not_found` and writes no audit row. Success deletes the link and appends `access.user.unlinked` with target the user id. Grants for that user stay.
+`unlinkUser(tx, input)` takes `{ now, userId, actorUserId }`. The actor must hold `access.users.manage`, with the same denial audit otherwise. A missing link is `not_found` and writes no audit row. Success deletes the link and appends `access.user.unlinked` with target the user id. Grants for that user stay.
 
 ### Grants
 
-`bootstrapOwner(tx, input)` takes `{ now, userId, actorUserId }`. `userId` must equal `actorUserId`. Otherwise `invalid_id`, and nothing is written. It inserts `org_owner` and `community_admin` for that user when the organisation has no organisation grant and this community has no community grant. Otherwise `already_bootstrapped`, and nothing is written. Success appends one `access.owner.bootstrapped` with both grant ids.
+`bootstrapOwner(tx, input)` takes `{ now, userId, actorUserId }`. `userId` must equal `actorUserId`. Otherwise `invalid_id`, and nothing is written. It takes a transaction-level advisory lock on the organisation, then inserts `org_owner` and `community_admin` for that user when the organisation has no organisation grant and this community has no community grant. Otherwise `already_bootstrapped`, and nothing is written. Two concurrent calls create one owner. Success appends one `access.owner.bootstrapped` with both grant ids. There is no HTTP route for this function. A later provisioning path calls it.
 
 `grantRole(tx, input)` takes `{ now, userId, roleKey, customRoleId, actorUserId }`. Exactly one of `roleKey` and `customRoleId` is set. Otherwise `invalid_role`.
 
@@ -112,7 +112,7 @@ The actor must `decide` to `access.roles.manage`. Otherwise the function appends
 
 A built-in `roleKey` must be one of the seven community keys or one of the four organisation keys. A custom role must be a row in this community. Otherwise `invalid_role`.
 
-The actor may grant a role only when every permission in that role is a permission `decide` already allows the actor. Otherwise `forbidden`, with the same denial audit, and no grant row. An organisation role additionally requires the actor to hold `org_owner` or `org_admin`. A community role does not require an organisation role.
+The actor may grant a role only when every permission in that role is a permission `decide` already allows the actor. Otherwise `forbidden`, with the same denial audit, and no grant row. Only an `org_owner` may grant `org_owner`. An `org_admin` may grant `org_admin` and any role below it, and may not grant `org_owner`. A community-level actor may grant only community-scoped roles in the current community, and only when they hold every permission that role carries.
 
 When the user has a link and that person is a minor, the result is `minor_forbidden` and no grant. A user with no link is not a minor check. This chunk does not query `identity.users`. A uuid that is not a user can be granted. The HTTP layer only does that for a uuid the client sends; the actor is always a session user.
 
@@ -120,7 +120,7 @@ A duplicate of the same user and the same role is `duplicate_grant`.
 
 An organisation role inserts `app.organisation_role_grants`. A community role or a custom role inserts `app.community_role_grants`. Success appends `access.role.granted` with target the grant id.
 
-`revokeRole(tx, input)` takes `{ now, grantId, scope, actorUserId }`. `scope` is `organisation` or `community`. The actor must hold `access.roles.manage`, with the same denial audit otherwise. The grant must be in scope. Otherwise `not_found`. Revoking the last `org_owner` in the organisation is `last_owner`, and the row stays. Success deletes the row and appends `access.role.revoked` with target the grant id.
+`revokeRole(tx, input)` takes `{ now, grantId, scope, actorUserId }`. `scope` is `organisation` or `community`. The actor must hold `access.roles.manage`, with the same denial audit otherwise. Revoke uses the same rank rule as grant: the actor must be allowed to grant the role they are revoking. The grant must be in scope. Otherwise `not_found`. Before counting owners, revoke takes the same organisation advisory lock. Revoking the last `org_owner` in the organisation is `last_owner`, and the row stays. Two concurrent revokes of two owners leave one owner. Success deletes the row and appends `access.role.revoked` with target the grant id.
 
 ### Custom roles
 
@@ -144,24 +144,23 @@ Denied: append `access.permission.denied`, purpose `people.restricted.read`, tar
 
 Each access route is `POST`, `Content-Type: application/json`, surface `tenant`. The presented hostname must equal the API hostname. Any other known hostname is 404 with an empty body. A missing or invalid bearer token is 401 with an empty body. The token is the access token `readSession` already accepts. The body is a strict object. An unknown key, a wrong type, or a non-JSON body is 400 with an empty body.
 
-The community slug is a field in the JSON body. It is not a path segment and not a query parameter. `findCommunityBySlug` on the platform login returns the organisation id and the community id. The route passes that pair to `withAppTransaction`. It never reads an organisation id or a community id from the body. An unknown slug, after a valid session, is 403 with an empty body on every route except bootstrap. Bootstrap of an unknown slug is 404 with an empty body.
+The community slug is a field in the JSON body. It is not a path segment and not a query parameter. `findCommunityBySlug` on the platform login returns the organisation id and the community id. The route passes that pair to `withAppTransaction`. It never reads an organisation id, a community id, or an actor id from the body. The actor id comes from the session. An unknown slug and a community where the caller has no role are the same answer: 403 with an empty body.
 
 `AccessError` maps as follows. `forbidden` is 403. `not_found` is 404. `already_bootstrapped`, `duplicate_grant`, `duplicate_role`, `duplicate_link`, `last_owner`, `limit_reached`, `role_in_use`, and `minor_forbidden` are 409. `invalid_id`, `invalid_role`, and `invalid_permission` are 400. Every error body is empty. A 200 body is JSON and contains ids, role keys, scopes, and permission strings only.
 
-| Route                                 | Permission            | Body                                                                              | Success                                                  |
-| ------------------------------------- | --------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `POST /v1/access/grants/list`         | `access.roles.view`   | `{ communitySlug }`                                                               | `{ grants, customRoles, catalogue, builtIn, userLinks }` |
-| `POST /v1/access/owner/bootstrap`     | none                  | `{ communitySlug }`                                                               | `{ organisationGrantId, communityGrantId }`              |
-| `POST /v1/access/grants`              | `access.roles.manage` | `{ communitySlug, userId, roleKey }` or `{ communitySlug, userId, customRoleId }` | `{ grantId, scope }`                                     |
-| `POST /v1/access/grants/revoke`       | `access.roles.manage` | `{ communitySlug, grantId, scope }`                                               | empty 200                                                |
-| `POST /v1/access/custom-roles`        | `access.roles.manage` | `{ communitySlug, key, permissions }`                                             | `{ customRoleId }`                                       |
-| `POST /v1/access/custom-roles/delete` | `access.roles.manage` | `{ communitySlug, customRoleId }`                                                 | empty 200                                                |
-| `POST /v1/access/user-links`          | `access.users.manage` | `{ communitySlug, userId, personId }`                                             | `{ linkId }`                                             |
-| `POST /v1/access/user-links/delete`   | `access.users.manage` | `{ communitySlug, userId }`                                                       | empty 200                                                |
+| Route                                 | Permission            | Body                                                                              | Success                                                               |
+| ------------------------------------- | --------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `POST /v1/access/grants/list`         | `access.roles.view`   | `{ communitySlug }`                                                               | `{ grants, customRoles, catalogue, builtIn, userLinks, permissions }` |
+| `POST /v1/access/grants`              | `access.roles.manage` | `{ communitySlug, userId, roleKey }` or `{ communitySlug, userId, customRoleId }` | `{ grantId, scope }`                                                  |
+| `POST /v1/access/grants/revoke`       | `access.roles.manage` | `{ communitySlug, grantId, scope }`                                               | empty 200                                                             |
+| `POST /v1/access/custom-roles`        | `access.roles.manage` | `{ communitySlug, key, permissions }`                                             | `{ customRoleId }`                                                    |
+| `POST /v1/access/custom-roles/delete` | `access.roles.manage` | `{ communitySlug, customRoleId }`                                                 | empty 200                                                             |
+| `POST /v1/access/user-links`          | `access.users.manage` | `{ communitySlug, userId, personId }`                                             | `{ linkId }`                                                          |
+| `POST /v1/access/user-links/delete`   | `access.users.manage` | `{ communitySlug, userId }`                                                       | empty 200                                                             |
 
-`grants` entries are `{ grantId, scope, userId, roleKey, customRoleId, customRoleKey }`. `roleKey` is null on a custom grant. `customRoleId` and `customRoleKey` are null on a built-in grant. `customRoles` entries are `{ customRoleId, key, permissions }`. `builtIn` entries are `{ roleKey, scope, permissions }`, all eleven, in the table order above. `userLinks` entries are `{ userId, personId }`. `catalogue` is the five strings.
+`grants` entries are `{ grantId, scope, userId, roleKey, customRoleId, customRoleKey }`. `roleKey` is null on a custom grant. `customRoleId` and `customRoleKey` are null on a built-in grant. `customRoles` entries are `{ customRoleId, key, permissions }`. `builtIn` entries are `{ roleKey, scope, permissions }`, all eleven, in the table order above. `userLinks` entries are `{ userId, personId }`. `catalogue` is the five strings. `permissions` is the catalogue permissions the caller holds.
 
-List requires `access.roles.view`. A session with no grant gets 403 and the denial audit. Bootstrap does not require a grant. Its actor is the session user, and that user receives the two grants.
+List requires `access.roles.view`. A session with no grant gets 403 and the denial audit.
 
 Logs for these routes use the existing request log. They include the path, the status, and the request id. They do not include a body, a token, a slug, or an id.
 
@@ -175,13 +174,15 @@ The access token is kept in `sessionStorage` under `community-hub.access-token`.
 
 Sign-in has an email field named `Email`, a button `Send code`, a code field named `Code`, and a button `Verify`. Send code `POST`s `{ email }` to `{VITE_AUTH_ORIGIN}/v1/auth/email-otp/start`. Verify `POST`s `{ email, code }` to `{VITE_AUTH_ORIGIN}/v1/auth/email-otp/verify`. A 200 stores `accessToken` and navigates to `/settings/users`. Any other status shows `Sign-in failed` and does not show the address or the code. The boot process still has no mail vendor, so a live sign-in against that process receives the existing 503. Tests use a mail double, as `identity-otp` already does.
 
-Users & Roles has heading `Users & Roles`. With no token, the page shows `Sign in required` and a link `Sign in` to `/sign-in`, and it does not call `fetch`. With a token, it shows a field named `Community`, a button `Load`, and no list until Load succeeds. Load `POST`s `{ communitySlug }` to `{VITE_API_ORIGIN}/v1/access/grants/list`. An empty `grants` array shows `No role grants` and a button `Become the owner`. That button is absent when any grant is returned. Become the owner `POST`s bootstrap, then loads again.
+Users & Roles has heading `Users & Roles`. With no token, the page shows `Sign in required` and a link `Sign in` to `/sign-in`, and it does not call `fetch`. With a token, it shows a field named `Community`, a button `Load`, and no list until Load succeeds. Load `POST`s `{ communitySlug }` to `{VITE_API_ORIGIN}/v1/access/grants/list`. An empty `grants` array shows `No role grants`. There is no bootstrap control.
 
-The loaded page can grant, revoke, create a custom role, delete a custom role, link a user to a person, and unlink. Each control has an accessible name: `User`, `Role`, `Person`, `Grant`, `Revoke`, `Custom role key`, `Create custom role`, `Delete custom role`, `Link`, `Unlink`. At 20 custom roles, `Create custom role` is absent and the page shows `Custom role limit reached`. A 403 shows `You cannot manage roles`. A 409 shows `That change was rejected`. A network failure shows `Directory unavailable`. The page never renders a name, an email, or a phone.
+The loaded page can grant, revoke, create a custom role, delete a custom role, link a user to a person, and unlink. Each control has an accessible name: `User`, `Role`, `Person`, `Grant`, `Revoke`, `Custom role key`, `Create custom role`, `Delete custom role`, `Link`, `Unlink`. `Grant`, `Revoke`, `Create custom role`, and `Delete custom role` render only when `permissions` includes `access.roles.manage`. `Link` and `Unlink` render only when `permissions` includes `access.users.manage`. A missing `permissions` array hides those controls. At 20 custom roles, `Create custom role` is absent and the page shows `Custom role limit reached`. A 403 shows `You cannot manage roles`. A 409 shows `That change was rejected`. A network failure shows `Directory unavailable`. The page never renders a name, an email, or a phone. The page does not render a control that only returns 403.
 
 The response-headers policy in `infra/modules/aws-admin-static` keeps every directive except `connect-src`. `connect-src` becomes `'self' https://au.api.${zone_name} https://auth.au.${zone_name}`. The existing test zone is `example.net`, so that test expects `connect-src 'self' https://au.api.example.net https://auth.au.example.net`. No other header changes.
 
-`admin-publish` fails when `ADMIN_API_ORIGIN` or `ADMIN_AUTH_ORIGIN` is unset. It passes them as `VITE_API_ORIGIN` and `VITE_AUTH_ORIGIN`. A pull request build uses the example origins above and does not publish. The values are origins, not secrets. They are not written into the repo.
+The tenant API gateway in `infra/modules/aws-ingress` allows the admin origin `https://admin.${zone_name}`, the methods `GET`, `POST`, and `OPTIONS`, and the headers `authorization` and `content-type`. It does not allow credentials. The auth hostname uses that API, so the sign-in posts are included. The ops API has no CORS configuration.
+
+`admin-publish` fails when `ADMIN_API_ORIGIN` or `ADMIN_AUTH_ORIGIN` is unset. It passes them as `VITE_API_ORIGIN` and `VITE_AUTH_ORIGIN`. A pull request build uses the example origins above and does not publish. The values are repository variables, not secrets. They are not written into the repo.
 
 ### Catalogue
 
@@ -235,11 +236,11 @@ Checks, exact:
 Unique indexes:
 
 - `organisation_role_grants (org_id, user_id, role_key)`.
-- `community_role_grants (community_id, user_id, role_key)` where `role_key` is not null.
-- `community_role_grants (community_id, user_id, custom_role_id)` where `custom_role_id` is not null.
-- `custom_roles (community_id, key)`.
-- `user_links (community_id, user_id)`.
-- `user_links (community_id, person_id)`.
+- `community_role_grants (org_id, community_id, user_id, role_key)` where `role_key` is not null.
+- `community_role_grants (org_id, community_id, user_id, custom_role_id)` where `custom_role_id` is not null.
+- `custom_roles (org_id, community_id, key)`.
+- `user_links (org_id, community_id, user_id)`.
+- `user_links (org_id, community_id, person_id)`.
 
 No ciphertext column. No index on a personal field. Role keys and permission strings are categories.
 
@@ -313,7 +314,7 @@ No new resource billed by the hour or the month. The response-headers policy alr
 | A minor is linked to a user or granted a role                         | `personIsMinor` true is `minor_forbidden`. A test links an adult and rejects a minor.                                                                |
 | `people.restricted.read` decrypts before the check                    | `readPersonForActor` throws `forbidden` before `readPerson`. A test shows no `people.person.read` row on that path.                                  |
 | A guardian reads every child                                          | `decide` is person-scoped. A test allows the linked child and denies another person.                                                                 |
-| A community admin grants `org_owner`                                  | Organisation roles require `org_owner` or `org_admin` on the actor. A test expects `forbidden` and no row.                                           |
+| A community admin or an org admin grants `org_owner`                  | Only an `org_owner` may grant `org_owner`. A test expects `forbidden` and no row.                                                                    |
 | The last owner is revoked                                             | `last_owner` leaves the row. A test revokes a second owner and fails on the last one.                                                                |
 | Custom roles exceed the limit or escape the catalogue                 | The twenty-first key is `limit_reached`. A permission outside the five strings is `invalid_permission`. The check constraint lists the five strings. |
 | `org_id` is taken from the request body                               | The route uses `findCommunityBySlug`. A test sends a different organisation id in the JSON and still writes the directory pair. An extra key is 400. |
@@ -329,12 +330,12 @@ No new resource billed by the hour or the month. The response-headers policy alr
 
 - Domain tests, no database. `decide` allows `org_owner` all five, allows `staff` only the two view permissions, and denies `member` all five. `people.restricted.read` is true for a person-scoped guardian and false for `access.roles.manage` with the same guardian flag. `bundle("platform_admin")` is `null`. A custom key `Org_Owner` is `invalid_role`. The twenty-first custom role is `limit_reached` by a pure count the domain function takes as an argument.
 - Integration, in the existing `@community-hub/db` Docker Postgres, one database. The test file is `modules/core/access/infrastructure/access.integration.test.ts`. It uses `withAppTransaction` and `withRequest`. `createImplicitOrganisation` mints the tenant. KMS is the test port from `@community-hub/crypto/testing` only inside the `readPersonForActor` case.
-- `bootstrapOwner` writes one organisation grant and one community grant, and one `access.owner.bootstrapped` row. A second call throws `already_bootstrapped` and does not add a grant. `grantRole` of `staff` by that owner writes `access.role.granted`. `grantRole` of `org_owner` by a `community_admin` throws `forbidden` and writes `access.permission.denied`. Revoking the only `org_owner` throws `last_owner`.
+- `bootstrapOwner` writes one organisation grant and one community grant, and one `access.owner.bootstrapped` row. A second call throws `already_bootstrapped` and does not add a grant. Two concurrent calls leave one owner. `grantRole` of `staff` by that owner writes `access.role.granted`. `grantRole` of `org_owner` by a `community_admin` or an `org_admin` throws `forbidden`. Revoking the only `org_owner` throws `last_owner`. Two concurrent revokes of two owners leave one owner. Revoke uses the same rank rule as grant.
 - `linkUser` of an adult person returns a link id. `linkUser` of a minor throws `minor_forbidden` and writes no link. `readPersonForActor` as `safeguarding_officer` returns the minor and writes `people.person.read`. The same call as `member` throws `forbidden`, does not call through to a second person-read audit, and writes `access.permission.denied`. A guardian with `view` true reads that child and is denied for a different person.
 - A second organisation's transaction selects none of the first organisation's grants. The `identity` login and the `platform` login cannot select `app.community_role_grants`. `has_table_privilege` for `UPDATE` is false and for `DELETE` is true on that table.
 - The generated SQL for `app.organisation_role_grants` contains `org_id` and `FORCE ROW LEVEL SECURITY`, and does not contain `community_id`. Every other new table contains `community_id`, `org_id`, and `FORCE ROW LEVEL SECURITY`, and its policy contains `app.community_id`. `schema-rls` still passes.
 - `modules/core/access` does not import `@community-hub/tenancy` or `@community-hub/identity`. `packages/policy` does not import `@community-hub/db`. The people manifest `permissions` array is exactly `["people.restricted.read"]`. The access manifest has no `website`.
-- API tests in `apps/api` cover 401, 400 on an extra JSON key, 403 for an unknown slug after a valid session, bootstrap 404 for an unknown slug, and a grant whose body includes `organisationId` rejected as 400. The hostname test uses `au.api.example.test` for 200 and `auth.au.example.test` for 404.
+- API tests in `apps/api` cover 401, 400 on an extra JSON key, 403 for an unknown slug after a valid session, the same 403 for a community where the caller has no role, and a grant whose body includes `organisationId` or `actorUserId` rejected as 400. The actor id comes from the session. The hostname test uses `au.api.example.test` for 200 and `auth.au.example.test` for 404. One integration test drives list, grant, and revoke through the real server and a real database, with no mocked access module.
 - Admin tests. Dashboard still does not call `fetch`. `/settings/users` without a token does not call `fetch` and shows `Sign in required`. With a token, Load posts the slug and renders the returned user id and role key, and does not render a fixture email. Sign-in stores only the access token. The Terraform header test matches the `example.net` string under Behaviour.
 
 ## Out-of-band
@@ -343,7 +344,16 @@ No new resource billed by the hour or the month. The response-headers policy alr
 - New subprocessor: none. No ADR. `architecture.md` is not edited.
 - The custom-role cap is 20 per community. That number is part of this draft. Approval accepts it or replaces it before the plan.
 - Users and roles are a sensitive chunk. The work touches authorisation and a minor's restricted read. The second fresh-context review starts when the pull request opens. The pull request is not merged until that line is closed.
-- The human applies the response-headers change. The agent does not apply. Staging stays parked. Live email stays Q9, so a booted process still returns 503 from the existing mail port.
+- The human applies the response-headers change and the gateway CORS change. The agent does not apply. Staging stays parked. Live email stays Q9, so a booted process still returns 503 from the existing mail port.
+
+## Human
+
+Before merge, the repository variables `ADMIN_API_ORIGIN` and `ADMIN_AUTH_ORIGIN` must exist. They are variables, not secrets.
+
+Two applies, run by a human. The agent does not apply.
+
+1. The admin content-security policy `connect-src` in `infra/modules/aws-admin-static`.
+2. The API gateway CORS configuration in `infra/modules/aws-ingress`.
 
 ## Rollback
 

@@ -34,6 +34,7 @@ describe("admin publish origins", () => {
     expect(job).toContain("export VITE_AUTH_ORIGIN");
     expect(job).toMatch(/-z "\$\{ADMIN_API_ORIGIN:-}"/);
     expect(job).toMatch(/-z "\$\{ADMIN_AUTH_ORIGIN:-}"/);
+    expect(job).toContain("admin publish origins are unset");
     for (const line of job.split("\n")) {
       if (!line.includes("echo")) {
         continue;
