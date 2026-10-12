@@ -18,7 +18,13 @@ import {
 import { withRequest } from "@community-hub/kernel";
 import { createHousehold, createPerson } from "@community-hub/people";
 
-import { bootstrapOwner, grantRole, linkUser, revokeRole } from "../public/index.js";
+import {
+  bootstrapOwner,
+  createCustomRole,
+  grantRole,
+  linkUser,
+  revokeRole,
+} from "../public/index.js";
 
 type Runtime = {
   productOnlyUrl: string;
@@ -279,6 +285,72 @@ describe("links, bootstrap, and grants", () => {
         where role_key = 'org_owner'
       `;
       expect(after).toEqual(before);
+    });
+  });
+
+  it("refuses a community admin, a manage-only custom role, and an org admin revoking an owner", async () => {
+    await withParish("grant-revoke-rank", async (tx) => {
+      const owner = newId();
+      const second = newId();
+      const communityAdmin = newId();
+      const customHolder = newId();
+      const orgAdmin = newId();
+      const boot = await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      const other = await grantRole(tx, {
+        now: NOW,
+        userId: second,
+        roleKey: "org_owner",
+        customRoleId: null,
+        actorUserId: owner,
+      });
+      await grantRole(tx, {
+        now: NOW,
+        userId: communityAdmin,
+        roleKey: "community_admin",
+        customRoleId: null,
+        actorUserId: owner,
+      });
+      const custom = await createCustomRole(tx, {
+        now: NOW,
+        key: "desk",
+        permissions: ["access.roles.manage"],
+        actorUserId: owner,
+      });
+      await grantRole(tx, {
+        now: NOW,
+        userId: customHolder,
+        roleKey: null,
+        customRoleId: custom.customRoleId,
+        actorUserId: owner,
+      });
+      await grantRole(tx, {
+        now: NOW,
+        userId: orgAdmin,
+        roleKey: "org_admin",
+        customRoleId: null,
+        actorUserId: owner,
+      });
+
+      for (const actorUserId of [communityAdmin, customHolder, orgAdmin]) {
+        await expect(
+          revokeRole(tx, {
+            now: NOW,
+            grantId: boot.organisationGrantId,
+            scope: "organisation",
+            actorUserId,
+          }),
+        ).rejects.toMatchObject({ code: "forbidden" });
+      }
+
+      const owners = await tx<{ id: string }[]>`
+        select id::text as id
+        from app.organisation_role_grants
+        where role_key = 'org_owner'
+        order by id
+      `;
+      expect(owners.map((row) => row.id).sort()).toEqual(
+        [boot.organisationGrantId, other.grantId].sort(),
+      );
     });
   });
 

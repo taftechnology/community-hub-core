@@ -483,6 +483,16 @@ export async function revokeRole(
     if (roleKey === undefined) {
       throw new AccessError("not_found");
     }
+    await assertMayGrantRole(tx, actor, actorUserId, roleKey);
+    const permissions = bundle(roleKey);
+    if (permissions === null) {
+      throw new AccessError("invalid_role");
+    }
+    for (const permission of permissions) {
+      if (!allows(actor, permission)) {
+        await deny(tx, actorUserId);
+      }
+    }
     if (roleKey === "org_owner") {
       const owners = await tx<{ n: number }[]>`
         select count(*)::int as n
@@ -500,15 +510,41 @@ export async function revokeRole(
         and org_id = current_setting('app.org_id')::uuid
     `;
   } else {
-    const rows = await tx<{ id: string }[]>`
-      select id::text as id
+    const rows = await tx<{ role_key: string | null; custom_role_id: string | null }[]>`
+      select role_key, custom_role_id::text as custom_role_id
       from app.community_role_grants
       where id = ${grantId}::uuid
         and org_id = current_setting('app.org_id')::uuid
         and community_id = current_setting('app.community_id')::uuid
     `;
-    if (rows[0] === undefined) {
+    const row = rows[0];
+    if (row === undefined) {
       throw new AccessError("not_found");
+    }
+    if (row.role_key !== null) {
+      await assertMayGrantRole(tx, actor, actorUserId, row.role_key);
+      const permissions = bundle(row.role_key);
+      if (permissions === null) {
+        throw new AccessError("invalid_role");
+      }
+      for (const permission of permissions) {
+        if (!allows(actor, permission)) {
+          await deny(tx, actorUserId);
+        }
+      }
+    } else if (row.custom_role_id !== null) {
+      const permissionRows = await tx<{ permission: string }[]>`
+        select permission
+        from app.custom_role_permissions
+        where custom_role_id = ${row.custom_role_id}::uuid
+          and org_id = current_setting('app.org_id')::uuid
+          and community_id = current_setting('app.community_id')::uuid
+      `;
+      for (const permission of permissionRows) {
+        if (!allows(actor, permission.permission)) {
+          await deny(tx, actorUserId);
+        }
+      }
     }
     await tx`
       delete from app.community_role_grants
