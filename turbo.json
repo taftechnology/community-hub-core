@@ -24,10 +24,13 @@
       "dependsOn": ["^build", "@community-hub/db#test", "@community-hub/tenancy#test"]
     },
     "@community-hub/api#test": {
-      "dependsOn": ["^build", "@community-hub/identity#test"]
+      "dependsOn": ["^build", "@community-hub/access#test"]
     },
     "@community-hub/people#test": {
-      "dependsOn": ["^build", "@community-hub/api#test"]
+      "dependsOn": ["^build", "@community-hub/identity#test"]
+    },
+    "@community-hub/access#test": {
+      "dependsOn": ["^build", "@community-hub/people#test"]
     },
     "build": {
       "dependsOn": ["^build"],

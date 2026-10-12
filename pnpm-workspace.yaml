@@ -5,3 +5,4 @@ packages:
   - "modules/core/tenancy"
   - "modules/core/identity"
   - "modules/core/people"
+  - "modules/core/access"
