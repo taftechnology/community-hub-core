@@ -61,7 +61,7 @@ const ALLOWED_LOG_KEYS: ReadonlySet<LogFieldKey> = new Set([
 const GATEWAY_REQUEST_ID = /^[A-Za-z0-9+/=_-]{1,128}$/;
 const HOSTNAME = /^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/;
 const ERROR_CLASS = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
-const ERROR_CODE = /^[A-Z0-9_]{1,32}$/;
+const ERROR_CODE = /^[A-Z0-9_]{1,40}$/;
 const FALLBACK_ERROR_CLASS = "Error";
 const REASONS = new Set<LogReason>([
   "missing_hostname_header",

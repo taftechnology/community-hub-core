@@ -323,13 +323,24 @@ describe("createRequestHandler", () => {
       ["an array", [MARKERS.extra]],
       ["a lower-case string", "econnrefused"],
       ["a string with spaces", `42P01 ${MARKERS.extra}`],
-      ["an over-long string", "A".repeat(33)],
+      ["an over-long string", "A".repeat(41)],
     ])("logs no code when the code is %s", async (_label, code) => {
       const { info, serialised } = await throwing(new StubDriverError(code));
       const fields = info.mock.calls[0]![0] as Record<string, unknown>;
       expect("errorCode" in fields).toBe(false);
       expect(fields.errorClass).toBe("StubDriverError");
       expectNoMarkers(serialised);
+    });
+
+    it("logs a 33-character TLS code and a 40-character code, not a 41-character one", async () => {
+      const tls = await throwing(new StubDriverError("UNABLE_TO_GET_ISSUER_CERT_LOCALLY"));
+      expect((tls.info.mock.calls[0]![0] as Record<string, unknown>).errorCode).toBe(
+        "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+      );
+      const longest = await throwing(new StubDriverError("A".repeat(40)));
+      expect((longest.info.mock.calls[0]![0] as Record<string, unknown>).errorCode).toBe(
+        "A".repeat(40),
+      );
     });
 
     it("still returns 500 and logs once when reading the error throws", async () => {

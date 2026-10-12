@@ -124,7 +124,7 @@ describe("createLogger", () => {
     ["a trailing newline", "42P01\n"],
     ["lower case", "econnrefused"],
     ["a hyphen", "A-B"],
-    ["33 characters", "A".repeat(33)],
+    ["41 characters", "A".repeat(41)],
     ["empty", ""],
     ["a number", 42 as unknown as string],
     ["an object", {} as unknown as string],
@@ -140,12 +140,22 @@ describe("createLogger", () => {
     expect(logger.getDroppedFieldCount()).toBe(1);
   });
 
-  it("accepts an error code of exactly 32 characters", () => {
+  it("accepts an error code of exactly 40 characters", () => {
     const lines: string[] = [];
     const logger = createLogger({ write: (line) => lines.push(line) });
-    const code = "A".repeat(32);
+    const code = "A".repeat(40);
     logger.info("request", { errorCode: code });
     expect((JSON.parse(lines[0] ?? "{}") as Record<string, unknown>).errorCode).toBe(code);
+  });
+
+  it("accepts the 33-character TLS code for an unknown issuer", () => {
+    const lines: string[] = [];
+    const logger = createLogger({ write: (line) => lines.push(line) });
+    logger.info("request", { errorCode: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY" });
+    expect((JSON.parse(lines[0] ?? "{}") as Record<string, unknown>).errorCode).toBe(
+      "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+    );
+    expect(logger.getDroppedFieldCount()).toBe(0);
   });
 
   it("never throws on bad field input", () => {

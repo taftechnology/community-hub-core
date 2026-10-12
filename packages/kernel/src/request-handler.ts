@@ -18,7 +18,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CLIENT_IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{1,255}$/;
 const GATEWAY_REQUEST_ID = /^[A-Za-z0-9+/=_-]{1,128}$/;
 const ERROR_CLASS = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
-const ERROR_CODE = /^[A-Z0-9_]{1,32}$/;
+const ERROR_CODE = /^[A-Z0-9_]{1,40}$/;
 
 type ThrownError = { errorClass: string; errorCode?: string };
 
