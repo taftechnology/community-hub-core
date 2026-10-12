@@ -10,7 +10,7 @@ Spec: docs/specs/2026-10-12-access-roles.md
 
 **Tech Stack:** TypeScript, Drizzle ORM `0.45.2`, `postgres` `3.4.9`, Vitest, Node 24, Docker `postgres:17`, Zod `4.6.5`, React Router, Terraform `~> 1.11.0`. No new third-party package.
 
-Status: draft
+Status: approved (2026-10-12, Adnan Bin Hossen)
 
 **Branch:** `feat/2026-10-12-access-roles` · one PR · 9 tasks, one commit each
 
