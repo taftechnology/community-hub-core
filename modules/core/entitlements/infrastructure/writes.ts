@@ -4,6 +4,7 @@ import type { Sql } from "postgres";
 
 import { EntitlementError } from "../domain/error.js";
 import { parseEntitlementKey, parsePlanKey } from "../domain/keys.js";
+import { clearSnapshotCache, clearSnapshotPair } from "./snapshot.js";
 
 type EntitlementLimit = {
   key: string;
@@ -96,6 +97,7 @@ export async function upsertPlan(
   input: { key: string; entitlements: EntitlementLimit[] },
 ): Promise<void> {
   await upsertCatalogue(sql, "plan", input.key, input.entitlements);
+  clearSnapshotCache();
 }
 
 export async function upsertAddOn(
@@ -103,6 +105,7 @@ export async function upsertAddOn(
   input: { key: string; entitlements: EntitlementLimit[] },
 ): Promise<void> {
   await upsertCatalogue(sql, "add_on", input.key, input.entitlements);
+  clearSnapshotCache();
 }
 
 export async function assignPlan(
@@ -163,6 +166,10 @@ export async function assignPlan(
       }
     }
   });
+  const affected = await listCommunityIds(sql, input.organisationId);
+  for (const communityId of affected) {
+    clearSnapshotPair(input.organisationId, communityId);
+  }
 }
 
 export async function allocate(
@@ -170,10 +177,11 @@ export async function allocate(
   input: { communityId: string; key: string },
 ): Promise<void> {
   const key = parseEntitlementKey(input.key);
-  const communities = await sql<{ id: string }[]>`
-    select id from platform.communities where id = ${input.communityId}::uuid
+  const communities = await sql<{ id: string; organisation_id: string }[]>`
+    select id, organisation_id from platform.communities where id = ${input.communityId}::uuid
   `;
-  if (communities.length === 0) {
+  const organisationId = communities[0]?.organisation_id;
+  if (organisationId === undefined) {
     throw new EntitlementError("not_found");
   }
   const existing = await sql<{ community_id: string }[]>`
@@ -189,6 +197,7 @@ export async function allocate(
     insert into platform.community_allocations (community_id, entitlement_key)
     values (${input.communityId}::uuid, ${key})
   `;
+  clearSnapshotPair(organisationId, input.communityId);
 }
 
 export async function grantOverride(
@@ -224,6 +233,10 @@ export async function grantOverride(
       where id = ${overrideId}::uuid
     `;
   });
+  const communityIds = await listCommunityIds(sql, input.organisationId);
+  for (const communityId of communityIds) {
+    clearSnapshotPair(input.organisationId, communityId);
+  }
 }
 
 export async function setFeatureFlag(
@@ -278,4 +291,12 @@ export async function setFeatureFlag(
       where id = ${flagId}::uuid
     `;
   });
+  if (input.organisationId === null) {
+    clearSnapshotCache();
+    return;
+  }
+  const communityIds = await listCommunityIds(sql, input.organisationId);
+  for (const communityId of communityIds) {
+    clearSnapshotPair(input.organisationId, communityId);
+  }
 }
