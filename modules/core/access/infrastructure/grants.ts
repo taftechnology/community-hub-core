@@ -12,6 +12,7 @@ const LINKED = "access.user.linked";
 const UNLINKED = "access.user.unlinked";
 const DENIED = "access.permission.denied";
 const MANAGE = "access.roles.manage";
+const USERS = "access.users.manage";
 
 type LinkInput = {
   now: Date;
@@ -131,12 +132,16 @@ export async function loadActor(tx: AppTransaction, actorUserId: string): Promis
   };
 }
 
-export async function deny(tx: AppTransaction, actorUserId: string): Promise<never> {
+export async function deny(
+  tx: AppTransaction,
+  actorUserId: string,
+  purpose: string = MANAGE,
+): Promise<never> {
   await appendAuditEvent(tx, {
     actorKind: "user",
     actorId: actorUserId,
     action: DENIED,
-    purpose: MANAGE,
+    purpose,
     targetIds: [actorUserId],
   });
   throw new AccessError("forbidden");
@@ -174,6 +179,10 @@ export async function linkUser(tx: AppTransaction, input: LinkInput): Promise<{ 
   const userId = parseUuid(input.userId);
   const personId = parseUuid(input.personId);
   const actorUserId = parseUuid(input.actorUserId);
+  const actor = await loadActor(tx, actorUserId);
+  if (!allows(actor, USERS)) {
+    await deny(tx, actorUserId, USERS);
+  }
   const minor = await personIsMinor(tx, personId);
   if (minor === null) {
     throw new AccessError("not_found");
@@ -217,6 +226,10 @@ export async function unlinkUser(
 ): Promise<void> {
   const userId = parseUuid(input.userId);
   const actorUserId = parseUuid(input.actorUserId);
+  const actor = await loadActor(tx, actorUserId);
+  if (!allows(actor, USERS)) {
+    await deny(tx, actorUserId, USERS);
+  }
   const removed = await tx<{ id: string }[]>`
     delete from app.user_links
     where user_id = ${userId}::uuid

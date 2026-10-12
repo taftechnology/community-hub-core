@@ -177,6 +177,8 @@ describe("restricted read for an actor", () => {
   it("lets a guardian read only the linked child", async () => {
     await withParish("read-guardian", async (tx, kms) => {
       const guardianUser = newId();
+      const owner = newId();
+      await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
       const household = await createHousehold(tx, kms, KEY_ARN, {
         now: NOW,
         label: null,
@@ -199,7 +201,7 @@ describe("restricted read for an actor", () => {
         now: NOW,
         userId: guardianUser,
         personId: adult.personId,
-        actorUserId: guardianUser,
+        actorUserId: owner,
       });
       await linkGuardian(tx, {
         now: NOW,

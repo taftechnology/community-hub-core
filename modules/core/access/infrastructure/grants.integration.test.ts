@@ -24,6 +24,7 @@ import {
   grantRole,
   linkUser,
   revokeRole,
+  unlinkUser,
 } from "../public/index.js";
 
 type Runtime = {
@@ -252,10 +253,41 @@ describe("links, bootstrap, and grants", () => {
     });
   });
 
+  it("refuses a link and an unlink without users.manage", async () => {
+    await withParish("grant-link-permission", async (tx, kms) => {
+      const people = await householdWithPeople(tx, kms);
+      const owner = newId();
+      const stranger = newId();
+      await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      await linkUser(tx, {
+        now: NOW,
+        userId: owner,
+        personId: people.adultId,
+        actorUserId: owner,
+      });
+      await expect(
+        linkUser(tx, {
+          now: NOW,
+          userId: stranger,
+          personId: people.adultId,
+          actorUserId: stranger,
+        }),
+      ).rejects.toMatchObject({ code: "forbidden" });
+      await expect(
+        unlinkUser(tx, { now: NOW, userId: owner, actorUserId: stranger }),
+      ).rejects.toMatchObject({ code: "forbidden" });
+      const links = await tx<{ user_id: string }[]>`
+        select user_id::text as user_id from app.user_links
+      `;
+      expect(links).toEqual([{ user_id: owner }]);
+    });
+  });
+
   it("links an adult and refuses a minor", async () => {
     await withParish("grant-link", async (tx, kms) => {
       const people = await householdWithPeople(tx, kms);
       const owner = newId();
+      await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
       const linked = await linkUser(tx, {
         now: NOW,
         userId: owner,
