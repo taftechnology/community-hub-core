@@ -1,3 +1,4 @@
+import { createLogger } from "@community-hub/observability";
 import { describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 
@@ -308,6 +309,59 @@ describe("createGate", () => {
     expect(await response.text()).toBe("");
     expect(reads).toBe(0);
     expect(JSON.stringify(lines)).not.toContain(marker);
+  });
+});
+
+describe("createGate when a route throws", () => {
+  it("writes one request line with the error class and code and none of the error text", async () => {
+    const written: string[] = [];
+    const logger = createLogger({ write: (line) => written.push(line) });
+    const marker = "marker-secret-7c1e ada@example.test select * from people";
+    const gate = createGate({
+      hostnames: HOSTS,
+      routes: [
+        {
+          method: "GET",
+          pattern: "/boom",
+          surface: "tenant",
+          handle: () => {
+            throw Object.assign(new Error(marker), {
+              name: "PostgresError",
+              code: "42P01",
+              detail: marker,
+              query: marker,
+            });
+          },
+        },
+      ],
+      info: (message, fields) => {
+        logger.info(message, fields);
+      },
+    });
+
+    const response = await gate({
+      request: new Request("http://127.0.0.1/boom", {
+        headers: { "x-community-hub-hostname": HOSTS.api },
+      }),
+      remoteAddress: "10.0.0.1",
+    });
+
+    expect(response.status).toBe(500);
+    expect(await response.text()).toBe("");
+    expect(written).toHaveLength(1);
+    const line = JSON.parse(written[0] ?? "{}") as Record<string, unknown>;
+    expect(line).toMatchObject({
+      message: "request",
+      method: "GET",
+      path: "/boom",
+      status: 500,
+      errorClass: "PostgresError",
+      errorCode: "42P01",
+    });
+    expect(written[0]).not.toContain("marker-secret-7c1e");
+    expect(written[0]).not.toContain("ada@example.test");
+    expect(written[0]).not.toContain("select *");
+    expect(logger.getDroppedFieldCount()).toBe(0);
   });
 });
 
