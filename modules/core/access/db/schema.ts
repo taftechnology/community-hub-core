@@ -77,7 +77,7 @@ export function accessTables(app: PgSchema) {
       },
       (t) => [
         primaryKey({ columns: [t.orgId, t.id] }),
-        unique("custom_roles_community_key_unique").on(t.communityId, t.key),
+        unique("custom_roles_community_key_unique").on(t.orgId, t.communityId, t.key),
         check(
           "custom_roles_key",
           sql`${t.key} ~ '^[a-z][a-z0-9_]{1,31}$' and ${t.key} not in ('org_owner', 'org_admin', 'org_billing', 'org_auditor', 'community_admin', 'staff', 'finance', 'safeguarding_officer', 'volunteer_coordinator', 'content_editor', 'member', 'platform_admin', 'platform_support', 'platform_security')`,
@@ -105,10 +105,10 @@ export function accessTables(app: PgSchema) {
       (t) => [
         primaryKey({ columns: [t.orgId, t.id] }),
         uniqueIndex("community_role_grants_user_role_unique")
-          .on(t.communityId, t.userId, t.roleKey)
+          .on(t.orgId, t.communityId, t.userId, t.roleKey)
           .where(sql`${t.roleKey} is not null`),
         uniqueIndex("community_role_grants_user_custom_unique")
-          .on(t.communityId, t.userId, t.customRoleId)
+          .on(t.orgId, t.communityId, t.userId, t.customRoleId)
           .where(sql`${t.customRoleId} is not null`),
         foreignKey({
           columns: [t.orgId, t.customRoleId],
@@ -173,8 +173,8 @@ export function accessTables(app: PgSchema) {
       },
       (t) => [
         primaryKey({ columns: [t.orgId, t.id] }),
-        unique("user_links_community_user_unique").on(t.communityId, t.userId),
-        unique("user_links_community_person_unique").on(t.communityId, t.personId),
+        unique("user_links_community_user_unique").on(t.orgId, t.communityId, t.userId),
+        unique("user_links_community_person_unique").on(t.orgId, t.communityId, t.personId),
         foreignKey({
           columns: [t.orgId, t.personId],
           foreignColumns: [persons.orgId, persons.id],

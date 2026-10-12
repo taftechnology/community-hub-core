@@ -27,7 +27,7 @@ CREATE TABLE "app"."custom_roles" (
 	"community_id" uuid NOT NULL,
 	"key" text NOT NULL,
 	CONSTRAINT "custom_roles_org_id_id_pk" PRIMARY KEY("org_id","id"),
-	CONSTRAINT "custom_roles_community_key_unique" UNIQUE("community_id","key"),
+	CONSTRAINT "custom_roles_community_key_unique" UNIQUE("org_id","community_id","key"),
 	CONSTRAINT "custom_roles_key" CHECK ("app"."custom_roles"."key" ~ '^[a-z][a-z0-9_]{1,31}$' and "app"."custom_roles"."key" not in ('org_owner', 'org_admin', 'org_billing', 'org_auditor', 'community_admin', 'staff', 'finance', 'safeguarding_officer', 'volunteer_coordinator', 'content_editor', 'member', 'platform_admin', 'platform_support', 'platform_security'))
 );
 --> statement-breakpoint
@@ -50,16 +50,16 @@ CREATE TABLE "app"."user_links" (
 	"user_id" uuid NOT NULL,
 	"person_id" uuid NOT NULL,
 	CONSTRAINT "user_links_org_id_id_pk" PRIMARY KEY("org_id","id"),
-	CONSTRAINT "user_links_community_user_unique" UNIQUE("community_id","user_id"),
-	CONSTRAINT "user_links_community_person_unique" UNIQUE("community_id","person_id")
+	CONSTRAINT "user_links_community_user_unique" UNIQUE("org_id","community_id","user_id"),
+	CONSTRAINT "user_links_community_person_unique" UNIQUE("org_id","community_id","person_id")
 );
 --> statement-breakpoint
 ALTER TABLE "app"."user_links" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "app"."community_role_grants" ADD CONSTRAINT "community_role_grants_custom_role_fk" FOREIGN KEY ("org_id","custom_role_id") REFERENCES "app"."custom_roles"("org_id","id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."custom_role_permissions" ADD CONSTRAINT "custom_role_permissions_custom_role_fk" FOREIGN KEY ("org_id","custom_role_id") REFERENCES "app"."custom_roles"("org_id","id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "app"."user_links" ADD CONSTRAINT "user_links_person_fk" FOREIGN KEY ("org_id","person_id") REFERENCES "app"."persons"("org_id","id") ON DELETE restrict ON UPDATE no action NOT VALID;--> statement-breakpoint
-CREATE UNIQUE INDEX "community_role_grants_user_role_unique" ON "app"."community_role_grants" USING btree ("community_id","user_id","role_key") WHERE "app"."community_role_grants"."role_key" is not null;--> statement-breakpoint
-CREATE UNIQUE INDEX "community_role_grants_user_custom_unique" ON "app"."community_role_grants" USING btree ("community_id","user_id","custom_role_id") WHERE "app"."community_role_grants"."custom_role_id" is not null;--> statement-breakpoint
+CREATE UNIQUE INDEX "community_role_grants_user_role_unique" ON "app"."community_role_grants" USING btree ("org_id","community_id","user_id","role_key") WHERE "app"."community_role_grants"."role_key" is not null;--> statement-breakpoint
+CREATE UNIQUE INDEX "community_role_grants_user_custom_unique" ON "app"."community_role_grants" USING btree ("org_id","community_id","user_id","custom_role_id") WHERE "app"."community_role_grants"."custom_role_id" is not null;--> statement-breakpoint
 CREATE POLICY "community_isolation" ON "app"."community_role_grants" AS PERMISSIVE FOR ALL TO public USING ("app"."community_role_grants"."org_id" = current_setting('app.org_id')::uuid and "app"."community_role_grants"."community_id" = current_setting('app.community_id')::uuid) WITH CHECK ("app"."community_role_grants"."org_id" = current_setting('app.org_id')::uuid and "app"."community_role_grants"."community_id" = current_setting('app.community_id')::uuid);--> statement-breakpoint
 CREATE POLICY "community_isolation" ON "app"."custom_role_permissions" AS PERMISSIVE FOR ALL TO public USING ("app"."custom_role_permissions"."org_id" = current_setting('app.org_id')::uuid and "app"."custom_role_permissions"."community_id" = current_setting('app.community_id')::uuid) WITH CHECK ("app"."custom_role_permissions"."org_id" = current_setting('app.org_id')::uuid and "app"."custom_role_permissions"."community_id" = current_setting('app.community_id')::uuid);--> statement-breakpoint
 CREATE POLICY "community_isolation" ON "app"."custom_roles" AS PERMISSIVE FOR ALL TO public USING ("app"."custom_roles"."org_id" = current_setting('app.org_id')::uuid and "app"."custom_roles"."community_id" = current_setting('app.community_id')::uuid) WITH CHECK ("app"."custom_roles"."org_id" = current_setting('app.org_id')::uuid and "app"."custom_roles"."community_id" = current_setting('app.community_id')::uuid);--> statement-breakpoint

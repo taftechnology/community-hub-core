@@ -88,6 +88,15 @@ describe("access grant tables", () => {
     expect(sql).not.toContain("ON DELETE CASCADE");
     expect(sql).not.toContain("DEFAULT");
 
+    const uniqueTargets = [
+      ...sql.matchAll(/UNIQUE\(([^)]+)\)/g),
+      ...sql.matchAll(/CREATE UNIQUE INDEX \S+ ON \S+ USING btree \(([^)]+)\)/g),
+    ].map((match) => match[1] ?? "");
+    expect(uniqueTargets.length).toBeGreaterThan(0);
+    for (const target of uniqueTargets) {
+      expect(target.replaceAll('"', "").split(",")[0]?.trim(), target).toBe("org_id");
+    }
+
     const permissionCheck = statements(sql).filter((statement) =>
       statement.includes("custom_role_permissions_permission"),
     );

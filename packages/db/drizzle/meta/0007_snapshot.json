@@ -1,5 +1,5 @@
 {
-  "id": "4855c2de-4258-41e1-9893-54bde4a9e474",
+  "id": "45d4ddc4-56b5-4d35-b8e2-b9f3a2e1e8fb",
   "prevId": "75787775-a6d4-460d-aa80-6badcdf87d95",
   "version": "7",
   "dialect": "postgresql",
@@ -373,6 +373,12 @@
           "name": "community_role_grants_user_role_unique",
           "columns": [
             {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
               "expression": "community_id",
               "isExpression": false,
               "asc": true,
@@ -400,6 +406,12 @@
         "community_role_grants_user_custom_unique": {
           "name": "community_role_grants_user_custom_unique",
           "columns": [
+            {
+              "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
             {
               "expression": "community_id",
               "isExpression": false,
@@ -602,6 +614,7 @@
           "name": "custom_roles_community_key_unique",
           "nullsNotDistinct": false,
           "columns": [
+            "org_id",
             "community_id",
             "key"
           ]
@@ -2265,6 +2278,7 @@
           "name": "user_links_community_user_unique",
           "nullsNotDistinct": false,
           "columns": [
+            "org_id",
             "community_id",
             "user_id"
           ]
@@ -2273,6 +2287,7 @@
           "name": "user_links_community_person_unique",
           "nullsNotDistinct": false,
           "columns": [
+            "org_id",
             "community_id",
             "person_id"
           ]
