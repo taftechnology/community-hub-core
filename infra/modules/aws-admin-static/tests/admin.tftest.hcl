@@ -121,7 +121,7 @@ run "happy" {
 
   assert {
     condition = (
-      aws_cloudfront_response_headers_policy.admin.security_headers_config[0].content_security_policy[0].content_security_policy == "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'" &&
+      aws_cloudfront_response_headers_policy.admin.security_headers_config[0].content_security_policy[0].content_security_policy == "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self' https://au.api.example.net https://auth.au.example.net" &&
       aws_cloudfront_response_headers_policy.admin.security_headers_config[0].content_security_policy[0].override &&
       aws_cloudfront_response_headers_policy.admin.security_headers_config[0].strict_transport_security[0].access_control_max_age_sec == 31536000 &&
       aws_cloudfront_response_headers_policy.admin.security_headers_config[0].strict_transport_security[0].include_subdomains &&

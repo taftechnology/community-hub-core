@@ -34,24 +34,33 @@ function UnnamedButton() {
   return <button type="button" />;
 }
 
-it("renders Dashboard only, in the frozen label order", () => {
+it("renders Dashboard and Users & Roles from the frozen labels", () => {
   expect(labels).toEqual(frozenLabels);
 
   render(<Shell />);
 
   const nav = screen.getByRole("navigation", { name: "Admin" });
   const links = within(nav).getAllByRole("link");
-  expect(links).toHaveLength(1);
-  const link = within(nav).getByRole("link", { name: "Dashboard" });
-  expect(link.getAttribute("href")).toBe("/");
+  expect(links.map((link) => link.textContent)).toEqual(["Dashboard", "Users & Roles"]);
+  expect(within(nav).getByRole("link", { name: "Dashboard" }).getAttribute("href")).toBe("/");
+  expect(within(nav).getByRole("link", { name: "Users & Roles" }).getAttribute("href")).toBe(
+    "/settings/users",
+  );
+  expect(within(nav).getByText("Settings").tagName).not.toBe("A");
+  expect(within(nav).queryByRole("link", { name: "Settings" })).toBeNull();
 
   const headings = screen.getAllByRole("heading", { level: 1 });
   expect(headings).toHaveLength(1);
   expect(headings[0]?.textContent).toBe("Dashboard");
 
-  for (const label of frozenLabels.slice(1)) {
+  for (const label of frozenLabels) {
+    if (label === "Dashboard" || label === "Settings") {
+      continue;
+    }
     expect(screen.queryByText(label)).toBeNull();
   }
+  expect(screen.queryByText("General Settings")).toBeNull();
+  expect(screen.queryByText("Email Settings")).toBeNull();
 });
 
 it("names Refresh and reports no axe violations", async () => {

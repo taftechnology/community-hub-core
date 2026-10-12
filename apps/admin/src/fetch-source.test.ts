@@ -13,6 +13,8 @@ export function fileCallsFetch(filePath: string): boolean {
   return fs.readFileSync(filePath, "utf8").includes("fetch(");
 }
 
+const allowedFetch = new Set(["sign-in.tsx", "users-roles.tsx"]);
+
 function scanSource(dir: string): string[] {
   const hits: string[] = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -24,15 +26,18 @@ function scanSource(dir: string): string[] {
     if (!entry.isFile() || isTestFile(entry.name)) {
       continue;
     }
-    if (fileCallsFetch(full)) {
-      hits.push(path.relative(srcDir, full));
+    const relative = path.relative(srcDir, full).split(path.sep).join("/");
+    if (fileCallsFetch(full) && !allowedFetch.has(relative)) {
+      hits.push(relative);
     }
   }
   return hits;
 }
 
-it("skips test files and finds no fetch( under src", () => {
+it("allows fetch only on sign-in and users and roles", () => {
   expect(scanSource(srcDir)).toEqual([]);
+  expect(fileCallsFetch(path.join(srcDir, "shell.tsx"))).toBe(false);
+  expect(fileCallsFetch(path.join(srcDir, "nav.tsx"))).toBe(false);
 });
 
 it("fails the fixture that calls fetch", () => {
