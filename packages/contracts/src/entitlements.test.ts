@@ -14,4 +14,21 @@ describe("entitlement bodies", () => {
       toggleEntitlementBody.safeParse({ communitySlug: "ada", key: "people.directory" }).success,
     ).toBe(false);
   });
+
+  it("rejects a malformed entitlement key", () => {
+    expect(
+      toggleEntitlementBody.safeParse({
+        communitySlug: "ada",
+        key: "not-a-key",
+        enabled: false,
+      }).success,
+    ).toBe(false);
+    expect(
+      toggleEntitlementBody.safeParse({
+        communitySlug: "ada",
+        key: "people.directory",
+        enabled: false,
+      }).success,
+    ).toBe(true);
+  });
 });
