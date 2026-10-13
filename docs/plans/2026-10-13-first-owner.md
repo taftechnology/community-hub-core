@@ -131,11 +131,11 @@ New section, after **Apply product migrations** and modelled on that section's s
    read -r -p "Owner email: " OWNER_EMAIL
    jq -n --arg o "${ORG_SLUG}" --arg c "${COMMUNITY_SLUG}" --arg e "${OWNER_EMAIL}" \
      '{organisationSlug: $o, communitySlug: $c, email: $e}' \
-     | aws secretsmanager put-secret-value --profile ${AWS_PROFILE} \
-       --secret-id ${PROVISION_SECRET_NAME} --secret-string file:///dev/stdin
+     | aws secretsmanager create-secret --profile ${AWS_PROFILE} \
+       --name ${PROVISION_SECRET_NAME} --secret-string file:///dev/stdin
    unset ORG_SLUG COMMUNITY_SLUG OWNER_EMAIL
    ```
-   The JSON is built and piped straight into `put-secret-value`; it is never echoed, printed, or assigned to a variable that gets printed. `${PROVISION_SECRET_NAME}` is the one fixed name from task 5.
+   The JSON is built and piped straight into `create-secret`, not `put-secret-value` — this secret is never Terraform-managed and is fully destroyed by step 3's `--force-delete-without-recovery` every cycle, so it does not exist when Create runs again; `put-secret-value` only writes a new version to an *existing* secret and would fail with `ResourceNotFoundException`. (Proof 7b's own `put-secret-value` usage is a different, Terraform-managed secret that already exists — not a precedent here.) Nothing is echoed, printed, or assigned to a variable that gets printed. `${PROVISION_SECRET_NAME}` is the one fixed name from task 5.
 2. **Run.** `aws ecs run-task` on the service task definition (same network pattern as the existing proof one-offs: task security group, staging public subnet, public address), command override `["node", "/app/provision-owner.js"]`, environment override `PROVISION_SECRET_ARN=<arn>`, `entryPoint` not set. Then the existing **After a service-container one-off** triad (`wait tasks-stopped`, `describe-tasks` for exit code, `get-log-events` for stdout/stderr).
 3. **Delete and verify.**
    ```
