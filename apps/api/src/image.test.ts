@@ -454,4 +454,46 @@ describe.skipIf(process.env.RUN_IMAGE_TESTS !== "1")("regional service image", (
     );
     expect(shipped.status, shipped.stderr).toBe(0);
   }, 600_000);
+
+  it("ships db-migrate and the product migrations", () => {
+    ensureImage();
+    const listed = spawnSync(
+      "docker",
+      [
+        "run",
+        "--rm",
+        image,
+        "node",
+        "--input-type=module",
+        "-e",
+        [
+          'import { existsSync, readFileSync } from "node:fs";',
+          'const drizzle = "/app/node_modules/@community-hub/db/drizzle";',
+          'const journal = JSON.parse(readFileSync(drizzle + "/meta/_journal.json", "utf8"));',
+          "const tags = journal.entries.map((entry) => entry.tag);",
+          'const missing = tags.filter((tag) => !existsSync(drizzle + "/" + tag + ".sql"));',
+          'if (!existsSync("/app/db-migrate.js") || missing.length > 0) process.exit(1);',
+          "process.stdout.write(JSON.stringify(tags));",
+        ].join(" "),
+      ],
+      { encoding: "utf8" },
+    );
+    expect(listed.status, listed.stderr).toBe(0);
+    const expected = (
+      JSON.parse(
+        readFileSync(path.join(root, "packages/db/drizzle/meta/_journal.json"), "utf8"),
+      ) as { entries: { tag: string }[] }
+    ).entries.map((entry) => entry.tag);
+    expect(JSON.parse(listed.stdout)).toEqual(expected);
+  }, 600_000);
+
+  it("runs db-migrate with no environment", () => {
+    ensureImage();
+    const result = spawnSync("docker", ["run", "--rm", image, "node", "/app/db-migrate.js"], {
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("env\n");
+  }, 600_000);
 });

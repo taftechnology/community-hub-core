@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { createPlaintextDirectSql } from "../src/plaintext.js";
-import { applyMigrations, applyProductMigrations } from "../src/migrate.js";
+import { runBootstrap } from "../src/bootstrap.js";
+import { MIGRATION_LOCK_ID, applyMigrations, applyProductMigrations } from "../src/migrate.js";
+import { freshDatabase } from "./fixtures/database-fixture.js";
 
 type Runtime = {
   directUrl: string;
@@ -50,22 +52,22 @@ describe("applyProductMigrations", () => {
         { nspname: "platform", owner: "migrator" },
       ]);
 
-      const [{ n }] = await sql<{ n: string }[]>`
+      const counted = await sql<{ n: string }[]>`
         select count(*)::text as n from migrator.__drizzle_migrations
       `;
       const journal = JSON.parse(
         readFileSync(path.join(DRIZZLE, "meta/_journal.json"), "utf8"),
       ) as { entries: unknown[] };
-      expect(n).toBe(String(journal.entries.length));
+      expect(counted[0]?.n).toBe(String(journal.entries.length));
 
-      const [{ rel }] = await sql<{ rel: string | null }[]>`
+      const testJournal = await sql<{ rel: string | null }[]>`
         select to_regclass('migrator.__drizzle_migrations_test')::text as rel
       `;
-      expect(rel).toBeNull();
+      expect(testJournal[0]?.rel).toBeNull();
     } finally {
       await sql.end({ timeout: 1 });
     }
-  });
+  }, 30_000);
 
   it("fails a changed hash before applying a newer sabotaged file", async () => {
     const runtime = loadRuntime();
@@ -122,15 +124,76 @@ describe("applyProductMigrations", () => {
 
       const sql = createPlaintextDirectSql(runtime.directUrl);
       try {
-        const [{ rel }] = await sql<{ rel: string | null }[]>`
+        const pwn = await sql<{ rel: string | null }[]>`
           select to_regclass('app.pwn')::text as rel
         `;
-        expect(rel).toBeNull();
+        expect(pwn[0]?.rel).toBeNull();
       } finally {
         await sql.end({ timeout: 1 });
       }
     } finally {
       rmSync(folder, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
+
+  it("applyProductMigrations reports the tags it applied", async () => {
+    const runtime = loadRuntime();
+    const journal = JSON.parse(readFileSync(path.join(DRIZZLE, "meta/_journal.json"), "utf8")) as {
+      entries: { tag: string }[];
+    };
+    const tags = journal.entries.map((entry) => entry.tag);
+    const database = await freshDatabase(runtime.directUrl);
+    try {
+      const first = createPlaintextDirectSql(database.url);
+      try {
+        await expect(applyProductMigrations(first)).resolves.toEqual({
+          applied: tags,
+          total: tags.length,
+        });
+      } finally {
+        await first.end({ timeout: 1 });
+      }
+      const second = createPlaintextDirectSql(database.url);
+      try {
+        await expect(applyProductMigrations(second)).resolves.toEqual({
+          applied: [],
+          total: tags.length,
+        });
+      } finally {
+        await second.end({ timeout: 1 });
+      }
+    } finally {
+      await database.drop();
+    }
+  }, 30_000);
+
+  it("applyProductMigrations resets the role and frees the lock after a failure", async () => {
+    const runtime = loadRuntime();
+    const database = await freshDatabase(runtime.directUrl);
+    const sql = createPlaintextDirectSql(database.url);
+    const other = createPlaintextDirectSql(database.url);
+    try {
+      await runBootstrap(sql);
+      await sql.unsafe("create schema app authorization migrator").simple();
+      await sql.unsafe("create table app.outbox (id int)").simple();
+      await expect(applyProductMigrations(sql)).rejects.toThrow();
+
+      const who = await sql<{ usr: string }[]>`select current_user as usr`;
+      expect(who[0]?.usr).not.toBe("migrator");
+      const schemas = await sql<{ nspname: string }[]>`
+        select nspname from pg_namespace where nspname in ('identity', 'platform')
+      `;
+      expect(schemas).toEqual([]);
+
+      const lock = await other<{ got: boolean }[]>`
+        select pg_try_advisory_lock(${MIGRATION_LOCK_ID}) as got
+      `;
+      expect(lock[0]?.got).toBe(true);
+      await other`select pg_advisory_unlock(${MIGRATION_LOCK_ID})`;
+    } finally {
+      await other.end({ timeout: 1 });
+      await sql.end({ timeout: 1 });
+      await database.drop();
+    }
+  }, 30_000);
 });

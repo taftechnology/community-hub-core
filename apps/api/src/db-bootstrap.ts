@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url";
 
 import { createDirectSql, runBootstrap, setLoginPasswords } from "@community-hub/db";
 
+import { readOpsEnv } from "./db-ops-env.js";
 import { IMAGE_CERT_PATH } from "./env.js";
 
 type Failure = "env" | "bootstrap" | "alter_role" | "max_connections";
@@ -19,50 +20,16 @@ export type DbBootstrapResult = {
   stderr: "" | `${Failure}\n`;
 };
 
-function text(source: NodeJS.ProcessEnv, key: string): string | undefined {
-  const value = source[key];
-  if (value === undefined || value.length === 0) {
-    return undefined;
-  }
-  return value;
-}
-
-function portNumber(value: string | undefined): number | undefined {
-  if (value === undefined || !/^[0-9]+$/.test(value)) {
-    return undefined;
-  }
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
-    return undefined;
-  }
-  return parsed;
-}
-
 function failed(step: Failure): DbBootstrapResult {
   return { exitCode: 1, stdout: "", stderr: `${step}\n` };
 }
 
 export async function runDbBootstrap(deps: DbBootstrapDeps): Promise<DbBootstrapResult> {
-  const host = text(deps.source, "PGHOST");
-  const port = portNumber(text(deps.source, "PGPORT"));
-  const database = text(deps.source, "PGDATABASE");
-  const user = text(deps.source, "PGUSER");
-  const master = text(deps.source, "PGPASSWORD_MASTER");
-  const app = text(deps.source, "PGPASSWORD_APP");
-  const identity = text(deps.source, "PGPASSWORD_IDENTITY");
-  const platform = text(deps.source, "PGPASSWORD_PLATFORM");
-  if (
-    host === undefined ||
-    port === undefined ||
-    database === undefined ||
-    user === undefined ||
-    master === undefined ||
-    app === undefined ||
-    identity === undefined ||
-    platform === undefined
-  ) {
+  const env = readOpsEnv(deps.source);
+  if (env === undefined) {
     return failed("env");
   }
+  const { host, port, database, user, master, app, identity, platform } = env;
 
   let step: Failure = "bootstrap";
   let sql: ReturnType<typeof createDirectSql> | undefined;

@@ -1,164 +1,36 @@
-import { execFileSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createDirectSql } from "../src/connections.js";
-import { createPlaintextDirectSql } from "../src/plaintext.js";
+import {
+  TLS_SERVER_NAME,
+  createTlsCerts,
+  startTlsPostgres,
+  type TlsCerts,
+  type TlsPostgres,
+} from "./fixtures/tls-fixture.js";
 
-const DIR = path.dirname(fileURLToPath(import.meta.url));
-const ENTRYPOINT = path.join(DIR, "postgres-tls-entrypoint.sh");
-
-let tmp = "";
-let container = "";
+let certs: TlsCerts | undefined;
+let server: TlsPostgres | undefined;
 let port = 0;
 let signingCa = "";
 let otherCa = "";
 
-function run(command: string, args: string[], cwd?: string): string {
-  return execFileSync(command, args, {
-    cwd,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-}
-
-async function waitForPlaintext(hostPort: number): Promise<void> {
-  const deadline = Date.now() + 40_000;
-  while (Date.now() < deadline) {
-    const sql = createPlaintextDirectSql(`postgres://hub:local-tls-only@127.0.0.1:${hostPort}/hub`);
-    try {
-      await sql`select 1`;
-      await sql.end({ timeout: 1 });
-      return;
-    } catch {
-      await sql.end({ timeout: 1 }).catch(() => undefined);
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
-  }
-  throw new Error("postgres did not become ready");
-}
-
 beforeAll(async () => {
-  tmp = mkdtempSync(path.join(tmpdir(), "hub-db-tls-"));
-  writeFileSync(
-    path.join(tmp, "san.cnf"),
-    "subjectAltName=DNS:db.tls.test\nbasicConstraints=CA:FALSE\n",
-  );
-  const openssl = (args: string[]) => {
-    run("openssl", args, tmp);
-  };
-  openssl([
-    "req",
-    "-x509",
-    "-newkey",
-    "rsa:2048",
-    "-nodes",
-    "-keyout",
-    "ca.key",
-    "-out",
-    "ca.crt",
-    "-subj",
-    "/CN=TestCA",
-    "-days",
-    "2",
-  ]);
-  openssl([
-    "req",
-    "-newkey",
-    "rsa:2048",
-    "-nodes",
-    "-keyout",
-    "server.key",
-    "-out",
-    "server.csr",
-    "-subj",
-    "/CN=db.tls.test",
-  ]);
-  openssl([
-    "x509",
-    "-req",
-    "-in",
-    "server.csr",
-    "-CA",
-    "ca.crt",
-    "-CAkey",
-    "ca.key",
-    "-CAcreateserial",
-    "-out",
-    "server.crt",
-    "-days",
-    "2",
-    "-extfile",
-    "san.cnf",
-  ]);
-  openssl([
-    "req",
-    "-x509",
-    "-newkey",
-    "rsa:2048",
-    "-nodes",
-    "-keyout",
-    "other.key",
-    "-out",
-    "other.crt",
-    "-subj",
-    "/CN=OtherCA",
-    "-days",
-    "2",
-  ]);
-  signingCa = readFileSync(path.join(tmp, "ca.crt"), "utf8");
-  otherCa = readFileSync(path.join(tmp, "other.crt"), "utf8");
-  container = `ch-db-tls-${randomBytes(4).toString("hex")}`;
-  run("docker", [
-    "run",
-    "-d",
-    "--name",
-    container,
-    "--entrypoint",
-    "/tls-entrypoint.sh",
-    "-p",
-    "127.0.0.1::5432",
-    "-v",
-    `${tmp}:/certs:ro`,
-    "-v",
-    `${ENTRYPOINT}:/tls-entrypoint.sh:ro`,
-    "-e",
-    "POSTGRES_USER=hub",
-    "-e",
-    "POSTGRES_PASSWORD=local-tls-only",
-    "-e",
-    "POSTGRES_DB=hub",
-    "postgres:17",
-  ]);
-  const published = run("docker", ["port", container, "5432/tcp"]).trim();
-  const match = published.match(/:(\d+)\s*$/);
-  if (!match?.[1]) {
-    throw new Error("docker port did not publish 5432");
-  }
-  port = Number(match[1]);
-  await waitForPlaintext(port);
+  certs = createTlsCerts();
+  signingCa = certs.signingCa;
+  otherCa = certs.otherCa;
+  server = await startTlsPostgres({
+    certDir: certs.dir,
+    superuser: "hub",
+    password: "local-tls-only",
+    database: "hub",
+  });
+  port = server.port;
 }, 120_000);
 
 afterAll(() => {
-  if (container) {
-    try {
-      run("docker", ["stop", container]);
-    } catch {
-      // The container may already be gone after a setup failure.
-    }
-    try {
-      run("docker", ["rm", container]);
-    } catch {
-      // Removal is best-effort so a missing container does not hide the test error.
-    }
-  }
-  if (tmp) {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  server?.stop();
+  certs?.cleanup();
 }, 30_000);
 
 function hasAltNameInvalid(error: unknown): boolean {
@@ -215,7 +87,7 @@ describe("production TLS", () => {
       user: "hub",
       password: "local-tls-only",
       ca: otherCa,
-      servername: "db.tls.test",
+      servername: TLS_SERVER_NAME,
     });
     try {
       await expect(sql<{ n: number }[]>`select 1 as n`).rejects.toBeInstanceOf(Error);
@@ -232,7 +104,7 @@ describe("production TLS", () => {
       user: "hub",
       password: "local-tls-only",
       ca: signingCa,
-      servername: "db.tls.test",
+      servername: TLS_SERVER_NAME,
     });
     try {
       const rows = await sql<{ n: number }[]>`select 1 as n`;
@@ -263,7 +135,7 @@ describe("production TLS", () => {
       user: "hub",
       password: marker,
       ca: signingCa,
-      servername: "db.tls.test",
+      servername: TLS_SERVER_NAME,
     });
     let caught: unknown;
     try {
@@ -290,7 +162,7 @@ describe("production TLS", () => {
       user: "hub",
       password: "local-bootstrap-only",
       ca: signingCa,
-      servername: "db.tls.test",
+      servername: TLS_SERVER_NAME,
     });
     try {
       await expect(sql<{ n: number }[]>`select 1 as n`).rejects.toBeInstanceOf(Error);
@@ -332,14 +204,14 @@ describe("factory arguments", () => {
   });
 
   it("throws when ca is empty", () => {
-    expect(() => createDirectSql({ ...base, ca: "", servername: "db.tls.test" })).toThrow(
+    expect(() => createDirectSql({ ...base, ca: "", servername: TLS_SERVER_NAME })).toThrow(
       /^ca must contain a certificate$/,
     );
   });
 
   it("throws when ca is not a certificate", () => {
-    expect(() => createDirectSql({ ...base, ca: "not a pem", servername: "db.tls.test" })).toThrow(
-      /^ca must contain a certificate$/,
-    );
+    expect(() =>
+      createDirectSql({ ...base, ca: "not a pem", servername: TLS_SERVER_NAME }),
+    ).toThrow(/^ca must contain a certificate$/);
   });
 });

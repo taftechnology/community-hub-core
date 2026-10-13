@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -19,6 +20,21 @@ export type AppliedMigration = {
   hash: string;
   created_at: number;
 };
+
+/** What a run did: the journal tags it applied, in journal order, and the journal length. */
+export type MigrationReport = {
+  applied: string[];
+  total: number;
+};
+
+type JournalEntry = { tag: string; when: number };
+
+function readJournal(folder: string): JournalEntry[] {
+  const parsed = JSON.parse(readFileSync(path.join(folder, "meta/_journal.json"), "utf8")) as {
+    entries: JournalEntry[];
+  };
+  return parsed.entries.map((entry) => ({ tag: entry.tag, when: entry.when }));
+}
 
 export function assertMigrationPreflight(
   migrations: MigrationMeta[],
@@ -56,8 +72,8 @@ export function assertMigrationPreflight(
  * Direct connection only — never PgBouncer. The runner takes an advisory
  * lock, SET ROLE, and migrate() on the Sql the caller opened.
  */
-export async function applyProductMigrations(sql: Sql): Promise<void> {
-  await applyMigrations({
+export async function applyProductMigrations(sql: Sql): Promise<MigrationReport> {
+  return applyMigrations({
     sql,
     folder: PRODUCT_FOLDER,
     table: PRODUCT_TABLE,
@@ -69,7 +85,7 @@ export async function applyMigrations(opts: {
   sql: Sql;
   folder: string;
   table: string;
-}): Promise<void> {
+}): Promise<MigrationReport> {
   if (
     path.basename(path.resolve(opts.folder)) === TEST_FOLDER_NAME &&
     opts.table === PRODUCT_TABLE
@@ -86,7 +102,7 @@ export async function applyMigrations(opts: {
     const lockPid = Number(lockRows[0]?.pid);
     await runBootstrap(sql);
     await sql.unsafe("set role migrator");
-    await preflightFromDb(sql, opts.folder, opts.table);
+    const before = await preflightFromDb(sql, opts.folder, opts.table);
     const session = await sql<{ pid: number; usr: string }[]>`
       select pg_backend_pid() as pid, current_user as usr
     `;
@@ -102,6 +118,18 @@ export async function applyMigrations(opts: {
       migrationsSchema: "migrator",
       migrationsTable: opts.table,
     });
+    const rows = await sql.unsafe<{ created_at: string | number | bigint }[]>(
+      `select created_at from migrator.${opts.table}`,
+    );
+    const after = new Set(rows.map((row) => Number(row.created_at)));
+    const known = new Set(before.map((row) => row.created_at));
+    const journal = readJournal(opts.folder);
+    return {
+      applied: journal
+        .filter((entry) => after.has(entry.when) && !known.has(entry.when))
+        .map((entry) => entry.tag),
+      total: journal.length,
+    };
   } finally {
     await sql.unsafe("reset role").catch(() => undefined);
     await sql`select pg_advisory_unlock(${MIGRATION_LOCK_ID})`.catch(() => undefined);
@@ -112,7 +140,7 @@ async function preflightFromDb(
   sql: Sql,
   migrationsFolder: string,
   migrationsTable: string,
-): Promise<void> {
+): Promise<AppliedMigration[]> {
   const migrations = readMigrationFiles({ migrationsFolder });
   const qualified = `migrator.${migrationsTable}`;
   const relRows = await sql<{ rel: string | null }[]>`
@@ -120,7 +148,7 @@ async function preflightFromDb(
   `;
   if (relRows[0]?.rel == null) {
     assertMigrationPreflight(migrations, []);
-    return;
+    return [];
   }
   const rows = await sql.unsafe<{ hash: string; created_at: string | number | bigint }[]>(
     `select hash, created_at from migrator.${migrationsTable}`,
@@ -130,4 +158,5 @@ async function preflightFromDb(
     created_at: Number(row.created_at),
   }));
   assertMigrationPreflight(migrations, applied);
+  return applied;
 }
