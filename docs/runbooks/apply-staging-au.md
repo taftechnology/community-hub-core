@@ -272,7 +272,7 @@ Hold `${PLAN_FILE}` as a path outside this repository. The plan file holds sensi
 
 ### Retrospective record (CSP and CORS, 2026-10-12)
 
-The owner applied the admin content-security-policy change and the gateway CORS change to staging on 2026-10-12 before those commits merged. The applied commit SHA is confirmed by the owner when evidence is written (believed `836a3f9` in the spec; the owner fills the actual SHA in the evidence commit). Plan for that apply: 0 add, 2 change, 0 destroy. Record counts and addresses with action only; no ARNs.
+The owner applied the admin content-security-policy change and the gateway CORS change to staging on 2026-10-12 at about 09:01 UTC from commit `836a3f9`, before those commits merged. Plan for that apply: 0 to add, 2 to change, 0 to destroy. CloudTrail shows one update to the tenant gateway API and one update to the CloudFront response-headers policy in the same second, made through Terraform with no error. The apply worktree was moved to `836a3f9` two minutes earlier and stayed there until this run; no later commit on that branch touched `infra/`. Apply 1 of this run planned no change to either resource. Record counts and addresses with action only; no ARNs.
 
 ### One-off network
 
@@ -340,6 +340,14 @@ Hold the printed ARN in `${TASK_ARN}` (never recorded). Then:
     curl -sS -o /dev/null -w '%{http_code}\n' "https://${API_HOSTNAME}/health"
 
     curl -sS -o /dev/null -w '%{http_code}\n' "https://${API_HOSTNAME}/health"
+
+5. Cloud Map instance count and custom health status. Namespace name is `ch-staging.local` (`aws_service_discovery_private_dns_namespace.this` name = `${var.name}.local` in `infra/modules/aws-ingress/main.tf`); discovery service name is `service` (`aws_service_discovery_service.this`). ECS registers the task through `service_registries` on `aws_ecs_service.this` and manages custom health via `health_check_custom_config` (failure_threshold 1). Hold ids in shell variables; never record them. Pass: print shows count `1` and status `HEALTHY` only (a count and a status; never an id). This check was added after the 2026-10-13 run and has not yet been run against a live service.
+
+    NAMESPACE_ID=$(aws servicediscovery list-namespaces --profile ${AWS_PROFILE} --filters Name=NAME,Values=ch-staging.local --query 'Namespaces[0].Id' --output text)
+
+    DISCOVERY_SERVICE_ID=$(aws servicediscovery list-services --profile ${AWS_PROFILE} --filters Name=NAMESPACE_ID,Values=${NAMESPACE_ID} --query "Services[?Name=='service'].Id | [0]" --output text)
+
+    aws servicediscovery get-instances-health-status --profile ${AWS_PROFILE} --service-id ${DISCOVERY_SERVICE_ID} --query '{count: length(keys(Status || `{}`)), statuses: values(Status || `{}`)}' --output json
 
 **Stop if** any check fails: stop the proofs and re-park.
 
@@ -636,8 +644,8 @@ Use "the api hostname", "the auth hostname" and "the admin origin" in every evid
   - create `module.ingress.aws_iam_role_policy.pull[0]`
   - create `module.ingress.aws_vpc_security_group_ingress_rule.task_api[0]`
   - Apply complete at about 03:50Z: 10 added, 0 changed, 0 destroyed.
-- **Retrospective record, CSP and CORS:** apply worktree was still at commit `836a3f9` when this run began; apply 1's plan showed no change to either resource, so both changes were live. Owner to confirm `836a3f9` as the commit applied on 2026-10-12 (plan then: 0 to add, 2 to change, 0 to destroy).
-- **Proof 1:** pass. Desired 1, running 1, pending 0; task `RUNNING`, health `HEALTHY`; running digest equals pre-check; five `GET /health` on the api hostname returned 200; VPC link `AVAILABLE`.
+- **Retrospective record, CSP and CORS:** the owner applied both changes on 2026-10-12 at about 09:01 UTC from commit `836a3f9`; plan 0 to add, 2 to change, 0 to destroy; CloudTrail shows one update to the tenant gateway API and one update to the CloudFront response-headers policy in the same second, made through Terraform with no error; the apply worktree was moved to `836a3f9` two minutes earlier and stayed there until this run; no later commit on that branch touched `infra/`; apply 1 of this run planned no change to either resource.
+- **Proof 1:** pass. Desired 1, running 1, pending 0; task `RUNNING`, health `HEALTHY`; stopped-task list for the service was empty at proof-1 time; running digest equals pre-check; five `GET /health` on the api hostname returned 200; VPC link `AVAILABLE`. Cloud Map instance health was not read during the run, because the operator steps did not include it; five 200 answers through the gateway, which routes through Cloud Map, are the only indication.
 - **Proof 2a:** pass. Exit 0, stdout and stderr empty. Service stayed at 1.
 - **Proof 2b:** pass. Exit 0, stdout `1000 1000`.
 - **Proof 2c:** pass. Exit 0, stdout and stderr empty (write under `/app` refused).
@@ -691,6 +699,9 @@ Use "the api hostname", "the auth hostname" and "the admin origin" in every evid
 7. The rotation steps need two warnings: send no request to the service between the forced deployment and the post-rotation request (an open pooled connection survives the password change); and after the bootstrap confirm the service task is the same one that was running before the secret change (a replacement starts with the new password).
 8. The one-off start commands print nothing, so a failed start is silent. Append `&& print ${#TASK_ARN}` so a task id length prints without showing the id.
 9. Applying a saved plan (plan to a file outside the repository, list addresses and actions with `terraform show -json` and `jq`, then apply that file with output filtered to progress lines) kept every identifier off the terminal. Plain plan and apply would have printed them.
+10. The browser pass (proof 8c) was run by the owner, not the assistant as the spec's decision 12 says, to keep the admin hostname out of the assistant's transcript; the assistant corroborated it from the service log (preflight 204, request 503).
+11. Proof 7b passed on a third attempt, after the spec's stop rule of two failed attempts; the owner chose to try once more once both failures were understood to come from the procedure and not the product.
+12. The browser pass did not record two things the spec lists: whether the console showed a content-security-policy violation, and whether the typed address was held anywhere other than the input.
 
 ## First running task
 
