@@ -176,6 +176,83 @@ If the cause cannot be fixed inside the unpark window, re-park. That destroys a 
 
 The journal table records each file's `when` value, not the time it ran. The ECS task's stop time and the log stream are the record of a run. Copy the exit code and the lines into the evidence of the chunk that ran it.
 
+## Provision the first owner
+
+The organisation slug, the community slug, and the owner email reach the task only inside a short-lived Secrets Manager secret under the one fixed name `${PROVISION_SECRET_NAME}`. The task reads it once, by ARN, passed as the `PROVISION_SECRET_ARN` environment override. A human runs every step. An agent does not. This runs as a one-off override of the service task definition, not the `db_ops` task definition; it adds no HTTP route and no change to the `db_ops` task role. This section is written and reviewed in this chunk; its first live execution on `staging-au` is deferred to the email chunk's own staging run, the same way **Apply product migrations** shipped its command before a later chunk exercised it (spec Definition of done).
+
+Shell variables and placeholders only, as in the rest of this file: never paste an account id, an ARN, a hostname, the resolved secret name, or the email into the file or the evidence. The slug and email values are prompted for at run time so they never land in shell history as typed command text. In zsh write `${VAR}:text`, not `$VAR:text`.
+
+### Create
+
+The operator is prompted for each value, so none is typed as a command-line argument or left in shell history. The three values are assembled into JSON with `jq` and piped straight into `put-secret-value`; nothing is echoed, printed, or left in a variable that is later printed. The put output is discarded. End by unsetting the three prompted variables.
+
+    read -r -p "Organisation slug: " ORG_SLUG
+    read -r -p "Community slug: " COMMUNITY_SLUG
+    read -r -p "Owner email: " OWNER_EMAIL
+    jq -n --arg o "${ORG_SLUG}" --arg c "${COMMUNITY_SLUG}" --arg e "${OWNER_EMAIL}" \
+      '{organisationSlug: $o, communitySlug: $c, email: $e}' \
+      | aws secretsmanager put-secret-value --profile ${AWS_PROFILE} \
+        --secret-id ${PROVISION_SECRET_NAME} --secret-string file:///dev/stdin >/dev/null
+    unset ORG_SLUG COMMUNITY_SLUG OWNER_EMAIL
+
+`${PROVISION_SECRET_NAME}` is the one fixed name the task 5 Terraform grants on (`${name}-provision-owner`); its resolved value is never written here. The secret value carries the email, so it is `confidential`; it is deleted in **Delete and verify** immediately after the run.
+
+### Run
+
+Hold `${PROVISION_SECRET_ARN}` from a read-only describe of the secret, the same way the proof run holds `${IDENTITY_SECRET_ARN}` and the other ARNs. It is never recorded.
+
+    PROVISION_SECRET_ARN=$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} \
+      --secret-id ${PROVISION_SECRET_NAME} --query 'ARN' --output text)
+
+Run the service task definition as a one-off, same network pattern as **Apply product migrations** (task security group, staging public subnet, public address). `entryPoint` is not set. The override sets `command` to `["node","/app/provision-owner.js"]` and one environment entry, `PROVISION_SECRET_ARN`, to the ARN held above — the only input the script reads.
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${SERVICE_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/provision-owner.js\"],\"environment\":[{\"name\":\"PROVISION_SECRET_ARN\",\"value\":\"${PROVISION_SECRET_ARN}\"}]}]}" \
+      --query 'tasks[0].taskArn' --output text)
+
+Then, as after every service-container one-off in this file, wait for it to stop, read the exit code and stopped reason, and read the one log stream. The container name and the `awslogs-stream-prefix` are both `service`, so the stream is `service/service/` followed by the task id.
+
+    aws ecs wait tasks-stopped --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN}
+
+    aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN} --query 'tasks[0].[containers[0].exitCode,stoppedReason]' --output text
+
+    aws logs get-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --log-stream-name "service/service/${TASK_ARN##*/}" --query 'events[].message' --output text | tr '\t' '\n'
+
+The describe step prints the exit code and the stopped reason on one line, separated by a tab. The task writes only the one line in **Results**. It never writes the slugs, the email, the resolved ids, the secret value, a host, a port, SQL text, or a driver message. Read the stopped reason; do not paste it when it can name a registry or a secret.
+
+### Results
+
+| Exit | Stdout                 | Stderr               | Meaning and what to do                                                                                                                                                                                                 |
+| ---- | ---------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | `created`              | empty                | No owner existed. The organisation and community were created if both were absent; the identity user was created if it did not already exist; the owner grants were created. Go to **Delete and verify**.             |
+| 0    | `already_bootstrapped` | empty                | An owner already existed for this organisation/community and it is the same user as the named email. Nothing was created or changed. Go to **Delete and verify**.                                                     |
+| 1    | empty                  | `env`                | `PROVISION_SECRET_ARN` is missing, malformed, or does not name the one fixed secret. Check the environment override and the secret name. Nothing was created.                                                         |
+| 1    | empty                  | `secret`             | The secret could not be read, or its JSON is missing `organisationSlug`, `communitySlug`, or `email`. Re-create it (**Create**) and run again. Nothing was created.                                                   |
+| 1    | empty                  | `organisation`       | The slug pair is inconsistent: one of the two exists without the other, or the community belongs to a different organisation than the one named. Fix the slugs and run again. Nothing was created.                    |
+| 1    | empty                  | `owner`              | An owner already exists and it is not the user for the named email. Nothing was created — in particular no new identity user. Do not retry with another email; this command never reassigns, demotes, or adds owners. |
+| 1    | empty                  | `kms`                | The envelope-key `GenerateDataKey` or `Decrypt` call failed. Check the envelope-key grant, then run again.                                                                                                            |
+| 1    | empty                  | `connect`            | The database connection failed with no database error: a network, DNS, or TLS problem. Check the task security group and the subnet.                                                                                 |
+| 1    | empty                  | `connect <SQLSTATE>` | The database connection failed with that database error code. Nothing was created.                                                                                                                                   |
+| 1    | empty                  | `fail`               | Anything else. Nothing was created. The code is the only evidence; there is no message.                                                                                                                              |
+| none | no log stream          | none                 | The task never started. The exit code prints `None` and the stopped reason names the cause (an image pull or a secret injection failure). No command ran and nothing was provisioned. Fix the cause the reason names, then run again. The stopped reason can name a registry or a secret, so do not copy it into the evidence. |
+
+### Delete and verify
+
+Delete the secret immediately after the run, without a recovery window, so the one fixed name is free for the next run. Then confirm it is gone.
+
+    aws secretsmanager delete-secret --profile ${AWS_PROFILE} \
+      --secret-id ${PROVISION_SECRET_NAME} --force-delete-without-recovery
+
+    aws secretsmanager describe-secret --profile ${AWS_PROFILE} \
+      --secret-id ${PROVISION_SECRET_NAME}
+
+The `describe-secret` call is expected to fail with a not-found error — that failure is the confirmation the secret is gone, so this is the one step in this file whose "success" is an AWS error, not a clean result. Record that it failed as expected; do not record the error body. Then `unset PROVISION_SECRET_ARN`.
+
 ## Staging proof run
 
 This section is the operator path for `docs/specs/2026-10-12-staging-proof-run.md`. The human owner runs every apply, every `aws ecs run-task`, and `put-secret-value`. The owner's assistant is read-only: it describes resources, reads CloudTrail and CloudWatch Logs, calls the staging hostnames over HTTP, and runs the signed-out browser pass. An agent does not. Stop after any failed proof, or after a second failure on the same step (AGENTS.md section 12). Then re-park before more attempts. The 48-hour hard stop is measured from apply 1 completion; the owner, not the assistant, runs the re-park at that hard stop even if proofs remain.
