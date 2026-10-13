@@ -22,7 +22,7 @@ Status: approved (2026-10-12, owner)
 - `packages/db/src` does not import `@community-hub/entitlements`. `db/schema.ts` does not call `pgSchema`.
 - The eval package and the entitlements domain import no framework, no Drizzle, and no `@community-hub/crypto`. The module does not import `@community-hub/access`, `@community-hub/people`, `@community-hub/identity`, or `@community-hub/crypto`.
 - Write functions take `sql: Sql` from `postgres` first. They do not open a connection and do not call `set_config`. A multi-row write may use `sql.begin`. That begin does not set `app.org_id` or `app.community_id`.
-- One journal entry, in Task 4, after `0007_fast_gorilla_man`. Later tasks do not add a migration. Migration wave: expand. No drop. No change to `platform.organisations`, `platform.communities`, an `app` table, or an `identity` table. The SQL inserts no row.
+- Two journal entries, in Task 4, after `0007_fast_gorilla_man`: `0008_public_brother_voodoo` (widens the `custom_role_permissions` CHECK) and `0009_flippant_bedlam` (creates the platform tables). Later tasks do not add a migration. Migration wave: expand. No drop. No change to `platform.organisations`, `platform.communities`, an `app` table, or an `identity` table beyond the CHECK widen. The SQL inserts no row.
 - Staging stays parked. Do not change `enable_database`, `desired_count`, or add `service_image`. Do not edit Terraform. Do not apply.
 - The agent does not apply and does not merge. Session scratch (`.superpowers/`, `*-report.md`) is never committed.
 - This chunk changes the permission catalogue. The second fresh-context review starts when the pull request opens. Leave that line open. Do not write the second review.
@@ -30,26 +30,26 @@ Status: approved (2026-10-12, owner)
 - Docker Postgres is started by the `@community-hub/db` test setup. Do not add a second compose file. If Docker is missing, stop and report. Do not skip the integration test.
 - This plan changes no Terraform. There is no Terraform assert to probe and no scratch apply.
 
-**Rollback:** A later contract migration drops `platform.feature_flags`, `platform.entitlement_overrides`, `platform.community_toggles`, `platform.community_allocations`, `platform.organisation_add_ons`, `platform.organisation_plans`, `platform.add_on_entitlements`, `platform.plan_entitlements`, `platform.add_ons`, then `platform.plans`. This journal entry is not edited after it ships. Revert of the PR before merge removes the entry with the branch. Staging flags are unchanged.
+**Rollback:** A later contract migration drops `platform.feature_flags`, `platform.entitlement_overrides`, `platform.community_toggles`, `platform.community_allocations`, `platform.organisation_add_ons`, `platform.organisation_plans`, `platform.add_on_entitlements`, `platform.plan_entitlements`, `platform.add_ons`, then `platform.plans`. These journal entries are not edited after they ship. Revert of the PR before merge removes the entries with the branch. Staging flags are unchanged.
 
 **Cost:** No new hourly or monthly resource. Staging stays parked.
 
 ## File map
 
-| File                                                                                         | Responsibility                                                 |
-| -------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `packages/entitlements-eval/`                                                                | `EntitlementSnapshot`, `evaluate`, and `limit`. No database.   |
-| `packages/policy/src/decide.ts`                                                              | Catalogue and the three view bundles gain `entitlements.view`. |
-| `modules/core/people/module.manifest.ts`                                                     | The three `features` strings.                                  |
-| `modules/core/access/infrastructure/holds-permission.ts`                                     | `holdsPermission`. Read only.                                  |
-| `modules/core/tenancy/infrastructure/communities.ts`                                         | `listCommunityIds`.                                            |
-| `modules/core/entitlements/`                                                                 | Manifest, schema, writes, cache, toggle.                       |
-| `packages/db/drizzle.schema.ts`                                                              | Passes the one `platform` schema into `entitlementTables`.     |
-| `packages/db/drizzle/`                                                                       | One new journal entry after `0007_fast_gorilla_man`.           |
-| `packages/contracts/src/entitlements.ts`                                                     | Strict request schemas. Export path `./entitlements`.          |
-| `apps/api/src/entitlement-routes.ts`                                                         | The two POST routes.                                           |
-| `apps/admin/src/`                                                                            | `visibleLabels` and Module Toggles.                            |
-| `docs/roadmap.md`, `AGENTS.md`, `architecture.md`, `docs/adr/0012-entitlement-visibility.md` | The sentences the spec names.                                  |
+| File                                                                                         | Responsibility                                                                                              |
+| -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `packages/entitlements-eval/`                                                                | `EntitlementSnapshot`, `evaluate`, and `limit`. No database.                                                |
+| `packages/policy/src/decide.ts`                                                              | Catalogue and the three view bundles gain `entitlements.view`.                                              |
+| `modules/core/people/module.manifest.ts`                                                     | The three `features` strings.                                                                               |
+| `modules/core/access/infrastructure/holds-permission.ts`                                     | `holdsPermission`. Read only.                                                                               |
+| `modules/core/tenancy/infrastructure/communities.ts`                                         | `listCommunityIds`.                                                                                         |
+| `modules/core/entitlements/`                                                                 | Manifest, schema, writes, cache, toggle.                                                                    |
+| `packages/db/drizzle.schema.ts`                                                              | Passes the one `platform` schema into `entitlementTables`.                                                  |
+| `packages/db/drizzle/`                                                                       | Two journal entries after `0007_fast_gorilla_man`: `0008_public_brother_voodoo` and `0009_flippant_bedlam`. |
+| `packages/contracts/src/entitlements.ts`                                                     | Strict request schemas. Export path `./entitlements`.                                                       |
+| `apps/api/src/entitlement-routes.ts`                                                         | The two POST routes.                                                                                        |
+| `apps/admin/src/`                                                                            | `visibleLabels` and Module Toggles.                                                                         |
+| `docs/roadmap.md`, `AGENTS.md`, `architecture.md`, `docs/adr/0012-entitlement-visibility.md` | The sentences the spec names.                                                                               |
 
 ## Dependencies
 
@@ -317,7 +317,7 @@ EOF
 
 `boundaries` are in `schema.test.ts` as a source read of `db/schema.ts`: it fails if the file contains `pgSchema`.
 
-The tests fail because the module and the journal entry do not exist.
+The tests fail because the module and the journal entries do not exist.
 
 - [ ] **Step 2: Add the tables**
 

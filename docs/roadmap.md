@@ -253,6 +253,8 @@ Startup does not prove the database or KMS, `GET /health` opens neither, and a r
 
 The access routes derive both ids from `findCommunityBySlug`. `withAppTransaction` does not verify that a community belongs to an organisation. Later routes follow the same directory lookup and never take either id from request input.
 
+`readSnapshot` in `core/entitlements` does not verify that the community belongs to the organisation; the routes always pass a matching pair from one lookup, so it is hardening, not a defect.
+
 This image has not run on Fargate. The next chunk that unparks staging re-runs the health check, the `/tmp` write one-off, and the ops task before the service is relied on.
 
 ---
