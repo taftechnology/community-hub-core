@@ -1,7 +1,7 @@
 # Spec: First organisation owner provisioning
 
 Slug: first-owner
-Status: draft
+Status: approved (2026-10-13, Abdus Salam)
 Architecture refs: §6.3 (identity/platform/app schema ownership), §12.1, §12.2.1, AGENTS.md §1 rules 2, 5, 8
 
 ## Problem

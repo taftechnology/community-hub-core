@@ -1,5 +1,5 @@
 Spec: docs/specs/2026-10-13-first-owner.md
-Status: draft
+Status: approved (2026-10-13, Adnan Bin Hossen)
 
 # Plan: First organisation owner provisioning
 
