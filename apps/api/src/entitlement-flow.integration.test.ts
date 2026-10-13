@@ -197,6 +197,26 @@ describe("entitlement flow", () => {
         canManage: false,
       });
 
+      const staffToggle = await call(
+        toggle.handle,
+        toggle.pattern,
+        { communitySlug: slug, key: "people.directory", enabled: false },
+        staff.accessToken,
+      );
+      expect(staffToggle.status).toBe(403);
+      expect(await staffToggle.text()).toBe("");
+      const staffToggleAudits = await withAppTransaction(
+        app,
+        { orgId: organisationId, communityId },
+        (tx) =>
+          tx<{ n: number }[]>`
+            select count(*)::int as n
+            from app.audit_events
+            where action = 'entitlements.toggle.changed'
+          `,
+      );
+      expect(staffToggleAudits).toEqual([{ n: 0 }]);
+
       const turnedOff = await call(
         toggle.handle,
         toggle.pattern,
@@ -281,7 +301,10 @@ describe("entitlement flow", () => {
           where action = 'entitlements.permission.denied'
         `,
       );
-      expect(denials).toEqual([{ target_ids: [organisationId, communityId] }]);
+      expect(denials).toHaveLength(2);
+      for (const row of denials) {
+        expect(row).toEqual({ target_ids: [organisationId, communityId] });
+      }
 
       const rolled = await call(
         toggle.handle,
