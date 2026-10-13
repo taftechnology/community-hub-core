@@ -138,4 +138,55 @@ describe("holdsPermission", () => {
       await app.end({ timeout: 1 });
     }
   });
+
+  it("denies a permission granted only in another organisation", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const organisationA = newId();
+    const communityA = newId();
+    const organisationB = newId();
+    const communityB = newId();
+    const slugA = `holda-${newId().replaceAll("-", "").slice(0, 12)}`;
+    const slugB = `holdb-${newId().replaceAll("-", "").slice(0, 12)}`;
+    const ownerB = newId();
+    const staffId = newId();
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values
+            (${organisationA}, ${slugA}, 'au', 'implicit'),
+            (${organisationB}, ${slugB}, 'au', 'implicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values
+            (${communityA}, ${organisationA}, ${slugA}, 'au'),
+            (${communityB}, ${organisationB}, ${slugB}, 'au')
+        `;
+      });
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationB, communityId: communityB }, async (tx) => {
+          await bootstrapOwner(tx, { now: NOW, userId: ownerB, actorUserId: ownerB });
+          await grantRole(tx, {
+            now: NOW,
+            userId: staffId,
+            roleKey: "staff",
+            customRoleId: null,
+            actorUserId: ownerB,
+          });
+          expect(await holdsPermission(tx, staffId, "entitlements.view")).toBe(true);
+        }),
+      );
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationA, communityId: communityA }, async (tx) => {
+          expect(await holdsPermission(tx, staffId, "entitlements.view")).toBe(false);
+        }),
+      );
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
 });
