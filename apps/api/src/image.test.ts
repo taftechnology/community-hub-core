@@ -458,6 +458,24 @@ describe.skipIf(process.env.RUN_IMAGE_TESTS !== "1")("regional service image", (
     expect(shipped.status, shipped.stderr).toBe(0);
   }, 600_000);
 
+  it("ships provision-owner", () => {
+    ensureImage();
+    const shipped = spawnSync(
+      "docker",
+      [
+        "run",
+        "--rm",
+        image,
+        "node",
+        "--input-type=module",
+        "-e",
+        'import { existsSync } from "node:fs"; process.exit(existsSync("/app/provision-owner.js") ? 0 : 1);',
+      ],
+      { encoding: "utf8" },
+    );
+    expect(shipped.status, shipped.stderr).toBe(0);
+  }, 600_000);
+
   it("ships db-migrate and the product migrations", () => {
     ensureImage();
     const listed = spawnSync(
