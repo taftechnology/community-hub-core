@@ -42,6 +42,7 @@ Files: `modules/core/identity/infrastructure/identity-user.ts`, `modules/core/id
 **Why a shared helper, not a parallel reimplementation:** `verifyEmailOtp` already derives the blind index and looks up `identity.users` by `email_bidx` inline (`email-otp.ts` lines 142-143 and 173-176). The spec requires the new exports to use "the same lookup," not an equivalent one — so this task first extracts that derivation (the `bidxKey` call plus the `hmac(... "identity.users.email" ...)` step) into one internal helper that both `email-otp.ts` and `identity-user.ts` call, closing off any chance of the two paths drifting apart later. This refactor is covered by the existing OTP tests continuing to pass unchanged.
 
 **Test first (RED):**
+
 - Unit/integration test: `findUserByEmail(sql, kms, keyArn, { email })` returns `null` when no row exists, and the existing row's `{ userId }` when one does — asserted with a mixed-case, whitespace-padded variant of an email already inserted via `insertIdentityUser`, to pin the normalisation requirement directly at this layer.
 - Unit/integration test: `findOrCreateUserByEmail` creates a new row when absent (same shape `insertIdentityUser` already returns), returns the existing `userId` when present (no duplicate row), and — reusing the existing `isUsersEmailConflict` race handling `verifyEmailOtp` already has (lines 183-194) — resolves to the winning row rather than throwing when two calls race on the same new email.
 
@@ -68,11 +69,12 @@ Follows the `db-bootstrap.ts` / `db-migrate.ts` shape: a `runProvisionOwner(deps
    - An owner exists: call task 3's `findUserByEmail` (read-only — never the create path). Resolves to the same `userId` as the owner → stdout `already_bootstrapped`, nothing created. Resolves to a different `userId`, or to no row at all → stderr `owner`, nothing created.
 4. `kms` on an envelope-key failure; `connect` / `connect <SQLSTATE>` on a database connection failure; `fail` for anything else. Never print the secret's contents, the resolved ids, or any part of the email, on either stream, in either outcome.
 
-**Audit trail note (document in the commit, write no new code for it):** `bootstrapOwner`'s own `appendAuditEvent` call already records `actorId: actorUserId`, and `bootstrapOwner` requires `actorUserId === userId` — so the audit log already shows the new owner as the grantor of their own role. This chunk adds no second audit trail. The record of *who ran the provisioning task* is CloudTrail's `RunTask` event for the one-off, not this application audit log — the same split the staging proof run already relies on for every other ops one-off.
+**Audit trail note (document in the commit, write no new code for it):** `bootstrapOwner`'s own `appendAuditEvent` call already records `actorId: actorUserId`, and `bootstrapOwner` requires `actorUserId === userId` — so the audit log already shows the new owner as the grantor of their own role. This chunk adds no second audit trail. The record of _who ran the provisioning task_ is CloudTrail's `RunTask` event for the one-off, not this application audit log — the same split the staging proof run already relies on for every other ops one-off.
 
 **Test first (RED), unit (mocked dependencies):** one case per stdout/stderr row in the spec's Behaviour tables, including the wrong-secret-name case under `env` and the different-email case under `owner`.
 
 **Test first (RED), integration (real test database):**
+
 - Fresh run: `created`; organisation, community, identity user, and both role grants now exist.
 - Second run, same email: `already_bootstrapped`; no new row anywhere (organisation, community, identity, or grants).
 - Second run, **different** email: exit 1, `owner`; no new `identity.users` row. **This is the regression pin for the bug this spec's revision fixed** — assert the row count on `identity.users` is unchanged, not just the exit code.
@@ -91,12 +93,14 @@ Files: `infra/modules/aws-db-secrets/main.tf`, `infra/modules/aws-db-secrets/tes
 No new Terraform input variable anywhere — both modules already carry `var.name`, `var.aws_region`, and `var.aws_account_id`, which is everything needed to construct the one fixed pattern inline, the same way the three existing patterns are already built inline rather than passed in as a variable.
 
 **Test first (RED):**
+
 - In `envelope.tftest.hcl`'s `run "happy"` block, add an assert mirroring the existing one at lines 353-364: the `task_secrets` policy contains a `secretsmanager:GetSecretValue` statement whose `Resource` is exactly `"arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-provision-owner-??????"` (same mock account id and `name` the file's `run "happy"` block already uses), and that string is neither `"*"` nor equal to any of the three existing role-secret ARNs.
 - In `secrets.tftest.hcl`, add an assert that `aws_kms_key.secrets`'s policy contains that same fixed pattern inside the `SecretsManagerUse` statement's `kms:EncryptionContext:SecretARN` `StringLike` list, alongside (not replacing) the three existing patterns.
 
 Run both updated test files and confirm they fail against the current `main.tf` in each module before making any source change.
 
 **Implementation (GREEN):**
+
 - `infra/modules/aws-db-secrets/main.tf`: add one line to the existing `StringLike` list (after the `-platform-??????` entry): `"arn:aws:secretsmanager:ap-southeast-2:${var.aws_account_id}:secret:${var.name}-provision-owner-??????"`.
 - `infra/modules/aws-kms-envelope/main.tf`: add one new statement object to `aws_iam_role_policy.task_secrets`'s `Statement` list (not to `execution_secrets` — that policy backs ECS-native `secrets` injection for the three role passwords, unrelated to this app-level fetch):
   ```
@@ -107,7 +111,7 @@ Run both updated test files and confirm they fail against the current `main.tf` 
     Resource = "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:${var.name}-provision-owner-??????"
   }
   ```
-  **Correction, checked against the real file:** this is *not* "written the same way as the three existing patterns" in `task_secrets` — those three (`Resource = var.db_secret_arns`, lines 352-372) are a variable holding concrete, already-resolved ARNs populated from `infra/regions/au/main.tf:162-166` (`module.db_secrets.app_secret_arn` etc.), not inline wildcard-pattern strings anywhere in this file. The `-??????` wildcard-pattern style this new statement actually borrows from exists only in the **sibling module**, `aws-db-secrets/main.tf`'s `StringLike` condition. Introducing a literal wildcard string into `task_secrets` is new ground for this specific file — very likely fine (IAM natively matches `?`/`*` wildcards directly in a `Resource` string, no `Condition` block needed, the same mechanism `StringLike` uses), but it is not a line-for-line mirror of an existing statement the way the `aws-db-secrets` change is. Treat this with the same caution as the scratch-probe gap below: confirm it plans cleanly before treating task 5 as low-risk.
+  **Correction, checked against the real file:** this is _not_ "written the same way as the three existing patterns" in `task_secrets` — those three (`Resource = var.db_secret_arns`, lines 352-372) are a variable holding concrete, already-resolved ARNs populated from `infra/regions/au/main.tf:162-166` (`module.db_secrets.app_secret_arn` etc.), not inline wildcard-pattern strings anywhere in this file. The `-??????` wildcard-pattern style this new statement actually borrows from exists only in the **sibling module**, `aws-db-secrets/main.tf`'s `StringLike` condition. Introducing a literal wildcard string into `task_secrets` is new ground for this specific file — very likely fine (IAM natively matches `?`/`*` wildcards directly in a `Resource` string, no `Condition` block needed, the same mechanism `StringLike` uses), but it is not a line-for-line mirror of an existing statement the way the `aws-db-secrets` change is. Treat this with the same caution as the scratch-probe gap below: confirm it plans cleanly before treating task 5 as low-risk.
 - No change to `db_ops` anywhere in `infra/regions/au/main.tf` or its tests.
 
 Run both test files again and confirm they pass.
@@ -135,7 +139,7 @@ New section, after **Apply product migrations** and modelled on that section's s
        --name ${PROVISION_SECRET_NAME} --secret-string file:///dev/stdin
    unset ORG_SLUG COMMUNITY_SLUG OWNER_EMAIL
    ```
-   The JSON is built and piped straight into `create-secret`, not `put-secret-value` — this secret is never Terraform-managed and is fully destroyed by step 3's `--force-delete-without-recovery` every cycle, so it does not exist when Create runs again; `put-secret-value` only writes a new version to an *existing* secret and would fail with `ResourceNotFoundException`. (Proof 7b's own `put-secret-value` usage is a different, Terraform-managed secret that already exists — not a precedent here.) Nothing is echoed, printed, or assigned to a variable that gets printed. `${PROVISION_SECRET_NAME}` is the one fixed name from task 5.
+   The JSON is built and piped straight into `create-secret`, not `put-secret-value` — this secret is never Terraform-managed and is fully destroyed by step 3's `--force-delete-without-recovery` every cycle, so it does not exist when Create runs again; `put-secret-value` only writes a new version to an _existing_ secret and would fail with `ResourceNotFoundException`. (Proof 7b's own `put-secret-value` usage is a different, Terraform-managed secret that already exists — not a precedent here.) Nothing is echoed, printed, or assigned to a variable that gets printed. `${PROVISION_SECRET_NAME}` is the one fixed name from task 5.
 2. **Run.** `aws ecs run-task` on the service task definition (same network pattern as the existing proof one-offs: task security group, staging public subnet, public address), command override `["node", "/app/provision-owner.js"]`, environment override `PROVISION_SECRET_ARN=<arn>`, `entryPoint` not set. Then the existing **After a service-container one-off** triad (`wait tasks-stopped`, `describe-tasks` for exit code, `get-log-events` for stdout/stderr).
 3. **Delete and verify.**
    ```
@@ -162,13 +166,13 @@ Add a `first-owner` row under Phase 1 (status **done**), and update the "Where w
 
 ## Security pins (carried from the spec's Tests section)
 
-| Setting | Test | Source change that must make the test fail | Task |
-| --- | --- | --- | --- |
-| A second run naming a different email than the existing owner refuses and creates nothing | Integration test, task 4 | Checking only grant existence, not whether it matches the named email | 4 |
-| A second run with the same email is a no-op | Integration test, task 4 | Removing the existing-owner check or the organisation/community pre-check | 4 |
-| Command refuses when the community belongs to a different organisation | Integration test, task 4 | Comparing community existence only, not its resolved `organisationId` | 4 |
-| Email matching uses the same normalisation and lookup as OTP | Integration test, task 4 (depends on the shared helper from task 3) | Using a different normalisation or a separate lookup path | 3, 4 |
-| Email never reaches a command/env override or stdout/stderr | Unit test, task 4 | Adding an email-bearing CLI arg or env var | 4 |
-| Tenant isolation | Integration test, task 4 | Removing `org_id` scoping on the new writes | 4 |
-| The new IAM statement's resource is exactly one fixed secret name | Terraform test, task 5 | Widening the statement's `Resource` | 5 |
-| The compiled entrypoint ships in the image | Image test, task 4 | Removing the file from build output without failing a test | 4 |
+| Setting                                                                                   | Test                                                                | Source change that must make the test fail                                | Task |
+| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------- | ---- |
+| A second run naming a different email than the existing owner refuses and creates nothing | Integration test, task 4                                            | Checking only grant existence, not whether it matches the named email     | 4    |
+| A second run with the same email is a no-op                                               | Integration test, task 4                                            | Removing the existing-owner check or the organisation/community pre-check | 4    |
+| Command refuses when the community belongs to a different organisation                    | Integration test, task 4                                            | Comparing community existence only, not its resolved `organisationId`     | 4    |
+| Email matching uses the same normalisation and lookup as OTP                              | Integration test, task 4 (depends on the shared helper from task 3) | Using a different normalisation or a separate lookup path                 | 3, 4 |
+| Email never reaches a command/env override or stdout/stderr                               | Unit test, task 4                                                   | Adding an email-bearing CLI arg or env var                                | 4    |
+| Tenant isolation                                                                          | Integration test, task 4                                            | Removing `org_id` scoping on the new writes                               | 4    |
+| The new IAM statement's resource is exactly one fixed secret name                         | Terraform test, task 5                                              | Widening the statement's `Resource`                                       | 5    |
+| The compiled entrypoint ships in the image                                                | Image test, task 4                                                  | Removing the file from build output without failing a test                | 4    |

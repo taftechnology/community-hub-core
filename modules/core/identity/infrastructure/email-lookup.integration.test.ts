@@ -88,7 +88,9 @@ describe("find or create user by email", () => {
     await withSql(async (sql) => {
       const before = await sql<{ n: number }[]>`select count(*)::int as n from identity.users`;
       expect(before[0]?.n).toBe(0);
-      const created = await findOrCreateUserByEmail(sql, kms, KEY_ARN, { email: "Ada@Example.com" });
+      const created = await findOrCreateUserByEmail(sql, kms, KEY_ARN, {
+        email: "Ada@Example.com",
+      });
       expect(created.userId).toEqual(expect.any(String));
       const after = await sql<{ id: string; n: number }[]>`
         select count(*)::int as n from identity.users
@@ -113,7 +115,11 @@ describe("find or create user by email", () => {
   it("resolves two racing calls on the same new email to one winning row", async () => {
     const kms = createLocalKmsPort();
     const runtime = loadRuntime();
-    const sql = postgres(identityUrl(runtime), { max: 4, prepare: true, onnotice: () => undefined });
+    const sql = postgres(identityUrl(runtime), {
+      max: 4,
+      prepare: true,
+      onnotice: () => undefined,
+    });
     try {
       await clearIdentity(sql);
       const results = await Promise.all([

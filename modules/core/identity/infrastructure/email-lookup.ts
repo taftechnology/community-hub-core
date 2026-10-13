@@ -1,5 +1,11 @@
 import type { webcrypto } from "node:crypto";
-import { blindIndex, deriveKeys, encrypt, unwrapKmsRoot, type KmsPort } from "@community-hub/crypto";
+import {
+  blindIndex,
+  deriveKeys,
+  encrypt,
+  unwrapKmsRoot,
+  type KmsPort,
+} from "@community-hub/crypto";
 import { newId } from "@community-hub/db";
 import type { Sql } from "postgres";
 

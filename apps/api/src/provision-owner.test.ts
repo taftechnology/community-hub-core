@@ -60,7 +60,8 @@ const SECRET = JSON.stringify({
 });
 
 // Each stream, on every path, is empty or one of the fixed lines in the spec's Behaviour tables.
-const ALLOWED = /^$|^created\n$|^already_bootstrapped\n$|^(env|secret|organisation|owner|kms|fail)\n$|^connect( [0-9A-Z]{5})?\n$/;
+const ALLOWED =
+  /^$|^created\n$|^already_bootstrapped\n$|^(env|secret|organisation|owner|kms|fail)\n$|^connect( [0-9A-Z]{5})?\n$/;
 
 const mFindOrg = vi.mocked(findOrganisationBySlug);
 const mFindCommunity = vi.mocked(findCommunityBySlug);
@@ -81,7 +82,9 @@ type Harness = {
   run: () => Promise<ProvisionOwnerResult>;
 };
 
-function harness(options: { arn?: string | null; readSecret?: () => Promise<string> } = {}): Harness {
+function harness(
+  options: { arn?: string | null; readSecret?: () => Promise<string> } = {},
+): Harness {
   const read: string[] = [];
   const base: NodeJS.ProcessEnv = {};
   if (options.arn !== null) {
