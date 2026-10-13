@@ -13,7 +13,11 @@ import {
 
 import type { Sql } from "postgres";
 
-import { createImplicitOrganisation, findCommunityBySlug } from "../public/index.js";
+import {
+  createImplicitOrganisation,
+  findCommunityBySlug,
+  findOrganisationBySlug,
+} from "../public/index.js";
 
 type Runtime = {
   productOnlyUrl: string;
@@ -84,6 +88,18 @@ describe("implicit organisation", () => {
 
       const missing = await findCommunityBySlug(sql, "missing-parish");
       expect(missing).toBeNull();
+
+      const foundOrganisation = await findOrganisationBySlug(sql, "example-parish");
+      expect(foundOrganisation).toEqual({
+        id: created.organisationId,
+        slug: "example-parish",
+        region: "au",
+        kind: "implicit",
+      });
+      expect(foundOrganisation).not.toHaveProperty("organisationId");
+
+      const missingOrganisation = await findOrganisationBySlug(sql, "missing-parish");
+      expect(missingOrganisation).toBeNull();
 
       await expect(
         createImplicitOrganisation(sql, {
@@ -279,6 +295,9 @@ describe("implicit organisation", () => {
     await expect(findCommunityBySlug(sql, "Example")).resolves.toBeNull();
     await expect(findCommunityBySlug(sql, "")).resolves.toBeNull();
     await expect(findCommunityBySlug(sql, "ab")).resolves.toBeNull();
+    await expect(findOrganisationBySlug(sql, "Example")).resolves.toBeNull();
+    await expect(findOrganisationBySlug(sql, "")).resolves.toBeNull();
+    await expect(findOrganisationBySlug(sql, "ab")).resolves.toBeNull();
   });
 
   it("leaves the caller's timestamp parsers unchanged", async () => {

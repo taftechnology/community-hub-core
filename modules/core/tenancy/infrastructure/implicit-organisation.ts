@@ -50,6 +50,31 @@ export async function createImplicitOrganisation(
   return { organisationId, communityId };
 }
 
+export async function findOrganisationBySlug(
+  sql: Sql,
+  slug: string,
+): Promise<{ id: string; slug: string; region: string; kind: string } | null> {
+  if (!isSlug(slug)) {
+    return null;
+  }
+  const rows = await sql<{ id: string; slug: string; region: string; kind: string }[]>`
+    select id, slug, region, kind
+    from platform.organisations
+    where slug = ${slug}
+    limit 1
+  `;
+  const row = rows[0];
+  if (row === undefined) {
+    return null;
+  }
+  return {
+    id: row.id,
+    slug: row.slug,
+    region: row.region,
+    kind: row.kind,
+  };
+}
+
 export async function findCommunityBySlug(
   sql: Sql,
   slug: string,
