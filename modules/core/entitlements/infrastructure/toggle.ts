@@ -16,6 +16,15 @@ export async function setToggle(
   },
 ): Promise<"changed" | "unchanged"> {
   const key = parseEntitlementKey(input.key);
+  const owned = await sql<{ id: string }[]>`
+    select id
+    from platform.communities
+    where id = ${input.communityId}::uuid
+      and organisation_id = ${input.organisationId}::uuid
+  `;
+  if (owned.length === 0) {
+    throw new EntitlementError("not_found");
+  }
   const fresh = await loadSnapshot(sql, {
     organisationId: input.organisationId,
     communityId: input.communityId,
