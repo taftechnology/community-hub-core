@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import axe from "axe-core";
 import { afterEach, beforeEach } from "vitest";
 
 import { router, Shell } from "./shell";
@@ -6,9 +7,17 @@ import { router, Shell } from "./shell";
 const TOKEN = "token-1";
 const EMAIL = "ada@example.com";
 
-async function showModules(): Promise<void> {
+function resultIds(
+  results: axe.AxeResults,
+  bucket: "passes" | "violations" | "incomplete" | "inapplicable",
+): string[] {
+  return results[bucket].map((entry) => entry.id);
+}
+
+async function showModules(): Promise<HTMLElement> {
   await router.navigate("/settings/modules");
-  render(<Shell />);
+  const view = render(<Shell />);
+  return view.container;
 }
 
 beforeEach(async () => {
@@ -209,4 +218,49 @@ it("posts the toggle and keeps the slug out of the url", async () => {
   expect(init.body).toBe(
     JSON.stringify({ communitySlug: "parish", key: "people.directory", enabled: false }),
   );
+});
+
+it("reports no axe violations with switches and without", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        keys: [{ key: "people.directory", enabled: true }],
+        canManage: true,
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ),
+  );
+  const withSwitches = await showModules();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Load" }));
+  expect(await screen.findByRole("switch", { name: "people.directory" })).toBeTruthy();
+  const managed = await axe.run(withSwitches, {
+    rules: { "color-contrast": { enabled: false } },
+  });
+  expect(resultIds(managed, "violations")).toEqual([]);
+
+  cleanup();
+  fetchSpy.mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        keys: [{ key: "people.directory", enabled: true }],
+        canManage: false,
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ),
+  );
+  const withoutSwitches = await showModules();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Load" }));
+  expect(await screen.findByText("people.directory")).toBeTruthy();
+  expect(screen.queryByRole("switch")).toBeNull();
+  const viewOnly = await axe.run(withoutSwitches, {
+    rules: { "color-contrast": { enabled: false } },
+  });
+  expect(resultIds(viewOnly, "violations")).toEqual([]);
 });
