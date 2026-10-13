@@ -71,7 +71,16 @@ export function createCheckout<TSql>(options: {
 
   async function readPassword(role: Role, used: string): Promise<string | undefined> {
     const currentSecret = await options.readSecret(options.arns[role], "AWSCURRENT");
-    const previousSecret = await options.readSecret(options.arns[role], "AWSPREVIOUS");
+    let previousSecret: string | undefined;
+    try {
+      previousSecret = await options.readSecret(options.arns[role], "AWSPREVIOUS");
+    } catch (error) {
+      // A secret that was never rotated has no previous version. When the current secret is the
+      // password already in use, that is not a reason to hide the database error that sent us here.
+      if (currentSecret !== used) {
+        throw error;
+      }
+    }
     if (currentSecret !== used) {
       return currentSecret;
     }

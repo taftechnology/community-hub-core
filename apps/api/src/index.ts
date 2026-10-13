@@ -12,6 +12,7 @@ import {
 } from "@community-hub/db";
 import { rejectingOtpMail } from "@community-hub/identity";
 import { healthRequest } from "@community-hub/kernel";
+import { createLogger, type Logger } from "@community-hub/observability";
 
 import { authRoutes, type AuthDeps } from "./auth-routes.js";
 import { accessRoutes, type AccessDeps } from "./access-routes.js";
@@ -24,6 +25,8 @@ import { secretsManagerReader } from "./secrets.js";
 import { startServer } from "./server.js";
 
 let current: Server | undefined;
+
+const bootLogger = createLogger();
 
 export function listeningServer(): Server | undefined {
   return current;
@@ -94,9 +97,10 @@ function target(env: ServiceEnv, pem: string, user: string, password: string): S
   };
 }
 
-function bindServices(
+export function bindServices(
   env: ServiceEnv,
   pem: string,
+  logger: Logger = bootLogger,
 ): { auth: AuthDeps; access: AccessDeps; entitlements: EntitlementDeps } {
   const checkout = createCheckout({
     passwords: {
@@ -130,7 +134,10 @@ function bindServices(
           typeof createAwsKmsPort
         >[0]["client"],
         keyArn: env.ENVELOPE_KEY_ARN,
-        info: () => undefined,
+        // The adapter reports only an operation, a key kind and an outcome, each a fixed value.
+        info: (fields) => {
+          logger.info("kms", fields);
+        },
       });
       return kms;
     },

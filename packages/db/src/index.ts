@@ -15,5 +15,6 @@ export {
 } from "./connections.js";
 export { newId } from "./ids.js";
 export { insertEncrypted } from "./insert-encrypted.js";
-export { applyProductMigrations } from "./migrate.js";
+export { MIGRATION_LOCK_ID, applyProductMigrations } from "./migrate.js";
+export type { MigrationReport } from "./migrate.js";
 export { scramSha256Verifier } from "./scram.js";

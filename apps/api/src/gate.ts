@@ -38,6 +38,8 @@ export type GateLogFields = {
     | "ops_route_on_other_hostname"
     | "other_route_on_ops_hostname";
   hostname?: string;
+  errorClass?: string;
+  errorCode?: string;
 };
 
 const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);

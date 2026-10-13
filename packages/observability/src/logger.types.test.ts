@@ -17,6 +17,8 @@ describe("logger compile-time field typing", () => {
       operation: "decrypt",
       key_kind: "identity",
       outcome: "rejected",
+      errorClass: "PostgresError",
+      errorCode: "42P01",
     });
 
     // @ts-expect-error untyped records must not be accepted by the logger API

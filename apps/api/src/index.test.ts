@@ -1,9 +1,11 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createLogger } from "@community-hub/observability";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { boot, listeningServer, run } from "./index.js";
+import { readServiceEnv } from "./env.js";
+import { bindServices, boot, listeningServer, run } from "./index.js";
 
 const pem = readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), "../certs/rds-ap-southeast-2-bundle.pem"),
@@ -135,5 +137,76 @@ describe("api entrypoint", () => {
     expect(stderr).toEqual(["env\n"]);
     expect(stderr.join("")).not.toContain("marker-missing-cert");
     expect(listeningServer()).toBeUndefined();
+  });
+});
+
+describe("api boot wiring of the kms adapter log", () => {
+  const keyArn = `arn:aws:kms:ap-southeast-2:123456789012:key/mrk-${"ab".repeat(16)}`;
+  const otherKeyId = "marker-not-the-configured-key-9d41";
+  const context = { key_kind: "identity", region: "au", key_version: "1" } as const;
+
+  function env() {
+    const read = readServiceEnv({ ...source(), ENVELOPE_KEY_ARN: keyArn }, pem);
+    if (!read.ok) {
+      throw new Error("test env is invalid");
+    }
+    return read.env;
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("writes a kms line with only allow-listed fields when the adapter reports a failure", async () => {
+    const written: string[] = [];
+    const logger = createLogger({ write: (line) => written.push(line) });
+    const bound = bindServices(env(), pem, logger);
+
+    await expect(
+      bound.auth.kms.decrypt(otherKeyId, new Uint8Array([1, 2, 3]), context),
+    ).rejects.toThrow();
+
+    expect(written).toHaveLength(1);
+    expect(JSON.parse(written[0] ?? "{}")).toEqual({
+      level: "info",
+      message: "kms",
+      operation: "decrypt",
+      key_kind: "identity",
+      outcome: "rejected",
+    });
+    expect(written[0]).not.toContain(otherKeyId);
+    expect(written[0]).not.toContain(keyArn);
+    expect(written[0]).not.toContain("123456789012");
+    expect(logger.getDroppedFieldCount()).toBe(0);
+  });
+
+  it("shares one adapter between the auth and access routes", async () => {
+    const written: string[] = [];
+    const bound = bindServices(env(), pem, createLogger({ write: (line) => written.push(line) }));
+
+    await expect(bound.access.kms.generateDataKey(otherKeyId, context)).rejects.toThrow();
+
+    expect(bound.access.kms).toBe(bound.auth.kms);
+    expect(written).toHaveLength(1);
+    expect(JSON.parse(written[0] ?? "{}")).toMatchObject({
+      message: "kms",
+      operation: "generate_data_key",
+      outcome: "rejected",
+    });
+  });
+
+  it("uses a real logger when none is passed", async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line: unknown) => {
+      lines.push(String(line));
+    });
+    const bound = bindServices(env(), pem);
+
+    await expect(
+      bound.auth.kms.decrypt(otherKeyId, new Uint8Array([1]), context),
+    ).rejects.toThrow();
+
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0] ?? "{}")).toMatchObject({ message: "kms", outcome: "rejected" });
   });
 });
