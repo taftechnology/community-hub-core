@@ -291,8 +291,8 @@ EOF
 - Create: `modules/core/entitlements/db/parked.test.ts`
 - Create: `modules/core/entitlements/public/index.ts`
 - Modify: `packages/db/drizzle.schema.ts`
-- Create: the generated journal entry under `packages/db/drizzle/`
-- Modify: `packages/db/drizzle/meta/_journal.json` and the generated snapshot
+- Create: two generated journal entries under `packages/db/drizzle/`: `0008_public_brother_voodoo` (widens the `custom_role_permissions` CHECK for `entitlements.view` and `entitlements.manage`) and `0009_flippant_bedlam` (creates the platform tables)
+- Modify: `packages/db/drizzle/meta/_journal.json` and the generated snapshots
 - Modify: `pnpm-workspace.yaml`
 - Modify: `turbo.json`
 - Modify: `pnpm-lock.yaml`
@@ -325,7 +325,7 @@ Copy the tenancy package's `tsconfig` files and Vitest config. `package.json` na
 
 `drizzle.schema.ts` imports `entitlementTables` and calls it with the existing `platform` schema. Export each table.
 
-From `packages/db`, run `pnpm exec drizzle-kit generate`. Commit the new SQL, the new snapshot, and the journal entry. Do not edit `0000` through `0007`. Do not hand-add row level security. If the feature-flag unique lacks `NULLS NOT DISTINCT`, hand-add that phrase on that one constraint and nowhere else. If a check is missing, fix `schema.ts` and generate again.
+From `packages/db`, run `pnpm exec drizzle-kit generate`. Commit the new SQL, the new snapshots, and the two journal entries (`0008_public_brother_voodoo` for the permission CHECK, `0009_flippant_bedlam` for the platform tables). Do not edit `0000` through `0007`. Do not hand-add row level security. If the feature-flag unique lacks `NULLS NOT DISTINCT`, hand-add that phrase on that one constraint and nowhere else. If a check is missing, fix `schema.ts` and generate again.
 
 `public/index.ts` exports `EntitlementError` only in this task.
 
