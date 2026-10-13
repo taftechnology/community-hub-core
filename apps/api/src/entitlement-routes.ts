@@ -251,6 +251,9 @@ export function entitlementRoutes(deps: EntitlementDeps): GateRoute[] {
         }),
       );
     } catch (error) {
+      if (error instanceof EntitlementError && error.code === "not_found") {
+        return finish(request, empty(404));
+      }
       if (
         error instanceof EntitlementError &&
         (error.code === "not_allocated" || error.code === "invalid_key")
