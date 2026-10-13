@@ -184,15 +184,17 @@ Shell variables and placeholders only, as in the rest of this file: never paste 
 
 ### Create
 
-The operator is prompted for each value, so none is typed as a command-line argument or left in shell history. The three values are assembled into JSON with `jq` and piped straight into `put-secret-value`; nothing is echoed, printed, or left in a variable that is later printed. The put output is discarded. End by unsetting the three prompted variables.
+The operator is prompted for each value, so none is typed as a command-line argument or left in shell history. The three values are assembled into JSON with `jq` and piped straight into `create-secret`; nothing is echoed, printed, or left in a variable that is later printed. The create output is discarded. End by unsetting the three prompted variables.
+
+This secret is never Terraform-managed, and **Delete and verify** below fully destroys it with `--force-delete-without-recovery`, so by the time this step runs again the secret genuinely does not exist. `put-secret-value` only writes a new version to an *already-existing* secret and would fail with `ResourceNotFoundException`; `create-secret` is the correct call every time this step runs. (Proof 7b's rotation uses `put-secret-value` because that secret is Terraform-managed and already exists — a different situation, not a precedent for this one.)
 
     read -r -p "Organisation slug: " ORG_SLUG
     read -r -p "Community slug: " COMMUNITY_SLUG
     read -r -p "Owner email: " OWNER_EMAIL
     jq -n --arg o "${ORG_SLUG}" --arg c "${COMMUNITY_SLUG}" --arg e "${OWNER_EMAIL}" \
       '{organisationSlug: $o, communitySlug: $c, email: $e}' \
-      | aws secretsmanager put-secret-value --profile ${AWS_PROFILE} \
-        --secret-id ${PROVISION_SECRET_NAME} --secret-string file:///dev/stdin >/dev/null
+      | aws secretsmanager create-secret --profile ${AWS_PROFILE} \
+        --name ${PROVISION_SECRET_NAME} --secret-string file:///dev/stdin >/dev/null
     unset ORG_SLUG COMMUNITY_SLUG OWNER_EMAIL
 
 `${PROVISION_SECRET_NAME}` is the one fixed name the task 5 Terraform grants on (`${name}-provision-owner`); its resolved value is never written here. The secret value carries the email, so it is `confidential`; it is deleted in **Delete and verify** immediately after the run.
