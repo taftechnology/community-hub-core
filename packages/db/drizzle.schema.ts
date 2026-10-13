@@ -1,4 +1,8 @@
 import { accessTables, rememberPersonKey } from "../../modules/core/access/db/schema.js";
+import {
+  entitlementTables,
+  rememberPlatformTables,
+} from "../../modules/core/entitlements/db/schema.js";
 import { identityTables } from "../../modules/core/identity/db/schema.js";
 import { peopleTables } from "../../modules/core/people/db/schema.js";
 import { platformTables } from "../../modules/core/tenancy/db/schema.js";
@@ -11,6 +15,23 @@ const platformRows = platformTables(platform);
 
 export const organisations = platformRows.organisations;
 export const communities = platformRows.communities;
+
+rememberPlatformTables({
+  organisationId: organisations.id,
+  communityId: communities.id,
+});
+const entitlementRows = entitlementTables(platform);
+
+export const plans = entitlementRows.plans;
+export const planEntitlements = entitlementRows.planEntitlements;
+export const addOns = entitlementRows.addOns;
+export const addOnEntitlements = entitlementRows.addOnEntitlements;
+export const organisationPlans = entitlementRows.organisationPlans;
+export const organisationAddOns = entitlementRows.organisationAddOns;
+export const communityAllocations = entitlementRows.communityAllocations;
+export const communityToggles = entitlementRows.communityToggles;
+export const entitlementOverrides = entitlementRows.entitlementOverrides;
+export const featureFlags = entitlementRows.featureFlags;
 
 const identityRows = identityTables(identity);
 

@@ -16,6 +16,7 @@ import { createLogger, type Logger } from "@community-hub/observability";
 
 import { authRoutes, type AuthDeps } from "./auth-routes.js";
 import { accessRoutes, type AccessDeps } from "./access-routes.js";
+import { entitlementRoutes, type EntitlementDeps } from "./entitlement-routes.js";
 import { createCheckout } from "./checkout.js";
 import { readServiceEnv, IMAGE_CERT_PATH, type ServiceEnv } from "./env.js";
 import { RoutesRejected, type GateRoute } from "./gate.js";
@@ -61,7 +62,12 @@ export function run(source: NodeJS.ProcessEnv, pem: string, routes: readonly Gat
     const bound = bindServices(read.env, pem);
     current = startServer({
       env: read.env,
-      routes: [...routes, ...authRoutes(bound.auth), ...accessRoutes(bound.access)],
+      routes: [
+        ...routes,
+        ...authRoutes(bound.auth),
+        ...accessRoutes(bound.access),
+        ...entitlementRoutes(bound.entitlements),
+      ],
     });
   } catch (error) {
     if (error instanceof RoutesRejected) {
@@ -95,7 +101,7 @@ export function bindServices(
   env: ServiceEnv,
   pem: string,
   logger: Logger = bootLogger,
-): { auth: AuthDeps; access: AccessDeps } {
+): { auth: AuthDeps; access: AccessDeps; entitlements: EntitlementDeps } {
   const checkout = createCheckout({
     passwords: {
       app: env.PGPASSWORD_APP,
@@ -161,12 +167,27 @@ export function bindServices(
       apiHostname: env.API_HOSTNAME,
       log: shared.log,
     },
+    entitlements: {
+      checkout: shared.checkout,
+      get kms() {
+        return shared.kms;
+      },
+      keyArn: shared.keyArn,
+      now: shared.now,
+      apiHostname: env.API_HOSTNAME,
+      log: shared.log,
+    },
   };
 }
 
 export function productionRoutes(env: ServiceEnv, pem: string): readonly GateRoute[] {
   const bound = bindServices(env, pem);
-  return [healthRoute, ...authRoutes(bound.auth), ...accessRoutes(bound.access)];
+  return [
+    healthRoute,
+    ...authRoutes(bound.auth),
+    ...accessRoutes(bound.access),
+    ...entitlementRoutes(bound.entitlements),
+  ];
 }
 
 const entry = process.argv[1];

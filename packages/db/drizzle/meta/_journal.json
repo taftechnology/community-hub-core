@@ -57,6 +57,20 @@
       "when": 1791792160316,
       "tag": "0007_fast_gorilla_man",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791816358567,
+      "tag": "0008_public_brother_voodoo",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791817899149,
+      "tag": "0009_flippant_bedlam",
+      "breakpoints": true
     }
   ]
 }

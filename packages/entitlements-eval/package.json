@@ -1,0 +1,26 @@
+{
+  "name": "@community-hub/entitlements-eval",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/src/evaluate.d.ts",
+      "import": "./dist/src/evaluate.js"
+    }
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --build && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run --config vitest.config.ts",
+    "build": "tsc --build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2",
+    "vitest": "^4.1.11"
+  }
+}

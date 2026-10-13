@@ -29,6 +29,8 @@ export const CATALOGUE_PERMISSIONS = [
   "access.roles.view",
   "access.roles.manage",
   "people.restricted.read",
+  "entitlements.view",
+  "entitlements.manage",
 ] as const;
 
 const KEY = /^[a-z][a-z0-9_]{1,31}$/;

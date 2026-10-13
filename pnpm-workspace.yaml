@@ -6,3 +6,4 @@ packages:
   - "modules/core/identity"
   - "modules/core/people"
   - "modules/core/access"
+  - "modules/core/entitlements"

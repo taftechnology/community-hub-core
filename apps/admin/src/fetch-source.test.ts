@@ -13,7 +13,7 @@ export function fileCallsFetch(filePath: string): boolean {
   return fs.readFileSync(filePath, "utf8").includes("fetch(");
 }
 
-const allowedFetch = new Set(["sign-in.tsx", "users-roles.tsx"]);
+const allowedFetch = new Set(["sign-in.tsx", "users-roles.tsx", "module-toggles.tsx"]);
 
 function scanSource(dir: string): string[] {
   const hits: string[] = [];
@@ -34,7 +34,7 @@ function scanSource(dir: string): string[] {
   return hits;
 }
 
-it("allows fetch only on sign-in and users and roles", () => {
+it("allows fetch only on sign-in, users and roles, and module toggles", () => {
   expect(scanSource(srcDir)).toEqual([]);
   expect(fileCallsFetch(path.join(srcDir, "shell.tsx"))).toBe(false);
   expect(fileCallsFetch(path.join(srcDir, "nav.tsx"))).toBe(false);

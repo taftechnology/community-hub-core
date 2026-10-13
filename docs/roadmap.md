@@ -21,7 +21,7 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 |              |                                                                   |
 | ------------ | ----------------------------------------------------------------- |
 | Phase        | 1 — Core platform                                                 |
-| Last shipped | `db-migrate-command`                                              |
+| Last shipped | `entitlements-plans`                                              |
 | Next chunk   | `staging-proof-run`                                               |
 | Phase 0      | 25 rows: 24 done, 1 superseded (`api-au-hostname`), 0 not started |
 | Later phases | not started                                                       |
@@ -95,7 +95,7 @@ Architecture: monorepo, CI, Terraform for AWS in `ap-southeast-2`, kernel, db wi
 | done       | `service-image-runtime-base` | The service image final stage has no package manager. `gnutls28` is not in the runtime. Spec `docs/specs/2026-10-10-service-image-runtime-base.md`.                                                                                                                                                                                                                                                                                                                                |
 | done       | `db-migrate-command`         | The image gains `/app/db-migrate.js`, which applies the product migrations as the master login, refuses to run before `db-bootstrap`, and prints the tags it applied. It has not been run on staging. Spec `docs/specs/2026-10-12-db-migrate-command.md`.                                                                                                                                                                                                                          |
 
-Next is `staging-proof-run`.
+Next is `staging-proof-run`. `stripe-billing` comes after it.
 
 SQS, EventBridge, file storage, and the admin static-file distribution are not rows here. Each waits for the first chunk that uses it.
 
@@ -116,7 +116,7 @@ Vertical slices. Nav items appear in the frozen order (see [Admin navigation](#a
 | done        | `identity-otp`         | The regional service. OTP and passkeys as designed. No email on a gateway. Spec `docs/specs/2026-10-11-identity-otp.md`.                                              |
 | done        | `people-households`    | Person, Household, GuardianLink, `is_minor`. Tags + activity log land here. Spec `docs/specs/2026-10-11-people-households.md`.                                        |
 | done        | `access-roles`         | Settings → Users & Roles. Spec `docs/specs/2026-10-12-access-roles.md`.                                                                                               |
-| not started | `entitlements-plans`   | Plans and allocations in the `platform` schema. Not a D1 control plane. Community toggles; nav hide/show. How a request sees them is Q14.                             |
+| done        | `entitlements-plans`   | Plans and allocations in the platform schema. Community toggles; nav hide/show. Spec docs/specs/2026-10-12-entitlements-plans.md.                                     |
 | not started | `stripe-billing`       | Our subscriptions. Webhooks on the Sydney hostname. The regional service does the work. Not `exec`. Not GivingJar.                                                    |
 | not started | `ops-console`          | Routes on the regional service. Passkeys. The `platform` role has no `app` privileges. No Cloudflare Access.                                                          |
 | not started | `usage-facts`          | `core/usage` skeleton (community × feature × day). Facts grow as modules ship.                                                                                        |
@@ -253,13 +253,15 @@ Startup does not prove the database or KMS, `GET /health` opens neither, and a r
 
 The access routes derive both ids from `findCommunityBySlug`. `withAppTransaction` does not verify that a community belongs to an organisation. Later routes follow the same directory lookup and never take either id from request input.
 
+`readSnapshot` in `core/entitlements` does not verify that the community belongs to the organisation; the routes always pass a matching pair from one lookup, so it is hardening, not a defect.
+
 This image has not run on Fargate. The next chunk that unparks staging re-runs the health check, the `/tmp` write one-off, and the ops task before the service is relied on.
 
 ---
 
 ## Next spec
 
-The next approved chunk on this list is **staging-proof-run**.
+The next approved chunk on this list is **staging-proof-run**. `stripe-billing` comes after it.
 
 ---
 

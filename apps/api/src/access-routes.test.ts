@@ -250,6 +250,8 @@ describe("access routes", () => {
       "access.roles.view",
       "access.roles.manage",
       "people.restricted.read",
+      "entitlements.view",
+      "entitlements.manage",
     ]);
     expect(body.grants).toEqual([
       {

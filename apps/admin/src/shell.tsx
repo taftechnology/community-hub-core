@@ -4,6 +4,7 @@ import { createBrowserRouter, Outlet, RouterProvider } from "react-router";
 import { labels } from "./labels";
 import { AdminNav } from "./nav";
 import { SignInPage } from "./sign-in";
+import { ModuleTogglesPage } from "./module-toggles";
 import { UsersRolesPage } from "./users-roles";
 
 function DashboardPage() {
@@ -45,6 +46,7 @@ export const router = createBrowserRouter([
       { index: true, element: <DashboardPage /> },
       { path: "sign-in", element: <SignInPage /> },
       { path: "settings/users", element: <UsersRolesPage /> },
+      { path: "settings/modules", element: <ModuleTogglesPage /> },
     ],
   },
 ]);

@@ -147,4 +147,15 @@ describe("access grant tables", () => {
       expect(permissionCheck[0], permission).toContain(permission);
     }
   });
+
+  it("widens the custom_role_permissions CHECK for entitlements permissions", () => {
+    const files = readdirSync(DRIZZLE).filter(
+      (name) => name.startsWith("0008_") && name.endsWith(".sql"),
+    );
+    expect(files).toHaveLength(1);
+    const sql = readFileSync(path.join(DRIZZLE, files[0] ?? ""), "utf8");
+    expect(sql).toContain("custom_role_permissions_permission");
+    expect(sql).toContain("entitlements.view");
+    expect(sql).toContain("entitlements.manage");
+  });
 });

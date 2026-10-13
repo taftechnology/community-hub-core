@@ -24,10 +24,11 @@ defineAuditPurpose("people.restricted.read");
 export { AccessError } from "../domain/error.js";
 export { createCustomRole, deleteCustomRole } from "../infrastructure/custom-roles.js";
 export {
-  bootstrapOwner,
   grantRole,
-  linkUser,
   revokeRole,
+  bootstrapOwner,
+  linkUser,
   unlinkUser,
 } from "../infrastructure/grants.js";
+export { holdsPermission } from "../infrastructure/holds-permission.js";
 export { readPersonForActor } from "../infrastructure/restricted-read.js";
