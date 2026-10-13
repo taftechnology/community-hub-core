@@ -102,7 +102,7 @@ Record that SHA. Then terraform plan shows no changes. The plan still contains t
 
 A stopped database is still not parking. A VPC link with no traffic for 60 days becomes `INACTIVE`.
 
-Unpark happened in `first-running-task`, and staging is parked again. Do not unpark from this sentence. A later unpark uses the database ops task and needs a fresh image scan with no CRITICAL finding before any apply.
+Unpark happened in `first-running-task` and again in `staging-proof-run`. Staging is parked again. Do not unpark from this sentence. A later unpark follows **Staging proof run** below (pre-checks, apply 1, apply 2, proofs, then re-park) and needs a fresh image scan with no CRITICAL finding before any apply.
 
 ### Park apply
 
@@ -656,6 +656,29 @@ Use "the api hostname", "the auth hostname" and "the admin origin" in every evid
 - **Proof 8c:** pass (owner browser). Home shows Dashboard with Settings links; Users & Roles and Module Toggles show heading, `Sign in required` and Sign in link; after Send code: `Sign-in failed`. Service log: `OPTIONS` 204 then `POST /v1/auth/email-otp/start` 503, twice. Direct loads of `/sign-in`, `/settings/users` and `/settings/modules`: 403 each.
 - **Proof 9:** pass. Service log 177 lines, tenant API access log 33 lines. Count 0 in both for: `proof` followed by hex, `@`, `Bearer`, both synthetic local parts, the test domain, the community slug placeholder, `identity.`, `password`, `secret`. Eight digits: 11 lines in the service log, every one inside `requestId` only; 0 in the access log. Request statuses: 200 ×118, 204 ×6, 400 ×2, 401 ×5, 404 ×7, 503 ×7. `kms` lines: `decrypt` `ok` ×9, `generate_data_key` `ok` ×1. No `errorClass`. No `hostname` field. Access log: no integration error.
 - No request returned 500 at any point in the run.
+- **Proof 10 (re-park)** at commit `c2bfd97`, 2026-10-13 UTC. No `service_image` in the gitignored file (line removed; count-only grep showed 0). Saved plan outside the repository, then apply that file. Plan: 0 to add, 0 to change, 18 to destroy:
+  - delete `aws_ecs_task_definition.db_ops[0]`
+  - delete `aws_iam_role.db_ops_execution[0]`
+  - delete `aws_iam_role.db_ops_task[0]`
+  - delete `aws_iam_role_policy.db_ops_execution[0]`
+  - delete `module.ingress.aws_ecs_cluster.this[0]`
+  - delete `module.ingress.aws_ecs_cluster_capacity_providers.this[0]`
+  - delete `module.ingress.aws_ecs_service.this[0]`
+  - delete `module.ingress.aws_ecs_task_definition.this[0]`
+  - delete `module.ingress.aws_iam_role_policy.pull[0]`
+  - delete `module.ingress.aws_vpc_security_group_ingress_rule.task_api[0]`
+  - delete `module.rds[0].aws_cloudwatch_metric_alarm.cpu_credit_balance`
+  - delete `module.rds[0].aws_cloudwatch_metric_alarm.database_connections`
+  - delete `module.rds[0].aws_cloudwatch_metric_alarm.free_storage_space`
+  - delete `module.rds[0].aws_cloudwatch_metric_alarm.freeable_memory`
+  - delete `module.rds[0].aws_db_instance.this`
+  - delete `module.rds[0].aws_db_parameter_group.this`
+  - delete `module.rds[0].aws_db_subnet_group.this`
+  - delete `module.rds[0].terraform_data.prod_protection`
+  - Apply started at about 04:56Z and completed at about 05:00Z: 0 added, 0 changed, 18 destroyed. The service took 1m43s to destroy and the database instance 1m53s. A plan straight afterwards showed no changes. Read-only checks at 05:01Z: database instances 0, snapshots 0, automated backups 0; ECS clusters 0; RDS alarms 0, the one other staging alarm still present; interface endpoints 0, NAT gateways 0, public IPv4 addresses in use 0, load balancers 0; ops roles 0; secrets 3 (the three role secrets; the RDS-managed master secret is gone); budget 1; alert topic 1. The api hostname `/health` answers 500, as it does whenever staging is parked. The three saved plan files were deleted by the owner.
+- **Apply history for this chunk:** apply 1 at `c88d6f3`, completed about 03:44Z; apply 2 at `c88d6f3` with the image in the gitignored file, completed about 03:50Z; re-park at `c2bfd97`, completed about 05:00Z.
+- **Window:** about 1 hour 15 minutes from the cost anchor (03:44Z) to the start of the re-park apply, against a 24-hour target and a 48-hour hard stop. At the spec's rate of USD 0.0468 an hour that is about USD 0.06, with the one-off tasks and per-use lines outside the total as the spec says.
+- The identity secret was changed three times during proof 7b and now holds the last value; the database it matched is destroyed. The next unpark's `db-bootstrap` sets the role passwords from the secrets, so nothing needs correcting.
 
 ### Findings from the 2026-10-13 run
 
