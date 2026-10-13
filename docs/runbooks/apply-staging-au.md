@@ -188,17 +188,19 @@ Every one-off this section defines (2a, 2b, 2c, both row-count commands, and the
 
 Hold `${DEPLOY_SHA}` as the latest `main` SHA that contains `db-migrate-command`, `fix/2026-10-12-request-error-log`, and `entitlements-plans` (`cd19f0b` or later). Confirm all three are on that SHA. Never record registry hosts or URLs.
 
-1. Publish and admin-publish conclusions for that commit (record conclusion only):
+1. Publish and admin-publish conclusions for that commit (record conclusion only). Hold the run id for that commit, then print the two jobs' conclusions. Expected: both `success`.
 
-   gh run list --commit ${DEPLOY_SHA} --workflow ci.yml --json name,conclusion,databaseId --jq '.[] | select(.name=="publish" or .name=="admin-publish") | {name,conclusion}'
+   RUN_ID=$(gh run list --commit ${DEPLOY_SHA} --workflow ci.yml --json databaseId --jq '.[0].databaseId')
+
+   gh run view ${RUN_ID} --json jobs --jq '.jobs[] | select(.name=="publish" or .name=="admin-publish") | {name,conclusion}'
 
 2. Image digest for that tag (record the digest only; never the registry host). Repository name is `ch-staging/service` (`infra/modules/aws-ingress/main.tf`):
 
    aws ecr describe-images --profile ${AWS_PROFILE} --repository-name ch-staging/service --image-ids imageTag=${DEPLOY_SHA} --query 'imageDetails[0].imageDigest' --output text
 
-3. Scan status and CRITICAL count for that tag (record status and the CRITICAL count only):
+3. Scan status and CRITICAL count for that tag (record status and the CRITICAL count only). An absent CRITICAL count means zero findings of that severity.
 
-   aws ecr describe-image-scan-findings --profile ${AWS_PROFILE} --repository-name ch-staging/service --image-id imageTag=${DEPLOY_SHA} --query '{status:imageScanStatus.status,critical:imageScanFindings.findingSeverityCounts.CRITICAL}' --output json
+   aws ecr describe-image-scan-findings --profile ${AWS_PROFILE} --repository-name ch-staging/service --image-id imageTag=${DEPLOY_SHA} --query '{status:imageScanStatus.status,critical:imageScanFindings.findingSeverityCounts.CRITICAL || `0`}' --output json
 
 4. Confirm repository variables `ADMIN_API_ORIGIN` and `ADMIN_AUTH_ORIGIN` are set. Record "both origins present" and "no placeholder"; never URLs.
 
@@ -450,11 +452,15 @@ Next: the three **After a db-ops-container one-off** commands.
 
 ### Proof 7a
 
-Hold `${TASK_ROLE_ARN}`, `${APP_SECRET_ARN}`, `${IDENTITY_SECRET_ARN}`, `${PLATFORM_SECRET_ARN}`, and `${SECRETS_KEY_ARN}` from read-only describes / Terraform outputs (never recorded). Assistant tries `iam:SimulatePrincipalPolicy` once:
+Hold `${TASK_ROLE_ARN}`, `${APP_SECRET_ARN}`, `${IDENTITY_SECRET_ARN}`, `${PLATFORM_SECRET_ARN}`, and `${SECRETS_KEY_ARN}` from read-only describes / Terraform outputs (never recorded). Assistant tries `iam:SimulatePrincipalPolicy` in two calls and records the decisions only:
 
-    aws iam simulate-principal-policy --profile ${AWS_PROFILE} --policy-source-arn ${TASK_ROLE_ARN} --action-names secretsmanager:GetSecretValue kms:Decrypt --resource-arns ${APP_SECRET_ARN} ${IDENTITY_SECRET_ARN} ${PLATFORM_SECRET_ARN} ${SECRETS_KEY_ARN} --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text
+    aws iam simulate-principal-policy --profile ${AWS_PROFILE} --policy-source-arn ${TASK_ROLE_ARN} --action-names secretsmanager:GetSecretValue --resource-arns ${APP_SECRET_ARN} ${IDENTITY_SECRET_ARN} ${PLATFORM_SECRET_ARN} --query 'EvaluationResults[0].ResourceSpecificResults[].EvalResourceDecision' --output text
 
-Expected: `allowed` for `secretsmanager:GetSecretValue` on each of the three database secrets and for `kms:Decrypt` on the secrets key (four allowed decisions covering those action/resource pairs). If the call is refused, the human pastes a table of action and effect per statement from the attached policy, with each resource shown as redacted; the assistant reads that table against the same four actions.
+Expected: `allowed allowed allowed`.
+
+    aws iam simulate-principal-policy --profile ${AWS_PROFILE} --policy-source-arn ${TASK_ROLE_ARN} --action-names kms:Decrypt --resource-arns ${SECRETS_KEY_ARN} --query 'EvaluationResults[0].EvalDecision' --output text
+
+Expected: `allowed`. If either call is refused, the human pastes a table of action and effect per statement from the attached policy, with each resource shown as redacted; the assistant reads that table against `secretsmanager:GetSecretValue` on the three database secrets and `kms:Decrypt` on the secrets key.
 
 Then the owner runs a one-off of the **service** task definition (task role, not the execution role). The service container already has `IDENTITY_SECRET_ARN` in its environment (`infra/modules/aws-ingress/main.tf`). Confirm the name with `describe-task-definition` if needed; never record the value. The command calls `GetSecretValue` with `VersionStage` `AWSCURRENT` via `@aws-sdk/client-secrets-manager` and prints `pass` only when a non-empty string comes back. On any failure: stdout empty, stderr exactly `fail`, exit 1.
 
@@ -501,11 +507,11 @@ Order: after proofs 5 and 6b and 6f and **Row counts (counts only)**. The rotati
 
 Download the service log group (stream prefixes `service` and `db-ops`):
 
-    aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${LOG_START_MS} --end-time ${LOG_END_MS} --query 'events[].message' --output text > ${SCRATCH_SERVICE_LOGS}
+    aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${LOG_START_MS} --end-time ${LOG_END_MS} --query 'events[].message' --output text | tr '\t' '\n' > ${SCRATCH_SERVICE_LOGS}
 
 Download the tenant API access log group:
 
-    aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${API_ACCESS_LOG_GROUP} --start-time ${LOG_START_MS} --end-time ${LOG_END_MS} --query 'events[].message' --output text > ${SCRATCH_API_ACCESS_LOGS}
+    aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${API_ACCESS_LOG_GROUP} --start-time ${LOG_START_MS} --end-time ${LOG_END_MS} --query 'events[].message' --output text | tr '\t' '\n' > ${SCRATCH_API_ACCESS_LOGS}
 
 Run each search below on both scratch files (pass = count `0`, unless every hit is only inside `errorClass`, `errorCode`, `requestId`, or `gatewayRequestId` on a `request` or `kms` line — those hits are read by eye; record the field name, never the line). Hold `${SYNTHETIC_LOCAL}` as the synthetic address's local part for the run (never recorded in evidence). Hold `${COMMUNITY_SLUG}` as `proof-run-no-community`.
 
