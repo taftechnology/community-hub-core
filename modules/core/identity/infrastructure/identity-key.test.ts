@@ -19,4 +19,13 @@ describe("identity key source", () => {
     expect(user).not.toMatch(/\bSET\b/);
     expect(user).not.toMatch(/where email/);
   });
+
+  it("looks up identity.users by the blind index only, never the raw email column", () => {
+    const lookup = source("email-lookup.ts");
+    // The shared helper reads and writes identity.users, so it must only ever
+    // filter on the blind index, never on the ciphertext `email` column itself.
+    expect(lookup).toMatch(/email_bidx/);
+    expect(lookup).not.toMatch(/where email /);
+    expect(lookup).not.toMatch(/and email /);
+  });
 });
