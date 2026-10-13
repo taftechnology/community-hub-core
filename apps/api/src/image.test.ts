@@ -118,13 +118,16 @@ describe("service image build", () => {
       .split("\n")
       .find((line) => line.includes("pnpm --filter") && line.trimEnd().endsWith(" build"));
     expect(build).toBeDefined();
+    const filters = [...(build?.matchAll(/--filter\s+(\S+)/g) ?? [])].map((match) => match[1]);
     for (const name of [
       "@community-hub/policy",
       "@community-hub/tenancy",
       "@community-hub/people",
       "@community-hub/access",
+      "@community-hub/entitlements-eval",
+      "@community-hub/entitlements",
     ]) {
-      expect(build, name).toContain(`--filter ${name}`);
+      expect(filters, name).toContain(name);
     }
   });
 });
