@@ -263,6 +263,94 @@ describe("links, bootstrap, and grants", () => {
     });
   });
 
+  it("finds the owner from an organisation-level grant alone", async () => {
+    await withParish("grant-find-owner-org-only", async (tx) => {
+      const owner = newId();
+      await tx`
+        insert into app.organisation_role_grants (id, org_id, user_id, role_key)
+        values (
+          ${newId()}::uuid,
+          current_setting('app.org_id')::uuid,
+          ${owner}::uuid,
+          'org_owner'
+        )
+      `;
+      const community = await tx<{ n: number }[]>`
+        select count(*)::int as n from app.community_role_grants
+      `;
+      expect(community).toEqual([{ n: 0 }]);
+      expect(await findOwner(tx)).toEqual({ userId: owner });
+    });
+  });
+
+  it("falls back to a community-level grant when no organisation-level grant exists", async () => {
+    await withParish("grant-find-owner-community-only", async (tx) => {
+      const owner = newId();
+      await tx`
+        insert into app.community_role_grants (
+          id, org_id, community_id, user_id, role_key, custom_role_id
+        ) values (
+          ${newId()}::uuid,
+          current_setting('app.org_id')::uuid,
+          current_setting('app.community_id')::uuid,
+          ${owner}::uuid,
+          'community_admin',
+          null
+        )
+      `;
+      const organisation = await tx<{ n: number }[]>`
+        select count(*)::int as n from app.organisation_role_grants
+      `;
+      expect(organisation).toEqual([{ n: 0 }]);
+      expect(await findOwner(tx)).toEqual({ userId: owner });
+    });
+  });
+
+  it("does not find an owner bootstrapped in a different organisation", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const organisationId = newId();
+    const communityId = newId();
+    const otherOrg = newId();
+    const otherCommunity = newId();
+    try {
+      await platform.begin(async (platformTx) => {
+        await platformTx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, 'grant-find-owner-tenant-a', 'au', 'implicit')
+        `;
+        await platformTx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, 'grant-find-owner-tenant-a', 'au')
+        `;
+        await platformTx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${otherOrg}, 'grant-find-owner-tenant-b', 'au', 'implicit')
+        `;
+        await platformTx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${otherCommunity}, ${otherOrg}, 'grant-find-owner-tenant-b', 'au')
+        `;
+      });
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const owner = newId();
+          await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+          expect(await findOwner(tx)).toEqual({ userId: owner });
+        }),
+      );
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: otherOrg, communityId: otherCommunity }, async (tx) => {
+          expect(await findOwner(tx)).toBeNull();
+        }),
+      );
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
+
   it("refuses a link and an unlink without users.manage", async () => {
     await withParish("grant-link-permission", async (tx, kms) => {
       const people = await householdWithPeople(tx, kms);
