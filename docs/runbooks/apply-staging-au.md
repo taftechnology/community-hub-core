@@ -222,22 +222,53 @@ Run the checks under **Before each apply** above: clean tree, `git rev-parse HEA
 
 Profile `${AWS_PROFILE}` (default `ch-admin`). Region `ap-southeast-2`. From `infra/regions/au`.
 
+Hold `${PLAN_FILE}` as a path outside this repository. The plan file holds sensitive values. It lives outside the repository and is deleted after the apply.
+
 **Apply 1 (owner)** — Task 2 SHA, no `service_image` in either var file.
 
 1. Run the before-each-apply checks.
 2. `terraform init -backend-config=backend/staging.hcl -lockfile=readonly`
-3. Plan with both var files. Paste add/change/destroy counts and Terraform resource addresses with action only. Expected: eight `module.rds[0]` creates, nothing else.
-4. **Stop** if the plan changes `module.admin_static[0].aws_cloudfront_response_headers_policy.admin` or `module.ingress.aws_apigatewayv2_api.tenant`, or if the counts differ from eight RDS creates. Reconcile state first; the cost window has not started.
-5. Apply with the same var files. Record the UTC completion time under **Cost anchor**.
-6. Wait until the RDS instance status is `available` (read-only describe; do not record identifiers).
+3. Plan to the saved file. Only the summary line is shown. Expected: eight `module.rds[0]` creates, nothing else.
 
-**Abandoning after apply 1 only** (apply 2 never ran): commit and push the re-park flags (`enable_database = false`, `desired_count = 0`), leave no `service_image` in the gitignored file, then apply. Expect the eight database resources under `module.rds[0]` destroyed.
+   terraform plan -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -out=${PLAN_FILE} -input=false | grep --line-buffered '^Plan:'
+
+4. List addresses and actions from that file:
+
+   terraform show -json ${PLAN_FILE} | jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | "\(.change.actions | join(" ")) \(.address)"'
+
+5. **Stop** if the plan changes `module.admin_static[0].aws_cloudfront_response_headers_policy.admin` or `module.ingress.aws_apigatewayv2_api.tenant`, or if the counts differ from eight RDS creates. Reconcile state first; the cost window has not started.
+6. Apply that file. Progress lines show as they happen; resource ids are stripped. Record the UTC completion time under **Cost anchor**.
+
+   terraform apply -input=false ${PLAN_FILE} | grep --line-buffered -E ': (Creating|Still creating|Creation complete|Modifying|Still modifying|Modification complete|Destroying|Still destroying|Destruction complete)|Apply complete' | sed -l -E 's/ \[id=[^]]+\]//'
+
+7. Delete the plan file:
+
+   rm -f ${PLAN_FILE}
+
+8. Wait until the RDS instance status is `available` (read-only describe; do not record identifiers).
+
+**Abandoning after apply 1 only** (apply 2 never ran): commit and push the re-park flags (`enable_database = false`, `desired_count = 0`), leave no `service_image` in the gitignored file, then plan and apply with the same saved-plan method above. Expect the eight database resources under `module.rds[0]` destroyed.
 
 **Apply 2 (owner)** — digest in the gitignored `staging.local.tfvars` only.
 
 1. Set `service_image` to the digest URI from the pre-check (`<registry>/ch-staging/service@sha256:<digest>`). The registry host stays only in that gitignored file.
-2. Plan and apply. Expected: exactly ten new ECS-related resources (cluster, capacity providers, service task definition, service, ECR pull policy, task API ingress rule, ops task definition, ops execution role, ops task role, ops execution policy). **Stop** if the plan shows anything else.
-3. Wait until the ECS service is stable and the VPC link name `ch-staging-link` is `AVAILABLE`.
+2. Plan to the saved file. Only the summary line is shown. Expected: exactly ten new ECS-related resources (cluster, capacity providers, service task definition, service, ECR pull policy, task API ingress rule, ops task definition, ops execution role, ops task role, ops execution policy). **Stop** if the plan shows anything else.
+
+   terraform plan -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -out=${PLAN_FILE} -input=false | grep --line-buffered '^Plan:'
+
+3. List addresses and actions from that file:
+
+   terraform show -json ${PLAN_FILE} | jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | "\(.change.actions | join(" ")) \(.address)"'
+
+4. Apply that file. Progress lines show as they happen; resource ids are stripped.
+
+   terraform apply -input=false ${PLAN_FILE} | grep --line-buffered -E ': (Creating|Still creating|Creation complete|Modifying|Still modifying|Modification complete|Destroying|Still destroying|Destruction complete)|Apply complete' | sed -l -E 's/ \[id=[^]]+\]//'
+
+5. Delete the plan file:
+
+   rm -f ${PLAN_FILE}
+
+6. Wait until the ECS service is stable and the VPC link name `ch-staging-link` is `AVAILABLE`.
 
 ### Retrospective record (CSP and CORS, 2026-10-12)
 
@@ -260,7 +291,7 @@ Hold these in the shell. Never record their values.
 | `${API_ACCESS_LOG_GROUP}`    | Tenant API access log group `/community-hub/ch-staging/api-access`                                                           |
 | `${API_HOSTNAME}`            | Api hostname from Terraform / DNS (never recorded; say "the api hostname" in evidence)                                       |
 
-Same network pattern as **Apply product migrations**: task security group, staging public subnet, public address. Command override only; do not set `entryPoint`. Service container name is `service` (`awslogs-stream-prefix` `service`). Ops container name is `db-ops` (`awslogs-stream-prefix` `db-ops`). After each one-off, wait stopped, describe the exit code, and read the log stream. The stopped reason is read and never pasted when it can name a registry or a secret.
+Same network pattern as **Apply product migrations**: task security group, staging public subnet, public address. Command override only; do not set `entryPoint`. Service container name is `service` (`awslogs-stream-prefix` `service`). Ops container name is `db-ops` (`awslogs-stream-prefix` `db-ops`). Each start command ends with `&& print ${#TASK_ARN}`; the number printed is the length of the task id. After each one-off, wait stopped, describe the exit code, and read the log stream. The stopped reason is read and never pasted when it can name a registry or a secret.
 
 **After a service-container one-off** (2a, 2b, 2c, 2e, 7a), run these three in order:
 
@@ -325,7 +356,7 @@ Owner runs each `aws ecs run-task`. Assistant reads exit codes and log lines. Do
       --launch-type FARGATE \
       --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
       --overrides '{"containerOverrides":[{"name":"service","command":["node","--input-type=module","-e","import{writeFileSync}from'\''node:fs'\'';try{writeFileSync('\''/tmp/proof-write'\'','\''ok'\'');}catch{console.error('\''fail'\'');process.exit(1);}"]}]}' \
-      --query 'tasks[0].taskArn' --output text)
+      --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
 
 Next: the three **After a service-container one-off** commands.
 
@@ -338,7 +369,7 @@ Next: the three **After a service-container one-off** commands.
       --launch-type FARGATE \
       --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
       --overrides '{"containerOverrides":[{"name":"service","command":["node","--input-type=module","-e","try{console.log(String(process.getuid())+'\'' '\''+String(process.getgid()));}catch{console.error('\''fail'\'');process.exit(1);}"]}]}' \
-      --query 'tasks[0].taskArn' --output text)
+      --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
 
 Next: the three **After a service-container one-off** commands.
 
@@ -351,7 +382,7 @@ Next: the three **After a service-container one-off** commands.
       --launch-type FARGATE \
       --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
       --overrides '{"containerOverrides":[{"name":"service","command":["node","--input-type=module","-e","import{writeFileSync}from'\''node:fs'\'';try{writeFileSync('\''/app/proof-write'\'','\''ok'\'');console.error('\''fail'\'');process.exit(1);}catch{}"]}]}' \
-      --query 'tasks[0].taskArn' --output text)
+      --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
 
 Next: the three **After a service-container one-off** commands.
 
@@ -364,7 +395,7 @@ Next: the three **After a service-container one-off** commands.
       --launch-type FARGATE \
       --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
       --overrides '{"containerOverrides":[{"name":"db-ops","command":["node","/app/db-bootstrap.js"]}]}' \
-      --query 'tasks[0].taskArn' --output text)
+      --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
 
 Next: the three **After a db-ops-container one-off** commands.
 
@@ -377,7 +408,7 @@ Next: the three **After a db-ops-container one-off** commands.
       --launch-type FARGATE \
       --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
       --overrides '{"containerOverrides":[{"name":"service","command":["node","/app/probe.js"]}]}' \
-      --query 'tasks[0].taskArn' --output text)
+      --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
 
 Next: the three **After a service-container one-off** commands.
 
@@ -433,7 +464,7 @@ Do not run these one-offs until both valid sign-in-code requests have returned 5
       --launch-type FARGATE \
       --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
       --overrides '{"containerOverrides":[{"name":"db-ops","command":["node","--input-type=module","-e","import{createDirectSql}from'\''@community-hub/db'\'';import{readFileSync}from'\''node:fs'\'';try{const pem=readFileSync('\''/app/certs/rds-ap-southeast-2-bundle.pem'\'','\''utf8'\'');const e=process.env;const sql=createDirectSql({host:e.PGHOST,port:Number(e.PGPORT),database:e.PGDATABASE,user:'\''identity'\'',password:e.PGPASSWORD_IDENTITY,ca:pem});const t=['\''identity_keys'\'','\''otp_challenges'\'','\''users'\'','\''sessions'\'','\''passkey_challenges'\'','\''passkey_credentials'\''];const o=[];for(const n of t){const r=await sql.unsafe('\''select count(*)::int c from identity.'\''+n);o.push(r[0].c);}console.log(o.join('\'' '\''));await sql.end({timeout:1});}catch{console.error('\''fail'\'');process.exit(1);}"]}]}' \
-      --query 'tasks[0].taskArn' --output text)
+      --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
 
 Next: the three **After a db-ops-container one-off** commands.
 
@@ -446,7 +477,7 @@ Next: the three **After a db-ops-container one-off** commands.
       --launch-type FARGATE \
       --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
       --overrides '{"containerOverrides":[{"name":"db-ops","command":["node","--input-type=module","-e","import{createDirectSql}from'\''@community-hub/db'\'';import{readFileSync}from'\''node:fs'\'';try{const pem=readFileSync('\''/app/certs/rds-ap-southeast-2-bundle.pem'\'','\''utf8'\'');const e=process.env;const sql=createDirectSql({host:e.PGHOST,port:Number(e.PGPORT),database:e.PGDATABASE,user:'\''platform'\'',password:e.PGPASSWORD_PLATFORM,ca:pem});const t=['\''organisations'\'','\''communities'\'','\''plans'\'','\''plan_entitlements'\'','\''add_ons'\'','\''add_on_entitlements'\'','\''organisation_plans'\'','\''organisation_add_ons'\'','\''community_allocations'\'','\''community_toggles'\'','\''entitlement_overrides'\'','\''feature_flags'\''];const o=[];for(const n of t){const r=await sql.unsafe('\''select count(*)::int c from platform.'\''+n);o.push(r[0].c);}console.log(o.join('\'' '\''));await sql.end({timeout:1});}catch{console.error('\''fail'\'');process.exit(1);}"]}]}' \
-      --query 'tasks[0].taskArn' --output text)
+      --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
 
 Next: the three **After a db-ops-container one-off** commands.
 
@@ -471,7 +502,7 @@ Then the owner runs a one-off of the **service** task definition (task role, not
       --launch-type FARGATE \
       --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
       --overrides '{"containerOverrides":[{"name":"service","command":["node","--input-type=module","-e","import{GetSecretValueCommand,SecretsManagerClient}from'\''@aws-sdk/client-secrets-manager'\'';try{const id=process.env.IDENTITY_SECRET_ARN;if(!id)throw 0;const r=await new SecretsManagerClient({}).send(new GetSecretValueCommand({SecretId:id,VersionStage:'\''AWSCURRENT'\''}));if(typeof r.SecretString!=='\''string'\''||r.SecretString.length===0)throw 0;console.log('\''pass'\'');}catch{console.error('\''fail'\'');process.exit(1);}"]}]}' \
-      --query 'tasks[0].taskArn' --output text)
+      --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
 
 Next: the three **After a service-container one-off** commands.
 
@@ -480,6 +511,10 @@ Next: the three **After a service-container one-off** commands.
 ### Proof 7b
 
 Order: after proofs 5 and 6b and 6f and **Row counts (counts only)**. The rotation must never display a secret. The identity secret's string is a bare password (not JSON): Terraform writes `secret_string_wo` from `ephemeral.random_password` with `length = 32` and `special = false` (`infra/modules/aws-db-secrets/main.tf`). **Change a database role** applies a later password by running the ops bootstrap task after the secret changes; it does not open a master session.
+
+**Warnings (read before acting):** send no request to the service between the forced deployment and the post-rotation request — an open pooled connection survives the password change and the re-read is not demonstrated. After the bootstrap, confirm the service task is the one that was running before the secret change; if it was replaced, start again from the forced deployment (a replacement task starts with the new password). Read-only command that shows the running service task's start time without printing an id (hold the task ARN in `${TASK_ARN}` from a list-tasks query, never record it):
+
+    aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN} --query 'tasks[0].startedAt' --output text
 
 1. Owner forces a new deployment of the service and waits until it is stable, so the pool is empty and start-time environment holds the current password:
 
@@ -572,6 +607,67 @@ The repository never commits an account id, ARN, hostname, registry host, secret
 - **Synthetic email address:** never written into the runbook, the pull request or a commit.
 
 Use "the api hostname", "the auth hostname" and "the admin origin" in every evidence note.
+
+### Evidence (2026-10-13)
+
+- Deploy commit (image): `cd19f0b`. Image digest `sha256:4c4515f95a20ac24950df43b297257be2ece3ede1b79b6a10203ddefde07e50c`.
+- Pre-checks: `publish` success, `admin-publish` success, scan `COMPLETE` with no findings (CRITICAL 0), ten journal tags `0000_schemas` to `0009_flippant_bedlam`; repository variables: both origins present, no placeholder.
+- A read-only plan of the unpark commit taken before the day showed 8 to add, 0 to change, 0 to destroy.
+- **Apply 1** at commit `c88d6f3`, no `service_image`. Saved plan outside the repository, then apply that file. Plan: 8 to add, 0 to change, 0 to destroy:
+  - create `module.rds[0].aws_cloudwatch_metric_alarm.cpu_credit_balance`
+  - create `module.rds[0].aws_cloudwatch_metric_alarm.database_connections`
+  - create `module.rds[0].aws_cloudwatch_metric_alarm.free_storage_space`
+  - create `module.rds[0].aws_cloudwatch_metric_alarm.freeable_memory`
+  - create `module.rds[0].aws_db_instance.this`
+  - create `module.rds[0].aws_db_parameter_group.this`
+  - create `module.rds[0].aws_db_subnet_group.this`
+  - create `module.rds[0].terraform_data.prod_protection`
+  - No change to `module.admin_static[0].aws_cloudfront_response_headers_policy.admin` or `module.ingress.aws_apigatewayv2_api.tenant`. Apply complete: 8 added, 0 changed, 0 destroyed. Instance `available`, storage encrypted, not publicly accessible, four RDS alarms present.
+- **Cost anchor:** apply 1 completed at about 03:44Z. Target 2026-10-14T03:44Z; hard stop 2026-10-15T03:44Z.
+- **Apply 2** at commit `c88d6f3`, `service_image` set to the digest above in the gitignored file only. Plan: 10 to add, 0 to change, 0 to destroy:
+  - create `aws_ecs_task_definition.db_ops[0]`
+  - create `aws_iam_role.db_ops_execution[0]`
+  - create `aws_iam_role.db_ops_task[0]`
+  - create `aws_iam_role_policy.db_ops_execution[0]`
+  - create `module.ingress.aws_ecs_cluster.this[0]`
+  - create `module.ingress.aws_ecs_cluster_capacity_providers.this[0]`
+  - create `module.ingress.aws_ecs_service.this[0]`
+  - create `module.ingress.aws_ecs_task_definition.this[0]`
+  - create `module.ingress.aws_iam_role_policy.pull[0]`
+  - create `module.ingress.aws_vpc_security_group_ingress_rule.task_api[0]`
+  - Apply complete at about 03:50Z: 10 added, 0 changed, 0 destroyed.
+- **Retrospective record, CSP and CORS:** apply worktree was still at commit `836a3f9` when this run began; apply 1's plan showed no change to either resource, so both changes were live. Owner to confirm `836a3f9` as the commit applied on 2026-10-12 (plan then: 0 to add, 2 to change, 0 to destroy).
+- **Proof 1:** pass. Desired 1, running 1, pending 0; task `RUNNING`, health `HEALTHY`; running digest equals pre-check; five `GET /health` on the api hostname returned 200; VPC link `AVAILABLE`.
+- **Proof 2a:** pass. Exit 0, stdout and stderr empty. Service stayed at 1.
+- **Proof 2b:** pass. Exit 0, stdout `1000 1000`.
+- **Proof 2c:** pass. Exit 0, stdout and stderr empty (write under `/app` refused).
+- **Proof 2d:** pass. Exit 0, stdout `79`.
+- **Proof 2e:** pass. Exit 0, stdout `pass`.
+- **Proof 3 (first run):** pass. Exit 0. Applied tags `0000_schemas` through `0009_flippant_bedlam`; `done applied=10 total=10`.
+- **Proof 3 (second run):** pass. Exit 0. Stdout `done applied=0 total=10` only.
+- **Proof 4:** pass. Preflight to `/v1/access/grants/list` with the admin origin: api hostname 204, auth hostname 204; allow-origin reflects the admin origin; methods include GET, POST, OPTIONS; headers include authorization and content-type; no allow-credentials. Other origin: 204 on both, no allow-origin. Ops hostname `/health`: 404, no allow-origin. Service log shows `OPTIONS` with path `unmatched` and status 204. Webhooks hostname (recorded, not asserted): 404 with allow-origin reflecting the admin origin.
+- **Proof 5:** pass. Two valid sign-in-code requests: 503 and 503, empty bodies. Malformed address: 400, empty body. Service log: `kms` `generate_data_key` `ok` `identity`, then `kms` `decrypt` `ok` `identity`, then `request` `POST /v1/auth/email-otp/start` 503 with no `errorClass`; after the second request one more `kms` `decrypt` `ok` `identity`, no second `generate_data_key`. CloudTrail by the task role: `GenerateDataKey` 1, `Decrypt` 2; encryption-context keys `key_kind`, `key_version`, `region`. No 500 and no 204.
+- **Proof 6:** pass. 6a 401; 6b 401; 6c 404; 6d 400; 6e 401; 6f without token 401, with random token 401; auth hostname entitlement list and toggle 404 and 404. All bodies empty. Each random-token request produced one `kms` `decrypt` `ok` line.
+- **Row counts:** pass. Identity stdout `1 0 0 0 0 0`. Platform stdout `0 0 0 0 0 0 0 0 0 0 0 0`.
+- **Proof 7a:** pass. IAM simulate: `secretsmanager:GetSecretValue` on the three database secrets `allowed allowed allowed`; `kms:Decrypt` on the secrets key `allowed`. One-off stdout `pass`. CloudTrail: one `GetSecretValue` by the task role, stage `AWSCURRENT`.
+- **Proof 7b:** pass on the third attempt. Attempts 1–2 failed to demonstrate the re-read (Spot interruption replaced the task; then a pre-change check left an open pooled connection). Attempt 3: forced deployment, no request before rotation, bootstrap exit 0 stdout `79`, service task unchanged; post-rotation sign-in-code 503 empty body; CloudTrail two `GetSecretValue` by the task role (`AWSCURRENT` and `AWSPREVIOUS`), no error.
+- **Proof 8a:** pass. Admin origin `GET /`: 200. Content-security-policy present with expected directives; `connect-src` holds self and both origins and no other origin. Referrer-policy, x-content-type-options and strict-transport-security present.
+- **Proof 8b:** pass. Script bundle holds both origins, exactly two origins under the staging zone, no placeholder.
+- **Proof 8c:** pass (owner browser). Home shows Dashboard with Settings links; Users & Roles and Module Toggles show heading, `Sign in required` and Sign in link; after Send code: `Sign-in failed`. Service log: `OPTIONS` 204 then `POST /v1/auth/email-otp/start` 503, twice. Direct loads of `/sign-in`, `/settings/users` and `/settings/modules`: 403 each.
+- **Proof 9:** pass. Service log 177 lines, tenant API access log 33 lines. Count 0 in both for: `proof` followed by hex, `@`, `Bearer`, both synthetic local parts, the test domain, the community slug placeholder, `identity.`, `password`, `secret`. Eight digits: 11 lines in the service log, every one inside `requestId` only; 0 in the access log. Request statuses: 200 ×118, 204 ×6, 400 ×2, 401 ×5, 404 ×7, 503 ×7. `kms` lines: `decrypt` `ok` ×9, `generate_data_key` `ok` ×1. No `errorClass`. No `hostname` field. Access log: no integration error.
+- No request returned 500 at any point in the run.
+
+### Findings from the 2026-10-13 run
+
+1. Fargate Spot interrupted the service task twice in eight minutes (stop code `SpotInterruption`, container exit 0). With one task on `FARGATE_SPOT`, staging goes down on every interruption until ECS starts a replacement.
+2. The webhooks hostname answers a preflight with the admin origin allowed (status 404, allow-origin reflecting the admin origin), because the gateway's CORS configuration is shared by the api, auth and webhooks hostnames.
+3. Reloading a deep link returns 403 from CloudFront (`/sign-in`, `/settings/users`, `/settings/modules`). The browser pass must start at `/`.
+4. The admin shell has no layout or styling to speak of. Functional, but too poor to use as is.
+5. Unsolicited requests from the internet reached the service at unknown paths during the window (`GET`, path `unmatched`, 404). Expected for a public gateway.
+6. The pooled checkout still logs nothing when it re-reads a secret; CloudTrail was the only evidence of the re-read.
+7. The rotation steps need two warnings: send no request to the service between the forced deployment and the post-rotation request (an open pooled connection survives the password change); and after the bootstrap confirm the service task is the same one that was running before the secret change (a replacement starts with the new password).
+8. The one-off start commands print nothing, so a failed start is silent. Append `&& print ${#TASK_ARN}` so a task id length prints without showing the id.
+9. Applying a saved plan (plan to a file outside the repository, list addresses and actions with `terraform show -json` and `jq`, then apply that file with output filtered to progress lines) kept every identifier off the terminal. Plain plan and apply would have printed them.
 
 ## First running task
 
