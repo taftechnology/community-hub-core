@@ -38,4 +38,20 @@ describe("entitlement platform tables", () => {
   it("does not declare the platform schema itself", () => {
     expect(readFileSync(SCHEMA, "utf8")).not.toContain("pgSchema");
   });
+
+  it("fails on a platform grant to app or identity", () => {
+    const files = readdirSync(DRIZZLE).filter((name) => name.endsWith(".sql"));
+    expect(files.length).toBeGreaterThan(0);
+    const schemaGrant = /\bGRANT\b[^;]*\bON\s+SCHEMA\s+platform\b[^;]*\bTO\s+(?:app|identity)\b/i;
+    const objectGrant =
+      /\bGRANT\b[^;]*\bON\s+(?:TABLE\s+)?(?:"platform"\.|platform\.)[^;]*\bTO\s+(?:app|identity)\b/i;
+    const defaultGrant =
+      /\bALTER\s+DEFAULT\s+PRIVILEGES\b[^;]*\bIN\s+SCHEMA\s+platform\b[^;]*\bTO\s+(?:app|identity)\b/i;
+    for (const name of files) {
+      const sql = readFileSync(path.join(DRIZZLE, name), "utf8");
+      expect(sql, name).not.toMatch(schemaGrant);
+      expect(sql, name).not.toMatch(objectGrant);
+      expect(sql, name).not.toMatch(defaultGrant);
+    }
+  });
 });
