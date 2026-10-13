@@ -176,6 +176,240 @@ If the cause cannot be fixed inside the unpark window, re-park. That destroys a 
 
 The journal table records each file's `when` value, not the time it ran. The ECS task's stop time and the log stream are the record of a run. Copy the exit code and the lines into the evidence of the chunk that ran it.
 
+## Staging proof run
+
+This section is the operator path for `docs/specs/2026-10-12-staging-proof-run.md`. The human owner runs every apply, every `aws ecs run-task`, and `put-secret-value`. The owner's assistant is read-only: it describes resources, reads CloudTrail and CloudWatch Logs, calls the staging hostnames over HTTP, and runs the signed-out browser pass. An agent does not. Stop after any failed proof, or after a second failure on the same step (AGENTS.md section 12). Then re-park before more attempts. The 48-hour hard stop is measured from apply 1 completion; the owner, not the assistant, runs the re-park at that hard stop even if proofs remain.
+
+Shell variables and placeholders only. Never paste an account id, ARN, hostname, registry host, secret name, key id, task id, IP address or email address into evidence. Say "the api hostname", "the auth hostname", and "the admin origin". Values that come from AWS at run time (a subnet, a security group, a task definition revision, a secret id) are held in shell variables and never recorded. In zsh write `${VAR}:text`, not `$VAR:text`. Do not put an inline `#` comment inside a command string. Single-quoted JSON for `--overrides`. One pasteable command per indented block.
+
+Every one-off this section defines (2a, 2b, 2c, both row-count commands, and the Secrets Manager read in 7a) prints only its fixed success form on success. On any failure it prints exactly the word `fail` to stderr, exits 1, and never prints an error object, a message, a stack, a host, a port, a secret name or an ARN. The image has no shell: every one-off is a `node` invocation.
+
+### Pre-checks (assistant, read-only)
+
+1. Resolve the deploy SHA on `main`: the latest that contains `db-migrate-command`, `fix/2026-10-12-request-error-log`, and `entitlements-plans` (`cd19f0b` or later). Confirm all three are on that SHA.
+2. Confirm the `publish` and `admin-publish` jobs for that SHA succeeded. Confirm the ECR scan is `COMPLETE` and `CRITICAL` is 0. Record the image digest only; never the registry host.
+3. Confirm the repository variables `ADMIN_API_ORIGIN` and `ADMIN_AUTH_ORIGIN` are set. Record "both origins present" and "no placeholder"; never URLs.
+4. Read `packages/db/drizzle/meta/_journal.json` on that SHA. Record the journal tags in order. Those are the expected `applied <tag>` lines for proof 3.
+
+**Stop if:** publish failed, the scan is not `COMPLETE`, or `CRITICAL` is above 0.
+
+### Cost anchor
+
+The owner records the UTC time when apply 1 completes (after the apply returns, not when the plan was shown). The 24-hour target and the 48-hour hard stop are measured from that instant to the start of the re-park apply. At the hard stop the owner re-parks even if proofs remain. The assistant does not act on the hard stop.
+
+### Before each apply
+
+Run the checks under **Before each apply** above: clean tree, `git rev-parse HEAD` equals the SHA named for that apply and that SHA is on origin, both var files passed with the gitignored file last, `terraform init` with `-lockfile=readonly`.
+
+### Apply 1 and apply 2
+
+Profile `${AWS_PROFILE}` (default `ch-admin`). Region `ap-southeast-2`. From `infra/regions/au`.
+
+**Apply 1 (owner)** — Task 2 SHA, no `service_image` in either var file.
+
+1. Run the before-each-apply checks.
+2. `terraform init -backend-config=backend/staging.hcl -lockfile=readonly`
+3. Plan with both var files. Paste add/change/destroy counts and Terraform resource addresses with action only. Expected: eight `module.rds[0]` creates, nothing else.
+4. **Stop** if the plan changes `module.admin_static[0].aws_cloudfront_response_headers_policy.admin` or `module.ingress.aws_apigatewayv2_api.tenant`, or if the counts differ from eight RDS creates. Reconcile state first; the cost window has not started.
+5. Apply with the same var files. Record the UTC completion time under **Cost anchor**.
+6. Wait until the RDS instance status is `available` (read-only describe; do not record identifiers).
+
+**Apply 2 (owner)** — digest in the gitignored `staging.local.tfvars` only.
+
+1. Set `service_image` to the digest URI from the pre-check (`<registry>/ch-staging/service@sha256:<digest>`). The registry host stays only in that gitignored file.
+2. Plan and apply. Expected: exactly ten new ECS-related resources (cluster, capacity providers, service task definition, service, ECR pull policy, task API ingress rule, ops task definition, ops execution role, ops task role, ops execution policy). **Stop** if the plan shows anything else.
+3. Wait until the ECS service is stable and the VPC link name `ch-staging-link` is `AVAILABLE`.
+
+### Retrospective record (CSP and CORS, 2026-10-12)
+
+The owner applied the admin content-security-policy change and the gateway CORS change to staging on 2026-10-12 before those commits merged. The applied commit SHA is confirmed by the owner when evidence is written (believed `836a3f9` in the spec; the owner fills the actual SHA in the evidence commit). Plan for that apply: 0 add, 2 change, 0 destroy. Record counts and addresses with action only; no ARNs.
+
+### One-off network
+
+Hold these in the shell. Never record their values.
+
+| Variable                     | Meaning                                                                                                |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `${AWS_PROFILE}`             | Apply and one-off profile (default `ch-admin`)                                                         |
+| `${CLUSTER}`                 | ECS cluster name for staging (`ch-staging`)                                                            |
+| `${SERVICE_TASK_DEFINITION}` | Service task definition family (`ch-staging`, from `aws_ecs_task_definition.this` family = `var.name`) |
+| `${OPS_TASK_DEFINITION}`     | Ops task definition family (`ch-staging-db-ops`)                                                       |
+| `${SUBNET}`                  | Staging public subnet id (from Terraform / describe; never recorded)                                   |
+| `${TASK_SECURITY_GROUP}`     | Task security group id (from Terraform / describe; never recorded)                                     |
+| `${LOG_GROUP}`               | Service log group `/community-hub/ch-staging/service` (streams use prefixes `service` and `db-ops`)    |
+
+Same network pattern as **Apply product migrations**: task security group, staging public subnet, public address. Command override only; do not set `entryPoint`. Service container name is `service`. Ops container name is `db-ops`. After each one-off, wait stopped, describe the exit code, and read the log stream the same way the migrate section does (`service/service/<task-id>` or `db-ops/db-ops/<task-id>`). Do not paste a stopped reason that names a registry or a secret.
+
+### Proof 2a–2e command overrides
+
+Owner runs each `aws ecs run-task`. Assistant reads exit codes and log lines. Do not set `entryPoint`. Paste only exit code and the command's own stdout or stderr when this section fixes their form.
+
+**2a — `/tmp` write (service).** Expected: exit 0, stderr empty. The service stays at 1 of 1.
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${SERVICE_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides '{"containerOverrides":[{"name":"service","command":["node","--input-type=module","-e","import{writeFileSync}from'\''node:fs'\'';try{writeFileSync('\''/tmp/proof-write'\'','\''ok'\'');}catch{console.error('\''fail'\'');process.exit(1);}"]}]}' \
+      --query 'tasks[0].taskArn' --output text)
+
+**2b — uid and gid (service).** Expected: stdout exactly `1000 1000`, stderr empty, exit 0.
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${SERVICE_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides '{"containerOverrides":[{"name":"service","command":["node","--input-type=module","-e","try{console.log(String(process.getuid())+'\'' '\''+String(process.getgid()));}catch{console.error('\''fail'\'');process.exit(1);}"]}]}' \
+      --query 'tasks[0].taskArn' --output text)
+
+**2c — read-only root (service).** Tries to write under `/app` and exits 0 only if the write is refused. Expected: exit 0, stderr empty.
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${SERVICE_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides '{"containerOverrides":[{"name":"service","command":["node","--input-type=module","-e","import{writeFileSync}from'\''node:fs'\'';try{writeFileSync('\''/app/proof-write'\'','\''ok'\'');console.error('\''fail'\'');process.exit(1);}catch{/* write refused */}"]}]}' \
+      --query 'tasks[0].taskArn' --output text)
+
+**2d — bootstrap (ops).** After 2a–2c. Command `["node","/app/db-bootstrap.js"]`. Expected: exit 0, stdout exactly one integer and one newline, stderr empty. A non-integer or a non-zero exit stops the run.
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${OPS_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides '{"containerOverrides":[{"name":"db-ops","command":["node","/app/db-bootstrap.js"]}]}' \
+      --query 'tasks[0].taskArn' --output text)
+
+**2e — probe (service).** After 2d succeeds. Command `["node","/app/probe.js"]`. Expected: stdout `pass`, stderr empty, exit 0.
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${SERVICE_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides '{"containerOverrides":[{"name":"service","command":["node","/app/probe.js"]}]}' \
+      --query 'tasks[0].taskArn' --output text)
+
+**Stop if:** proof 1 (service healthy) or any of 2a–2e fails — go to re-park.
+
+### Proof 3
+
+Run **Apply product migrations** twice (same network as 2d). First run: one `applied <tag>` per journal entry from the pre-check, then `done applied=<n> total=<m>`. Second run: stdout exactly `done applied=0 total=<m>`, no `applied` lines. Exit 0 and stderr empty both times.
+
+**Stop if:** exit 1.
+
+### Row counts (counts only)
+
+Proof 5, after the OTP requests and before proof 7b. Owner runs two ops one-offs on family `${OPS_TASK_DEFINITION}`, container `db-ops`, same network as 2d. The ops task already injects `PGHOST`, `PGPORT`, `PGDATABASE`, `PGPASSWORD_IDENTITY`, and `PGPASSWORD_PLATFORM` (`apps/api/src/db-ops-env.ts` and `aws_ecs_task_definition.db_ops`). Login `identity` reads `PGPASSWORD_IDENTITY`. Login `platform` reads `PGPASSWORD_PLATFORM`. CA file is `/app/certs/rds-ap-southeast-2-bundle.pem` (`IMAGE_CERT_PATH` in `apps/api/src/env.ts`). Each command uses `@community-hub/db` `createDirectSql` the same way `apps/api/src/probe.ts` does: omit `servername` because ops `PGHOST` is DNS, not an IP. Output is one line of space-separated integers in the fixed table order only.
+
+**Identity** — tables in order: `identity_keys`, `otp_challenges`, `users`, `sessions`, `passkey_challenges`, `passkey_credentials`. Expected after proof 3 and the proof 5 OTP posts: `1 0 0 0 0 0`.
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${OPS_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides '{"containerOverrides":[{"name":"db-ops","command":["node","--input-type=module","-e","import{createDirectSql}from'\''@community-hub/db'\'';import{readFileSync}from'\''node:fs'\'';try{const pem=readFileSync('\''/app/certs/rds-ap-southeast-2-bundle.pem'\'','\''utf8'\'');const e=process.env;const sql=createDirectSql({host:e.PGHOST,port:Number(e.PGPORT),database:e.PGDATABASE,user:'\''identity'\'',password:e.PGPASSWORD_IDENTITY,ca:pem});const t=['\''identity_keys'\'','\''otp_challenges'\'','\''users'\'','\''sessions'\'','\''passkey_challenges'\'','\''passkey_credentials'\''];const o=[];for(const n of t){const r=await sql.unsafe('\''select count(*)::int c from identity.'\''+n);o.push(r[0].c);}console.log(o.join('\'' '\''));await sql.end({timeout:1});}catch{console.error('\''fail'\'');process.exit(1);}"]}]}' \
+      --query 'tasks[0].taskArn' --output text)
+
+**Platform** — tables in order: `organisations`, `communities`, `plans`, `plan_entitlements`, `add_ons`, `add_on_entitlements`, `organisation_plans`, `organisation_add_ons`, `community_allocations`, `community_toggles`, `entitlement_overrides`, `feature_flags`. Expected on a fresh database: twelve zeros.
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${OPS_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides '{"containerOverrides":[{"name":"db-ops","command":["node","--input-type=module","-e","import{createDirectSql}from'\''@community-hub/db'\'';import{readFileSync}from'\''node:fs'\'';try{const pem=readFileSync('\''/app/certs/rds-ap-southeast-2-bundle.pem'\'','\''utf8'\'');const e=process.env;const sql=createDirectSql({host:e.PGHOST,port:Number(e.PGPORT),database:e.PGDATABASE,user:'\''platform'\'',password:e.PGPASSWORD_PLATFORM,ca:pem});const t=['\''organisations'\'','\''communities'\'','\''plans'\'','\''plan_entitlements'\'','\''add_ons'\'','\''add_on_entitlements'\'','\''organisation_plans'\'','\''organisation_add_ons'\'','\''community_allocations'\'','\''community_toggles'\'','\''entitlement_overrides'\'','\''feature_flags'\''];const o=[];for(const n of t){const r=await sql.unsafe('\''select count(*)::int c from platform.'\''+n);o.push(r[0].c);}console.log(o.join('\'' '\''));await sql.end({timeout:1});}catch{console.error('\''fail'\'');process.exit(1);}"]}]}' \
+      --query 'tasks[0].taskArn' --output text)
+
+### HTTP proofs (assistant)
+
+Shapes only. Never paste hostnames or the synthetic address into evidence.
+
+**Proof 4 — preflight.** `OPTIONS` to `/v1/access/grants/list` on the api hostname and again on the auth hostname. Headers: `Origin` set to the admin origin, `Access-Control-Request-Method: POST`, `Access-Control-Request-Headers: authorization,content-type`. Repeat both with an origin that is not the admin origin. Expected for the admin origin: status 204; CORS headers match `cors_configuration` in `infra/modules/aws-ingress/main.tf` (`access-control-allow-origin` reflects the admin origin, methods include `GET`, `POST` and `OPTIONS`, headers include `authorization` and `content-type`, no `access-control-allow-credentials`). Record status and that the headers match; do not paste origin strings or full header values. Other origin: no `access-control-allow-origin`; record status, do not assert it. Control: the same preflight to the ops hostname `/health` → expect 404 and no `access-control-allow-origin`. Record whether the service log group shows an `OPTIONS` line. The webhooks hostname answer is recorded and not asserted.
+
+**Proof 5 — email OTP.** Two `POST` requests to the auth hostname path `/v1/auth/email-otp/start`, header `content-type: application/json`, body `{"email":"<synthetic>"}`. The synthetic address uses local part `proof` plus eight random hex digits and a domain reserved for tests under RFC 2606; generate it for the run and never write it into the runbook. Then one `POST` with a malformed address. Expected: both valid requests return 503 with an empty body; malformed returns 400 with an empty body. A 500 means stop and record `errorClass` / `errorCode` from the request log at once. A 204 means a mail port other than the boot port is running; stop. CloudTrail (read-only): after the first request, one `GenerateDataKey` and one `Decrypt` (count 1 each), encryption-context key names `key_kind`, `region`, `key_version` only. After the second, one more `Decrypt` and no second `GenerateDataKey`. Service log: `kms` lines with fields `operation` (`generate_data_key` or `decrypt`), `outcome` (`ok`), `key_kind` (`identity`); no `errorClass` on those lines. Then run the row-count one-offs above.
+
+**Proof 6 — refused routes.** All `POST` with `content-type: application/json`. Placeholder slug e.g. `proof-run-no-community`. Where a bearer is required, use 43 random base64url characters.
+
+- 6a. Api hostname `/v1/access/grants/list`, body `{"communitySlug":"<slug>"}`, no `Authorization`. Expected: 401, empty body.
+- 6b. Same path and body with `Authorization: Bearer` plus 43 random base64url characters. Expected: 401, empty body (needs proof 3).
+- 6c. Same body to the auth hostname. Expected: 404, empty body.
+- 6d. Body with an extra key on the api hostname. Expected: 400, empty body.
+- 6e. Api hostname `/v1/entitlements/list`, body `{"communitySlug":"<slug>"}`, no `Authorization`. Expected: 401, empty body.
+- 6f. Api hostname `/v1/entitlements/toggle`, body `{"communitySlug":"<slug>","key":"people.directory","enabled":true}`, no `Authorization`. Expected: 401. With a bearer of 43 random base64url characters, also 401 (needs proof 3). On the auth hostname, either body returns 404.
+
+### Proof 7a
+
+Assistant tries `iam:SimulatePrincipalPolicy` once for the service task role against `secretsmanager:GetSecretValue` on each of the three database secrets and `kms:Decrypt` on the secrets key. Expected: `allowed` for all four. If the call is refused, the human pastes a table of action and effect per statement from the attached policy, with each resource shown as redacted; the assistant reads that table against the same four actions.
+
+Then the owner runs a one-off of the **service** task definition (task role, not the execution role). The service container already has `IDENTITY_SECRET_ARN` in its environment (`infra/modules/aws-ingress/main.tf`). Confirm the name with `describe-task-definition` if needed; never record the value. The command calls `GetSecretValue` with `VersionStage` `AWSCURRENT` via `@aws-sdk/client-secrets-manager` and prints `pass` only when a non-empty string comes back. On any failure: stdout empty, stderr exactly `fail`, exit 1.
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${SERVICE_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides '{"containerOverrides":[{"name":"service","command":["node","--input-type=module","-e","import{GetSecretValueCommand,SecretsManagerClient}from'\''@aws-sdk/client-secrets-manager'\'';try{const id=process.env.IDENTITY_SECRET_ARN;if(!id)throw 0;const r=await new SecretsManagerClient({}).send(new GetSecretValueCommand({SecretId:id,VersionStage:'\''AWSCURRENT'\''}));if(typeof r.SecretString!=='\''string'\''||r.SecretString.length===0)throw 0;console.log('\''pass'\'');}catch{console.error('\''fail'\'');process.exit(1);}"]}]}' \
+      --query 'tasks[0].taskArn' --output text)
+
+**Stop if:** non-zero exit or denied simulate with no matching redacted policy table.
+
+### Proof 7b
+
+Order: after proofs 5 and 6b and 6f and the row-count one-offs. The rotation must never display a secret.
+
+1. Owner forces a new deployment of the service and waits until it is stable, so the pool is empty and start-time environment holds the current password.
+2. Owner generates a new random value and puts it on the identity secret in one pipeline, with nothing echoed and nothing left in shell history beyond the pipeline itself. Hold the secret id in `${IDENTITY_SECRET_ID}` from a read-only describe (never recorded):
+
+   openssl rand -base64 48 | tr -d '\n' | aws secretsmanager put-secret-value \
+   --profile ${AWS_PROFILE} \
+      --secret-id ${IDENTITY_SECRET_ID} \
+   --secret-string file:///dev/stdin
+
+3. Owner re-runs proof 2d (`node /app/db-bootstrap.js`). That one-off reads the secrets at task start and runs `ALTER ROLE` so the database role passwords match the secrets (`setLoginPasswords` in the bootstrap path). **If this step fails:** the secret holds a value the role does not; the running service still works on its old start-time password. Re-run 2d, or re-park. Do not print the secret. Do not leave the mismatch for a later day without re-parking.
+4. Assistant repeats one proof 5 `POST /v1/auth/email-otp/start`. Expected: 503, not 500. CloudTrail (read-only, may lag ~15 minutes): event name `GetSecretValue`, count 2, by the task role for the identity secret in that window.
+
+**Stop if:** OTP is not 503.
+
+### Proof 8–9
+
+**Proof 8 (assistant).** Admin origin `GET /`: expect 200 and one `h1` named Dashboard. For `content-security-policy`, record "both origins present" in `connect-src` and "no other origin"; do not paste the header. Confirm other directives still match `local.content_security_policy` in `infra/modules/aws-admin-static/main.tf` without pasting values. Fetch the page's script asset and record "both origins present" and "no other origin" in the bundle. Browser pass (signed out): open `/`, follow Users & Roles, Module Toggles, Sign in; enter the synthetic address; press Send code. Direct loads of `/sign-in`, `/settings/users` and `/settings/modules` return 403 from CloudFront (no `custom_error_response`); start at `/`. Expected while signed out: each Settings page shows the heading and `Sign in required`. After Send code: page shows `Sign-in failed`; record that one preflight returned 204 and one `POST` returned 503 (status only). Record CloudFront 403 on deep links as a finding only; do not fix here.
+
+**Proof 9 (assistant).** Read-only `filter-log-events` on the service log group (`/community-hub/ch-staging/service`, stream prefixes `service` and `db-ops`) and the tenant API access log group (`/community-hub/ch-staging/api-access`) over the whole window. Searches expected to return zero events unless a hit is only inside `errorClass` or `errorCode` on a `request` or `kms` line: the string `proof` followed by hex; the `@` character; the word `Bearer`; any run of eight digits outside a `requestId` or `gatewayRequestId` value; the synthetic address's local part; the community slug placeholder; the strings `identity.`, `password` and `secret`. Request log fields (`packages/kernel` via `apps/api/src/gate.ts`): message `request`, plus `method`, `path` (route pattern), `status`, `duration`, `requestId`, optional `gatewayRequestId`, and on a thrown 500 also `errorClass` and optional `errorCode`. KMS log fields (`apps/api/src/kms/aws-kms-adapter.ts`): message `kms`, plus `operation`, `outcome`, optional `key_kind`, and `errorClass` when outcome is `failed`. Never paste `hostname` from gate not-found lines. If any proof produced a 500, record `status`, `path`, `errorClass` and `errorCode` at once; if none did, say so.
+
+### Proof 10
+
+Pointer: follow **Re-park** / the re-park apply for this chunk. Expected plan: eighteen destroys (ten from apply 2, eight under `module.rds[0]`), nothing created, updated or replaced. Apply. Following plan shows no changes, detailed exit code 0. Live read-only: RDS instances 0; ECS services in `ch-staging` 0; KMS interface endpoints 0. The topic, subscription, hostname alarm and budget remain. Clear `service_image` from the gitignored file before the apply.
+
+### Evidence rules
+
+The repository never commits an account id, ARN, hostname, registry host, secret name, key id, task id, IP address or email address. Record only:
+
+- **Terraform plans:** add/change/destroy counts and Terraform resource addresses with their action only. Never plan JSON, attribute lines, or anything containing an ARN, an endpoint or an id.
+- **One-off tasks:** exit code and the command's own stdout or stderr only when this section fixes their form. Read the stopped reason; do not paste it when it can name a registry or a secret.
+- **CloudTrail:** event name, count, and encryption-context key names only. Never the event JSON.
+- **IAM policy fallback (proof 7a):** action and effect per statement, resource shown as redacted.
+- **Admin CSP and published bundle:** "both origins present" and "no other origin"; never the header value or a URL.
+- **The image:** digest only; never the registry host.
+- **Service log lines:** field names and the values of `status`, `path` (route pattern), `errorClass`, `errorCode`, `operation`, `outcome` and `key_kind` only. Never paste `hostname` from gate not-found lines.
+- **Browser pass:** status and what is rendered; no screenshot of a request body and no URL with a hostname.
+- **Synthetic email address:** never written into the runbook, the pull request or a commit.
+
+Use "the api hostname", "the auth hostname" and "the admin origin" in every evidence note.
+
 ## First running task
 
 Both applies used `feat/2026-10-06-first-running-task` at `ba881554b5ca7d72d3faabbf9994f464df490f38`, profile ch-admin. `service_image` stayed in the gitignored file. The ops task ran `db-bootstrap.js`. A person did not open a master session.
