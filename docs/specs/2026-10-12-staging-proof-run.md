@@ -1,7 +1,7 @@
 # Spec: Staging proof run
 
 Slug: staging-proof-run
-Status: draft
+Status: approved (2026-10-12, Abdus)
 Architecture refs: §7.1, §7.3, §23.1, §23.2, ADR 0009. Follows `docs/specs/2026-10-06-first-running-task.md`, which is the model for the unpark, the proofs and the re-park. Depends on `service-image-runtime-base`, `tenancy-implicit-org`, `identity-otp`, `people-households`, `access-roles`, `db-migrate-command` (`docs/specs/2026-10-12-db-migrate-command.md`), the no-spec fix `fix/2026-10-12-request-error-log`, and `entitlements-plans` (`docs/specs/2026-10-12-entitlements-plans.md`). All three of those later merges are on `main` at `cd19f0b` (pull requests 49, 48 and 47). The image is the latest `main` SHA that contains all three (`cd19f0b` or later).
 
 ## Problem
