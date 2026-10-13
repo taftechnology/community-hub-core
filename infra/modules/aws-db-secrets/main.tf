@@ -55,6 +55,7 @@ resource "aws_kms_key" "secrets" {
               "arn:aws:secretsmanager:ap-southeast-2:${var.aws_account_id}:secret:${var.name}-app-??????",
               "arn:aws:secretsmanager:ap-southeast-2:${var.aws_account_id}:secret:${var.name}-identity-??????",
               "arn:aws:secretsmanager:ap-southeast-2:${var.aws_account_id}:secret:${var.name}-platform-??????",
+              "arn:aws:secretsmanager:ap-southeast-2:${var.aws_account_id}:secret:${var.name}-provision-owner-??????",
             ]
           }
         }
