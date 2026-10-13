@@ -21,6 +21,7 @@ import { createHousehold, createPerson } from "@community-hub/people";
 import {
   bootstrapOwner,
   createCustomRole,
+  findOwner,
   grantRole,
   linkUser,
   revokeRole,
@@ -250,6 +251,15 @@ describe("links, bootstrap, and grants", () => {
       expect(grants).toEqual([{ n: 1 }]);
       expect(community).toEqual([{ n: 1 }]);
       expect(bootAudits).toEqual([{ n: 1 }]);
+    });
+  });
+
+  it("finds no owner before bootstrap and the bootstrapped owner after", async () => {
+    await withParish("grant-find-owner", async (tx) => {
+      expect(await findOwner(tx)).toBeNull();
+      const owner = newId();
+      await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      expect(await findOwner(tx)).toEqual({ userId: owner });
     });
   });
 

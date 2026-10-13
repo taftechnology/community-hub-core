@@ -297,6 +297,31 @@ export async function bootstrapOwner(
   return { organisationGrantId, communityGrantId };
 }
 
+export async function findOwner(tx: AppTransaction): Promise<{ userId: string } | null> {
+  const organisationRows = await tx<{ user_id: string }[]>`
+    select user_id::text as user_id
+    from app.organisation_role_grants
+    where org_id = current_setting('app.org_id')::uuid
+    limit 1
+  `;
+  const organisationUserId = organisationRows[0]?.user_id;
+  if (organisationUserId !== undefined) {
+    return { userId: organisationUserId };
+  }
+  const communityRows = await tx<{ user_id: string }[]>`
+    select user_id::text as user_id
+    from app.community_role_grants
+    where org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
+    limit 1
+  `;
+  const communityUserId = communityRows[0]?.user_id;
+  if (communityUserId !== undefined) {
+    return { userId: communityUserId };
+  }
+  return null;
+}
+
 async function assertGrantSubjectAdult(tx: AppTransaction, userId: string): Promise<void> {
   const linked = await tx<{ person_id: string }[]>`
     select person_id::text as person_id
