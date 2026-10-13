@@ -21,9 +21,9 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 |              |                                                                   |
 | ------------ | ----------------------------------------------------------------- |
 | Phase        | 1 — Core platform                                                 |
-| Last shipped | `entitlements-plans`                                              |
-| Next chunk   | `staging-proof-run`                                               |
-| Phase 0      | 25 rows: 24 done, 1 superseded (`api-au-hostname`), 0 not started |
+| Last shipped | `staging-proof-run`                                               |
+| Next chunk   | `stripe-billing`                                                  |
+| Phase 0      | 26 rows: 25 done, 1 superseded (`api-au-hostname`), 0 not started |
 | Later phases | not started                                                       |
 
 Update the snapshot and the row in the **same PR**, last commit on the chunk branch, before the PR opens. Do not defer to a follow-up chore after merge. Do not put implementer reports here ([AGENTS.md](../AGENTS.md) §5).
@@ -94,8 +94,9 @@ Architecture: monorepo, CI, Terraform for AWS in `ap-southeast-2`, kernel, db wi
 | done       | `kms-mrk-replica`            | A replica of the envelope key in `ap-southeast-4`, not a database backup. Spec `docs/specs/2026-10-07-kms-mrk-replica.md`.                                                                                                                                                                                                                                                                                                                                                         |
 | done       | `service-image-runtime-base` | The service image final stage has no package manager. `gnutls28` is not in the runtime. Spec `docs/specs/2026-10-10-service-image-runtime-base.md`.                                                                                                                                                                                                                                                                                                                                |
 | done       | `db-migrate-command`         | The image gains `/app/db-migrate.js`, which applies the product migrations as the master login, refuses to run before `db-bootstrap`, and prints the tags it applied. It has not been run on staging. Spec `docs/specs/2026-10-12-db-migrate-command.md`.                                                                                                                                                                                                                          |
+| done       | `staging-proof-run`          | The distroless image runs on Fargate. `db-bootstrap` then `db-migrate` applied the ten product migrations to RDS and a second run applied none. The sign-in-code route answers 503 with no mail vendor; role and entitlement routes refuse a request with no session; the service re-read a changed database secret and recovered without a restart. Staging was re-parked the same day. Spec `docs/specs/2026-10-12-staging-proof-run.md`.                                        |
 
-Next is `staging-proof-run`. `stripe-billing` comes after it.
+Next is `stripe-billing`.
 
 SQS, EventBridge, file storage, and the admin static-file distribution are not rows here. Each waits for the first chunk that uses it.
 
@@ -255,13 +256,27 @@ The access routes derive both ids from `findCommunityBySlug`. `withAppTransactio
 
 `readSnapshot` in `core/entitlements` does not verify that the community belongs to the organisation; the routes always pass a matching pair from one lookup, so it is hardening, not a defect.
 
-This image has not run on Fargate. The next chunk that unparks staging re-runs the health check, the `/tmp` write one-off, and the ops task before the service is relied on.
+The distroless image ran on Fargate in `staging-proof-run`: health stayed 200, the `/tmp` write one-off and the ops bootstrap and migrate succeeded, and staging was re-parked the same day.
+
+With one task on Fargate Spot, the service was interrupted twice in eight minutes during the proof run and staging had no running task for a minute or two each time until ECS started a replacement.
+
+The webhooks hostname answers a preflight with the admin origin allowed, because the gateway's CORS configuration is shared by the api, auth and webhooks hostnames. Recorded in the proof run; not fixed there.
+
+Reloading an admin deep link (`/sign-in`, `/settings/users`, `/settings/modules`) returns 403 from CloudFront. The signed-out browser pass must start at `/`.
+
+The admin shell has no layout or styling to speak of. Functional, but too poor to use as is.
+
+The pooled checkout logs nothing when it re-reads a secret after a password change; CloudTrail was the only evidence of the re-read in the proof run.
+
+The turbo build cache does not hash the staging var file, so the three parked-state tests can replay a cached result across an unpark or re-park commit. Bypass the cache (`pnpm test --force`, or the full gate form in the proof-run plan) when those flags change; see that plan's "CI and local gate while unparked" section.
+
+A signed-in proof on staging still waits for a mail vendor and a first-owner path.
 
 ---
 
 ## Next spec
 
-The next approved chunk on this list is **staging-proof-run**. `stripe-billing` comes after it.
+The next approved chunk on this list is **stripe-billing**.
 
 ---
 
