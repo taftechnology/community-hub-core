@@ -9,7 +9,7 @@ Spec: docs/specs/2026-10-12-staging-proof-run.md
 **Architecture:** Six agent commits (four documents, two `staging.tfvars` flag changes). No product code. The human runs every apply, every ECS one-off, and `put-secret-value`. The owner's assistant is read-only and records evidence. Nothing in an agent task calls AWS.
 
 Slug: staging-proof-run
-Status: draft
+Status: approved (2026-10-12, Abdus)
 
 **Branch:** `feat/2026-10-12-staging-proof-run` · one PR · six agent commits after the approved spec
 
@@ -31,7 +31,6 @@ The assistant describes resources, reads CloudTrail and CloudWatch Logs, calls t
 - No real account id, hosted zone id, alarm email, key ARN, secret ARN, password, registry host, hostname, task id, or synthetic email address in commits, the plan, or runbook evidence.
 - The branch is already rebased on `origin/main` and pushed. From apply 1 onward: no rebase, no amend, no force-push. If `origin/main` moves, bring it in with a merge commit. The pull request opens only after the re-park commit, the re-park apply, the empty plan, the runbook apply records, and the catalogue commit — with `staging.tfvars` parked and the full gate green (turbo cache bypassed after re-park — see Tasks 4–6). The PR merges with a merge commit, not squash. This follows AGENTS.md §5 and §9: after the first apply there is no rebase, amend or force-push; `origin/main` comes in by a merge commit; the pull request merges with a merge commit so recorded apply SHAs stay valid.
 - Session scratch (`.superpowers/`, `*-report.md`) is never committed.
-- Do not mark this plan approved yourself.
 - Second fresh-context review is required before merge. Leave that line open in the PR. The assistant starts it when the PR opens.
 - Image comes from the `publish` and `admin-publish` jobs on `main` for the chosen SHA. Nobody builds or pushes by hand.
 
@@ -335,4 +334,4 @@ Task 4 SHA must already be on origin before this apply.
 
 ## Plan approval
 
-Do not set `Status: approved` on this file until the human approves the plan.
+The owner approved this plan on 2026-10-12.
