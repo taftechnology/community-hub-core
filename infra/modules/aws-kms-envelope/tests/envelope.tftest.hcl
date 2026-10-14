@@ -381,6 +381,15 @@ run "happy" {
   }
 
   assert {
+    condition = one([
+      for statement in jsondecode(aws_iam_role_policy.task_secrets.policy).Statement :
+      statement.Action
+      if statement.Sid == "ReadProvisionSecret"
+    ]) == ["secretsmanager:GetSecretValue"]
+    error_message = "the provision-owner statement must allow only secretsmanager:GetSecretValue"
+  }
+
+  assert {
     condition = (
       strcontains(aws_iam_role_policy.execution_secrets.policy, "secretsmanager:GetSecretValue") &&
       strcontains(aws_iam_role_policy.execution_secrets.policy, "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-app-AbCdEf") &&
