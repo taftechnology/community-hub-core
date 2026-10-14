@@ -182,6 +182,13 @@ The organisation slug, the community slug, and the owner email reach the task on
 
 Shell variables and placeholders only, as in the rest of this file: never paste an account id, an ARN, a hostname, the resolved secret name, or the email into the file or the evidence. The slug and email values are prompted for at run time so they never land in shell history as typed command text. In zsh write `${VAR}:text`, not `$VAR:text`.
 
+### Prerequisites
+
+- The Terraform change for this chunk (the `ReadProvisionSecret` IAM statement and the secrets-key key-policy pattern) is applied. This can happen while staging stays parked.
+- A live run of this section happens only as part of the email chunk's own staging proof run, after `db-bootstrap` and `db-migrate` have both already exited 0 on that database. This command assumes a working service, a working database, and the product schema already exist; it is not a bootstrap step itself.
+- This chunk (`first-owner`) does not unpark staging itself.
+- Only one run of this section happens at a time. The design uses one fixed secret name, reusable only because **Delete and verify** destroys it every run; two concurrent runs would race on that one name.
+
 ### Create
 
 The operator is prompted for each value, so none is typed as a command-line argument or left in shell history. The three values are assembled into JSON with `jq` and piped straight into `create-secret`; nothing is echoed, printed, or left in a variable that is later printed. The create output is discarded. End by unsetting the three prompted variables.
