@@ -288,6 +288,57 @@ describe("runProvisionOwner against the test database", () => {
     }
   });
 
+  it("refuses when both organisations exist and the named one does not own the community, touching nothing under it", async () => {
+    const conns = connect(loadRuntime());
+    try {
+      await clearIdentity(conns);
+      // Organisation A: a full successful run with its own community and owner.
+      expect(
+        (
+          await provision(conns, {
+            organisationSlug: "prov-dual-a",
+            communitySlug: "prov-dual-a-com",
+            email: "owner-a@example.com",
+          })
+        ).stdout,
+      ).toBe("created\n");
+      // Organisation B: a genuinely separate, already-provisioned row with its own owner.
+      // Unlike the single-org mismatch test above, B really exists in platform.organisations.
+      expect(
+        (
+          await provision(conns, {
+            organisationSlug: "prov-dual-b",
+            communitySlug: "prov-dual-b-com",
+            email: "owner-b@example.com",
+          })
+        ).stdout,
+      ).toBe("created\n");
+
+      const scopeB = await scopeBySlug(conns, "prov-dual-b", "prov-dual-b-com");
+      const ownerBBefore = await withAppTransaction(conns.app, scopeB!, (tx) => findOwner(tx));
+      const grantsBBefore = await grantCounts(conns, scopeB!);
+      const usersBefore = await identityUserCount(conns);
+
+      // Name organisation B (real) together with organisation A's community (owned by A, not B).
+      // The organisationId equality check is the only thing that refuses this; weakening it to
+      // "both non-null" would let the run proceed under B and this assertion would fail.
+      const result = await provision(conns, {
+        organisationSlug: "prov-dual-b",
+        communitySlug: "prov-dual-a-com",
+        email: "intruder@example.com",
+      });
+      expect(result).toEqual({ exitCode: 1, stdout: "", stderr: "organisation\n" });
+
+      // Nothing changed under B: same owner, same grant counts, no new identity user anywhere.
+      const ownerBAfter = await withAppTransaction(conns.app, scopeB!, (tx) => findOwner(tx));
+      expect(ownerBAfter).toEqual(ownerBBefore);
+      expect(await grantCounts(conns, scopeB!)).toEqual(grantsBBefore);
+      expect(await identityUserCount(conns)).toBe(usersBefore);
+    } finally {
+      await closeConns(conns);
+    }
+  });
+
   it("resolves a differently-cased email to the same owner with exactly one identity.users row", async () => {
     const conns = connect(loadRuntime());
     try {
