@@ -21,6 +21,7 @@ import { createHousehold, createPerson } from "@community-hub/people";
 import {
   bootstrapOwner,
   createCustomRole,
+  findOwner,
   grantRole,
   linkUser,
   revokeRole,
@@ -251,6 +252,103 @@ describe("links, bootstrap, and grants", () => {
       expect(community).toEqual([{ n: 1 }]);
       expect(bootAudits).toEqual([{ n: 1 }]);
     });
+  });
+
+  it("finds no owner before bootstrap and the bootstrapped owner after", async () => {
+    await withParish("grant-find-owner", async (tx) => {
+      expect(await findOwner(tx)).toBeNull();
+      const owner = newId();
+      await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      expect(await findOwner(tx)).toEqual({ userId: owner });
+    });
+  });
+
+  it("finds the owner from an organisation-level grant alone", async () => {
+    await withParish("grant-find-owner-org-only", async (tx) => {
+      const owner = newId();
+      await tx`
+        insert into app.organisation_role_grants (id, org_id, user_id, role_key)
+        values (
+          ${newId()}::uuid,
+          current_setting('app.org_id')::uuid,
+          ${owner}::uuid,
+          'org_owner'
+        )
+      `;
+      const community = await tx<{ n: number }[]>`
+        select count(*)::int as n from app.community_role_grants
+      `;
+      expect(community).toEqual([{ n: 0 }]);
+      expect(await findOwner(tx)).toEqual({ userId: owner });
+    });
+  });
+
+  it("falls back to a community-level grant when no organisation-level grant exists", async () => {
+    await withParish("grant-find-owner-community-only", async (tx) => {
+      const owner = newId();
+      await tx`
+        insert into app.community_role_grants (
+          id, org_id, community_id, user_id, role_key, custom_role_id
+        ) values (
+          ${newId()}::uuid,
+          current_setting('app.org_id')::uuid,
+          current_setting('app.community_id')::uuid,
+          ${owner}::uuid,
+          'community_admin',
+          null
+        )
+      `;
+      const organisation = await tx<{ n: number }[]>`
+        select count(*)::int as n from app.organisation_role_grants
+      `;
+      expect(organisation).toEqual([{ n: 0 }]);
+      expect(await findOwner(tx)).toEqual({ userId: owner });
+    });
+  });
+
+  it("does not find an owner bootstrapped in a different organisation", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const organisationId = newId();
+    const communityId = newId();
+    const otherOrg = newId();
+    const otherCommunity = newId();
+    try {
+      await platform.begin(async (platformTx) => {
+        await platformTx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, 'grant-find-owner-tenant-a', 'au', 'implicit')
+        `;
+        await platformTx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, 'grant-find-owner-tenant-a', 'au')
+        `;
+        await platformTx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${otherOrg}, 'grant-find-owner-tenant-b', 'au', 'implicit')
+        `;
+        await platformTx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${otherCommunity}, ${otherOrg}, 'grant-find-owner-tenant-b', 'au')
+        `;
+      });
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const owner = newId();
+          await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+          expect(await findOwner(tx)).toEqual({ userId: owner });
+        }),
+      );
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: otherOrg, communityId: otherCommunity }, async (tx) => {
+          expect(await findOwner(tx)).toBeNull();
+        }),
+      );
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
   });
 
   it("refuses a link and an unlink without users.manage", async () => {
@@ -851,5 +949,40 @@ describe("links, bootstrap, and grants", () => {
       `;
       expect(revoked).toEqual([{ target_ids: [granted.grantId] }]);
     });
+  });
+});
+
+describe("findOwner source", () => {
+  const GRANTS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "grants.ts");
+
+  /** Isolates a top-level function body, whose closing brace is the first `\n}` after it. */
+  function functionBody(src: string, signature: string): string {
+    const start = src.indexOf(signature);
+    if (start < 0) {
+      throw new Error(`${signature} not found`);
+    }
+    const end = src.indexOf("\n}", start);
+    if (end < 0) {
+      throw new Error(`end of ${signature} not found`);
+    }
+    return src.slice(start, end + 2);
+  }
+
+  it("filters both the organisation and community lookups by current_setting('app.org_id')", () => {
+    // Behavioural isolation here cannot prove this: FORCE ROW LEVEL SECURITY on the
+    // grant tables would mask a dropped org_id predicate and the tests above would
+    // still pass. Pin findOwner's own SQL as source text so the tenant filter on both
+    // queries cannot be removed silently.
+    const body = functionBody(readFileSync(GRANTS, "utf8"), "export async function findOwner(");
+    const orgTable = body.indexOf("organisation_role_grants");
+    const communityTable = body.indexOf("community_role_grants");
+    expect(orgTable).toBeGreaterThanOrEqual(0);
+    expect(communityTable).toBeGreaterThan(orgTable);
+    const orgQuery = body.slice(orgTable, communityTable);
+    const communityQuery = body.slice(communityTable);
+    expect(orgQuery).toMatch(/current_setting\(\s*'app\.org_id'\s*\)/);
+    expect(communityQuery).toMatch(/current_setting\(\s*'app\.org_id'\s*\)/);
+    // The community lookup additionally narrows to the community.
+    expect(communityQuery).toMatch(/current_setting\(\s*'app\.community_id'\s*\)/);
   });
 });

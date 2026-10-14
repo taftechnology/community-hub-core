@@ -49,6 +49,11 @@ run "happy" {
   }
 
   assert {
+    condition     = strcontains(aws_kms_key.secrets.policy, "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-provision-owner-??????")
+    error_message = "secrets key policy must bind the provision-owner secret ARN pattern"
+  }
+
+  assert {
     condition = (
       aws_secretsmanager_secret_version.app.secret_string == null &&
       aws_secretsmanager_secret_version.identity.secret_string == null &&

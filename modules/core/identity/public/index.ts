@@ -2,6 +2,7 @@ export { IdentityError } from "../domain/error.js";
 export { OtpMailUnavailable, rejectingOtpMail, type OtpMail } from "../domain/otp-mail.js";
 export { startEmailOtp, verifyEmailOtp } from "../infrastructure/email-otp.js";
 export { ensureIdentityKey } from "../infrastructure/identity-key.js";
+export { findOrCreateUserByEmail, findUserByEmail } from "../infrastructure/email-lookup.js";
 export {
   beginPasskeyAuthentication,
   beginPasskeyRegistration,

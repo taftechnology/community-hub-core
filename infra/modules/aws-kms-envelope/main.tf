@@ -367,6 +367,12 @@ resource "aws_iam_role_policy" "task_secrets" {
         Action   = ["kms:Decrypt"]
         Resource = var.db_secrets_key_arn
       },
+      {
+        Sid      = "ReadProvisionSecret"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:${var.name}-provision-owner-??????"
+      },
     ]
   })
 }

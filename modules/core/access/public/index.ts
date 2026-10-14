@@ -27,6 +27,7 @@ export {
   grantRole,
   revokeRole,
   bootstrapOwner,
+  findOwner,
   linkUser,
   unlinkUser,
 } from "../infrastructure/grants.js";
