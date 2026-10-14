@@ -9,7 +9,7 @@ Spec: docs/specs/2026-10-14-email-provider.md
 **Architecture:** An SES v2 adapter implements the existing `OtpMail` port in `apps/api/src/mail/` and is wired only when two optional variables are set. Terraform adds staging-only SES resources, DNS records and one task-role policy in the AU root, and passes the two variables through the ingress module. The owner runs every apply and one-off; agents commit code, Terraform, documents and the two `staging.tfvars` flag changes only.
 
 Slug: email-provider
-Status: draft
+Status: approved (2026-10-14, Adnan Bin Hossen)
 
 **Branch:** `feat/2026-10-14-email-provider` · one PR · ten agent commits after the approved spec
 
