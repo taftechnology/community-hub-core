@@ -5,6 +5,8 @@ Status: approved (2026-10-13, Adnan Bin Hossen)
 
 Migration wave: none. No schema change in this chunk.
 
+Cost and parking: this chunk does not unpark staging — the Terraform change (task 5) applies while parked, and the one thing that costs money, the provisioning secret, is USD 0.40/secret/month prorated, in practice a fraction of that since it exists only for the duration of one run.
+
 Rollback: revert the commit. No destructive DDL to undo. If an organisation, community, identity user, or role grant were created in error during manual testing, remove them by hand (role-grant rows, then the community row, then the organisation row, then the identity user). The Terraform change (task 5) is reverted by removing the one added IAM statement and the one added KMS key policy pattern — nothing depends on them until this chunk's code ships, so there is no live-traffic risk to a revert.
 
 Parallelism note: tasks 1, 2, 3, and 5 touch disjoint files (`core/tenancy`, `core/access`, `core/identity`, `infra/modules/*` respectively) and may be dispatched to separate implementers in parallel per AGENTS.md §5. Task 4 depends on 1–3. Task 6 depends on 4 and 5. Task 7 is last, always.
