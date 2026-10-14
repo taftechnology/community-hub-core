@@ -28,4 +28,19 @@ describe("identity key source", () => {
     expect(lookup).not.toMatch(/where email /);
     expect(lookup).not.toMatch(/and email /);
   });
+
+  it("resolves the OTP user through the shared findOrCreateUserByKeys core", () => {
+    const otp = source("email-otp.ts");
+    // Isolate verifyEmailOtp's own body (its closing brace is the first `\n}` after it)
+    // so the assertion cannot be satisfied by a mention elsewhere in the file.
+    const start = otp.indexOf("export async function verifyEmailOtp");
+    expect(start).toBeGreaterThanOrEqual(0);
+    const end = otp.indexOf("\n}", start);
+    expect(end).toBeGreaterThan(start);
+    const body = otp.slice(start, end + 2);
+    // verifyEmailOtp must resolve its user through the one shared find-or-create core,
+    // so no future edit can reintroduce a parallel lookup/insert that drifts from the
+    // provisioning path's derivation of the same address.
+    expect(body).toMatch(/findOrCreateUserByKeys\(/);
+  });
 });
