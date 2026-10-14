@@ -12,9 +12,24 @@ import {
   createPlaintextIdentitySql,
   createPlaintextPlatformSql,
 } from "@community-hub/db/plaintext";
-import { findUserByEmail } from "@community-hub/identity";
+import {
+  findUserByEmail,
+  startEmailOtp,
+  verifyEmailOtp,
+  type OtpMail,
+} from "@community-hub/identity";
 
 import { runProvisionOwner, type ProvisionOwnerResult } from "./provision-owner.js";
+
+/** Captures the last code the OTP flow would have mailed, like the identity suite's own fake. */
+class MemoryMail implements OtpMail {
+  last: { to: string; code: string } | undefined;
+
+  send(input: { to: string; code: string }): Promise<void> {
+    this.last = input;
+    return Promise.resolve();
+  }
+}
 
 type Runtime = {
   productOnlyUrl: string;
@@ -289,12 +304,30 @@ describe("runProvisionOwner against the test database", () => {
 
       const scope = await scopeBySlug(conns, "prov-case-org", "prov-case-com");
       const owner = await withAppTransaction(conns.app, scope!, (tx) => findOwner(tx));
-      // The OTP sign-in path resolves through the same shared blind-index lookup this uses.
+
+      // The claim is that the real OTP sign-in path — not a read helper — resolves the
+      // lower-case address to the owner the mixed-case provisioning created. Drive the
+      // exact functions a user's sign-in calls: start a code, then verify it, against a
+      // real otp_challenges row and a real code match. The session's user is the proof.
+      const mail = new MemoryMail();
+      await startEmailOtp(conns.identity, conns.kms, KEY_ARN, mail, {
+        email: "ada@example.com",
+        now: NOW,
+      });
+      const session = await verifyEmailOtp(conns.identity, conns.kms, KEY_ARN, {
+        email: "ada@example.com",
+        code: mail.last!.code,
+        now: new Date(NOW.getTime() + 60 * 1000),
+      });
+      expect(session).not.toBeNull();
+      expect(session!.userId).toBe(owner!.userId);
+      expect(await identityUserCount(conns)).toBe(1);
+
+      // Secondary corroboration: the read helper agrees with the OTP session's user.
       const resolved = await findUserByEmail(conns.identity, conns.kms, KEY_ARN, {
         email: "ada@example.com",
       });
       expect(resolved).toEqual({ userId: owner!.userId });
-      expect(await identityUserCount(conns)).toBe(1);
     } finally {
       await closeConns(conns);
     }
