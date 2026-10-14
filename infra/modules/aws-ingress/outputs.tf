@@ -43,3 +43,8 @@ output "tenant_write_throttle" {
     }
   }
 }
+
+output "service_environment" {
+  description = "Container environment map when service_image is set, otherwise empty."
+  value       = var.service_image == null ? {} : { for e in jsondecode(aws_ecs_task_definition.this[0].container_definitions)[0].environment : e.name => e.value }
+}

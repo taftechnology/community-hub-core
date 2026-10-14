@@ -276,3 +276,30 @@ variable "service_image" {
     error_message = "service_image must be a lowercase sha256 digest in this account's ap-southeast-2 ECR repository."
   }
 }
+
+variable "mail_from_address" {
+  type        = string
+  default     = null
+  description = "Optional sender email address for Amazon SES sign-in codes."
+
+  validation {
+    condition     = var.mail_from_address == null || can(regex("^[^\\s<>@]+@[^\\s<>@]+$", var.mail_from_address))
+    error_message = "mail_from_address must be a single local@domain with no whitespace or angle brackets."
+  }
+
+  validation {
+    condition     = (var.mail_from_address == null) == (var.ses_configuration_set == null)
+    error_message = "mail_from_address and ses_configuration_set must both be set or both be null."
+  }
+}
+
+variable "ses_configuration_set" {
+  type        = string
+  default     = null
+  description = "Optional Amazon SES configuration set name for sign-in emails."
+
+  validation {
+    condition     = var.ses_configuration_set == null || can(regex("^[A-Za-z0-9_-]{1,64}$", var.ses_configuration_set))
+    error_message = "ses_configuration_set must match ^[A-Za-z0-9_-]{1,64}$."
+  }
+}

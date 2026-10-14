@@ -674,6 +674,14 @@ run "staging_image_set" {
     )
     error_message = "the ops container runs db-bootstrap.js with passwords injected and no secret ARN in the environment"
   }
+
+  assert {
+    condition = (
+      module.ingress.service_environment["MAIL_FROM_ADDRESS"] == "no-reply@mail.communityhub-staging.net" &&
+      module.ingress.service_environment["SES_CONFIGURATION_SET"] == "ch-staging-mail"
+    )
+    error_message = "staging service environment contains derived MAIL_FROM_ADDRESS and SES_CONFIGURATION_SET"
+  }
 }
 
 run "prod_image_set" {
@@ -693,6 +701,80 @@ run "prod_image_set" {
     service_image         = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-prod/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
   }
 
+  override_resource {
+    target = module.db_secrets.aws_secretsmanager_secret.app
+    values = {
+      arn = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:app"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = module.db_secrets.aws_secretsmanager_secret.identity
+    values = {
+      arn = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:identity"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = module.db_secrets.aws_secretsmanager_secret.platform
+    values = {
+      arn = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:platform"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = module.db_secrets.aws_kms_key.secrets
+    values = {
+      arn = "arn:aws:kms:ap-southeast-2:123456789012:key/role-secrets"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = module.kms.aws_kms_key.storage
+    values = {
+      arn = "arn:aws:kms:ap-southeast-2:123456789012:key/storage"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = module.envelope.aws_kms_key.envelope
+    values = {
+      arn = "arn:aws:kms:ap-southeast-2:123456789012:key/envelope"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = aws_iam_role.db_ops_execution
+    values = {
+      id  = "role-db-ops-execution"
+      arn = "arn:aws:iam::123456789012:role/db-ops-execution"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = aws_iam_role.db_ops_task
+    values = {
+      id  = "role-db-ops-task"
+      arn = "arn:aws:iam::123456789012:role/db-ops-task"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = module.ingress.aws_ecr_repository.service
+    values = {
+      arn = "arn:aws:ecr:ap-southeast-2:123456789012:repository/ch-staging/service"
+    }
+    override_during = plan
+  }
+
   assert {
     condition     = length(module.ingress.task_subnet_ids) == 2
     error_message = "a set production image plans both public subnets"
@@ -701,6 +783,15 @@ run "prod_image_set" {
   assert {
     condition     = length(aws_ecs_task_definition.db_ops) == 1
     error_message = "a set production image plans the ops task"
+  }
+
+  assert {
+    condition = (
+      length(module.ingress.service_environment) == 18 &&
+      !contains(keys(module.ingress.service_environment), "MAIL_FROM_ADDRESS") &&
+      !contains(keys(module.ingress.service_environment), "SES_CONFIGURATION_SET")
+    )
+    error_message = "prod service environment has 18 entries and neither mail variable"
   }
 }
 

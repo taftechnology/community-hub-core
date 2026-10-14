@@ -250,6 +250,8 @@ module "ingress" {
   app_secret_arn         = module.db_secrets.app_secret_arn
   identity_secret_arn    = module.db_secrets.identity_secret_arn
   platform_secret_arn    = module.db_secrets.platform_secret_arn
+  mail_from_address      = local.ses_enabled ? local.mail_from : null
+  ses_configuration_set  = local.ses_enabled ? aws_sesv2_configuration_set.mail[0].configuration_set_name : null
 }
 
 resource "aws_iam_role" "db_ops_execution" {
