@@ -951,3 +951,38 @@ describe("links, bootstrap, and grants", () => {
     });
   });
 });
+
+describe("findOwner source", () => {
+  const GRANTS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "grants.ts");
+
+  /** Isolates a top-level function body, whose closing brace is the first `\n}` after it. */
+  function functionBody(src: string, signature: string): string {
+    const start = src.indexOf(signature);
+    if (start < 0) {
+      throw new Error(`${signature} not found`);
+    }
+    const end = src.indexOf("\n}", start);
+    if (end < 0) {
+      throw new Error(`end of ${signature} not found`);
+    }
+    return src.slice(start, end + 2);
+  }
+
+  it("filters both the organisation and community lookups by current_setting('app.org_id')", () => {
+    // Behavioural isolation here cannot prove this: FORCE ROW LEVEL SECURITY on the
+    // grant tables would mask a dropped org_id predicate and the tests above would
+    // still pass. Pin findOwner's own SQL as source text so the tenant filter on both
+    // queries cannot be removed silently.
+    const body = functionBody(readFileSync(GRANTS, "utf8"), "export async function findOwner(");
+    const orgTable = body.indexOf("organisation_role_grants");
+    const communityTable = body.indexOf("community_role_grants");
+    expect(orgTable).toBeGreaterThanOrEqual(0);
+    expect(communityTable).toBeGreaterThan(orgTable);
+    const orgQuery = body.slice(orgTable, communityTable);
+    const communityQuery = body.slice(communityTable);
+    expect(orgQuery).toMatch(/current_setting\(\s*'app\.org_id'\s*\)/);
+    expect(communityQuery).toMatch(/current_setting\(\s*'app\.org_id'\s*\)/);
+    // The community lookup additionally narrows to the community.
+    expect(communityQuery).toMatch(/current_setting\(\s*'app\.community_id'\s*\)/);
+  });
+});
