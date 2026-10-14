@@ -118,7 +118,7 @@ describe("readServiceEnv", () => {
       [
         "address with <",
         {
-          MAIL_FROM_ADDRESS: "<no-reply@mail.example.test>",
+          MAIL_FROM_ADDRESS: "<no-reply@mail.example.test",
           SES_CONFIGURATION_SET: "valid-set",
         },
       ],
