@@ -188,13 +188,16 @@ The operator is prompted for each value, so none is typed as a command-line argu
 
 This secret is never Terraform-managed, and **Delete and verify** below fully destroys it with `--force-delete-without-recovery`, so by the time this step runs again the secret genuinely does not exist. `put-secret-value` only writes a new version to an _already-existing_ secret and would fail with `ResourceNotFoundException`; `create-secret` is the correct call every time this step runs. (Proof 7b's rotation uses `put-secret-value` because that secret is Terraform-managed and already exists — a different situation, not a precedent for this one.)
 
+`create-secret` must name the customer-managed secrets key with `--kms-key-id ${SECRETS_KEY_ARN}`. Without it the secret is encrypted under the account's AWS-managed key, and the task 5 key-policy grant — which covers only this one secret name on the customer-managed key — would cover nothing. Hold `${SECRETS_KEY_ARN}` from a read-only describe or Terraform output, the same source proof 7a uses; it is never recorded.
+
     read -r -p "Organisation slug: " ORG_SLUG
     read -r -p "Community slug: " COMMUNITY_SLUG
     read -r -p "Owner email: " OWNER_EMAIL
     jq -n --arg o "${ORG_SLUG}" --arg c "${COMMUNITY_SLUG}" --arg e "${OWNER_EMAIL}" \
       '{organisationSlug: $o, communitySlug: $c, email: $e}' \
       | aws secretsmanager create-secret --profile ${AWS_PROFILE} \
-        --name ${PROVISION_SECRET_NAME} --secret-string file:///dev/stdin >/dev/null
+        --name ${PROVISION_SECRET_NAME} --kms-key-id ${SECRETS_KEY_ARN} \
+        --secret-string file:///dev/stdin >/dev/null
     unset ORG_SLUG COMMUNITY_SLUG OWNER_EMAIL
 
 `${PROVISION_SECRET_NAME}` is the one fixed name the task 5 Terraform grants on (`${name}-provision-owner`); its resolved value is never written here. The secret value carries the email, so it is `confidential`; it is deleted in **Delete and verify** immediately after the run.
