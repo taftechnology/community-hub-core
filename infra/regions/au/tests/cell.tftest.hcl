@@ -71,6 +71,20 @@ mock_provider "aws" {
       }
     }
   }
+
+  mock_resource "aws_sesv2_email_identity" {
+    defaults = {
+      dkim_signing_attributes = {
+        tokens = ["tok1", "tok2", "tok3"]
+      }
+    }
+  }
+
+  mock_resource "aws_sesv2_configuration_set" {
+    defaults = {
+      arn = "arn:aws:ses:ap-southeast-2:123456789012:configuration-set/mock-set"
+    }
+  }
 }
 
 run "staging_happy" {
@@ -182,6 +196,95 @@ run "staging_happy" {
     condition     = length(aws_ecs_task_definition.db_ops) == 0 && length(aws_iam_role.db_ops_execution) == 0
     error_message = "an unset image plans no ops task"
   }
+
+  assert {
+    condition = (
+      length(aws_sesv2_email_identity.mail) == 1 &&
+      aws_sesv2_email_identity.mail[0].email_identity == "mail.communityhub-staging.net" &&
+      aws_sesv2_email_identity.mail[0].configuration_set_name == aws_sesv2_configuration_set.mail[0].configuration_set_name &&
+      aws_sesv2_email_identity.mail[0].dkim_signing_attributes[0].next_signing_key_length == "RSA_2048_BIT"
+    )
+    error_message = "staging creates SES email identity with dkim RSA_2048_BIT and default configuration set"
+  }
+
+  assert {
+    condition = (
+      length(aws_sesv2_email_identity_mail_from_attributes.mail) == 1 &&
+      aws_sesv2_email_identity_mail_from_attributes.mail[0].email_identity == "mail.communityhub-staging.net" &&
+      aws_sesv2_email_identity_mail_from_attributes.mail[0].mail_from_domain == "bounces.mail.communityhub-staging.net" &&
+      aws_sesv2_email_identity_mail_from_attributes.mail[0].behavior_on_mx_failure == "USE_DEFAULT_VALUE"
+    )
+    error_message = "staging configures custom MAIL FROM domain on email identity"
+  }
+
+  assert {
+    condition = (
+      length(aws_sesv2_configuration_set.mail) == 1 &&
+      aws_sesv2_configuration_set.mail[0].delivery_options[0].tls_policy == "REQUIRE" &&
+      aws_sesv2_configuration_set.mail[0].reputation_options[0].reputation_metrics_enabled == true &&
+      toset(aws_sesv2_configuration_set.mail[0].suppression_options[0].suppressed_reasons) == toset(["BOUNCE", "COMPLAINT"]) &&
+      aws_sesv2_configuration_set.mail[0].sending_options[0].sending_enabled == true &&
+      length(aws_sesv2_configuration_set.mail[0].tracking_options) == 0 &&
+      length(aws_sesv2_configuration_set.mail[0].vdm_options) == 0 &&
+      !strcontains(file("${path.module}/ses.tf"), "event_destination") &&
+      !strcontains(file("${path.module}/ses.tf"), "vdm_options") &&
+      !strcontains(file("${path.module}/ses.tf"), "tracking_options")
+    )
+    error_message = "staging configuration set has tls REQUIRE, suppression reasons, and no tracking/vdm/destination"
+  }
+
+  assert {
+    condition = (
+      length(aws_route53_record.ses_dkim) == 3 &&
+      aws_route53_record.ses_dkim[0].name == "tok1._domainkey.mail.communityhub-staging.net" &&
+      aws_route53_record.ses_dkim[0].type == "CNAME" &&
+      aws_route53_record.ses_dkim[0].ttl == 300 &&
+      aws_route53_record.ses_dkim[0].records == toset(["tok1.dkim.amazonses.com"]) &&
+      aws_route53_record.ses_dkim[1].name == "tok2._domainkey.mail.communityhub-staging.net" &&
+      aws_route53_record.ses_dkim[1].records == toset(["tok2.dkim.amazonses.com"]) &&
+      aws_route53_record.ses_dkim[2].name == "tok3._domainkey.mail.communityhub-staging.net" &&
+      aws_route53_record.ses_dkim[2].records == toset(["tok3.dkim.amazonses.com"]) &&
+      length(aws_route53_record.ses_mail_from_mx) == 1 &&
+      aws_route53_record.ses_mail_from_mx[0].name == "bounces.mail.communityhub-staging.net" &&
+      aws_route53_record.ses_mail_from_mx[0].type == "MX" &&
+      aws_route53_record.ses_mail_from_mx[0].ttl == 300 &&
+      aws_route53_record.ses_mail_from_mx[0].records == toset(["10 feedback-smtp.ap-southeast-2.amazonses.com"]) &&
+      length(aws_route53_record.ses_mail_from_txt) == 1 &&
+      aws_route53_record.ses_mail_from_txt[0].name == "bounces.mail.communityhub-staging.net" &&
+      aws_route53_record.ses_mail_from_txt[0].type == "TXT" &&
+      aws_route53_record.ses_mail_from_txt[0].ttl == 300 &&
+      aws_route53_record.ses_mail_from_txt[0].records == toset(["v=spf1 include:amazonses.com ~all"]) &&
+      length(aws_route53_record.ses_dmarc_txt) == 1 &&
+      aws_route53_record.ses_dmarc_txt[0].name == "_dmarc.mail.communityhub-staging.net" &&
+      aws_route53_record.ses_dmarc_txt[0].type == "TXT" &&
+      aws_route53_record.ses_dmarc_txt[0].ttl == 300 &&
+      aws_route53_record.ses_dmarc_txt[0].records == toset(["v=DMARC1; p=none;"])
+    )
+    error_message = "staging creates DKIM CNAMEs, MAIL FROM MX/SPF and DMARC TXT records"
+  }
+
+  assert {
+    condition = (
+      length(aws_iam_role_policy.ses_send) == 1 &&
+      aws_iam_role_policy.ses_send[0].role == module.envelope.task_role_name &&
+      jsondecode(aws_iam_role_policy.ses_send[0].policy).Statement == [
+        {
+          Effect = "Allow"
+          Action = ["ses:SendEmail"]
+          Resource = [
+            "arn:aws:ses:ap-southeast-2:123456789012:identity/*",
+            "arn:aws:ses:ap-southeast-2:123456789012:configuration-set/mock-set"
+          ]
+          Condition = {
+            StringEquals = {
+              "ses:FromAddress" = "no-reply@mail.communityhub-staging.net"
+            }
+          }
+        }
+      ]
+    )
+    error_message = "staging attaches exact task role policy for SES send"
+  }
 }
 
 run "budgets_on" {
@@ -288,6 +391,20 @@ run "prod_tfvars" {
       length(aws_iam_role_policy.admin_publish) == 0
     )
     error_message = "prod plans no admin shell and no admin publish role"
+  }
+
+  assert {
+    condition = (
+      length(aws_sesv2_configuration_set.mail) == 0 &&
+      length(aws_sesv2_email_identity.mail) == 0 &&
+      length(aws_sesv2_email_identity_mail_from_attributes.mail) == 0 &&
+      length(aws_route53_record.ses_dkim) == 0 &&
+      length(aws_route53_record.ses_mail_from_mx) == 0 &&
+      length(aws_route53_record.ses_mail_from_txt) == 0 &&
+      length(aws_route53_record.ses_dmarc_txt) == 0 &&
+      length(aws_iam_role_policy.ses_send) == 0
+    )
+    error_message = "prod plans no SES resource, DNS records or send policy"
   }
 }
 

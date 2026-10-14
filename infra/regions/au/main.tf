@@ -4,6 +4,10 @@ provider "aws" {
 
 locals {
   name           = "ch-${var.environment}"
+  zone_name      = var.environment == "prod" ? "communityhub.one" : "communityhub-staging.net"
+  mail_domain    = "mail.${local.zone_name}"
+  mail_from      = "no-reply@${local.mail_domain}"
+  ses_enabled    = var.environment == "staging"
   db_ops_count   = var.service_image != null && var.enable_database ? 1 : 0
   db_ops_log_arn = "arn:aws:logs:${var.aws_region}:${var.aws_account_id}:log-group:${module.envelope.log_group_name}"
   image_publish_count = (
@@ -227,7 +231,7 @@ module "ingress" {
   vpc_id                 = module.network.vpc_id
   private_subnet_ids     = module.network.private_subnet_ids
   task_security_group_id = module.network.task_security_group_id
-  zone_name              = var.environment == "prod" ? "communityhub.one" : "communityhub-staging.net"
+  zone_name              = local.zone_name
   create_public_zone     = var.create_public_zone
   attach_public_dns      = var.attach_public_dns
   public_zone_id         = var.create_public_zone ? null : var.staging_zone_id
@@ -453,7 +457,7 @@ module "admin_static" {
   name        = local.name
   environment = var.environment
   project     = "community-hub"
-  zone_name   = var.environment == "prod" ? "communityhub.one" : "communityhub-staging.net"
+  zone_name   = local.zone_name
   zone_id     = coalesce(var.staging_zone_id, "ZUNUSED")
 }
 
