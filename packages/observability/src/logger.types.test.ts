@@ -21,6 +21,11 @@ describe("logger compile-time field typing", () => {
       errorCode: "42P01",
     });
 
+    logger.info("mail", {
+      operation: "send_email",
+      outcome: "ok",
+    });
+
     // @ts-expect-error untyped records must not be accepted by the logger API
     logger.info("request", untyped);
 

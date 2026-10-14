@@ -12,6 +12,7 @@
   "dependencies": {
     "@aws-sdk/client-kms": "^3.758.0",
     "@aws-sdk/client-secrets-manager": "^3.758.0",
+    "@aws-sdk/client-sesv2": "^3.758.0",
     "@community-hub/access": "workspace:*",
     "@community-hub/contracts": "workspace:*",
     "@community-hub/crypto": "workspace:*",
