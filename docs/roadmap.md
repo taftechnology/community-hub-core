@@ -22,7 +22,7 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 | ------------ | ----------------------------------------------------------------- |
 | Phase        | 1 — Core platform                                                 |
 | Last shipped | `first-owner`                                                     |
-| Next chunk   | email provider (Amazon SES; no spec yet), then `stripe-billing`   |
+| Next chunk   | `email-provider` (Amazon SES; no spec yet), then `stripe-billing` |
 | Phase 0      | 26 rows: 25 done, 1 superseded (`api-au-hostname`), 0 not started |
 | Later phases | not started                                                       |
 
@@ -96,7 +96,7 @@ Architecture: monorepo, CI, Terraform for AWS in `ap-southeast-2`, kernel, db wi
 | done       | `db-migrate-command`         | The image gains `/app/db-migrate.js`, which applies the product migrations as the master login, refuses to run before `db-bootstrap`, and prints the tags it applied. It has not been run on staging. Spec `docs/specs/2026-10-12-db-migrate-command.md`.                                                                                                                                                                                                                          |
 | done       | `staging-proof-run`          | The distroless image runs on Fargate. `db-bootstrap` then `db-migrate` applied the ten product migrations to RDS and a second run applied none. The sign-in-code route answers 503 with no mail vendor; role and entitlement routes refuse a request with no session; the service re-read a changed database secret and recovered without a restart. Staging was re-parked the same day. Spec `docs/specs/2026-10-12-staging-proof-run.md`.                                        |
 
-Next is an email provider (Amazon SES; no spec yet), then `stripe-billing`.
+Next is `email-provider` (Amazon SES; no spec yet), then `stripe-billing`.
 
 SQS, EventBridge, file storage, and the admin static-file distribution are not rows here. Each waits for the first chunk that uses it.
 
@@ -119,6 +119,7 @@ Vertical slices. Nav items appear in the frozen order (see [Admin navigation](#a
 | done        | `access-roles`         | Settings → Users & Roles. Spec `docs/specs/2026-10-12-access-roles.md`.                                                                                                             |
 | done        | `entitlements-plans`   | Plans and allocations in the platform schema. Community toggles; nav hide/show. Spec docs/specs/2026-10-12-entitlements-plans.md.                                                   |
 | done        | `first-owner`          | Operator-run one-off that provisions the organisation and community (if absent) and the first owner. No HTTP route, no claim link yet. Spec `docs/specs/2026-10-13-first-owner.md`. |
+| not started | `email-provider`       | Amazon SES behind the existing mail port. Sign-in codes only for now. Sandbox (verified addresses only) until production access is approved. No spec yet.                           |
 | not started | `stripe-billing`       | Our subscriptions. Webhooks on the Sydney hostname. The regional service does the work. Not `exec`. Not GivingJar.                                                                  |
 | not started | `ops-console`          | Routes on the regional service. Passkeys. The `platform` role has no `app` privileges. No Cloudflare Access.                                                                        |
 | not started | `usage-facts`          | `core/usage` skeleton (community × feature × day). Facts grow as modules ship.                                                                                                      |
@@ -271,13 +272,13 @@ The pooled checkout logs nothing when it re-reads a secret after a password chan
 
 The turbo build cache does not hash the staging var file, so the three parked-state tests can replay a cached result across an unpark or re-park commit. Bypass the cache (`pnpm test --force`, or the full gate form in the proof-run plan) when those flags change; see that plan's "CI and local gate while unparked" section.
 
-A signed-in proof on staging still waits for a mail vendor. The first-owner path now exists (`first-owner`) but has not yet been run on staging — that live run is deferred to the email chunk, which needs a working owner anyway.
+A signed-in proof on staging still waits for a mail vendor. The first-owner path now exists (`first-owner`) but has not yet been run on staging — that live run is deferred to `email-provider`, which needs a working owner anyway.
 
 ---
 
 ## Next spec
 
-The next chunk is an email provider (Amazon SES), ahead of **stripe-billing** per Abdus's 2026-10-13 direction — neither has an approved spec yet. Billing is still blocked on plan tiers/pricing (Q8).
+The next chunk is `email-provider` (Amazon SES), ahead of **stripe-billing** per Abdus's 2026-10-13 direction — neither has an approved spec yet. Billing is still blocked on plan tiers/pricing (Q8).
 
 ---
 
