@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { bootstrapOwner, findOwner } from "@community-hub/access";
@@ -396,5 +399,48 @@ describe("runProvisionOwnerMain backstop", () => {
     expect(result).toEqual(failure("fail"));
     const out = `${result.stdout}${result.stderr}`;
     expect(out).not.toContain(MARKER);
+  });
+});
+
+/**
+ * Isolates the exact `createAwsKmsPort(...)` call argument by balanced-paren scan,
+ * so the assertions below read only that construction and not the whole file. The
+ * inner `new KMSClient({ ... })` paren is handled by the depth counter.
+ */
+function kmsPortCall(src: string): string {
+  const start = src.indexOf("createAwsKmsPort({");
+  if (start < 0) {
+    throw new Error("createAwsKmsPort call not found");
+  }
+  let depth = 0;
+  for (let i = src.indexOf("(", start); i < src.length; i += 1) {
+    const ch = src[i];
+    if (ch === "(") {
+      depth += 1;
+    } else if (ch === ")") {
+      depth -= 1;
+      if (depth === 0) {
+        return src.slice(start, i + 1);
+      }
+    }
+  }
+  throw new Error("unbalanced createAwsKmsPort call");
+}
+
+describe("provision-owner source", () => {
+  const DIR = path.dirname(fileURLToPath(import.meta.url));
+  const src = readFileSync(path.join(DIR, "provision-owner.ts"), "utf8");
+
+  it("gives the KMS adapter a no-op info logger in the entrypoint", () => {
+    // The dispatch IIFE constructs the real KMS port and only runs at module load as
+    // the process entrypoint, so a source-text pin is the only practical way to assert
+    // its logger. The info field must be the literal no-op `() => undefined`; anything
+    // that can write (console.log, a body that calls process.stdout.write) must fail,
+    // so no 'kms' line can ever reach stdout. Whitespace variation is tolerated; a
+    // non-empty body or a non-empty parameter list is not.
+    const call = kmsPortCall(src);
+    expect(call).toMatch(/info:\s*\(\)\s*=>\s*undefined/);
+    expect(call).not.toMatch(/console\s*\./);
+    expect(call).not.toMatch(/process\s*\.\s*stdout/);
   });
 });
