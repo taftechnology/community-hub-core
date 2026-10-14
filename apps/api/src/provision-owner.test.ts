@@ -127,6 +127,14 @@ function harness(
       } else {
         expect(result.stderr).toBe("");
       }
+      // On every path, not just the happy one: the only environment key this command
+      // may ever read is PROVISION_SECRET_ARN. A fallback that reads a second env var
+      // (say, an email when the secret is invalid) trips this wherever it is added.
+      // Tolerates zero or repeated reads of PROVISION_SECRET_ARN itself.
+      expect(
+        read.every((key) => key === "PROVISION_SECRET_ARN"),
+        `environment keys read: ${JSON.stringify(read)}`,
+      ).toBe(true);
       return result;
     },
   };
@@ -188,6 +196,8 @@ describe("runProvisionOwner env", () => {
   });
 
   it("reads only PROVISION_SECRET_ARN from the environment", async () => {
+    // The shared harness run() now enforces this on every path in the file; this case
+    // keeps the intent documented and pins the exact single read on the happy path.
     const h = harness();
     await h.run();
     expect(h.read).toEqual(["PROVISION_SECRET_ARN"]);
