@@ -11,6 +11,7 @@ import {
 
 import {
   runProvisionOwner,
+  runProvisionOwnerMain,
   type ProvisionOwnerDeps,
   type ProvisionOwnerResult,
 } from "./provision-owner.js";
@@ -351,5 +352,39 @@ describe("runProvisionOwner failure classes", () => {
     mFindOwner.mockRejectedValue(new Error("something unexpected"));
     const h = harness();
     expect(await h.run()).toEqual(failure("fail"));
+  });
+});
+
+describe("runProvisionOwnerMain backstop", () => {
+  // Deps the backstop forwards unchanged; only the injected `run` matters here.
+  const deps = (
+    run: (deps: ProvisionOwnerDeps) => Promise<ProvisionOwnerResult>,
+  ): ProvisionOwnerDeps & { run: typeof runProvisionOwner } => ({
+    source: { PROVISION_SECRET_ARN: ARN },
+    readSecret: async () => SECRET,
+    platform: fakeSql,
+    app: fakeSql,
+    identity: fakeSql,
+    kms: fakeKms,
+    keyArn: KEY_ARN,
+    now: () => new Date("2026-10-13T00:00:00+11:00"),
+    run,
+  });
+
+  it("passes the inner result through unchanged on success", async () => {
+    const result = await runProvisionOwnerMain(deps(async () => created()));
+    expect(result).toEqual(created());
+  });
+
+  it("returns the fixed fail result and leaks nothing when the run throws", async () => {
+    const MARKER = `marker-should-never-leak-${Math.random()}`;
+    const result = await runProvisionOwnerMain(
+      deps(async () => {
+        throw new Error(MARKER);
+      }),
+    );
+    expect(result).toEqual(failure("fail"));
+    const out = `${result.stdout}${result.stderr}`;
+    expect(out).not.toContain(MARKER);
   });
 });

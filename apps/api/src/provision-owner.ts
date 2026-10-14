@@ -218,6 +218,25 @@ export async function runProvisionOwner(deps: ProvisionOwnerDeps): Promise<Provi
   }
 }
 
+/**
+ * The top-level backstop. `runProvisionOwner` already classifies the failures it
+ * expects, but if it throws for any other reason — a bug, an unexpected rejection
+ * from a dependency — that would otherwise surface as an unhandled rejection and
+ * print a message or stack trace. This catches any such throw and returns the fixed
+ * `fail` contract instead, reading nothing from the error. The connection-close
+ * `finally` still wraps the call at the entrypoint below.
+ */
+export async function runProvisionOwnerMain(
+  deps: ProvisionOwnerDeps & { run?: typeof runProvisionOwner },
+): Promise<ProvisionOwnerResult> {
+  const run = deps.run ?? runProvisionOwner;
+  try {
+    return await run(deps);
+  } catch {
+    return failed("fail\n");
+  }
+}
+
 function target(env: ServiceEnv, pem: string, user: string, password: string): SqlTarget {
   return {
     host: env.PGHOST,
@@ -266,7 +285,7 @@ if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
       info: () => undefined,
     });
     try {
-      result = await runProvisionOwner({
+      result = await runProvisionOwnerMain({
         source: process.env,
         readSecret: (arn) => reader(arn, "AWSCURRENT"),
         platform,
