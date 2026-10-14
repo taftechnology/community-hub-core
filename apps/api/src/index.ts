@@ -3,6 +3,7 @@ import type { Server } from "node:http";
 import { pathToFileURL } from "node:url";
 import { KMSClient } from "@aws-sdk/client-kms";
 import { SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
+import { SESv2Client } from "@aws-sdk/client-sesv2";
 import type { KmsPort } from "@community-hub/crypto";
 import {
   createAppSql,
@@ -10,7 +11,7 @@ import {
   createPlatformSql,
   type SqlTarget,
 } from "@community-hub/db";
-import { rejectingOtpMail } from "@community-hub/identity";
+import { rejectingOtpMail, type OtpMail } from "@community-hub/identity";
 import { healthRequest } from "@community-hub/kernel";
 import { createLogger, type Logger } from "@community-hub/observability";
 
@@ -21,6 +22,7 @@ import { createCheckout } from "./checkout.js";
 import { readServiceEnv, IMAGE_CERT_PATH, type ServiceEnv } from "./env.js";
 import { RoutesRejected, type GateRoute } from "./gate.js";
 import { createAwsKmsPort } from "./kms/aws-kms-adapter.js";
+import { createSesOtpMail } from "./mail/ses-otp-mail.js";
 import { secretsManagerReader } from "./secrets.js";
 import { startServer } from "./server.js";
 
@@ -145,6 +147,21 @@ export function bindServices(
     now: () => new Date(),
     log: () => undefined,
   };
+  let sesClient: SESv2Client | undefined;
+  const mail: OtpMail =
+    env.MAIL_FROM_ADDRESS !== undefined && env.SES_CONFIGURATION_SET !== undefined
+      ? createSesOtpMail({
+          client: () => {
+            sesClient ??= new SESv2Client({ region: env.AWS_REGION, maxAttempts: 1 });
+            return sesClient;
+          },
+          from: env.MAIL_FROM_ADDRESS,
+          configurationSet: env.SES_CONFIGURATION_SET,
+          info: (fields) => {
+            logger.info("mail", fields);
+          },
+        })
+      : rejectingOtpMail;
   return {
     auth: {
       checkout: shared.checkout,
@@ -152,7 +169,7 @@ export function bindServices(
         return shared.kms;
       },
       keyArn: shared.keyArn,
-      mail: rejectingOtpMail,
+      mail,
       now: shared.now,
       authHostname: env.AUTH_HOSTNAME,
       log: shared.log,

@@ -80,4 +80,103 @@ describe("readServiceEnv", () => {
     shared.OPS_HOSTNAME = shared.API_HOSTNAME;
     expect(readServiceEnv(shared, pem)).toEqual({ ok: false });
   });
+
+  describe("mail variables (MAIL_FROM_ADDRESS and SES_CONFIGURATION_SET)", () => {
+    it("accepts when neither mail variable is set, returning env without the keys", () => {
+      const read = readServiceEnv(complete(), pem);
+      expect(read.ok).toBe(true);
+      if (read.ok) {
+        expect("MAIL_FROM_ADDRESS" in read.env).toBe(false);
+        expect("SES_CONFIGURATION_SET" in read.env).toBe(false);
+      }
+    });
+
+    it("accepts when both mail variables are valid, returning env with both keys", () => {
+      const source = {
+        ...complete(),
+        MAIL_FROM_ADDRESS: "no-reply@mail.example.test",
+        SES_CONFIGURATION_SET: "community-hub-otp",
+      };
+      const read = readServiceEnv(source, pem);
+      expect(read.ok).toBe(true);
+      if (read.ok) {
+        expect(read.env.MAIL_FROM_ADDRESS).toBe("no-reply@mail.example.test");
+        expect(read.env.SES_CONFIGURATION_SET).toBe("community-hub-otp");
+      }
+    });
+
+    it.each([
+      ["only MAIL_FROM_ADDRESS", { MAIL_FROM_ADDRESS: "no-reply@mail.example.test" }],
+      ["only SES_CONFIGURATION_SET", { SES_CONFIGURATION_SET: "community-hub-otp" }],
+      [
+        "address with a space",
+        {
+          MAIL_FROM_ADDRESS: "no reply@mail.example.test",
+          SES_CONFIGURATION_SET: "valid-set",
+        },
+      ],
+      [
+        "address with <",
+        {
+          MAIL_FROM_ADDRESS: "<no-reply@mail.example.test>",
+          SES_CONFIGURATION_SET: "valid-set",
+        },
+      ],
+      [
+        "address with >",
+        {
+          MAIL_FROM_ADDRESS: "no-reply@mail.example.test>",
+          SES_CONFIGURATION_SET: "valid-set",
+        },
+      ],
+      [
+        "address with two @",
+        {
+          MAIL_FROM_ADDRESS: "no@reply@mail.example.test",
+          SES_CONFIGURATION_SET: "valid-set",
+        },
+      ],
+      [
+        "address with empty local part",
+        {
+          MAIL_FROM_ADDRESS: "@mail.example.test",
+          SES_CONFIGURATION_SET: "valid-set",
+        },
+      ],
+      [
+        "address with empty domain",
+        {
+          MAIL_FROM_ADDRESS: "no-reply@",
+          SES_CONFIGURATION_SET: "valid-set",
+        },
+      ],
+      [
+        "address empty string",
+        {
+          MAIL_FROM_ADDRESS: "",
+          SES_CONFIGURATION_SET: "valid-set",
+        },
+      ],
+      [
+        "set name of 65 characters",
+        {
+          MAIL_FROM_ADDRESS: "no-reply@mail.example.test",
+          SES_CONFIGURATION_SET: "a".repeat(65),
+        },
+      ],
+      [
+        "set name with a dot",
+        {
+          MAIL_FROM_ADDRESS: "no-reply@mail.example.test",
+          SES_CONFIGURATION_SET: "set.name",
+        },
+      ],
+    ])("rejects invalid configuration: %s", (_label, overrides) => {
+      const source = {
+        ...complete(),
+        ...overrides,
+      };
+      expect(readServiceEnv(source, pem)).toEqual({ ok: false });
+    });
+  });
 });

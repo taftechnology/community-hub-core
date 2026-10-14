@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLogger } from "@community-hub/observability";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { OtpMailUnavailable } from "@community-hub/identity";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { readServiceEnv } from "./env.js";
 import { bindServices, boot, listeningServer, run } from "./index.js";
@@ -208,5 +209,142 @@ describe("api boot wiring of the kms adapter log", () => {
 
     expect(lines).toHaveLength(1);
     expect(JSON.parse(lines[0] ?? "{}")).toMatchObject({ message: "kms", outcome: "rejected" });
+  });
+});
+
+const { sesInstances, FakeSESv2Client } = vi.hoisted(() => {
+  const instances: Array<{
+    options: unknown;
+    send: ReturnType<typeof vi.fn>;
+  }> = [];
+
+  class FakeSESv2Client {
+    public options: unknown;
+    public static sendImpl: ((cmd: unknown) => Promise<unknown>) | undefined;
+    public send = vi.fn(async (cmd: unknown) => {
+      if (FakeSESv2Client.sendImpl) {
+        return FakeSESv2Client.sendImpl(cmd);
+      }
+      return { MessageId: "msg-12345" };
+    });
+
+    constructor(options?: unknown) {
+      this.options = options;
+      instances.push(this);
+    }
+  }
+
+  return { sesInstances: instances, FakeSESv2Client };
+});
+
+vi.mock("@aws-sdk/client-sesv2", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@aws-sdk/client-sesv2")>();
+  return {
+    ...actual,
+    SESv2Client: FakeSESv2Client,
+  };
+});
+
+describe("api boot wiring of the ses mail adapter", () => {
+  const keyArn = `arn:aws:kms:ap-southeast-2:123456789012:key/mrk-${"ab".repeat(16)}`;
+
+  function envWithMail() {
+    const read = readServiceEnv(
+      {
+        ...source(),
+        ENVELOPE_KEY_ARN: keyArn,
+        MAIL_FROM_ADDRESS: "no-reply@mail.example.test",
+        SES_CONFIGURATION_SET: "community-hub-otp",
+      },
+      pem,
+    );
+    if (!read.ok) {
+      throw new Error("test env is invalid");
+    }
+    return read.env;
+  }
+
+  function envWithoutMail() {
+    const read = readServiceEnv({ ...source(), ENVELOPE_KEY_ARN: keyArn }, pem);
+    if (!read.ok) {
+      throw new Error("test env is invalid");
+    }
+    return read.env;
+  }
+
+  beforeEach(() => {
+    FakeSESv2Client.sendImpl = undefined;
+    sesInstances.length = 0;
+  });
+
+  afterEach(() => {
+    FakeSESv2Client.sendImpl = undefined;
+    vi.restoreAllMocks();
+  });
+
+  it("with both variables, auth.mail.send calls spy send once, constructor receives exact options, and logger outputs ok with 0 dropped fields", async () => {
+    const written: string[] = [];
+    const logger = createLogger({ write: (line) => written.push(line) });
+    const e = envWithMail();
+    const bound = bindServices(e, pem, logger);
+
+    await bound.auth.mail.send({ to: "user@example.test", code: "12345678" });
+
+    expect(sesInstances).toHaveLength(1);
+    const instance = sesInstances[0]!;
+    expect(instance.options).toEqual({ region: e.AWS_REGION, maxAttempts: 1 });
+    expect(instance.send).toHaveBeenCalledTimes(1);
+
+    expect(written).toHaveLength(1);
+    const line = JSON.parse(written[0] ?? "{}") as Record<string, unknown>;
+    expect(line).toEqual({
+      level: "info",
+      message: "mail",
+      operation: "send_email",
+      outcome: "ok",
+    });
+    expect(logger.getDroppedFieldCount()).toBe(0);
+  });
+
+  it("with a failing spy send, logger outputs failed outcome and errorClass with 0 dropped fields", async () => {
+    class MessageRejected extends Error {
+      constructor() {
+        super("Message rejected");
+        this.name = "MessageRejected";
+      }
+    }
+
+    FakeSESv2Client.sendImpl = async () => {
+      throw new MessageRejected();
+    };
+
+    const written: string[] = [];
+    const logger = createLogger({ write: (line) => written.push(line) });
+    const bound = bindServices(envWithMail(), pem, logger);
+
+    await expect(
+      bound.auth.mail.send({ to: "user@example.test", code: "12345678" }),
+    ).rejects.toBeInstanceOf(OtpMailUnavailable);
+
+    expect(written).toHaveLength(1);
+    const line = JSON.parse(written[0] ?? "{}") as Record<string, unknown>;
+    expect(line).toEqual({
+      level: "info",
+      message: "mail",
+      operation: "send_email",
+      outcome: "failed",
+      errorClass: "MessageRejected",
+    });
+    expect(logger.getDroppedFieldCount()).toBe(0);
+  });
+
+  it("without the variables, auth.mail.send rejects with OtpMailUnavailable and spy constructor was never called", async () => {
+    const bound = bindServices(envWithoutMail(), pem);
+
+    await expect(
+      bound.auth.mail.send({ to: "user@example.test", code: "12345678" }),
+    ).rejects.toBeInstanceOf(OtpMailUnavailable);
+
+    expect(sesInstances).toHaveLength(0);
   });
 });
