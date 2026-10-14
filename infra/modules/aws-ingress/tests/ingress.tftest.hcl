@@ -771,6 +771,26 @@ run "mail_malformed_set_fails" {
   expect_failures = [var.ses_configuration_set]
 }
 
+run "mail_set_too_long_fails" {
+  command = plan
+
+  variables {
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
+    zone_name              = "communityhub-staging.net"
+    mail_from_address      = "no-reply@mail.communityhub-staging.net"
+    ses_configuration_set  = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+
+  expect_failures = [var.ses_configuration_set]
+}
+
 run "mail_variables_into_task" {
   command = plan
 
