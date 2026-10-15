@@ -15,12 +15,12 @@ Status: approved (2026-10-14, Adnan Bin Hossen)
 
 ## Who does what
 
-| Actor                  | Writes repo commits                              | Runs `terraform apply`          | Runs AWS one-offs, verifies addresses | Applies or merges |
-| ---------------------- | ------------------------------------------------ | ------------------------------- | ------------------------------------- | ----------------- |
-| Implementer (agent)    | Yes — Tasks 1–10, only the files each task names | Never                           | Never                                 | Never             |
-| Reviewer (fresh agent) | Never                                            | Never                           | Never — read-only AWS, HTTP           | Never             |
+| Actor                  | Writes repo commits                              | Runs `terraform apply`                                         | Runs AWS one-offs, verifies addresses                 | Applies or merges |
+| ---------------------- | ------------------------------------------------ | -------------------------------------------------------------- | ----------------------------------------------------- | ----------------- |
+| Implementer (agent)    | Yes — Tasks 1–10, only the files each task names | Never                                                          | Never                                                 | Never             |
+| Reviewer (fresh agent) | Never                                            | Never                                                          | Never — read-only AWS, HTTP                           | Never             |
 | Human owner (Abdus)    | Never during the run                             | Yes — Apply 0 on this branch; Apply 1–2 in `ses-sign-in-proof` | Apply 0 verification here; live one-offs in follow-up | Merges the PR     |
-| Developer (Adnan)      | Approves this plan                               | Never                           | Never                                 | Never             |
+| Developer (Adnan)      | Approves this plan                               | Never                                                          | Never                                                 | Never             |
 
 ## Global constraints
 
@@ -205,7 +205,7 @@ H1. Reviewer: read-only plan against real state without the lock; compare with T
 
 **Moved to follow-up chunk `ses-sign-in-proof`.** H5–H8 are not run on this branch. Apply 1 was stopped before it started: no published image contains this chunk's code. The unpark commit (Task 7) was never applied.
 
-H5. Reviewer: read-only plan. H6. Owner: Apply 1 with `service_image` in the gitignored local file only; records the UTC completion time (cost clock). H7. Owner: `db-bootstrap`, `db-migrate`, first-owner one-off. H8. Proofs P1–P5 per the runbook. *(All deferred to `ses-sign-in-proof`.)*
+H5. Reviewer: read-only plan. H6. Owner: Apply 1 with `service_image` in the gitignored local file only; records the UTC completion time (cost clock). H7. Owner: `db-bootstrap`, `db-migrate`, first-owner one-off. H8. Proofs P1–P5 per the runbook. _(All deferred to `ses-sign-in-proof`.)_
 
 ### Task 8: Re-park commit
 
@@ -222,7 +222,7 @@ H5. Reviewer: read-only plan. H6. Owner: Apply 1 with `service_image` in the git
 
 **Moved to follow-up chunk `ses-sign-in-proof`.** H9–H10 are not run on this branch.
 
-H9. Owner: remove `service_image` from the local file, re-park apply, then a plan that shows no changes. H10. Reviewer: RDS instances 0 and ECS desired count 0. *(Deferred to `ses-sign-in-proof`.)*
+H9. Owner: remove `service_image` from the local file, re-park apply, then a plan that shows no changes. H10. Reviewer: RDS instances 0 and ECS desired count 0. _(Deferred to `ses-sign-in-proof`.)_
 
 ### Task 9: Record Apply 0 only
 
