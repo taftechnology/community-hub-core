@@ -4,7 +4,7 @@ export type LogReason =
   | "ops_route_on_other_hostname"
   | "other_route_on_ops_hostname";
 
-export type LogOperation = "generate_data_key" | "decrypt";
+export type LogOperation = "generate_data_key" | "decrypt" | "send_email";
 
 export type LogKeyKind = "org" | "identity";
 
@@ -69,7 +69,7 @@ const REASONS = new Set<LogReason>([
   "ops_route_on_other_hostname",
   "other_route_on_ops_hostname",
 ]);
-const OPERATIONS = new Set<LogOperation>(["generate_data_key", "decrypt"]);
+const OPERATIONS = new Set<LogOperation>(["generate_data_key", "decrypt", "send_email"]);
 const KEY_KINDS = new Set<LogKeyKind>(["org", "identity"]);
 const OUTCOMES = new Set<LogOutcome>(["ok", "rejected", "failed", "timeout"]);
 

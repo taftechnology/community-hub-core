@@ -67,6 +67,24 @@ describe("createLogger", () => {
     expect(logger.getDroppedFieldCount()).toBe(6);
   });
 
+  it("keeps send_email operation and drops unknown operations", () => {
+    const lines: string[] = [];
+    const logger = createLogger({ write: (line) => lines.push(line) });
+    logger.info("mail", {
+      operation: "send_email" as unknown as "decrypt",
+      outcome: "ok",
+    });
+    logger.info("mail", {
+      operation: "unknown_op" as unknown as "decrypt",
+      outcome: "ok",
+    });
+    const first = JSON.parse(lines[0] ?? "{}") as Record<string, unknown>;
+    expect(first.operation).toBe("send_email");
+    const second = lines[1] ?? "";
+    expect(second).not.toContain("unknown_op");
+    expect(logger.getDroppedFieldCount()).toBe(1);
+  });
+
   it("passes a valid error class name and error code through", () => {
     const lines: string[] = [];
     const logger = createLogger({ write: (line) => lines.push(line) });

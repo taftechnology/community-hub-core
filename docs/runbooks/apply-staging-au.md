@@ -197,14 +197,22 @@ This secret is never Terraform-managed, and **Delete and verify** below fully de
 
 `create-secret` must name the customer-managed secrets key with `--kms-key-id ${SECRETS_KEY_ARN}`. Without it the secret is encrypted under the account's AWS-managed key, and the task 5 key-policy grant — which covers only this one secret name on the customer-managed key — would cover nothing. Hold `${SECRETS_KEY_ARN}` from a read-only describe or Terraform output, the same source proof 7a uses; it is never recorded.
 
-    read -r -p "Organisation slug: " ORG_SLUG
-    read -r -p "Community slug: " COMMUNITY_SLUG
-    read -r -p "Owner email: " OWNER_EMAIL
+Type the prompt and the commands that use the variable directly into one terminal; do not use an editor's Run button while a prompt is waiting, because the button's command text becomes the answer.
+
+    read -r "ORG_SLUG?Organisation slug: "
+
+    read -r "COMMUNITY_SLUG?Community slug: "
+
+    read -rs "OWNER_EMAIL?Owner email: "
+
+    print
+
     jq -n --arg o "${ORG_SLUG}" --arg c "${COMMUNITY_SLUG}" --arg e "${OWNER_EMAIL}" \
       '{organisationSlug: $o, communitySlug: $c, email: $e}' \
       | aws secretsmanager create-secret --profile ${AWS_PROFILE} \
         --name ${PROVISION_SECRET_NAME} --kms-key-id ${SECRETS_KEY_ARN} \
         --secret-string file:///dev/stdin >/dev/null
+
     unset ORG_SLUG COMMUNITY_SLUG OWNER_EMAIL
 
 `${PROVISION_SECRET_NAME}` is the one fixed name the task 5 Terraform grants on (`${name}-provision-owner`); its resolved value is never written here. The secret value carries the email, so it is `confidential`; it is deleted in **Delete and verify** immediately after the run.
@@ -266,6 +274,339 @@ Delete the secret immediately after the run, without a recovery window, so the o
       --secret-id ${PROVISION_SECRET_NAME}
 
 The `describe-secret` call is expected to fail with a not-found error — that failure is the confirmation the secret is gone, so this is the one step in this file whose "success" is an AWS error, not a clean result. Record that it failed as expected; do not record the error body. Then `unset PROVISION_SECRET_ARN`.
+
+## SES sign-in proof
+
+This section is the operator path for `docs/specs/2026-10-14-email-provider.md`. **Apply 0 ran on that chunk and is recorded under Evidence below. The live part (Apply 1, one-offs, proofs P1–P5, and the re-park) runs in the follow-up chunk `ses-sign-in-proof`**, after `email-provider` merges and `main` publishes an image that contains the merge commit.
+
+The human owner runs every apply, recipient verification, and ECS run-task. The owner's assistant is read-only: it describes resources, queries CloudWatch Logs, and calls the staging hostnames over HTTP. An agent does not apply. Stop after any failed proof, or after a second failure on the same step (AGENTS.md section 12). Then re-park before further attempts. The 48-hour hard stop is measured from apply 1 completion; the owner runs the re-park at that hard stop even if proofs remain.
+
+Shell variables and placeholders only. Never paste an account id, ARN, hostname, email address, OTP code, registry host, secret name, or key id into evidence. Say "the api hostname", "the auth hostname", and "the sender address". Values that come from AWS at run time are held in shell variables and never recorded. In zsh write `${VAR}:text`, not `$VAR:text`. Do not put an inline `#` comment inside a command string. One pasteable command per indented block. Evidence rules: counts, statuses, and lengths only.
+
+### Prerequisites (before Apply 1)
+
+Apply 1 needs a service image published from a `main` commit that contains the `email-provider` merge (so the image includes `apps/api/src/mail/ses-otp-mail.ts` and the mail wiring). The newest image from before that merge does not contain this chunk's code; an unpark against it would run a service that ignores the mail settings.
+
+Hold `${DEPLOY_SHA}` as that `main` commit. Confirm the image with the same pre-check commands under **Staging proof run → Pre-checks** below: the `publish` job conclusion for that commit, then the image digest and scan for tag `${DEPLOY_SHA}` (repository `ch-staging/service`). Record conclusion, digest, and CRITICAL count only — never a registry host. **Stop if** publish failed, the scan is not `COMPLETE`, or `CRITICAL` is above 0.
+
+### Shell variables
+
+Hold these in the shell. Never record their values.
+
+| Variable                     | Meaning                                                                                          |
+| ---------------------------- | ------------------------------------------------------------------------------------------------ |
+| `${AWS_PROFILE}`             | Apply and one-off profile (default `ch-admin`)                                                   |
+| `${ZONE_NAME}`               | Apex hosted zone name from `staging_zone_id` (`communityhub-staging.net`)                        |
+| `${AUTH_HOST}`               | Auth hostname (`auth.au.${ZONE_NAME}`)                                                           |
+| `${API_HOST}`                | Tenant API hostname (`au.api.${ZONE_NAME}`)                                                      |
+| `${DB_INSTANCE_ID}`          | RDS database instance identifier (`ch-staging-postgres`)                                         |
+| `${CLUSTER}`                 | ECS cluster name for staging (`ch-staging`)                                                      |
+| `${SERVICE}`                 | ECS service name for staging (`ch-staging`)                                                      |
+| `${SERVICE_TASK_DEFINITION}` | Service task definition family (`ch-staging`)                                                    |
+| `${OPS_TASK_DEFINITION}`     | Ops task definition family (`ch-staging-db-ops`)                                                 |
+| `${SUBNET}`                  | Staging public subnet id (from Terraform / describe; never recorded)                             |
+| `${TASK_SECURITY_GROUP}`     | Task security group id (from Terraform / describe; never recorded)                               |
+| `${LOG_GROUP}`               | Service log group `/community-hub/ch-staging/service` (streams use prefixes `service`, `db-ops`) |
+| `${PLAN_FILE}`               | Saved plan file path outside the repository (never committed; deleted after apply)               |
+
+### Apply 0 — SES identity and policy (parked)
+
+Apply 0 runs while staging is parked (`enable_database = false`, `desired_count = 0`, `service_image = null`). The plan creates the SES domain identity, Easy DKIM records, custom MAIL FROM attributes and DNS records, DMARC TXT record, configuration set, and the task-role send policy.
+
+Run before-each-apply checks against the SHA named for that apply on origin.
+
+Initialize Terraform with the staging backend:
+
+    terraform init -backend-config=backend/staging.hcl -lockfile=readonly
+
+Plan to the saved file outside the repository:
+
+    terraform plan -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -out=${PLAN_FILE} -input=false | grep --line-buffered '^Plan:'
+
+Expected plan summary: exactly 10 to add, 0 to change, 0 to destroy. List addresses and actions from the plan file:
+
+    terraform show -json ${PLAN_FILE} | jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | "\(.change.actions | join(" ")) \(.address)"'
+
+Expected addresses:
+
+- `aws_sesv2_email_identity.mail[0]` (create)
+- `aws_sesv2_email_identity_mail_from_attributes.mail[0]` (create)
+- `aws_sesv2_configuration_set.mail[0]` (create)
+- `aws_route53_record.ses_dkim[0]` (create)
+- `aws_route53_record.ses_dkim[1]` (create)
+- `aws_route53_record.ses_dkim[2]` (create)
+- `aws_route53_record.ses_mail_from_mx[0]` (create)
+- `aws_route53_record.ses_mail_from_txt[0]` (create)
+- `aws_route53_record.ses_dmarc_txt[0]` (create)
+- `aws_iam_role_policy.ses_send[0]` (create)
+
+Apply that file:
+
+    terraform apply -input=false ${PLAN_FILE} | grep --line-buffered -E ': (Creating|Still creating|Creation complete|Modifying|Still modifying|Modification complete|Destroying|Still destroying|Destruction complete)|Apply complete' | sed -l -E 's/ \[id=[^]]+\]//'
+
+Delete the plan file:
+
+    rm -f ${PLAN_FILE}
+
+### Sandbox recipient verification and DKIM
+
+While in the SES sandbox, SES delivers only to verified recipient addresses. The owner verifies the recipient address(es) used for the live proof. The address is held in a shell variable and never written down.
+
+Prompt for the sandbox recipient address. Type the prompt and the commands that use the variable directly into one terminal; do not use an editor's Run button while a prompt is waiting, because the button's command text becomes the answer:
+
+    read -rs "RECIPIENT_EMAIL?Sandbox recipient email: "
+
+    print
+
+Request verification for that email identity:
+
+    aws sesv2 create-email-identity --profile ${AWS_PROFILE} --email-identity "${RECIPIENT_EMAIL}"
+
+Open the verification email sent to that inbox by Amazon SES and click the confirmation link.
+
+Confirm verification status shows `SUCCESS`:
+
+    aws sesv2 get-email-identity --profile ${AWS_PROFILE} --email-identity "${RECIPIENT_EMAIL}" --query 'VerificationStatus' --output text
+
+Unset the recipient address variable:
+
+    unset RECIPIENT_EMAIL
+
+Wait for the domain Easy DKIM to show verified:
+
+    aws sesv2 get-email-identity --profile ${AWS_PROFILE} --email-identity "mail.${ZONE_NAME}" --query 'DkimAttributes.Status' --output text
+
+Expected: `SUCCESS`. Repeat until `SUCCESS` before proceeding to Apply 1.
+
+### Apply 1 — Unpark and cost clock
+
+The branch moves to the unpark commit (`enable_database = true`, `desired_count = 1` in `infra/regions/au/env/staging.tfvars`). The owner sets `service_image` in the gitignored `infra/regions/au/env/staging.local.tfvars`.
+
+Run before-each-apply checks against the SHA named for that apply on origin.
+
+Plan to the saved file outside the repository:
+
+    terraform plan -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -out=${PLAN_FILE} -input=false | grep --line-buffered '^Plan:'
+
+Expected plan summary: exactly 18 to add (8 database resources under `module.rds[0]`, 10 ECS resources under `module.ingress`), 0 to change, 0 to destroy. List addresses and actions:
+
+    terraform show -json ${PLAN_FILE} | jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | "\(.change.actions | join(" ")) \(.address)"'
+
+Apply that file:
+
+    terraform apply -input=false ${PLAN_FILE} | grep --line-buffered -E ': (Creating|Still creating|Creation complete|Modifying|Still modifying|Modification complete|Destroying|Still destroying|Destruction complete)|Apply complete' | sed -l -E 's/ \[id=[^]]+\]//'
+
+Record the UTC completion time under **Cost clock** below. The 24-hour target and 48-hour hard stop start at this instant. Rate: USD 0.0468 per hour.
+
+Delete the plan file:
+
+    rm -f ${PLAN_FILE}
+
+Wait until the RDS instance is available:
+
+    aws rds describe-db-instances --profile ${AWS_PROFILE} --db-instance-identifier ${DB_INSTANCE_ID} --query 'DBInstances[0].DBInstanceStatus' --output text
+
+### One-offs
+
+Run the one-off tasks in order on the freshly unparked database. These commands connect directly to RDS and require only the database instance to be available.
+
+Run `db-bootstrap`:
+
+    TASK_ARN=$(aws ecs run-task --profile ${AWS_PROFILE} --cluster ${CLUSTER} --task-definition ${OPS_TASK_DEFINITION} --launch-type FARGATE --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" --overrides '{"containerOverrides":[{"name":"db-ops","command":["node","/app/db-bootstrap.js"]}]}' --query 'tasks[0].taskArn' --output text)
+
+Wait for `db-bootstrap` to stop and read the exit code:
+
+    aws ecs wait tasks-stopped --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN}
+
+    aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN} --query 'tasks[0].[containers[0].exitCode,stoppedReason]' --output text
+
+    aws logs get-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --log-stream-name "db-ops/db-ops/${TASK_ARN##*/}" --query 'events[].message' --output text | tr '\t' '\n'
+
+Expected: exit 0, stdout exactly one integer (`max_connections`), stderr empty.
+
+Run `db-migrate`:
+
+    TASK_ARN=$(aws ecs run-task --profile ${AWS_PROFILE} --cluster ${CLUSTER} --task-definition ${OPS_TASK_DEFINITION} --launch-type FARGATE --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" --overrides '{"containerOverrides":[{"name":"db-ops","command":["node","/app/db-migrate.js"]}]}' --query 'tasks[0].taskArn' --output text)
+
+Wait for `db-migrate` to stop and read the exit code:
+
+    aws ecs wait tasks-stopped --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN}
+
+    aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN} --query 'tasks[0].[containers[0].exitCode,stoppedReason]' --output text
+
+    aws logs get-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --log-stream-name "db-ops/db-ops/${TASK_ARN##*/}" --query 'events[].message' --output text | tr '\t' '\n'
+
+Expected: exit 0, stdout `applied <tag>` lines in journal order, stderr empty.
+
+Provision the first owner following the **Provision the first owner** procedure above (Create secret, Run one-off `provision-owner.js`, Delete and verify secret). Use the verified owner email and hold `${COMMUNITY_SLUG}` in the shell for P2.
+Expected: exit 0, stdout `created`, stderr empty. (This proves P4).
+
+Before starting HTTP proofs P1–P3, wait until the ECS service is stable. The service container launched during Apply 1 and its `/health` check does not touch the database, but the auth and session routes tested in P1–P3 require the service to be stable and running against the bootstrapped and migrated database:
+
+    aws ecs wait services-stable --profile ${AWS_PROFILE} --cluster ${CLUSTER} --services ${SERVICE}
+
+### Proofs
+
+Proofs P1–P5 verify transactional email delivery, authentication flow, error isolation, first-owner provisioning, and log hygiene.
+
+#### P1: Start challenge for verified owner address
+
+Prompt for the verified owner address. Type the prompt and the commands that use the variable directly into one terminal; do not use an editor's Run button while a prompt is waiting, because the button's command text becomes the answer:
+
+    read -rs "OWNER_EMAIL?Verified owner email: "
+
+    print
+
+Call the start endpoint:
+
+    curl -s -S -o /dev/null -w '%{http_code}\n' -X POST "https://${AUTH_HOST}/v1/auth/email-otp/start" -H 'content-type: application/json' -d "{\"email\":\"${OWNER_EMAIL}\"}"
+
+Expected: HTTP status `204`.
+
+Check the recipient inbox:
+
+- Exactly one email arrives from the configured sender address (`no-reply@mail.<zone>`).
+- The email subject is "Your sign-in code" (the subject contains no code).
+- The email body contains an eight-digit numeric code.
+
+#### P2: Verify challenge with code and call session route
+
+Prompt for the eight-digit code from the received email. Type the prompt and the commands that use the variable directly into one terminal; do not use an editor's Run button while a prompt is waiting, because the button's command text becomes the answer:
+
+    read -rs "OTP_CODE?One-time code: "
+
+    print
+
+Call the verify endpoint:
+
+    TOKENS=$(curl -s -S -X POST "https://${AUTH_HOST}/v1/auth/email-otp/verify" -H 'content-type: application/json' -d "{\"email\":\"${OWNER_EMAIL}\",\"code\":\"${OTP_CODE}\"}")
+
+Read the access token:
+
+    ACCESS_TOKEN=$(print -r -- "${TOKENS}" | jq -r '.accessToken')
+
+If `${COMMUNITY_SLUG}` was not retained from the first-owner provisioning, prompt for it:
+
+    [[ -n "${COMMUNITY_SLUG}" ]] || read -r "COMMUNITY_SLUG?Community slug: "
+
+Call one route that requires a session:
+
+    curl -s -S -o /dev/null -w '%{http_code}\n' -X POST "https://${API_HOST}/v1/access/grants/list" -H "authorization: Bearer ${ACCESS_TOKEN}" -H 'content-type: application/json' -d "{\"communitySlug\":\"${COMMUNITY_SLUG}\"}"
+
+Expected: HTTP status `200`.
+
+Clean up session variables:
+
+    unset ACCESS_TOKEN TOKENS COMMUNITY_SLUG
+
+#### P3: Unverified recipient rejected
+
+Prompt for an unverified recipient address. Type the prompt and the commands that use the variable directly into one terminal; do not use an editor's Run button while a prompt is waiting, because the button's command text becomes the answer:
+
+    read -rs "UNVERIFIED_EMAIL?Unverified email: "
+
+    print
+
+Call the start endpoint for the unverified address:
+
+    curl -s -S -o /dev/null -w '%{http_code}\n' -X POST "https://${AUTH_HOST}/v1/auth/email-otp/start" -H 'content-type: application/json' -d "{\"email\":\"${UNVERIFIED_EMAIL}\"}"
+
+Expected: HTTP status `503`.
+
+Inspect the service's `mail` log event for that request:
+
+    aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --filter-pattern '{ $.message = "mail" }' --query 'events[].message' --output text | tr '\t' '\n' | jq -r 'select(.outcome=="failed") | {operation,outcome,errorClass}'
+
+Expected: `operation` is `send_email`, `outcome` is `failed`, and `errorClass` is `MessageRejected` (SES recipient rejection in sandbox), NOT `AccessDeniedException` (IAM denial).
+Note on CloudTrail: According to AWS documentation ([Logging Amazon SES API calls using AWS CloudTrail](https://docs.aws.amazon.com/ses/latest/dg/logging-using-cloudtrail.html)), SES data-plane sending calls (`SendEmail`) are not recorded in CloudTrail by default. The service's structured `mail` log event is the primary evidence. If CloudTrail data events are active, CloudTrail may be checked as supplementary verification.
+
+#### P4: First-owner execution
+
+Proven by the one-off step: `node /app/provision-owner.js` exited 0 with stdout `created` and empty stderr.
+
+#### P5: Log hygiene and privacy
+
+Search CloudWatch Logs across the proof window for the test email addresses:
+
+    aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --filter-pattern "\"${OWNER_EMAIL}\"" --query 'length(events)' --output text
+
+    aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --filter-pattern "\"${UNVERIFIED_EMAIL}\"" --query 'length(events)' --output text
+
+Expected: `0` for both searches. No personal email address appears in service logs.
+
+Search CloudWatch Logs for the eight-digit OTP code:
+
+    aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --filter-pattern "\"${OTP_CODE}\"" --query 'length(events)' --output text
+
+Expected: `0`. The sign-in code never appears in logs.
+
+Positive control — confirm at least two `mail` log lines exist across the proof window (from P1 and P3):
+
+    aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --filter-pattern '{ $.message = "mail" }' --query 'length(events)' --output text
+
+Expected: integer `>= 2`.
+
+Inspect all `mail` log lines emitted during the window:
+
+    aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --filter-pattern '{ $.message = "mail" }' --query 'events[].message' --output text | tr '\t' '\n' | jq -r '{message,operation,outcome,errorClass}'
+
+Expected: mail lines carry only `message` (`mail`), `operation` (`send_email`), `outcome` (`ok` or `failed`), and optional `errorClass` (`MessageRejected`). No recipient address, code, or SDK detail.
+
+Unset remaining test variables:
+
+    unset OWNER_EMAIL UNVERIFIED_EMAIL OTP_CODE
+
+### Apply 2 — Re-park
+
+The branch moves to the re-park commit (`enable_database = false`, `desired_count = 0` in `infra/regions/au/env/staging.tfvars`). The owner removes `service_image` from the gitignored `infra/regions/au/env/staging.local.tfvars`.
+
+Run before-each-apply checks against the SHA named for that apply on origin.
+
+Plan to the saved file outside the repository:
+
+    terraform plan -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -out=${PLAN_FILE} -input=false | grep --line-buffered '^Plan:'
+
+Expected plan summary: 0 to add, 0 to change, 18 to destroy. List addresses and actions:
+
+    terraform show -json ${PLAN_FILE} | jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | "\(.change.actions | join(" ")) \(.address)"'
+
+Apply that file:
+
+    terraform apply -input=false ${PLAN_FILE} | grep --line-buffered -E ': (Creating|Still creating|Creation complete|Modifying|Still modifying|Modification complete|Destroying|Still destroying|Destruction complete)|Apply complete' | sed -l -E 's/ \[id=[^]]+\]//'
+
+Delete the plan file:
+
+    rm -f ${PLAN_FILE}
+
+Run a follow-up plan to confirm staging is cleanly parked:
+
+    terraform plan -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars
+
+Expected: `No changes. Your infrastructure matches the configuration.`
+
+Record the UTC completion time under **Cost clock** below and calculate the total unpark duration.
+
+### Cost clock and applies
+
+- Apply 0 SHA: `edeaaca` (see Evidence)
+- Apply 0 completed: about 20:11 UTC on 2026-10-14 (see Evidence)
+- Apply 1 SHA: _(deferred to `ses-sign-in-proof`)_
+- Apply 1 completed (cost anchor): _(deferred)_
+- Apply 2 SHA: _(deferred)_
+- Apply 2 completed: _(deferred)_
+- Total unpark window: _(deferred; no unpark on the `email-provider` branch)_
+
+### Evidence
+
+Evidence (Apply 0 against `edeaaca`, 2026-10-14 UTC). Counts, statuses, and lengths only. No account id, ARN, hostname, email address, or registry host.
+
+- Applied by the owner at `edeaaca` on 2026-10-14, completed about 20:11 UTC, using a saved plan file outside the repository. Plan: 10 to add, 2 to change, 0 to destroy. Applied: 10 added, 2 changed, 0 destroyed.
+- Created: `aws_sesv2_configuration_set.mail[0]`, `aws_sesv2_email_identity.mail[0]`, `aws_sesv2_email_identity_mail_from_attributes.mail[0]`, `aws_iam_role_policy.ses_send[0]`, `aws_route53_record.ses_dkim[0]`, `[1]`, `[2]`, `aws_route53_record.ses_mail_from_mx[0]`, `aws_route53_record.ses_mail_from_txt[0]`, `aws_route53_record.ses_dmarc_txt[0]`.
+- Changed in place: `module.db_secrets.aws_kms_key.secrets` and `module.envelope.aws_iam_role_policy.task_secrets` — the first-owner policy change from pull request 52, applied here for the first time.
+- No existing DNS record was updated, replaced or deleted.
+- Read-only checks at about 23:22 UTC: the mail domain identity `SUCCESS` with sending enabled; DKIM `SUCCESS`; MAIL FROM `SUCCESS`; one sandbox recipient verified (`SUCCESS`). The account is still in the SES sandbox (production access off, 200 messages a day).
+- The recipient address was entered at a silent prompt and is in no file.
+- Apply 1 was not run on the `email-provider` branch: no published image contained that chunk's code. The live proof (Apply 1 onward) is `ses-sign-in-proof`.
 
 ## Staging proof run
 

@@ -692,3 +692,153 @@ run "spot_in_prod_fails" {
 
   expect_failures = [var.capacity_provider]
 }
+
+run "mail_address_alone_fails" {
+  command = plan
+
+  variables {
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
+    zone_name              = "communityhub-staging.net"
+    mail_from_address      = "no-reply@mail.communityhub-staging.net"
+  }
+
+  expect_failures = [var.mail_from_address]
+}
+
+run "mail_set_alone_fails" {
+  command = plan
+
+  variables {
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
+    zone_name              = "communityhub-staging.net"
+    ses_configuration_set  = "ch-staging-mail"
+  }
+
+  expect_failures = [var.mail_from_address]
+}
+
+run "mail_malformed_address_fails" {
+  command = plan
+
+  variables {
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
+    zone_name              = "communityhub-staging.net"
+    mail_from_address      = "not-an-email"
+    ses_configuration_set  = "ch-staging-mail"
+  }
+
+  expect_failures = [var.mail_from_address]
+}
+
+run "mail_malformed_set_fails" {
+  command = plan
+
+  variables {
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
+    zone_name              = "communityhub-staging.net"
+    mail_from_address      = "no-reply@mail.communityhub-staging.net"
+    ses_configuration_set  = "invalid set name with spaces!"
+  }
+
+  expect_failures = [var.ses_configuration_set]
+}
+
+run "mail_set_too_long_fails" {
+  command = plan
+
+  variables {
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
+    zone_name              = "communityhub-staging.net"
+    mail_from_address      = "no-reply@mail.communityhub-staging.net"
+    ses_configuration_set  = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+
+  expect_failures = [var.ses_configuration_set]
+}
+
+run "mail_variables_into_task" {
+  command = plan
+
+  variables {
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
+    zone_name              = "communityhub-staging.net"
+    attach_public_dns      = true
+    create_public_zone     = false
+    public_zone_id         = "ZSTAGING"
+    service_image          = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    task_subnet_ids        = ["subnet-public"]
+    execution_role_arn     = "arn:aws:iam::123456789012:role/ch-staging-execution"
+    execution_role_name    = "ch-staging-execution"
+    task_role_arn          = "arn:aws:iam::123456789012:role/ch-staging-task"
+    log_group_name         = "/community-hub/ch-staging/service"
+    db_host                = "ch-staging-postgres.example.ap-southeast-2.rds.amazonaws.com"
+    db_port                = 5432
+    envelope_key_arn       = "arn:aws:kms:ap-southeast-2:123456789012:key/mock"
+    app_secret_arn         = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:app"
+    identity_secret_arn    = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:identity"
+    platform_secret_arn    = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:platform"
+    capacity_provider      = "FARGATE_SPOT"
+    desired_count          = 0
+    mail_from_address      = "no-reply@mail.communityhub-staging.net"
+    ses_configuration_set  = "ch-staging-mail"
+  }
+
+  override_resource {
+    target = aws_security_group.vpc_link
+    values = {
+      id = "sg-vpc-link"
+    }
+    override_during = plan
+  }
+
+  assert {
+    condition = (
+      output.service_environment["MAIL_FROM_ADDRESS"] == "no-reply@mail.communityhub-staging.net" &&
+      output.service_environment["SES_CONFIGURATION_SET"] == "ch-staging-mail"
+    )
+    error_message = "the task definition environment contains MAIL_FROM_ADDRESS and SES_CONFIGURATION_SET"
+  }
+}
+

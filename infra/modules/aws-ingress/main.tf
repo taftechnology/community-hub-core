@@ -471,26 +471,30 @@ resource "aws_ecs_task_definition" "this" {
         containerPath = "/tmp"
         readOnly      = false
       }]
-      environment = [
-        { name = "PORT", value = "8080" },
-        { name = "AWS_REGION", value = "ap-southeast-2" },
-        { name = "NODE_ENV", value = "production" },
-        { name = "COMMUNITY_HUB_ENVIRONMENT", value = var.environment },
-        { name = "PGHOST", value = var.db_host },
-        { name = "PGPORT", value = tostring(var.db_port) },
-        { name = "PGDATABASE", value = "communityhub" },
-        { name = "PGUSER_APP", value = "app" },
-        { name = "PGUSER_IDENTITY", value = "identity" },
-        { name = "PGUSER_PLATFORM", value = "platform" },
-        { name = "ENVELOPE_KEY_ARN", value = var.envelope_key_arn },
-        { name = "API_HOSTNAME", value = local.api_hostname },
-        { name = "AUTH_HOSTNAME", value = local.auth_hostname },
-        { name = "WEBHOOKS_HOSTNAME", value = local.webhooks_hostname },
-        { name = "OPS_HOSTNAME", value = local.ops_hostname },
-        { name = "APP_SECRET_ARN", value = var.app_secret_arn },
-        { name = "IDENTITY_SECRET_ARN", value = var.identity_secret_arn },
-        { name = "PLATFORM_SECRET_ARN", value = var.platform_secret_arn },
-      ]
+      environment = concat(
+        [
+          { name = "PORT", value = "8080" },
+          { name = "AWS_REGION", value = "ap-southeast-2" },
+          { name = "NODE_ENV", value = "production" },
+          { name = "COMMUNITY_HUB_ENVIRONMENT", value = var.environment },
+          { name = "PGHOST", value = var.db_host },
+          { name = "PGPORT", value = tostring(var.db_port) },
+          { name = "PGDATABASE", value = "communityhub" },
+          { name = "PGUSER_APP", value = "app" },
+          { name = "PGUSER_IDENTITY", value = "identity" },
+          { name = "PGUSER_PLATFORM", value = "platform" },
+          { name = "ENVELOPE_KEY_ARN", value = var.envelope_key_arn },
+          { name = "API_HOSTNAME", value = local.api_hostname },
+          { name = "AUTH_HOSTNAME", value = local.auth_hostname },
+          { name = "WEBHOOKS_HOSTNAME", value = local.webhooks_hostname },
+          { name = "OPS_HOSTNAME", value = local.ops_hostname },
+          { name = "APP_SECRET_ARN", value = var.app_secret_arn },
+          { name = "IDENTITY_SECRET_ARN", value = var.identity_secret_arn },
+          { name = "PLATFORM_SECRET_ARN", value = var.platform_secret_arn },
+        ],
+        var.mail_from_address == null ? [] : [{ name = "MAIL_FROM_ADDRESS", value = var.mail_from_address }],
+        var.ses_configuration_set == null ? [] : [{ name = "SES_CONFIGURATION_SET", value = var.ses_configuration_set }],
+      )
       secrets = concat(
         [
           { name = "PGPASSWORD_APP", valueFrom = var.app_secret_arn },

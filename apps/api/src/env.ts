@@ -50,6 +50,8 @@ export type ServiceEnv = {
   APP_SECRET_ARN: string;
   IDENTITY_SECRET_ARN: string;
   PLATFORM_SECRET_ARN: string;
+  MAIL_FROM_ADDRESS?: string;
+  SES_CONFIGURATION_SET?: string;
 };
 
 export function text(source: NodeJS.ProcessEnv, key: string): string | undefined {
@@ -69,6 +71,20 @@ export function portNumber(value: string | undefined): number | undefined {
     return undefined;
   }
   return parsed;
+}
+
+const CONFIG_SET_NAME = /^[A-Za-z0-9_-]{1,64}$/;
+
+function isValidEmail(address: string): boolean {
+  if (address.length === 0 || /\s/.test(address) || /[<>]/.test(address)) {
+    return false;
+  }
+  const parts = address.split("@");
+  if (parts.length !== 2) {
+    return false;
+  }
+  const [local, domain] = parts;
+  return (local?.length ?? 0) > 0 && (domain?.length ?? 0) > 0;
 }
 
 export function readServiceEnv(
@@ -101,6 +117,17 @@ export function readServiceEnv(
     return { ok: false };
   }
 
+  const mailFrom = text(source, "MAIL_FROM_ADDRESS");
+  const sesConfigSet = text(source, "SES_CONFIGURATION_SET");
+  if ((mailFrom === undefined) !== (sesConfigSet === undefined)) {
+    return { ok: false };
+  }
+  if (mailFrom !== undefined && sesConfigSet !== undefined) {
+    if (!isValidEmail(mailFrom) || !CONFIG_SET_NAME.test(sesConfigSet)) {
+      return { ok: false };
+    }
+  }
+
   const hostnames = [
     values.API_HOSTNAME,
     values.AUTH_HOSTNAME,
@@ -118,30 +145,37 @@ export function readServiceEnv(
     return { ok: false };
   }
 
+  const env: ServiceEnv = {
+    PORT: port,
+    PGPORT: pgPort,
+    AWS_REGION: "ap-southeast-2",
+    NODE_ENV: nodeEnv,
+    COMMUNITY_HUB_ENVIRONMENT: hubEnv,
+    API_HOSTNAME: values.API_HOSTNAME ?? "",
+    AUTH_HOSTNAME: values.AUTH_HOSTNAME ?? "",
+    WEBHOOKS_HOSTNAME: values.WEBHOOKS_HOSTNAME ?? "",
+    OPS_HOSTNAME: values.OPS_HOSTNAME ?? "",
+    PGHOST: values.PGHOST ?? "",
+    PGDATABASE: values.PGDATABASE ?? "",
+    PGUSER_APP: values.PGUSER_APP ?? "",
+    PGUSER_IDENTITY: values.PGUSER_IDENTITY ?? "",
+    PGUSER_PLATFORM: values.PGUSER_PLATFORM ?? "",
+    PGPASSWORD_APP: values.PGPASSWORD_APP ?? "",
+    PGPASSWORD_IDENTITY: values.PGPASSWORD_IDENTITY ?? "",
+    PGPASSWORD_PLATFORM: values.PGPASSWORD_PLATFORM ?? "",
+    ENVELOPE_KEY_ARN: values.ENVELOPE_KEY_ARN ?? "",
+    APP_SECRET_ARN: values.APP_SECRET_ARN ?? "",
+    IDENTITY_SECRET_ARN: values.IDENTITY_SECRET_ARN ?? "",
+    PLATFORM_SECRET_ARN: values.PLATFORM_SECRET_ARN ?? "",
+  };
+
+  if (mailFrom !== undefined && sesConfigSet !== undefined) {
+    env.MAIL_FROM_ADDRESS = mailFrom;
+    env.SES_CONFIGURATION_SET = sesConfigSet;
+  }
+
   return {
     ok: true,
-    env: {
-      PORT: port,
-      PGPORT: pgPort,
-      AWS_REGION: "ap-southeast-2",
-      NODE_ENV: nodeEnv,
-      COMMUNITY_HUB_ENVIRONMENT: hubEnv,
-      API_HOSTNAME: values.API_HOSTNAME ?? "",
-      AUTH_HOSTNAME: values.AUTH_HOSTNAME ?? "",
-      WEBHOOKS_HOSTNAME: values.WEBHOOKS_HOSTNAME ?? "",
-      OPS_HOSTNAME: values.OPS_HOSTNAME ?? "",
-      PGHOST: values.PGHOST ?? "",
-      PGDATABASE: values.PGDATABASE ?? "",
-      PGUSER_APP: values.PGUSER_APP ?? "",
-      PGUSER_IDENTITY: values.PGUSER_IDENTITY ?? "",
-      PGUSER_PLATFORM: values.PGUSER_PLATFORM ?? "",
-      PGPASSWORD_APP: values.PGPASSWORD_APP ?? "",
-      PGPASSWORD_IDENTITY: values.PGPASSWORD_IDENTITY ?? "",
-      PGPASSWORD_PLATFORM: values.PGPASSWORD_PLATFORM ?? "",
-      ENVELOPE_KEY_ARN: values.ENVELOPE_KEY_ARN ?? "",
-      APP_SECRET_ARN: values.APP_SECRET_ARN ?? "",
-      IDENTITY_SECRET_ARN: values.IDENTITY_SECRET_ARN ?? "",
-      PLATFORM_SECRET_ARN: values.PLATFORM_SECRET_ARN ?? "",
-    },
+    env,
   };
 }
