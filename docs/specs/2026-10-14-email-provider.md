@@ -17,7 +17,7 @@ Nobody can sign in anywhere outside a test. `POST /v1/auth/email-otp/start` crea
 | O3  | SPF alignment and DMARC   | Custom MAIL FROM `bounces.mail.<zone name>` with MX `10 feedback-smtp.ap-southeast-2.amazonses.com` and TXT `v=spf1 include:amazonses.com ~all`. DMARC TXT at `_dmarc.mail.<zone name>`: `v=DMARC1; p=none;` with no `rua`, so no address is committed.                                                                                                                     | Developer, 2026-10-14                                                     |
 | O4  | Sandbox recipients        | Verified by hand by the owner, outside Terraform: one CLI command per address, then the owner opens the verification message and confirms it. No address in any committed file; the system sender in O2 is a role mailbox and is committed by design.                                                                                                                       | AGENTS.md §1 rule 8; `first-owner` takes the address at run time          |
 | O5  | Production access         | Out of scope. Recommended precondition for when it is requested: a per-source limit on code requests and a bounce/complaint alarm (Risks, first row).                                                                                                                                                                                                                       | `docs/roadmap.md:122`                                                     |
-| O6  | Unpark for the live proof | Approved: USD 0.0468 an hour, 24-hour target, 48-hour hard stop measured from the completion of Apply 1 (the unpark). The owner runs both applies. Re-parked (`enable_database = false`, `desired_count = 0`, `service_image` removed from the local var file) before the pull request merges. Both applies and their SHAs recorded in `docs/runbooks/apply-staging-au.md`. | Owner, 2026-10-14; `first-owner` spec Cost; `staging-proof-run` spec Cost |
+| O6  | Unpark for the live proof | **Amended 2026-10-14 (Abdus):** this chunk applies Apply 0 only and merges parked. The live proof (Apply 1, one-offs, P1–P5, re-park), its unpark cost (USD 0.0468 an hour), and its 24-hour / 48-hour window move to follow-up chunk `ses-sign-in-proof`, which runs after this pull request merges and uses the image `main` publishes for the merge commit. Reason: the unpark commit was never applied — no published image contains this chunk's code (`publish` runs only on push to `main`), so an unpark would run code that ignores the mail settings. Original approval (same day): USD 0.0468 an hour, 24-hour target, 48-hour hard stop from Apply 1; both applies by the owner; re-park before merge. Apply 0 is this chunk's staging evidence. | Owner, 2026-10-14 (amended same day); `first-owner` spec Cost; `staging-proof-run` spec Cost; same pattern as `db-migrate-command` → `staging-proof-run` |
 | O7  | Port and adapter location | `OtpMail` stays the port; the SES adapter goes in `apps/api/src/mail/`, beside `apps/api/src/kms/`. D13 is amended to say sign-in codes use `OtpMail` until the general `EmailProvider` lands with Broadcast Messages (Phase 2).                                                                                                                                            | `docs/specs/2026-10-11-identity-otp.md:25`                                |
 | O8  | AWS accounts              | Staging and production are separate AWS accounts. `docs/specs/2026-10-06-image-publish.md:28` superseded `docs/specs/2026-10-03-foundations.md:126`; the state backends are separate (`infra/regions/au/backend/staging.hcl`, `prod.hcl`). SES sandbox and production access here concern the staging account only.                                                         | Owner, 2026-10-14                                                         |
 
@@ -37,10 +37,12 @@ In:
 - Terraform tests: `cell.tftest.hcl` (new mock defaults for the SES identity's three tokens; a prod run asserting no SES resource; staging assertions for the settings below), `modules/aws-ingress/tests/ingress.tftest.hcl` (variables emitted only when set). No change to `tooling/checks/terraform-invariants`: SES resources use `var.aws_region` and Route 53 records have no region argument; no VPC endpoint is added.
 - New dependency `@aws-sdk/client-sesv2` in `apps/api` only, `^3.758.0` like the other AWS clients. The PR gives the AGENTS.md §14 justification. Dockerfile and `image.test.ts` unchanged.
 - ADR 0013; `architecture.md` system-owners row (`:65`), D13 (`:122`), the diagram node (`:154`), §7.2 row (`:270`), §8 tree (`:370`, `:380`), Q9 (`:1397`).
-- A runbook section for the live proof: unpark, provision the first owner, sign in by code, re-park.
-- Last commit: `docs/roadmap.md` (snapshot, the `email-provider` row, the Q9 row, Open items, Next spec) and `AGENTS.md:9` Repository state row.
+- A runbook section for the SES path: Apply 0 while parked, plus the steps for the live proof. This chunk records Apply 0 evidence only; Apply 1 onward runs in `ses-sign-in-proof`.
+- Last commit: `docs/roadmap.md` (snapshot, the `email-provider` row done, a `ses-sign-in-proof` row not started, Open items, Next spec) and `AGENTS.md:9` Repository state row. Staging stays parked in committed files.
 
 Out:
+
+- The live unpark, one-offs, proofs P1–P5, and re-park apply (moved to `ses-sign-in-proof`).
 
 - Any other mail (invitations, receipts, broadcasts), HTML templates, per-tenant sender settings (Settings → Email Settings), and the general `EmailProvider` port.
 - Bounce and complaint notifications to SNS or the database, and DMARC reporting.
@@ -95,18 +97,15 @@ No route, request or response change. No event. Two optional environment variabl
 | Route 53 records in the existing zone | 0                               | Not billed per record                                                                                                          |
 | SES sending                           | under 0.01                      | USD 0.10 per 1,000 messages; staging sends a handful                                                                           |
 | VPC endpoint or NAT                   | 0                               | None added                                                                                                                     |
-| **Live proof unpark (O6)**            | **USD 0.0468 an hour while up** | The `staging-proof-run` Cost table (USD 34.20 a month if left up)                                                              |
-| Outside the totals                    | cents                           | One-off Fargate tasks, billed per second; the first-owner provisioning secret, USD 0.40 a month prorated, deleted the same day |
+| **Live proof unpark (O6)**            | **0 in this chunk**             | Unpark cost and window move to `ses-sign-in-proof` (USD 0.0468 an hour; `staging-proof-run` Cost table USD 34.20 a month if left up) |
+| Outside the totals                    | cents                           | One-off Fargate tasks and the first-owner secret are billed in `ses-sign-in-proof`, not here                                      |
 
-The window has a 24-hour target and a 48-hour hard stop, measured from the completion of Apply 1, the unpark (see Order), recorded in the runbook in UTC: about USD 1.12 and USD 2.25. The owner re-parks at the hard stop even if proofs remain. The same branch re-parks before its pull request merges.
+This chunk adds no unpark window. The live proof's 24-hour target and 48-hour hard stop, measured from Apply 1, are named in `ses-sign-in-proof`. This branch stays parked (`enable_database = false`, `desired_count = 0`) through merge.
 
 ## Order of applies (owner runs every apply)
 
-0. Apply 0, while parked: the SES identity, DNS records, configuration set and task-role policy. The owner verifies the sandbox recipients by hand (O4) and waits for the domain identity to show DKIM verified.
-1. Apply 1, the unpark, with `service_image` in the gitignored local var file only, as in `staging-proof-run`. The cost clock starts when Apply 1 completes.
-2. One-off tasks: `db-bootstrap`, `db-migrate` (the unpark creates a fresh database), then the first-owner command with a verified address.
-3. Proof: request a code for that address, read it from the inbox, sign in, call one route that needs a session and see 200. Request a code for an unverified address and see 503, and confirm from CloudTrail that the SES call was rejected for the recipient, not denied by IAM. Read the service logs for the window and confirm no address or code appears.
-4. Apply 2, the re-park, before the pull request merges.
+0. Apply 0, while parked: the SES identity, DNS records, configuration set and task-role policy. The owner verifies the sandbox recipients by hand (O4) and waits for the domain identity to show DKIM verified. **This chunk stops here** and merges parked; Apply 0 is its staging evidence.
+1. Apply 1 onward (unpark with `service_image` in the gitignored local var file, one-offs, proofs P1–P5, re-park): **moved to `ses-sign-in-proof`**, after this pull request merges and `main` has published an image that contains the merge commit.
 
 ## Risks
 

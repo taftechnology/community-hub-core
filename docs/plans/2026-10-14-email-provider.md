@@ -4,9 +4,9 @@ Spec: docs/specs/2026-10-14-email-provider.md
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A person on staging receives an eight-digit sign-in code by Amazon SES and signs in; the first owner is provisioned live; staging is re-parked before the pull request merges.
+**Goal:** Sign-in codes go through Amazon SES in Sydney behind the mail port; staging SES identity and DNS are applied (Apply 0). The live unpark, first-owner run, and sign-in proofs move to follow-up chunk `ses-sign-in-proof` after this pull request merges.
 
-**Architecture:** An SES v2 adapter implements the existing `OtpMail` port in `apps/api/src/mail/` and is wired only when two optional variables are set. Terraform adds staging-only SES resources, DNS records and one task-role policy in the AU root, and passes the two variables through the ingress module. The owner runs every apply and one-off; agents commit code, Terraform, documents and the two `staging.tfvars` flag changes only.
+**Architecture:** An SES v2 adapter implements the existing `OtpMail` port in `apps/api/src/mail/` and is wired only when two optional variables are set. Terraform adds staging-only SES resources, DNS records and one task-role policy in the AU root, and passes the two variables through the ingress module. The owner runs Apply 0 on this branch; Apply 1 onward is `ses-sign-in-proof`. Agents commit code, Terraform, documents and the `staging.tfvars` flag changes only.
 
 Slug: email-provider
 Status: approved (2026-10-14, Adnan Bin Hossen)
@@ -19,17 +19,17 @@ Status: approved (2026-10-14, Adnan Bin Hossen)
 | ---------------------- | ------------------------------------------------ | ------------------------------- | ------------------------------------- | ----------------- |
 | Implementer (agent)    | Yes — Tasks 1–10, only the files each task names | Never                           | Never                                 | Never             |
 | Reviewer (fresh agent) | Never                                            | Never                           | Never — read-only AWS, HTTP           | Never             |
-| Human owner (Abdus)    | Never during the run                             | Yes — Apply 0, Apply 1, Apply 2 | Yes                                   | Merges the PR     |
+| Human owner (Abdus)    | Never during the run                             | Yes — Apply 0 on this branch; Apply 1–2 in `ses-sign-in-proof` | Apply 0 verification here; live one-offs in follow-up | Merges the PR     |
 | Developer (Adnan)      | Approves this plan                               | Never                           | Never                                 | Never             |
 
 ## Global constraints
 
 - The spec is approved and is not edited by any task.
 - No agent runs `terraform apply`, `terraform init` against a live backend, `aws`, `docker push`, or any step in a **Human** section. Implementer runs start with no AWS credentials and pushes blocked; the orchestrator pushes the branch before each apply.
-- `service_image` is never committed. Staging's committed flags change only in Task 7 (unpark) and Task 8 (re-park).
+- `service_image` is never committed. Staging's committed flags change only in Task 7 (unpark) and Task 8 (re-park). Task 7's unpark commit was never applied; Task 8 restores the parked file so this branch merges parked.
 - No account id, zone id, ARN, hostname, email address, secret name, task id or IP address in any commit, this plan, or runbook evidence. Terraform derives names; tests use the existing synthetic placeholders.
 - No hostname literal is added. The zone name is read from the one root local that Task 3 introduces.
-- From Apply 0 onward: no rebase, no amend, no force-push. If `origin/main` moves, merge it in. The PR opens only after Task 10, with staging parked in git and in AWS and the full gate green with the turbo cache bypassed.
+- From Apply 0 onward: no rebase, no amend, no force-push. If `origin/main` moves, merge it in. The PR opens only after Task 10, with staging parked in git (Apply 0 already left AWS parked for the database and service) and the full gate green with the turbo cache bypassed.
 - Session scratch (`.superpowers/`, `*-report.md`) is never committed.
 - Second fresh-context review is required (authentication). It starts when the PR opens.
 - One run at a time uses the Docker test database.
@@ -67,12 +67,12 @@ Each row: the implementer weakens the source once as described, sees the named t
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | Before Apply 0                        | Nothing in AWS. Revert commits on new commits.                                                                             |
 | After Apply 0                         | SES resources are additive and unused while parked. The owner can destroy them by reverting Tasks 3–4 and applying.        |
-| After Apply 1, proof failure          | Stop proofs, Task 8 re-park commit, Apply 2, record the failure in the runbook.                                            |
+| After Apply 1, proof failure          | Stop proofs, re-park commit, Apply 2, record the failure — in `ses-sign-in-proof`, not this branch.                        |
 | Service sending bad mail at any point | Unset the variables (remove from the task definition by re-park, or revert Task 4's root wiring): the service answers 503. |
 
 ## Stop and ask (AGENTS.md §12)
 
-Implementer: the plan is wrong or ambiguous; a migration, Dockerfile, workflow or dependency change not named here; a checker or test outside the named files needs changing; the same step fails twice. Day of run: the Apply 0 or Apply 1 plan shows changes outside this plan's resources; DKIM not verified after 72 hours; a proof fails twice; the 48-hour hard stop.
+Implementer: the plan is wrong or ambiguous; a migration, Dockerfile, workflow or dependency change not named here; a checker or test outside the named files needs changing; the same step fails twice. Day of run: the Apply 0 plan shows changes outside this plan's resources; DKIM not verified after 72 hours. Apply 1, live proofs, and the 48-hour hard stop are `ses-sign-in-proof`.
 
 ---
 
@@ -195,41 +195,50 @@ H1. Reviewer: read-only plan against real state without the lock; compare with T
 
 **Files:** `infra/regions/au/env/staging.tfvars`: `enable_database = true`, `desired_count = 1`. Nothing else.
 
+**Status:** commit made (`f4cf4e1`) and pushed, but **never applied**. Apply 1 was stopped before it started: no published image contains this chunk's code (`publish` runs only on push to `main`). Task 8 restores the parked file. The live unpark runs in `ses-sign-in-proof` after merge.
+
 **Commit subject:** `feat(infra): unpark staging for the SES sign-in proof`
 
-- [ ] `terraform fmt`; `terraform -chdir=infra/regions/au test`; `pnpm format`, `lint`, `typecheck`, `check:boundaries`. `pnpm test` is expected red on the three parked tests while unparked (as in `staging-proof-run`); do not run the full gate.
-- [ ] The orchestrator pushes before Apply 1.
+- [x] Commit made and pushed; Apply 1 not run (see Status).
 
 ## Human: Apply 1, one-offs and proofs (owner; reviewer reads)
 
-H5. Reviewer: read-only plan. H6. Owner: Apply 1 with `service_image` in the gitignored local file only; records the UTC completion time (cost clock). H7. Owner: `db-bootstrap`, `db-migrate`, first-owner one-off. H8. Proofs P1–P5 per the runbook.
+**Moved to follow-up chunk `ses-sign-in-proof`.** H5–H8 are not run on this branch. Apply 1 was stopped before it started: no published image contains this chunk's code. The unpark commit (Task 7) was never applied.
+
+H5. Reviewer: read-only plan. H6. Owner: Apply 1 with `service_image` in the gitignored local file only; records the UTC completion time (cost clock). H7. Owner: `db-bootstrap`, `db-migrate`, first-owner one-off. H8. Proofs P1–P5 per the runbook. *(All deferred to `ses-sign-in-proof`.)*
 
 ### Task 8: Re-park commit
 
 **Files:** `infra/regions/au/env/staging.tfvars`: `enable_database = false`, `desired_count = 0`.
 
-**Commit subject:** `feat(infra): park staging after the SES sign-in proof`
+**Status:** commit made. Restores the parked file so this branch matches `origin/main` for those flags. There is no Apply 2 on this branch (Apply 1 never ran; AWS stayed parked for the database and service after Apply 0).
 
-- [ ] `terraform test`; full gate with the turbo cache bypassed (`pnpm format`, `pnpm lint --force`, `pnpm typecheck --force`, `pnpm test --force`, `pnpm check:boundaries`).
-- [ ] The orchestrator pushes before Apply 2.
+**Commit subject:** `feat(infra): park staging; the live SES proof moves to a follow-up` (or equivalent)
+
+- [x] Commit restores parked flags; `git diff origin/main -- infra/regions/au/env/staging.tfvars` is empty.
+- [ ] Full gate with the turbo cache bypassed before the catalogue commit (`pnpm format`, `pnpm lint --force`, `pnpm typecheck --force`, `pnpm test --force`, `pnpm check:boundaries`).
 
 ## Human: Apply 2 (owner)
 
-H9. Owner: remove `service_image` from the local file, re-park apply, then a plan that shows no changes. H10. Reviewer: RDS instances 0 and ECS desired count 0.
+**Moved to follow-up chunk `ses-sign-in-proof`.** H9–H10 are not run on this branch.
 
-### Task 9: Record the proofs and both applies
+H9. Owner: remove `service_image` from the local file, re-park apply, then a plan that shows no changes. H10. Reviewer: RDS instances 0 and ECS desired count 0. *(Deferred to `ses-sign-in-proof`.)*
 
-**Files:** `docs/runbooks/apply-staging-au.md` (evidence for P1–P5; Apply 0, 1, 2 SHAs and UTC times; counts and statuses only).
+### Task 9: Record Apply 0 only
 
-**Commit subject:** `docs(runbooks): record the SES sign-in proof`
+**Files:** `docs/runbooks/apply-staging-au.md` (Evidence for Apply 0: SHAs, UTC times, counts and statuses only; hand the live path to `ses-sign-in-proof`).
 
-- [ ] Scan added lines for identifiers (12-digit numbers, `arn:`, `@`, hostnames); `pnpm gate --force` form as Task 8.
+**Status:** records Apply 0 only. P1–P5 and Apply 1/2 evidence are deferred to `ses-sign-in-proof`.
+
+**Commit subject:** `docs(runbooks): record Apply 0 and hand the live SES proof to its own chunk`
+
+- [ ] Scan added lines for identifiers (12-digit numbers, `arn:`, `@`, hostnames); format and gate as needed.
 
 ### Task 10: Catalogue (last task on this branch)
 
-**Files:** `docs/roadmap.md` (snapshot; `email-provider` row done; Q9 row closed by ADR 0013; Open items: signed-in proof and first-owner live run done, add the abuse precondition for production access; Next spec `stripe-billing`), `AGENTS.md:9` repository-state row.
+**Files:** `docs/roadmap.md` (snapshot; `email-provider` row done with Apply 0 evidence and live proof named in `ses-sign-in-proof`; add `ses-sign-in-proof` not started; Next spec `ses-sign-in-proof` then `stripe-billing`; Open items: signed-in proof waits for `ses-sign-in-proof`), `AGENTS.md:9` repository-state row (same next sequence; Phase 0 counts unchanged).
 
-**Commit subject:** `docs(roadmap): mark email-provider done`
+**Commit subject:** `docs(roadmap): mark email-provider done; next is the SES sign-in proof`
 
 - [ ] `pnpm format`; full gate with the cache bypassed; `rm -f docs/plans/*-report.md`; `git status --short` clean.
 
@@ -237,10 +246,10 @@ H9. Owner: remove `service_image` from the local file, re-park apply, then a pla
 
 ## Definition of done (AGENTS.md §8)
 
-- [ ] Tasks 1–10 and human steps done, or dropped with a note
-- [ ] Security pins 1–12 and 14 each seen failing once, reported in the task reports; pin 13 by live proof
+- [ ] Tasks 1–10 done; human steps H1–H4 (Apply 0) done; H5–H10 deferred to `ses-sign-in-proof` with a note
+- [ ] Security pins 1–12 and 14 each seen failing once, reported in the task reports; pin 13 by live proof in `ses-sign-in-proof`
 - [ ] Full CI green on the PR
-- [ ] P1–P5 recorded; staging re-parked in git and in AWS
-- [ ] ADR 0013, `architecture.md`, `docs/roadmap.md` and `AGENTS.md:9` updated in this PR
+- [ ] Apply 0 recorded; staging parked in committed files at merge (no unpark applied on this branch)
+- [ ] ADR 0013, `architecture.md`, `docs/roadmap.md` and `AGENTS.md:9` updated in this PR; roadmap names `ses-sign-in-proof` next
 - [ ] Reviewer sign-off and second fresh-context review recorded in the PR
 - [ ] Session scratch cleaned
