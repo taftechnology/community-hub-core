@@ -197,14 +197,22 @@ This secret is never Terraform-managed, and **Delete and verify** below fully de
 
 `create-secret` must name the customer-managed secrets key with `--kms-key-id ${SECRETS_KEY_ARN}`. Without it the secret is encrypted under the account's AWS-managed key, and the task 5 key-policy grant — which covers only this one secret name on the customer-managed key — would cover nothing. Hold `${SECRETS_KEY_ARN}` from a read-only describe or Terraform output, the same source proof 7a uses; it is never recorded.
 
+Type the prompt and the commands that use the variable directly into one terminal; do not use an editor's Run button while a prompt is waiting, because the button's command text becomes the answer.
+
     read -r "ORG_SLUG?Organisation slug: "
+
     read -r "COMMUNITY_SLUG?Community slug: "
-    read -r "OWNER_EMAIL?Owner email: "
+
+    read -rs "OWNER_EMAIL?Owner email: "
+
+    print
+
     jq -n --arg o "${ORG_SLUG}" --arg c "${COMMUNITY_SLUG}" --arg e "${OWNER_EMAIL}" \
       '{organisationSlug: $o, communitySlug: $c, email: $e}' \
       | aws secretsmanager create-secret --profile ${AWS_PROFILE} \
         --name ${PROVISION_SECRET_NAME} --kms-key-id ${SECRETS_KEY_ARN} \
         --secret-string file:///dev/stdin >/dev/null
+
     unset ORG_SLUG COMMUNITY_SLUG OWNER_EMAIL
 
 `${PROVISION_SECRET_NAME}` is the one fixed name the task 5 Terraform grants on (`${name}-provision-owner`); its resolved value is never written here. The secret value carries the email, so it is `confidential`; it is deleted in **Delete and verify** immediately after the run.
@@ -336,9 +344,11 @@ Delete the plan file:
 
 While in the SES sandbox, SES delivers only to verified recipient addresses. The owner verifies the recipient address(es) used for the live proof. The address is held in a shell variable and never written down.
 
-Prompt for the sandbox recipient address:
+Prompt for the sandbox recipient address. Type the prompt and the commands that use the variable directly into one terminal; do not use an editor's Run button while a prompt is waiting, because the button's command text becomes the answer:
 
-    read -r "RECIPIENT_EMAIL?Sandbox recipient email: "
+    read -rs "RECIPIENT_EMAIL?Sandbox recipient email: "
+
+    print
 
 Request verification for that email identity:
 
@@ -433,9 +443,11 @@ Proofs P1–P5 verify transactional email delivery, authentication flow, error i
 
 #### P1: Start challenge for verified owner address
 
-Prompt for the verified owner address:
+Prompt for the verified owner address. Type the prompt and the commands that use the variable directly into one terminal; do not use an editor's Run button while a prompt is waiting, because the button's command text becomes the answer:
 
-    read -r "OWNER_EMAIL?Verified owner email: "
+    read -rs "OWNER_EMAIL?Verified owner email: "
+
+    print
 
 Call the start endpoint:
 
@@ -479,9 +491,11 @@ Clean up session variables:
 
 #### P3: Unverified recipient rejected
 
-Prompt for an unverified recipient address:
+Prompt for an unverified recipient address. Type the prompt and the commands that use the variable directly into one terminal; do not use an editor's Run button while a prompt is waiting, because the button's command text becomes the answer:
 
-    read -r "UNVERIFIED_EMAIL?Unverified email: "
+    read -rs "UNVERIFIED_EMAIL?Unverified email: "
+
+    print
 
 Call the start endpoint for the unverified address:
 
