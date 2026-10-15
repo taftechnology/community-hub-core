@@ -277,9 +277,17 @@ The `describe-secret` call is expected to fail with a not-found error — that f
 
 ## SES sign-in proof
 
-This section is the operator path for `docs/specs/2026-10-14-email-provider.md`. The human owner runs every apply, recipient verification, and ECS run-task. The owner's assistant is read-only: it describes resources, queries CloudWatch Logs, and calls the staging hostnames over HTTP. An agent does not apply. Stop after any failed proof, or after a second failure on the same step (AGENTS.md section 12). Then re-park before further attempts. The 48-hour hard stop is measured from apply 1 completion; the owner runs the re-park at that hard stop even if proofs remain.
+This section is the operator path for `docs/specs/2026-10-14-email-provider.md`. **Apply 0 ran on that chunk and is recorded under Evidence below. The live part (Apply 1, one-offs, proofs P1–P5, and the re-park) runs in the follow-up chunk `ses-sign-in-proof`**, after `email-provider` merges and `main` publishes an image that contains the merge commit.
+
+The human owner runs every apply, recipient verification, and ECS run-task. The owner's assistant is read-only: it describes resources, queries CloudWatch Logs, and calls the staging hostnames over HTTP. An agent does not apply. Stop after any failed proof, or after a second failure on the same step (AGENTS.md section 12). Then re-park before further attempts. The 48-hour hard stop is measured from apply 1 completion; the owner runs the re-park at that hard stop even if proofs remain.
 
 Shell variables and placeholders only. Never paste an account id, ARN, hostname, email address, OTP code, registry host, secret name, or key id into evidence. Say "the api hostname", "the auth hostname", and "the sender address". Values that come from AWS at run time are held in shell variables and never recorded. In zsh write `${VAR}:text`, not `$VAR:text`. Do not put an inline `#` comment inside a command string. One pasteable command per indented block. Evidence rules: counts, statuses, and lengths only.
+
+### Prerequisites (before Apply 1)
+
+Apply 1 needs a service image published from a `main` commit that contains the `email-provider` merge (so the image includes `apps/api/src/mail/ses-otp-mail.ts` and the mail wiring). The newest image from before that merge does not contain this chunk's code; an unpark against it would run a service that ignores the mail settings.
+
+Hold `${DEPLOY_SHA}` as that `main` commit. Confirm the image with the same pre-check commands under **Staging proof run → Pre-checks** below: the `publish` job conclusion for that commit, then the image digest and scan for tag `${DEPLOY_SHA}` (repository `ch-staging/service`). Record conclusion, digest, and CRITICAL count only — never a registry host. **Stop if** publish failed, the scan is not `COMPLETE`, or `CRITICAL` is above 0.
 
 ### Shell variables
 
@@ -463,9 +471,11 @@ Check the recipient inbox:
 
 #### P2: Verify challenge with code and call session route
 
-Prompt for the eight-digit code from the received email:
+Prompt for the eight-digit code from the received email. Type the prompt and the commands that use the variable directly into one terminal; do not use an editor's Run button while a prompt is waiting, because the button's command text becomes the answer:
 
-    read -r "OTP_CODE?One-time code: "
+    read -rs "OTP_CODE?One-time code: "
+
+    print
 
 Call the verify endpoint:
 
@@ -578,13 +588,25 @@ Record the UTC completion time under **Cost clock** below and calculate the tota
 
 ### Cost clock and applies
 
-- Apply 0 SHA:
-- Apply 0 completed:
-- Apply 1 SHA:
-- Apply 1 completed (cost anchor):
-- Apply 2 SHA:
-- Apply 2 completed:
-- Total unpark window:
+- Apply 0 SHA: `edeaaca` (see Evidence)
+- Apply 0 completed: about 20:11 UTC on 2026-10-14 (see Evidence)
+- Apply 1 SHA: _(deferred to `ses-sign-in-proof`)_
+- Apply 1 completed (cost anchor): _(deferred)_
+- Apply 2 SHA: _(deferred)_
+- Apply 2 completed: _(deferred)_
+- Total unpark window: _(deferred; no unpark on the `email-provider` branch)_
+
+### Evidence
+
+Evidence (Apply 0 against `edeaaca`, 2026-10-14 UTC). Counts, statuses, and lengths only. No account id, ARN, hostname, email address, or registry host.
+
+- Applied by the owner at `edeaaca` on 2026-10-14, completed about 20:11 UTC, using a saved plan file outside the repository. Plan: 10 to add, 2 to change, 0 to destroy. Applied: 10 added, 2 changed, 0 destroyed.
+- Created: `aws_sesv2_configuration_set.mail[0]`, `aws_sesv2_email_identity.mail[0]`, `aws_sesv2_email_identity_mail_from_attributes.mail[0]`, `aws_iam_role_policy.ses_send[0]`, `aws_route53_record.ses_dkim[0]`, `[1]`, `[2]`, `aws_route53_record.ses_mail_from_mx[0]`, `aws_route53_record.ses_mail_from_txt[0]`, `aws_route53_record.ses_dmarc_txt[0]`.
+- Changed in place: `module.db_secrets.aws_kms_key.secrets` and `module.envelope.aws_iam_role_policy.task_secrets` — the first-owner policy change from pull request 52, applied here for the first time.
+- No existing DNS record was updated, replaced or deleted.
+- Read-only checks at about 23:22 UTC: the mail domain identity `SUCCESS` with sending enabled; DKIM `SUCCESS`; MAIL FROM `SUCCESS`; one sandbox recipient verified (`SUCCESS`). The account is still in the SES sandbox (production access off, 200 messages a day).
+- The recipient address was entered at a silent prompt and is in no file.
+- Apply 1 was not run on the `email-provider` branch: no published image contained that chunk's code. The live proof (Apply 1 onward) is `ses-sign-in-proof`.
 
 ## Staging proof run
 
