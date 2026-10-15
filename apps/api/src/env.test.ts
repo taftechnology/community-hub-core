@@ -116,6 +116,27 @@ describe("readServiceEnv", () => {
         },
       ],
       [
+        "address with LF",
+        {
+          MAIL_FROM_ADDRESS: "no\nreply@mail.example.test",
+          SES_CONFIGURATION_SET: "valid-set",
+        },
+      ],
+      [
+        "address with CR",
+        {
+          MAIL_FROM_ADDRESS: "no\rreply@mail.example.test",
+          SES_CONFIGURATION_SET: "valid-set",
+        },
+      ],
+      [
+        "address with CRLF",
+        {
+          MAIL_FROM_ADDRESS: "no\r\nreply@mail.example.test",
+          SES_CONFIGURATION_SET: "valid-set",
+        },
+      ],
+      [
         "address with <",
         {
           MAIL_FROM_ADDRESS: "<no-reply@mail.example.test",
