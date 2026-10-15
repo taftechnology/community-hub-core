@@ -18,7 +18,7 @@ Transactional email (D13, Q9) must process in the tenant's region or be an expli
 ## Consequences
 
 - An SES v2 client adapter is wired in `bindServices` when `MAIL_FROM_ADDRESS` and `SES_CONFIGURATION_SET` are configured; without them, the service continues to wire `rejectingOtpMail`.
-- Staging AU root plans SES domain identity, Easy DKIM CNAMEs, custom MAIL FROM records (`bounces.mail.<zone>`), DMARC TXT record, a configuration set with `tls_policy = REQUIRE` and suppression reasons (`BOUNCE`, `COMPLAINT`), and a least-privilege task-role policy allowing only `ses:SendEmail`.
+- Staging AU root plans SES domain identity, Easy DKIM CNAMEs, custom MAIL FROM records (`bounces.mail.<zone>`), DMARC TXT record, a configuration set with `tls_policy = REQUIRE` and suppression reasons (`BOUNCE`, `COMPLAINT`), and a least-privilege task-role policy allowing only `ses:SendEmail`. The DMARC policy is `p=none` until bounce and complaint handling and DMARC reporting exist; a later change raises it.
 - No personal data or sign-in code is written to service logs, traces, or URLs (AGENTS.md §1 rule 5).
 
 ## Alternatives rejected
