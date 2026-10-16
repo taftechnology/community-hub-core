@@ -296,27 +296,27 @@ Hold `${DEPLOY_SHA}` as that `main` commit (`81f4960` or later). Confirm the ima
 
 Read-only pre-checks (before Apply 1; any failure is a stop before spend):
 
-1. Confirm the SES domain identity and DKIM status show `SUCCESS`:
+Pre-check 1. Confirm the SES domain identity and DKIM status show `SUCCESS`:
 
-   aws sesv2 get-email-identity --profile ${AWS_PROFILE} --email-identity "mail.${ZONE_NAME}" --query 'DkimAttributes.Status' --output text
+    aws sesv2 get-email-identity --profile ${AWS_PROFILE} --email-identity "mail.${ZONE_NAME}" --query 'DkimAttributes.Status' --output text
 
 Expected: `SUCCESS`.
 
-2. Confirm SES account production access is off:
+Pre-check 2. Confirm SES account production access is off:
 
-   aws sesv2 get-account --profile ${AWS_PROFILE} --region ap-southeast-2 --query 'ProductionAccessEnabled' --output text
+    aws sesv2 get-account --profile ${AWS_PROFILE} --region ap-southeast-2 --query 'ProductionAccessEnabled' --output text
 
 Expected: `False`. Stop if `True`.
 
-3. Confirm the owner address is verified. The owner checks, in his own shell at a silent prompt, that the lowercase owner address shows `VerificationStatus` `SUCCESS`, then unsets it. Record the status only:
+Pre-check 3. Confirm the owner address is verified. The owner checks, in his own shell at a silent prompt, that the lowercase owner address shows `VerificationStatus` `SUCCESS`, then unsets it. Record the status only:
 
-   read -rs "OWNER_EMAIL?Lowercase owner email: "
+    read -rs "OWNER_EMAIL?Lowercase owner email: "
 
-   print
+    print
 
-   aws sesv2 get-email-identity --profile ${AWS_PROFILE} --email-identity "${OWNER_EMAIL}" --query 'VerificationStatus' --output text
+    aws sesv2 get-email-identity --profile ${AWS_PROFILE} --email-identity "${OWNER_EMAIL}" --query 'VerificationStatus' --output text
 
-   unset OWNER_EMAIL
+    unset OWNER_EMAIL
 
 Expected: `SUCCESS`.
 
@@ -558,11 +558,13 @@ Check the recipient inbox:
 
 Guards:
 
-- Rule (a): if no mail arrives within 5 minutes, the assistant counts the `mail` lines by `outcome` since `${WINDOW_START_MS}`, before any further `start`:
+Rule (a): if no mail arrives within 5 minutes, the assistant counts the `mail` lines by `outcome` since `${WINDOW_START_MS}`, before any further `start`. The owner prints `${WINDOW_START_MS}` (an epoch integer, not personal data) and gives it to the assistant, who sets `WINDOW_START_MS` in their own shell:
 
-  aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${WINDOW_START_MS} --query 'events[].message' --output text | tr '\t' '\n' | jq -r 'fromjson? | select(.message=="mail") | .outcome' | sort | uniq -c
+    read -r "WINDOW_START_MS?Window start (epoch ms): "
 
-- Rule (b): a 204 with no new `mail` line is the five-an-hour limit (`modules/core/identity/infrastructure/email-otp.ts:63-71`): stop.
+    aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${WINDOW_START_MS} --query 'events[].message' --output text | tr '\t' '\n' | jq -rR 'fromjson? | select(.message=="mail") | .outcome' | sort | uniq -c
+
+Rule (b): a 204 with no new `mail` line is the five-an-hour limit (`modules/core/identity/infrastructure/email-otp.ts:63-71`): stop.
 
 #### P2: Verify challenge with code and call session route
 
@@ -584,7 +586,9 @@ Read the access token:
 
 Prompt for the community slug from the first-owner provisioning:
 
-    read -r "COMMUNITY_SLUG?Community slug: "
+    read -rs "COMMUNITY_SLUG?Community slug: "
+
+    print
 
 Call one route that requires a session:
 
@@ -606,7 +610,7 @@ Expected: HTTP status `503`.
 
 Inspect the service's `mail` log event for that request:
 
-    aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${WINDOW_START_MS} --filter-pattern '{ $.message = "mail" }' --query 'events[].message' --output text | tr '\t' '\n' | jq -r 'fromjson? | select(.outcome=="failed") | {operation,outcome,errorClass}'
+    aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${WINDOW_START_MS} --filter-pattern '{ $.message = "mail" }' --query 'events[].message' --output text | tr '\t' '\n' | jq -rR 'fromjson? | select(.outcome=="failed") | {operation,outcome,errorClass}'
 
 Expected: `operation` is `send_email`, `outcome` is `failed`, and `errorClass` is `MessageRejected` (SES recipient rejection in sandbox), NOT `AccessDeniedException` (IAM denial). Note that `outcome` can also be `timeout`, which is a stop.
 Note on CloudTrail: According to AWS documentation ([Logging Amazon SES API calls using AWS CloudTrail](https://docs.aws.amazon.com/ses/latest/dg/logging-using-cloudtrail.html)), SES data-plane sending calls (`SendEmail`) are not recorded in CloudTrail by default. The service's structured `mail` log event is the primary evidence. If CloudTrail data events are active, CloudTrail may be checked as supplementary verification.
@@ -657,7 +661,7 @@ If `${ORG_SLUG}` or `${COMMUNITY_SLUG}` was unset by the provision procedure, pr
 
     print
 
-Run privacy counts against service logs (one command per value; expected `0` each; record the printed integer):
+Run privacy counts against service logs (one command per value; expected `0` each; record the printed integer; `grep` exiting with status 1 on a count of 0 is normal):
 
     print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${OWNER_EMAIL}"
 
@@ -675,7 +679,7 @@ Run privacy counts against service logs (one command per value; expected `0` eac
 
     print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "@"
 
-Run privacy counts against API access logs (one command per value; expected `0` each; record the printed integer):
+Run privacy counts against API access logs (one command per value; expected `0` each; record the printed integer; `grep` exiting with status 1 on a count of 0 is normal):
 
     print -r -- "${ACCESS_MSGS}" | grep -c -i -F -- "${OWNER_EMAIL}"
 
