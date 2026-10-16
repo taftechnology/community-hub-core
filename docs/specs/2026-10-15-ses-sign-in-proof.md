@@ -59,7 +59,7 @@ Out:
    - The owner checks, at a silent prompt in his shell, that the lowercase owner address P1 will use shows `VerificationStatus` `SUCCESS`. Record the status only. The same address goes into the provision secret, because the signed-in user must be the provisioned owner.
 2. **Apply 1.** Push the unpark commit, then plan against it. The expected plan is exactly 18 to add, 0 to change and 0 to destroy:
    - 8 under `module.rds[0]`;
-   - 6 under `module.ingress`: `aws_vpc_security_group_ingress_rule.task_api`, `aws_ecs_cluster.this`, `aws_ecs_cluster_capacity_providers.this`, `aws_ecs_task_definition.this`, `aws_ecs_service.this`, `aws_iam_role_policy.pull`;
+   - 6 under `module.ingress`: `aws_ecs_cluster.this[0]`, `aws_ecs_cluster_capacity_providers.this[0]`, `aws_ecs_service.this[0]`, `aws_ecs_task_definition.this[0]`, `aws_iam_role_policy.pull[0]`, `aws_vpc_security_group_ingress_rule.task_api[0]`;
    - 4 at the root: `aws_iam_role.db_ops_execution[0]`, `aws_iam_role.db_ops_task[0]`, `aws_iam_role_policy.db_ops_execution[0]`, `aws_ecs_task_definition.db_ops[0]`.
      Any other address or count is a stop before apply. Record the UTC completion time, which starts the cost clock.
 3. **One-offs.** Wait for RDS to be `available`.

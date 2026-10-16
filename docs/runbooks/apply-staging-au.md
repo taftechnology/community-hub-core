@@ -199,9 +199,13 @@ This secret is never Terraform-managed, and **Delete and verify** below fully de
 
 Type the prompt and the commands that use the variable directly into one terminal; do not use an editor's Run button while a prompt is waiting, because the button's command text becomes the answer.
 
-    read -r "ORG_SLUG?Organisation slug: "
+    read -rs "ORG_SLUG?Organisation slug: "
 
-    read -r "COMMUNITY_SLUG?Community slug: "
+    print
+
+    read -rs "COMMUNITY_SLUG?Community slug: "
+
+    print
 
     read -rs "OWNER_EMAIL?Owner email: "
 
@@ -277,7 +281,7 @@ The `describe-secret` call is expected to fail with a not-found error — that f
 
 ## SES sign-in proof
 
-This section is the operator path for `docs/specs/2026-10-14-email-provider.md`. **Apply 0 ran on that chunk and is recorded under Evidence below. The live part (Apply 1, one-offs, proofs P1–P5, and the re-park) runs in the follow-up chunk `ses-sign-in-proof`**, after `email-provider` merges and `main` publishes an image that contains the merge commit.
+This section is the live path run by the `ses-sign-in-proof` chunk. Apply 0 ran on the `email-provider` chunk and is recorded under Evidence below.
 
 The human owner runs every apply, recipient verification, and ECS run-task. The owner's assistant is read-only: it describes resources, queries CloudWatch Logs, and calls the staging hostnames over HTTP. An agent does not apply. Stop after any failed proof, or after a second failure on the same step (AGENTS.md section 12). Then re-park before further attempts. The 48-hour hard stop is measured from apply 1 completion; the owner runs the re-park at that hard stop even if proofs remain.
 
@@ -290,15 +294,39 @@ General rules:
 
 ### Prerequisites (before Apply 1)
 
-Apply 1 needs a service image published from a `main` commit that contains the `email-provider` merge (`81f4960` or a later `main` commit that contains it; so the image includes `apps/api/src/mail/ses-otp-mail.ts` and the mail wiring). The newest image from before that merge does not contain this chunk's code; an unpark against it would run a service that ignores the mail settings.
+Apply 1 needs a service image published from a `main` commit that contains the `email-provider` merge (`81f4960` or a later `main` commit that contains it; so the image includes `apps/api/src/mail/ses-otp-mail.ts` and the mail wiring). The newest image from before that merge does not contain this chunk's code; an unpark against it would run a service that ignores the mail settings. Images are tagged with the full 40-character SHA.
 
-Hold `${DEPLOY_SHA}` as that `main` commit (`81f4960` or later). Confirm the image with the same pre-check commands under **Staging proof run → Pre-checks** below: the `publish` job conclusion for that commit, then the image digest and scan for tag `${DEPLOY_SHA}` (repository `ch-staging/service`). Record conclusion, digest, and CRITICAL count only — never a registry host. **Stop if** publish failed, the scan is not `COMPLETE`, or `CRITICAL` is above 0.
+Hold `${DEPLOY_SHA}` as that `main` commit (`81f4960` or later). Confirm the image with the pasteable blocks below. Record conclusion, digest length, and CRITICAL count only — never a registry host. **Stop if** publish failed, the scan is not `COMPLETE`, or `CRITICAL` is above 0.
+
+    git fetch origin
+
+    DEPLOY_SHA=$(git rev-parse origin/main)
+
+    git merge-base --is-ancestor 81f4960 ${DEPLOY_SHA} && print ok
+
+Expected: `ok`. Anything else is a stop.
+
+    RUN_ID=$(gh run list --branch main --commit ${DEPLOY_SHA} --workflow ci.yml --json databaseId --jq '.[0].databaseId')
+
+    gh run view ${RUN_ID} --json jobs --jq '.jobs[] | select(.name=="publish") | .conclusion'
+
+Expected: `success`.
+
+    DIGEST=$(aws ecr describe-images --profile ${AWS_PROFILE} --region ap-southeast-2 --repository-name ch-staging/service --image-ids imageTag=${DEPLOY_SHA} --query 'imageDetails[0].imageDigest' --output text)
+
+    print ${#DIGEST}
+
+Expected: `71`.
+
+    aws ecr describe-image-scan-findings --profile ${AWS_PROFILE} --region ap-southeast-2 --repository-name ch-staging/service --image-id imageTag=${DEPLOY_SHA} --query '[imageScanStatus.status, imageScanFindings.findingSeverityCounts.CRITICAL]' --output text
+
+Expected: `COMPLETE` and `None` or `0`.
 
 Read-only pre-checks (before Apply 1; any failure is a stop before spend):
 
 Pre-check 1. Confirm the SES domain identity and DKIM status show `SUCCESS`:
 
-    aws sesv2 get-email-identity --profile ${AWS_PROFILE} --email-identity "mail.${ZONE_NAME}" --query 'DkimAttributes.Status' --output text
+    aws sesv2 get-email-identity --profile ${AWS_PROFILE} --region ap-southeast-2 --email-identity "mail.${ZONE_NAME}" --query 'DkimAttributes.Status' --output text
 
 Expected: `SUCCESS`.
 
@@ -314,7 +342,7 @@ Pre-check 3. Confirm the owner address is verified. The owner checks, in his own
 
     print
 
-    aws sesv2 get-email-identity --profile ${AWS_PROFILE} --email-identity "${OWNER_EMAIL}" --query 'VerificationStatus' --output text
+    aws sesv2 get-email-identity --profile ${AWS_PROFILE} --region ap-southeast-2 --email-identity "${OWNER_EMAIL}" --query 'VerificationStatus' --output text
 
     unset OWNER_EMAIL
 
@@ -394,13 +422,13 @@ Prompt for the sandbox recipient address. Type the prompt and the commands that 
 
 Request verification for that email identity:
 
-    aws sesv2 create-email-identity --profile ${AWS_PROFILE} --email-identity "${RECIPIENT_EMAIL}"
+    aws sesv2 create-email-identity --profile ${AWS_PROFILE} --region ap-southeast-2 --email-identity "${RECIPIENT_EMAIL}"
 
 Open the verification email sent to that inbox by Amazon SES and click the confirmation link.
 
 Confirm verification status shows `SUCCESS`:
 
-    aws sesv2 get-email-identity --profile ${AWS_PROFILE} --email-identity "${RECIPIENT_EMAIL}" --query 'VerificationStatus' --output text
+    aws sesv2 get-email-identity --profile ${AWS_PROFILE} --region ap-southeast-2 --email-identity "${RECIPIENT_EMAIL}" --query 'VerificationStatus' --output text
 
 Unset the recipient address variable:
 
@@ -408,7 +436,7 @@ Unset the recipient address variable:
 
 Wait for the domain Easy DKIM to show verified:
 
-    aws sesv2 get-email-identity --profile ${AWS_PROFILE} --email-identity "mail.${ZONE_NAME}" --query 'DkimAttributes.Status' --output text
+    aws sesv2 get-email-identity --profile ${AWS_PROFILE} --region ap-southeast-2 --email-identity "mail.${ZONE_NAME}" --query 'DkimAttributes.Status' --output text
 
 Expected: `SUCCESS`. Repeat until `SUCCESS` before proceeding to Apply 1.
 
@@ -417,6 +445,22 @@ Expected: `SUCCESS`. Repeat until `SUCCESS` before proceeding to Apply 1.
 The branch moves to the unpark commit (`enable_database = true`, `desired_count = 1` in `infra/regions/au/env/staging.tfvars`). The owner sets `service_image` in the gitignored `infra/regions/au/env/staging.local.tfvars`.
 
 Run before-each-apply checks against the SHA named for that apply on origin.
+
+From `infra/regions/au`, write the image line into the gitignored local var file without echoing it. The line is never printed or committed:
+
+    REGISTRY=$(aws sts get-caller-identity --profile ${AWS_PROFILE} --query Account --output text).dkr.ecr.ap-southeast-2.amazonaws.com
+
+    print -r -- "service_image = \"${REGISTRY}/ch-staging/service@${DIGEST}\"" >> env/staging.local.tfvars
+
+    grep -c '^service_image' env/staging.local.tfvars
+
+Expected: `1`. Stop if 2 or more; the owner removes the duplicate line by hand in an editor.
+
+    unset REGISTRY
+
+Initialize Terraform with the staging backend:
+
+    terraform init -backend-config=backend/staging.hcl -lockfile=readonly
 
 Plan to the saved file outside the repository:
 
@@ -495,7 +539,7 @@ Wait for `db-migrate` to stop and read the exit code:
 
 Expected: exit 0, stdout ten `applied <tag>` lines for 0000–0009 in journal order, then `done applied=10 total=10`, with stderr empty.
 
-Provision the first owner following the **Provision the first owner** procedure above (Create secret, Run one-off `provision-owner.js`, Delete and verify secret). Use the same lowercase verified address. Use synthetic slugs with a random suffix, for example `proof-` plus 8 hex characters, so that P5's substring counts cannot match a route name. The slugs are never recorded. (The provision procedure unsets `${COMMUNITY_SLUG}`; P2 prompts for it.)
+Provision the first owner following the **Provision the first owner** procedure above (Create secret, Run one-off `provision-owner.js`, Delete and verify secret). Use the same lowercase verified address. Use synthetic slugs with a random suffix, for example `proof-` plus 8 hex characters, so that P5's substring counts cannot match a route name. Note the two slugs privately (not in evidence) before the procedure unsets them; P2 and P5 ask for the exact same values again at silent prompts. The slugs are never recorded.
 Expected: exit 0, stdout `created`, stderr empty. (This proves P4).
 
 ### Running-task check (assistant, read-only)
@@ -506,7 +550,7 @@ Before starting HTTP proofs P1–P3, wait until the ECS service is stable. The s
 
 Check that the running task's image digest matches the pre-checked digest:
 
-    SERVICE_TASK_ARN=$(aws ecs list-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --service-name ${SERVICE} --query 'taskArns[0]' --output text)
+    SERVICE_TASK_ARN=$(aws ecs list-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --service-name ${SERVICE} --desired-status RUNNING --query 'taskArns[0]' --output text)
 
     aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks "${SERVICE_TASK_ARN}" --query 'tasks[0].containers[0].imageDigest' --output text
 
@@ -610,7 +654,7 @@ Expected: HTTP status `503`.
 
 Inspect the service's `mail` log event for that request:
 
-    aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${WINDOW_START_MS} --filter-pattern '{ $.message = "mail" }' --query 'events[].message' --output text | tr '\t' '\n' | jq -rR 'fromjson? | select(.outcome=="failed") | {operation,outcome,errorClass}'
+    aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${WINDOW_START_MS} --query 'events[].message' --output text | tr '\t' '\n' | jq -rR 'fromjson? | select(.message=="mail" and .outcome=="failed") | {operation,outcome,errorClass}'
 
 Expected: `operation` is `send_email`, `outcome` is `failed`, and `errorClass` is `MessageRejected` (SES recipient rejection in sandbox), NOT `AccessDeniedException` (IAM denial). Note that `outcome` can also be `timeout`, which is a stop.
 Note on CloudTrail: According to AWS documentation ([Logging Amazon SES API calls using AWS CloudTrail](https://docs.aws.amazon.com/ses/latest/dg/logging-using-cloudtrail.html)), SES data-plane sending calls (`SendEmail`) are not recorded in CloudTrail by default. The service's structured `mail` log event is the primary evidence. If CloudTrail data events are active, CloudTrail may be checked as supplementary verification.
@@ -627,7 +671,7 @@ The owner runs P5 in the same shell. Start with `setopt pipefail`, then set the 
 
     WINDOW_END_MS=$(( $(date +%s) * 1000 ))
 
-Pull each log group once into a shell variable, held in memory and never written to disk. Do not use `--filter-pattern`. Directly after each pull, `print $?` must print `0` (with `pipefail` set this is the status of the whole pipeline). Anything else is a stop:
+Pull each log group once into a shell variable, held in memory and never written to disk. Do not use `--filter-pattern`. The AWS CLI v2 paginates `filter-log-events` automatically when `--query` and `--output text` are used; do not add `--max-items`, `--page-size`, or `--no-paginate`. Directly after each pull, `print $?` must print `0` (with `pipefail` set this is the status of the whole pipeline). Anything else is a stop:
 
     SERVICE_MSGS=$(aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${WINDOW_START_MS} --end-time ${WINDOW_END_MS} --query 'events[].message' --output text | tr '\t' '\n')
 
@@ -719,9 +763,19 @@ Finish by unsetting all test and helper variables:
 
 ### Apply 2 — Re-park
 
-The branch moves to the re-park commit (`enable_database = false`, `desired_count = 0` in `infra/regions/au/env/staging.tfvars`). The owner removes `service_image` from the gitignored `infra/regions/au/env/staging.local.tfvars`.
+The branch moves to the re-park commit (`enable_database = false`, `desired_count = 0` in `infra/regions/au/env/staging.tfvars`). From `infra/regions/au`, remove `service_image` from the gitignored local var file:
+
+    sed -i '' '/^service_image/d' env/staging.local.tfvars
+
+    grep -c '^service_image' env/staging.local.tfvars
+
+Expected: `0`.
 
 Run before-each-apply checks against the SHA named for that apply on origin.
+
+Initialize Terraform with the staging backend:
+
+    terraform init -backend-config=backend/staging.hcl -lockfile=readonly
 
 Plan to the saved file outside the repository:
 

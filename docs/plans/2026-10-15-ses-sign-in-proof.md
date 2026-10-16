@@ -55,7 +55,7 @@ Status: approved (2026-10-15, Adnan Bin Hossen)
 
 Before each commit while unparked, run `pnpm format`, `lint`, `typecheck` and `check:boundaries`. Run the Terraform checks too.
 
-Run Terraform on Linux, macOS or WSL. On native Windows, `init -lockfile=readonly` fails a checksum match because the lock file holds CI-platform hashes only. Do not "fix" that with `terraform providers lock`.
+The runbook commands are zsh on macOS; on Windows use WSL2.
 
 `boundaries.test.ts:39-44` scans every file in `infra/regions/au/env/`, including the gitignored local file. In the implementer's worktree that file does not exist. In the owner's checkout it fails until `service_image` is removed (H7.1).
 
@@ -256,6 +256,8 @@ Keep the section's conventions: one pasteable command per indented block, zsh, `
 - [ ] Commit. After the reviewer accepts, push before Apply 1.
 
 ---
+
+A runbook fix commit was added after review, before Apply 1.
 
 ## Human: pre-checks through proofs
 
