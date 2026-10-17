@@ -6,12 +6,12 @@ Spec: docs/specs/2026-10-15-ses-sign-in-proof.md
 
 **Goal:** Unpark staging on the image published for the `email-provider` merge. Provision the first owner, prove a real sign-in through SES (P1–P5), and re-park before the pull request opens.
 
-**Architecture:** Six agent commits: four documents and two `staging.tfvars` flag flips. There is no product code, Terraform, lock file or dependency change. The owner runs every apply, ECS one-off and secret step, and the P1, P2, P3 and P5 commands that hold a personal value. The owner's assistant is read-only. Nothing in an agent task calls AWS.
+**Architecture:** Eight agent commits: four documents, two `staging.tfvars` flag flips, and two docs fix commits after review. There is no product code, Terraform, lock file or dependency change. The owner runs every apply, ECS one-off and secret step, and the P1, P2, P3 and P5 commands that hold a personal value. The owner's assistant is read-only. Nothing in an agent task calls AWS.
 
 Slug: ses-sign-in-proof
 Status: approved (2026-10-15, Adnan Bin Hossen)
 
-**Branch:** `feat/2026-10-15-ses-sign-in-proof` · one PR · six agent commits after the approved spec
+**Branch:** `feat/2026-10-15-ses-sign-in-proof` · one PR · eight agent commits after the approved spec
 
 ## Who does what
 
@@ -202,7 +202,7 @@ This applies when a proof failed because of code. The fix lands on `main` throug
      - Directly after each pull, `print $?` must print `0` (with `pipefail` set this is the status of the whole pipeline). Anything else is a stop.
    - **Positive controls, mandatory.** Use content counts, not `wc -l` (an empty variable still prints one line):
      - `print -r -- "${SERVICE_MSGS}" | grep -c '"message":"mail"'` is at least the number of `start` calls.
-     - `print -r -- "${ACCESS_MSGS}" | grep -c '"routeKey"'` is at least the number of P1–P3 requests.
+     - `print -r -- "${ACCESS_MSGS}" | grep -c '"routeKey"'` is at least the number of API-hostname requests in the run (minimum 1, for P2). P1 and P3 call the auth hostname and do not write to the API access log group; only P2 does. The approved spec still says P1–P3; this plan line is the correction.
      - Either control below its minimum is a stop.
    - **Counts.** Use one command per value per group: `print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${VALUE}"`. The values are:
      - `OWNER_EMAIL`, `UNVERIFIED_EMAIL`, `OTP_CODE`;
@@ -258,6 +258,7 @@ Keep the section's conventions: one pasteable command per indented block, zsh, `
 ---
 
 A runbook fix commit was added after review, before Apply 1.
+A second docs fix commit followed the second review (routeKey floor, -no-color, digest wording).
 
 ## Human: pre-checks through proofs
 
@@ -276,7 +277,7 @@ Follow the amended runbook section. For each step, the owner pastes counts, stat
 
 **Files:** Modify `docs/runbooks/apply-staging-au.md`, section **SES sign-in proof → Cost clock and applies** and **Evidence**.
 
-**Change:** record Apply 1's SHA, digest and UTC completion. Record the one-off results and P1–P5 as statuses and counts, including the positive controls. Record any Spot interruptions or reruns. Transcribe from the owner's and assistant's reports; never paste a raw CLI line.
+**Change:** record Apply 1's SHA, digest length and UTC completion. Record the one-off results and P1–P5 as statuses and counts, including the positive controls. Record any Spot interruptions or reruns. Transcribe from the owner's and assistant's reports; never paste a raw CLI line.
 
 **Commit subject:** `docs(runbooks): record the SES sign-in proof evidence`
 

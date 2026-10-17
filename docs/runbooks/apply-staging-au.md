@@ -383,7 +383,7 @@ Initialize Terraform with the staging backend:
 
 Plan to the saved file outside the repository:
 
-    terraform plan -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -out=${PLAN_FILE} -input=false | grep --line-buffered '^Plan:'
+    terraform plan -no-color -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -out=${PLAN_FILE} -input=false | grep --line-buffered '^Plan:'
 
 Expected plan summary: exactly 10 to add, 0 to change, 0 to destroy. List addresses and actions from the plan file:
 
@@ -464,7 +464,7 @@ Initialize Terraform with the staging backend:
 
 Plan to the saved file outside the repository:
 
-    terraform plan -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -out=${PLAN_FILE} -input=false | grep --line-buffered '^Plan:'
+    terraform plan -no-color -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -out=${PLAN_FILE} -input=false | grep --line-buffered '^Plan:'
 
 Expected plan summary: exactly 18 to add, 0 to change, 0 to destroy. List addresses and actions:
 
@@ -691,7 +691,7 @@ Expected: at least the number of `start` calls in this run (e.g. `>= 2`).
 
     print -r -- "${ACCESS_MSGS}" | grep -c '"routeKey"'
 
-Expected: at least the number of P1–P3 requests in this run.
+Expected: at least the number of API-hostname requests in the run (minimum 1, for P2).
 
 Either control below its minimum is a stop.
 
@@ -779,7 +779,7 @@ Initialize Terraform with the staging backend:
 
 Plan to the saved file outside the repository:
 
-    terraform plan -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -out=${PLAN_FILE} -input=false | grep --line-buffered '^Plan:'
+    terraform plan -no-color -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -out=${PLAN_FILE} -input=false | grep --line-buffered '^Plan:'
 
 Expected plan summary: 0 to add, 0 to change, 18 to destroy. List addresses and actions:
 
@@ -858,7 +858,7 @@ Evidence (Apply 1 against `6e9c65a`, 2026-10-16 UTC). Counts, statuses, lengths,
 - **P2:** verify succeeded; access token length 43; `POST /v1/access/grants/list` with the session → 200.
 - **P3:** start for the unverified example.com placeholder → 503; `mail` line outcome `failed`, errorClass `MessageRejected` (not `AccessDeniedException`).
 - **P4:** provision-owner `created` (above).
-- **P5:** pulls with pipefail ok. Positive controls: mail lines 2 (≥ 2 start calls), routeKey lines 6 (≥ 3). Privacy counts, service log / access log: owner email 0/0, unverified email 0/0, OTP code 0/0, organisation slug 0/0, community slug 0/0, access token 0/0, `Bearer` 0/0, the at-sign character 0/0. Mail key sets: `["level","message","operation","outcome"]` for the ok line, `["errorClass","level","message","operation","outcome"]` for the failed line. 0 timeout.
+- **P5:** pulls with pipefail ok. Positive controls: mail lines 2 (≥ 2 start calls), routeKey lines 6 (≥ 1 API-hostname request). Privacy counts, service log / access log: owner email 0/0, unverified email 0/0, OTP code 0/0, organisation slug 0/0, community slug 0/0, access token 0/0, `Bearer` 0/0, the at-sign character 0/0. Mail key sets: `["level","message","operation","outcome"]` for the ok line, `["errorClass","level","message","operation","outcome"]` for the failed line. 0 timeout.
 - Spot interruptions: none. Proof reruns: none.
 
 Evidence (Apply 2 against `7433c59`, 2026-10-17 UTC). Counts, statuses, lengths, short commit SHAs and UTC times only. No account id, ARN, hostname, registry host, email address, image digest, task id, OTP code, token, slug or secret.
