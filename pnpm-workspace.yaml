@@ -7,3 +7,4 @@ packages:
   - "modules/core/people"
   - "modules/core/access"
   - "modules/core/entitlements"
+  - "modules/core/billing"

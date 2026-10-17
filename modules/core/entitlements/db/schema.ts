@@ -54,8 +54,14 @@ export function entitlementTables(platform: PgSchema) {
     {
       id: uuid("id").primaryKey(),
       key: text("key").notNull(),
+      stripeLookupKey: text("stripe_lookup_key"),
+      trialEligible: boolean("trial_eligible").notNull().default(false),
     },
-    (t) => [unique("plans_key_unique").on(t.key), planKey("plans_key", t.key)],
+    (t) => [
+      unique("plans_key_unique").on(t.key),
+      unique("plans_stripe_lookup_key_unique").on(t.stripeLookupKey),
+      planKey("plans_key", t.key),
+    ],
   );
 
   const planEntitlements = platform.table(

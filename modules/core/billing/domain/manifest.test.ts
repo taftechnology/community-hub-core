@@ -1,0 +1,49 @@
+import { describe, expect, it } from "vitest";
+
+import billingModule from "../module.manifest.js";
+
+describe("core.billing manifest", () => {
+  it("declares the platform columns, dependencies and permissions", () => {
+    expect(billingModule).toEqual({
+      key: "core.billing",
+      version: 1,
+      requires: ["core.tenancy", "core.entitlements"],
+      publishes: [],
+      subscribes: [],
+      ports: [],
+      permissions: ["billing.view", "billing.manage"],
+      dataClasses: {
+        "billing_accounts.organisation_id": "internal",
+        "billing_accounts.mode": "internal",
+        "billing_accounts.stripe_customer_id": "internal",
+        "billing_accounts.stripe_subscription_id": "internal",
+        "billing_accounts.stripe_status": "internal",
+        "billing_accounts.plan_lookup_key": "internal",
+        "billing_accounts.quantity": "internal",
+        "billing_accounts.current_period_end": "internal",
+        "billing_accounts.trial_end": "internal",
+        "billing_accounts.trial_used_at": "internal",
+        "billing_accounts.unpaid_since": "internal",
+        "billing_accounts.grace_until": "internal",
+        "billing_accounts.tax_rate_id": "internal",
+        "billing_accounts.synced_at": "internal",
+        "billing_settings.id": "internal",
+        "billing_settings.gst_rate_bps": "internal",
+        "billing_settings.prices_include_gst": "internal",
+        "billing_settings.trial_days": "internal",
+        "billing_settings.grace_days": "internal",
+        "billing_settings.stripe_tax_rate_id": "internal",
+        "billing_settings.note": "internal",
+        "billing_settings.created_at": "internal",
+        "billing_stripe_events.event_id": "internal",
+        "billing_stripe_events.type": "internal",
+        "billing_stripe_events.outcome": "internal",
+        "billing_stripe_events.received_at": "internal",
+        "billing_stripe_events.processed_at": "internal",
+      },
+    });
+    expect(billingModule).not.toHaveProperty("website");
+    expect(billingModule).not.toHaveProperty("entitlement");
+    expect(billingModule).not.toHaveProperty("features");
+  });
+});
