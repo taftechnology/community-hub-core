@@ -21,8 +21,8 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 |              |                                                                   |
 | ------------ | ----------------------------------------------------------------- |
 | Phase        | 1 — Core platform                                                 |
-| Last shipped | `email-provider`                                                  |
-| Next chunk   | `ses-sign-in-proof`, then `stripe-billing`                        |
+| Last shipped | `ses-sign-in-proof`                                               |
+| Next chunk   | `stripe-billing` (blocked on Q8)                                  |
 | Phase 0      | 26 rows: 25 done, 1 superseded (`api-au-hostname`), 0 not started |
 | Later phases | not started                                                       |
 
@@ -96,7 +96,7 @@ Architecture: monorepo, CI, Terraform for AWS in `ap-southeast-2`, kernel, db wi
 | done       | `db-migrate-command`         | The image gains `/app/db-migrate.js`, which applies the product migrations as the master login, refuses to run before `db-bootstrap`, and prints the tags it applied. It has not been run on staging. Spec `docs/specs/2026-10-12-db-migrate-command.md`.                                                                                                                                                                                                                          |
 | done       | `staging-proof-run`          | The distroless image runs on Fargate. `db-bootstrap` then `db-migrate` applied the ten product migrations to RDS and a second run applied none. The sign-in-code route answers 503 with no mail vendor; role and entitlement routes refuse a request with no session; the service re-read a changed database secret and recovered without a restart. Staging was re-parked the same day. Spec `docs/specs/2026-10-12-staging-proof-run.md`.                                        |
 
-Next is `ses-sign-in-proof`, then `stripe-billing`.
+Next is `stripe-billing` (blocked on Q8).
 
 SQS, EventBridge, file storage, and the admin static-file distribution are not rows here. Each waits for the first chunk that uses it.
 
@@ -120,7 +120,7 @@ Vertical slices. Nav items appear in the frozen order (see [Admin navigation](#a
 | done        | `entitlements-plans`   | Plans and allocations in the platform schema. Community toggles; nav hide/show. Spec docs/specs/2026-10-12-entitlements-plans.md.                                                     |
 | done        | `first-owner`          | Operator-run one-off that provisions the organisation and community (if absent) and the first owner. No HTTP route, no claim link yet. Spec `docs/specs/2026-10-13-first-owner.md`.   |
 | done        | `email-provider`       | Sign-in codes go through SES in Sydney behind the mail port; staging SES identity and DNS applied; live proof in `ses-sign-in-proof`. Spec `docs/specs/2026-10-14-email-provider.md`. |
-| not started | `ses-sign-in-proof`    | Unpark staging on an image published from the `email-provider` merge, run first-owner and proofs P1–P5, re-park. Spec not written yet.                                                |
+| done        | `ses-sign-in-proof`    | Real email OTP sign-in through SES on staging-au (sandbox); first owner provisioned; P1–P5 passed; staging re-parked. Spec `docs/specs/2026-10-15-ses-sign-in-proof.md`.              |
 | not started | `stripe-billing`       | Our subscriptions. Webhooks on the Sydney hostname. The regional service does the work. Not `exec`. Not GivingJar.                                                                    |
 | not started | `ops-console`          | Routes on the regional service. Passkeys. The `platform` role has no `app` privileges. No Cloudflare Access.                                                                          |
 | not started | `usage-facts`          | `core/usage` skeleton (community × feature × day). Facts grow as modules ship.                                                                                                        |
@@ -273,13 +273,23 @@ The pooled checkout logs nothing when it re-reads a secret after a password chan
 
 The turbo build cache does not hash the staging var file, so the three parked-state tests can replay a cached result across an unpark or re-park commit. Bypass the cache (`pnpm test --force`, or the full gate form in the proof-run plan) when those flags change; see that plan's "CI and local gate while unparked" section.
 
-A signed-in proof on staging still waits for `ses-sign-in-proof`. The SES adapter and Apply 0 identity landed in `email-provider`; the live unpark, first-owner run, and proofs P1–P5 are that follow-up chunk.
+`ses-sign-in-proof` is done: a real email OTP sign-in through SES on staging-au (sandbox), first owner provisioned, P1–P5 passed, and staging re-parked.
+
+The editor chat/Run input can send a command to a different shell than the one holding variables, and it turned a literal at-sign into a full-width character; commands that use held variables are typed into the one terminal (runbook SES findings 1–2).
+
+`grep '^Plan:'` misses Terraform's coloured summary across the runbook's plan blocks; add `-no-color` (finding 5). The forced provision-secret delete is asynchronous; the verify step should poll (finding 3).
+
+`sed -l` in the runbook's apply filters is BSD-only; portable replacement `awk '{gsub(/ \[id=[^]]*\]/,""); print; fflush()}'` for Linux/WSL operators.
+
+The parked-state tests (pins 1a and 1b) are presence regexes, so a comment holding the parked values can pass them while the tree is unparked; Task 4 closed the gap for this chunk with a byte-equality check against `origin/main`, but the tests themselves were not changed.
+
+SES production access is still pending (account in the sandbox, 200 a day, verified recipients only).
 
 ---
 
 ## Next spec
 
-The next chunk is `ses-sign-in-proof`, then **stripe-billing**. Billing is still blocked on plan tiers/pricing (Q8).
+The next chunk is **stripe-billing**. Billing is still blocked on plan tiers/pricing (Q8).
 
 ---
 
