@@ -29,3 +29,27 @@ export {
   type UpdateDefaultTaxRateInput,
   type UpdateQuantityInput,
 } from "../domain/port.js";
+
+export {
+  findByCustomer,
+  findBySubscription,
+  linkSubscription,
+  readAccount,
+  setMode,
+  type BillingAccount,
+  type LinkSubscriptionResult,
+} from "../infrastructure/accounts.js";
+
+export {
+  isReplayOutcome,
+  markOutcome,
+  recordReceived,
+  type BillingEventOutcome,
+} from "../infrastructure/events.js";
+
+export {
+  currentSettings,
+  insertSettings,
+  type BillingSettings,
+  type InsertSettingsInput,
+} from "../infrastructure/settings.js";
