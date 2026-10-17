@@ -112,6 +112,6 @@ describe("plan-billing integration", () => {
         stripeLookupKey: lookupKey,
         trialEligible: false,
       }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: "23505" });
   });
 });
