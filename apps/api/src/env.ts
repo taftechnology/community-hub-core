@@ -80,16 +80,40 @@ const CONFIG_SET_NAME = /^[A-Za-z0-9_-]{1,64}$/;
 const BILLING_SECRET_ARN =
   /^arn:aws:secretsmanager:ap-southeast-2:[0-9]{12}:secret:[^\s:]+-billing-[A-Za-z0-9]{6}$/;
 
+const HOSTNAME = /^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/;
+
 function isValidAdminOrigin(origin: string): boolean {
   if (!origin.startsWith("https://")) {
     return false;
   }
+  let url: URL;
   try {
-    const url = new URL(origin);
-    return url.origin === origin;
+    url = new URL(origin);
   } catch {
     return false;
   }
+  if (url.origin !== origin) {
+    return false;
+  }
+  if (url.protocol !== "https:") {
+    return false;
+  }
+  if (url.port !== "") {
+    return false;
+  }
+  if (url.username !== "" || url.password !== "") {
+    return false;
+  }
+  if (url.pathname !== "/") {
+    return false;
+  }
+  if (url.search !== "" || url.hash !== "") {
+    return false;
+  }
+  if (!HOSTNAME.test(url.hostname)) {
+    return false;
+  }
+  return true;
 }
 
 function isValidEmail(address: string): boolean {

@@ -283,6 +283,41 @@ describe("readServiceEnv", () => {
           ADMIN_ORIGIN: "https://admin.example.test#bar",
         },
       ],
+      [
+        "wildcard origin",
+        {
+          BILLING_SECRET_ARN: validBillingArn,
+          ADMIN_ORIGIN: "https://*.example.test",
+        },
+      ],
+      [
+        "origin with trailing dot in hostname",
+        {
+          BILLING_SECRET_ARN: validBillingArn,
+          ADMIN_ORIGIN: "https://admin.example.test.",
+        },
+      ],
+      [
+        "origin with port",
+        {
+          BILLING_SECRET_ARN: validBillingArn,
+          ADMIN_ORIGIN: "https://admin.example.test:8443",
+        },
+      ],
+      [
+        "origin with username",
+        {
+          BILLING_SECRET_ARN: validBillingArn,
+          ADMIN_ORIGIN: "https://a@admin.example.test",
+        },
+      ],
+      [
+        "origin with /x path",
+        {
+          BILLING_SECRET_ARN: validBillingArn,
+          ADMIN_ORIGIN: "https://admin.example.test/x",
+        },
+      ],
     ])("rejects invalid billing configuration: %s", (_label, overrides) => {
       const source = {
         ...complete(),

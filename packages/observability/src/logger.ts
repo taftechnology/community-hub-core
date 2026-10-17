@@ -236,7 +236,7 @@ function sanitizeFields(raw: unknown): { fields: LogFields; dropped: number } {
         break;
       }
       case "stripeEventType": {
-        if (typeof value === "string" && STRIPE_EVENT_TYPE.test(value)) {
+        if (typeof value === "string" && value.length <= 100 && STRIPE_EVENT_TYPE.test(value)) {
           fields.stripeEventType = value;
         } else if (value !== undefined) {
           dropped += 1;

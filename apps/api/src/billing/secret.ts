@@ -1,3 +1,5 @@
+import util from "node:util";
+
 import { BillingUnavailable } from "@community-hub/billing";
 
 export type BillingSecretReader = (
@@ -6,14 +8,11 @@ export type BillingSecretReader = (
 ) => Promise<string>;
 
 export type BillingSecretValues = {
-  secret_key: string;
-  webhook_secret: string;
-  secretKey: string;
-  webhookSecret: string;
+  readonly secretKey: string;
+  readonly webhookSecret: string;
 };
 
 export type BillingSecret = {
-  (): Promise<BillingSecretValues>;
   get(): Promise<BillingSecretValues>;
   invalidate(): void;
 };
@@ -23,6 +22,7 @@ export function billingSecret(
   arn: string,
   environment: "staging" | "prod",
 ): BillingSecret {
+  let generation = 0;
   let cached: BillingSecretValues | undefined;
   let inflight: Promise<BillingSecretValues> | undefined;
 
@@ -34,7 +34,8 @@ export function billingSecret(
       return inflight;
     }
 
-    inflight = (async () => {
+    const currentGeneration = generation;
+    const promise = (async () => {
       let raw: string;
       try {
         raw = await readSecret(arn, "AWSCURRENT");
@@ -72,12 +73,16 @@ export function billingSecret(
       const secret_key = rec.secret_key;
       const webhook_secret = rec.webhook_secret;
 
-      if (!webhook_secret.startsWith("whsec_")) {
+      if (!webhook_secret.startsWith("whsec_") || webhook_secret.length <= "whsec_".length) {
         throw new BillingUnavailable("BILLING_KEY_UNAVAILABLE");
       }
 
-      const isTestKey = secret_key.startsWith("sk_test_") || secret_key.startsWith("rk_test_");
-      const isLiveKey = secret_key.startsWith("sk_live_") || secret_key.startsWith("rk_live_");
+      const isTestKey =
+        (secret_key.startsWith("sk_test_") || secret_key.startsWith("rk_test_")) &&
+        secret_key.length > 8;
+      const isLiveKey =
+        (secret_key.startsWith("sk_live_") || secret_key.startsWith("rk_live_")) &&
+        secret_key.length > 8;
 
       if (environment === "staging") {
         if (!isTestKey) {
@@ -87,35 +92,58 @@ export function billingSecret(
         if (!isLiveKey) {
           throw new BillingUnavailable("BILLING_KEY_MODE_MISMATCH");
         }
+      } else {
+        throw new BillingUnavailable("BILLING_KEY_MODE_MISMATCH");
       }
 
-      const values: BillingSecretValues = {
-        secret_key,
-        webhook_secret,
-        get secretKey() {
-          return secret_key;
+      const values: BillingSecretValues = Object.defineProperties(
+        {
+          toJSON() {
+            return {
+              secretKey: "[REDACTED]",
+              webhookSecret: "[REDACTED]",
+            };
+          },
+          [util.inspect.custom]() {
+            return "[BillingSecretValues <redacted>]";
+          },
+        } as unknown as BillingSecretValues,
+        {
+          secretKey: {
+            value: secret_key,
+            enumerable: false,
+            writable: false,
+          },
+          webhookSecret: {
+            value: webhook_secret,
+            enumerable: false,
+            writable: false,
+          },
         },
-        get webhookSecret() {
-          return webhook_secret;
-        },
-      };
+      );
 
-      cached = values;
+      if (currentGeneration === generation) {
+        cached = values;
+      }
       return values;
     })().finally(() => {
-      inflight = undefined;
+      if (inflight === promise) {
+        inflight = undefined;
+      }
     });
 
+    inflight = promise;
     return inflight;
   }
 
   function invalidate(): void {
+    generation += 1;
     cached = undefined;
     inflight = undefined;
   }
 
-  return Object.assign(get, {
+  return {
     get,
     invalidate,
-  });
+  };
 }
