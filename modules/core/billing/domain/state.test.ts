@@ -29,25 +29,25 @@ describe("deriveState", () => {
     },
     {
       name: "invoiced mode with active stripe status -> invoiced",
-      account: { mode: "invoiced", stripeSubscriptionId: "sub_1", stripeStatus: "active" },
+      account: { mode: "invoiced", stripeSubscriptionId: "sub_test1", stripeStatus: "active" },
       at: now,
       expected: "invoiced",
     },
     {
       name: "invoiced mode with past_due stripe status -> invoiced",
-      account: { mode: "invoiced", stripeSubscriptionId: "sub_1", stripeStatus: "past_due" },
+      account: { mode: "invoiced", stripeSubscriptionId: "sub_test1", stripeStatus: "past_due" },
       at: now,
       expected: "invoiced",
     },
     {
       name: "invoiced mode with unpaid stripe status -> invoiced",
-      account: { mode: "invoiced", stripeSubscriptionId: "sub_1", stripeStatus: "unpaid" },
+      account: { mode: "invoiced", stripeSubscriptionId: "sub_test1", stripeStatus: "unpaid" },
       at: now,
       expected: "invoiced",
     },
     {
       name: "invoiced mode with canceled stripe status -> invoiced",
-      account: { mode: "invoiced", stripeSubscriptionId: "sub_1", stripeStatus: "canceled" },
+      account: { mode: "invoiced", stripeSubscriptionId: "sub_test1", stripeStatus: "canceled" },
       at: now,
       expected: "invoiced",
     },
@@ -67,27 +67,31 @@ describe("deriveState", () => {
     // 4. self_serve: incomplete -> none
     {
       name: "self_serve with incomplete subscription -> none",
-      account: { mode: "self_serve", stripeSubscriptionId: "sub_1", stripeStatus: "incomplete" },
+      account: {
+        mode: "self_serve",
+        stripeSubscriptionId: "sub_test1",
+        stripeStatus: "incomplete",
+      },
       at: now,
       expected: "none",
     },
     // 5. self_serve: trialing, active -> ok
     {
       name: "self_serve with trialing subscription -> ok",
-      account: { mode: "self_serve", stripeSubscriptionId: "sub_1", stripeStatus: "trialing" },
+      account: { mode: "self_serve", stripeSubscriptionId: "sub_test1", stripeStatus: "trialing" },
       at: now,
       expected: "ok",
     },
     {
       name: "self_serve with active subscription -> ok",
-      account: { mode: "self_serve", stripeSubscriptionId: "sub_1", stripeStatus: "active" },
+      account: { mode: "self_serve", stripeSubscriptionId: "sub_test1", stripeStatus: "active" },
       at: now,
       expected: "ok",
     },
     // 6. self_serve: past_due -> retrying
     {
       name: "self_serve with past_due subscription -> retrying",
-      account: { mode: "self_serve", stripeSubscriptionId: "sub_1", stripeStatus: "past_due" },
+      account: { mode: "self_serve", stripeSubscriptionId: "sub_test1", stripeStatus: "past_due" },
       at: now,
       expected: "retrying",
     },
@@ -96,7 +100,7 @@ describe("deriveState", () => {
       name: "self_serve with unpaid subscription and now < grace_until -> grace",
       account: {
         mode: "self_serve",
-        stripeSubscriptionId: "sub_1",
+        stripeSubscriptionId: "sub_test1",
         stripeStatus: "unpaid",
         graceUntil: later,
       },
@@ -108,7 +112,7 @@ describe("deriveState", () => {
       name: "self_serve with unpaid subscription and grace_until equal to now -> read_only",
       account: {
         mode: "self_serve",
-        stripeSubscriptionId: "sub_1",
+        stripeSubscriptionId: "sub_test1",
         stripeStatus: "unpaid",
         graceUntil: now,
       },
@@ -120,7 +124,7 @@ describe("deriveState", () => {
       name: "self_serve with unpaid subscription and now > grace_until -> read_only",
       account: {
         mode: "self_serve",
-        stripeSubscriptionId: "sub_1",
+        stripeSubscriptionId: "sub_test1",
         stripeStatus: "unpaid",
         graceUntil: earlier,
       },
@@ -132,7 +136,7 @@ describe("deriveState", () => {
       name: "self_serve with unpaid subscription and null grace_until -> read_only",
       account: {
         mode: "self_serve",
-        stripeSubscriptionId: "sub_1",
+        stripeSubscriptionId: "sub_test1",
         stripeStatus: "unpaid",
         graceUntil: null,
       },
@@ -142,7 +146,7 @@ describe("deriveState", () => {
     // 11. self_serve: canceled -> read_only
     {
       name: "self_serve with canceled subscription -> read_only",
-      account: { mode: "self_serve", stripeSubscriptionId: "sub_1", stripeStatus: "canceled" },
+      account: { mode: "self_serve", stripeSubscriptionId: "sub_test1", stripeStatus: "canceled" },
       at: now,
       expected: "read_only",
     },
@@ -151,8 +155,29 @@ describe("deriveState", () => {
       name: "self_serve with incomplete_expired subscription -> read_only",
       account: {
         mode: "self_serve",
-        stripeSubscriptionId: "sub_1",
+        stripeSubscriptionId: "sub_test1",
         stripeStatus: "incomplete_expired",
+      },
+      at: now,
+      expected: "read_only",
+    },
+    // 13. self_serve: unknown statuses (e.g. paused, some_future_status) -> read_only
+    {
+      name: "self_serve with paused subscription -> read_only",
+      account: {
+        mode: "self_serve",
+        stripeSubscriptionId: "sub_test1",
+        stripeStatus: "paused",
+      },
+      at: now,
+      expected: "read_only",
+    },
+    {
+      name: "self_serve with some_future_status subscription -> read_only",
+      account: {
+        mode: "self_serve",
+        stripeSubscriptionId: "sub_test1",
+        stripeStatus: "some_future_status",
       },
       at: now,
       expected: "read_only",

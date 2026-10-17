@@ -26,17 +26,17 @@ describe("checkoutDecision", () => {
     },
     {
       name: "invoiced mode with active subscription -> conflict",
-      account: { mode: "invoiced", stripeSubscriptionId: "sub_1", stripeStatus: "active" },
+      account: { mode: "invoiced", stripeSubscriptionId: "sub_test1", stripeStatus: "active" },
       expected: "conflict",
     },
     {
       name: "invoiced mode with canceled subscription -> conflict",
-      account: { mode: "invoiced", stripeSubscriptionId: "sub_1", stripeStatus: "canceled" },
+      account: { mode: "invoiced", stripeSubscriptionId: "sub_test1", stripeStatus: "canceled" },
       expected: "conflict",
     },
     {
       name: "invoiced mode with unpaid subscription -> conflict",
-      account: { mode: "invoiced", stripeSubscriptionId: "sub_1", stripeStatus: "unpaid" },
+      account: { mode: "invoiced", stripeSubscriptionId: "sub_test1", stripeStatus: "unpaid" },
       expected: "conflict",
     },
     // 3. self_serve: no subscription -> allowed
@@ -53,7 +53,7 @@ describe("checkoutDecision", () => {
     // 4. self_serve: canceled -> allowed
     {
       name: "self_serve with canceled subscription -> allowed",
-      account: { mode: "self_serve", stripeSubscriptionId: "sub_1", stripeStatus: "canceled" },
+      account: { mode: "self_serve", stripeSubscriptionId: "sub_test1", stripeStatus: "canceled" },
       expected: "allowed",
     },
     // 5. self_serve: incomplete_expired -> allowed
@@ -61,7 +61,7 @@ describe("checkoutDecision", () => {
       name: "self_serve with incomplete_expired subscription -> allowed",
       account: {
         mode: "self_serve",
-        stripeSubscriptionId: "sub_1",
+        stripeSubscriptionId: "sub_test1",
         stripeStatus: "incomplete_expired",
       },
       expected: "allowed",
@@ -69,25 +69,29 @@ describe("checkoutDecision", () => {
     // 6. self_serve: incomplete -> conflict
     {
       name: "self_serve with incomplete subscription -> conflict",
-      account: { mode: "self_serve", stripeSubscriptionId: "sub_1", stripeStatus: "incomplete" },
+      account: {
+        mode: "self_serve",
+        stripeSubscriptionId: "sub_test1",
+        stripeStatus: "incomplete",
+      },
       expected: "conflict",
     },
     // 7. self_serve: trialing -> conflict
     {
       name: "self_serve with trialing subscription -> conflict",
-      account: { mode: "self_serve", stripeSubscriptionId: "sub_1", stripeStatus: "trialing" },
+      account: { mode: "self_serve", stripeSubscriptionId: "sub_test1", stripeStatus: "trialing" },
       expected: "conflict",
     },
     // 8. self_serve: active -> conflict
     {
       name: "self_serve with active subscription -> conflict",
-      account: { mode: "self_serve", stripeSubscriptionId: "sub_1", stripeStatus: "active" },
+      account: { mode: "self_serve", stripeSubscriptionId: "sub_test1", stripeStatus: "active" },
       expected: "conflict",
     },
     // 9. self_serve: past_due -> conflict
     {
       name: "self_serve with past_due subscription -> conflict",
-      account: { mode: "self_serve", stripeSubscriptionId: "sub_1", stripeStatus: "past_due" },
+      account: { mode: "self_serve", stripeSubscriptionId: "sub_test1", stripeStatus: "past_due" },
       expected: "conflict",
     },
     // 10. self_serve: unpaid (during grace) -> conflict (Security pin 7)
@@ -95,7 +99,7 @@ describe("checkoutDecision", () => {
       name: "self_serve with unpaid subscription (within grace) -> conflict",
       account: {
         mode: "self_serve",
-        stripeSubscriptionId: "sub_1",
+        stripeSubscriptionId: "sub_test1",
         stripeStatus: "unpaid",
         graceUntil: future,
       },
@@ -106,9 +110,28 @@ describe("checkoutDecision", () => {
       name: "self_serve with unpaid subscription (after grace) -> conflict",
       account: {
         mode: "self_serve",
-        stripeSubscriptionId: "sub_1",
+        stripeSubscriptionId: "sub_test1",
         stripeStatus: "unpaid",
         graceUntil: past,
+      },
+      expected: "conflict",
+    },
+    // 12. self_serve: unknown statuses (e.g. paused, some_future_status) -> conflict
+    {
+      name: "self_serve with paused subscription -> conflict",
+      account: {
+        mode: "self_serve",
+        stripeSubscriptionId: "sub_test1",
+        stripeStatus: "paused",
+      },
+      expected: "conflict",
+    },
+    {
+      name: "self_serve with some_future_status subscription -> conflict",
+      account: {
+        mode: "self_serve",
+        stripeSubscriptionId: "sub_test1",
+        stripeStatus: "some_future_status",
       },
       expected: "conflict",
     },

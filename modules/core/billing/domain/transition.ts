@@ -1,17 +1,12 @@
 export interface TransitionPrevious {
   readonly stripeStatus?: string | null;
-  readonly stripe_status?: string | null;
   readonly unpaidSince?: Date | null;
-  readonly unpaid_since?: Date | null;
   readonly graceUntil?: Date | null;
-  readonly grace_until?: Date | null;
 }
 
 export interface TransitionResult {
   readonly unpaidSince: Date | null;
   readonly graceUntil: Date | null;
-  readonly unpaid_since: Date | null;
-  readonly grace_until: Date | null;
 }
 
 export function transition(
@@ -21,16 +16,13 @@ export function transition(
   graceDays: number,
 ): TransitionResult {
   if (nextStatus === "unpaid") {
-    const prevStatus = prev?.stripeStatus ?? prev?.stripe_status ?? null;
+    const prevStatus = prev?.stripeStatus ?? null;
     if (prevStatus === "unpaid") {
-      const prevUnpaidSince = prev?.unpaidSince ?? prev?.unpaid_since ?? now;
-      const prevGraceUntil =
-        prev?.graceUntil ?? prev?.grace_until ?? new Date(now.getTime() + graceDays * 86_400_000);
+      const prevUnpaidSince = prev?.unpaidSince ?? now;
+      const prevGraceUntil = prev?.graceUntil ?? new Date(now.getTime() + graceDays * 86_400_000);
       return {
         unpaidSince: prevUnpaidSince,
         graceUntil: prevGraceUntil,
-        unpaid_since: prevUnpaidSince,
-        grace_until: prevGraceUntil,
       };
     }
 
@@ -38,15 +30,11 @@ export function transition(
     return {
       unpaidSince: now,
       graceUntil: calculatedGraceUntil,
-      unpaid_since: now,
-      grace_until: calculatedGraceUntil,
     };
   }
 
   return {
     unpaidSince: null,
     graceUntil: null,
-    unpaid_since: null,
-    grace_until: null,
   };
 }

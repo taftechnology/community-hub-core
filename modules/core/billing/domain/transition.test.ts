@@ -85,6 +85,28 @@ describe("transition", () => {
     expect(res.graceUntil).toEqual(t6Grace);
   });
 
+  it("resets unpaidSince and graceUntil on unpaid when prev was active with stale grace", () => {
+    const res = transition(
+      { stripeStatus: "active", unpaidSince: t2, graceUntil: t2Grace },
+      "unpaid",
+      t6,
+      graceDays,
+    );
+    expect(res.unpaidSince).toEqual(t6);
+    expect(res.graceUntil).toEqual(t6Grace);
+  });
+
+  it("resets unpaidSince and graceUntil on unpaid when prev was past_due with stale grace", () => {
+    const res = transition(
+      { stripeStatus: "past_due", unpaidSince: t2, graceUntil: t2Grace },
+      "unpaid",
+      t6,
+      graceDays,
+    );
+    expect(res.unpaidSince).toEqual(t6);
+    expect(res.graceUntil).toEqual(t6Grace);
+  });
+
   it("sets graceUntil equal to now when graceDays is 0", () => {
     const res = transition(
       { stripeStatus: "active", unpaidSince: null, graceUntil: null },

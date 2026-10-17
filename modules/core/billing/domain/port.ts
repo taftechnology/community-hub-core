@@ -1,7 +1,19 @@
-export class BillingUnavailable extends Error {
-  readonly code: string;
+export type BillingErrorCode =
+  | "BILLING_KEY_UNAVAILABLE"
+  | "BILLING_KEY_MODE_MISMATCH"
+  | "BILLING_UNKNOWN_PRICE"
+  | "BILLING_DUPLICATE_SUBSCRIPTION"
+  | "STRIPE_AUTH"
+  | "STRIPE_RATE_LIMIT"
+  | "STRIPE_INVALID_REQUEST"
+  | "STRIPE_CONNECTION"
+  | "STRIPE_API";
 
-  constructor(code: string) {
+// BillingUnavailable.code is restricted to BillingErrorCode; arbitrary strings are rejected at compile time.
+export class BillingUnavailable extends Error {
+  readonly code: BillingErrorCode;
+
+  constructor(code: BillingErrorCode) {
     super(code);
     this.name = "BillingUnavailable";
     this.code = code;
@@ -75,7 +87,6 @@ export interface CreateTaxRateInput {
   readonly inclusive: boolean;
   readonly country: string;
   readonly displayName?: string;
-  readonly display_name?: string;
   readonly idempotencyKey: string;
 }
 
@@ -83,7 +94,6 @@ export interface UpdateQuantityInput {
   readonly subscriptionId: string;
   readonly quantity: number;
   readonly prorationBehavior?: "create_prorations" | "none" | "always_invoice" | string;
-  readonly proration_behavior?: "create_prorations" | "none" | "always_invoice" | string;
   readonly idempotencyKey: string;
 }
 

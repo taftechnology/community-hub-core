@@ -12,6 +12,7 @@ export {
 
 export {
   BillingUnavailable,
+  type BillingErrorCode,
   type CheckoutSessionResult,
   type CreateCheckoutSessionInput,
   type CreatePortalSessionInput,
