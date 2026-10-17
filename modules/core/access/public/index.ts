@@ -31,5 +31,6 @@ export {
   linkUser,
   unlinkUser,
 } from "../infrastructure/grants.js";
+export { holdsAnyGrant } from "../infrastructure/holds-any-grant.js";
 export { holdsPermission } from "../infrastructure/holds-permission.js";
 export { readPersonForActor } from "../infrastructure/restricted-read.js";
