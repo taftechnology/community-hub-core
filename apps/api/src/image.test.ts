@@ -126,6 +126,7 @@ describe("service image build", () => {
       "@community-hub/access",
       "@community-hub/entitlements-eval",
       "@community-hub/entitlements",
+      "@community-hub/billing",
     ]) {
       expect(filters, name).toContain(name);
     }

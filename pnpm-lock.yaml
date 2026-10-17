@@ -116,6 +116,9 @@ importers:
       '@community-hub/access':
         specifier: workspace:*
         version: link:../../modules/core/access
+      '@community-hub/billing':
+        specifier: workspace:*
+        version: link:../../modules/core/billing
       '@community-hub/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
