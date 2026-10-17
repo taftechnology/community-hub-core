@@ -100,6 +100,16 @@ describe("holdsAnyGrant", () => {
               null
             )
           `;
+          await tx`
+            insert into app.organisation_role_grants (
+              id, org_id, user_id, role_key
+            ) values (
+              ${newId()}::uuid,
+              current_setting('app.org_id')::uuid,
+              ${otherOrgUser}::uuid,
+              'org_billing'
+            )
+          `;
         }),
       );
 
@@ -227,7 +237,10 @@ describe("holdsAnyGrant", () => {
             },
           ),
         ),
-      ).rejects.toMatchObject({ code: "23514" });
+      ).rejects.toMatchObject({
+        code: "23514",
+        constraint_name: "custom_role_permissions_permission",
+      });
     } finally {
       await platform.end({ timeout: 1 });
       await app.end({ timeout: 1 });

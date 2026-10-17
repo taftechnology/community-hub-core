@@ -50,6 +50,11 @@ describe("bundle", () => {
     expect(bundle("org_owner")).toEqual([...all, "billing.view", "billing.manage"]);
     expect(bundle("org_admin")).toEqual([...all, "billing.view", "billing.manage"]);
     expect(bundle("community_admin")).toEqual(all);
+    expect(bundle("staff")).toEqual([
+      "access.users.view",
+      "access.roles.view",
+      "entitlements.view",
+    ]);
     expect(bundle("org_billing")).toEqual([
       "access.users.view",
       "entitlements.view",
@@ -79,6 +84,30 @@ describe("decide", () => {
         }),
       ),
     ).toBe(true);
+  });
+
+  it("denies every community role both billing permissions", () => {
+    const communityRoles = [
+      "community_admin",
+      "staff",
+      "finance",
+      "safeguarding_officer",
+      "volunteer_coordinator",
+      "content_editor",
+      "member",
+    ];
+    for (const role of communityRoles) {
+      for (const permission of ["billing.view", "billing.manage"]) {
+        expect(
+          decide(
+            actor(permission, {
+              organisationRoleKeys: [],
+              communityRoleKeys: [role],
+            }),
+          ),
+        ).toBe(false);
+      }
+    }
   });
 
   it("denies community_admin and member billing.manage", () => {
