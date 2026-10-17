@@ -53,3 +53,10 @@ export {
   type BillingSettings,
   type InsertSettingsInput,
 } from "../infrastructure/settings.js";
+
+export {
+  applySubscription,
+  syncQuantity,
+  type ApplySubscriptionHooks,
+  type ApplySubscriptionResult,
+} from "../infrastructure/apply.js";
