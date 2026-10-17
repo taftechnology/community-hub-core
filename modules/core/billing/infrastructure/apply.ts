@@ -1,6 +1,6 @@
 import { assignPlan, currentPlan, planByLookupKey } from "@community-hub/entitlements";
 import { listCommunityIds } from "@community-hub/tenancy";
-import type { Sql } from "postgres";
+import type { Sql, TransactionSql } from "postgres";
 
 import type { StripeBilling } from "../domain/port.js";
 import { transition } from "../domain/transition.js";
@@ -29,7 +29,12 @@ export async function applySubscription(
   now: Date,
   hooks?: ApplySubscriptionHooks,
 ): Promise<ApplySubscriptionResult> {
-  const txResult = await sql.begin(async (tx) => {
+  const runTx =
+    typeof sql.begin === "function"
+      ? sql.begin.bind(sql)
+      : (sql as unknown as TransactionSql).savepoint.bind(sql);
+
+  const txResult = await runTx(async (tx) => {
     const rows = await tx<LockedAccountRow[]>`
       select
         organisation_id,
@@ -52,9 +57,12 @@ export async function applySubscription(
     await hooks?.afterLock?.();
 
     const settings = await currentSettings(tx);
+    if (!settings) {
+      throw new Error("BILLING_SETTINGS_MISSING");
+    }
     const sub = await port.retrieveSubscription(subscriptionId);
 
-    const graceDays = settings?.graceDays ?? 7;
+    const graceDays = settings.graceDays;
     const trans = transition(
       {
         stripeStatus: account.stripe_status,
@@ -129,7 +137,7 @@ export async function syncQuantity(
 ): Promise<void> {
   const account = await readAccount(sql, orgId);
   if (!account || !account.stripeSubscriptionId) {
-    throw new Error(`Organisation ${orgId} has no linked subscription`);
+    throw new Error("BILLING_NOT_LINKED");
   }
 
   const communityIds = await listCommunityIds(sql, orgId);

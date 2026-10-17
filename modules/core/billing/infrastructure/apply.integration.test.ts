@@ -12,6 +12,7 @@ import postgres from "postgres";
 import type { StripeBilling, StripeSubscription } from "../domain/port.js";
 import { linkSubscription, readAccount, setMode } from "./accounts.js";
 import { applySubscription, syncQuantity } from "./apply.js";
+import { currentSettings } from "./settings.js";
 
 type Runtime = {
   productOnlyUrl: string;
@@ -238,12 +239,14 @@ describe("apply subscription integration", () => {
         if (bPortCalls > 0) {
           break;
         }
-        const rows = await platformSql<{ wait_event_type: string | null }[]>`
-          select wait_event_type
+        const rows = await platformSql<
+          { wait_event_type: string | null; wait_event: string | null }[]
+        >`
+          select wait_event_type, wait_event
           from pg_stat_activity
           where pid = ${bPid}
         `;
-        if (rows[0]?.wait_event_type === "Lock") {
+        if (rows[0]?.wait_event_type === "Lock" && rows[0]?.wait_event === "transactionid") {
           lockSeen = true;
           break;
         }
@@ -421,28 +424,52 @@ describe("apply subscription integration", () => {
     await linkSubscription(platformSql, orgId, token("cus"), subId, "trialing");
 
     const now1 = new Date("2026-10-17T10:00:00.000Z");
-    const portTrialing: Pick<StripeBilling, "retrieveSubscription"> = {
+    const trialEnd = new Date("2026-11-17T00:00:00.000Z");
+    const portTrialing1: Pick<StripeBilling, "retrieveSubscription"> = {
       retrieveSubscription: async (id) => ({
         id,
         customerId: token("cus"),
         status: "trialing",
         lookupKey: "starter_monthly",
         quantity: 1,
-        currentPeriodEnd: new Date("2026-11-17T00:00:00.000Z"),
-        trialEnd: new Date("2026-11-17T00:00:00.000Z"),
+        currentPeriodEnd: trialEnd,
+        trialEnd,
         taxRateId: null,
         organisationIdMetadata: orgId,
       }),
     };
 
-    const res1 = await applySubscription(platformSql, portTrialing, subId, now1);
+    const res1 = await applySubscription(platformSql, portTrialing1, subId, now1);
     expect(res1).toBe("applied");
 
     const accountAfter1 = await readAccount(platformSql, orgId);
     expect(accountAfter1?.trialUsedAt?.getTime()).toBe(now1.getTime());
 
-    // Later apply with active status (or later trialing) leaves trial_used_at unchanged
-    const now2 = new Date("2026-10-25T10:00:00.000Z");
+    // Second apply with status: "trialing", trialEnd set, and a later now:
+    // trial_used_at still equals now1
+    const now2 = new Date("2026-10-20T10:00:00.000Z");
+    const portTrialing2: Pick<StripeBilling, "retrieveSubscription"> = {
+      retrieveSubscription: async (id) => ({
+        id,
+        customerId: token("cus"),
+        status: "trialing",
+        lookupKey: "starter_monthly",
+        quantity: 1,
+        currentPeriodEnd: trialEnd,
+        trialEnd,
+        taxRateId: null,
+        organisationIdMetadata: orgId,
+      }),
+    };
+
+    const res2 = await applySubscription(platformSql, portTrialing2, subId, now2);
+    expect(res2).toBe("applied");
+
+    const accountAfter2 = await readAccount(platformSql, orgId);
+    expect(accountAfter2?.trialUsedAt?.getTime()).toBe(now1.getTime());
+
+    // Later apply with active status and trialEnd still set leaves trial_used_at unchanged
+    const now3 = new Date("2026-10-25T10:00:00.000Z");
     const portActive: Pick<StripeBilling, "retrieveSubscription"> = {
       retrieveSubscription: async (id) => ({
         id,
@@ -451,17 +478,17 @@ describe("apply subscription integration", () => {
         lookupKey: "starter_monthly",
         quantity: 1,
         currentPeriodEnd: new Date("2026-11-17T00:00:00.000Z"),
-        trialEnd: null,
+        trialEnd,
         taxRateId: null,
         organisationIdMetadata: orgId,
       }),
     };
 
-    const res2 = await applySubscription(platformSql, portActive, subId, now2);
-    expect(res2).toBe("applied");
+    const res3 = await applySubscription(platformSql, portActive, subId, now3);
+    expect(res3).toBe("applied");
 
-    const accountAfter2 = await readAccount(platformSql, orgId);
-    expect(accountAfter2?.trialUsedAt?.getTime()).toBe(now1.getTime());
+    const accountAfter3 = await readAccount(platformSql, orgId);
+    expect(accountAfter3?.trialUsedAt?.getTime()).toBe(now1.getTime());
   });
 
   it("two organisations: applying A's subscription never changes B's row", async () => {
@@ -531,8 +558,88 @@ describe("apply subscription integration", () => {
       idempotencyKey,
     });
 
-    // Rejects if org has no linked subscription
+    // Rejects if org has no linked subscription with exact BILLING_NOT_LINKED message and no UUID
     const orgUnlinked = await createTestOrg(platformSql);
-    await expect(syncQuantity(platformSql, port, orgUnlinked, token("key"))).rejects.toThrow();
+    await expect(syncQuantity(platformSql, port, orgUnlinked, token("key"))).rejects.toThrow(
+      "BILLING_NOT_LINKED",
+    );
+    try {
+      await syncQuantity(platformSql, port, orgUnlinked, token("key"));
+      expect.fail("should have thrown");
+    } catch (err) {
+      expect((err as Error).message).toBe("BILLING_NOT_LINKED");
+      expect((err as Error).message).not.toContain(orgUnlinked);
+    }
+  });
+
+  it("fails closed with BILLING_SETTINGS_MISSING when no settings row is visible, leaving account unchanged", async () => {
+    const orgId = await createTestOrg(platformSql);
+    await setMode(platformSql, orgId, "self_serve");
+
+    const customerId = token("cus");
+    const subscriptionId = token("sub");
+    await linkSubscription(platformSql, orgId, customerId, subscriptionId, "active");
+
+    const initialAccount = await readAccount(platformSql, orgId);
+    expect(initialAccount).not.toBeNull();
+
+    const now = new Date("2026-10-17T12:00:00.000Z");
+    const port: Pick<StripeBilling, "retrieveSubscription"> = {
+      retrieveSubscription: async (subId) => ({
+        id: subId,
+        customerId,
+        status: "active",
+        lookupKey: "starter_monthly",
+        quantity: 1,
+        currentPeriodEnd: new Date("2026-11-17T00:00:00.000Z"),
+        trialEnd: null,
+        taxRateId: null,
+        organisationIdMetadata: orgId,
+      }),
+    };
+
+    // Use a directSql transaction that deletes platform.billing_settings temporarily
+    // and is rolled back at the end of the test so the shared seed row is never lost.
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    try {
+      let rolledBack = false;
+      try {
+        await directSql.begin(async (tx) => {
+          await tx`delete from platform.billing_settings`;
+
+          await expect(
+            applySubscription(tx as unknown as Sql, port, subscriptionId, now),
+          ).rejects.toThrow("BILLING_SETTINGS_MISSING");
+
+          // Inside the transaction, verify the account was not modified
+          const inTxRows = await tx`
+            select stripe_status, synced_at
+            from platform.billing_accounts
+            where organisation_id = ${orgId}::uuid
+          `;
+          expect(inTxRows[0]?.synced_at).toBeNull();
+
+          // Roll back outer transaction to restore platform.billing_settings
+          throw new Error("ROLLBACK_FOR_TEST");
+        });
+      } catch (err: unknown) {
+        if (err instanceof Error && err.message === "ROLLBACK_FOR_TEST") {
+          rolledBack = true;
+        } else {
+          throw err;
+        }
+      }
+      expect(rolledBack).toBe(true);
+    } finally {
+      await directSql.end({ timeout: 1 });
+    }
+
+    // In platformSql, account row is unchanged
+    const accountAfter = await readAccount(platformSql, orgId);
+    expect(accountAfter).toEqual(initialAccount);
+
+    // Shared seed row is intact
+    const settings = await currentSettings(platformSql);
+    expect(settings).not.toBeNull();
   });
 });
