@@ -828,9 +828,9 @@ Record the UTC completion time under **Cost clock** below and calculate the tota
 - Apply 0 completed: about 20:11 UTC on 2026-10-14 (see Evidence)
 - Apply 1 SHA: `6e9c65a`
 - Apply 1 completed (cost anchor): about 2026-10-16T23:58Z
-- Apply 2 SHA: _(deferred)_
-- Apply 2 completed: _(deferred)_
-- Total unpark window: _(deferred until Apply 2)_
+- Apply 2 SHA: `7433c59`
+- Apply 2 completed: about 2026-10-17T02:15Z
+- Total unpark window: about 2 h 17 min (2026-10-16T23:58Z to 2026-10-17T02:15Z); about 2.28 hours × USD 0.0468 ≈ USD 0.11. Inside the 24-hour target.
 - Rate: USD 0.0468 per hour. 24-hour target 2026-10-17T23:58Z; 48-hour hard stop 2026-10-18T23:58Z.
 
 ### Evidence
@@ -860,6 +860,13 @@ Evidence (Apply 1 against `6e9c65a`, 2026-10-16 UTC). Counts, statuses, lengths,
 - **P4:** provision-owner `created` (above).
 - **P5:** pulls with pipefail ok. Positive controls: mail lines 2 (≥ 2 start calls), routeKey lines 6 (≥ 3). Privacy counts, service log / access log: owner email 0/0, unverified email 0/0, OTP code 0/0, organisation slug 0/0, community slug 0/0, access token 0/0, `Bearer` 0/0, the at-sign character 0/0. Mail key sets: `["level","message","operation","outcome"]` for the ok line, `["errorClass","level","message","operation","outcome"]` for the failed line. 0 timeout.
 - Spot interruptions: none. Proof reruns: none.
+
+Evidence (Apply 2 against `7433c59`, 2026-10-17 UTC). Counts, statuses, lengths, short commit SHAs and UTC times only. No account id, ARN, hostname, registry host, email address, image digest, task id, OTP code, token, slug or secret.
+
+- **Apply 2** at branch SHA `7433c59` (owner). Local `service_image` line removed (grep count 0). Saved plan: 0 to add, 0 to change, 18 to destroy; the 18 addresses were exactly Apply 1's 18, each delete. Apply complete: 0 added, 0 changed, 18 destroyed. UTC completion about 2026-10-17T02:15Z. Plan file deleted.
+- Follow-up plan: `No changes. Your infrastructure matches the configuration.`
+- Read-only checks after: 0 RDS instances, 0 ECS clusters; the SES domain identity (1) and the configuration set (1) remain; no provision secret (not found).
+- Total unpark window: about 2 h 17 min (2026-10-16T23:58Z to 2026-10-17T02:15Z); about 2.28 hours × USD 0.0468 ≈ USD 0.11. Inside the 24-hour target.
 
 ### Findings from the SES sign-in proof run
 
