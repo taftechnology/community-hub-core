@@ -24,7 +24,8 @@
     "@community-hub/kernel": "workspace:*",
     "@community-hub/observability": "workspace:*",
     "@community-hub/policy": "workspace:*",
-    "@community-hub/tenancy": "workspace:*"
+    "@community-hub/tenancy": "workspace:*",
+    "stripe": "23.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",

@@ -3,6 +3,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLogger } from "@community-hub/observability";
 import { OtpMailUnavailable } from "@community-hub/identity";
+import { SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
+import { BillingUnavailable } from "@community-hub/billing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { readServiceEnv } from "./env.js";
@@ -346,5 +348,74 @@ describe("api boot wiring of the ses mail adapter", () => {
     ).rejects.toBeInstanceOf(OtpMailUnavailable);
 
     expect(sesInstances).toHaveLength(0);
+  });
+});
+
+describe("api boot wiring of the billing adapter and logger", () => {
+  const keyArn = `arn:aws:kms:ap-southeast-2:123456789012:key/mrk-${"ab".repeat(16)}`;
+  const billingSecretArn =
+    "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:staging-billing-123456";
+  const adminOrigin = "https://admin.example.test";
+
+  function envWithBilling() {
+    const read = readServiceEnv(
+      {
+        ...source(),
+        ENVELOPE_KEY_ARN: keyArn,
+        BILLING_SECRET_ARN: billingSecretArn,
+        ADMIN_ORIGIN: adminOrigin,
+      },
+      pem,
+    );
+    if (!read.ok) {
+      throw new Error("test env is invalid");
+    }
+    return read.env;
+  }
+
+  function envWithoutBilling() {
+    const read = readServiceEnv({ ...source(), ENVELOPE_KEY_ARN: keyArn }, pem);
+    if (!read.ok) {
+      throw new Error("test env is invalid");
+    }
+    return read.env;
+  }
+
+  it("boot with neither billing variable succeeds and the port rejects with BILLING_KEY_UNAVAILABLE", async () => {
+    const bound = bindServices(envWithoutBilling(), pem);
+    await expect(bound.billing.port.retrieveSubscription("sub_test1")).rejects.toThrow(
+      new BillingUnavailable("BILLING_KEY_UNAVAILABLE"),
+    );
+  });
+
+  it("boot with both billing variables does not call the secret reader", async () => {
+    const sendSpy = vi.spyOn(SecretsManagerClient.prototype, "send");
+    const bound = bindServices(envWithBilling(), pem);
+    expect(bound.billing).toBeDefined();
+    expect(bound.billing.port).toBeDefined();
+    expect(sendSpy).not.toHaveBeenCalled();
+  });
+
+  it("a billing log line through the real logger parses with getDroppedFieldCount() === 0", () => {
+    const written: string[] = [];
+    const logger = createLogger({ write: (line) => written.push(line) });
+    const bound = bindServices(envWithBilling(), pem, logger);
+
+    bound.billing.log("billing test line", {
+      operation: "stripe_call",
+      outcome: "ok",
+      organisationId: "12345678-1234-4234-8234-1234567890ab",
+    });
+
+    expect(written).toHaveLength(1);
+    const parsed = JSON.parse(written[0] ?? "{}") as Record<string, unknown>;
+    expect(parsed).toMatchObject({
+      level: "info",
+      message: "billing test line",
+      operation: "stripe_call",
+      outcome: "ok",
+      organisationId: "12345678-1234-4234-8234-1234567890ab",
+    });
+    expect(logger.getDroppedFieldCount()).toBe(0);
   });
 });
