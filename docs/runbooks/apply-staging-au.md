@@ -826,11 +826,12 @@ Record the UTC completion time under **Cost clock** below and calculate the tota
 
 - Apply 0 SHA: `edeaaca` (see Evidence)
 - Apply 0 completed: about 20:11 UTC on 2026-10-14 (see Evidence)
-- Apply 1 SHA: _(deferred to `ses-sign-in-proof`)_
-- Apply 1 completed (cost anchor): _(deferred)_
+- Apply 1 SHA: `6e9c65a`
+- Apply 1 completed (cost anchor): about 2026-10-16T23:58Z
 - Apply 2 SHA: _(deferred)_
 - Apply 2 completed: _(deferred)_
-- Total unpark window: _(deferred; no unpark on the `email-provider` branch)_
+- Total unpark window: _(deferred until Apply 2)_
+- Rate: USD 0.0468 per hour. 24-hour target 2026-10-17T23:58Z; 48-hour hard stop 2026-10-18T23:58Z.
 
 ### Evidence
 
@@ -843,6 +844,30 @@ Evidence (Apply 0 against `edeaaca`, 2026-10-14 UTC). Counts, statuses, and leng
 - Read-only checks at about 23:22 UTC: the mail domain identity `SUCCESS` with sending enabled; DKIM `SUCCESS`; MAIL FROM `SUCCESS`; one sandbox recipient verified (`SUCCESS`). The account is still in the SES sandbox (production access off, 200 messages a day).
 - The recipient address was entered at a silent prompt and is in no file.
 - Apply 1 was not run on the `email-provider` branch: no published image contained that chunk's code. The live proof (Apply 1 onward) is `ses-sign-in-proof`.
+
+Evidence (Apply 1 against `6e9c65a`, 2026-10-16 UTC). Counts, statuses, lengths, short commit SHAs and UTC times only. No account id, ARN, hostname, registry host, email address, image digest, task id, OTP code, token, slug or secret.
+
+- **Pre-checks** (all before spend, 2026-10-16): `DEPLOY_SHA` = main `81f4960` (contains the email-provider merge; `merge-base --is-ancestor` ok). publish job: success. ECR image for that full-SHA tag present (digest length 71; digest held in shell, not recorded). Scan `COMPLETE`, CRITICAL 0, HIGH 0. SES: domain identity DKIM `SUCCESS`, VerificationStatus `SUCCESS`, MAIL FROM `SUCCESS`. ProductionAccessEnabled `False` (sandbox). Owner address (verified shared mailbox; length held in shell, not recorded) VerificationStatus `SUCCESS`. Staging parked before Apply 1: 0 RDS instances, 0 ECS clusters.
+- **Apply 1** at branch SHA `6e9c65a` (owner). `service_image` written to the gitignored local var file (grep count 1); init ok. Saved plan: 18 to add, 0 to change, 0 to destroy; addresses matched the runbook list exactly (the `^Plan:` grep printed nothing because Terraform colours the line; the assistant read the summary from `terraform show -json`). Apply complete: 18 added, 0 changed, 0 destroyed. UTC completion about 2026-10-16T23:58Z. Rate USD 0.0468 per hour. 24-hour target 2026-10-17T23:58Z; 48-hour hard stop 2026-10-18T23:58Z. Plan file deleted. RDS available.
+- **One-offs:**
+  - `db-bootstrap`: exit 0, stopped reason "Essential container in task exited", stdout one integer, nothing else.
+  - `db-migrate`: exit 0, ten `applied` lines 0000–0009 in journal order, `done applied=10 total=10`.
+  - `provision-owner`: synthetic slugs generated in the shell as `proof-` plus 8 hex characters, never printed or recorded, kept set until P5 so they were never retyped (deviation from the runbook's typed prompts; better). Secret created under the customer-managed secrets key; one-off exit 0, stdout `created`. Secret deleted with force-delete-without-recovery; a describe 5 seconds later still found it (deletion is asynchronous); a read-only describe seconds later returned ResourceNotFoundException.
+- **Running-task check:** services-stable; running task image digest equals the pre-checked digest (match); task definition env names include `MAIL_FROM_ADDRESS` and `SES_CONFIGURATION_SET`; 1 running, 1 desired, 1 deployment.
+- **P1:** start → 204. One `mail` line `send_email` `ok`. Owner confirmed exactly one email from the sender address, subject "Your sign-in code" (no code in subject), eight-digit code in body. Start calls for the owner address: 1 of cap 3.
+- **P2:** verify succeeded; access token length 43; `POST /v1/access/grants/list` with the session → 200.
+- **P3:** start for the unverified example.com placeholder → 503; `mail` line outcome `failed`, errorClass `MessageRejected` (not `AccessDeniedException`).
+- **P4:** provision-owner `created` (above).
+- **P5:** pulls with pipefail ok. Positive controls: mail lines 2 (≥ 2 start calls), routeKey lines 6 (≥ 3). Privacy counts, service log / access log: owner email 0/0, unverified email 0/0, OTP code 0/0, organisation slug 0/0, community slug 0/0, access token 0/0, `Bearer` 0/0, the at-sign character 0/0. Mail key sets: `["level","message","operation","outcome"]` for the ok line, `["errorClass","level","message","operation","outcome"]` for the failed line. 0 timeout.
+- Spot interruptions: none. Proof reruns: none.
+
+### Findings from the SES sign-in proof run
+
+1. The editor's chat/Run input sometimes sends a command to a different shell than the one holding the variables. Two commands ran in the main checkout's shell: one SES describe failed on that shell's expired default login; one P3 curl had an empty host and reached nothing. Neither touched staging. Type commands that use held variables directly into the one terminal.
+2. The chat input turned the at-sign into a full-width `＠` (U+FF20), so the first at-sign count searched the wrong character. Rerun with `AT=$'\x40'` gave 0/0. A literal at-sign in a pasted command is not reliable through that path.
+3. Secret delete with force-delete-without-recovery is asynchronous; a describe a few seconds later can still succeed. Poll until ResourceNotFoundException.
+4. ECS task ids are 32 characters (an earlier expectation of 36 was wrong).
+5. `grep '^Plan:'` misses Terraform's coloured summary; use `-no-color` on plan.
 
 ## Staging proof run
 
