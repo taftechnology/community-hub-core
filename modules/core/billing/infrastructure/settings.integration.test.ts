@@ -42,6 +42,10 @@ describe("settings repository integration", () => {
     const migration = createPlaintextDirectSql(runtime.productOnlyUrl);
     try {
       await applyProductMigrations(migration);
+      await migration`
+        delete from platform.billing_settings
+        where id != '00000000-0000-0000-0000-000000000001'::uuid
+      `;
     } finally {
       await migration.end({ timeout: 1 });
     }
@@ -77,72 +81,88 @@ describe("settings repository integration", () => {
   });
 
   it("the newest row wins by created_at, then by id", async () => {
-    const baseTime = Date.now() + 100_000;
-    const olderTime = new Date(baseTime + 10_000);
-    const newerTime = new Date(baseTime + 20_000);
+    try {
+      await platformSql.begin(async (tx) => {
+        const baseTime = Date.now() + 100_000;
+        const olderTime = new Date(baseTime + 10_000);
+        const newerTime = new Date(baseTime + 20_000);
 
-    const olderNote = token("older");
-    const newerNote = token("newer");
+        const olderNote = token("older");
+        const newerNote = token("newer");
 
-    await insertSettings(platformSql, {
-      gstRateBps: 1000,
-      pricesIncludeGst: true,
-      trialDays: 30,
-      graceDays: 7,
-      stripeTaxRateId: "txr_older",
-      note: olderNote,
-      createdAt: olderTime,
-    });
+        await insertSettings(tx, {
+          gstRateBps: 1000,
+          pricesIncludeGst: true,
+          trialDays: 30,
+          graceDays: 7,
+          stripeTaxRateId: "txr_older",
+          note: olderNote,
+          createdAt: olderTime,
+        });
 
-    const insertedNewer = await insertSettings(platformSql, {
-      gstRateBps: 1500,
-      pricesIncludeGst: false,
-      trialDays: 14,
-      graceDays: 5,
-      stripeTaxRateId: "txr_newer",
-      note: newerNote,
-      createdAt: newerTime,
-    });
+        const insertedNewer = await insertSettings(tx, {
+          gstRateBps: 1500,
+          pricesIncludeGst: false,
+          trialDays: 14,
+          graceDays: 5,
+          stripeTaxRateId: "txr_newer",
+          note: newerNote,
+          createdAt: newerTime,
+        });
 
-    const current = await currentSettings(platformSql);
-    expect(current).not.toBeNull();
-    expect(current?.id).toBe(insertedNewer.id);
-    expect(current?.note).toBe(newerNote);
-    expect(current?.gstRateBps).toBe(1500);
-    expect(current?.pricesIncludeGst).toBe(false);
-    expect(current?.trialDays).toBe(14);
-    expect(current?.graceDays).toBe(5);
-    expect(current?.stripeTaxRateId).toBe("txr_newer");
+        const current = await currentSettings(tx);
+        expect(current).not.toBeNull();
+        expect(current?.id).toBe(insertedNewer.id);
+        expect(current?.note).toBe(newerNote);
+        expect(current?.gstRateBps).toBe(1500);
+        expect(current?.pricesIncludeGst).toBe(false);
+        expect(current?.trialDays).toBe(14);
+        expect(current?.graceDays).toBe(5);
+        expect(current?.stripeTaxRateId).toBe("txr_newer");
 
-    // Test tie-breaking by id when created_at is identical
-    const tieTime = new Date(baseTime + 30_000);
-    const lowerId = "00000000-0000-0000-0000-000000000010";
-    const higherId = "00000000-0000-0000-0000-000000000020";
+        // Test tie-breaking by id when created_at is identical
+        const tieTime = new Date(baseTime + 30_000);
+        const lowerId = "00000000-0000-0000-0000-000000000010";
+        const higherId = "00000000-0000-0000-0000-000000000020";
 
-    await insertSettings(platformSql, {
-      id: lowerId,
-      gstRateBps: 1000,
-      pricesIncludeGst: true,
-      trialDays: 30,
-      graceDays: 7,
-      stripeTaxRateId: "txr_tie_1",
-      note: "tie lower id",
-      createdAt: tieTime,
-    });
+        await insertSettings(tx, {
+          id: lowerId,
+          gstRateBps: 1000,
+          pricesIncludeGst: true,
+          trialDays: 30,
+          graceDays: 7,
+          stripeTaxRateId: "txr_tie_1",
+          note: "tie lower id",
+          createdAt: tieTime,
+        });
 
-    await insertSettings(platformSql, {
-      id: higherId,
-      gstRateBps: 1000,
-      pricesIncludeGst: true,
-      trialDays: 30,
-      graceDays: 7,
-      stripeTaxRateId: "txr_tie_2",
-      note: "tie higher id",
-      createdAt: tieTime,
-    });
+        await insertSettings(tx, {
+          id: higherId,
+          gstRateBps: 1000,
+          pricesIncludeGst: true,
+          trialDays: 30,
+          graceDays: 7,
+          stripeTaxRateId: "txr_tie_2",
+          note: "tie higher id",
+          createdAt: tieTime,
+        });
 
-    const tieCurrent = await currentSettings(platformSql);
-    expect(tieCurrent?.id).toBe(higherId);
-    expect(tieCurrent?.note).toBe("tie higher id");
+        const tieCurrent = await currentSettings(tx);
+        expect(tieCurrent?.id).toBe(higherId);
+        expect(tieCurrent?.note).toBe("tie higher id");
+
+        // Force rollback to avoid leaking future-dated settings rows
+        throw new Error("ROLLBACK_FOR_TEST");
+      });
+    } catch (err: unknown) {
+      if ((err as Error)?.message !== "ROLLBACK_FOR_TEST") {
+        throw err;
+      }
+    }
+
+    const reset = await currentSettings(platformSql);
+    expect(reset).not.toBeNull();
+    expect(reset?.id).toBe("00000000-0000-0000-0000-000000000001");
+    expect(reset?.note).toBe("seed");
   });
 });

@@ -24,7 +24,7 @@ export async function recordReceived(
       now()
     )
     on conflict (event_id) do update
-      set type = excluded.type
+      set type = billing_stripe_events.type
     returning outcome
   `;
   return rows[0]!.outcome;
@@ -41,5 +41,6 @@ export async function markOutcome(
       outcome = ${outcome},
       processed_at = now()
     where event_id = ${eventId}
+      and outcome = 'received'
   `;
 }

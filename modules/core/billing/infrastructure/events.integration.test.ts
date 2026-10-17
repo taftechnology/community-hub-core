@@ -145,4 +145,38 @@ describe("events repository integration", () => {
     );
     expect(isReplayOutcome(processedOutcome)).toBe(true);
   });
+
+  it("markOutcome is forward-only: markOutcome(ignored) on a processed row leaves it processed", async () => {
+    const eventId = token("evt");
+    await recordReceived(platformSql, eventId, "checkout.session.completed");
+    await markOutcome(platformSql, eventId, "processed");
+
+    // Attempt to change outcome from processed to ignored
+    await markOutcome(platformSql, eventId, "ignored");
+
+    const rows = await platformSql<{ outcome: string }[]>`
+      select outcome
+      from platform.billing_stripe_events
+      where event_id = ${eventId}
+    `;
+    expect(rows[0]?.outcome).toBe("processed");
+  });
+
+  it("replay does not rewrite: second recordReceived with a different type leaves the original type", async () => {
+    const eventId = token("evt");
+    const originalType = "checkout.session.completed";
+    const differentType = "customer.subscription.updated";
+
+    await recordReceived(platformSql, eventId, originalType);
+
+    const replayOutcome = await recordReceived(platformSql, eventId, differentType);
+    expect(replayOutcome).toBe("received");
+
+    const rows = await platformSql<{ type: string }[]>`
+      select type
+      from platform.billing_stripe_events
+      where event_id = ${eventId}
+    `;
+    expect(rows[0]?.type).toBe(originalType);
+  });
 });

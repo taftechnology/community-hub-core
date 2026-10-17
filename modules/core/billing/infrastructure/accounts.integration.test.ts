@@ -320,4 +320,70 @@ describe("accounts repository integration", () => {
     expect(accountBFinal?.stripeSubscriptionId).toBe(subB);
     expect(accountBFinal?.stripeCustomerId).toBe(cusB);
   });
+
+  it("linkSubscription serialises on row lock: concurrent link sees committed subscription as duplicate", async () => {
+    const orgId = await createTestOrg(platformSql);
+    await setMode(platformSql, orgId, "self_serve");
+
+    const holder = await platformSql.reserve();
+    let committed = false;
+    try {
+      await holder`begin`;
+      await holder`
+        select organisation_id
+        from platform.billing_accounts
+        where organisation_id = ${orgId}::uuid
+        for update
+      `;
+
+      const cusB = token("cus");
+      const subB = token("sub");
+      const linkPromise = linkSubscription(platformSql, orgId, cusB, subB, "active");
+
+      let lockCount = 0;
+      for (let i = 0; i < 5000; i++) {
+        const rows = await platformSql<{ count: string }[]>`
+          select count(*)::text as count
+          from pg_stat_activity
+          where wait_event_type = 'Lock'
+            and query like '%billing_accounts%'
+            and pid != pg_backend_pid()
+        `;
+        lockCount = Number(rows[0]?.count ?? "0");
+        if (lockCount === 1) {
+          break;
+        }
+      }
+      expect(lockCount).toBe(1);
+
+      const cusA = token("cus");
+      const subA = token("sub");
+      await holder`
+        update platform.billing_accounts
+        set
+          stripe_customer_id = ${cusA},
+          stripe_subscription_id = ${subA},
+          stripe_status = 'active'
+        where organisation_id = ${orgId}::uuid
+      `;
+      await holder`commit`;
+      committed = true;
+
+      const res = await linkPromise;
+      expect(res).toBe("duplicate");
+
+      const stored = await readAccount(platformSql, orgId);
+      expect(stored?.stripeSubscriptionId).toBe(subA);
+      expect(stored?.stripeCustomerId).toBe(cusA);
+    } finally {
+      if (!committed) {
+        try {
+          await holder`rollback`;
+        } catch {
+          // ignore
+        }
+      }
+      holder.release();
+    }
+  });
 });

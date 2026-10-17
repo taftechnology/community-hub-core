@@ -1,5 +1,5 @@
 import { newId } from "@community-hub/db";
-import type { Sql } from "postgres";
+import type { Sql, TransactionSql } from "postgres";
 
 export interface BillingSettings {
   readonly id: string;
@@ -18,7 +18,7 @@ export interface InsertSettingsInput {
   readonly pricesIncludeGst: boolean;
   readonly trialDays: number;
   readonly graceDays: number;
-  readonly stripeTaxRateId: string | null;
+  readonly stripeTaxRateId: string;
   readonly note: string;
   readonly createdAt?: Date;
 }
@@ -47,7 +47,7 @@ function toBillingSettings(row: BillingSettingsRow): BillingSettings {
   };
 }
 
-export async function currentSettings(sql: Sql): Promise<BillingSettings | null> {
+export async function currentSettings(sql: Sql | TransactionSql): Promise<BillingSettings | null> {
   const rows = await sql<BillingSettingsRow[]>`
     select
       id,
@@ -69,7 +69,7 @@ export async function currentSettings(sql: Sql): Promise<BillingSettings | null>
 }
 
 export async function insertSettings(
-  sql: Sql,
+  sql: Sql | TransactionSql,
   input: InsertSettingsInput,
 ): Promise<BillingSettings> {
   if (input.stripeTaxRateId == null || input.stripeTaxRateId.trim() === "") {
