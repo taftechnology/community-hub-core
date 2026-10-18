@@ -1,14 +1,16 @@
-import { holdsPermission } from "@community-hub/access";
-import { checkoutBody, portalBody } from "@community-hub/contracts/billing";
+import { holdsAnyGrant, holdsPermission } from "@community-hub/access";
+import { checkoutBody, portalBody, statusBody } from "@community-hub/contracts/billing";
 import { appendAuditEvent, withAppTransaction } from "@community-hub/db";
 import {
+  BillingUnavailable,
   checkoutDecision,
   currentSettings,
+  deriveState,
   readAccount,
   trialDaysFor,
   type StripeBilling,
 } from "@community-hub/billing";
-import { planBilling } from "@community-hub/entitlements";
+import { currentPlan, planBilling, planByLookupKey } from "@community-hub/entitlements";
 import { readSession } from "@community-hub/identity";
 import { getRequestContext } from "@community-hub/kernel";
 import { findCommunityBySlug, listCommunityIds } from "@community-hub/tenancy";
@@ -17,15 +19,21 @@ import type { Checkout } from "./checkout.js";
 import { presentedHostname, type GateRoute } from "./gate.js";
 
 const DENIED = "billing.permission.denied";
+const VIEW = "billing.view";
 const MANAGE = "billing.manage";
 
 type Scope = { orgId: string; communityId: string };
 
+type BillingSql = Parameters<typeof readSession>[0];
+
+function asSql(sql: unknown): BillingSql {
+  return sql as BillingSql;
+}
+
 export type BillingRouteLog = (message: string, fields?: Record<string, unknown>) => void;
 
 export type BillingRoutesDeps = {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly checkout: Checkout<any>;
+  readonly checkout: Checkout<unknown>;
   readonly kms: Parameters<typeof readSession>[1];
   readonly keyArn: string;
   readonly now: () => Date;
@@ -96,7 +104,7 @@ export function billingRoutes(deps: BillingRoutesDeps): GateRoute[] {
       return empty(401);
     }
     const session = await deps.checkout("identity", (sql) =>
-      readSession(sql, deps.kms, deps.keyArn, {
+      readSession(asSql(sql), deps.kms, deps.keyArn, {
         accessToken: token,
         now: deps.now(),
       }),
@@ -108,7 +116,7 @@ export function billingRoutes(deps: BillingRoutesDeps): GateRoute[] {
   }
 
   async function communityScope(slug: string): Promise<Scope | null> {
-    const found = await deps.checkout("platform", (sql) => findCommunityBySlug(sql, slug));
+    const found = await deps.checkout("platform", (sql) => findCommunityBySlug(asSql(sql), slug));
     if (found === null) {
       return null;
     }
@@ -122,7 +130,7 @@ export function billingRoutes(deps: BillingRoutesDeps): GateRoute[] {
   ): Promise<boolean> {
     return deps.checkout("app", (sql) =>
       withAppTransaction(
-        sql,
+        asSql(sql),
         { orgId: scope.orgId, communityId: scope.communityId },
         async (tx) => {
           const allowed = await holdsPermission(tx, userId, permission);
@@ -165,29 +173,36 @@ export function billingRoutes(deps: BillingRoutesDeps): GateRoute[] {
     }
 
     try {
-      const account = await deps.checkout("platform", (sql) => readAccount(sql, scope.orgId));
+      const account = await deps.checkout("platform", (sql) =>
+        readAccount(asSql(sql), scope.orgId),
+      );
       const decision = checkoutDecision(account);
       if (decision === "conflict") {
         return finish(request, empty(409));
       }
 
-      const planInfo = await deps.checkout("platform", (sql) => planBilling(sql, body.planKey));
+      const planInfo = await deps.checkout("platform", (sql) =>
+        planBilling(asSql(sql), body.planKey),
+      );
       if (planInfo === null || planInfo.stripeLookupKey === null) {
         return finish(request, empty(422));
       }
 
-      const settings = await deps.checkout("platform", (sql) => currentSettings(sql));
+      const settings = await deps.checkout("platform", (sql) => currentSettings(asSql(sql)));
       if (settings === null || settings.stripeTaxRateId === null) {
         return finish(request, empty(503));
       }
 
       const price = await deps.port.findPriceByLookupKey(planInfo.stripeLookupKey);
       if (price === null) {
+        deps.log("billing", {
+          errorCode: "BILLING_UNKNOWN_PRICE",
+        });
         return finish(request, empty(503));
       }
 
       const communityIds = await deps.checkout("platform", (sql) =>
-        listCommunityIds(sql, scope.orgId),
+        listCommunityIds(asSql(sql), scope.orgId),
       );
       const quantity = communityIds.length;
 
@@ -213,8 +228,11 @@ export function billingRoutes(deps: BillingRoutesDeps): GateRoute[] {
       });
 
       return finish(request, Response.json({ url: session.url }));
-    } catch {
-      return finish(request, empty(503));
+    } catch (error) {
+      if (error instanceof BillingUnavailable) {
+        return finish(request, empty(503));
+      }
+      throw error;
     }
   }
 
@@ -241,7 +259,9 @@ export function billingRoutes(deps: BillingRoutesDeps): GateRoute[] {
     }
 
     try {
-      const account = await deps.checkout("platform", (sql) => readAccount(sql, scope.orgId));
+      const account = await deps.checkout("platform", (sql) =>
+        readAccount(asSql(sql), scope.orgId),
+      );
       if (account === null || account.stripeCustomerId === null) {
         return finish(request, empty(409));
       }
@@ -260,9 +280,107 @@ export function billingRoutes(deps: BillingRoutesDeps): GateRoute[] {
       });
 
       return finish(request, Response.json({ url: session.url }));
-    } catch {
-      return finish(request, empty(503));
+    } catch (error) {
+      if (error instanceof BillingUnavailable) {
+        return finish(request, empty(503));
+      }
+      throw error;
     }
+  }
+
+  async function handleStatus(request: Request): Promise<Response> {
+    const hidden = foreignHost(request);
+    if (hidden !== undefined) {
+      return finish(request, hidden);
+    }
+    const body = await parse(request, statusBody);
+    if (body === undefined) {
+      return finish(request, empty(400));
+    }
+    const actor = await sessionUser(request);
+    if (actor instanceof Response) {
+      return finish(request, actor);
+    }
+    const scope = await communityScope(body.communitySlug);
+    if (scope === null) {
+      return finish(request, empty(403));
+    }
+
+    const auth = await deps.checkout("app", (sql) =>
+      withAppTransaction(
+        asSql(sql),
+        { orgId: scope.orgId, communityId: scope.communityId },
+        async (tx) => {
+          const canView = await holdsPermission(tx, actor.userId, VIEW);
+          const canManage = await holdsPermission(tx, actor.userId, MANAGE);
+          if (canView) {
+            return { allowed: true, canView, canManage, bannerOnly: false };
+          }
+          const anyGrant = await holdsAnyGrant(tx, actor.userId);
+          if (!anyGrant) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: DENIED,
+              purpose: DENIED,
+              targetIds: [scope.orgId, scope.communityId],
+            });
+            return { allowed: false, canView: false, canManage: false, bannerOnly: false };
+          }
+          return { allowed: true, canView: false, canManage: false, bannerOnly: true };
+        },
+      ),
+    );
+
+    if (!auth.allowed) {
+      return finish(request, empty(403));
+    }
+
+    const account = await deps.checkout("platform", (sql) => readAccount(asSql(sql), scope.orgId));
+    const state = deriveState(account, deps.now());
+
+    if (auth.bannerOnly) {
+      return finish(
+        request,
+        Response.json({
+          state,
+          trial_end: account?.trialEnd ? account.trialEnd.toISOString() : null,
+          grace_until: account?.graceUntil ? account.graceUntil.toISOString() : null,
+          canView: auth.canView,
+          canManage: auth.canManage,
+        }),
+      );
+    }
+
+    let planKey: string | null = null;
+    if (account?.planLookupKey) {
+      const byLookup = await deps.checkout("platform", (sql) =>
+        planByLookupKey(asSql(sql), account.planLookupKey!),
+      );
+      planKey = byLookup?.key ?? null;
+    }
+    if (planKey === null) {
+      const current = await deps.checkout("platform", (sql) =>
+        currentPlan(asSql(sql), scope.orgId),
+      );
+      planKey = current?.key ?? null;
+    }
+
+    return finish(
+      request,
+      Response.json({
+        state,
+        planKey,
+        quantity: account?.quantity ?? null,
+        current_period_end: account?.currentPeriodEnd
+          ? account.currentPeriodEnd.toISOString()
+          : null,
+        trial_end: account?.trialEnd ? account.trialEnd.toISOString() : null,
+        grace_until: account?.graceUntil ? account.graceUntil.toISOString() : null,
+        canView: auth.canView,
+        canManage: auth.canManage,
+      }),
+    );
   }
 
   return [
@@ -277,6 +395,12 @@ export function billingRoutes(deps: BillingRoutesDeps): GateRoute[] {
       pattern: "/v1/billing/portal",
       surface: "tenant",
       handle: handlePortal,
+    },
+    {
+      method: "POST",
+      pattern: "/v1/billing/status",
+      surface: "tenant",
+      handle: handleStatus,
     },
   ];
 }

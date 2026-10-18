@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { readServiceEnv } from "./env.js";
 import { bindServices, boot, listeningServer, productionRoutes, run } from "./index.js";
+import * as serverModule from "./server.js";
 import { rejectingStripeBilling } from "./billing/stripe-adapter.js";
 
 const pem = readFileSync(
@@ -484,5 +485,53 @@ describe("api boot wiring of the billing adapter and logger", () => {
     expect(webhookRoute).toBeDefined();
     expect(webhookRoute?.surface).toBe("tenant");
     expect(webhookRoute?.largeBody).toBe("webhooks");
+  });
+
+  it("registers the three billing routes and the webhook route in productionRoutes and run", () => {
+    const startServerSpy = vi.spyOn(serverModule, "startServer").mockReturnValue({} as never);
+    try {
+      const routes = productionRoutes(envWithBilling(), pem);
+      const expectedBillingRoutes = [
+        { method: "POST", pattern: "/v1/billing/checkout", surface: "tenant" },
+        { method: "POST", pattern: "/v1/billing/portal", surface: "tenant" },
+        { method: "POST", pattern: "/v1/billing/status", surface: "tenant" },
+        { method: "POST", pattern: "/v1/stripe/webhook", surface: "tenant", largeBody: "webhooks" },
+      ];
+
+      for (const expected of expectedBillingRoutes) {
+        const found = routes.find(
+          (r) => r.method === expected.method && r.pattern === expected.pattern,
+        );
+        expect(found).toBeDefined();
+        expect(found?.surface).toBe(expected.surface);
+        if (expected.largeBody) {
+          expect(found?.largeBody).toBe(expected.largeBody);
+        }
+      }
+
+      const envSource = {
+        ...source(),
+        ENVELOPE_KEY_ARN: keyArn,
+        BILLING_SECRET_ARN: billingSecretArn,
+        ADMIN_ORIGIN: adminOrigin,
+      };
+      const runResult = run(envSource, pem, []);
+      expect(runResult).toBe(0);
+      expect(startServerSpy).toHaveBeenCalledTimes(1);
+      const passedRoutes = startServerSpy.mock.calls[0]?.[0]?.routes ?? [];
+
+      for (const expected of expectedBillingRoutes) {
+        const found = passedRoutes.find(
+          (r) => r.method === expected.method && r.pattern === expected.pattern,
+        );
+        expect(found).toBeDefined();
+        expect(found?.surface).toBe(expected.surface);
+        if (expected.largeBody) {
+          expect(found?.largeBody).toBe(expected.largeBody);
+        }
+      }
+    } finally {
+      startServerSpy.mockRestore();
+    }
   });
 });
