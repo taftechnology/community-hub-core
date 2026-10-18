@@ -1053,12 +1053,7 @@ describe("billing routes", () => {
       const target = route("/v1/billing/portal");
       const res = await withRequest({ requestId: REQUEST_ID }, async () =>
         target.handle(
-          request(
-            "/v1/billing/portal",
-            API_HOSTNAME,
-            { communitySlug: "parish" },
-            "Bearer token",
-          ),
+          request("/v1/billing/portal", API_HOSTNAME, { communitySlug: "parish" }, "Bearer token"),
         ),
       );
       expect(res.status).toBe(200);
@@ -1069,12 +1064,7 @@ describe("billing routes", () => {
         expect.anything(),
       );
 
-      expect(checkoutCalls.map((c) => c.role)).toEqual([
-        "identity",
-        "platform",
-        "app",
-        "platform",
-      ]);
+      expect(checkoutCalls.map((c) => c.role)).toEqual(["identity", "platform", "app", "platform"]);
     });
 
     it("pins roles and scope for status full path with planLookupKey", async () => {
@@ -1188,12 +1178,7 @@ describe("billing routes", () => {
         expect.anything(),
       );
 
-      expect(checkoutCalls.map((c) => c.role)).toEqual([
-        "identity",
-        "platform",
-        "app",
-        "platform",
-      ]);
+      expect(checkoutCalls.map((c) => c.role)).toEqual(["identity", "platform", "app", "platform"]);
     });
   });
 });
