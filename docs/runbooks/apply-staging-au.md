@@ -1558,7 +1558,7 @@ The secret value is never written to a file or the shell history. Hold `${BILLIN
 
     print
 
-    printf '{"secret_key":"%s","webhook_secret":"whsec_placeholder_until_stripe_billing_proof"}' "${STRIPE_KEY}" | aws secretsmanager put-secret-value --profile ${AWS_PROFILE} --region ap-southeast-2 --secret-id ${BILLING_SECRET_ID} --secret-string file:///dev/stdin
+    printf '{"secret_key":"%s","webhook_secret":"whsec_placeholder_until_stripe_billing_proof"}' "${STRIPE_KEY}" | aws secretsmanager put-secret-value --profile ${AWS_PROFILE} --region ap-southeast-2 --secret-id ${BILLING_SECRET_ID} --secret-string file:///dev/stdin >/dev/null
 
     unset STRIPE_KEY
 
@@ -1580,8 +1580,9 @@ Permissions required by `createStripeBilling` methods and endpoints:
 - Subscriptions: Write (`GET /v1/subscriptions/{id}`, `POST /v1/subscriptions/{id}`)
 - Tax Rates: Write (`POST /v1/tax_rates`)
 - Invoices: Read (`GET /v1/invoices/{id}`)
+- Customers: Read (both keys)
 - Prices: Read in production (`GET /v1/prices`); Write in staging (`POST /v1/prices` for `seed-test-catalogue`)
-- Products: Read in production (`GET /v1/products/search`); Write in staging (`POST /v1/products` for `seed-test-catalogue`)
+- Products: Read in production; Write in staging (`POST /v1/products` and `GET /v1/products/search`; only `seed-test-catalogue` calls `products/search`)
 - Webhook endpoints: None (handled out-of-band; event signatures use local HMAC verification)
 
 Confirm dashboard resource names at key creation.
@@ -1592,7 +1593,7 @@ The billing-admin one-off tool (`/app/billing-admin.js`) runs inside the service
 
 Warning: the `--note` argument appears in ECS task override descriptions and CloudTrail event records. The note is a change note only (for example, documenting rate rationale or ticket references), never a person's name, email, or personal data.
 
-Output prints fixed words and state indicators only, never secret keys or amounts. Each one-off is followed by `aws ecs wait tasks-stopped`, `aws ecs describe-tasks`, and `aws logs get-log-events`.
+Output prints fixed words and state indicators only, never secret keys or amounts. `settings` prints the TaxRate id (`billing-admin.ts:224`); the id is not copied into notes, tickets or the PR. Each one-off is followed by `aws ecs wait tasks-stopped`, `aws ecs describe-tasks`, and `aws logs get-log-events`.
 
 **Settings** (`settings --gst-bps <n> --inclusive <bool> --trial-days <n> --grace-days <n> --note <text>`): creates a Stripe tax rate and inserts a billing settings row.
 
@@ -1605,7 +1606,7 @@ Output prints fixed words and state indicators only, never secret keys or amount
       --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/billing-admin.js\",\"settings\",\"--gst-bps\",\"${GST_BPS}\",\"--inclusive\",\"${INCLUSIVE}\",\"--trial-days\",\"${TRIAL_DAYS}\",\"--grace-days\",\"${GRACE_DAYS}\",\"--note\",\"${NOTE}\"]}]}" \
       --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
 
-**Sync** (`sync <slug>`): syncs the Stripe subscription quantity to the organisation's active community count.
+**Sync** (`sync <organisation-slug>`): takes an organisation slug and syncs the Stripe subscription quantity to the organisation's active community count.
 
     TASK_ARN=$(aws ecs run-task \
       --profile ${AWS_PROFILE} \
@@ -1613,10 +1614,10 @@ Output prints fixed words and state indicators only, never secret keys or amount
       --task-definition ${SERVICE_TASK_DEFINITION} \
       --launch-type FARGATE \
       --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
-      --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/billing-admin.js\",\"sync\",\"${COMMUNITY_SLUG}\"]}]}" \
+      --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/billing-admin.js\",\"sync\",\"${ORG_SLUG}\"]}]}" \
       --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
 
-**Apply tax rate** (`apply-tax-rate <slug>`): moves an organisation's Stripe subscription to the current default tax rate.
+**Apply tax rate** (`apply-tax-rate <organisation-slug>`): takes an organisation slug and moves an organisation's Stripe subscription to the current default tax rate.
 
     TASK_ARN=$(aws ecs run-task \
       --profile ${AWS_PROFILE} \
@@ -1624,10 +1625,10 @@ Output prints fixed words and state indicators only, never secret keys or amount
       --task-definition ${SERVICE_TASK_DEFINITION} \
       --launch-type FARGATE \
       --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
-      --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/billing-admin.js\",\"apply-tax-rate\",\"${COMMUNITY_SLUG}\"]}]}" \
+      --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/billing-admin.js\",\"apply-tax-rate\",\"${ORG_SLUG}\"]}]}" \
       --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
 
-**Mode** (`mode <slug> self_serve|invoiced [--subscription-cancelled-in-stripe]`): transitions billing mode between self-serve and invoiced.
+**Mode** (`mode <organisation-slug> self_serve|invoiced [--subscription-cancelled-in-stripe]`): takes an organisation slug and transitions billing mode between self-serve and invoiced.
 
     TASK_ARN=$(aws ecs run-task \
       --profile ${AWS_PROFILE} \
@@ -1635,10 +1636,10 @@ Output prints fixed words and state indicators only, never secret keys or amount
       --task-definition ${SERVICE_TASK_DEFINITION} \
       --launch-type FARGATE \
       --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
-      --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/billing-admin.js\",\"mode\",\"${COMMUNITY_SLUG}\",\"${TARGET_MODE}\"]}]}" \
+      --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/billing-admin.js\",\"mode\",\"${ORG_SLUG}\",\"${TARGET_MODE}\"]}]}" \
       --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
 
-When switching to invoiced with an existing active subscription that has already been cancelled in Stripe:
+When switching an organisation slug to invoiced with an existing active subscription that has already been cancelled in Stripe:
 
     TASK_ARN=$(aws ecs run-task \
       --profile ${AWS_PROFILE} \
@@ -1646,7 +1647,7 @@ When switching to invoiced with an existing active subscription that has already
       --task-definition ${SERVICE_TASK_DEFINITION} \
       --launch-type FARGATE \
       --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
-      --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/billing-admin.js\",\"mode\",\"${COMMUNITY_SLUG}\",\"invoiced\",\"--subscription-cancelled-in-stripe\"]}]}" \
+      --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/billing-admin.js\",\"mode\",\"${ORG_SLUG}\",\"invoiced\",\"--subscription-cancelled-in-stripe\"]}]}" \
       --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
 
 **Plan** (`plan <key> --lookup-key <k> --trial-eligible <bool> --entitlements <comma list>`): upserts a plan and binds its Stripe lookup key and trial eligibility.
