@@ -270,3 +270,15 @@ export async function linkSubscription(
     return "duplicate";
   });
 }
+
+export async function setAccountTaxRate(
+  sql: Sql,
+  organisationId: string,
+  taxRateId: string,
+): Promise<void> {
+  await sql`
+    update platform.billing_accounts
+    set tax_rate_id = ${taxRateId}
+    where organisation_id = ${organisationId}::uuid
+  `;
+}

@@ -6,6 +6,7 @@ import {
   deriveState,
   insertSettings,
   readAccount,
+  setAccountTaxRate,
   setMode,
   syncQuantity,
   type BillingMode,
@@ -79,9 +80,10 @@ const SEED_CATALOGUE_ITEMS = [
 export type BillingAdminDeps = {
   args: string[];
   platform: Sql;
-  stripe: StripeBilling;
-  secret: BillingSecret;
-  now?: () => Date;
+  stripe?: StripeBilling | undefined;
+  secret?: BillingSecret | undefined;
+  billingSecretArn?: string | undefined;
+  now?: (() => Date) | undefined;
 };
 
 export type BillingAdminResult = {
@@ -137,6 +139,10 @@ export async function runBillingAdmin(deps: BillingAdminDeps): Promise<BillingAd
   try {
     switch (command) {
       case "settings": {
+        if (deps.billingSecretArn === undefined || !deps.stripe || !deps.secret) {
+          return failed("env\n");
+        }
+
         const gstBpsRaw = flags.get("--gst-bps");
         const inclusiveRaw = flags.get("--inclusive");
         const trialDaysRaw = flags.get("--trial-days");
@@ -153,8 +159,11 @@ export async function runBillingAdmin(deps: BillingAdminDeps): Promise<BillingAd
           return failed("invalid_argument\n");
         }
 
+        if (!/^(0|[1-9][0-9]{0,3})$/.test(gstBpsRaw)) {
+          return failed("invalid_argument\n");
+        }
         const gstBps = Number(gstBpsRaw);
-        if (!Number.isInteger(gstBps) || gstBps < 0 || gstBps > 5000) {
+        if (gstBps < 0 || gstBps > 5000) {
           return failed("invalid_argument\n");
         }
 
@@ -163,22 +172,29 @@ export async function runBillingAdmin(deps: BillingAdminDeps): Promise<BillingAd
         }
         const inclusive = inclusiveRaw === "true";
 
+        if (!/^(0|[1-9][0-9]?)$/.test(trialDaysRaw)) {
+          return failed("invalid_argument\n");
+        }
         const trialDays = Number(trialDaysRaw);
-        if (!Number.isInteger(trialDays) || trialDays < 0 || trialDays > 90) {
+        if (trialDays < 0 || trialDays > 90) {
           return failed("invalid_argument\n");
         }
 
+        if (!/^(0|[1-9][0-9]?)$/.test(graceDaysRaw)) {
+          return failed("invalid_argument\n");
+        }
         const graceDays = Number(graceDaysRaw);
-        if (!Number.isInteger(graceDays) || graceDays < 0 || graceDays > 30) {
+        if (graceDays < 0 || graceDays > 30) {
           return failed("invalid_argument\n");
         }
 
-        // Note: at most 200 printable ASCII characters, no newline
+        // Note: at least 1 and at most 200 printable ASCII characters, no newline
         if (
+          note.length === 0 ||
           note.length > 200 ||
           note.includes("\n") ||
           note.includes("\r") ||
-          !/^[\x20-\x7E]*$/.test(note)
+          !/^[\x20-\x7E]+$/.test(note)
         ) {
           return failed("invalid_argument\n");
         }
@@ -209,6 +225,10 @@ export async function runBillingAdmin(deps: BillingAdminDeps): Promise<BillingAd
       }
 
       case "sync": {
+        if (deps.billingSecretArn === undefined || !deps.stripe || !deps.secret) {
+          return failed("env\n");
+        }
+
         const slug = positional[0];
         if (slug === undefined) {
           return failed("invalid_argument\n");
@@ -234,6 +254,10 @@ export async function runBillingAdmin(deps: BillingAdminDeps): Promise<BillingAd
       }
 
       case "apply-tax-rate": {
+        if (deps.billingSecretArn === undefined || !deps.stripe || !deps.secret) {
+          return failed("env\n");
+        }
+
         const slug = positional[0];
         if (slug === undefined) {
           return failed("invalid_argument\n");
@@ -262,11 +286,7 @@ export async function runBillingAdmin(deps: BillingAdminDeps): Promise<BillingAd
           idempotencyKey,
         });
 
-        await deps.platform`
-          update platform.billing_accounts
-          set tax_rate_id = ${settings.stripeTaxRateId}
-          where organisation_id = ${org.id}::uuid
-        `;
+        await setAccountTaxRate(deps.platform, org.id, settings.stripeTaxRateId);
 
         return ok("applied\n");
       }
@@ -317,7 +337,8 @@ export async function runBillingAdmin(deps: BillingAdminDeps): Promise<BillingAd
           key === undefined ||
           lookupKey === undefined ||
           trialEligibleRaw === undefined ||
-          (trialEligibleRaw !== "true" && trialEligibleRaw !== "false")
+          (trialEligibleRaw !== "true" && trialEligibleRaw !== "false") ||
+          entitlementsRaw === undefined
         ) {
           return failed("invalid_argument\n");
         }
@@ -332,14 +353,28 @@ export async function runBillingAdmin(deps: BillingAdminDeps): Promise<BillingAd
           return failed("invalid_argument\n");
         }
 
+        const rawEntitlements = entitlementsRaw
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+
+        if (rawEntitlements.length === 0) {
+          return failed("invalid_argument\n");
+        }
+
+        const seenKeys = new Set<string>();
+        for (const k of rawEntitlements) {
+          if (k.length > 64 || !/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/.test(k)) {
+            return failed("invalid_argument\n");
+          }
+          if (seenKeys.has(k)) {
+            return failed("invalid_argument\n");
+          }
+          seenKeys.add(k);
+        }
+
         const trialEligible = trialEligibleRaw === "true";
-        const entitlementsList = entitlementsRaw
-          ? entitlementsRaw
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean)
-              .map((k) => ({ key: k, limit: null }))
-          : [];
+        const entitlementsList = rawEntitlements.map((k) => ({ key: k, limit: null }));
 
         await upsertPlan(deps.platform, { key, entitlements: entitlementsList });
         await setPlanBilling(deps.platform, key, {
@@ -351,6 +386,10 @@ export async function runBillingAdmin(deps: BillingAdminDeps): Promise<BillingAd
       }
 
       case "seed-test-catalogue": {
+        if (deps.billingSecretArn === undefined || !deps.stripe || !deps.secret) {
+          return failed("env\n");
+        }
+
         const secretValues = await deps.secret.get();
         const key = secretValues.secretKey;
         const isTestMode =
@@ -444,18 +483,21 @@ if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
         typeof secretsManagerReader
       >[0],
     );
-    const secret = billingSecret(
-      (arn, stage) => reader(arn, stage ?? "AWSCURRENT"),
-      env.BILLING_SECRET_ARN ?? "",
-      env.COMMUNITY_HUB_ENVIRONMENT === "prod" ? "prod" : "staging",
-    );
-    const stripe = createStripeBilling({ secret });
+    const secret = env.BILLING_SECRET_ARN
+      ? billingSecret(
+          (arn, stage) => reader(arn, stage ?? "AWSCURRENT"),
+          env.BILLING_SECRET_ARN,
+          env.COMMUNITY_HUB_ENVIRONMENT,
+        )
+      : undefined;
+    const stripe = secret ? createStripeBilling({ secret }) : undefined;
     try {
       result = await runBillingAdminMain({
         args: process.argv.slice(2),
         platform,
         stripe,
         secret,
+        billingSecretArn: env.BILLING_SECRET_ARN,
         now: () => new Date(),
       });
     } finally {

@@ -12,6 +12,7 @@ import {
   findBySubscription,
   linkSubscription,
   readAccount,
+  setAccountTaxRate,
   setMode,
 } from "./accounts.js";
 
@@ -385,5 +386,21 @@ describe("accounts repository integration", () => {
       }
       holder.release();
     }
+  });
+
+  it("setAccountTaxRate updates only that organisation's tax_rate_id; org B unchanged", async () => {
+    const orgA = await createTestOrg(platformSql);
+    const orgB = await createTestOrg(platformSql);
+    await setMode(platformSql, orgA, "self_serve");
+    await setMode(platformSql, orgB, "self_serve");
+
+    const taxRateA = token("txr");
+    await setAccountTaxRate(platformSql, orgA, taxRateA);
+
+    const accountA = await readAccount(platformSql, orgA);
+    expect(accountA?.taxRateId).toBe(taxRateA);
+
+    const accountB = await readAccount(platformSql, orgB);
+    expect(accountB?.taxRateId).toBeNull();
   });
 });

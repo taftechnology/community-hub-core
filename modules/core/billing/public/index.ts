@@ -40,6 +40,7 @@ export {
   findBySubscription,
   linkSubscription,
   readAccount,
+  setAccountTaxRate,
   setMode,
   type BillingAccount,
   type LinkSubscriptionResult,

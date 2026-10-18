@@ -14,6 +14,7 @@ const billing = vi.hoisted(() => ({
   currentSettings: vi.fn(),
   insertSettings: vi.fn(),
   readAccount: vi.fn(),
+  setAccountTaxRate: vi.fn(),
   setMode: vi.fn(),
   syncQuantity: vi.fn(),
 }));
@@ -32,6 +33,7 @@ vi.mock("@community-hub/billing", async () => {
     currentSettings: billing.currentSettings,
     insertSettings: billing.insertSettings,
     readAccount: billing.readAccount,
+    setAccountTaxRate: billing.setAccountTaxRate,
     setMode: billing.setMode,
     syncQuantity: billing.syncQuantity,
   };
@@ -47,6 +49,8 @@ const LIVE_SECRET_KEY = "sk_live_" + "synthetic1234567890abcdef";
 describe("billing-admin", () => {
   let fakeSql: Sql;
   let sqlExecuted: string[];
+  let productStore: Map<string, { id: string }>;
+  let priceStore: Map<string, { id: string }>;
   let fakeStripe: {
     createTaxRate: ReturnType<typeof vi.fn>;
     updateQuantity: ReturnType<typeof vi.fn>;
@@ -70,6 +74,8 @@ describe("billing-admin", () => {
       return [];
     }) as unknown as Sql;
 
+    productStore = new Map();
+    priceStore = new Map();
     createdProductsCount = 0;
     createdPricesCount = 0;
 
@@ -79,12 +85,24 @@ describe("billing-admin", () => {
       updateDefaultTaxRate: vi.fn(async () => undefined),
       findPriceByLookupKey: vi.fn(async () => null),
       ensureProduct: vi.fn(async (input) => {
+        const existing = productStore.get(input.lookupKey);
+        if (existing) {
+          return existing;
+        }
         createdProductsCount++;
-        return { id: `prod_${input.lookupKey}` };
+        const created = { id: `prod_${input.lookupKey}` };
+        productStore.set(input.lookupKey, created);
+        return created;
       }),
       ensurePrice: vi.fn(async (input) => {
+        const existing = priceStore.get(input.lookupKey);
+        if (existing) {
+          return existing;
+        }
         createdPricesCount++;
-        return { id: `price_${input.lookupKey}` };
+        const created = { id: `price_${input.lookupKey}` };
+        priceStore.set(input.lookupKey, created);
+        return created;
       }),
     };
 
@@ -103,6 +121,8 @@ describe("billing-admin", () => {
       platform: fakeSql,
       stripe: fakeStripe as unknown as BillingAdminDeps["stripe"],
       secret: fakeSecret as unknown as BillingAdminDeps["secret"],
+      billingSecretArn:
+        "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-billing-AbCdEf",
       now: () => new Date("2026-10-18T00:00:00.000Z"),
       ...overrides,
     };
@@ -264,11 +284,84 @@ describe("billing-admin", () => {
           .exitCode,
       ).toBe(0);
 
-      // note bounds: length <= 200 printable ASCII
+      // note bounds: length <= 200 printable ASCII, at least 1 char
       const note200 = "a".repeat(200);
       const note201 = "a".repeat(201);
       expect((await runBillingAdmin(deps([...validArgs.slice(0, 10), note200]))).exitCode).toBe(0);
       expect((await runBillingAdmin(deps([...validArgs.slice(0, 10), note201]))).exitCode).toBe(1);
+
+      fakeStripe.createTaxRate.mockClear();
+      const emptyNoteResult = await runBillingAdmin(deps([...validArgs.slice(0, 10), ""]));
+      expect(emptyNoteResult.exitCode).toBe(1);
+      expect(emptyNoteResult.stderr).toBe("invalid_argument\n");
+      expect(fakeStripe.createTaxRate).not.toHaveBeenCalled();
+    });
+
+    it("strict number formats for gst-bps, trial-days, and grace-days exit 1 with invalid_argument and createTaxRate not called", async () => {
+      const baseArgs = [
+        "settings",
+        "--gst-bps",
+        "1000",
+        "--inclusive",
+        "true",
+        "--trial-days",
+        "30",
+        "--grace-days",
+        "7",
+        "--note",
+        "valid note",
+      ];
+
+      const badGstBps = ["", "0x3E8", "1e3", " 1000 ", "10.5"];
+      for (const val of badGstBps) {
+        fakeStripe.createTaxRate.mockClear();
+        const res = await runBillingAdmin(
+          deps(["settings", "--gst-bps", val, ...baseArgs.slice(3)]),
+        );
+        expect(res.exitCode).toBe(1);
+        expect(res.stderr).toBe("invalid_argument\n");
+        expect(fakeStripe.createTaxRate).not.toHaveBeenCalled();
+      }
+
+      fakeStripe.createTaxRate.mockClear();
+      const resTrial = await runBillingAdmin(
+        deps([
+          "settings",
+          "--gst-bps",
+          "1000",
+          "--inclusive",
+          "true",
+          "--trial-days",
+          "",
+          "--grace-days",
+          "7",
+          "--note",
+          "valid note",
+        ]),
+      );
+      expect(resTrial.exitCode).toBe(1);
+      expect(resTrial.stderr).toBe("invalid_argument\n");
+      expect(fakeStripe.createTaxRate).not.toHaveBeenCalled();
+
+      fakeStripe.createTaxRate.mockClear();
+      const resGrace = await runBillingAdmin(
+        deps([
+          "settings",
+          "--gst-bps",
+          "1000",
+          "--inclusive",
+          "true",
+          "--trial-days",
+          "30",
+          "--grace-days",
+          "",
+          "--note",
+          "valid note",
+        ]),
+      );
+      expect(resGrace.exitCode).toBe(1);
+      expect(resGrace.stderr).toBe("invalid_argument\n");
+      expect(fakeStripe.createTaxRate).not.toHaveBeenCalled();
     });
 
     it("note with newline fails", async () => {
@@ -381,7 +474,7 @@ describe("billing-admin", () => {
   });
 
   describe("apply-tax-rate command", () => {
-    it("happy path calls updateDefaultTaxRate with exact idempotency key and updates billing_accounts", async () => {
+    it("happy path calls updateDefaultTaxRate with exact idempotency key and calls setAccountTaxRate", async () => {
       tenancy.findOrganisationBySlug.mockResolvedValueOnce({
         id: "33333333-3333-4333-8333-333333333333",
         slug: "grace-church",
@@ -409,9 +502,12 @@ describe("billing-admin", () => {
         idempotencyKey: "taxmove:sub_taxmove_1:sett-4444",
       });
 
-      expect(sqlExecuted.length).toBeGreaterThan(0);
-      expect(sqlExecuted[0]).toContain("update platform.billing_accounts");
-      expect(sqlExecuted[0]).toContain("tax_rate_id");
+      expect(billing.setAccountTaxRate).toHaveBeenCalledTimes(1);
+      expect(billing.setAccountTaxRate).toHaveBeenCalledWith(
+        fakeSql,
+        "33333333-3333-4333-8333-333333333333",
+        "txr_newest_gst",
+      );
     });
 
     it("fails when organisation slug is unknown", async () => {
@@ -420,6 +516,7 @@ describe("billing-admin", () => {
       const result = await runBillingAdmin(deps(["apply-tax-rate", "unknown"]));
       expect(result.exitCode).toBe(1);
       expect(fakeStripe.updateDefaultTaxRate).not.toHaveBeenCalled();
+      expect(billing.setAccountTaxRate).not.toHaveBeenCalled();
     });
 
     it("fails when settings has no tax rate", async () => {
@@ -435,6 +532,38 @@ describe("billing-admin", () => {
       const result = await runBillingAdmin(deps(["apply-tax-rate", "grace-church"]));
       expect(result.exitCode).toBe(1);
       expect(fakeStripe.updateDefaultTaxRate).not.toHaveBeenCalled();
+      expect(billing.setAccountTaxRate).not.toHaveBeenCalled();
+    });
+
+    it("not_linked: organisation without linked subscription exits 1 with not_linked and makes no port calls", async () => {
+      tenancy.findOrganisationBySlug.mockResolvedValue({
+        id: "33333333-3333-4333-8333-333333333333",
+        slug: "grace-church",
+      });
+      billing.currentSettings.mockResolvedValue({
+        id: "sett-4444",
+        stripeTaxRateId: "txr_newest_gst",
+      });
+
+      // 1. Account is null
+      billing.readAccount.mockResolvedValueOnce(null);
+      const resNull = await runBillingAdmin(deps(["apply-tax-rate", "grace-church"]));
+      expect(resNull.exitCode).toBe(1);
+      expect(resNull.stderr).toBe("not_linked\n");
+      expect(fakeStripe.updateDefaultTaxRate).not.toHaveBeenCalled();
+      expect(billing.setAccountTaxRate).not.toHaveBeenCalled();
+
+      // 2. Account has null stripeSubscriptionId
+      billing.readAccount.mockResolvedValueOnce({
+        organisationId: "33333333-3333-4333-8333-333333333333",
+        mode: "self_serve",
+        stripeSubscriptionId: null,
+      });
+      const resNoSub = await runBillingAdmin(deps(["apply-tax-rate", "grace-church"]));
+      expect(resNoSub.exitCode).toBe(1);
+      expect(resNoSub.stderr).toBe("not_linked\n");
+      expect(fakeStripe.updateDefaultTaxRate).not.toHaveBeenCalled();
+      expect(billing.setAccountTaxRate).not.toHaveBeenCalled();
     });
   });
 
@@ -484,41 +613,45 @@ describe("billing-admin", () => {
       expect(result.stdout).toBe("invoiced\n");
     });
 
-    it("mode invoiced on active refuses without --subscription-cancelled-in-stripe and succeeds with it", async () => {
-      tenancy.findOrganisationBySlug.mockResolvedValue({
-        id: "44444444-4444-4444-8444-444444444444",
-        slug: "st-peters",
-      });
-      billing.readAccount.mockResolvedValue({
-        organisationId: "44444444-4444-4444-8444-444444444444",
-        mode: "self_serve",
-        stripeSubscriptionId: "sub_live_123",
-        stripeStatus: "active",
-      });
+    it.each(["trialing", "active", "past_due", "unpaid", "incomplete", "paused"])(
+      "mode invoiced on live status %s refuses without --subscription-cancelled-in-stripe and succeeds with it",
+      async (status) => {
+        tenancy.findOrganisationBySlug.mockResolvedValue({
+          id: "44444444-4444-4444-8444-444444444444",
+          slug: "st-peters",
+        });
+        billing.readAccount.mockResolvedValue({
+          organisationId: "44444444-4444-4444-8444-444444444444",
+          mode: "self_serve",
+          stripeSubscriptionId: "sub_live_123",
+          stripeStatus: status,
+        });
 
-      // 1. Without flag: refuses
-      const refused = await runBillingAdmin(deps(["mode", "st-peters", "invoiced"]));
-      expect(refused.exitCode).toBe(1);
-      expect(billing.setMode).not.toHaveBeenCalled();
+        // 1. Without flag: refuses
+        const refused = await runBillingAdmin(deps(["mode", "st-peters", "invoiced"]));
+        expect(refused.exitCode).toBe(1);
+        expect(refused.stderr).toBe("refused\n");
+        expect(billing.setMode).not.toHaveBeenCalled();
 
-      // 2. With flag: succeeds
-      billing.setMode.mockResolvedValueOnce({
-        organisationId: "44444444-4444-4444-8444-444444444444",
-        mode: "invoiced",
-        stripeSubscriptionId: "sub_live_123",
-        stripeStatus: "active",
-      });
-      const allowed = await runBillingAdmin(
-        deps(["mode", "st-peters", "invoiced", "--subscription-cancelled-in-stripe"]),
-      );
-      expect(allowed.exitCode).toBe(0);
-      expect(allowed.stdout).toBe("invoiced\n");
-      expect(billing.setMode).toHaveBeenCalledWith(
-        fakeSql,
-        "44444444-4444-4444-8444-444444444444",
-        "invoiced",
-      );
-    });
+        // 2. With flag: succeeds
+        billing.setMode.mockResolvedValueOnce({
+          organisationId: "44444444-4444-4444-8444-444444444444",
+          mode: "invoiced",
+          stripeSubscriptionId: "sub_live_123",
+          stripeStatus: status,
+        });
+        const allowed = await runBillingAdmin(
+          deps(["mode", "st-peters", "invoiced", "--subscription-cancelled-in-stripe"]),
+        );
+        expect(allowed.exitCode).toBe(0);
+        expect(allowed.stdout).toBe("invoiced\n");
+        expect(billing.setMode).toHaveBeenCalledWith(
+          fakeSql,
+          "44444444-4444-4444-8444-444444444444",
+          "invoiced",
+        );
+      },
+    );
 
     it("mode invoiced on canceled or incomplete_expired subscription succeeds without flag", async () => {
       tenancy.findOrganisationBySlug.mockResolvedValue({
@@ -629,6 +762,69 @@ describe("billing-admin", () => {
       expect(result.exitCode).toBe(1);
       expect(entitlements.upsertPlan).not.toHaveBeenCalled();
     });
+
+    it("fails and exits 1 with upsertPlan not called when --entitlements is missing", async () => {
+      const result = await runBillingAdmin(
+        deps(["plan", "starter", "--lookup-key", "starter_monthly", "--trial-eligible", "true"]),
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toBe("invalid_argument\n");
+      expect(entitlements.upsertPlan).not.toHaveBeenCalled();
+    });
+
+    it("fails and exits 1 with upsertPlan not called when --entitlements is ','", async () => {
+      const result = await runBillingAdmin(
+        deps([
+          "plan",
+          "starter",
+          "--lookup-key",
+          "starter_monthly",
+          "--trial-eligible",
+          "true",
+          "--entitlements",
+          ",",
+        ]),
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toBe("invalid_argument\n");
+      expect(entitlements.upsertPlan).not.toHaveBeenCalled();
+    });
+
+    it("fails and exits 1 with upsertPlan not called when duplicate entitlement key is passed", async () => {
+      const result = await runBillingAdmin(
+        deps([
+          "plan",
+          "starter",
+          "--lookup-key",
+          "starter_monthly",
+          "--trial-eligible",
+          "true",
+          "--entitlements",
+          "people.directory,people.directory",
+        ]),
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toBe("invalid_argument\n");
+      expect(entitlements.upsertPlan).not.toHaveBeenCalled();
+    });
+
+    it("fails and exits 1 with upsertPlan not called when invalid entitlement key is passed", async () => {
+      const result = await runBillingAdmin(
+        deps([
+          "plan",
+          "starter",
+          "--lookup-key",
+          "starter_monthly",
+          "--trial-eligible",
+          "true",
+          "--entitlements",
+          "invalid_key_without_dot",
+        ]),
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toBe("invalid_argument\n");
+      expect(entitlements.upsertPlan).not.toHaveBeenCalled();
+    });
   });
 
   describe("seed-test-catalogue command", () => {
@@ -710,21 +906,105 @@ describe("billing-admin", () => {
       expect(createdProductsCount).toBe(7);
       expect(createdPricesCount).toBe(7);
 
-      // Now simulate existing objects in fakeStripe (mock existing search hits)
-      fakeStripe.ensureProduct.mockImplementation(async (input) => ({
-        id: `prod_existing_${input.lookupKey}`,
-      }));
-      fakeStripe.ensurePrice.mockImplementation(async (input) => ({
-        id: `price_existing_${input.lookupKey}`,
-      }));
-
+      // Reset create counters for run 2 — fake state (productStore & priceStore) is carried over
       createdProductsCount = 0;
       createdPricesCount = 0;
 
+      // Second run uses the same fakes; existing objects found by lookup_key search
       const secondRun = await runBillingAdmin(deps(["seed-test-catalogue"]));
       expect(secondRun.exitCode).toBe(0);
       expect(createdProductsCount).toBe(0);
       expect(createdPricesCount).toBe(0);
+    });
+  });
+
+  describe("entrypoint and BILLING_SECRET_ARN handling", () => {
+    it.each([
+      [
+        "settings",
+        [
+          "settings",
+          "--gst-bps",
+          "1000",
+          "--inclusive",
+          "true",
+          "--trial-days",
+          "30",
+          "--grace-days",
+          "7",
+          "--note",
+          "GST",
+        ],
+      ],
+      ["sync", ["sync", "acme-parish"]],
+      ["apply-tax-rate", ["apply-tax-rate", "acme-parish"]],
+      ["seed-test-catalogue", ["seed-test-catalogue"]],
+    ])(
+      "when BILLING_SECRET_ARN is undefined, Stripe-using command %s exits with env\\n",
+      async (_name, cmd) => {
+        const res = await runBillingAdmin(
+          deps(cmd, { billingSecretArn: undefined, stripe: undefined, secret: undefined }),
+        );
+        expect(res.exitCode).toBe(1);
+        expect(res.stdout).toBe("");
+        expect(res.stderr).toBe("env\n");
+        expect(fakeSecret.get).not.toHaveBeenCalled();
+        expect(fakeStripe.createTaxRate).not.toHaveBeenCalled();
+        expect(fakeStripe.ensureProduct).not.toHaveBeenCalled();
+        expect(fakeStripe.updateDefaultTaxRate).not.toHaveBeenCalled();
+      },
+    );
+
+    it("non-Stripe commands mode and plan succeed even when BILLING_SECRET_ARN is undefined", async () => {
+      tenancy.findOrganisationBySlug.mockResolvedValueOnce({
+        id: "44444444-4444-4444-8444-444444444444",
+        slug: "st-peters",
+      });
+      billing.readAccount.mockResolvedValueOnce(null);
+      billing.setMode.mockResolvedValueOnce({
+        organisationId: "44444444-4444-4444-8444-444444444444",
+        mode: "invoiced",
+        stripeSubscriptionId: null,
+        stripeStatus: null,
+      });
+
+      const modeRes = await runBillingAdmin(
+        deps(["mode", "st-peters", "invoiced"], {
+          billingSecretArn: undefined,
+          stripe: undefined,
+          secret: undefined,
+        }),
+      );
+      expect(modeRes.exitCode).toBe(0);
+      expect(modeRes.stdout).toBe("invoiced\n");
+
+      const planRes = await runBillingAdmin(
+        deps(
+          [
+            "plan",
+            "starter",
+            "--lookup-key",
+            "starter_monthly",
+            "--trial-eligible",
+            "true",
+            "--entitlements",
+            "people.directory",
+          ],
+          { billingSecretArn: undefined, stripe: undefined, secret: undefined },
+        ),
+      );
+      expect(planRes.exitCode).toBe(0);
+      expect(planRes.stdout).toBe("plan_set\n");
+    });
+
+    it("passes env.COMMUNITY_HUB_ENVIRONMENT directly in entrypoint source", async () => {
+      const { readFileSync } = await import("node:fs");
+      const path = await import("node:path");
+      const { fileURLToPath } = await import("node:url");
+      const thisDir = path.dirname(fileURLToPath(import.meta.url));
+      const source = readFileSync(path.join(thisDir, "billing-admin.ts"), "utf8");
+      expect(source).toContain("env.COMMUNITY_HUB_ENVIRONMENT,");
+      expect(source).not.toContain('env.COMMUNITY_HUB_ENVIRONMENT === "prod"');
     });
   });
 
