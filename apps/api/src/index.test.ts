@@ -8,7 +8,7 @@ import { BillingUnavailable } from "@community-hub/billing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { readServiceEnv } from "./env.js";
-import { bindServices, boot, listeningServer, run } from "./index.js";
+import { bindServices, boot, listeningServer, productionRoutes, run } from "./index.js";
 import { rejectingStripeBilling } from "./billing/stripe-adapter.js";
 
 const pem = readFileSync(
@@ -474,5 +474,15 @@ describe("api boot wiring of the billing adapter and logger", () => {
       organisationId: "12345678-1234-4234-8234-1234567890ab",
     });
     expect(logger.getDroppedFieldCount()).toBe(0);
+  });
+
+  it("productionRoutes includes POST /v1/stripe/webhook with largeBody webhooks", () => {
+    const routes = productionRoutes(envWithBilling(), pem);
+    const webhookRoute = routes.find(
+      (r) => r.method === "POST" && r.pattern === "/v1/stripe/webhook",
+    );
+    expect(webhookRoute).toBeDefined();
+    expect(webhookRoute?.surface).toBe("tenant");
+    expect(webhookRoute?.largeBody).toBe("webhooks");
   });
 });

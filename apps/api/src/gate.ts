@@ -7,6 +7,7 @@ export type GateRoute = {
   pattern: string;
   surface: Surface;
   handle: (request: Request) => Response | Promise<Response>;
+  largeBody?: "webhooks";
 };
 
 export class RoutesRejected extends Error {
@@ -54,6 +55,14 @@ export function assertRoutes(routes: readonly GateRoute[]): void {
     if (route.surface === "all" && !(route.method === "GET" && route.pattern === "/health")) {
       throw new RoutesRejected();
     }
+    if (
+      route.largeBody !== undefined &&
+      (route.largeBody !== "webhooks" ||
+        route.method !== "POST" ||
+        route.pattern !== "/v1/stripe/webhook")
+    ) {
+      throw new RoutesRejected();
+    }
     const key = `${route.method} ${route.pattern}`;
     if (seen.has(key)) {
       throw new RoutesRejected();
@@ -76,7 +85,7 @@ function knownHostnames(hostnames: Hostnames): {
   };
 }
 
-function presentedHostname(request: Request): string | undefined {
+export function presentedHostname(request: Request): string | undefined {
   const raw = request.headers.get("x-community-hub-hostname");
   if (raw === null || raw === "") {
     return undefined;

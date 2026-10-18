@@ -19,6 +19,7 @@ import { createLogger, type LogFields, type Logger } from "@community-hub/observ
 import { authRoutes, type AuthDeps } from "./auth-routes.js";
 import { accessRoutes, type AccessDeps } from "./access-routes.js";
 import { entitlementRoutes, type EntitlementDeps } from "./entitlement-routes.js";
+import { billingWebhookRoutes } from "./billing-webhook.js";
 import { billingSecret, type BillingSecret } from "./billing/secret.js";
 import { createStripeBilling, rejectingStripeBilling } from "./billing/stripe-adapter.js";
 import { createCheckout } from "./checkout.js";
@@ -72,6 +73,7 @@ export function run(source: NodeJS.ProcessEnv, pem: string, routes: readonly Gat
         ...authRoutes(bound.auth),
         ...accessRoutes(bound.access),
         ...entitlementRoutes(bound.entitlements),
+        ...billingWebhookRoutes(bound.billing),
       ],
     });
   } catch (error) {
@@ -276,6 +278,7 @@ export function productionRoutes(env: ServiceEnv, pem: string): readonly GateRou
     ...authRoutes(bound.auth),
     ...accessRoutes(bound.access),
     ...entitlementRoutes(bound.entitlements),
+    ...billingWebhookRoutes(bound.billing),
   ];
 }
 

@@ -388,4 +388,142 @@ describe("startServer", () => {
     expect(await response.text()).toBe("");
     expect(calls).toBe(0);
   });
+
+  it("a 10 KiB POST to the webhook path with the webhooks hostname header reaches the handler", async () => {
+    const env = envFor(18460);
+    let calls = 0;
+    const server = startServer({
+      env,
+      routes: [
+        health,
+        {
+          method: "POST",
+          pattern: "/v1/stripe/webhook",
+          surface: "tenant",
+          largeBody: "webhooks",
+          handle: () => {
+            calls += 1;
+            return new Response(null, { status: 200 });
+          },
+        },
+      ],
+    });
+    servers.push(server);
+    await listening(server);
+
+    const response = await fetch("http://127.0.0.1:18460/v1/stripe/webhook", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-community-hub-hostname": env.WEBHOOKS_HOSTNAME,
+      },
+      body: "a".repeat(10240),
+    });
+    expect(response.status).toBe(200);
+    expect(calls).toBe(1);
+  });
+
+  it("262145 bytes to the webhook path gets 413, and the handler is not called", async () => {
+    const env = envFor(18461);
+    let calls = 0;
+    const server = startServer({
+      env,
+      routes: [
+        health,
+        {
+          method: "POST",
+          pattern: "/v1/stripe/webhook",
+          surface: "tenant",
+          largeBody: "webhooks",
+          handle: () => {
+            calls += 1;
+            return new Response(null, { status: 200 });
+          },
+        },
+      ],
+    });
+    servers.push(server);
+    await listening(server);
+
+    const response = await fetch("http://127.0.0.1:18461/v1/stripe/webhook", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-community-hub-hostname": env.WEBHOOKS_HOSTNAME,
+      },
+      body: "a".repeat(262145),
+    });
+    expect(response.status).toBe(413);
+    expect(await response.text()).toBe("");
+    expect(calls).toBe(0);
+  });
+
+  it("a 4097-byte POST to /v1/access/grants still gets 400", async () => {
+    const env = envFor(18462);
+    let calls = 0;
+    const server = startServer({
+      env,
+      routes: [
+        health,
+        {
+          method: "POST",
+          pattern: "/v1/access/grants",
+          surface: "tenant",
+          handle: () => {
+            calls += 1;
+            return new Response(null, { status: 204 });
+          },
+        },
+      ],
+    });
+    servers.push(server);
+    await listening(server);
+
+    const response = await fetch("http://127.0.0.1:18462/v1/access/grants", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-community-hub-hostname": env.API_HOSTNAME,
+      },
+      body: "a".repeat(4097),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("");
+    expect(calls).toBe(0);
+  });
+
+  it("a 10 KiB POST to the webhook path with the api hostname header gets 400", async () => {
+    const env = envFor(18463);
+    let calls = 0;
+    const server = startServer({
+      env,
+      routes: [
+        health,
+        {
+          method: "POST",
+          pattern: "/v1/stripe/webhook",
+          surface: "tenant",
+          largeBody: "webhooks",
+          handle: () => {
+            calls += 1;
+            return new Response(null, { status: 200 });
+          },
+        },
+      ],
+    });
+    servers.push(server);
+    await listening(server);
+
+    const response = await fetch("http://127.0.0.1:18463/v1/stripe/webhook", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-community-hub-hostname": env.API_HOSTNAME,
+      },
+      body: "a".repeat(10240),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("");
+    expect(calls).toBe(0);
+  });
 });

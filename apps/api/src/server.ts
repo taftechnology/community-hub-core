@@ -17,6 +17,18 @@ export type SignalSource = {
 
 const logger = createLogger();
 const POST_BODY_MAX_BYTES = 4096;
+const WEBHOOK_BODY_MAX_BYTES = 262_144;
+
+function presentedHostnameFromReq(req: IncomingMessage): string | undefined {
+  const raw = req.headers["x-community-hub-hostname"];
+  if (typeof raw === "string" && raw.length > 0) {
+    return raw.toLowerCase();
+  }
+  if (Array.isArray(raw) && raw.length > 0 && typeof raw[0] === "string" && raw[0].length > 0) {
+    return raw[0].toLowerCase();
+  }
+  return undefined;
+}
 
 function requestFrom(req: IncomingMessage, body?: Uint8Array): Request {
   const headers = new Headers();
@@ -37,13 +49,13 @@ function requestFrom(req: IncomingMessage, body?: Uint8Array): Request {
   });
 }
 
-async function readPostBody(req: IncomingMessage): Promise<Uint8Array | "over"> {
+async function readPostBody(req: IncomingMessage, maxBytes: number): Promise<Uint8Array | "over"> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += buf.byteLength;
-    if (size > POST_BODY_MAX_BYTES) {
+    if (size > maxBytes) {
       return "over";
     }
     chunks.push(buf);
@@ -98,10 +110,26 @@ export function startServer(options: {
       try {
         let body: Uint8Array | undefined;
         if (req.method === "POST") {
-          const read = await readPostBody(req);
+          const pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+          const isLargeBodyRoute = options.routes.some(
+            (route) =>
+              route.method === "POST" &&
+              route.pattern === pathname &&
+              route.largeBody === "webhooks",
+          );
+          const presentedHost = presentedHostnameFromReq(req);
+          const isWebhookHost =
+            presentedHost !== undefined &&
+            presentedHost === options.env.WEBHOOKS_HOSTNAME.toLowerCase();
+
+          const isLargeBody = isLargeBodyRoute && isWebhookHost;
+          const maxBytes = isLargeBody ? WEBHOOK_BODY_MAX_BYTES : POST_BODY_MAX_BYTES;
+
+          const read = await readPostBody(req, maxBytes);
           if (read === "over") {
+            const status = isLargeBody ? 413 : 400;
             if (!res.headersSent && !res.writableEnded && !res.socket?.destroyed) {
-              res.writeHead(400, { "Content-Length": "0" });
+              res.writeHead(status, { "Content-Length": "0" });
               res.end();
             }
             req.destroy();
