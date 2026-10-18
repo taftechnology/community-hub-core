@@ -120,6 +120,7 @@ resource "aws_ecr_lifecycle_policy" "service" {
 }
 
 locals {
+  admin_origin      = "https://admin.${var.zone_name}"
   api_hostname      = "au.api.${var.zone_name}"
   auth_hostname     = "auth.au.${var.zone_name}"
   webhooks_hostname = "webhooks.au.${var.zone_name}"
@@ -195,7 +196,7 @@ resource "aws_apigatewayv2_api" "tenant" {
     allow_credentials = false
     allow_headers     = ["authorization", "content-type"]
     allow_methods     = ["GET", "POST", "OPTIONS"]
-    allow_origins     = ["https://admin.${var.zone_name}"]
+    allow_origins     = [local.admin_origin]
   }
 
   tags = {
@@ -494,6 +495,7 @@ resource "aws_ecs_task_definition" "this" {
         ],
         var.mail_from_address == null ? [] : [{ name = "MAIL_FROM_ADDRESS", value = var.mail_from_address }],
         var.ses_configuration_set == null ? [] : [{ name = "SES_CONFIGURATION_SET", value = var.ses_configuration_set }],
+        var.billing_secret_arn == null ? [] : [{ name = "ADMIN_ORIGIN", value = local.admin_origin }, { name = "BILLING_SECRET_ARN", value = var.billing_secret_arn }],
       )
       secrets = concat(
         [

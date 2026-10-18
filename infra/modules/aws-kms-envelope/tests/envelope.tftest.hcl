@@ -54,6 +54,7 @@ run "happy" {
       "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-platform-AbCdEf",
     ]
     db_secrets_key_arn = "arn:aws:kms:ap-southeast-2:123456789012:key/mock-secrets"
+    billing_secret_arn = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-billing-AbCdEf"
   }
 
   override_resource {
@@ -381,6 +382,40 @@ run "happy" {
   }
 
   assert {
+    condition = jsondecode(aws_iam_role_policy.task_secrets.policy).Statement == [
+      {
+        Sid    = "ReadDbSecrets"
+        Effect = "Allow"
+        Action = ["secretsmanager:GetSecretValue"]
+        Resource = [
+          "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-app-AbCdEf",
+          "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-identity-AbCdEf",
+          "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-platform-AbCdEf",
+        ]
+      },
+      {
+        Sid      = "DecryptDbSecrets"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = "arn:aws:kms:ap-southeast-2:123456789012:key/mock-secrets"
+      },
+      {
+        Sid      = "ReadProvisionSecret"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-provision-owner-??????"
+      },
+      {
+        Sid      = "ReadBillingSecret"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-billing-AbCdEf"
+      },
+    ]
+    error_message = "task_secrets policy statements must match the exact expected four statements including ReadBillingSecret"
+  }
+
+  assert {
     condition = one([
       for statement in jsondecode(aws_iam_role_policy.task_secrets.policy).Statement :
       statement.Action
@@ -416,6 +451,11 @@ run "happy" {
       ])
     )
     error_message = "execution secrets must be the three role secrets and must not include the master secret"
+  }
+
+  assert {
+    condition     = !strcontains(aws_iam_role_policy.execution_secrets.policy, var.billing_secret_arn)
+    error_message = "execution secrets policy must not contain the billing secret ARN"
   }
 
   assert {
@@ -477,6 +517,7 @@ run "endpoint_on" {
       "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-platform-AbCdEf",
     ]
     db_secrets_key_arn = "arn:aws:kms:ap-southeast-2:123456789012:key/mock-secrets"
+    billing_secret_arn = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-billing-AbCdEf"
   }
 
   override_resource {
@@ -586,6 +627,7 @@ run "probe_create_grant" {
       "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-platform-AbCdEf",
     ]
     db_secrets_key_arn = "arn:aws:kms:ap-southeast-2:123456789012:key/mock-secrets"
+    billing_secret_arn = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-billing-AbCdEf"
   }
 
   expect_failures = [terraform_data.envelope_key_policy]
@@ -609,6 +651,7 @@ run "wrong_region" {
       "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-platform-AbCdEf",
     ]
     db_secrets_key_arn = "arn:aws:kms:ap-southeast-2:123456789012:key/mock-secrets"
+    billing_secret_arn = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-billing-AbCdEf"
   }
 
   expect_failures = [var.aws_region]
@@ -633,6 +676,7 @@ run "rotation_off" {
       "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-platform-AbCdEf",
     ]
     db_secrets_key_arn = "arn:aws:kms:ap-southeast-2:123456789012:key/mock-secrets"
+    billing_secret_arn = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-billing-AbCdEf"
   }
 
   expect_failures = [var.enable_key_rotation]
@@ -657,6 +701,7 @@ run "log_retention_zero" {
       "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-platform-AbCdEf",
     ]
     db_secrets_key_arn = "arn:aws:kms:ap-southeast-2:123456789012:key/mock-secrets"
+    billing_secret_arn = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-billing-AbCdEf"
   }
 
   expect_failures = [var.log_retention_days]

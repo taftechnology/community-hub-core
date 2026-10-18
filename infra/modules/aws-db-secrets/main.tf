@@ -56,6 +56,7 @@ resource "aws_kms_key" "secrets" {
               "arn:aws:secretsmanager:ap-southeast-2:${var.aws_account_id}:secret:${var.name}-identity-??????",
               "arn:aws:secretsmanager:ap-southeast-2:${var.aws_account_id}:secret:${var.name}-platform-??????",
               "arn:aws:secretsmanager:ap-southeast-2:${var.aws_account_id}:secret:${var.name}-provision-owner-??????",
+              "arn:aws:secretsmanager:ap-southeast-2:${var.aws_account_id}:secret:${var.name}-billing-??????",
             ]
           }
         }
@@ -98,6 +99,13 @@ resource "aws_secretsmanager_secret" "identity" {
 resource "aws_secretsmanager_secret" "platform" {
   region     = var.aws_region
   name       = "${var.name}-platform"
+  kms_key_id = aws_kms_key.secrets.arn
+  tags       = local.tags
+}
+
+resource "aws_secretsmanager_secret" "billing" {
+  region     = var.aws_region
+  name       = "${var.name}-billing"
   kms_key_id = aws_kms_key.secrets.arn
   tags       = local.tags
 }
