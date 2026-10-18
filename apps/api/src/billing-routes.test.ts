@@ -1045,5 +1045,155 @@ describe("billing routes", () => {
         { role: "platform" }, // listCommunityIds
       ]);
     });
+
+    it("pins roles and scope for portal success", async () => {
+      checkoutCalls.length = 0;
+      db.withAppTransaction.mockClear();
+
+      const target = route("/v1/billing/portal");
+      const res = await withRequest({ requestId: REQUEST_ID }, async () =>
+        target.handle(
+          request(
+            "/v1/billing/portal",
+            API_HOSTNAME,
+            { communitySlug: "parish" },
+            "Bearer token",
+          ),
+        ),
+      );
+      expect(res.status).toBe(200);
+
+      expect(db.withAppTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        { orgId: ORG, communityId: COMMUNITY },
+        expect.anything(),
+      );
+
+      expect(checkoutCalls.map((c) => c.role)).toEqual([
+        "identity",
+        "platform",
+        "app",
+        "platform",
+      ]);
+    });
+
+    it("pins roles and scope for status full path with planLookupKey", async () => {
+      checkoutCalls.length = 0;
+      db.withAppTransaction.mockClear();
+
+      billing.readAccount.mockResolvedValueOnce({
+        organisationId: ORG,
+        mode: "self_serve",
+        stripeCustomerId: "cus_test1",
+        stripeSubscriptionId: "sub_test1",
+        stripeStatus: "active",
+        planLookupKey: "starter_monthly",
+        quantity: 2,
+        currentPeriodEnd: new Date("2026-11-18T00:00:00.000Z"),
+        trialEnd: null,
+        trialUsedAt: null,
+        unpaidSince: null,
+        graceUntil: null,
+        taxRateId: null,
+        syncedAt: null,
+      });
+
+      const target = route("/v1/billing/status");
+      const res = await withRequest({ requestId: REQUEST_ID }, async () =>
+        target.handle(
+          request("/v1/billing/status", API_HOSTNAME, { communitySlug: "parish" }, "Bearer token"),
+        ),
+      );
+      expect(res.status).toBe(200);
+
+      expect(db.withAppTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        { orgId: ORG, communityId: COMMUNITY },
+        expect.anything(),
+      );
+
+      expect(checkoutCalls.map((c) => c.role)).toEqual([
+        "identity",
+        "platform",
+        "app",
+        "platform",
+        "platform",
+      ]);
+    });
+
+    it("pins roles and scope for status full path when planByLookupKey resolves null", async () => {
+      checkoutCalls.length = 0;
+      db.withAppTransaction.mockClear();
+
+      billing.readAccount.mockResolvedValueOnce({
+        organisationId: ORG,
+        mode: "self_serve",
+        stripeCustomerId: "cus_test1",
+        stripeSubscriptionId: "sub_test1",
+        stripeStatus: "active",
+        planLookupKey: "starter_monthly",
+        quantity: 2,
+        currentPeriodEnd: new Date("2026-11-18T00:00:00.000Z"),
+        trialEnd: null,
+        trialUsedAt: null,
+        unpaidSince: null,
+        graceUntil: null,
+        taxRateId: null,
+        syncedAt: null,
+      });
+      entitlements.planByLookupKey.mockResolvedValueOnce(null);
+
+      const target = route("/v1/billing/status");
+      const res = await withRequest({ requestId: REQUEST_ID }, async () =>
+        target.handle(
+          request("/v1/billing/status", API_HOSTNAME, { communitySlug: "parish" }, "Bearer token"),
+        ),
+      );
+      expect(res.status).toBe(200);
+
+      expect(db.withAppTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        { orgId: ORG, communityId: COMMUNITY },
+        expect.anything(),
+      );
+
+      expect(checkoutCalls.map((c) => c.role)).toEqual([
+        "identity",
+        "platform",
+        "app",
+        "platform",
+        "platform",
+        "platform",
+      ]);
+    });
+
+    it("pins roles and scope for status banner path", async () => {
+      checkoutCalls.length = 0;
+      db.withAppTransaction.mockClear();
+
+      access.holdsPermission.mockResolvedValue(false);
+      access.holdsAnyGrant.mockResolvedValue(true);
+
+      const target = route("/v1/billing/status");
+      const res = await withRequest({ requestId: REQUEST_ID }, async () =>
+        target.handle(
+          request("/v1/billing/status", API_HOSTNAME, { communitySlug: "parish" }, "Bearer token"),
+        ),
+      );
+      expect(res.status).toBe(200);
+
+      expect(db.withAppTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        { orgId: ORG, communityId: COMMUNITY },
+        expect.anything(),
+      );
+
+      expect(checkoutCalls.map((c) => c.role)).toEqual([
+        "identity",
+        "platform",
+        "app",
+        "platform",
+      ]);
+    });
   });
 });
