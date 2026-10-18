@@ -1,3 +1,8 @@
+import { defineAuditAction, defineAuditPurpose } from "@community-hub/kernel/module";
+
+defineAuditAction("billing.permission.denied");
+defineAuditPurpose("billing.permission.denied");
+
 export { deriveState, type Account, type BillingMode, type BillingState } from "../domain/state.js";
 
 export { checkoutDecision, type CheckoutDecision } from "../domain/checkout.js";

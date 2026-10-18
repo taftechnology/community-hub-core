@@ -1,5 +1,7 @@
 import { defineModule } from "@community-hub/kernel/module";
 
+// Audit action and purpose "billing.permission.denied" are registered in public/index.ts.
+
 export default defineModule({
   key: "core.billing",
   version: 1,

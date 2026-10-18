@@ -20,6 +20,7 @@ import { authRoutes, type AuthDeps } from "./auth-routes.js";
 import { accessRoutes, type AccessDeps } from "./access-routes.js";
 import { entitlementRoutes, type EntitlementDeps } from "./entitlement-routes.js";
 import { billingWebhookRoutes } from "./billing-webhook.js";
+import { billingRoutes } from "./billing-routes.js";
 import { billingSecret, type BillingSecret } from "./billing/secret.js";
 import { createStripeBilling, rejectingStripeBilling } from "./billing/stripe-adapter.js";
 import { createCheckout } from "./checkout.js";
@@ -74,6 +75,7 @@ export function run(source: NodeJS.ProcessEnv, pem: string, routes: readonly Gat
         ...accessRoutes(bound.access),
         ...entitlementRoutes(bound.entitlements),
         ...billingWebhookRoutes(bound.billing),
+        ...billingRoutes(bound.billing),
       ],
     });
   } catch (error) {
@@ -123,6 +125,8 @@ export type BillingLogFields = Pick<
 
 export type BillingDeps = {
   readonly checkout: ReturnType<typeof createCheckout>;
+  readonly kms: KmsPort;
+  readonly keyArn: string;
   readonly port: StripeBilling;
   readonly now: () => Date;
   readonly apiHostname: string;
@@ -216,6 +220,10 @@ export function bindServices(
 
   const billing: BillingDeps = {
     checkout,
+    get kms() {
+      return shared.kms;
+    },
+    keyArn: shared.keyArn,
     get port() {
       if (billingSecretInstance === undefined) {
         return rejectingStripeBilling;
@@ -279,6 +287,7 @@ export function productionRoutes(env: ServiceEnv, pem: string): readonly GateRou
     ...accessRoutes(bound.access),
     ...entitlementRoutes(bound.entitlements),
     ...billingWebhookRoutes(bound.billing),
+    ...billingRoutes(bound.billing),
   ];
 }
 

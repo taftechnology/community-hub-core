@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { isAuditAction, isAuditPurpose } from "@community-hub/kernel/module";
 
 import billingModule from "../module.manifest.js";
+import "../public/index.js";
 
 describe("core.billing manifest", () => {
   it("declares the platform columns, dependencies and permissions", () => {
@@ -45,5 +47,10 @@ describe("core.billing manifest", () => {
     expect(billingModule).not.toHaveProperty("website");
     expect(billingModule).not.toHaveProperty("entitlement");
     expect(billingModule).not.toHaveProperty("features");
+  });
+
+  it("registers billing.permission.denied as an audit action and purpose", () => {
+    expect(isAuditAction("billing.permission.denied")).toBe(true);
+    expect(isAuditPurpose("billing.permission.denied")).toBe(true);
   });
 });
