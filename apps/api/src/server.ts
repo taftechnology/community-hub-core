@@ -110,7 +110,7 @@ export function startServer(options: {
       try {
         let body: Uint8Array | undefined;
         if (req.method === "POST") {
-          const pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+          const pathname = new URL(`http://127.0.0.1${req.url ?? "/"}`).pathname;
           const isLargeBodyRoute = options.routes.some(
             (route) =>
               route.method === "POST" &&

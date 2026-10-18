@@ -430,6 +430,47 @@ describe("billing-webhook", () => {
         "ignored",
       );
     });
+
+    it("an invoice event whose apply returns unknown_price is processed and logged BILLING_UNKNOWN_PRICE", async () => {
+      billingRepo.recordReceived.mockResolvedValueOnce("received");
+      billingRepo.applySubscription.mockResolvedValueOnce("unknown_price");
+      const port = createFakePort({
+        verifyEvent: vi.fn(async () => ({
+          id: "evt_testInvUnknownPrice",
+          type: "invoice.paid",
+          data: { object: { id: "in_test_up" } },
+        })),
+        subscriptionForInvoice: vi.fn(async () => "sub_test_up"),
+      });
+
+      const { deps, loggedLines } = createTestDeps({ port });
+      const routes = billingWebhookRoutes(deps);
+      const route = routes.find((r) => r.pattern === "/v1/stripe/webhook")!;
+
+      const req = makeWebhookRequest("{}", { "stripe-signature": "dummy" });
+      const res = await route.handle(req);
+
+      expect(res.status).toBe(200);
+      expect(billingRepo.applySubscription).toHaveBeenCalledWith(
+        expect.anything(),
+        port,
+        "sub_test_up",
+        FROZEN_NOW,
+      );
+      expect(billingRepo.markOutcome).toHaveBeenCalledWith(
+        expect.anything(),
+        "evt_testInvUnknownPrice",
+        "processed",
+      );
+      expect(loggedLines).toHaveLength(1);
+      expect(loggedLines[0]).toMatchObject({
+        operation: "stripe_webhook",
+        stripeEventId: "evt_testInvUnknownPrice",
+        stripeEventType: "invoice.paid",
+        outcome: "processed",
+        errorCode: "BILLING_UNKNOWN_PRICE",
+      });
+    });
   });
 
   describe("event types and outcomes", () => {
@@ -545,6 +586,7 @@ describe("billing-webhook", () => {
               client_reference_id: validOrgId,
               customer: "cus_test1",
               subscription: "sub_test1",
+              status: "complete",
             },
           },
         })),
@@ -589,6 +631,187 @@ describe("billing-webhook", () => {
         "evt_testCheckout",
         "processed",
       );
+    });
+
+    it("mismatched organisationIdMetadata in re-read is ignored without linking, code logged", async () => {
+      billingRepo.recordReceived.mockResolvedValueOnce("received");
+
+      const port = createFakePort({
+        verifyEvent: vi.fn(async () => ({
+          id: "evt_testCheckoutMismatch",
+          type: "checkout.session.completed",
+          data: {
+            object: {
+              id: "cs_test_mismatch",
+              client_reference_id: validOrgId,
+              customer: "cus_test1",
+              subscription: "sub_test1",
+              status: "complete",
+            },
+          },
+        })),
+        retrieveSubscription: vi.fn(async (id: string) => ({
+          id,
+          customerId: "cus_test1",
+          status: "trialing",
+          lookupKey: "starter_monthly",
+          quantity: 1,
+          currentPeriodEnd: new Date("2026-11-18T09:00:00Z"),
+          trialEnd: new Date("2026-11-18T09:00:00Z"),
+          taxRateId: "txr_test1",
+          organisationIdMetadata: "87654321-4321-4234-8234-1234567890ab",
+        })),
+      });
+
+      const { deps, loggedLines } = createTestDeps({ port });
+      const routes = billingWebhookRoutes(deps);
+      const route = routes.find((r) => r.pattern === "/v1/stripe/webhook")!;
+
+      const req = makeWebhookRequest("{}", { "stripe-signature": "dummy" });
+      const res = await route.handle(req);
+
+      expect(res.status).toBe(200);
+      expect(billingRepo.linkSubscription).not.toHaveBeenCalled();
+      expect(billingRepo.applySubscription).not.toHaveBeenCalled();
+      expect(billingRepo.markOutcome).toHaveBeenCalledWith(
+        expect.anything(),
+        "evt_testCheckoutMismatch",
+        "ignored",
+      );
+      expect(loggedLines).toHaveLength(1);
+      expect(loggedLines[0]).toMatchObject({
+        operation: "stripe_webhook",
+        stripeEventId: "evt_testCheckoutMismatch",
+        stripeEventType: "checkout.session.completed",
+        organisationId: validOrgId,
+        outcome: "ignored",
+        errorCode: "BILLING_ORGANISATION_MISMATCH",
+      });
+    });
+
+    it("missing organisationIdMetadata in re-read is ignored without linking, code logged", async () => {
+      billingRepo.recordReceived.mockResolvedValueOnce("received");
+
+      const port = createFakePort({
+        verifyEvent: vi.fn(async () => ({
+          id: "evt_testCheckoutMissingMeta",
+          type: "checkout.session.completed",
+          data: {
+            object: {
+              id: "cs_test_missing_meta",
+              client_reference_id: validOrgId,
+              customer: "cus_test1",
+              subscription: "sub_test1",
+              status: "complete",
+            },
+          },
+        })),
+        retrieveSubscription: vi.fn(async (id: string) => ({
+          id,
+          customerId: "cus_test1",
+          status: "trialing",
+          lookupKey: "starter_monthly",
+          quantity: 1,
+          currentPeriodEnd: new Date("2026-11-18T09:00:00Z"),
+          trialEnd: new Date("2026-11-18T09:00:00Z"),
+          taxRateId: "txr_test1",
+          organisationIdMetadata: null,
+        })),
+      });
+
+      const { deps, loggedLines } = createTestDeps({ port });
+      const routes = billingWebhookRoutes(deps);
+      const route = routes.find((r) => r.pattern === "/v1/stripe/webhook")!;
+
+      const req = makeWebhookRequest("{}", { "stripe-signature": "dummy" });
+      const res = await route.handle(req);
+
+      expect(res.status).toBe(200);
+      expect(billingRepo.linkSubscription).not.toHaveBeenCalled();
+      expect(billingRepo.applySubscription).not.toHaveBeenCalled();
+      expect(billingRepo.markOutcome).toHaveBeenCalledWith(
+        expect.anything(),
+        "evt_testCheckoutMissingMeta",
+        "ignored",
+      );
+      expect(loggedLines).toHaveLength(1);
+      expect(loggedLines[0]).toMatchObject({
+        operation: "stripe_webhook",
+        stripeEventId: "evt_testCheckoutMissingMeta",
+        stripeEventType: "checkout.session.completed",
+        organisationId: validOrgId,
+        outcome: "ignored",
+        errorCode: "BILLING_ORGANISATION_MISMATCH",
+      });
+    });
+
+    it("a linked checkout whose apply returns unknown_price is processed and logged BILLING_UNKNOWN_PRICE", async () => {
+      billingRepo.recordReceived.mockResolvedValueOnce("received");
+      billingRepo.linkSubscription.mockResolvedValueOnce("linked");
+      billingRepo.applySubscription.mockResolvedValueOnce("unknown_price");
+
+      const port = createFakePort({
+        verifyEvent: vi.fn(async () => ({
+          id: "evt_testCheckoutUnknownPrice",
+          type: "checkout.session.completed",
+          data: {
+            object: {
+              id: "cs_test_unknown_price",
+              client_reference_id: validOrgId,
+              customer: "cus_test1",
+              subscription: "sub_test1",
+              status: "complete",
+            },
+          },
+        })),
+        retrieveSubscription: vi.fn(async (id: string) => ({
+          id,
+          customerId: "cus_test1",
+          status: "active",
+          lookupKey: "starter_monthly",
+          quantity: 1,
+          currentPeriodEnd: new Date("2026-11-18T09:00:00Z"),
+          trialEnd: null,
+          taxRateId: "txr_test1",
+          organisationIdMetadata: validOrgId,
+        })),
+      });
+
+      const { deps, loggedLines } = createTestDeps({ port });
+      const routes = billingWebhookRoutes(deps);
+      const route = routes.find((r) => r.pattern === "/v1/stripe/webhook")!;
+
+      const req = makeWebhookRequest("{}", { "stripe-signature": "dummy" });
+      const res = await route.handle(req);
+
+      expect(res.status).toBe(200);
+      expect(billingRepo.linkSubscription).toHaveBeenCalledWith(
+        expect.anything(),
+        validOrgId,
+        "cus_test1",
+        "sub_test1",
+        "active",
+      );
+      expect(billingRepo.applySubscription).toHaveBeenCalledWith(
+        expect.anything(),
+        port,
+        "sub_test1",
+        FROZEN_NOW,
+      );
+      expect(billingRepo.markOutcome).toHaveBeenCalledWith(
+        expect.anything(),
+        "evt_testCheckoutUnknownPrice",
+        "processed",
+      );
+      expect(loggedLines).toHaveLength(1);
+      expect(loggedLines[0]).toMatchObject({
+        operation: "stripe_webhook",
+        stripeEventId: "evt_testCheckoutUnknownPrice",
+        stripeEventType: "checkout.session.completed",
+        organisationId: validOrgId,
+        outcome: "processed",
+        errorCode: "BILLING_UNKNOWN_PRICE",
+      });
     });
 
     it("a duplicate is ignored, with the code logged BILLING_DUPLICATE_SUBSCRIPTION", async () => {
@@ -749,7 +972,7 @@ describe("billing-webhook", () => {
         })),
       });
 
-      const { deps, loggedLines } = createTestDeps({ port });
+      const { deps, loggedLines, logger } = createTestDeps({ port });
       const routes = billingWebhookRoutes(deps);
       const route = routes.find((r) => r.pattern === "/v1/stripe/webhook")!;
 
@@ -764,12 +987,97 @@ describe("billing-webhook", () => {
       // markOutcome was NOT called, so the row stays 'received'
       expect(billingRepo.markOutcome).not.toHaveBeenCalled();
 
+      // Assert that failed event is logged and 0 fields are dropped
+      expect(logger.getDroppedFieldCount()).toBe(0);
+      expect(loggedLines).toHaveLength(1);
+      expect(loggedLines[0]).toMatchObject({
+        operation: "stripe_webhook",
+        stripeEventId: "evt_testErr",
+        stripeEventType: "customer.subscription.updated",
+        outcome: "failed",
+      });
+
       // Check all logged lines
       for (const line of loggedLines) {
         const str = JSON.stringify(line);
         expect(str).not.toContain(syntheticEmail);
         expect(str).not.toContain("example.test");
       }
+    });
+
+    it("a thrown error in recordReceived gives 500 and logs failed with 0 dropped fields", async () => {
+      billingRepo.recordReceived.mockRejectedValueOnce(new Error("database connection timeout"));
+
+      const port = createFakePort({
+        verifyEvent: vi.fn(async () => ({
+          id: "evt_testRecvErr",
+          type: "customer.subscription.updated",
+          data: { object: { id: "sub_test1" } },
+        })),
+      });
+
+      const { deps, loggedLines, logger } = createTestDeps({ port });
+      const routes = billingWebhookRoutes(deps);
+      const route = routes.find((r) => r.pattern === "/v1/stripe/webhook")!;
+
+      const req = makeWebhookRequest("{}", { "stripe-signature": "dummy" });
+      const res = await route.handle(req);
+
+      expect(res.status).toBe(500);
+      expect(await res.text()).toBe("");
+      expect(billingRepo.markOutcome).not.toHaveBeenCalled();
+      expect(logger.getDroppedFieldCount()).toBe(0);
+      expect(loggedLines).toHaveLength(1);
+      expect(loggedLines[0]).toMatchObject({
+        operation: "stripe_webhook",
+        stripeEventId: "evt_testRecvErr",
+        stripeEventType: "customer.subscription.updated",
+        outcome: "failed",
+      });
+    });
+
+    it("a thrown error during checkout session handling logs failed with organisationId and 0 dropped fields", async () => {
+      const validOrgId = "12345678-1234-4234-8234-1234567890ab";
+      billingRepo.recordReceived.mockResolvedValueOnce("received");
+
+      const port = createFakePort({
+        verifyEvent: vi.fn(async () => ({
+          id: "evt_testCheckoutErr",
+          type: "checkout.session.completed",
+          data: {
+            object: {
+              id: "cs_test_err",
+              client_reference_id: validOrgId,
+              customer: "cus_test1",
+              subscription: "sub_test1",
+              status: "complete",
+            },
+          },
+        })),
+        retrieveSubscription: vi.fn(async () => {
+          throw new Error("Stripe network error");
+        }),
+      });
+
+      const { deps, loggedLines, logger } = createTestDeps({ port });
+      const routes = billingWebhookRoutes(deps);
+      const route = routes.find((r) => r.pattern === "/v1/stripe/webhook")!;
+
+      const req = makeWebhookRequest("{}", { "stripe-signature": "dummy" });
+      const res = await route.handle(req);
+
+      expect(res.status).toBe(500);
+      expect(await res.text()).toBe("");
+      expect(billingRepo.markOutcome).not.toHaveBeenCalled();
+      expect(logger.getDroppedFieldCount()).toBe(0);
+      expect(loggedLines).toHaveLength(1);
+      expect(loggedLines[0]).toMatchObject({
+        operation: "stripe_webhook",
+        stripeEventId: "evt_testCheckoutErr",
+        stripeEventType: "checkout.session.completed",
+        organisationId: validOrgId,
+        outcome: "failed",
+      });
     });
 
     it("every log line parses with 0 dropped fields and contains no part of the body", async () => {

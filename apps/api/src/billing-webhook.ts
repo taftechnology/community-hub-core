@@ -5,6 +5,7 @@ import {
   markOutcome,
   recordReceived,
   BillingUnavailable,
+  type ApplySubscriptionResult,
   type BillingErrorCode,
   type BillingEventOutcome,
   type StripeBilling,
@@ -16,6 +17,21 @@ import type { Checkout } from "./checkout.js";
 import { presentedHostname, type GateRoute } from "./gate.js";
 
 type BillingSql = Parameters<typeof recordReceived>[0];
+
+type WebhookErrorCode = BillingErrorCode | "BILLING_ORGANISATION_MISMATCH";
+
+function outcomeFromApplyResult(applyResult: ApplySubscriptionResult): {
+  outcome: "processed" | "ignored";
+  errorCode?: BillingErrorCode;
+} {
+  if (applyResult === "applied") {
+    return { outcome: "processed" };
+  }
+  if (applyResult === "unknown_price") {
+    return { outcome: "processed", errorCode: "BILLING_UNKNOWN_PRICE" };
+  }
+  return { outcome: "ignored" };
+}
 
 export type BillingLogFields = Pick<
   LogFields,
@@ -81,6 +97,12 @@ export function billingWebhookRoutes(deps: BillingWebhookDeps): GateRoute[] {
             recordReceived(sql as BillingSql, event.id, event.type),
           );
         } catch {
+          deps.log("webhook", {
+            operation: "stripe_webhook",
+            stripeEventId: event.id,
+            stripeEventType: event.type,
+            outcome: "failed",
+          });
           return new Response(null, { status: 500 });
         }
 
@@ -96,10 +118,10 @@ export function billingWebhookRoutes(deps: BillingWebhookDeps): GateRoute[] {
         }
 
         // 5. Dispatch
+        let orgId: string | undefined;
         try {
           let outcome: "processed" | "ignored" = "ignored";
-          let errorCode: BillingErrorCode | undefined;
-          let orgId: string | undefined;
+          let errorCode: WebhookErrorCode | undefined;
 
           if (event.type === "checkout.session.completed") {
             const obj = event.data.object;
@@ -113,32 +135,32 @@ export function billingWebhookRoutes(deps: BillingWebhookDeps): GateRoute[] {
               if (customerId !== undefined && subscriptionId !== undefined) {
                 // Re-read subscription from port to obtain current status
                 const sub = await deps.port.retrieveSubscription(subscriptionId);
-                const linkResult = await deps.checkout("platform", (sql) =>
-                  linkSubscription(
-                    sql as BillingSql,
-                    orgId!,
-                    customerId,
-                    subscriptionId,
-                    sub.status,
-                  ),
-                );
-
-                if (linkResult === "duplicate") {
+                if (sub.organisationIdMetadata !== clientRefId) {
                   outcome = "ignored";
-                  errorCode = "BILLING_DUPLICATE_SUBSCRIPTION";
-                } else if (linkResult === "invoiced" || linkResult === "missing") {
-                  outcome = "ignored";
-                } else if (linkResult === "linked") {
-                  const applyResult = await deps.checkout("platform", (sql) =>
-                    applySubscription(sql as BillingSql, deps.port, subscriptionId, deps.now()),
+                  errorCode = "BILLING_ORGANISATION_MISMATCH";
+                } else {
+                  const linkResult = await deps.checkout("platform", (sql) =>
+                    linkSubscription(
+                      sql as BillingSql,
+                      orgId!,
+                      customerId,
+                      subscriptionId,
+                      sub.status,
+                    ),
                   );
-                  if (applyResult === "applied") {
-                    outcome = "processed";
-                  } else if (applyResult === "unknown_price") {
-                    outcome = "processed";
-                    errorCode = "BILLING_UNKNOWN_PRICE";
-                  } else {
+
+                  if (linkResult === "duplicate") {
                     outcome = "ignored";
+                    errorCode = "BILLING_DUPLICATE_SUBSCRIPTION";
+                  } else if (linkResult === "invoiced" || linkResult === "missing") {
+                    outcome = "ignored";
+                  } else if (linkResult === "linked") {
+                    const applyResult = await deps.checkout("platform", (sql) =>
+                      applySubscription(sql as BillingSql, deps.port, subscriptionId, deps.now()),
+                    );
+                    const mapped = outcomeFromApplyResult(applyResult);
+                    outcome = mapped.outcome;
+                    errorCode = mapped.errorCode;
                   }
                 }
               } else {
@@ -156,14 +178,9 @@ export function billingWebhookRoutes(deps: BillingWebhookDeps): GateRoute[] {
             const applyResult = await deps.checkout("platform", (sql) =>
               applySubscription(sql as BillingSql, deps.port, subscriptionId, deps.now()),
             );
-            if (applyResult === "applied") {
-              outcome = "processed";
-            } else if (applyResult === "unknown_price") {
-              outcome = "processed";
-              errorCode = "BILLING_UNKNOWN_PRICE";
-            } else {
-              outcome = "ignored";
-            }
+            const mapped = outcomeFromApplyResult(applyResult);
+            outcome = mapped.outcome;
+            errorCode = mapped.errorCode;
           } else if (event.type === "invoice.paid" || event.type === "invoice.payment_failed") {
             const invoiceId = event.data.object.id;
             const subscriptionId = await deps.port.subscriptionForInvoice(invoiceId);
@@ -171,14 +188,9 @@ export function billingWebhookRoutes(deps: BillingWebhookDeps): GateRoute[] {
               const applyResult = await deps.checkout("platform", (sql) =>
                 applySubscription(sql as BillingSql, deps.port, subscriptionId, deps.now()),
               );
-              if (applyResult === "applied") {
-                outcome = "processed";
-              } else if (applyResult === "unknown_price") {
-                outcome = "processed";
-                errorCode = "BILLING_UNKNOWN_PRICE";
-              } else {
-                outcome = "ignored";
-              }
+              const mapped = outcomeFromApplyResult(applyResult);
+              outcome = mapped.outcome;
+              errorCode = mapped.errorCode;
             } else {
               outcome = "ignored";
             }
@@ -208,6 +220,16 @@ export function billingWebhookRoutes(deps: BillingWebhookDeps): GateRoute[] {
           return new Response(null, { status: 200 });
         } catch {
           // A thrown error answers 500 with an empty body and leaves the row received.
+          const logFields: BillingLogFields = {
+            operation: "stripe_webhook",
+            stripeEventId: event.id,
+            stripeEventType: event.type,
+            outcome: "failed",
+          };
+          if (orgId !== undefined && UUID_RE.test(orgId)) {
+            logFields.organisationId = orgId;
+          }
+          deps.log("webhook", logFields);
           return new Response(null, { status: 500 });
         }
       },
