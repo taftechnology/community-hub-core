@@ -23,6 +23,13 @@ import type { BillingSecret, BillingSecretValues } from "./secret.js";
 
 export const PINNED_STRIPE_API_VERSION = "2026-09-30.endive" as const;
 
+export class WebhookSignatureInvalid extends Error {
+  constructor() {
+    super("WEBHOOK_SIGNATURE_INVALID");
+    this.name = "WebhookSignatureInvalid";
+  }
+}
+
 export interface StripeClient {
   readonly checkout: {
     readonly sessions: {
@@ -213,8 +220,8 @@ export function createStripeBilling(options: CreateStripeBillingOptions): Stripe
       throw new BillingUnavailable("BILLING_KEY_UNAVAILABLE");
     }
 
-    const client = clientFor(secretValues.secretKey);
     try {
+      const client = clientFor(secretValues.secretKey);
       const result = await fn(client);
       info({ operation: "stripe_call", outcome: "ok" });
       return result;
@@ -307,14 +314,7 @@ export function createStripeBilling(options: CreateStripeBillingOptions): Stripe
     async subscriptionForInvoice(invoiceId: string): Promise<string | null> {
       return runStripeCall(async (client) => {
         const invoice = await client.invoices.retrieve(invoiceId);
-        const parent = (
-          invoice as {
-            parent?: {
-              type?: string;
-              subscription_details?: { subscription?: string | { id: string } };
-            };
-          }
-        ).parent;
+        const parent = invoice.parent;
         if (parent?.type === "subscription_details" && parent.subscription_details?.subscription) {
           const sub = parent.subscription_details.subscription;
           return typeof sub === "string" ? sub : sub.id;
@@ -435,19 +435,26 @@ export function createStripeBilling(options: CreateStripeBillingOptions): Stripe
 
     async verifyEvent(rawBody: Uint8Array, header: string): Promise<StripeWebhookEvent> {
       const secretValues = await options.secret.get();
-      const event = Stripe.webhooks.constructEvent(
-        Buffer.from(rawBody),
-        header,
-        secretValues.webhookSecret,
-        300,
-      );
-      return {
-        id: event.id,
-        type: event.type,
-        data: {
-          object: event.data.object as unknown as Record<string, unknown> & { id: string },
-        },
-      };
+      try {
+        const event = Stripe.webhooks.constructEvent(
+          Buffer.from(rawBody),
+          header,
+          secretValues.webhookSecret,
+          300,
+        );
+        return {
+          id: event.id,
+          type: event.type,
+          data: {
+            object: event.data.object as unknown as Record<string, unknown> & { id: string },
+          },
+        };
+      } catch (error) {
+        if (error instanceof BillingUnavailable) {
+          throw error;
+        }
+        throw new WebhookSignatureInvalid();
+      }
     },
   };
 }

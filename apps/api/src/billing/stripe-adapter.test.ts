@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createStripeBilling,
   defaultStripeClient,
+  WebhookSignatureInvalid,
   type StripeCallLogFields,
   type StripeClient,
 } from "./stripe-adapter.js";
@@ -596,7 +597,8 @@ describe("stripe-adapter", () => {
         productId: "prod_1",
         lookupKey: "starter_monthly",
         currency: "aud",
-        unitAmount: 2000,
+        // Obviously non-price sentinel; real placeholder amounts live only in Task 12's map.
+        unitAmount: 1,
         interval: "month",
         taxBehavior: "inclusive",
         idempotencyKey: "seed:price:starter_monthly",
@@ -628,7 +630,8 @@ describe("stripe-adapter", () => {
         productId: "prod_1",
         lookupKey: "starter_monthly",
         currency: "aud",
-        unitAmount: 2000,
+        // Obviously non-price sentinel; real placeholder amounts live only in Task 12's map.
+        unitAmount: 1,
         interval: "month",
         taxBehavior: "inclusive",
         idempotencyKey: "seed:price:starter_monthly",
@@ -639,7 +642,7 @@ describe("stripe-adapter", () => {
           product: "prod_1",
           lookup_key: "starter_monthly",
           currency: "aud",
-          unit_amount: 2000,
+          unit_amount: 1,
           recurring: { interval: "month" },
           tax_behavior: "inclusive",
         },
@@ -695,7 +698,9 @@ describe("stripe-adapter", () => {
       const corrupted = new Uint8Array(rawBytes);
       corrupted[10] = corrupted[10]! ^ 0xff;
 
-      await expect(billing.verifyEvent(corrupted, header)).rejects.toThrow();
+      await expect(billing.verifyEvent(corrupted, header)).rejects.toBeInstanceOf(
+        WebhookSignatureInvalid,
+      );
     });
 
     it("fails when payload is re-serialised through JSON.stringify(JSON.parse(...))", async () => {
@@ -711,7 +716,9 @@ describe("stripe-adapter", () => {
       // Compact JSON instead of pretty-printed raw bytes
       const reserialised = new TextEncoder().encode(JSON.stringify(JSON.parse(prettyJson)));
 
-      await expect(billing.verifyEvent(reserialised, header)).rejects.toThrow();
+      await expect(billing.verifyEvent(reserialised, header)).rejects.toBeInstanceOf(
+        WebhookSignatureInvalid,
+      );
     });
 
     it("fails when timestamp is 301 seconds old", async () => {
@@ -726,7 +733,62 @@ describe("stripe-adapter", () => {
         timestamp: now - 301,
       });
 
-      await expect(billing.verifyEvent(rawBytes, oldHeader)).rejects.toThrow();
+      await expect(billing.verifyEvent(rawBytes, oldHeader)).rejects.toBeInstanceOf(
+        WebhookSignatureInvalid,
+      );
+    });
+
+    it("signature failures carry no payload or header in JSON, stack, or own properties (M2)", async () => {
+      const billing = createStripeBilling({
+        secret: fakeBillingSecret({ webhookSecret }),
+      });
+
+      const syntheticEmail = "subscriber.leak.test@example.test";
+      const payloadWithEmail = JSON.stringify({
+        id: "evt_test_synthetic",
+        type: "customer.subscription.updated",
+        data: {
+          object: {
+            id: "sub_test_synthetic",
+            customer_email: syntheticEmail,
+          },
+        },
+      });
+      const rawPayload = new TextEncoder().encode(payloadWithEmail);
+      const badHeader = "t=12345678,v1=synthetic_invalid_signature_header_abc123";
+
+      let caughtError: unknown;
+      try {
+        await billing.verifyEvent(rawPayload, badHeader);
+      } catch (err) {
+        caughtError = err;
+      }
+
+      expect(caughtError).toBeInstanceOf(WebhookSignatureInvalid);
+      const err = caughtError as WebhookSignatureInvalid;
+      expect(err.message).toBe("WEBHOOK_SIGNATURE_INVALID");
+      expect(err.name).toBe("WebhookSignatureInvalid");
+      expect((err as Error & { cause?: unknown }).cause).toBeUndefined();
+
+      // JSON.stringify, String(stack), and getOwnPropertyNames contain neither body nor header
+      const jsonStr = JSON.stringify(err);
+      expect(jsonStr).not.toContain(syntheticEmail);
+      expect(jsonStr).not.toContain("example.test");
+      expect(jsonStr).not.toContain("synthetic_invalid_signature_header_abc123");
+
+      const stackStr = String(err.stack);
+      expect(stackStr).not.toContain(syntheticEmail);
+      expect(stackStr).not.toContain("example.test");
+      expect(stackStr).not.toContain("synthetic_invalid_signature_header_abc123");
+
+      const ownProps = Object.getOwnPropertyNames(err);
+      expect(ownProps).not.toContain("payload");
+      expect(ownProps).not.toContain("header");
+      for (const prop of ownProps) {
+        expect(prop).not.toContain(syntheticEmail);
+        expect(prop).not.toContain("synthetic_invalid_signature_header_abc123");
+      }
+      expect(ownProps.sort()).toEqual(["message", "name", "stack"]);
     });
   });
 
@@ -773,6 +835,13 @@ describe("stripe-adapter", () => {
       expect(caughtError).toBeInstanceOf(BillingUnavailable);
       const billingError = caughtError as BillingUnavailable;
       expect(billingError.code).toBe("STRIPE_API");
+      expect((billingError as Error & { cause?: unknown }).cause).toBeUndefined();
+      expect(Object.getOwnPropertyNames(billingError).sort()).toEqual([
+        "code",
+        "message",
+        "name",
+        "stack",
+      ]);
 
       // Verify thrown error does not contain any sensitive strings
       const errorString = `${billingError.name}: ${billingError.message} ${JSON.stringify(billingError)}`;
@@ -878,6 +947,48 @@ describe("stripe-adapter", () => {
       await expect(billing.retrieveSubscription("sub_test1")).rejects.toThrow(
         new BillingUnavailable("STRIPE_CONNECTION"),
       );
+    });
+
+    it("handles client factory throw: maps to STRIPE_API, logs once, and serialised error does not leak message (M1)", async () => {
+      const syntheticEmail = "factory.leak.test@example.test";
+      const factoryError = new Error(`Connection to Stripe client failed for ${syntheticEmail}`);
+
+      const secret = fakeBillingSecret();
+      const loggedFields: StripeCallLogFields[] = [];
+      const billing = createStripeBilling({
+        secret,
+        clientFor: () => {
+          throw factoryError;
+        },
+        info: (f) => loggedFields.push(f),
+      });
+
+      let caughtError: unknown;
+      try {
+        await billing.retrieveSubscription("sub_test1");
+      } catch (err) {
+        caughtError = err;
+      }
+
+      expect(caughtError).toBeInstanceOf(BillingUnavailable);
+      const billingError = caughtError as BillingUnavailable;
+      expect(billingError.code).toBe("STRIPE_API");
+
+      // Verify one info line logged
+      expect(loggedFields).toHaveLength(1);
+      expect(loggedFields[0]).toEqual({
+        operation: "stripe_call",
+        outcome: "failed",
+        errorCode: "STRIPE_API",
+      });
+
+      // Verify no email in serialised error or string
+      const serialized = JSON.stringify(billingError);
+      expect(serialized).not.toContain(syntheticEmail);
+      expect(serialized).not.toContain("example.test");
+      const errStr = `${billingError.name}: ${billingError.message} ${String(billingError.stack)}`;
+      expect(errStr).not.toContain(syntheticEmail);
+      expect(errStr).not.toContain("example.test");
     });
   });
 });

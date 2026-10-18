@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { readServiceEnv } from "./env.js";
 import { bindServices, boot, listeningServer, run } from "./index.js";
+import { rejectingStripeBilling } from "./billing/stripe-adapter.js";
 
 const pem = readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), "../certs/rds-ap-southeast-2-bundle.pem"),
@@ -388,12 +389,68 @@ describe("api boot wiring of the billing adapter and logger", () => {
     );
   });
 
-  it("boot with both billing variables does not call the secret reader", async () => {
-    const sendSpy = vi.spyOn(SecretsManagerClient.prototype, "send");
-    const bound = bindServices(envWithBilling(), pem);
-    expect(bound.billing).toBeDefined();
-    expect(bound.billing.port).toBeDefined();
-    expect(sendSpy).not.toHaveBeenCalled();
+  it("boot with both billing variables wires the real adapter and lazily calls secrets manager (M3)", async () => {
+    const sendSpy = vi
+      .spyOn(SecretsManagerClient.prototype, "send")
+      .mockImplementation(async () => {
+        return {
+          SecretString: JSON.stringify({
+            // live key in staging triggers BILLING_KEY_MODE_MISMATCH on get(), verifying laziness without Stripe network calls
+            secret_key: "sk_live_synthetic_for_m3",
+            webhook_secret: "whsec_synthetic_for_m3",
+          }),
+        } as never;
+      });
+    try {
+      const bound = bindServices(envWithBilling(), pem);
+      expect(bound.billing).toBeDefined();
+      expect(bound.billing.port).not.toBe(rejectingStripeBilling);
+      expect(sendSpy).not.toHaveBeenCalled();
+
+      // First port method call invokes SecretsManagerClient.prototype.send
+      await expect(bound.billing.port.retrieveSubscription("sub_test1")).rejects.toThrow(
+        new BillingUnavailable("BILLING_KEY_MODE_MISMATCH"),
+      );
+      expect(sendSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      sendSpy.mockRestore();
+    }
+  });
+
+  it("writes adapter stripe_call lines through the real logger with 0 dropped fields (L1)", async () => {
+    const sendSpy = vi
+      .spyOn(SecretsManagerClient.prototype, "send")
+      .mockImplementation(async () => {
+        return {
+          SecretString: JSON.stringify({
+            // live key in staging triggers BILLING_KEY_MODE_MISMATCH
+            secret_key: "sk_live_synthetic_for_l1",
+            webhook_secret: "whsec_synthetic_for_l1",
+          }),
+        } as never;
+      });
+    try {
+      const written: string[] = [];
+      const logger = createLogger({ write: (line) => written.push(line) });
+      const bound = bindServices(envWithBilling(), pem, logger);
+
+      await expect(bound.billing.port.retrieveSubscription("sub_test1")).rejects.toThrow(
+        new BillingUnavailable("BILLING_KEY_MODE_MISMATCH"),
+      );
+
+      expect(written).toHaveLength(1);
+      const logLine = JSON.parse(written[0] ?? "{}") as Record<string, unknown>;
+      expect(logLine).toEqual({
+        level: "info",
+        message: "stripe",
+        operation: "stripe_call",
+        outcome: "failed",
+        errorCode: "BILLING_KEY_MODE_MISMATCH",
+      });
+      expect(logger.getDroppedFieldCount()).toBe(0);
+    } finally {
+      sendSpy.mockRestore();
+    }
   });
 
   it("a billing log line through the real logger parses with getDroppedFieldCount() === 0", () => {
