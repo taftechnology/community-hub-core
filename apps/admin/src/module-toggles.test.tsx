@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import axe from "axe-core";
 import { afterEach, beforeEach } from "vitest";
 
@@ -56,7 +56,7 @@ it("loads the community and shows no modules when none are allocated", async () 
   fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
     target: { value: "parish" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Load" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
   expect(await screen.findByText("No modules are allocated.")).toBeTruthy();
   expect(document.body.textContent).not.toContain("Upgrade");
   expect(document.body.textContent).not.toContain("$");
@@ -94,7 +94,7 @@ it("names a switch with the key when the caller can manage", async () => {
   fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
     target: { value: "parish" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Load" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
   expect(await screen.findByRole("switch", { name: "people.directory" })).toBeTruthy();
   expect(document.body.textContent).not.toContain(EMAIL);
   expect(document.body.textContent).not.toContain("Ada Person");
@@ -117,7 +117,7 @@ it("renders the key without a switch when canManage is false or missing", async 
   fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
     target: { value: "parish" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Load" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
   expect(await screen.findByText("people.directory")).toBeTruthy();
   expect(screen.queryByRole("switch")).toBeNull();
 
@@ -132,7 +132,7 @@ it("renders the key without a switch when canManage is false or missing", async 
   fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
     target: { value: "parish" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Load" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
   expect(await screen.findByText("people.directory")).toBeTruthy();
   expect(screen.queryByRole("switch")).toBeNull();
 });
@@ -144,7 +144,7 @@ it("shows the module error for 403", async () => {
   fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
     target: { value: "parish" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Load" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
   expect(await screen.findByText("You cannot manage modules")).toBeTruthy();
 });
 
@@ -169,7 +169,7 @@ it("shows a rejected change and a network failure", async () => {
   fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
     target: { value: "parish" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Load" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
   fireEvent.click(await screen.findByRole("switch", { name: "people.directory" }));
   expect(await screen.findByText("That change was rejected")).toBeTruthy();
   expect(screen.queryByRole("switch", { name: "people.households" })).toBeNull();
@@ -180,7 +180,7 @@ it("shows a rejected change and a network failure", async () => {
   fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
     target: { value: "parish" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Load" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
   expect(await screen.findByText("Directory unavailable")).toBeTruthy();
 });
 
@@ -205,7 +205,7 @@ it("posts the toggle and keeps the slug out of the url", async () => {
   fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
     target: { value: "parish" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Load" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
   fireEvent.click(await screen.findByRole("switch", { name: "people.directory" }));
 
   const call = fetchSpy.mock.calls[1];
@@ -235,7 +235,7 @@ it("reports no axe violations with switches and without", async () => {
   fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
     target: { value: "parish" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Load" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
   expect(await screen.findByRole("switch", { name: "people.directory" })).toBeTruthy();
   const managed = await axe.run(withSwitches, {
     rules: { "color-contrast": { enabled: false } },
@@ -256,11 +256,28 @@ it("reports no axe violations with switches and without", async () => {
   fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
     target: { value: "parish" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Load" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
   expect(await screen.findByText("people.directory")).toBeTruthy();
   expect(screen.queryByRole("switch")).toBeNull();
   const viewOnly = await axe.run(withoutSwitches, {
     rules: { "color-contrast": { enabled: false } },
   });
   expect(resultIds(viewOnly, "violations")).toEqual([]);
+});
+
+it("loads from the context slug with no slug field of its own", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  sessionStorage.setItem("community-hub.community", "parish");
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        keys: [{ key: "people.directory", enabled: true }],
+        canManage: true,
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ),
+  );
+  await showModules();
+  expect(within(screen.getByRole("main")).queryByRole("textbox", { name: "Community" })).toBeNull();
+  expect(await screen.findByRole("switch", { name: "people.directory" })).toBeTruthy();
 });

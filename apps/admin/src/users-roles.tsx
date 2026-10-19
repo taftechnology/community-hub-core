@@ -1,8 +1,10 @@
 import { Button } from "@community-hub/ui";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router";
 
-import { clearAccessToken, directoryOrigins, readAccessToken } from "./directory";
+import { post } from "./api";
+import { useCommunity } from "./community";
+import { directoryOrigins, readAccessToken } from "./directory";
 
 type GrantView = {
   grantId: string;
@@ -154,8 +156,7 @@ function outcomeOf(response: Response | "unavailable"): Outcome {
 
 export function UsersRolesPage() {
   const [token, setToken] = useState(() => readAccessToken());
-  const [community, setCommunity] = useState("");
-  const [slug, setSlug] = useState("");
+  const { slug } = useCommunity();
   const [directory, setDirectory] = useState<Directory | undefined>(undefined);
   const [notice, setNotice] = useState<Notice | undefined>(undefined);
   const [userId, setUserId] = useState("");
@@ -174,28 +175,6 @@ export function UsersRolesPage() {
     setNotice(outcome);
   }
 
-  async function post(path: string, body: unknown): Promise<Response | "unavailable"> {
-    if (origins === undefined || token === null) {
-      return "unavailable";
-    }
-    try {
-      const response = await fetch(`${origins.api}${path}`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(body),
-      });
-      if (response.status === 401) {
-        clearAccessToken();
-      }
-      return response;
-    } catch {
-      return "unavailable";
-    }
-  }
-
   async function load(communitySlug: string): Promise<void> {
     const response = await post("/v1/access/grants/list", { communitySlug });
     const outcome = outcomeOf(response);
@@ -210,12 +189,20 @@ export function UsersRolesPage() {
         return;
       }
       setNotice(undefined);
-      setSlug(communitySlug);
       setDirectory(parsed);
     } catch {
       setNotice("unavailable");
     }
   }
+
+  useEffect(() => {
+    if (slug) {
+      void load(slug);
+    } else {
+      setDirectory(undefined);
+      setNotice(undefined);
+    }
+  }, [slug]);
 
   async function mutate(path: string, body: unknown): Promise<void> {
     const response = await post(path, body);
@@ -267,23 +254,6 @@ export function UsersRolesPage() {
   return (
     <>
       <h1>Users & Roles</h1>
-      <form
-        onSubmit={(event: FormEvent<HTMLFormElement>) => {
-          event.preventDefault();
-          void load(community);
-        }}
-      >
-        <label>
-          Community
-          <input
-            value={community}
-            onChange={(event) => {
-              setCommunity(event.target.value);
-            }}
-          />
-        </label>
-        <Button type="submit">Load</Button>
-      </form>
       {notice === "forbidden" ? <p>You cannot manage roles</p> : null}
       {notice === "conflict" ? <p>That change was rejected</p> : null}
       {notice === "unavailable" ? <p>Directory unavailable</p> : null}

@@ -83,6 +83,20 @@ it("names Refresh and reports no axe violations", async () => {
   expect(resultIds(results, "violations")).toEqual([]);
 });
 
+it("renders the community picker in the shell with no axe violations", async () => {
+  const { container } = render(<Shell />);
+  expect(screen.getByRole("textbox", { name: "Community" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Set" })).toBeTruthy();
+
+  const results = await axe.run(container, {
+    rules: {
+      "color-contrast": { enabled: false },
+    },
+  });
+
+  expect(resultIds(results, "violations")).toEqual([]);
+});
+
 it("flags a control with no accessible name", async () => {
   const { container } = render(<UnnamedButton />);
   const results = await axe.run(container, {

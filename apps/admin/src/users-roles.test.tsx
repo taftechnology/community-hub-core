@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import axe from "axe-core";
 import { afterEach, beforeEach } from "vitest";
 
@@ -91,7 +91,7 @@ it("loads ids and role keys and does not render personal details", async () => {
   fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
     target: { value: "parish" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Load" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
 
   expect(await screen.findByText(USER, { exact: false })).toBeTruthy();
   expect(document.body.textContent).toContain("org_owner");
@@ -128,7 +128,7 @@ it("hides custom role creation at the limit of 20", async () => {
   fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
     target: { value: "parish" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Load" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
   expect(await screen.findByText("Custom role limit reached")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Create custom role" })).toBeNull();
   expect(document.body.textContent).not.toContain(EMAIL);
@@ -146,7 +146,7 @@ it("shows no grants without a bootstrap control", async () => {
   fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
     target: { value: "parish" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Load" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
   expect(await screen.findByText("No role grants")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Become the owner" })).toBeNull();
 });
@@ -163,7 +163,7 @@ it("hides Grant, Revoke, and Delete without access.roles.manage", async () => {
   fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
     target: { value: "parish" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Load" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
   expect(await screen.findByText(USER, { exact: false })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Grant" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Revoke" })).toBeNull();
@@ -183,7 +183,7 @@ it("hides Link without access.users.manage", async () => {
   fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
     target: { value: "parish" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Load" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
   expect(await screen.findByRole("button", { name: "Grant" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Revoke" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Delete custom role" })).toBeTruthy();
@@ -197,7 +197,7 @@ it("shows the role errors for 403 and 409", async () => {
   fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
     target: { value: "parish" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Load" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
   expect(await screen.findByText("You cannot manage roles")).toBeTruthy();
 
   cleanup();
@@ -206,6 +206,20 @@ it("shows the role errors for 403 and 409", async () => {
   fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
     target: { value: "parish" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Load" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
   expect(await screen.findByText("That change was rejected")).toBeTruthy();
+});
+
+it("loads from the context slug with no slug field of its own", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  sessionStorage.setItem("community-hub.community", "parish");
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify(directory(0, [ownerGrant])), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
+  );
+  await showUsers();
+  expect(within(screen.getByRole("main")).queryByRole("textbox", { name: "Community" })).toBeNull();
+  expect(await screen.findByText(USER, { exact: false })).toBeTruthy();
 });

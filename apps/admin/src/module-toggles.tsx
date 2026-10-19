@@ -1,8 +1,9 @@
-import { Button } from "@community-hub/ui";
-import { type FormEvent, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router";
 
-import { clearAccessToken, directoryOrigins, readAccessToken } from "./directory";
+import { post } from "./api";
+import { useCommunity } from "./community";
+import { directoryOrigins, readAccessToken } from "./directory";
 
 type ModuleKey = {
   key: string;
@@ -53,8 +54,7 @@ function outcomeOf(response: Response | "unavailable"): Outcome {
 
 export function ModuleTogglesPage() {
   const [token, setToken] = useState(() => readAccessToken());
-  const [community, setCommunity] = useState("");
-  const [slug, setSlug] = useState("");
+  const { slug } = useCommunity();
   const [modules, setModules] = useState<ModuleKey[] | undefined>(undefined);
   const [canManage, setCanManage] = useState(false);
   const [notice, setNotice] = useState<Notice | undefined>(undefined);
@@ -67,28 +67,6 @@ export function ModuleTogglesPage() {
       return;
     }
     setNotice(outcome);
-  }
-
-  async function post(path: string, body: unknown): Promise<Response | "unavailable"> {
-    if (origins === undefined || token === null) {
-      return "unavailable";
-    }
-    try {
-      const response = await fetch(`${origins.api}${path}`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(body),
-      });
-      if (response.status === 401) {
-        clearAccessToken();
-      }
-      return response;
-    } catch {
-      return "unavailable";
-    }
   }
 
   async function load(communitySlug: string): Promise<void> {
@@ -105,13 +83,21 @@ export function ModuleTogglesPage() {
         return;
       }
       setNotice(undefined);
-      setSlug(communitySlug);
       setModules(parsed.keys);
       setCanManage(parsed.canManage);
     } catch {
       setNotice("unavailable");
     }
   }
+
+  useEffect(() => {
+    if (slug) {
+      void load(slug);
+    } else {
+      setModules(undefined);
+      setNotice(undefined);
+    }
+  }, [slug]);
 
   async function turn(key: string, enabled: boolean): Promise<void> {
     const response = await post("/v1/entitlements/toggle", {
@@ -150,23 +136,6 @@ export function ModuleTogglesPage() {
   return (
     <>
       <h1>Module Toggles</h1>
-      <form
-        onSubmit={(event: FormEvent<HTMLFormElement>) => {
-          event.preventDefault();
-          void load(community);
-        }}
-      >
-        <label>
-          Community
-          <input
-            value={community}
-            onChange={(event) => {
-              setCommunity(event.target.value);
-            }}
-          />
-        </label>
-        <Button type="submit">Load</Button>
-      </form>
       {notice === "forbidden" ? <p>You cannot manage modules</p> : null}
       {notice === "rejected" ? <p>That change was rejected</p> : null}
       {notice === "unavailable" ? <p>Directory unavailable</p> : null}

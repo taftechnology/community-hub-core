@@ -1,6 +1,7 @@
 import { Button } from "@community-hub/ui";
 import { createBrowserRouter, Outlet, RouterProvider } from "react-router";
 
+import { CommunityPicker, CommunityProvider } from "./community";
 import { labels } from "./labels";
 import { AdminNav } from "./nav";
 import { SignInPage } from "./sign-in";
@@ -31,6 +32,7 @@ function AdminLayout() {
   return (
     <>
       <AdminNav />
+      <CommunityPicker />
       <main>
         <Outlet />
       </main>
@@ -52,5 +54,9 @@ export const router = createBrowserRouter([
 ]);
 
 export function Shell() {
-  return <RouterProvider router={router} />;
+  return (
+    <CommunityProvider>
+      <RouterProvider router={router} />
+    </CommunityProvider>
+  );
 }
