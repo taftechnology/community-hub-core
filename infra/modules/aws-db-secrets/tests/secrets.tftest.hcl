@@ -43,7 +43,7 @@ run "happy" {
       strcontains(aws_kms_key.secrets.policy, "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-identity-??????") &&
       strcontains(aws_kms_key.secrets.policy, "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-platform-??????")
     )
-    error_message = "secrets key policy must bind Secrets Manager in ap-southeast-2 and the three secret ARN patterns"
+    error_message = "secrets key policy must bind Secrets Manager in ap-southeast-2 and the five secret ARN patterns"
   }
 
   assert {

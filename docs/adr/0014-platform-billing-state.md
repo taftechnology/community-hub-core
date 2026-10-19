@@ -39,6 +39,7 @@ To keep delivery reviewable and safe, the work was split across three chunks (sp
 - No monetary amounts are stored in code, configuration, or database tables; Stripe lookup keys are used exclusively.
 - Webhooks arrive on the Sydney webhooks hostname with signatures verified over the raw payload bytes before any state is written.
 - Staging and production Stripe secrets (restricted API key and webhook secret) are managed in AWS Secrets Manager and read lazily.
+- Staging requires a Stripe test-mode key and production a live-mode key; a mismatch is refused with a fixed 503 code without affecting boot.
 - Read-only write enforcement is decoupled from entitlement evaluation; when `billing-read-only` ships, tenants in arrears retain full read access to their data and the admin console to settle invoices via the Customer Portal.
 - Future background jobs that write must verify writeability via `assertWritable`.
 

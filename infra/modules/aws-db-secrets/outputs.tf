@@ -14,7 +14,7 @@ output "platform_secret_arn" {
 }
 
 output "key_arn" {
-  description = "ARN of the KMS key that encrypts the three role password secrets."
+  description = "ARN of the KMS key that encrypts the three role password secrets and the billing secret."
   value       = aws_kms_key.secrets.arn
 }
 
