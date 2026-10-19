@@ -314,17 +314,20 @@ it("ignores a stale response that arrives after the slug has changed", async () 
 it("retries fetching when Set is pressed again with the same slug", async () => {
   sessionStorage.setItem("community-hub.access-token", TOKEN);
   let attempts = 0;
-  vi.spyOn(globalThis, "fetch").mockImplementation(() => {
-    attempts++;
-    if (attempts === 1) {
-      return Promise.resolve(new Response(null, { status: 403 }));
+  vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+    if (String(input).includes("/v1/access/grants/list")) {
+      attempts++;
+      if (attempts === 1) {
+        return Promise.resolve(new Response(null, { status: 403 }));
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify(directory(0, [ownerGrant], ["access.roles.manage"])),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
     }
-    return Promise.resolve(
-      new Response(
-        JSON.stringify(directory(0, [ownerGrant], ["access.roles.manage"])),
-        { status: 200, headers: { "content-type": "application/json" } },
-      ),
-    );
+    return Promise.resolve(new Response(null, { status: 200 }));
   });
 
   await showUsers();

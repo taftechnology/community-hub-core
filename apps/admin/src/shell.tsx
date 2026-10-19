@@ -1,6 +1,8 @@
 import { Button } from "@community-hub/ui";
 import { createBrowserRouter, Outlet, RouterProvider } from "react-router";
 
+import { BillingBanner } from "./billing-banner";
+import { BillingStatusProvider } from "./billing-status";
 import { CommunityPicker, CommunityProvider } from "./community";
 import { labels } from "./labels";
 import { AdminNav } from "./nav";
@@ -33,6 +35,7 @@ function AdminLayout() {
     <>
       <AdminNav />
       <CommunityPicker />
+      <BillingBanner />
       <main>
         <Outlet />
       </main>
@@ -56,7 +59,9 @@ export const router = createBrowserRouter([
 export function Shell() {
   return (
     <CommunityProvider>
-      <RouterProvider router={router} />
+      <BillingStatusProvider>
+        <RouterProvider router={router} />
+      </BillingStatusProvider>
     </CommunityProvider>
   );
 }
