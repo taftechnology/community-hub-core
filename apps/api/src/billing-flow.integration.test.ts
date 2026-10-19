@@ -179,13 +179,18 @@ describe("billing flow (two organisations)", () => {
     }
 
     async function call(
-      handler: (input: Request) => Response | Promise<Response>,
+      handler: (
+        request: Request,
+        context: { billing: "exempt"; pattern: string },
+      ) => Response | Promise<Response>,
       pathName: string,
       body: unknown,
       token: string,
       requestId = REQUEST_ID,
     ): Promise<Response> {
-      return withRequest({ requestId }, async () => handler(request(pathName, body, token)));
+      return withRequest({ requestId }, async () =>
+        handler(request(pathName, body, token), { billing: "exempt", pattern: pathName }),
+      );
     }
 
     try {

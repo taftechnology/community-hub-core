@@ -92,6 +92,7 @@ const healthRoute: GateRoute = {
   method: "GET",
   pattern: "/health",
   surface: "all",
+  billing: "exempt",
   handle: healthRequest,
 };
 

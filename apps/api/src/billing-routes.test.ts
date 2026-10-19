@@ -140,7 +140,11 @@ function route(pathName: string, bound: BillingRoutesDeps = deps()) {
   if (found === undefined) {
     throw new Error(`Route not found: ${pathName}`);
   }
-  return found;
+  return {
+    ...found,
+    handle: (request: Request, context = { billing: found.billing, pattern: found.pattern }) =>
+      found.handle(request, context),
+  };
 }
 
 function testGate(bound: BillingRoutesDeps = deps()) {

@@ -361,6 +361,7 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
       method: "POST",
       pattern: "/v1/access/grants/list",
       surface: "tenant",
+      billing: "read",
       handle: async (request) => {
         const hidden = foreignHost(request);
         if (hidden !== undefined) {
@@ -392,6 +393,7 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
       method: "POST",
       pattern: "/v1/access/grants",
       surface: "tenant",
+      billing: "write",
       handle: async (request) => {
         const hidden = foreignHost(request);
         if (hidden !== undefined) {
@@ -425,6 +427,7 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
       method: "POST",
       pattern: "/v1/access/grants/revoke",
       surface: "tenant",
+      billing: "write",
       handle: async (request) => {
         const hidden = foreignHost(request);
         if (hidden !== undefined) {
@@ -457,6 +460,7 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
       method: "POST",
       pattern: "/v1/access/custom-roles",
       surface: "tenant",
+      billing: "write",
       handle: async (request) => {
         const hidden = foreignHost(request);
         if (hidden !== undefined) {
@@ -489,6 +493,7 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
       method: "POST",
       pattern: "/v1/access/custom-roles/delete",
       surface: "tenant",
+      billing: "write",
       handle: async (request) => {
         const hidden = foreignHost(request);
         if (hidden !== undefined) {
@@ -520,6 +525,7 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
       method: "POST",
       pattern: "/v1/access/user-links",
       surface: "tenant",
+      billing: "write",
       handle: async (request) => {
         const hidden = foreignHost(request);
         if (hidden !== undefined) {
@@ -556,6 +562,7 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
       method: "POST",
       pattern: "/v1/access/user-links/delete",
       surface: "tenant",
+      billing: "write",
       handle: async (request) => {
         const hidden = foreignHost(request);
         if (hidden !== undefined) {

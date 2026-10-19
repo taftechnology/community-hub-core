@@ -1,12 +1,19 @@
 import { createRequestHandler, type RequestLogFields } from "@community-hub/kernel";
 
 export type Surface = "ops" | "tenant" | "all";
+export type BillingMarking = "write" | "read" | "exempt";
+
+export type RouteContext = {
+  readonly billing: BillingMarking;
+  readonly pattern: string;
+};
 
 export type GateRoute = {
   method: string;
   pattern: string;
   surface: Surface;
-  handle: (request: Request) => Response | Promise<Response>;
+  billing: BillingMarking;
+  handle: (request: Request, context: RouteContext) => Response | Promise<Response>;
   largeBody?: "webhooks";
 };
 
@@ -50,6 +57,9 @@ export function assertRoutes(routes: readonly GateRoute[]): void {
   const seen = new Set<string>();
   for (const route of routes) {
     if (route.surface !== "ops" && route.surface !== "tenant" && route.surface !== "all") {
+      throw new RoutesRejected();
+    }
+    if (route.billing !== "write" && route.billing !== "read" && route.billing !== "exempt") {
       throw new RoutesRejected();
     }
     if (route.surface === "all" && !(route.method === "GET" && route.pattern === "/health")) {
@@ -138,7 +148,7 @@ export function createGate(options: {
       if (route === undefined) {
         return releaseUnreadBody(request).then(() => new Response(null, { status: 404 }));
       }
-      return route.handle(request);
+      return route.handle(request, { billing: route.billing, pattern: route.pattern });
     },
   );
 

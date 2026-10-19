@@ -388,18 +388,21 @@ export function billingRoutes(deps: BillingRoutesDeps): GateRoute[] {
       method: "POST",
       pattern: "/v1/billing/checkout",
       surface: "tenant",
+      billing: "exempt",
       handle: handleCheckout,
     },
     {
       method: "POST",
       pattern: "/v1/billing/portal",
       surface: "tenant",
+      billing: "exempt",
       handle: handlePortal,
     },
     {
       method: "POST",
       pattern: "/v1/billing/status",
       surface: "tenant",
+      billing: "exempt",
       handle: handleStatus,
     },
   ];

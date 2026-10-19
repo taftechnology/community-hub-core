@@ -2,7 +2,15 @@ import { createLogger } from "@community-hub/observability";
 import { describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 
-import { createGate, RoutesRejected, assertRoutes, type GateRoute, type Surface } from "./gate.js";
+import {
+  createGate,
+  RoutesRejected,
+  assertRoutes,
+  type GateRoute,
+  type Surface,
+  type BillingMarking,
+  type RouteContext,
+} from "./gate.js";
 
 const HOSTS = {
   api: "au.api.example.test",
@@ -23,6 +31,7 @@ function routes(spies: {
       method: "GET",
       pattern: "/health",
       surface: "all",
+      billing: "exempt",
       handle: (request) => {
         spies.health(request);
         return Response.json({ ok: true });
@@ -32,6 +41,7 @@ function routes(spies: {
       method: "GET",
       pattern: "/ops-only",
       surface: "ops",
+      billing: "exempt",
       handle: (request) => {
         spies.ops(request);
         return new Response(null, { status: 204 });
@@ -41,6 +51,7 @@ function routes(spies: {
       method: "GET",
       pattern: "/tenant-only",
       surface: "tenant",
+      billing: "read",
       handle: (request) => {
         spies.tenant(request);
         return new Response(null, { status: 204 });
@@ -185,6 +196,7 @@ describe("createGate", () => {
           method: "POST",
           pattern: "/v1/access/grants",
           surface: "tenant",
+          billing: "write",
           handle: () => {
             role();
             return new Response("granted", { status: 200 });
@@ -194,6 +206,7 @@ describe("createGate", () => {
           method: "POST",
           pattern: "/v1/auth/email-otp/start",
           surface: "tenant",
+          billing: "exempt",
           handle: () => {
             signIn();
             return new Response(null, { status: 204 });
@@ -310,6 +323,72 @@ describe("createGate", () => {
     expect(reads).toBe(0);
     expect(JSON.stringify(lines)).not.toContain(marker);
   });
+
+  it("refuses to build when a route has no billing or an unknown billing marking", () => {
+    const handle = () => new Response(null, { status: 204 });
+    expect(() =>
+      createGate({
+        hostnames: HOSTS,
+        routes: [
+          {
+            method: "GET",
+            pattern: "/health",
+            surface: "all",
+            handle,
+          } as unknown as GateRoute,
+        ],
+        info: () => undefined,
+      }),
+    ).toThrow(RoutesRejected);
+    expect(() =>
+      createGate({
+        hostnames: HOSTS,
+        routes: [
+          {
+            method: "GET",
+            pattern: "/health",
+            surface: "all",
+            billing: "maybe" as unknown as BillingMarking,
+            handle,
+          },
+        ],
+        info: () => undefined,
+      }),
+    ).toThrow(RoutesRejected);
+  });
+
+  it("passes route context with billing and pattern to handle", async () => {
+    let capturedContext: RouteContext | undefined;
+    const gate = createGate({
+      hostnames: HOSTS,
+      routes: [
+        {
+          method: "GET",
+          pattern: "/health",
+          surface: "all",
+          billing: "exempt",
+          handle: (_request, context) => {
+            capturedContext = context;
+            return Response.json({ ok: true });
+          },
+        },
+      ],
+      info: () => undefined,
+    });
+
+    const response = await gate({
+      request: new Request("https://au.api.example.test/health", {
+        headers: { "x-community-hub-hostname": HOSTS.api },
+      }),
+      remoteAddress: "10.0.0.8",
+    });
+
+    expect(response.status).toBe(200);
+    expect(capturedContext).toEqual({
+      billing: "exempt",
+      pattern: "/health",
+    });
+  });
 });
 
 describe("createGate when a route throws", () => {
@@ -324,6 +403,7 @@ describe("createGate when a route throws", () => {
           method: "GET",
           pattern: "/boom",
           surface: "tenant",
+          billing: "exempt",
           handle: () => {
             throw Object.assign(new Error(marker), {
               name: "PostgresError",
@@ -369,12 +449,14 @@ describe("assertRoutes", () => {
   it("rejects all on any route other than GET /health and a duplicate method and pattern", () => {
     const handle = () => new Response(null, { status: 204 });
     expect(() =>
-      assertRoutes([{ method: "GET", pattern: "/other", surface: "all", handle }]),
+      assertRoutes([
+        { method: "GET", pattern: "/other", surface: "all", billing: "exempt", handle },
+      ]),
     ).toThrow(RoutesRejected);
     expect(() =>
       assertRoutes([
-        { method: "GET", pattern: "/health", surface: "all", handle },
-        { method: "GET", pattern: "/health", surface: "all", handle },
+        { method: "GET", pattern: "/health", surface: "all", billing: "exempt", handle },
+        { method: "GET", pattern: "/health", surface: "all", billing: "exempt", handle },
       ]),
     ).toThrow(RoutesRejected);
     expect(() =>
@@ -383,6 +465,7 @@ describe("assertRoutes", () => {
           method: "GET",
           pattern: "/health",
           surface: undefined as unknown as Surface,
+          billing: "exempt",
           handle,
         },
       ]),
@@ -397,6 +480,7 @@ describe("assertRoutes", () => {
           method: "GET",
           pattern: "/v1/stripe/webhook",
           surface: "tenant",
+          billing: "exempt",
           largeBody: "webhooks",
           handle,
         },
@@ -408,6 +492,7 @@ describe("assertRoutes", () => {
           method: "POST",
           pattern: "/v1/other",
           surface: "tenant",
+          billing: "exempt",
           largeBody: "webhooks",
           handle,
         },
@@ -419,6 +504,7 @@ describe("assertRoutes", () => {
           method: "POST",
           pattern: "/v1/stripe/webhook",
           surface: "tenant",
+          billing: "exempt",
           largeBody: "invalid" as unknown as "webhooks",
           handle,
         },
@@ -430,10 +516,36 @@ describe("assertRoutes", () => {
           method: "POST",
           pattern: "/v1/stripe/webhook",
           surface: "tenant",
+          billing: "exempt",
           largeBody: "webhooks",
           handle,
         },
       ]),
     ).not.toThrow();
+  });
+
+  it("rejects a route with no billing and with an unknown billing marking", () => {
+    const handle = () => new Response(null, { status: 204 });
+    expect(() =>
+      assertRoutes([
+        {
+          method: "GET",
+          pattern: "/health",
+          surface: "all",
+          handle,
+        } as unknown as GateRoute,
+      ]),
+    ).toThrow(RoutesRejected);
+    expect(() =>
+      assertRoutes([
+        {
+          method: "GET",
+          pattern: "/health",
+          surface: "all",
+          billing: "maybe" as unknown as BillingMarking,
+          handle,
+        },
+      ]),
+    ).toThrow(RoutesRejected);
   });
 });

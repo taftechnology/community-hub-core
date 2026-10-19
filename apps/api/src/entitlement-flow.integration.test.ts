@@ -18,6 +18,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import type { Role } from "./checkout.js";
 import { entitlementRoutes } from "./entitlement-routes.js";
+import type { RouteContext } from "./gate.js";
 
 const KEY_ARN = `arn:aws:kms:ap-southeast-2:123456789012:key/mrk-${"ab".repeat(16)}`;
 const API_HOSTNAME = "au.api.example.test";
@@ -127,13 +128,17 @@ describe("entitlement flow", () => {
     }
 
     async function call(
-      handler: (input: Request) => Response | Promise<Response>,
+      handler: (request: Request, context: RouteContext) => Response | Promise<Response>,
       pathName: string,
       body: unknown,
       token: string,
       requestId = REQUEST_ID,
     ): Promise<Response> {
-      return withRequest({ requestId }, async () => handler(request(pathName, body, token)));
+      const billing =
+        pathName === "/v1/entitlements/toggle" ? ("write" as const) : ("read" as const);
+      return withRequest({ requestId }, async () =>
+        handler(request(pathName, body, token), { billing, pattern: pathName }),
+      );
     }
 
     try {

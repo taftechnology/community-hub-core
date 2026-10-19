@@ -130,7 +130,11 @@ function route(path: string, bound: AccessDeps = deps()) {
   if (found === undefined) {
     throw new Error(`missing ${path}`);
   }
-  return found;
+  return {
+    ...found,
+    handle: (request: Request, context = { billing: found.billing, pattern: found.pattern }) =>
+      found.handle(request, context),
+  };
 }
 
 describe("access routes", () => {

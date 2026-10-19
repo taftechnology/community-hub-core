@@ -66,6 +66,7 @@ export function billingWebhookRoutes(deps: BillingWebhookDeps): GateRoute[] {
       method: "POST",
       pattern: "/v1/stripe/webhook",
       surface: "tenant",
+      billing: "exempt",
       largeBody: "webhooks",
       handle: async (request: Request): Promise<Response> => {
         // 1. Answer 404 unless the presented hostname is the webhooks hostname.

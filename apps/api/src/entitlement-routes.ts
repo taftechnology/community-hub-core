@@ -301,12 +301,14 @@ export function entitlementRoutes(deps: EntitlementDeps): GateRoute[] {
       method: "POST",
       pattern: "/v1/entitlements/list",
       surface: "tenant",
+      billing: "read",
       handle: list,
     },
     {
       method: "POST",
       pattern: "/v1/entitlements/toggle",
       surface: "tenant",
+      billing: "write",
       handle: toggle,
     },
   ];

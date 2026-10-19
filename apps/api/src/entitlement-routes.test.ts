@@ -154,13 +154,17 @@ describe("entitlement routes", () => {
           { communitySlug: "parish" },
           "Bearer token",
         ),
+        { billing: listed.billing, pattern: listed.pattern },
       ),
     );
     expect(hidden.status).toBe(404);
     expect(await hidden.text()).toBe("");
 
     const open = await withRequest({ requestId: REQUEST_ID }, async () =>
-      listed.handle(request("/v1/entitlements/list", API_HOSTNAME, { communitySlug: "parish" })),
+      listed.handle(request("/v1/entitlements/list", API_HOSTNAME, { communitySlug: "parish" }), {
+        billing: listed.billing,
+        pattern: listed.pattern,
+      }),
     );
     expect(open.status).toBe(401);
     expect(await open.text()).toBe("");
@@ -177,6 +181,7 @@ describe("entitlement routes", () => {
           { communitySlug: "parish", key: "people.directory", enabled: false },
           "Bearer token",
         ),
+        { billing: toggled.billing, pattern: toggled.pattern },
       ),
     );
     expect(response.status).toBe(404);

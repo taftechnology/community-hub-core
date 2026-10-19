@@ -73,6 +73,7 @@ describe("api entrypoint", () => {
         method: "GET",
         pattern: "/health",
         surface: "all",
+        billing: "exempt",
         handle: () => Response.json({ ok: true }),
       },
     ]);
@@ -98,6 +99,7 @@ describe("api entrypoint", () => {
         method: "GET",
         pattern: "/other",
         surface: "all",
+        billing: "exempt",
         handle: () => new Response(null, { status: 204 }),
       },
     ]);
@@ -130,6 +132,7 @@ describe("api entrypoint", () => {
           method: "GET",
           pattern: "/health",
           surface: "all",
+          billing: "exempt",
           handle: () => Response.json({ ok: true }),
         },
       ],
@@ -533,5 +536,41 @@ describe("api boot wiring of the billing adapter and logger", () => {
     } finally {
       startServerSpy.mockRestore();
     }
+  });
+
+  it("marks every production route as exempt, read, or write matching the spec exactly", () => {
+    const routes = productionRoutes(envWithBilling(), pem);
+    const markings = new Map(
+      routes.map((route) => [
+        `${route.method} ${route.pattern}`,
+        (route as { billing?: string }).billing,
+      ]),
+    );
+    expect(routes).toHaveLength(21);
+    expect(markings).toEqual(
+      new Map([
+        ["GET /health", "exempt"],
+        ["POST /v1/auth/email-otp/start", "exempt"],
+        ["POST /v1/auth/email-otp/verify", "exempt"],
+        ["POST /v1/auth/passkey/register/options", "exempt"],
+        ["POST /v1/auth/passkey/register/verify", "exempt"],
+        ["POST /v1/auth/passkey/authenticate/options", "exempt"],
+        ["POST /v1/auth/passkey/authenticate/verify", "exempt"],
+        ["POST /v1/auth/session/refresh", "exempt"],
+        ["POST /v1/billing/checkout", "exempt"],
+        ["POST /v1/billing/portal", "exempt"],
+        ["POST /v1/billing/status", "exempt"],
+        ["POST /v1/stripe/webhook", "exempt"],
+        ["POST /v1/access/grants/list", "read"],
+        ["POST /v1/entitlements/list", "read"],
+        ["POST /v1/access/grants", "write"],
+        ["POST /v1/access/grants/revoke", "write"],
+        ["POST /v1/access/custom-roles", "write"],
+        ["POST /v1/access/custom-roles/delete", "write"],
+        ["POST /v1/access/user-links", "write"],
+        ["POST /v1/access/user-links/delete", "write"],
+        ["POST /v1/entitlements/toggle", "write"],
+      ]),
+    );
   });
 });
