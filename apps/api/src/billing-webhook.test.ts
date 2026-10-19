@@ -633,6 +633,124 @@ describe("billing-webhook", () => {
       );
     });
 
+    it("links the re-read subscription customer when the event customer differs", async () => {
+      billingRepo.recordReceived.mockResolvedValueOnce("received");
+      billingRepo.linkSubscription.mockResolvedValueOnce("linked");
+      billingRepo.applySubscription.mockResolvedValueOnce("applied");
+
+      const port = createFakePort({
+        verifyEvent: vi.fn(async () => ({
+          id: "evt_testCheckoutCustomerDiff",
+          type: "checkout.session.completed",
+          data: {
+            object: {
+              id: "cs_test_customer_diff",
+              client_reference_id: validOrgId,
+              customer: "cus_event_only",
+              subscription: "sub_test1",
+              status: "complete",
+            },
+          },
+        })),
+        retrieveSubscription: vi.fn(async (id: string) => ({
+          id,
+          customerId: "cus_from_subscription",
+          status: "trialing",
+          lookupKey: "starter_monthly",
+          quantity: 1,
+          currentPeriodEnd: new Date("2026-11-18T09:00:00Z"),
+          trialEnd: new Date("2026-11-18T09:00:00Z"),
+          taxRateId: "txr_test1",
+          organisationIdMetadata: validOrgId,
+        })),
+      });
+
+      const { deps } = createTestDeps({ port });
+      const routes = billingWebhookRoutes(deps);
+      const route = routes.find((r) => r.pattern === "/v1/stripe/webhook")!;
+
+      const req = makeWebhookRequest("{}", { "stripe-signature": "dummy" });
+      const res = await route.handle(req);
+
+      expect(res.status).toBe(200);
+      expect(billingRepo.linkSubscription).toHaveBeenCalledWith(
+        expect.anything(),
+        validOrgId,
+        "cus_from_subscription",
+        "sub_test1",
+        "trialing",
+      );
+      expect(billingRepo.linkSubscription).not.toHaveBeenCalledWith(
+        expect.anything(),
+        validOrgId,
+        "cus_event_only",
+        expect.anything(),
+        expect.anything(),
+      );
+      expect(billingRepo.applySubscription).toHaveBeenCalled();
+      expect(billingRepo.markOutcome).toHaveBeenCalledWith(
+        expect.anything(),
+        "evt_testCheckoutCustomerDiff",
+        "processed",
+      );
+    });
+
+    it("refuses to link when the re-read subscription customer is empty, same as a metadata mismatch", async () => {
+      billingRepo.recordReceived.mockResolvedValueOnce("received");
+
+      const port = createFakePort({
+        verifyEvent: vi.fn(async () => ({
+          id: "evt_testCheckoutEmptyCustomer",
+          type: "checkout.session.completed",
+          data: {
+            object: {
+              id: "cs_test_empty_customer",
+              client_reference_id: validOrgId,
+              customer: "cus_event_only",
+              subscription: "sub_test1",
+              status: "complete",
+            },
+          },
+        })),
+        retrieveSubscription: vi.fn(async (id: string) => ({
+          id,
+          customerId: "",
+          status: "trialing",
+          lookupKey: "starter_monthly",
+          quantity: 1,
+          currentPeriodEnd: new Date("2026-11-18T09:00:00Z"),
+          trialEnd: new Date("2026-11-18T09:00:00Z"),
+          taxRateId: "txr_test1",
+          organisationIdMetadata: validOrgId,
+        })),
+      });
+
+      const { deps, loggedLines } = createTestDeps({ port });
+      const routes = billingWebhookRoutes(deps);
+      const route = routes.find((r) => r.pattern === "/v1/stripe/webhook")!;
+
+      const req = makeWebhookRequest("{}", { "stripe-signature": "dummy" });
+      const res = await route.handle(req);
+
+      expect(res.status).toBe(200);
+      expect(billingRepo.linkSubscription).not.toHaveBeenCalled();
+      expect(billingRepo.applySubscription).not.toHaveBeenCalled();
+      expect(billingRepo.markOutcome).toHaveBeenCalledWith(
+        expect.anything(),
+        "evt_testCheckoutEmptyCustomer",
+        "ignored",
+      );
+      expect(loggedLines).toHaveLength(1);
+      expect(loggedLines[0]).toMatchObject({
+        operation: "stripe_webhook",
+        stripeEventId: "evt_testCheckoutEmptyCustomer",
+        stripeEventType: "checkout.session.completed",
+        organisationId: validOrgId,
+        outcome: "ignored",
+        errorCode: "BILLING_ORGANISATION_MISMATCH",
+      });
+    });
+
     it("mismatched organisationIdMetadata in re-read is ignored without linking, code logged", async () => {
       billingRepo.recordReceived.mockResolvedValueOnce("received");
 

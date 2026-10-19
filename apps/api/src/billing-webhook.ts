@@ -133,9 +133,9 @@ export function billingWebhookRoutes(deps: BillingWebhookDeps): GateRoute[] {
                 typeof obj.subscription === "string" ? obj.subscription : undefined;
 
               if (customerId !== undefined && subscriptionId !== undefined) {
-                // Re-read subscription from port to obtain current status
+                // Re-read subscription from port to obtain current status and customer
                 const sub = await deps.port.retrieveSubscription(subscriptionId);
-                if (sub.organisationIdMetadata !== clientRefId) {
+                if (sub.organisationIdMetadata !== clientRefId || sub.customerId.length === 0) {
                   outcome = "ignored";
                   errorCode = "BILLING_ORGANISATION_MISMATCH";
                 } else {
@@ -143,7 +143,7 @@ export function billingWebhookRoutes(deps: BillingWebhookDeps): GateRoute[] {
                     linkSubscription(
                       sql as BillingSql,
                       orgId!,
-                      customerId,
+                      sub.customerId,
                       subscriptionId,
                       sub.status,
                     ),
