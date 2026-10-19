@@ -22,7 +22,9 @@ import { findCommunityBySlug } from "@community-hub/tenancy";
 import { readSession } from "@community-hub/identity";
 
 import type { Checkout } from "./checkout.js";
-import type { GateRoute } from "./gate.js";
+import type { GateRoute, RouteContext } from "./gate.js";
+import type { BillingLogFields } from "./index.js";
+import { guardWrite } from "./billing-guard.js";
 
 type AccessSql = Parameters<typeof readSession>[0];
 
@@ -87,6 +89,7 @@ export type AccessDeps = {
   now: () => Date;
   apiHostname: string;
   log: AccessLog;
+  guardLog?: ((message: string, fields: BillingLogFields) => void) | undefined;
 };
 
 function empty(status: number): Response {
@@ -308,12 +311,30 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
     return { userId: session.userId };
   }
 
-  async function communityScope(slug: string): Promise<Scope | null> {
+  async function communityScope(
+    slug: string,
+    context: RouteContext,
+    userId: string,
+  ): Promise<Scope | Response | null> {
     const found = await deps.checkout("platform", (sql) => findCommunityBySlug(sql, slug));
     if (found === null) {
       return null;
     }
-    return { orgId: found.organisationId, communityId: found.id };
+    const scope = { orgId: found.organisationId, communityId: found.id };
+    const blocked = await guardWrite(
+      {
+        checkout: deps.checkout,
+        now: deps.now,
+        guardLog: deps.guardLog ?? deps.log,
+      },
+      scope,
+      userId,
+      context,
+    );
+    if (blocked !== null) {
+      return blocked;
+    }
+    return scope;
   }
 
   async function transact<T>(
@@ -362,7 +383,7 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
       pattern: "/v1/access/grants/list",
       surface: "tenant",
       billing: "read",
-      handle: async (request) => {
+      handle: async (request, context) => {
         const hidden = foreignHost(request);
         if (hidden !== undefined) {
           return hidden;
@@ -375,9 +396,12 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
         if (actor instanceof Response) {
           return actor;
         }
-        const scope = await communityScope(body.communitySlug);
+        const scope = await communityScope(body.communitySlug, context, actor.userId);
         if (scope === null) {
           return empty(403);
+        }
+        if (scope instanceof Response) {
+          return scope;
         }
         const outcome = await transact(scope, async (tx) => {
           const directory = await loadDirectory(tx);
@@ -394,7 +418,7 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
       pattern: "/v1/access/grants",
       surface: "tenant",
       billing: "write",
-      handle: async (request) => {
+      handle: async (request, context) => {
         const hidden = foreignHost(request);
         if (hidden !== undefined) {
           return hidden;
@@ -407,9 +431,12 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
         if (actor instanceof Response) {
           return actor;
         }
-        const scope = await communityScope(body.communitySlug);
+        const scope = await communityScope(body.communitySlug, context, actor.userId);
         if (scope === null) {
           return empty(403);
+        }
+        if (scope instanceof Response) {
+          return scope;
         }
         const outcome = await transact(scope, (tx) =>
           grantRole(tx, {
@@ -428,7 +455,7 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
       pattern: "/v1/access/grants/revoke",
       surface: "tenant",
       billing: "write",
-      handle: async (request) => {
+      handle: async (request, context) => {
         const hidden = foreignHost(request);
         if (hidden !== undefined) {
           return hidden;
@@ -441,9 +468,12 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
         if (actor instanceof Response) {
           return actor;
         }
-        const scope = await communityScope(body.communitySlug);
+        const scope = await communityScope(body.communitySlug, context, actor.userId);
         if (scope === null) {
           return empty(403);
+        }
+        if (scope instanceof Response) {
+          return scope;
         }
         const outcome = await transact(scope, (tx) =>
           revokeRole(tx, {
@@ -461,7 +491,7 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
       pattern: "/v1/access/custom-roles",
       surface: "tenant",
       billing: "write",
-      handle: async (request) => {
+      handle: async (request, context) => {
         const hidden = foreignHost(request);
         if (hidden !== undefined) {
           return hidden;
@@ -474,9 +504,12 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
         if (actor instanceof Response) {
           return actor;
         }
-        const scope = await communityScope(body.communitySlug);
+        const scope = await communityScope(body.communitySlug, context, actor.userId);
         if (scope === null) {
           return empty(403);
+        }
+        if (scope instanceof Response) {
+          return scope;
         }
         const outcome = await transact(scope, (tx) =>
           createCustomRole(tx, {
@@ -494,7 +527,7 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
       pattern: "/v1/access/custom-roles/delete",
       surface: "tenant",
       billing: "write",
-      handle: async (request) => {
+      handle: async (request, context) => {
         const hidden = foreignHost(request);
         if (hidden !== undefined) {
           return hidden;
@@ -507,9 +540,12 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
         if (actor instanceof Response) {
           return actor;
         }
-        const scope = await communityScope(body.communitySlug);
+        const scope = await communityScope(body.communitySlug, context, actor.userId);
         if (scope === null) {
           return empty(403);
+        }
+        if (scope instanceof Response) {
+          return scope;
         }
         const outcome = await transact(scope, (tx) =>
           deleteCustomRole(tx, {
@@ -526,7 +562,7 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
       pattern: "/v1/access/user-links",
       surface: "tenant",
       billing: "write",
-      handle: async (request) => {
+      handle: async (request, context) => {
         const hidden = foreignHost(request);
         if (hidden !== undefined) {
           return hidden;
@@ -539,9 +575,12 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
         if (actor instanceof Response) {
           return actor;
         }
-        const scope = await communityScope(body.communitySlug);
+        const scope = await communityScope(body.communitySlug, context, actor.userId);
         if (scope === null) {
           return empty(403);
+        }
+        if (scope instanceof Response) {
+          return scope;
         }
         const outcome = await transact(scope, async (tx) => {
           const directory = await loadDirectory(tx);
@@ -563,7 +602,7 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
       pattern: "/v1/access/user-links/delete",
       surface: "tenant",
       billing: "write",
-      handle: async (request) => {
+      handle: async (request, context) => {
         const hidden = foreignHost(request);
         if (hidden !== undefined) {
           return hidden;
@@ -576,9 +615,12 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
         if (actor instanceof Response) {
           return actor;
         }
-        const scope = await communityScope(body.communitySlug);
+        const scope = await communityScope(body.communitySlug, context, actor.userId);
         if (scope === null) {
           return empty(403);
+        }
+        if (scope instanceof Response) {
+          return scope;
         }
         const outcome = await transact(scope, async (tx) => {
           const directory = await loadDirectory(tx);

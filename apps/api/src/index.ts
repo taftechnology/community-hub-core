@@ -122,6 +122,7 @@ export type BillingLogFields = Pick<
   | "gatewayRequestId"
   | "hostname"
   | "reason"
+  | "path"
 >;
 
 export type BillingDeps = {
@@ -134,6 +135,7 @@ export type BillingDeps = {
   readonly webhooksHostname: string;
   readonly adminOrigin?: string | undefined;
   readonly log: (message: string, fields?: BillingLogFields) => void;
+  readonly guardLog?: ((message: string, fields: BillingLogFields) => void) | undefined;
 };
 
 export function bindServices(
@@ -242,6 +244,7 @@ export function bindServices(
     webhooksHostname: env.WEBHOOKS_HOSTNAME,
     adminOrigin: env.ADMIN_ORIGIN,
     log: billingLog,
+    guardLog: billingLog,
   };
 
   return {
@@ -265,6 +268,9 @@ export function bindServices(
       now: shared.now,
       apiHostname: env.API_HOSTNAME,
       log: shared.log,
+      guardLog: (message: string, fields: BillingLogFields) => {
+        logger.info(message, fields);
+      },
     },
     entitlements: {
       checkout: shared.checkout,
@@ -275,6 +281,9 @@ export function bindServices(
       now: shared.now,
       apiHostname: env.API_HOSTNAME,
       log: shared.log,
+      guardLog: (message: string, fields: BillingLogFields) => {
+        logger.info(message, fields);
+      },
     },
     billing,
   };

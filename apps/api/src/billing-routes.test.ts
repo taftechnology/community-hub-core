@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { withRequest } from "@community-hub/kernel";
-import { BillingUnavailable } from "@community-hub/billing";
+import { BillingReadOnly, BillingUnavailable } from "@community-hub/billing";
 import {
   bannerStatusResponse,
   fullStatusResponse,
@@ -28,6 +28,7 @@ const access = vi.hoisted(() => ({
 const billing = vi.hoisted(() => ({
   readAccount: vi.fn(),
   currentSettings: vi.fn(),
+  assertWritable: vi.fn(),
 }));
 
 const entitlements = vi.hoisted(() => ({
@@ -62,6 +63,7 @@ vi.mock("@community-hub/billing", async () => {
     ...actual,
     readAccount: billing.readAccount,
     currentSettings: billing.currentSettings,
+    assertWritable: billing.assertWritable,
   };
 });
 
@@ -177,6 +179,7 @@ describe("billing routes", () => {
     access.holdsAnyGrant.mockReset();
     billing.readAccount.mockReset();
     billing.currentSettings.mockReset();
+    billing.assertWritable.mockReset();
     entitlements.planBilling.mockReset();
     entitlements.planByLookupKey.mockReset();
     entitlements.currentPlan.mockReset();
@@ -1471,6 +1474,27 @@ describe("billing routes", () => {
         "platform",
         "platform",
       ]);
+    });
+
+    it("status, portal, checkout and plans never call assertWritable in read_only", async () => {
+      billing.assertWritable.mockRejectedValue(new BillingReadOnly("read_only"));
+      for (const path of [
+        "/v1/billing/status",
+        "/v1/billing/portal",
+        "/v1/billing/checkout",
+        "/v1/billing/plans",
+      ]) {
+        const target = route(path);
+        const payload =
+          path === "/v1/billing/checkout"
+            ? { communitySlug: "parish", planKey: "starter" }
+            : { communitySlug: "parish" };
+        const res = await withRequest({ requestId: REQUEST_ID }, async () =>
+          target.handle(request(path, API_HOSTNAME, payload, "Bearer token")),
+        );
+        expect(res.status).toBe(200);
+      }
+      expect(billing.assertWritable).not.toHaveBeenCalled();
     });
   });
 });

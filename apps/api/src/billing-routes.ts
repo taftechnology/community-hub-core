@@ -21,7 +21,9 @@ import { getRequestContext } from "@community-hub/kernel";
 import { findCommunityBySlug, listCommunityIds } from "@community-hub/tenancy";
 
 import type { Checkout } from "./checkout.js";
-import { presentedHostname, type GateRoute } from "./gate.js";
+import { presentedHostname, type GateRoute, type RouteContext } from "./gate.js";
+import type { BillingLogFields } from "./index.js";
+import { guardWrite } from "./billing-guard.js";
 
 const DENIED = "billing.permission.denied";
 const VIEW = "billing.view";
@@ -46,6 +48,7 @@ export type BillingRoutesDeps = {
   readonly adminOrigin?: string | undefined;
   readonly port: StripeBilling;
   readonly log: BillingRouteLog;
+  readonly guardLog?: ((message: string, fields: BillingLogFields) => void) | undefined;
 };
 
 function empty(status: number): Response {
@@ -120,12 +123,30 @@ export function billingRoutes(deps: BillingRoutesDeps): GateRoute[] {
     return { userId: session.userId };
   }
 
-  async function communityScope(slug: string): Promise<Scope | null> {
+  async function communityScope(
+    slug: string,
+    context: RouteContext,
+    userId: string,
+  ): Promise<Scope | Response | null> {
     const found = await deps.checkout("platform", (sql) => findCommunityBySlug(asSql(sql), slug));
     if (found === null) {
       return null;
     }
-    return { orgId: found.organisationId, communityId: found.id };
+    const scope = { orgId: found.organisationId, communityId: found.id };
+    const blocked = await guardWrite(
+      {
+        checkout: deps.checkout,
+        now: deps.now,
+        guardLog: deps.guardLog ?? deps.log,
+      },
+      scope,
+      userId,
+      context,
+    );
+    if (blocked !== null) {
+      return blocked;
+    }
+    return scope;
   }
 
   async function authorise(
@@ -155,7 +176,7 @@ export function billingRoutes(deps: BillingRoutesDeps): GateRoute[] {
     );
   }
 
-  async function handleCheckout(request: Request): Promise<Response> {
+  async function handleCheckout(request: Request, context: RouteContext): Promise<Response> {
     const hidden = foreignHost(request);
     if (hidden !== undefined) {
       return finish(request, hidden);
@@ -168,9 +189,12 @@ export function billingRoutes(deps: BillingRoutesDeps): GateRoute[] {
     if (actor instanceof Response) {
       return finish(request, actor);
     }
-    const scope = await communityScope(body.communitySlug);
+    const scope = await communityScope(body.communitySlug, context, actor.userId);
     if (scope === null) {
       return finish(request, empty(403));
+    }
+    if (scope instanceof Response) {
+      return finish(request, scope);
     }
     const allowed = await authorise(scope, actor.userId, MANAGE);
     if (!allowed) {
@@ -241,7 +265,7 @@ export function billingRoutes(deps: BillingRoutesDeps): GateRoute[] {
     }
   }
 
-  async function handlePortal(request: Request): Promise<Response> {
+  async function handlePortal(request: Request, context: RouteContext): Promise<Response> {
     const hidden = foreignHost(request);
     if (hidden !== undefined) {
       return finish(request, hidden);
@@ -254,9 +278,12 @@ export function billingRoutes(deps: BillingRoutesDeps): GateRoute[] {
     if (actor instanceof Response) {
       return finish(request, actor);
     }
-    const scope = await communityScope(body.communitySlug);
+    const scope = await communityScope(body.communitySlug, context, actor.userId);
     if (scope === null) {
       return finish(request, empty(403));
+    }
+    if (scope instanceof Response) {
+      return finish(request, scope);
     }
     const allowed = await authorise(scope, actor.userId, MANAGE);
     if (!allowed) {
@@ -293,7 +320,7 @@ export function billingRoutes(deps: BillingRoutesDeps): GateRoute[] {
     }
   }
 
-  async function handleStatus(request: Request): Promise<Response> {
+  async function handleStatus(request: Request, context: RouteContext): Promise<Response> {
     const hidden = foreignHost(request);
     if (hidden !== undefined) {
       return finish(request, hidden);
@@ -306,9 +333,12 @@ export function billingRoutes(deps: BillingRoutesDeps): GateRoute[] {
     if (actor instanceof Response) {
       return finish(request, actor);
     }
-    const scope = await communityScope(body.communitySlug);
+    const scope = await communityScope(body.communitySlug, context, actor.userId);
     if (scope === null) {
       return finish(request, empty(403));
+    }
+    if (scope instanceof Response) {
+      return finish(request, scope);
     }
 
     const auth = await deps.checkout("app", (sql) =>
@@ -388,7 +418,7 @@ export function billingRoutes(deps: BillingRoutesDeps): GateRoute[] {
     );
   }
 
-  async function handlePlans(request: Request): Promise<Response> {
+  async function handlePlans(request: Request, context: RouteContext): Promise<Response> {
     const hidden = foreignHost(request);
     if (hidden !== undefined) {
       return finish(request, hidden);
@@ -401,9 +431,12 @@ export function billingRoutes(deps: BillingRoutesDeps): GateRoute[] {
     if (actor instanceof Response) {
       return finish(request, actor);
     }
-    const scope = await communityScope(body.communitySlug);
+    const scope = await communityScope(body.communitySlug, context, actor.userId);
     if (scope === null) {
       return finish(request, empty(403));
+    }
+    if (scope instanceof Response) {
+      return finish(request, scope);
     }
     const allowed = await authorise(scope, actor.userId, MANAGE);
     if (!allowed) {

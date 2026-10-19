@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { withRequest } from "@community-hub/kernel";
+import { BillingReadOnly } from "@community-hub/billing";
 
 const identity = vi.hoisted(() => ({
   readSession: vi.fn(),
@@ -11,6 +12,11 @@ const tenancy = vi.hoisted(() => ({
 
 const access = vi.hoisted(() => ({
   holdsPermission: vi.fn(),
+  holdsAnyGrant: vi.fn(),
+}));
+
+const billing = vi.hoisted(() => ({
+  assertWritable: vi.fn(),
 }));
 
 const entitlements = vi.hoisted(() => {
@@ -44,7 +50,17 @@ vi.mock("@community-hub/tenancy", () => tenancy);
 
 vi.mock("@community-hub/access", () => ({
   holdsPermission: access.holdsPermission,
+  holdsAnyGrant: access.holdsAnyGrant,
 }));
+
+vi.mock("@community-hub/billing", async () => {
+  const actual =
+    await vi.importActual<typeof import("@community-hub/billing")>("@community-hub/billing");
+  return {
+    ...actual,
+    assertWritable: billing.assertWritable,
+  };
+});
 
 vi.mock("@community-hub/entitlements", () => ({
   EntitlementError: entitlements.EntitlementError,
@@ -78,6 +94,7 @@ function deps(): EntitlementDeps {
     now: () => new Date("2026-10-12T00:00:00.000Z"),
     apiHostname: API_HOSTNAME,
     log: () => undefined,
+    guardLog: () => undefined,
   };
 }
 
@@ -129,6 +146,10 @@ describe("entitlement routes", () => {
       region: "au",
     });
     access.holdsPermission.mockResolvedValue(true);
+    access.holdsAnyGrant.mockReset();
+    access.holdsAnyGrant.mockResolvedValue(true);
+    billing.assertWritable.mockReset();
+    billing.assertWritable.mockResolvedValue("ok");
   });
 
   it("serves list and toggle on the tenant surface", () => {
@@ -187,5 +208,77 @@ describe("entitlement routes", () => {
     expect(response.status).toBe(404);
     expect(await response.text()).toBe("");
     expect(db.appendAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("a member without entitlements.manage gets 402 on toggle in read_only, and 403 plus one audit row in ok (pin 11)", async () => {
+    access.holdsPermission.mockImplementation(
+      async (_tx: unknown, _userId: string, permission: string) => {
+        return permission === "entitlements.view";
+      },
+    );
+    billing.assertWritable.mockRejectedValue(new BillingReadOnly("read_only"));
+
+    const toggled = route("/v1/entitlements/toggle");
+    const blockedRes = await withRequest({ requestId: REQUEST_ID }, async () =>
+      toggled.handle(
+        request(
+          "/v1/entitlements/toggle",
+          API_HOSTNAME,
+          { communitySlug: "parish", key: "people.directory", enabled: false },
+          "Bearer token",
+        ),
+        { billing: toggled.billing, pattern: toggled.pattern },
+      ),
+    );
+    expect(blockedRes.status).toBe(402);
+    expect(await blockedRes.text()).toBe("");
+    expect(db.appendAuditEvent).not.toHaveBeenCalled();
+
+    billing.assertWritable.mockResolvedValue("ok");
+    const okRes = await withRequest({ requestId: REQUEST_ID }, async () =>
+      toggled.handle(
+        request(
+          "/v1/entitlements/toggle",
+          API_HOSTNAME,
+          { communitySlug: "parish", key: "people.directory", enabled: false },
+          "Bearer token",
+        ),
+        { billing: toggled.billing, pattern: toggled.pattern },
+      ),
+    );
+    expect(okRes.status).toBe(403);
+    expect(await okRes.text()).toBe("");
+    expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
+    expect(db.appendAuditEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        actorKind: "user",
+        actorId: USER,
+        action: "entitlements.permission.denied",
+        purpose: "entitlements.toggles.manage",
+        targetIds: [ORG, COMMUNITY],
+      }),
+    );
+  });
+
+  it("serves list normally in read_only and assertWritable is never called", async () => {
+    billing.assertWritable.mockRejectedValue(new BillingReadOnly("read_only"));
+    entitlements.readSnapshot.mockResolvedValue({
+      planEntitlements: [],
+      addOnEntitlements: [],
+      allocations: [],
+      overrides: [],
+      flags: [],
+      toggles: [],
+    });
+    const listed = route("/v1/entitlements/list");
+    const res = await withRequest({ requestId: REQUEST_ID }, async () =>
+      listed.handle(
+        request("/v1/entitlements/list", API_HOSTNAME, { communitySlug: "parish" }, "Bearer token"),
+        { billing: listed.billing, pattern: listed.pattern },
+      ),
+    );
+    expect(res.status).toBe(200);
+    expect(billing.assertWritable).not.toHaveBeenCalled();
   });
 });

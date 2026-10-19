@@ -8,7 +8,9 @@ import { getRequestContext } from "@community-hub/kernel";
 import { findCommunityBySlug } from "@community-hub/tenancy";
 
 import type { Checkout } from "./checkout.js";
-import type { GateRoute } from "./gate.js";
+import type { GateRoute, RouteContext } from "./gate.js";
+import type { BillingLogFields } from "./index.js";
+import { guardWrite } from "./billing-guard.js";
 
 type EntitlementSql = Parameters<typeof readSession>[0];
 
@@ -30,6 +32,7 @@ export type EntitlementDeps = {
   now: () => Date;
   apiHostname: string;
   log: EntitlementLog;
+  guardLog?: ((message: string, fields: BillingLogFields) => void) | undefined;
 };
 
 function empty(status: number): Response {
@@ -142,12 +145,30 @@ export function entitlementRoutes(deps: EntitlementDeps): GateRoute[] {
     return { userId: session.userId };
   }
 
-  async function communityScope(slug: string): Promise<Scope | null> {
+  async function communityScope(
+    slug: string,
+    context: RouteContext,
+    userId: string,
+  ): Promise<Scope | Response | null> {
     const found = await deps.checkout("platform", (sql) => findCommunityBySlug(sql, slug));
     if (found === null) {
       return null;
     }
-    return { orgId: found.organisationId, communityId: found.id };
+    const scope = { orgId: found.organisationId, communityId: found.id };
+    const blocked = await guardWrite(
+      {
+        checkout: deps.checkout,
+        now: deps.now,
+        guardLog: deps.guardLog ?? deps.log,
+      },
+      scope,
+      userId,
+      context,
+    );
+    if (blocked !== null) {
+      return blocked;
+    }
+    return scope;
   }
 
   async function authorise(
@@ -180,7 +201,7 @@ export function entitlementRoutes(deps: EntitlementDeps): GateRoute[] {
     );
   }
 
-  async function list(request: Request): Promise<Response> {
+  async function list(request: Request, context: RouteContext): Promise<Response> {
     const hidden = foreignHost(request);
     if (hidden !== undefined) {
       return finish(request, hidden);
@@ -193,9 +214,12 @@ export function entitlementRoutes(deps: EntitlementDeps): GateRoute[] {
     if (actor instanceof Response) {
       return finish(request, actor);
     }
-    const scope = await communityScope(body.communitySlug);
+    const scope = await communityScope(body.communitySlug, context, actor.userId);
     if (scope === null) {
       return finish(request, empty(404));
+    }
+    if (scope instanceof Response) {
+      return finish(request, scope);
     }
     const gate = await authorise(scope, actor.userId, VIEW, VIEW_PURPOSE);
     if (!gate.allowed) {
@@ -218,7 +242,7 @@ export function entitlementRoutes(deps: EntitlementDeps): GateRoute[] {
     );
   }
 
-  async function toggle(request: Request): Promise<Response> {
+  async function toggle(request: Request, context: RouteContext): Promise<Response> {
     const hidden = foreignHost(request);
     if (hidden !== undefined) {
       return finish(request, hidden);
@@ -231,9 +255,12 @@ export function entitlementRoutes(deps: EntitlementDeps): GateRoute[] {
     if (actor instanceof Response) {
       return finish(request, actor);
     }
-    const scope = await communityScope(body.communitySlug);
+    const scope = await communityScope(body.communitySlug, context, actor.userId);
     if (scope === null) {
       return finish(request, empty(404));
+    }
+    if (scope instanceof Response) {
+      return finish(request, scope);
     }
     const gate = await authorise(scope, actor.userId, MANAGE, MANAGE_PURPOSE);
     if (!gate.allowed) {
