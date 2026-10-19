@@ -241,6 +241,7 @@ export function createStripeBilling(options: CreateStripeBillingOptions): Stripe
         const session = await client.checkout.sessions.create(
           {
             mode: "subscription",
+            payment_method_collection: "always",
             line_items: [
               {
                 price: input.priceId,

@@ -146,6 +146,7 @@ describe("stripe-adapter", () => {
       expect(spies.checkoutCreate).toHaveBeenCalledWith(
         {
           mode: "subscription",
+          payment_method_collection: "always",
           line_items: [
             {
               price: "price_monthly_plan",
