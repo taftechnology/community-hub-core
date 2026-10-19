@@ -5,6 +5,8 @@ defineAuditPurpose("billing.permission.denied");
 
 export { deriveState, type Account, type BillingMode, type BillingState } from "../domain/state.js";
 
+export { BillingReadOnly, isWritable } from "../domain/writable.js";
+
 export { checkoutDecision, type CheckoutDecision } from "../domain/checkout.js";
 
 export { trialDaysFor, type TrialPlanInput, type TrialSettingsInput } from "../domain/trial.js";
@@ -45,6 +47,8 @@ export {
   type BillingAccount,
   type LinkSubscriptionResult,
 } from "../infrastructure/accounts.js";
+
+export { assertWritable } from "../infrastructure/writable.js";
 
 export {
   isReplayOutcome,
