@@ -346,6 +346,34 @@ describe("createGate", () => {
         routes: [
           {
             method: "GET",
+            pattern: "/ops-only",
+            surface: "ops",
+            handle,
+          } as unknown as GateRoute,
+        ],
+        info: () => undefined,
+      }),
+    ).toThrow(RoutesRejected);
+    expect(() =>
+      createGate({
+        hostnames: HOSTS,
+        routes: [
+          {
+            method: "POST",
+            pattern: "/v1/x",
+            surface: "tenant",
+            handle,
+          } as unknown as GateRoute,
+        ],
+        info: () => undefined,
+      }),
+    ).toThrow(RoutesRejected);
+    expect(() =>
+      createGate({
+        hostnames: HOSTS,
+        routes: [
+          {
+            method: "GET",
             pattern: "/health",
             surface: "all",
             billing: "maybe" as unknown as BillingMarking,
@@ -358,7 +386,9 @@ describe("createGate", () => {
   });
 
   it("passes route context with billing and pattern to handle", async () => {
-    let capturedContext: RouteContext | undefined;
+    let healthContext: RouteContext | undefined;
+    let writeContext: RouteContext | undefined;
+    let readContext: RouteContext | undefined;
     const gate = createGate({
       hostnames: HOSTS,
       routes: [
@@ -368,7 +398,27 @@ describe("createGate", () => {
           surface: "all",
           billing: "exempt",
           handle: (_request, context) => {
-            capturedContext = context;
+            healthContext = context;
+            return Response.json({ ok: true });
+          },
+        },
+        {
+          method: "POST",
+          pattern: "/v1/access/grants",
+          surface: "tenant",
+          billing: "write",
+          handle: (_request, context) => {
+            writeContext = context;
+            return Response.json({ ok: true });
+          },
+        },
+        {
+          method: "POST",
+          pattern: "/v1/access/grants/list",
+          surface: "tenant",
+          billing: "read",
+          handle: (_request, context) => {
+            readContext = context;
             return Response.json({ ok: true });
           },
         },
@@ -376,17 +426,42 @@ describe("createGate", () => {
       info: () => undefined,
     });
 
-    const response = await gate({
+    const healthResponse = await gate({
       request: new Request("https://au.api.example.test/health", {
         headers: { "x-community-hub-hostname": HOSTS.api },
       }),
       remoteAddress: "10.0.0.8",
     });
-
-    expect(response.status).toBe(200);
-    expect(capturedContext).toEqual({
+    expect(healthResponse.status).toBe(200);
+    expect(healthContext).toEqual({
       billing: "exempt",
       pattern: "/health",
+    });
+
+    const writeResponse = await gate({
+      request: new Request("https://au.api.example.test/v1/access/grants", {
+        method: "POST",
+        headers: { "x-community-hub-hostname": HOSTS.api },
+      }),
+      remoteAddress: "10.0.0.8",
+    });
+    expect(writeResponse.status).toBe(200);
+    expect(writeContext).toEqual({
+      billing: "write",
+      pattern: "/v1/access/grants",
+    });
+
+    const readResponse = await gate({
+      request: new Request("https://au.api.example.test/v1/access/grants/list", {
+        method: "POST",
+        headers: { "x-community-hub-hostname": HOSTS.api },
+      }),
+      remoteAddress: "10.0.0.8",
+    });
+    expect(readResponse.status).toBe(200);
+    expect(readContext).toEqual({
+      billing: "read",
+      pattern: "/v1/access/grants/list",
     });
   });
 });
@@ -532,6 +607,26 @@ describe("assertRoutes", () => {
           method: "GET",
           pattern: "/health",
           surface: "all",
+          handle,
+        } as unknown as GateRoute,
+      ]),
+    ).toThrow(RoutesRejected);
+    expect(() =>
+      assertRoutes([
+        {
+          method: "GET",
+          pattern: "/ops-only",
+          surface: "ops",
+          handle,
+        } as unknown as GateRoute,
+      ]),
+    ).toThrow(RoutesRejected);
+    expect(() =>
+      assertRoutes([
+        {
+          method: "POST",
+          pattern: "/v1/x",
+          surface: "tenant",
           handle,
         } as unknown as GateRoute,
       ]),
