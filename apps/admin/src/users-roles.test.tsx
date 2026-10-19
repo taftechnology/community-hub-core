@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import axe from "axe-core";
 import { afterEach, beforeEach } from "vitest";
 
@@ -305,7 +305,9 @@ it("ignores a stale response that arrives after the slug has changed", async () 
     ),
   );
 
-  await new Promise((r) => setTimeout(r, 50));
+  await act(async () => {
+    await cathedralPromise;
+  });
 
   expect(screen.getByText("No role grants")).toBeTruthy();
   expect(screen.queryByText(USER, { exact: false })).toBeNull();
@@ -388,7 +390,84 @@ it("ignores a write that finishes after switching to a forbidden community", asy
   expect(await screen.findByText("You cannot manage roles")).toBeTruthy();
 
   resolveRevoke(new Response(null, { status: 200 }));
-  await new Promise((r) => setTimeout(r, 50));
+  await act(async () => {
+    await revokePromise;
+  });
+
+  expect(screen.getByText("You cannot manage roles")).toBeTruthy();
+  expect(screen.queryByText(USER, { exact: false })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Grant" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Revoke" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Create custom role" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Link" })).toBeNull();
+});
+
+it("ignores a follow-up reload that finishes after switching to a forbidden community", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+
+  let parishListCalls = 0;
+  let resolveParishReload!: (value: Response) => void;
+  const parishReloadPromise = new Promise<Response>((resolve) => {
+    resolveParishReload = resolve;
+  });
+
+  vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const url = String(input);
+    if (url.endsWith("/v1/access/grants/revoke")) {
+      return Promise.resolve(new Response(null, { status: 200 }));
+    }
+    if (url.includes("/v1/access/grants/list")) {
+      const body = JSON.parse(String((init as RequestInit).body));
+      if (body.communitySlug === "parish") {
+        parishListCalls++;
+        if (parishListCalls === 1) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify(directory(1, [ownerGrant], ["access.roles.manage", "access.users.manage"])),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
+        return parishReloadPromise;
+      }
+      return Promise.resolve(new Response(null, { status: 403 }));
+    }
+    return Promise.resolve(new Response(null, { status: 200 }));
+  });
+
+  await showUsers();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  expect(await screen.findByText(USER, { exact: false })).toBeTruthy();
+  const revokeButton = screen.getByRole("button", { name: "Revoke" });
+
+  fireEvent.click(revokeButton);
+
+  await vi.waitFor(() => {
+    expect(parishListCalls).toBe(2);
+  });
+
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "cathedral" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  expect(await screen.findByText("You cannot manage roles")).toBeTruthy();
+
+  resolveParishReload(
+    new Response(
+      JSON.stringify(directory(0, [ownerGrant], ["access.roles.manage"])),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ),
+  );
+
+  await act(async () => {
+    await parishReloadPromise;
+  });
+  await act(async () => {});
 
   expect(screen.getByText("You cannot manage roles")).toBeTruthy();
   expect(screen.queryByText(USER, { exact: false })).toBeNull();

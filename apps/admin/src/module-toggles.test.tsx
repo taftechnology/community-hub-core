@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import axe from "axe-core";
 import { afterEach, beforeEach } from "vitest";
 
@@ -367,7 +367,9 @@ it("ignores a stale response that arrives after the slug has changed", async () 
     ),
   );
 
-  await new Promise((r) => setTimeout(r, 50));
+  await act(async () => {
+    await cathedralPromise;
+  });
 
   expect(screen.getByText("No modules are allocated.")).toBeTruthy();
   expect(screen.queryByRole("switch")).toBeNull();
@@ -452,7 +454,9 @@ it("ignores a write that finishes after switching to a forbidden community", asy
   expect(await screen.findByText("You cannot manage modules")).toBeTruthy();
 
   resolveToggle(new Response(null, { status: 200 }));
-  await new Promise((r) => setTimeout(r, 50));
+  await act(async () => {
+    await togglePromise;
+  });
 
   expect(screen.getByText("You cannot manage modules")).toBeTruthy();
   expect(screen.queryByRole("switch")).toBeNull();

@@ -1,5 +1,6 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import axe from "axe-core";
+import { StrictMode } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -68,6 +69,72 @@ describe("BillingBanner and Shell Billing Return", () => {
     expect(screen.queryByRole("status")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("renders no banner when status answers 403 with a status-like JSON body", async () => {
+    sessionStorage.setItem("community-hub.community", "parish");
+    let resolveStatus!: (res: Response) => void;
+    const statusPromise = new Promise<Response>((resolve) => {
+      resolveStatus = resolve;
+    });
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).includes("/v1/billing/status")) {
+        return statusPromise;
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    render(<Shell />);
+
+    resolveStatus(
+      new Response(
+        JSON.stringify({
+          state: "none",
+          trial_end: null,
+          grace_until: null,
+          canView: true,
+          canManage: true,
+        }),
+        {
+          status: 403,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+
+    await act(async () => {
+      await statusPromise;
+    });
+
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("renders no banner when status answers 500", async () => {
+    sessionStorage.setItem("community-hub.community", "parish");
+    let resolveStatus500!: (res: Response) => void;
+    const status500Promise = new Promise<Response>((resolve) => {
+      resolveStatus500 = resolve;
+    });
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).includes("/v1/billing/status")) {
+        return status500Promise;
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    render(<Shell />);
+
+    resolveStatus500(new Response("Internal Server Error", { status: 500 }));
+
+    await act(async () => {
+      await status500Promise;
+    });
+
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   describe("banner rows with canManage true and false (pin 17)", () => {
@@ -521,6 +588,7 @@ describe("BillingBanner and Shell Billing Return", () => {
 
       // Navigate from "/" to "/settings/users"
       await router.navigate("/settings/users");
+      await act(async () => {});
       // Still exactly 1 status call
       const statusCallsAfterNav = fetchSpy.mock.calls.filter((c) =>
         String(c[0]).includes("/v1/billing/status"),
@@ -540,6 +608,64 @@ describe("BillingBanner and Shell Billing Return", () => {
         expect(statusCallsAfterChange).toHaveLength(2);
         expect(statusCallsAfterChange[1]?.[1]?.body).toBe(JSON.stringify({ communitySlug: "cathedral" }));
       });
+    });
+
+    it("clears the banner on a community change while new status is pending, and stays clear on 403", async () => {
+      sessionStorage.setItem("community-hub.community", "parish");
+
+      let resolveCathedral!: (res: Response) => void;
+      const cathedralPromise = new Promise<Response>((resolve) => {
+        resolveCathedral = resolve;
+      });
+
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url.includes("/v1/billing/status")) {
+          const body = JSON.parse(String((init as RequestInit).body));
+          if (body.communitySlug === "parish") {
+            return mockStatusResponse({
+              state: "read_only",
+              trial_end: null,
+              grace_until: null,
+              canView: true,
+              canManage: true,
+            });
+          }
+          if (body.communitySlug === "cathedral") {
+            return cathedralPromise;
+          }
+        }
+        return new Response(null, { status: 404 });
+      });
+
+      render(<Shell />);
+
+      // A answers read_only -> banner is shown
+      expect(await screen.findByText("Subscription ended")).toBeTruthy();
+      expect(screen.queryByRole("alert")).toBeTruthy();
+
+      // Switch to B, with B's status held unresolved
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: "cathedral" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      // Assert there is no alert or status region immediately
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.queryByRole("status")).toBeNull();
+      expect(screen.queryByText("Subscription ended")).toBeNull();
+
+      // Resolve B with 403
+      resolveCathedral(new Response(null, { status: 403 }));
+
+      await act(async () => {
+        await cathedralPromise;
+      });
+
+      // Assert there is still none
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.queryByRole("status")).toBeNull();
+      expect(screen.queryByText("Subscription ended")).toBeNull();
     });
   });
 
@@ -575,12 +701,14 @@ describe("BillingBanner and Shell Billing Return", () => {
 
       // Advance 5 seconds
       vi.advanceTimersByTime(5000);
+      await act(async () => {});
 
-      // Refreshed once after 5s
+      // Refreshed once after 5s and return message is cleared
       const afterCalls = fetchSpy.mock.calls.filter((c) =>
         String(c[0]).includes("/v1/billing/status"),
       ).length;
       expect(afterCalls).toBe(initialCalls + 1);
+      expect(screen.queryByText("Payment received, your plan will appear shortly")).toBeNull();
 
       // Advance further -> no additional calls
       vi.advanceTimersByTime(10000);
@@ -618,6 +746,41 @@ describe("BillingBanner and Shell Billing Return", () => {
       ).length;
 
       vi.advanceTimersByTime(5000);
+      await act(async () => {});
+
+      const afterCalls = fetchSpy.mock.calls.filter((c) =>
+        String(c[0]).includes("/v1/billing/status"),
+      ).length;
+      expect(afterCalls).toBe(initialCalls + 1);
+      expect(screen.queryByText("Payment received, your plan will appear shortly")).toBeNull();
+    });
+
+    it("under StrictMode ?billing=done refreshes once after 5s", async () => {
+      vi.useFakeTimers();
+      sessionStorage.setItem("community-hub.community", "parish");
+      window.history.replaceState(null, "", "/?billing=done");
+
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+        mockStatusResponse({
+          state: "none",
+          trial_end: null,
+          grace_until: null,
+          canView: true,
+          canManage: true,
+        }),
+      );
+
+      render(
+        <StrictMode>
+          <Shell />
+        </StrictMode>,
+      );
+
+      const initialCalls = fetchSpy.mock.calls.filter((c) =>
+        String(c[0]).includes("/v1/billing/status"),
+      ).length;
+
+      vi.advanceTimersByTime(6000);
 
       const afterCalls = fetchSpy.mock.calls.filter((c) =>
         String(c[0]).includes("/v1/billing/status"),
@@ -643,6 +806,31 @@ describe("BillingBanner and Shell Billing Return", () => {
       expect(window.location.search).not.toContain("billing");
     });
 
+    it("?billing=cancelled on a none organisation: shows both Checkout was cancelled and Choose a plan with action", async () => {
+      sessionStorage.setItem("community-hub.community", "parish");
+      window.history.replaceState(null, "", "/?billing=cancelled");
+
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+        mockStatusResponse({
+          state: "none",
+          trial_end: null,
+          grace_until: null,
+          canView: true,
+          canManage: true,
+        }),
+      );
+
+      render(<Shell />);
+
+      // Both messages are shown
+      expect(await screen.findByText("Checkout was cancelled")).toBeTruthy();
+      expect(await screen.findByText("Choose a plan to start using Community Hub")).toBeTruthy();
+
+      // Action link is shown since canManage is true
+      const link = screen.getByRole("link", { name: "Choose a plan" });
+      expect(link.getAttribute("href")).toBe("/settings/general");
+    });
+
     it("?billing=portal on / and on /settings/users: strips parameter and triggers status refresh", async () => {
       sessionStorage.setItem("community-hub.community", "parish");
       window.history.replaceState(null, "", "/?billing=portal");
@@ -660,12 +848,12 @@ describe("BillingBanner and Shell Billing Return", () => {
       const { unmount } = render(<Shell />);
       expect(window.location.search).not.toContain("billing");
 
-      // Initial mount loads slug + portal triggers immediate refresh
+      // Initial mount loads slug + portal triggers immediate refresh (exactly 2 status calls)
       await vi.waitFor(() => {
         const calls = fetchSpy.mock.calls.filter((c) =>
           String(c[0]).includes("/v1/billing/status"),
         );
-        expect(calls.length).toBeGreaterThanOrEqual(1);
+        expect(calls).toHaveLength(2);
       });
       unmount();
 
@@ -680,8 +868,75 @@ describe("BillingBanner and Shell Billing Return", () => {
         const calls = fetchSpy.mock.calls.filter((c) =>
           String(c[0]).includes("/v1/billing/status"),
         );
-        expect(calls.length).toBeGreaterThanOrEqual(1);
+        expect(calls).toHaveLength(2);
       });
+    });
+
+    it("stale portal refresh for previous community does not overwrite new community banner on switch", async () => {
+      sessionStorage.setItem("community-hub.community", "parish");
+      window.history.replaceState(null, "", "/?billing=portal");
+
+      let parishCalls = 0;
+      let resolveParishPortal!: (res: Response) => void;
+      const parishPortalPromise = new Promise<Response>((resolve) => {
+        resolveParishPortal = resolve;
+      });
+
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url.includes("/v1/billing/status")) {
+          const body = JSON.parse(String((init as RequestInit).body));
+          if (body.communitySlug === "parish") {
+            parishCalls++;
+            if (parishCalls === 1) {
+              return mockStatusResponse({
+                state: "read_only",
+                trial_end: null,
+                grace_until: null,
+                canView: true,
+                canManage: true,
+              });
+            }
+            return parishPortalPromise;
+          }
+          if (body.communitySlug === "cathedral") {
+            return new Response(null, { status: 403 });
+          }
+        }
+        return new Response(null, { status: 404 });
+      });
+
+      render(<Shell />);
+
+      expect(await screen.findByText("Subscription ended")).toBeTruthy();
+
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: "cathedral" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      await vi.waitFor(() => {
+        expect(screen.queryByRole("alert")).toBeNull();
+        expect(screen.queryByRole("status")).toBeNull();
+      });
+
+      resolveParishPortal(
+        mockStatusResponse({
+          state: "read_only",
+          trial_end: null,
+          grace_until: null,
+          canView: true,
+          canManage: true,
+        }),
+      );
+
+      await act(async () => {
+        await parishPortalPromise;
+      });
+
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.queryByRole("status")).toBeNull();
+      expect(screen.queryByText("Subscription ended")).toBeNull();
     });
 
     it("?billing=<script> renders nothing from the value (pin 18) and removes parameter", async () => {

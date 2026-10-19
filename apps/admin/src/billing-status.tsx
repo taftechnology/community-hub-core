@@ -35,11 +35,43 @@ function isBillingStatus(value: unknown): value is BillingStatus {
   return typeof candidate.state === "string";
 }
 
+function readAndStripBillingParam(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("billing")) {
+      return null;
+    }
+    const billing = url.searchParams.get("billing");
+    url.searchParams.delete("billing");
+    const nextSearch = url.searchParams.toString();
+    const nextUrl =
+      url.pathname + (nextSearch ? `?${nextSearch}` : "") + url.hash;
+    window.history.replaceState(window.history.state, "", nextUrl);
+    return billing;
+  } catch {
+    return null;
+  }
+}
+
 export function BillingStatusProvider({ children }: { children: ReactNode }) {
   const { slug, version } = useCommunity();
   const [status, setStatus] = useState<BillingStatus | null>(null);
-  const [returnMessage, setReturnMessage] = useState<string | null>(null);
+  const [billingParam] = useState(() => readAndStripBillingParam());
+  const [returnMessage, setReturnMessage] = useState<string | null>(() => {
+    if (billingParam === "done") {
+      return "Payment received, your plan will appear shortly";
+    }
+    if (billingParam === "cancelled") {
+      return "Checkout was cancelled";
+    }
+    return null;
+  });
   const slugRef = useRef(slug);
+  const generation = useRef(0);
+  const portalRefreshed = useRef(false);
 
   useEffect(() => {
     slugRef.current = slug;
@@ -86,57 +118,45 @@ export function BillingStatusProvider({ children }: { children: ReactNode }) {
     if (!currentSlug) {
       return;
     }
-    await loadStatus(currentSlug);
+    const mine = generation.current;
+    await loadStatus(currentSlug, () => generation.current === mine);
   }, [loadStatus]);
 
+  const isInitialMount = useRef(true);
+
   useEffect(() => {
-    let current = true;
+    const mine = ++generation.current;
     setStatus(null);
-    setReturnMessage(null);
+    if (!isInitialMount.current) {
+      setReturnMessage(null);
+    }
+    isInitialMount.current = false;
     if (!slug) {
       return;
     }
-    void loadStatus(slug, () => current);
-    return () => {
-      current = false;
-    };
+    void loadStatus(slug, () => generation.current === mine);
   }, [slug, version, loadStatus]);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    try {
-      const url = new URL(window.location.href);
-      if (url.searchParams.has("billing")) {
-        const billing = url.searchParams.get("billing");
-        url.searchParams.delete("billing");
-        const nextSearch = url.searchParams.toString();
-        const nextUrl =
-          url.pathname + (nextSearch ? `?${nextSearch}` : "") + url.hash;
-        window.history.replaceState(window.history.state, "", nextUrl);
-
-        if (billing === "done") {
-          setReturnMessage("Payment received, your plan will appear shortly");
-          const timer = setTimeout(() => {
-            void refresh();
-          }, 5000);
-          return () => clearTimeout(timer);
-        }
-        if (billing === "cancelled") {
-          setReturnMessage("Checkout was cancelled");
+    if (billingParam === "done") {
+      const mine = generation.current;
+      const timer = setTimeout(async () => {
+        const currentSlug = slugRef.current;
+        if (!currentSlug || generation.current !== mine) {
           return;
         }
-        if (billing === "portal") {
-          void refresh();
-          return;
+        await loadStatus(currentSlug, () => generation.current === mine);
+        if (generation.current === mine) {
+          setReturnMessage(null);
         }
-        // Unknown billing values are ignored and never rendered (Pin 18)
-      }
-    } catch {
-      // Ignore URL parsing errors
+      }, 5000);
+      return () => clearTimeout(timer);
     }
-  }, [refresh]);
+    if (billingParam === "portal" && !portalRefreshed.current) {
+      portalRefreshed.current = true;
+      void refresh();
+    }
+  }, [billingParam, refresh, loadStatus]);
 
   return (
     <BillingStatusContext.Provider value={{ status, refresh, returnMessage }}>
