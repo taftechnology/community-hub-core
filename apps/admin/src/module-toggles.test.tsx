@@ -281,3 +281,124 @@ it("loads from the context slug with no slug field of its own", async () => {
   expect(within(screen.getByRole("main")).queryByRole("textbox", { name: "Community" })).toBeNull();
   expect(await screen.findByRole("switch", { name: "people.directory" })).toBeTruthy();
 });
+
+it("clears rows and switches when switching to a community that answers 403", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => {
+    const body = JSON.parse(String((init as RequestInit).body));
+    if (body.communitySlug === "parish") {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            keys: [{ key: "people.directory", enabled: true }],
+            canManage: true,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    }
+    return Promise.resolve(new Response(null, { status: 403 }));
+  });
+
+  await showModules();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  expect(await screen.findByRole("switch", { name: "people.directory" })).toBeTruthy();
+
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "cathedral" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  expect(await screen.findByText("You cannot manage modules")).toBeTruthy();
+  expect(screen.queryByRole("switch")).toBeNull();
+  expect(screen.queryByText("people.directory")).toBeNull();
+});
+
+it("ignores a stale response that arrives after the slug has changed", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  let resolveCathedral!: (value: Response) => void;
+  const cathedralPromise = new Promise<Response>((resolve) => {
+    resolveCathedral = resolve;
+  });
+
+  vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => {
+    const body = JSON.parse(String((init as RequestInit).body));
+    if (body.communitySlug === "cathedral") {
+      return cathedralPromise;
+    }
+    if (body.communitySlug === "abbey") {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ keys: [], canManage: true }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    }
+    return Promise.resolve(new Response(null, { status: 404 }));
+  });
+
+  await showModules();
+
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "cathedral" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "abbey" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  expect(await screen.findByText("No modules are allocated.")).toBeTruthy();
+
+  resolveCathedral(
+    new Response(
+      JSON.stringify({
+        keys: [{ key: "people.directory", enabled: true }],
+        canManage: true,
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ),
+  );
+
+  await new Promise((r) => setTimeout(r, 50));
+
+  expect(screen.getByText("No modules are allocated.")).toBeTruthy();
+  expect(screen.queryByRole("switch")).toBeNull();
+  expect(screen.queryByText("people.directory")).toBeNull();
+});
+
+it("retries fetching when Set is pressed again with the same slug", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  let attempts = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(() => {
+    attempts++;
+    if (attempts === 1) {
+      return Promise.resolve(new Response(null, { status: 403 }));
+    }
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({ keys: [], canManage: true }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+  });
+
+  await showModules();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  expect(await screen.findByText("You cannot manage modules")).toBeTruthy();
+  expect(attempts).toBe(1);
+
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  expect(await screen.findByText("No modules are allocated.")).toBeTruthy();
+  expect(attempts).toBe(2);
+});

@@ -12,11 +12,13 @@ const COMMUNITY_STORAGE_KEY = "community-hub.community";
 
 type CommunityContextValue = {
   slug: string;
+  version: number;
   setSlug: (slug: string) => void;
 };
 
 const CommunityContext = createContext<CommunityContextValue>({
   slug: "",
+  version: 0,
   setSlug: () => {},
 });
 
@@ -35,9 +37,11 @@ function readStoredSlug(): string {
 
 export function CommunityProvider({ children }: { children: ReactNode }) {
   const [slug, setSlugState] = useState<string>(() => readStoredSlug());
+  const [version, setVersion] = useState<number>(0);
 
   function setSlug(nextSlug: string): void {
     setSlugState(nextSlug);
+    setVersion((v) => v + 1);
     try {
       sessionStorage.setItem(COMMUNITY_STORAGE_KEY, nextSlug);
     } catch {
@@ -46,7 +50,7 @@ export function CommunityProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <CommunityContext.Provider value={{ slug, setSlug }}>
+    <CommunityContext.Provider value={{ slug, version, setSlug }}>
       {children}
     </CommunityContext.Provider>
   );

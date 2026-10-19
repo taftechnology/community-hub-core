@@ -6,10 +6,11 @@ import { CommunityProvider, useCommunity } from "./community";
 const COMMUNITY_KEY = "community-hub.community";
 
 function TestConsumer() {
-  const { slug, setSlug } = useCommunity();
+  const { slug, version, setSlug } = useCommunity();
   return (
     <div>
       <span data-testid="slug-display">{slug || "no-slug"}</span>
+      <span data-testid="version-display">{version}</span>
       <button type="button" onClick={() => setSlug("cathedral")}>
         Set Cathedral
       </button>
@@ -27,6 +28,7 @@ describe("Community context and sessionStorage persistence", () => {
 
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
     sessionStorage.clear();
     vi.restoreAllMocks();
   });
@@ -56,9 +58,29 @@ describe("Community context and sessionStorage persistence", () => {
     expect(screen.getByTestId("slug-display").textContent).toBe("cathedral");
   });
 
+  it("increments version on setSlug even when slug is unchanged", () => {
+    render(
+      <CommunityProvider>
+        <TestConsumer />
+      </CommunityProvider>,
+    );
+
+    expect(screen.getByTestId("version-display").textContent).toBe("0");
+    fireEvent.click(screen.getByRole("button", { name: "Set Cathedral" }));
+    expect(screen.getByTestId("version-display").textContent).toBe("1");
+    fireEvent.click(screen.getByRole("button", { name: "Set Cathedral" }));
+    expect(screen.getByTestId("version-display").textContent).toBe("2");
+  });
+
   it("handles a throwing sessionStorage on initial read with no slug and no crash", () => {
-    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
-      throw new Error("storage access denied");
+    vi.stubGlobal("sessionStorage", {
+      getItem: () => {
+        throw new Error("storage access denied");
+      },
+      setItem: () => {
+        throw new Error("storage access denied");
+      },
+      clear: () => {},
     });
 
     render(
@@ -71,8 +93,14 @@ describe("Community context and sessionStorage persistence", () => {
   });
 
   it("handles a throwing sessionStorage on write without crashing and preserves in-memory slug", () => {
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-      throw new Error("quota exceeded");
+    vi.stubGlobal("sessionStorage", {
+      getItem: () => {
+        throw new Error("storage access denied");
+      },
+      setItem: () => {
+        throw new Error("storage access denied");
+      },
+      clear: () => {},
     });
 
     render(

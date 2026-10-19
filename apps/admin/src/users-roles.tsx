@@ -156,7 +156,7 @@ function outcomeOf(response: Response | "unavailable"): Outcome {
 
 export function UsersRolesPage() {
   const [token, setToken] = useState(() => readAccessToken());
-  const { slug } = useCommunity();
+  const { slug, version } = useCommunity();
   const [directory, setDirectory] = useState<Directory | undefined>(undefined);
   const [notice, setNotice] = useState<Notice | undefined>(undefined);
   const [userId, setUserId] = useState("");
@@ -175,15 +175,28 @@ export function UsersRolesPage() {
     setNotice(outcome);
   }
 
-  async function load(communitySlug: string): Promise<void> {
+  async function load(
+    communitySlug: string,
+    isCurrent: () => boolean = () => true,
+  ): Promise<void> {
     const response = await post("/v1/access/grants/list", { communitySlug });
+    if (!isCurrent()) {
+      return;
+    }
     const outcome = outcomeOf(response);
     if (outcome !== "ok" || response === "unavailable") {
+      if (!isCurrent()) {
+        return;
+      }
       show(outcome === "ok" ? "unavailable" : outcome);
       return;
     }
     try {
-      const parsed = readDirectory(await response.json());
+      const body: unknown = await response.json();
+      if (!isCurrent()) {
+        return;
+      }
+      const parsed = readDirectory(body);
       if (parsed === undefined) {
         setNotice("unavailable");
         return;
@@ -191,18 +204,24 @@ export function UsersRolesPage() {
       setNotice(undefined);
       setDirectory(parsed);
     } catch {
+      if (!isCurrent()) {
+        return;
+      }
       setNotice("unavailable");
     }
   }
 
   useEffect(() => {
+    let current = true;
+    setDirectory(undefined);
+    setNotice(undefined);
     if (slug) {
-      void load(slug);
-    } else {
-      setDirectory(undefined);
-      setNotice(undefined);
+      void load(slug, () => current);
     }
-  }, [slug]);
+    return () => {
+      current = false;
+    };
+  }, [slug, version]);
 
   async function mutate(path: string, body: unknown): Promise<void> {
     const response = await post(path, body);
