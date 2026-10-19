@@ -232,9 +232,9 @@ describe("billing contracts", () => {
       expect(parsed.success).toBe(false);
     });
 
-    it("rejects extra field on plan item (including amount)", () => {
+    it("rejects extra field on plan item (including trialDays)", () => {
       const parsed = plansResponse.safeParse({
-        plans: [{ key: "starter", trialAvailable: true, amount: 1000 }],
+        plans: [{ key: "starter", trialAvailable: true, trialDays: 14 }],
       });
       expect(parsed.success).toBe(false);
     });
