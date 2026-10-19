@@ -226,17 +226,17 @@ create policy org_isolation on <table>
 
 **Not every table is organisation-scoped.** There are three categories, and each table declares which it is:
 
-| Category                   | Schema     | Owner                                  | Examples                                                                                                                                                                                                                      | Protection                                                                                                                                                |
-| -------------------------- | ---------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Organisation-scoped**    | `app`      | the module that owns the table         | people, households, donations, events, volunteers, consents, audit events                                                                                                                                                     | `org_id` + RLS as above                                                                                                                                   |
-| **Region-scoped identity** | `identity` | `core/identity`                        | users, credentials, sessions, OTP challenges                                                                                                                                                                                  | No `org_id`. A user belongs to a **region** and may hold memberships in several organisations. Own Postgres schema and role; no other module may query it |
-| **Region-scoped platform** | `platform` | `core/tenancy` and `core/entitlements` | `core/tenancy` for region routing and organisation and community directory rows that are not tenant-RLS'd. `core/entitlements` for plans, add-ons, entitlements, allocations, overrides, community toggles, and feature flags | No `org_id`. Own Postgres schema and role; no other module may query it                                                                                   |
+| Category                   | Schema     | Owner                                                   | Examples                                                                                                                                                                                                                                                                                                                         | Protection                                                                                                                                                |
+| -------------------------- | ---------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Organisation-scoped**    | `app`      | the module that owns the table                          | people, households, donations, events, volunteers, consents, audit events                                                                                                                                                                                                                                                        | `org_id` + RLS as above                                                                                                                                   |
+| **Region-scoped identity** | `identity` | `core/identity`                                         | users, credentials, sessions, OTP challenges                                                                                                                                                                                                                                                                                     | No `org_id`. A user belongs to a **region** and may hold memberships in several organisations. Own Postgres schema and role; no other module may query it |
+| **Region-scoped platform** | `platform` | `core/tenancy`, `core/entitlements`, and `core/billing` | `core/tenancy` for region routing and organisation and community directory rows that are not tenant-RLS'd. `core/entitlements` for plans, add-ons, entitlements, allocations, overrides, community toggles, and feature flags. `core/billing` for platform billing accounts, settings, and webhook idempotency events (ADR 0014) | No `org_id`. Own Postgres schema and role; no other module may query it                                                                                   |
 
 Identity rows are deliberately minimal — authentication identifiers, credentials and session metadata only. A person's name, contact details and any profile information live on the organisation-scoped `people` row. This keeps a shared user record from leaking the fact that someone is a member of another organisation.
 
 The domain **outbox** is organisation-scoped (`app` schema, `org_id` + RLS). It is not in the identity schema.
 
-CI fails if an `app`-schema table lacks `org_id`, RLS or `FORCE ROW LEVEL SECURITY`; if any module outside `core/identity` references the `identity` schema; or if any module outside `core/tenancy` and `core/entitlements` references the `platform` schema.
+CI fails if an `app`-schema table lacks `org_id`, RLS or `FORCE ROW LEVEL SECURITY`; if any module outside `core/identity` references the `identity` schema; or if any module outside `core/tenancy`, `core/entitlements`, and `core/billing` references the `platform` schema.
 
 ### 6.4 Moving a community
 
@@ -276,6 +276,8 @@ The previous global-versus-regional layout was superseded by [ADR 0009](docs/adr
 Personal data is stored and processed in Australia. The service, the database, the keys that wrap personal data, and the logs are in `ap-southeast-2`. Backups are in `ap-southeast-2` only. Any future copy of personal data stays in Australia. The Melbourne row is a replica of the envelope key, not a database backup.
 
 Personal data leaves Australia only when a tenant's own signed-in user opens it, wherever they are; when a support operator reads it under a grant or break-glass; or when it is sent to a named subprocessor, and only the fields that function needs.
+
+Stripe is a named subprocessor for platform billing (ADR 0014). Calls to Stripe originate from the regional service in `ap-southeast-2`, and webhooks arrive on the Sydney webhooks hostname. The fields sent to Stripe are the opaque organisation id (as `client_reference_id`, session and subscription metadata, and inside idempotency keys), price, quantity, TaxRate, trial days, Stripe customer id, and return URLs. The payer enters billing contact name, email, address and card directly on Stripe's hosted Checkout and Customer Portal pages; that data is held by Stripe outside Australia and is never stored by us. No member, household or child data is ever sent.
 
 The region check allows five resources outside `ap-southeast-2`. None holds personal data: the CloudFront viewer certificate in `us-east-1`, the global services CloudFront, Route 53, and IAM, the DNSSEC signing key in `us-east-1` when that open item is done, the Melbourne replica of the envelope key in `ap-southeast-4`, and AWS Budgets ([ADR 0010](docs/adr/0010-aws-budgets-exception.md)).
 
@@ -652,6 +654,8 @@ A request reads those rows from the `platform` schema on the platform login. The
 
 Hard usage limits (SMS credits and member caps) are open (Q15). Leaning: a counter row in Postgres per organisation and limit, updated in the same transaction as the action, with a condition that refuses to go over the limit. Counts only, no personal data. Decided by the first chunk that enforces a limit, which must say which schema the counters live in and why. The leaning is not a decision.
 
+**Billing state.** Billing state is derived on read from Stripe status and our grace period, stored in `platform` tables owned by `core/billing`. Read-only on non-payment is an API write guard rather than an evaluation step: entitlements continue to evaluate, but routes marked `write` return 402 once the organisation is read-only (after the grace period for non-payment, or at once when a subscription ends). A missing account row means `invoiced`. See [ADR 0014](docs/adr/0014-platform-billing-state.md).
+
 **Downgrades hide, never delete.** Data of a disabled module remains until retention or an erasure request removes it.
 
 ---
@@ -882,10 +886,10 @@ During migration the App Registry returns `site_url = https://{slug}.communityhu
 
 ### 14.1 Two money flows
 
-| Flow                                                         | Payer → payee                | System                                                                                                                                                                                                                |
-| ------------------------------------------------------------ | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Platform subscription                                        | Organisation → Community Hub | The regional service is the Stripe client. Webhooks arrive on the Sydney hostname. Stripe ids and status are `platform` rows. There is no separate service to strip a payload for. Personal data is still not logged. |
-| Community payments (donations, memberships, tickets, orders) | Member → community           | `PaymentProvider` port, GivingJar adapter                                                                                                                                                                             |
+| Flow                                                         | Payer → payee                | System                                                                                                                                                                                                                                                                                          |
+| ------------------------------------------------------------ | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Platform subscription                                        | Organisation → Community Hub | The regional service is the Stripe client (`core/billing`), reading its secret lazily from Secrets Manager. Webhooks arrive on the Sydney webhooks hostname. Stripe ids and status are `platform` rows. There is no separate service to strip a payload for. Personal data is still not logged. |
+| Community payments (donations, memberships, tickets, orders) | Member → community           | `PaymentProvider` port, GivingJar adapter                                                                                                                                                                                                                                                       |
 
 ### 14.2 Port
 
@@ -919,7 +923,7 @@ payment_events  org_id, payment_id, provider_event_id (unique), type, payload_ha
 
 ### 14.4 Webhook handling
 
-GivingJar and Stripe webhooks arrive on the Sydney hostname. The regional service verifies the signature, writes the ledger or the Stripe ids, and does the work. There is no second hostname and no second service. Personal data is not logged. How a Stripe webhook's entitlement change becomes visible is Q14, and that leaning is not a decision.
+GivingJar and Stripe webhooks arrive on the Sydney hostname. The regional service verifies the signature, writes the ledger or the Stripe ids, and does the work. There is no second hostname and no second service. Personal data is not logged. How a Stripe webhook's entitlement change becomes visible is decided in [ADR 0012](docs/adr/0012-entitlement-visibility.md).
 
 ### 14.5 Rules
 
@@ -1229,20 +1233,24 @@ A BI tool (Metabase, or a warehouse) may read a replica **in Australia**, still 
 
 ### 21.1 Australia (launch)
 
-| Obligation                                                                             | How the platform supports it                                                                                                       |
-| -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| **Privacy Act 1988 and Australian Privacy Principles**                                 | Collection notices per form and registration flow; purpose-bound access; access and correction requests; data kept in Australia    |
-| **Sensitive information** (religious affiliation, health)                              | Communities record consent or the applicable basis; religious records and health data are `restricted`                             |
-| **APP 8 — cross-border disclosure**                                                    | Subprocessor register per region; offshore services (e.g. OneSignal, Jellycube editor identity if applicable) receive minimal data |
-| **Notifiable Data Breaches scheme**                                                    | Audit trail, breach assessment runbook and workflow supporting the 30-day assessment requirement                                   |
-| **Children's Online Privacy Code** (being developed by the OAIC)                       | Privacy-protective defaults, guardian consent, age-based rules in a jurisdiction table ready to update when the code is registered |
-| **Capacity to consent for young people**                                               | Jurisdiction table holds the age below which guardian consent is required; value to be confirmed by counsel                        |
-| **Statutory tort for serious invasions of privacy**                                    | Restricted data controls and audit reduce exposure                                                                                 |
-| **National Principles for Child Safe Organisations; state Working With Children laws** | WWCC/Blue Card tracking with expiry enforcement; safeguarding messaging rules; check-in controls                                   |
-| **Spam Act 2003**                                                                      | Consent and unsubscribe records for email and SMS                                                                                  |
-| **ATO requirements for deductible gift recipients**                                    | Compliant receipts generated by `giving`                                                                                           |
-| **Social media minimum age obligations**                                               | Assess whether community messaging features fall in scope before launching member-to-member features                               |
-| **Accessibility**                                                                      | WCAG 2.2 AA for admin, portal, ops console, mobile and host islands ([§8.5](#85-client-surfaces))                                  |
+| Obligation                                                                             | How the platform supports it                                                                                                          |
+| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| **Privacy Act 1988 and Australian Privacy Principles**                                 | Collection notices per form and registration flow; purpose-bound access; access and correction requests; data kept in Australia       |
+| **Sensitive information** (religious affiliation, health)                              | Communities record consent or the applicable basis; religious records and health data are `restricted`                                |
+| **APP 8 — cross-border disclosure**                                                    | Subprocessor register per region; offshore services (Stripe, OneSignal, Jellycube editor identity if applicable) receive minimal data |
+| **Notifiable Data Breaches scheme**                                                    | Audit trail, breach assessment runbook and workflow supporting the 30-day assessment requirement                                      |
+| **Children's Online Privacy Code** (being developed by the OAIC)                       | Privacy-protective defaults, guardian consent, age-based rules in a jurisdiction table ready to update when the code is registered    |
+| **Capacity to consent for young people**                                               | Jurisdiction table holds the age below which guardian consent is required; value to be confirmed by counsel                           |
+| **Statutory tort for serious invasions of privacy**                                    | Restricted data controls and audit reduce exposure                                                                                    |
+| **National Principles for Child Safe Organisations; state Working With Children laws** | WWCC/Blue Card tracking with expiry enforcement; safeguarding messaging rules; check-in controls                                      |
+| **Spam Act 2003**                                                                      | Consent and unsubscribe records for email and SMS                                                                                     |
+| **ATO requirements for deductible gift recipients**                                    | Compliant receipts generated by `giving`                                                                                              |
+| **Social media minimum age obligations**                                               | Assess whether community messaging features fall in scope before launching member-to-member features                                  |
+| **Accessibility**                                                                      | WCAG 2.2 AA for admin, portal, ops console, mobile and host islands ([§8.5](#85-client-surfaces))                                     |
+
+**APP 8 subprocessor register (Australia):**
+
+- **Stripe** (platform subscriptions): Receives the fields we send: opaque organisation id as `client_reference_id` and metadata and inside idempotency keys, price, quantity, TaxRate, trial days, Stripe customer id, and return URLs. The payer enters billing contact name, email, address and card directly on Stripe's hosted pages, held by Stripe outside Australia, never stored by us. No member, household or child data.
 
 ### 21.2 Certifications
 

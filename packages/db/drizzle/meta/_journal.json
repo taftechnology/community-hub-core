@@ -71,6 +71,13 @@
       "when": 1791817899149,
       "tag": "0009_flippant_bedlam",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792217975897,
+      "tag": "0010_silly_lila_cheney",
+      "breakpoints": true
     }
   ]
 }

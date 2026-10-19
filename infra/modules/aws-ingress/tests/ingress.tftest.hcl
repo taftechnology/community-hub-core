@@ -842,3 +842,74 @@ run "mail_variables_into_task" {
   }
 }
 
+run "billing_variables_into_task" {
+  command = plan
+
+  variables {
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
+    zone_name              = "communityhub-staging.net"
+    attach_public_dns      = true
+    create_public_zone     = false
+    public_zone_id         = "ZSTAGING"
+    service_image          = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    task_subnet_ids        = ["subnet-public"]
+    execution_role_arn     = "arn:aws:iam::123456789012:role/ch-staging-execution"
+    execution_role_name    = "ch-staging-execution"
+    task_role_arn          = "arn:aws:iam::123456789012:role/ch-staging-task"
+    log_group_name         = "/community-hub/ch-staging/service"
+    db_host                = "ch-staging-postgres.example.ap-southeast-2.rds.amazonaws.com"
+    db_port                = 5432
+    envelope_key_arn       = "arn:aws:kms:ap-southeast-2:123456789012:key/mock"
+    app_secret_arn         = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:app"
+    identity_secret_arn    = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:identity"
+    platform_secret_arn    = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:platform"
+    capacity_provider      = "FARGATE_SPOT"
+    desired_count          = 0
+    billing_secret_arn     = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-billing-AbCdEf"
+  }
+
+  override_resource {
+    target = aws_security_group.vpc_link
+    values = {
+      id = "sg-vpc-link"
+    }
+    override_during = plan
+  }
+
+  assert {
+    condition = (
+      slice(
+        jsondecode(aws_ecs_task_definition.this[0].container_definitions)[0].environment,
+        length(jsondecode(aws_ecs_task_definition.this[0].container_definitions)[0].environment) - 2,
+        length(jsondecode(aws_ecs_task_definition.this[0].container_definitions)[0].environment)
+        ) == [
+        { name = "ADMIN_ORIGIN", value = "https://admin.communityhub-staging.net" },
+        { name = "BILLING_SECRET_ARN", value = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-billing-AbCdEf" },
+      ]
+    )
+    error_message = "last two environment entries must be ADMIN_ORIGIN and BILLING_SECRET_ARN"
+  }
+
+  assert {
+    condition = (
+      output.service_environment["ADMIN_ORIGIN"] == one(aws_apigatewayv2_api.tenant.cors_configuration[0].allow_origins)
+    )
+    error_message = "ADMIN_ORIGIN must equal one(allow_origins)"
+  }
+
+  assert {
+    condition = (
+      [for secret in jsondecode(aws_ecs_task_definition.this[0].container_definitions)[0].secrets : secret.name] == ["PGPASSWORD_APP", "PGPASSWORD_IDENTITY", "PGPASSWORD_PLATFORM"] &&
+      !contains([for secret in jsondecode(aws_ecs_task_definition.this[0].container_definitions)[0].secrets : secret.valueFrom], var.billing_secret_arn)
+    )
+    error_message = "secrets names must be exactly the three PG passwords and must not contain the billing secret ARN"
+  }
+}
+

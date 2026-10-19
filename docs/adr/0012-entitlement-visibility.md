@@ -3,6 +3,7 @@
 - Status: accepted
 - Date: 2026-10-12
 - Spec: `docs/specs/2026-10-12-entitlements-plans.md`
+- Amended by ADR 0014 (core/billing also owns platform tables).
 
 ## Context
 

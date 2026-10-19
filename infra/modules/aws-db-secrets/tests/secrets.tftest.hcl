@@ -1,5 +1,11 @@
 mock_provider "aws" {
   override_during = plan
+
+  mock_resource "aws_kms_key" {
+    defaults = {
+      arn = "arn:aws:kms:ap-southeast-2:123456789012:key/mock-secrets"
+    }
+  }
 }
 
 run "happy" {
@@ -37,7 +43,7 @@ run "happy" {
       strcontains(aws_kms_key.secrets.policy, "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-identity-??????") &&
       strcontains(aws_kms_key.secrets.policy, "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-platform-??????")
     )
-    error_message = "secrets key policy must bind Secrets Manager in ap-southeast-2 and the three secret ARN patterns"
+    error_message = "secrets key policy must bind Secrets Manager in ap-southeast-2 and the five secret ARN patterns"
   }
 
   assert {
@@ -68,6 +74,37 @@ run "happy" {
       aws_kms_key.secrets.tags["project"] == "community-hub"
     )
     error_message = "secrets key tags must be environment=staging and project=community-hub"
+  }
+
+  assert {
+    condition = (
+      aws_secretsmanager_secret.billing.name == "ch-staging-billing" &&
+      aws_secretsmanager_secret.billing.kms_key_id == aws_kms_key.secrets.arn &&
+      aws_secretsmanager_secret.billing.region == "ap-southeast-2"
+    )
+    error_message = "billing secret name must be ch-staging-billing in ap-southeast-2 using the secrets KMS key"
+  }
+
+  assert {
+    condition = (
+      !strcontains(file("${path.module}/main.tf"), "\"aws_secretsmanager_secret_version\" \"billing\"") &&
+      !strcontains(file("${path.module}/main.tf"), "aws_secretsmanager_secret.billing.")
+    )
+    error_message = "billing secret must have no version resource"
+  }
+
+  assert {
+    condition = one([
+      for statement in jsondecode(aws_kms_key.secrets.policy).Statement : statement
+      if statement.Sid == "SecretsManagerUse"
+      ]).Condition.StringLike["kms:EncryptionContext:SecretARN"] == [
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-app-??????",
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-identity-??????",
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-platform-??????",
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-provision-owner-??????",
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-billing-??????",
+    ]
+    error_message = "secrets key policy must bind exactly the five secret ARN patterns"
   }
 }
 

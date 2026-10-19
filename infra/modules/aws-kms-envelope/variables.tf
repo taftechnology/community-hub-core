@@ -84,3 +84,8 @@ variable "db_secrets_key_arn" {
   type        = string
   description = "ARN of the KMS key that encrypts the three role password secrets. The only kms:Decrypt resource on the role secret policies."
 }
+
+variable "billing_secret_arn" {
+  type        = string
+  description = "ARN of the billing secret. The task role gets secretsmanager:GetSecretValue on this ARN."
+}

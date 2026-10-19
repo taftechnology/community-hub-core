@@ -388,4 +388,219 @@ describe("startServer", () => {
     expect(await response.text()).toBe("");
     expect(calls).toBe(0);
   });
+
+  it("a 10 KiB POST to the webhook path with the webhooks hostname header reaches the handler", async () => {
+    const env = envFor(18460);
+    let calls = 0;
+    const server = startServer({
+      env,
+      routes: [
+        health,
+        {
+          method: "POST",
+          pattern: "/v1/stripe/webhook",
+          surface: "tenant",
+          largeBody: "webhooks",
+          handle: () => {
+            calls += 1;
+            return new Response(null, { status: 200 });
+          },
+        },
+      ],
+    });
+    servers.push(server);
+    await listening(server);
+
+    const response = await fetch("http://127.0.0.1:18460/v1/stripe/webhook", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-community-hub-hostname": env.WEBHOOKS_HOSTNAME,
+      },
+      body: "a".repeat(10240),
+    });
+    expect(response.status).toBe(200);
+    expect(calls).toBe(1);
+  });
+
+  it("262145 bytes to the webhook path gets 413, and the handler is not called", async () => {
+    const env = envFor(18461);
+    let calls = 0;
+    const server = startServer({
+      env,
+      routes: [
+        health,
+        {
+          method: "POST",
+          pattern: "/v1/stripe/webhook",
+          surface: "tenant",
+          largeBody: "webhooks",
+          handle: () => {
+            calls += 1;
+            return new Response(null, { status: 200 });
+          },
+        },
+      ],
+    });
+    servers.push(server);
+    await listening(server);
+
+    const response = await fetch("http://127.0.0.1:18461/v1/stripe/webhook", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-community-hub-hostname": env.WEBHOOKS_HOSTNAME,
+      },
+      body: "a".repeat(262145),
+    });
+    expect(response.status).toBe(413);
+    expect(await response.text()).toBe("");
+    expect(calls).toBe(0);
+  });
+
+  it("a 4097-byte POST to /v1/access/grants still gets 400", async () => {
+    const env = envFor(18462);
+    let calls = 0;
+    const server = startServer({
+      env,
+      routes: [
+        health,
+        {
+          method: "POST",
+          pattern: "/v1/access/grants",
+          surface: "tenant",
+          handle: () => {
+            calls += 1;
+            return new Response(null, { status: 204 });
+          },
+        },
+      ],
+    });
+    servers.push(server);
+    await listening(server);
+
+    const response = await fetch("http://127.0.0.1:18462/v1/access/grants", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-community-hub-hostname": env.API_HOSTNAME,
+      },
+      body: "a".repeat(4097),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("");
+    expect(calls).toBe(0);
+  });
+
+  it("a 10 KiB POST to the webhook path with the api hostname header gets 400", async () => {
+    const env = envFor(18463);
+    let calls = 0;
+    const server = startServer({
+      env,
+      routes: [
+        health,
+        {
+          method: "POST",
+          pattern: "/v1/stripe/webhook",
+          surface: "tenant",
+          largeBody: "webhooks",
+          handle: () => {
+            calls += 1;
+            return new Response(null, { status: 200 });
+          },
+        },
+      ],
+    });
+    servers.push(server);
+    await listening(server);
+
+    const response = await fetch("http://127.0.0.1:18463/v1/stripe/webhook", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-community-hub-hostname": env.API_HOSTNAME,
+      },
+      body: "a".repeat(10240),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("");
+    expect(calls).toBe(0);
+  });
+
+  it("a 10 KiB POST to //x/v1/stripe/webhook with the webhooks hostname gets 400", async () => {
+    const env = envFor(18464);
+    let calls = 0;
+    const server = startServer({
+      env,
+      routes: [
+        health,
+        {
+          method: "POST",
+          pattern: "/v1/stripe/webhook",
+          surface: "tenant",
+          largeBody: "webhooks",
+          handle: () => {
+            calls += 1;
+            return new Response(null, { status: 200 });
+          },
+        },
+      ],
+    });
+    servers.push(server);
+    await listening(server);
+
+    const body = "a".repeat(10240);
+    const raw = await new Promise<string>((resolve, reject) => {
+      const socket = net.connect(18464, "127.0.0.1");
+      let received = "";
+      socket.on("data", (chunk) => {
+        received += chunk.toString();
+        if (received.includes("\r\n\r\n")) {
+          socket.end();
+          resolve(received);
+        }
+      });
+      socket.on("error", reject);
+      socket.write(
+        `POST //x/v1/stripe/webhook HTTP/1.1\r\nHost: 127.0.0.1\r\nx-community-hub-hostname: ${env.WEBHOOKS_HOSTNAME}\r\nContent-Type: application/json\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`,
+      );
+    });
+
+    expect(raw.startsWith("HTTP/1.1 400 ")).toBe(true);
+    expect(calls).toBe(0);
+  });
+
+  it("a 10 KiB POST to the webhook path with the webhooks hostname upper-cased reaches the handler", async () => {
+    const env = envFor(18465);
+    let calls = 0;
+    const server = startServer({
+      env,
+      routes: [
+        health,
+        {
+          method: "POST",
+          pattern: "/v1/stripe/webhook",
+          surface: "tenant",
+          largeBody: "webhooks",
+          handle: () => {
+            calls += 1;
+            return new Response(null, { status: 200 });
+          },
+        },
+      ],
+    });
+    servers.push(server);
+    await listening(server);
+
+    const response = await fetch("http://127.0.0.1:18465/v1/stripe/webhook", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-community-hub-hostname": env.WEBHOOKS_HOSTNAME.toUpperCase(),
+      },
+      body: "a".repeat(10240),
+    });
+    expect(response.status).toBe(200);
+    expect(calls).toBe(1);
+  });
 });

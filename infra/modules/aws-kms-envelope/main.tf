@@ -373,6 +373,12 @@ resource "aws_iam_role_policy" "task_secrets" {
         Action   = ["secretsmanager:GetSecretValue"]
         Resource = "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:${var.name}-provision-owner-??????"
       },
+      {
+        Sid      = "ReadBillingSecret"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = var.billing_secret_arn
+      },
     ]
   })
 }

@@ -200,4 +200,130 @@ describe("readServiceEnv", () => {
       expect(readServiceEnv(source, pem)).toEqual({ ok: false });
     });
   });
+
+  describe("billing variables (BILLING_SECRET_ARN and ADMIN_ORIGIN)", () => {
+    const validBillingArn =
+      "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-billing-Ab12Cd";
+    const validAdminOrigin = "https://admin.example.test";
+
+    it("accepts when neither billing variable is set, returning env without the keys", () => {
+      const read = readServiceEnv(complete(), pem);
+      expect(read.ok).toBe(true);
+      if (read.ok) {
+        expect("BILLING_SECRET_ARN" in read.env).toBe(false);
+        expect("ADMIN_ORIGIN" in read.env).toBe(false);
+      }
+    });
+
+    it("accepts when both billing variables are valid, returning env with both keys", () => {
+      const source = {
+        ...complete(),
+        BILLING_SECRET_ARN: validBillingArn,
+        ADMIN_ORIGIN: validAdminOrigin,
+      };
+      const read = readServiceEnv(source, pem);
+      expect(read.ok).toBe(true);
+      if (read.ok) {
+        expect(read.env.BILLING_SECRET_ARN).toBe(validBillingArn);
+        expect(read.env.ADMIN_ORIGIN).toBe(validAdminOrigin);
+      }
+    });
+
+    it.each([
+      ["only BILLING_SECRET_ARN", { BILLING_SECRET_ARN: validBillingArn }],
+      ["only ADMIN_ORIGIN", { ADMIN_ORIGIN: validAdminOrigin }],
+      [
+        "ARN in another region",
+        {
+          BILLING_SECRET_ARN:
+            "arn:aws:secretsmanager:us-east-1:123456789012:secret:ch-staging-billing-Ab12Cd",
+          ADMIN_ORIGIN: validAdminOrigin,
+        },
+      ],
+      [
+        "ARN whose name lacks -billing-",
+        {
+          BILLING_SECRET_ARN:
+            "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:ch-staging-other-Ab12Cd",
+          ADMIN_ORIGIN: validAdminOrigin,
+        },
+      ],
+      [
+        "origin with trailing slash (path)",
+        {
+          BILLING_SECRET_ARN: validBillingArn,
+          ADMIN_ORIGIN: "https://admin.example.test/",
+        },
+      ],
+      [
+        "origin with subpath",
+        {
+          BILLING_SECRET_ARN: validBillingArn,
+          ADMIN_ORIGIN: "https://admin.example.test/path",
+        },
+      ],
+      [
+        "http origin",
+        {
+          BILLING_SECRET_ARN: validBillingArn,
+          ADMIN_ORIGIN: "http://admin.example.test",
+        },
+      ],
+      [
+        "origin with query",
+        {
+          BILLING_SECRET_ARN: validBillingArn,
+          ADMIN_ORIGIN: "https://admin.example.test?foo=1",
+        },
+      ],
+      [
+        "origin with fragment",
+        {
+          BILLING_SECRET_ARN: validBillingArn,
+          ADMIN_ORIGIN: "https://admin.example.test#bar",
+        },
+      ],
+      [
+        "wildcard origin",
+        {
+          BILLING_SECRET_ARN: validBillingArn,
+          ADMIN_ORIGIN: "https://*.example.test",
+        },
+      ],
+      [
+        "origin with trailing dot in hostname",
+        {
+          BILLING_SECRET_ARN: validBillingArn,
+          ADMIN_ORIGIN: "https://admin.example.test.",
+        },
+      ],
+      [
+        "origin with port",
+        {
+          BILLING_SECRET_ARN: validBillingArn,
+          ADMIN_ORIGIN: "https://admin.example.test:8443",
+        },
+      ],
+      [
+        "origin with username",
+        {
+          BILLING_SECRET_ARN: validBillingArn,
+          ADMIN_ORIGIN: "https://a@admin.example.test",
+        },
+      ],
+      [
+        "origin with /x path",
+        {
+          BILLING_SECRET_ARN: validBillingArn,
+          ADMIN_ORIGIN: "https://admin.example.test/x",
+        },
+      ],
+    ])("rejects invalid billing configuration: %s", (_label, overrides) => {
+      const source = {
+        ...complete(),
+        ...overrides,
+      };
+      expect(readServiceEnv(source, pem)).toEqual({ ok: false });
+    });
+  });
 });

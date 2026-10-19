@@ -19,6 +19,7 @@
     { "path": "../../packages/policy" },
     { "path": "../../modules/core/identity" },
     { "path": "../../modules/core/tenancy" },
-    { "path": "../../modules/core/access" }
+    { "path": "../../modules/core/access" },
+    { "path": "../../modules/core/billing" }
   ]
 }

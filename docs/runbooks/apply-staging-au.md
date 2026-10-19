@@ -1512,6 +1512,184 @@ The reviewer loaded `https://admin.<zone>/` before merge. The four checks passed
 
 Also confirmed: only same-origin requests; `index.html` is `no-cache` and the assets are immutable; the script is served gzip-compressed; `/enquires` returns 403 and is not rewritten to `index.html`; the bucket's direct URL returns 403; HTTP redirects to HTTPS. The reviewer read the bucket, the distribution, the certificate, the headers policy, and the publish role back from AWS and simulated the role's policy. It allows listing the bucket, putting and deleting objects, and invalidating this distribution, and nothing else that was tried.
 
+## Stripe billing
+
+This section is the operator path for Stripe billing infrastructure and administration (`docs/specs/2026-10-17-stripe-billing.md`). The human owner runs every apply, secret write, and ECS run-task. The owner's assistant is read-only.
+
+### Apply 0
+
+Apply 0 runs while staging is parked (`enable_database = false`, `desired_count = 0`, `service_image = null`). The plan creates the billing secret in AWS Secrets Manager, adds the `-billing-??????` secret ARN pattern to the database secrets KMS key policy, and adds `ReadBillingSecret` to the ECS service task-role policy. Staging is parked and `service_image` is null, so no ECS task definition is created or changed (deviation 3).
+
+Run before-each-apply checks against the SHA named for that apply on origin.
+
+Initialize Terraform with the staging backend:
+
+    terraform init -backend-config=backend/staging.hcl -lockfile=readonly
+
+Plan to the saved file outside the repository:
+
+    terraform plan -no-color -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -out=${PLAN_FILE} -input=false | grep --line-buffered '^Plan:'
+
+Expected plan summary: exactly 1 to add, 2 to change, 0 to destroy. List addresses and actions from the plan file:
+
+    terraform show -json ${PLAN_FILE} | jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | "\(.change.actions | join(" ")) \(.address)"'
+
+Expected addresses:
+
+- `module.db_secrets.aws_kms_key.secrets` (update in place)
+- `module.db_secrets.aws_secretsmanager_secret.billing` (create)
+- `module.envelope.aws_iam_role_policy.task_secrets` (update in place)
+
+Apply that file:
+
+    terraform apply -input=false ${PLAN_FILE} | grep --line-buffered -E ': (Creating|Still creating|Creation complete|Modifying|Still modifying|Modification complete|Destroying|Still destroying|Destruction complete)|Apply complete' | sed -l -E 's/ \[id=[^]]+\]//'
+
+Delete the plan file:
+
+    rm -f ${PLAN_FILE}
+
+### Put the test-mode values
+
+The owner puts the test-mode values on the billing secret by hand, using `put-secret-value` with `file:///dev/stdin`. The value is a JSON object with `secret_key` and `webhook_secret`. The secret key is a Stripe restricted key built to `### Restricted key permissions`. The webhook signing secret uses the placeholder `whsec_placeholder_until_stripe_billing_proof` until the webhook endpoint is created in `stripe-billing-proof`.
+
+The secret value is never written to a file or the shell history. Hold `${BILLING_SECRET_ID}` from a read-only describe or list (never recorded). Prompt for the Stripe restricted key without echo, pipe the JSON payload into stdin, and unset the shell variable:
+
+    read -rs "STRIPE_KEY?Stripe restricted key: "
+
+    print
+
+    printf '{"secret_key":"%s","webhook_secret":"whsec_placeholder_until_stripe_billing_proof"}' "${STRIPE_KEY}" | aws secretsmanager put-secret-value --profile ${AWS_PROFILE} --region ap-southeast-2 --secret-id ${BILLING_SECRET_ID} --secret-string file:///dev/stdin >/dev/null
+
+    unset STRIPE_KEY
+
+Reviewer verifies read-back as yes-or-no facts without printing values:
+
+- the secret exists and is encrypted with the secrets KMS key;
+- the secret has a current version (`AWSCURRENT`);
+- `aws iam simulate-principal-policy` shows `secretsmanager:GetSecretValue` on the billing secret is allowed for the task role;
+- the execution role policy does not allow `secretsmanager:GetSecretValue` on the billing secret.
+
+### Restricted key permissions
+
+In the Stripe dashboard (Developers -> API keys -> Restricted keys -> Create restricted key), create a test-mode key named for the staging environment. Confirm the exact dashboard resource names at key creation.
+
+Permissions required by `createStripeBilling` methods and endpoints:
+
+- Checkout Sessions: Write (`POST /v1/checkout/sessions`)
+- Customer portal: Write (`POST /v1/billing_portal/sessions`)
+- Subscriptions: Write (`GET /v1/subscriptions/{id}`, `POST /v1/subscriptions/{id}`)
+- Tax Rates: Write (`POST /v1/tax_rates`)
+- Invoices: Read (`GET /v1/invoices/{id}`)
+- Customers: Read (both keys)
+- Prices: Read in production (`GET /v1/prices`); Write in staging (`POST /v1/prices` for `seed-test-catalogue`)
+- Products: Read in production; Write in staging (`POST /v1/products` and `GET /v1/products/search`; only `seed-test-catalogue` calls `products/search`)
+- Webhook endpoints: None (handled out-of-band; event signatures use local HMAC verification)
+
+Confirm dashboard resource names at key creation.
+
+### billing-admin commands
+
+The billing-admin one-off tool (`/app/billing-admin.js`) runs inside the service container under `${SERVICE_TASK_DEFINITION}` when staging is unparked. The task role reads the billing secret from Secrets Manager at invocation.
+
+Warning: the `--note` argument appears in ECS task override descriptions and CloudTrail event records. The note is a change note only (for example, documenting rate rationale or ticket references), never a person's name, email, or personal data.
+
+Output prints fixed words and state indicators only, never secret keys or amounts. `settings` prints the TaxRate id (`billing-admin.ts:224`); the id is not copied into notes, tickets or the PR. Each one-off is followed by `aws ecs wait tasks-stopped`, `aws ecs describe-tasks`, and `aws logs get-log-events`.
+
+**Settings** (`settings --gst-bps <n> --inclusive <bool> --trial-days <n> --grace-days <n> --note <text>`): creates a Stripe tax rate and inserts a billing settings row.
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${SERVICE_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/billing-admin.js\",\"settings\",\"--gst-bps\",\"${GST_BPS}\",\"--inclusive\",\"${INCLUSIVE}\",\"--trial-days\",\"${TRIAL_DAYS}\",\"--grace-days\",\"${GRACE_DAYS}\",\"--note\",\"${NOTE}\"]}]}" \
+      --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
+
+**Sync** (`sync <organisation-slug>`): takes an organisation slug and syncs the Stripe subscription quantity to the organisation's active community count.
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${SERVICE_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/billing-admin.js\",\"sync\",\"${ORG_SLUG}\"]}]}" \
+      --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
+
+**Apply tax rate** (`apply-tax-rate <organisation-slug>`): takes an organisation slug and moves an organisation's Stripe subscription to the current default tax rate.
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${SERVICE_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/billing-admin.js\",\"apply-tax-rate\",\"${ORG_SLUG}\"]}]}" \
+      --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
+
+**Mode** (`mode <organisation-slug> self_serve|invoiced [--subscription-cancelled-in-stripe]`): takes an organisation slug and transitions billing mode between self-serve and invoiced.
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${SERVICE_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/billing-admin.js\",\"mode\",\"${ORG_SLUG}\",\"${TARGET_MODE}\"]}]}" \
+      --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
+
+When switching an organisation slug to invoiced with an existing active subscription that has already been cancelled in Stripe:
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${SERVICE_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/billing-admin.js\",\"mode\",\"${ORG_SLUG}\",\"invoiced\",\"--subscription-cancelled-in-stripe\"]}]}" \
+      --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
+
+**Plan** (`plan <key> --lookup-key <k> --trial-eligible <bool> --entitlements <comma list>`): upserts a plan and binds its Stripe lookup key and trial eligibility.
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${SERVICE_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/billing-admin.js\",\"plan\",\"${PLAN_KEY}\",\"--lookup-key\",\"${LOOKUP_KEY}\",\"--trial-eligible\",\"${TRIAL_ELIGIBLE}\",\"--entitlements\",\"${ENTITLEMENTS}\"]}]}" \
+      --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
+
+**Seed test catalogue** (`seed-test-catalogue`): idempotent seeding of test-mode products and prices. Refuses if key prefix is not test mode.
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${SERVICE_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/billing-admin.js\",\"seed-test-catalogue\"]}]}" \
+      --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
+
+### Evidence (2026-10-18)
+
+- Read-only plan before the apply, at `c7671d1`, without the lock: 1 to add, 2 to change, 0 to destroy, at exactly:
+  - create `module.db_secrets.aws_secretsmanager_secret.billing`
+  - update in place `module.db_secrets.aws_kms_key.secrets` — the key-policy change adds only the `-billing-` secret pattern
+  - update in place `module.envelope.aws_iam_role_policy.task_secrets` — keeps its three statements plus the new `ReadBillingSecret` (its resource was unknown in the plan until the secret existed)
+  - no task definition (staging parked).
+- **Apply 0** at commit `c7671d1`, by the owner, from a saved plan file outside the repository: 1 added, 2 changed, 0 destroyed. Completed 2026-10-18T20:52Z. Saved plan file deleted.
+- Test-mode restricted key created in the Stripe dashboard to `### Restricted key permissions`, put on the secret through the silent prompt and stdin. Webhook secret is the placeholder.
+- Read-backs (yes/no): secret exists — yes, encrypted with the same secrets key; current version — yes, 1 version; task role can read it — yes (`secretsmanager:GetSecretValue` allowed, `kms:Decrypt` allowed); execution role can read it — no (`implicitDeny`).
+- Follow-up plan after the apply: no changes. Staging still parked: 0 database instances, 0 ECS clusters.
+
+### Findings from Apply 0
+
+1. None from the apply itself (the change set matched the plan exactly).
+2. The `task_secrets` resource shows as unknown in a plan taken before the secret exists — expected, not a defect.
+3. A known test limit: the assert that forbids a secret version reads only `infra/modules/aws-db-secrets/main.tf`, so a version added in another file of that module would not fail it (the plan's own assert; follow-up if wanted).
+
 ## Restore drill
 
 Quarterly, and only against staging. Restore the staging database to a new instance from point-in-time recovery. Record the time taken against the 4-hour target. Then delete the restored instance, because it bills by the hour. This drill does not restore production. Reading `SHOW max_connections` belongs to `first-running-task`, not to this drill.

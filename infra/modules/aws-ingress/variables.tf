@@ -264,6 +264,11 @@ variable "turnstile_secret_arn" {
   default = null
 }
 
+variable "billing_secret_arn" {
+  type    = string
+  default = null
+}
+
 variable "service_image" {
   type    = string
   default = null

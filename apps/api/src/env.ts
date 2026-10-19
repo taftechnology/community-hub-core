@@ -52,6 +52,8 @@ export type ServiceEnv = {
   PLATFORM_SECRET_ARN: string;
   MAIL_FROM_ADDRESS?: string;
   SES_CONFIGURATION_SET?: string;
+  BILLING_SECRET_ARN?: string;
+  ADMIN_ORIGIN?: string;
 };
 
 export function text(source: NodeJS.ProcessEnv, key: string): string | undefined {
@@ -74,6 +76,45 @@ export function portNumber(value: string | undefined): number | undefined {
 }
 
 const CONFIG_SET_NAME = /^[A-Za-z0-9_-]{1,64}$/;
+
+const BILLING_SECRET_ARN =
+  /^arn:aws:secretsmanager:ap-southeast-2:[0-9]{12}:secret:[^\s:]+-billing-[A-Za-z0-9]{6}$/;
+
+const HOSTNAME = /^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/;
+
+function isValidAdminOrigin(origin: string): boolean {
+  if (!origin.startsWith("https://")) {
+    return false;
+  }
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (url.origin !== origin) {
+    return false;
+  }
+  if (url.protocol !== "https:") {
+    return false;
+  }
+  if (url.port !== "") {
+    return false;
+  }
+  if (url.username !== "" || url.password !== "") {
+    return false;
+  }
+  if (url.pathname !== "/") {
+    return false;
+  }
+  if (url.search !== "" || url.hash !== "") {
+    return false;
+  }
+  if (!HOSTNAME.test(url.hostname)) {
+    return false;
+  }
+  return true;
+}
 
 function isValidEmail(address: string): boolean {
   if (address.length === 0 || /\s/.test(address) || /[<>]/.test(address)) {
@@ -128,6 +169,17 @@ export function readServiceEnv(
     }
   }
 
+  const billingSecretArn = text(source, "BILLING_SECRET_ARN");
+  const adminOrigin = text(source, "ADMIN_ORIGIN");
+  if ((billingSecretArn === undefined) !== (adminOrigin === undefined)) {
+    return { ok: false };
+  }
+  if (billingSecretArn !== undefined && adminOrigin !== undefined) {
+    if (!BILLING_SECRET_ARN.test(billingSecretArn) || !isValidAdminOrigin(adminOrigin)) {
+      return { ok: false };
+    }
+  }
+
   const hostnames = [
     values.API_HOSTNAME,
     values.AUTH_HOSTNAME,
@@ -172,6 +224,11 @@ export function readServiceEnv(
   if (mailFrom !== undefined && sesConfigSet !== undefined) {
     env.MAIL_FROM_ADDRESS = mailFrom;
     env.SES_CONFIGURATION_SET = sesConfigSet;
+  }
+
+  if (billingSecretArn !== undefined && adminOrigin !== undefined) {
+    env.BILLING_SECRET_ARN = billingSecretArn;
+    env.ADMIN_ORIGIN = adminOrigin;
   }
 
   return {

@@ -126,6 +126,7 @@ describe("service image build", () => {
       "@community-hub/access",
       "@community-hub/entitlements-eval",
       "@community-hub/entitlements",
+      "@community-hub/billing",
     ]) {
       expect(filters, name).toContain(name);
     }
@@ -470,6 +471,24 @@ describe.skipIf(process.env.RUN_IMAGE_TESTS !== "1")("regional service image", (
         "--input-type=module",
         "-e",
         'import { existsSync } from "node:fs"; process.exit(existsSync("/app/provision-owner.js") ? 0 : 1);',
+      ],
+      { encoding: "utf8" },
+    );
+    expect(shipped.status, shipped.stderr).toBe(0);
+  }, 600_000);
+
+  it("ships billing-admin", () => {
+    ensureImage();
+    const shipped = spawnSync(
+      "docker",
+      [
+        "run",
+        "--rm",
+        image,
+        "node",
+        "--input-type=module",
+        "-e",
+        'import { existsSync } from "node:fs"; process.exit(existsSync("/app/billing-admin.js") ? 0 : 1);',
       ],
       { encoding: "utf8" },
     );

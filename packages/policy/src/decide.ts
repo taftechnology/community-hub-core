@@ -8,13 +8,15 @@ const CATALOGUE = [
   "entitlements.manage",
 ] as const;
 
+const BILLING = ["billing.view", "billing.manage"] as const;
+
 const EMPTY: readonly string[] = [];
 
 const BUNDLES: Record<string, readonly string[]> = {
-  org_owner: CATALOGUE,
-  org_admin: CATALOGUE,
-  org_billing: ["access.users.view", "entitlements.view"],
-  org_auditor: ["access.users.view", "access.roles.view", "entitlements.view"],
+  org_owner: [...CATALOGUE, ...BILLING],
+  org_admin: [...CATALOGUE, ...BILLING],
+  org_billing: ["access.users.view", "entitlements.view", ...BILLING],
+  org_auditor: ["access.users.view", "access.roles.view", "entitlements.view", "billing.view"],
   community_admin: CATALOGUE,
   staff: ["access.users.view", "access.roles.view", "entitlements.view"],
   finance: EMPTY,

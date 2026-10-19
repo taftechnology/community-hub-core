@@ -388,4 +388,52 @@ describe("assertRoutes", () => {
       ]),
     ).toThrow(RoutesRejected);
   });
+
+  it("rejects largeBody on any route other than POST /v1/stripe/webhook", () => {
+    const handle = () => new Response(null, { status: 204 });
+    expect(() =>
+      assertRoutes([
+        {
+          method: "GET",
+          pattern: "/v1/stripe/webhook",
+          surface: "tenant",
+          largeBody: "webhooks",
+          handle,
+        },
+      ]),
+    ).toThrow(RoutesRejected);
+    expect(() =>
+      assertRoutes([
+        {
+          method: "POST",
+          pattern: "/v1/other",
+          surface: "tenant",
+          largeBody: "webhooks",
+          handle,
+        },
+      ]),
+    ).toThrow(RoutesRejected);
+    expect(() =>
+      assertRoutes([
+        {
+          method: "POST",
+          pattern: "/v1/stripe/webhook",
+          surface: "tenant",
+          largeBody: "invalid" as unknown as "webhooks",
+          handle,
+        },
+      ]),
+    ).toThrow(RoutesRejected);
+    expect(() =>
+      assertRoutes([
+        {
+          method: "POST",
+          pattern: "/v1/stripe/webhook",
+          surface: "tenant",
+          largeBody: "webhooks",
+          handle,
+        },
+      ]),
+    ).not.toThrow();
+  });
 });

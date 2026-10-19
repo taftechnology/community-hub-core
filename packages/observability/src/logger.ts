@@ -4,11 +4,17 @@ export type LogReason =
   | "ops_route_on_other_hostname"
   | "other_route_on_ops_hostname";
 
-export type LogOperation = "generate_data_key" | "decrypt" | "send_email";
+export type LogOperation =
+  | "generate_data_key"
+  | "decrypt"
+  | "send_email"
+  | "stripe_call"
+  | "stripe_webhook"
+  | "billing_admin";
 
 export type LogKeyKind = "org" | "identity";
 
-export type LogOutcome = "ok" | "rejected" | "failed" | "timeout";
+export type LogOutcome = "ok" | "rejected" | "failed" | "timeout" | "processed" | "ignored";
 
 export type LogFields = {
   method?: string;
@@ -22,6 +28,9 @@ export type LogFields = {
   operation?: LogOperation;
   key_kind?: LogKeyKind;
   outcome?: LogOutcome;
+  organisationId?: string;
+  stripeEventId?: string;
+  stripeEventType?: string;
   /** A thrown error's class name. Anything that is not a plain identifier is logged as `Error`. */
   errorClass?: string;
   /** A short upper-case error code, such as a SQLSTATE or a Node errno code. */
@@ -54,12 +63,18 @@ const ALLOWED_LOG_KEYS: ReadonlySet<LogFieldKey> = new Set([
   "operation",
   "key_kind",
   "outcome",
+  "organisationId",
+  "stripeEventId",
+  "stripeEventType",
   "errorClass",
   "errorCode",
 ]);
 
 const GATEWAY_REQUEST_ID = /^[A-Za-z0-9+/=_-]{1,128}$/;
 const HOSTNAME = /^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const STRIPE_EVENT_ID = /^evt_[A-Za-z0-9]{1,255}$/;
+const STRIPE_EVENT_TYPE = /^[a-z_]+(\.[a-z_]+){1,4}$/;
 const ERROR_CLASS = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 const ERROR_CODE = /^[A-Z0-9_]{1,40}$/;
 const FALLBACK_ERROR_CLASS = "Error";
@@ -69,9 +84,23 @@ const REASONS = new Set<LogReason>([
   "ops_route_on_other_hostname",
   "other_route_on_ops_hostname",
 ]);
-const OPERATIONS = new Set<LogOperation>(["generate_data_key", "decrypt", "send_email"]);
+const OPERATIONS = new Set<LogOperation>([
+  "generate_data_key",
+  "decrypt",
+  "send_email",
+  "stripe_call",
+  "stripe_webhook",
+  "billing_admin",
+]);
 const KEY_KINDS = new Set<LogKeyKind>(["org", "identity"]);
-const OUTCOMES = new Set<LogOutcome>(["ok", "rejected", "failed", "timeout"]);
+const OUTCOMES = new Set<LogOutcome>([
+  "ok",
+  "rejected",
+  "failed",
+  "timeout",
+  "processed",
+  "ignored",
+]);
 
 function isOneOf<T extends string>(value: unknown, allowed: ReadonlySet<T>): value is T {
   return typeof value === "string" && allowed.has(value as T);
@@ -185,6 +214,30 @@ function sanitizeFields(raw: unknown): { fields: LogFields; dropped: number } {
       case "errorCode": {
         if (typeof value === "string" && ERROR_CODE.test(value)) {
           fields.errorCode = value;
+        } else if (value !== undefined) {
+          dropped += 1;
+        }
+        break;
+      }
+      case "organisationId": {
+        if (typeof value === "string" && UUID.test(value)) {
+          fields.organisationId = value;
+        } else if (value !== undefined) {
+          dropped += 1;
+        }
+        break;
+      }
+      case "stripeEventId": {
+        if (typeof value === "string" && STRIPE_EVENT_ID.test(value)) {
+          fields.stripeEventId = value;
+        } else if (value !== undefined) {
+          dropped += 1;
+        }
+        break;
+      }
+      case "stripeEventType": {
+        if (typeof value === "string" && value.length <= 100 && STRIPE_EVENT_TYPE.test(value)) {
+          fields.stripeEventType = value;
         } else if (value !== undefined) {
           dropped += 1;
         }

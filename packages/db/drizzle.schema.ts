@@ -1,4 +1,5 @@
 import { accessTables, rememberPersonKey } from "../../modules/core/access/db/schema.js";
+import { billingTables } from "../../modules/core/billing/db/schema.js";
 import {
   entitlementTables,
   rememberPlatformTables,
@@ -32,6 +33,12 @@ export const communityAllocations = entitlementRows.communityAllocations;
 export const communityToggles = entitlementRows.communityToggles;
 export const entitlementOverrides = entitlementRows.entitlementOverrides;
 export const featureFlags = entitlementRows.featureFlags;
+
+const billingRows = billingTables(platform, { organisationId: organisations.id });
+
+export const billingAccounts = billingRows.billingAccounts;
+export const billingSettings = billingRows.billingSettings;
+export const billingStripeEvents = billingRows.billingStripeEvents;
 
 const identityRows = identityTables(identity);
 

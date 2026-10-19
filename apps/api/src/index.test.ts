@@ -3,10 +3,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLogger } from "@community-hub/observability";
 import { OtpMailUnavailable } from "@community-hub/identity";
+import { SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
+import { BillingUnavailable } from "@community-hub/billing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { readServiceEnv } from "./env.js";
-import { bindServices, boot, listeningServer, run } from "./index.js";
+import { bindServices, boot, listeningServer, productionRoutes, run } from "./index.js";
+import * as serverModule from "./server.js";
+import { rejectingStripeBilling } from "./billing/stripe-adapter.js";
 
 const pem = readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), "../certs/rds-ap-southeast-2-bundle.pem"),
@@ -346,5 +350,188 @@ describe("api boot wiring of the ses mail adapter", () => {
     ).rejects.toBeInstanceOf(OtpMailUnavailable);
 
     expect(sesInstances).toHaveLength(0);
+  });
+});
+
+describe("api boot wiring of the billing adapter and logger", () => {
+  const keyArn = `arn:aws:kms:ap-southeast-2:123456789012:key/mrk-${"ab".repeat(16)}`;
+  const billingSecretArn =
+    "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:staging-billing-123456";
+  const adminOrigin = "https://admin.example.test";
+
+  function envWithBilling() {
+    const read = readServiceEnv(
+      {
+        ...source(),
+        ENVELOPE_KEY_ARN: keyArn,
+        BILLING_SECRET_ARN: billingSecretArn,
+        ADMIN_ORIGIN: adminOrigin,
+      },
+      pem,
+    );
+    if (!read.ok) {
+      throw new Error("test env is invalid");
+    }
+    return read.env;
+  }
+
+  function envWithoutBilling() {
+    const read = readServiceEnv({ ...source(), ENVELOPE_KEY_ARN: keyArn }, pem);
+    if (!read.ok) {
+      throw new Error("test env is invalid");
+    }
+    return read.env;
+  }
+
+  it("boot with neither billing variable succeeds and the port rejects with BILLING_KEY_UNAVAILABLE", async () => {
+    const bound = bindServices(envWithoutBilling(), pem);
+    await expect(bound.billing.port.retrieveSubscription("sub_test1")).rejects.toThrow(
+      new BillingUnavailable("BILLING_KEY_UNAVAILABLE"),
+    );
+  });
+
+  it("boot with both billing variables wires the real adapter and lazily calls secrets manager (M3)", async () => {
+    const sendSpy = vi
+      .spyOn(SecretsManagerClient.prototype, "send")
+      .mockImplementation(async () => {
+        return {
+          SecretString: JSON.stringify({
+            // live key in staging triggers BILLING_KEY_MODE_MISMATCH on get(), verifying laziness without Stripe network calls
+            secret_key: "sk_live_synthetic_for_m3",
+            webhook_secret: "whsec_synthetic_for_m3",
+          }),
+        } as never;
+      });
+    try {
+      const bound = bindServices(envWithBilling(), pem);
+      expect(bound.billing).toBeDefined();
+      expect(bound.billing.port).not.toBe(rejectingStripeBilling);
+      expect(sendSpy).not.toHaveBeenCalled();
+
+      // First port method call invokes SecretsManagerClient.prototype.send
+      await expect(bound.billing.port.retrieveSubscription("sub_test1")).rejects.toThrow(
+        new BillingUnavailable("BILLING_KEY_MODE_MISMATCH"),
+      );
+      expect(sendSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      sendSpy.mockRestore();
+    }
+  });
+
+  it("writes adapter stripe_call lines through the real logger with 0 dropped fields (L1)", async () => {
+    const sendSpy = vi
+      .spyOn(SecretsManagerClient.prototype, "send")
+      .mockImplementation(async () => {
+        return {
+          SecretString: JSON.stringify({
+            // live key in staging triggers BILLING_KEY_MODE_MISMATCH
+            secret_key: "sk_live_synthetic_for_l1",
+            webhook_secret: "whsec_synthetic_for_l1",
+          }),
+        } as never;
+      });
+    try {
+      const written: string[] = [];
+      const logger = createLogger({ write: (line) => written.push(line) });
+      const bound = bindServices(envWithBilling(), pem, logger);
+
+      await expect(bound.billing.port.retrieveSubscription("sub_test1")).rejects.toThrow(
+        new BillingUnavailable("BILLING_KEY_MODE_MISMATCH"),
+      );
+
+      expect(written).toHaveLength(1);
+      const logLine = JSON.parse(written[0] ?? "{}") as Record<string, unknown>;
+      expect(logLine).toEqual({
+        level: "info",
+        message: "stripe",
+        operation: "stripe_call",
+        outcome: "failed",
+        errorCode: "BILLING_KEY_MODE_MISMATCH",
+      });
+      expect(logger.getDroppedFieldCount()).toBe(0);
+    } finally {
+      sendSpy.mockRestore();
+    }
+  });
+
+  it("a billing log line through the real logger parses with getDroppedFieldCount() === 0", () => {
+    const written: string[] = [];
+    const logger = createLogger({ write: (line) => written.push(line) });
+    const bound = bindServices(envWithBilling(), pem, logger);
+
+    bound.billing.log("billing test line", {
+      operation: "stripe_call",
+      outcome: "ok",
+      organisationId: "12345678-1234-4234-8234-1234567890ab",
+    });
+
+    expect(written).toHaveLength(1);
+    const parsed = JSON.parse(written[0] ?? "{}") as Record<string, unknown>;
+    expect(parsed).toMatchObject({
+      level: "info",
+      message: "billing test line",
+      operation: "stripe_call",
+      outcome: "ok",
+      organisationId: "12345678-1234-4234-8234-1234567890ab",
+    });
+    expect(logger.getDroppedFieldCount()).toBe(0);
+  });
+
+  it("productionRoutes includes POST /v1/stripe/webhook with largeBody webhooks", () => {
+    const routes = productionRoutes(envWithBilling(), pem);
+    const webhookRoute = routes.find(
+      (r) => r.method === "POST" && r.pattern === "/v1/stripe/webhook",
+    );
+    expect(webhookRoute).toBeDefined();
+    expect(webhookRoute?.surface).toBe("tenant");
+    expect(webhookRoute?.largeBody).toBe("webhooks");
+  });
+
+  it("registers the three billing routes and the webhook route in productionRoutes and run", () => {
+    const startServerSpy = vi.spyOn(serverModule, "startServer").mockReturnValue({} as never);
+    try {
+      const routes = productionRoutes(envWithBilling(), pem);
+      const expectedBillingRoutes = [
+        { method: "POST", pattern: "/v1/billing/checkout", surface: "tenant" },
+        { method: "POST", pattern: "/v1/billing/portal", surface: "tenant" },
+        { method: "POST", pattern: "/v1/billing/status", surface: "tenant" },
+        { method: "POST", pattern: "/v1/stripe/webhook", surface: "tenant", largeBody: "webhooks" },
+      ];
+
+      for (const expected of expectedBillingRoutes) {
+        const found = routes.find(
+          (r) => r.method === expected.method && r.pattern === expected.pattern,
+        );
+        expect(found).toBeDefined();
+        expect(found?.surface).toBe(expected.surface);
+        if (expected.largeBody) {
+          expect(found?.largeBody).toBe(expected.largeBody);
+        }
+      }
+
+      const envSource = {
+        ...source(),
+        ENVELOPE_KEY_ARN: keyArn,
+        BILLING_SECRET_ARN: billingSecretArn,
+        ADMIN_ORIGIN: adminOrigin,
+      };
+      const runResult = run(envSource, pem, []);
+      expect(runResult).toBe(0);
+      expect(startServerSpy).toHaveBeenCalledTimes(1);
+      const passedRoutes = startServerSpy.mock.calls[0]?.[0]?.routes ?? [];
+
+      for (const expected of expectedBillingRoutes) {
+        const found = passedRoutes.find(
+          (r) => r.method === expected.method && r.pattern === expected.pattern,
+        );
+        expect(found).toBeDefined();
+        expect(found?.surface).toBe(expected.surface);
+        if (expected.largeBody) {
+          expect(found?.largeBody).toBe(expected.largeBody);
+        }
+      }
+    } finally {
+      startServerSpy.mockRestore();
+    }
   });
 });

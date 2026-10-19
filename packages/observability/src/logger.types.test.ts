@@ -26,6 +26,24 @@ describe("logger compile-time field typing", () => {
       outcome: "ok",
     });
 
+    logger.info("billing", {
+      operation: "stripe_call",
+      outcome: "processed",
+      organisationId: "12345678-1234-4234-8234-1234567890ab",
+      stripeEventId: "evt_1234",
+      stripeEventType: "customer.subscription.updated",
+    });
+
+    logger.info("billing webhook", {
+      operation: "stripe_webhook",
+      outcome: "ignored",
+    });
+
+    logger.info("billing admin", {
+      operation: "billing_admin",
+      outcome: "ok",
+    });
+
     // @ts-expect-error untyped records must not be accepted by the logger API
     logger.info("request", untyped);
 

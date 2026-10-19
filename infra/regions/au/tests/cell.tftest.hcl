@@ -120,9 +120,26 @@ run "staging_happy" {
     override_during = plan
   }
 
+  override_resource {
+    target = module.db_secrets.aws_secretsmanager_secret.billing
+    values = {
+      arn = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:billing"
+    }
+    override_during = plan
+  }
+
   assert {
     condition     = length(regexall("(?m)^\\s*environment\\s*=\\s*\"staging\"", file("${path.module}/env/staging.tfvars"))) > 0
     error_message = "env/staging.tfvars must set environment = \"staging\""
+  }
+
+  assert {
+    condition = (
+      module.db_secrets.billing_secret_arn == "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:billing" &&
+      !strcontains(regex("db_secret_arns\\s*=\\s*\\[[^\\]]*\\]", file("${path.module}/main.tf")), "billing") &&
+      length(regexall("(?m)^\\s*billing_secret_arn\\s*=\\s*module\\.db_secrets\\.billing_secret_arn\\s*$", file("${path.module}/main.tf"))) == 2
+    )
+    error_message = "billing secret must exist, not be in db_secret_arns, and be passed to envelope and ingress"
   }
 
   assert {
@@ -360,9 +377,26 @@ run "prod_tfvars" {
     attach_public_dns     = false
   }
 
+  override_resource {
+    target = module.db_secrets.aws_secretsmanager_secret.billing
+    values = {
+      arn = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:billing"
+    }
+    override_during = plan
+  }
+
   assert {
     condition     = length(regexall("(?m)^\\s*environment\\s*=\\s*\"prod\"", file("${path.module}/env/prod.tfvars"))) > 0
     error_message = "env/prod.tfvars must set environment = \"prod\""
+  }
+
+  assert {
+    condition = (
+      module.db_secrets.billing_secret_arn == "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:billing" &&
+      !strcontains(regex("db_secret_arns\\s*=\\s*\\[[^\\]]*\\]", file("${path.module}/main.tf")), "billing") &&
+      length(regexall("(?m)^\\s*billing_secret_arn\\s*=\\s*module\\.db_secrets\\.billing_secret_arn\\s*$", file("${path.module}/main.tf"))) == 2
+    )
+    error_message = "billing secret must exist, not be in db_secret_arns, and be passed to envelope and ingress"
   }
 
   assert {
@@ -509,6 +543,14 @@ run "staging_image_set" {
     target = module.db_secrets.aws_secretsmanager_secret.platform
     values = {
       arn = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:platform"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = module.db_secrets.aws_secretsmanager_secret.billing
+    values = {
+      arn = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:billing"
     }
     override_during = plan
   }
@@ -682,6 +724,14 @@ run "staging_image_set" {
     )
     error_message = "staging service environment contains derived MAIL_FROM_ADDRESS and SES_CONFIGURATION_SET"
   }
+
+  assert {
+    condition = (
+      module.ingress.service_environment["BILLING_SECRET_ARN"] == module.db_secrets.billing_secret_arn &&
+      module.ingress.service_environment["ADMIN_ORIGIN"] == "https://admin.communityhub-staging.net"
+    )
+    error_message = "staging service environment contains BILLING_SECRET_ARN and ADMIN_ORIGIN"
+  }
 }
 
 run "prod_image_set" {
@@ -721,6 +771,14 @@ run "prod_image_set" {
     target = module.db_secrets.aws_secretsmanager_secret.platform
     values = {
       arn = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:platform"
+    }
+    override_during = plan
+  }
+
+  override_resource {
+    target = module.db_secrets.aws_secretsmanager_secret.billing
+    values = {
+      arn = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:billing"
     }
     override_during = plan
   }
@@ -787,11 +845,19 @@ run "prod_image_set" {
 
   assert {
     condition = (
-      length(module.ingress.service_environment) == 18 &&
+      length(module.ingress.service_environment) == 20 &&
       !contains(keys(module.ingress.service_environment), "MAIL_FROM_ADDRESS") &&
       !contains(keys(module.ingress.service_environment), "SES_CONFIGURATION_SET")
     )
-    error_message = "prod service environment has 18 entries and neither mail variable"
+    error_message = "prod service environment has 20 entries and neither mail variable"
+  }
+
+  assert {
+    condition = (
+      module.ingress.service_environment["BILLING_SECRET_ARN"] == module.db_secrets.billing_secret_arn &&
+      module.ingress.service_environment["ADMIN_ORIGIN"] == "https://admin.communityhub.one"
+    )
+    error_message = "prod service environment contains BILLING_SECRET_ARN and ADMIN_ORIGIN"
   }
 }
 

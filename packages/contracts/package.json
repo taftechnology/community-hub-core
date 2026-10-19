@@ -18,6 +18,10 @@
     "./entitlements": {
       "types": "./dist/entitlements.d.ts",
       "import": "./dist/entitlements.js"
+    },
+    "./billing": {
+      "types": "./dist/billing.d.ts",
+      "import": "./dist/billing.js"
     }
   },
   "scripts": {

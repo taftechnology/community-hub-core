@@ -16,6 +16,8 @@ describe("core.entitlements manifest", () => {
       dataClasses: {
         "plans.id": "internal",
         "plans.key": "internal",
+        "plans.stripe_lookup_key": "internal",
+        "plans.trial_eligible": "internal",
         "plan_entitlements.plan_id": "internal",
         "plan_entitlements.entitlement_key": "internal",
         "plan_entitlements.limit_value": "internal",

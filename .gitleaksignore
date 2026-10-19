@@ -1,0 +1,56 @@
+# Synthetic Stripe test fixtures in already-applied commit history (PR #55).
+# Every value here is a test constant such as sk_test_synthetic… or whsec_synthetic…;
+# none is a real key. Exact fingerprints only (commit:file:rule:line), so a real
+# key added anywhere later still fails the scan. Do not add a wildcard here.
+
+105271d22273d8b1d94d280c408625710c1e1924:apps/api/src/billing-webhook.test.ts:generic-api-key:67
+19eb6b6dc2ffdaa7961d33c056e78dd83ab2fa0f:apps/api/src/index.test.ts:generic-api-key:399
+19eb6b6dc2ffdaa7961d33c056e78dd83ab2fa0f:apps/api/src/index.test.ts:generic-api-key:400
+19eb6b6dc2ffdaa7961d33c056e78dd83ab2fa0f:apps/api/src/index.test.ts:generic-api-key:427
+19eb6b6dc2ffdaa7961d33c056e78dd83ab2fa0f:apps/api/src/index.test.ts:generic-api-key:428
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:generic-api-key:109
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:generic-api-key:120
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:generic-api-key:133
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:generic-api-key:14
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:generic-api-key:144
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:generic-api-key:158
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:generic-api-key:170
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:generic-api-key:182
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:generic-api-key:194
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:stripe-access-token:108
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:stripe-access-token:119
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:stripe-access-token:13
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:stripe-access-token:132
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:stripe-access-token:143
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:stripe-access-token:157
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:stripe-access-token:164
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:stripe-access-token:169
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:stripe-access-token:176
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:stripe-access-token:181
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:stripe-access-token:188
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:stripe-access-token:193
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:stripe-access-token:200
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:stripe-access-token:24
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:stripe-access-token:29
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:stripe-access-token:30
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:stripe-access-token:35
+3aca45744965747c4d6b3d77468f096ded51cee7:apps/api/src/billing/secret.test.ts:stripe-access-token:41
+4b5f784810174589a74325c8ea0d0408a630b335:apps/api/src/billing/secret.test.ts:generic-api-key:184
+4b5f784810174589a74325c8ea0d0408a630b335:apps/api/src/billing/secret.test.ts:generic-api-key:197
+4b5f784810174589a74325c8ea0d0408a630b335:apps/api/src/billing/secret.test.ts:generic-api-key:210
+4b5f784810174589a74325c8ea0d0408a630b335:apps/api/src/billing/secret.test.ts:generic-api-key:290
+4b5f784810174589a74325c8ea0d0408a630b335:apps/api/src/billing/secret.test.ts:generic-api-key:311
+4b5f784810174589a74325c8ea0d0408a630b335:apps/api/src/billing/secret.test.ts:stripe-access-token:196
+4b5f784810174589a74325c8ea0d0408a630b335:apps/api/src/billing/secret.test.ts:stripe-access-token:209
+4b5f784810174589a74325c8ea0d0408a630b335:apps/api/src/billing/secret.test.ts:stripe-access-token:216
+4b5f784810174589a74325c8ea0d0408a630b335:apps/api/src/billing/secret.test.ts:stripe-access-token:220
+4b5f784810174589a74325c8ea0d0408a630b335:apps/api/src/billing/secret.test.ts:stripe-access-token:224
+4b5f784810174589a74325c8ea0d0408a630b335:apps/api/src/billing/secret.test.ts:stripe-access-token:239
+4b5f784810174589a74325c8ea0d0408a630b335:apps/api/src/billing/secret.test.ts:stripe-access-token:25
+4b5f784810174589a74325c8ea0d0408a630b335:apps/api/src/billing/secret.test.ts:stripe-access-token:251
+4b5f784810174589a74325c8ea0d0408a630b335:apps/api/src/billing/secret.test.ts:stripe-access-token:263
+4b5f784810174589a74325c8ea0d0408a630b335:apps/api/src/billing/secret.test.ts:stripe-access-token:275
+4b5f784810174589a74325c8ea0d0408a630b335:apps/api/src/billing/secret.test.ts:stripe-access-token:37
+5978b6ccc7f273a328532cf064afa6b9b89d15c6:apps/api/src/billing-admin.test.ts:generic-api-key:638
+5978b6ccc7f273a328532cf064afa6b9b89d15c6:apps/api/src/billing-admin.test.ts:generic-api-key:94
+5978b6ccc7f273a328532cf064afa6b9b89d15c6:apps/api/src/billing-admin.test.ts:stripe-access-token:43

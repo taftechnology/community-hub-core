@@ -47,13 +47,25 @@ describe("bundle", () => {
 
   it("returns the spec bundles for the other built-in roles", () => {
     const all = catalogue();
-    expect(bundle("org_admin")).toEqual(all);
+    expect(bundle("org_owner")).toEqual([...all, "billing.view", "billing.manage"]);
+    expect(bundle("org_admin")).toEqual([...all, "billing.view", "billing.manage"]);
     expect(bundle("community_admin")).toEqual(all);
-    expect(bundle("org_billing")).toEqual(["access.users.view", "entitlements.view"]);
+    expect(bundle("staff")).toEqual([
+      "access.users.view",
+      "access.roles.view",
+      "entitlements.view",
+    ]);
+    expect(bundle("org_billing")).toEqual([
+      "access.users.view",
+      "entitlements.view",
+      "billing.view",
+      "billing.manage",
+    ]);
     expect(bundle("org_auditor")).toEqual([
       "access.users.view",
       "access.roles.view",
       "entitlements.view",
+      "billing.view",
     ]);
     expect(bundle("safeguarding_officer")).toEqual(["people.restricted.read", "access.users.view"]);
     expect(bundle("volunteer_coordinator")).toEqual(["access.users.view"]);
@@ -63,6 +75,59 @@ describe("bundle", () => {
 });
 
 describe("decide", () => {
+  it("allows org_billing billing.manage", () => {
+    expect(
+      decide(
+        actor("billing.manage", {
+          organisationRoleKeys: ["org_billing"],
+          communityRoleKeys: [],
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("denies every community role both billing permissions", () => {
+    const communityRoles = [
+      "community_admin",
+      "staff",
+      "finance",
+      "safeguarding_officer",
+      "volunteer_coordinator",
+      "content_editor",
+      "member",
+    ];
+    for (const role of communityRoles) {
+      for (const permission of ["billing.view", "billing.manage"]) {
+        expect(
+          decide(
+            actor(permission, {
+              organisationRoleKeys: [],
+              communityRoleKeys: [role],
+            }),
+          ),
+        ).toBe(false);
+      }
+    }
+  });
+
+  it("denies community_admin and member billing.manage", () => {
+    expect(
+      decide(
+        actor("billing.manage", {
+          organisationRoleKeys: [],
+          communityRoleKeys: ["community_admin"],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      decide(
+        actor("billing.manage", {
+          organisationRoleKeys: [],
+          communityRoleKeys: ["member"],
+        }),
+      ),
+    ).toBe(false);
+  });
   it("allows an organisation owner every catalogue permission", () => {
     for (const permission of catalogue()) {
       expect(

@@ -184,4 +184,152 @@ describe("createLogger", () => {
     expect(() => logger.info("ok", 42 as unknown as LogFields)).not.toThrow();
     expect(() => logger.info("ok", "nope" as unknown as LogFields)).not.toThrow();
   });
+
+  it("keeps valid billing operations, outcomes, and fields", () => {
+    const lines: string[] = [];
+    const logger = createLogger({ write: (line) => lines.push(line) });
+    logger.info("stripe call", {
+      operation: "stripe_call" as unknown as "decrypt",
+      outcome: "processed" as unknown as "ok",
+      organisationId: "12345678-1234-4234-8234-1234567890ab",
+      stripeEventId: "evt_1234567890abcdef",
+      stripeEventType: "customer.subscription.updated",
+    } as unknown as LogFields);
+    logger.info("webhook", {
+      operation: "stripe_webhook" as unknown as "decrypt",
+      outcome: "ignored" as unknown as "ok",
+      stripeEventId: "evt_9999",
+      stripeEventType: "invoice.paid",
+    } as unknown as LogFields);
+    logger.info("admin", {
+      operation: "billing_admin" as unknown as "decrypt",
+      outcome: "ok",
+    } as unknown as LogFields);
+
+    const first = JSON.parse(lines[0] ?? "{}") as Record<string, unknown>;
+    expect(first.operation).toBe("stripe_call");
+    expect(first.outcome).toBe("processed");
+    expect(first.organisationId).toBe("12345678-1234-4234-8234-1234567890ab");
+    expect(first.stripeEventId).toBe("evt_1234567890abcdef");
+    expect(first.stripeEventType).toBe("customer.subscription.updated");
+
+    const second = JSON.parse(lines[1] ?? "{}") as Record<string, unknown>;
+    expect(second.operation).toBe("stripe_webhook");
+    expect(second.outcome).toBe("ignored");
+    expect(second.stripeEventId).toBe("evt_9999");
+    expect(second.stripeEventType).toBe("invoice.paid");
+
+    const third = JSON.parse(lines[2] ?? "{}") as Record<string, unknown>;
+    expect(third.operation).toBe("billing_admin");
+    expect(third.outcome).toBe("ok");
+
+    expect(logger.getDroppedFieldCount()).toBe(0);
+  });
+
+  it("drops and counts invalid billing field values", () => {
+    const lines: string[] = [];
+    const logger = createLogger({ write: (line) => lines.push(line) });
+
+    // An email in stripeEventType
+    logger.info("bad event type", {
+      stripeEventType: "ada@example.test",
+    } as unknown as LogFields);
+
+    // A non-UUID organisationId
+    logger.info("bad org id", {
+      organisationId: "not-a-uuid",
+    } as unknown as LogFields);
+
+    // An evt id with a space
+    logger.info("bad event id", {
+      stripeEventId: "evt_has space",
+    } as unknown as LogFields);
+
+    const first = JSON.parse(lines[0] ?? "{}") as Record<string, unknown>;
+    expect("stripeEventType" in first).toBe(false);
+    expect(lines[0]).not.toContain("ada@example.test");
+
+    const second = JSON.parse(lines[1] ?? "{}") as Record<string, unknown>;
+    expect("organisationId" in second).toBe(false);
+    expect(lines[1]).not.toContain("not-a-uuid");
+
+    const third = JSON.parse(lines[2] ?? "{}") as Record<string, unknown>;
+    expect("stripeEventId" in third).toBe(false);
+    expect(lines[2]).not.toContain("evt_has space");
+
+    expect(logger.getDroppedFieldCount()).toBe(3);
+  });
+
+  it("drops and counts invalid billing pattern cases", () => {
+    const lines: string[] = [];
+    const logger = createLogger({ write: (line) => lines.push(line) });
+
+    logger.info("evt id with leading email", {
+      stripeEventId: "ada@example.test evt_abc",
+    } as unknown as LogFields);
+    logger.info("evt id with trailing email", {
+      stripeEventId: "evt_abc ada@example.test",
+    } as unknown as LogFields);
+    logger.info("org id with leading email", {
+      organisationId: "ada@example.test 12345678-1234-4234-8234-1234567890ab",
+    } as unknown as LogFields);
+    logger.info("org id with trailing -x", {
+      organisationId: "12345678-1234-4234-8234-1234567890ab-x",
+    } as unknown as LogFields);
+    logger.info("org id with invalid uuid structure", {
+      organisationId: "abcdef-0123",
+    } as unknown as LogFields);
+    logger.info("event type with leading email", {
+      stripeEventType: "x@y invoice.paid",
+    } as unknown as LogFields);
+
+    expect(lines).toHaveLength(6);
+    const parsed = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+
+    expect("stripeEventId" in parsed[0]!).toBe(false);
+    expect(lines[0]).not.toContain("ada@example.test");
+    expect(lines[0]).not.toContain("evt_abc");
+
+    expect("stripeEventId" in parsed[1]!).toBe(false);
+    expect(lines[1]).not.toContain("ada@example.test");
+    expect(lines[1]).not.toContain("evt_abc");
+
+    expect("organisationId" in parsed[2]!).toBe(false);
+    expect(lines[2]).not.toContain("ada@example.test");
+    expect(lines[2]).not.toContain("12345678-1234-4234-8234-1234567890ab");
+
+    expect("organisationId" in parsed[3]!).toBe(false);
+    expect(lines[3]).not.toContain("12345678-1234-4234-8234-1234567890ab-x");
+
+    expect("organisationId" in parsed[4]!).toBe(false);
+    expect(lines[4]).not.toContain("abcdef-0123");
+
+    expect("stripeEventType" in parsed[5]!).toBe(false);
+    expect(lines[5]).not.toContain("x@y");
+    expect(lines[5]).not.toContain("invoice.paid");
+
+    expect(logger.getDroppedFieldCount()).toBe(6);
+  });
+
+  it("caps stripeEventType length at 100 and drops a 101-character value", () => {
+    const lines: string[] = [];
+    const logger = createLogger({ write: (line) => lines.push(line) });
+
+    const valid100 = `${"a".repeat(49)}.${"b".repeat(50)}`;
+    expect(valid100).toHaveLength(100);
+    const invalid101 = `${"a".repeat(50)}.${"b".repeat(50)}`;
+    expect(invalid101).toHaveLength(101);
+
+    logger.info("valid 100", { stripeEventType: valid100 } as unknown as LogFields);
+    logger.info("invalid 101", { stripeEventType: invalid101 } as unknown as LogFields);
+
+    const first = JSON.parse(lines[0] ?? "{}") as Record<string, unknown>;
+    expect(first.stripeEventType).toBe(valid100);
+
+    const second = JSON.parse(lines[1] ?? "{}") as Record<string, unknown>;
+    expect("stripeEventType" in second).toBe(false);
+    expect(lines[1]).not.toContain(invalid101);
+
+    expect(logger.getDroppedFieldCount()).toBe(1);
+  });
 });
