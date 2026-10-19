@@ -407,3 +407,54 @@ it("retries fetching when Set is pressed again with the same slug", async () => 
   expect(await screen.findByText("No modules are allocated.")).toBeTruthy();
   expect(attempts).toBe(2);
 });
+
+it("ignores a write that finishes after switching to a forbidden community", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  let resolveToggle!: (value: Response) => void;
+  const togglePromise = new Promise<Response>((resolve) => {
+    resolveToggle = resolve;
+  });
+
+  vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const url = String(input);
+    if (url.endsWith("/v1/entitlements/toggle")) {
+      return togglePromise;
+    }
+    const body = JSON.parse(String((init as RequestInit).body));
+    if (body.communitySlug === "parish") {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            keys: [{ key: "people.directory", enabled: true }],
+            canManage: true,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    }
+    return Promise.resolve(new Response(null, { status: 403 }));
+  });
+
+  await showModules();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  const toggle = await screen.findByRole("switch", { name: "people.directory" });
+  fireEvent.click(toggle);
+
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "cathedral" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  expect(await screen.findByText("You cannot manage modules")).toBeTruthy();
+
+  resolveToggle(new Response(null, { status: 200 }));
+  await new Promise((r) => setTimeout(r, 50));
+
+  expect(screen.getByText("You cannot manage modules")).toBeTruthy();
+  expect(screen.queryByRole("switch")).toBeNull();
+  expect(screen.queryByText("people.directory")).toBeNull();
+});

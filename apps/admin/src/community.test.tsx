@@ -109,7 +109,18 @@ describe("Community context and sessionStorage persistence", () => {
       </CommunityProvider>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Set Cathedral" }));
+    const errors: unknown[] = [];
+    const onError = (event: ErrorEvent) => {
+      errors.push(event.error);
+      event.preventDefault();
+    };
+    window.addEventListener("error", onError);
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Set Cathedral" }));
+    } finally {
+      window.removeEventListener("error", onError);
+    }
+    expect(errors).toEqual([]);
     expect(screen.getByTestId("slug-display").textContent).toBe("cathedral");
   });
 

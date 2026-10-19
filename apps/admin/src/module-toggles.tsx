@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 
 import { post } from "./api";
@@ -59,6 +59,7 @@ export function ModuleTogglesPage() {
   const [canManage, setCanManage] = useState(false);
   const [notice, setNotice] = useState<Notice | undefined>(undefined);
   const origins = directoryOrigins();
+  const generation = useRef(0);
 
   function show(outcome: Notice | "signed-out"): void {
     if (outcome === "signed-out") {
@@ -107,24 +108,25 @@ export function ModuleTogglesPage() {
   }
 
   useEffect(() => {
-    let current = true;
+    const mine = ++generation.current;
     setModules(undefined);
     setCanManage(false);
     setNotice(undefined);
     if (slug) {
-      void load(slug, () => current);
+      void load(slug, () => generation.current === mine);
     }
-    return () => {
-      current = false;
-    };
   }, [slug, version]);
 
   async function turn(key: string, enabled: boolean): Promise<void> {
+    const mine = generation.current;
     const response = await post("/v1/entitlements/toggle", {
       communitySlug: slug,
       key,
       enabled,
     });
+    if (generation.current !== mine) {
+      return;
+    }
     const outcome = outcomeOf(response);
     if (outcome !== "ok") {
       show(outcome);

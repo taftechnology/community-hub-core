@@ -1,5 +1,5 @@
 import { Button } from "@community-hub/ui";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 
 import { post } from "./api";
@@ -165,6 +165,7 @@ export function UsersRolesPage() {
   const [customKey, setCustomKey] = useState("");
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const origins = directoryOrigins();
+  const generation = useRef(0);
 
   function show(outcome: Notice | "signed-out"): void {
     if (outcome === "signed-out") {
@@ -212,25 +213,27 @@ export function UsersRolesPage() {
   }
 
   useEffect(() => {
-    let current = true;
+    const mine = ++generation.current;
     setDirectory(undefined);
     setNotice(undefined);
     if (slug) {
-      void load(slug, () => current);
+      void load(slug, () => generation.current === mine);
     }
-    return () => {
-      current = false;
-    };
   }, [slug, version]);
 
   async function mutate(path: string, body: unknown): Promise<void> {
+    const mine = generation.current;
+    const isCurrent = () => generation.current === mine;
     const response = await post(path, body);
+    if (!isCurrent()) {
+      return;
+    }
     const outcome = outcomeOf(response);
     if (outcome !== "ok") {
       show(outcome);
       return;
     }
-    await load(slug);
+    await load(slug, isCurrent);
   }
 
   function toggle(permission: string): void {
