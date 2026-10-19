@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { withRequest } from "@community-hub/kernel";
 import { BillingUnavailable } from "@community-hub/billing";
-import { bannerStatusResponse, fullStatusResponse } from "@community-hub/contracts/billing";
+import {
+  bannerStatusResponse,
+  fullStatusResponse,
+  plansResponse,
+} from "@community-hub/contracts/billing";
 import { bundle } from "@community-hub/policy";
 
 import { createGate } from "./gate.js";
@@ -30,6 +34,7 @@ const entitlements = vi.hoisted(() => ({
   planBilling: vi.fn(),
   planByLookupKey: vi.fn(),
   currentPlan: vi.fn(),
+  listCheckoutPlans: vi.fn(),
 }));
 
 const db = vi.hoisted(() => ({
@@ -64,6 +69,7 @@ vi.mock("@community-hub/entitlements", () => ({
   planBilling: entitlements.planBilling,
   planByLookupKey: entitlements.planByLookupKey,
   currentPlan: entitlements.currentPlan,
+  listCheckoutPlans: entitlements.listCheckoutPlans,
 }));
 
 vi.mock("@community-hub/db", async () => {
@@ -174,6 +180,7 @@ describe("billing routes", () => {
     entitlements.planBilling.mockReset();
     entitlements.planByLookupKey.mockReset();
     entitlements.currentPlan.mockReset();
+    entitlements.listCheckoutPlans.mockReset();
     db.withAppTransaction.mockReset();
     db.appendAuditEvent.mockReset();
     port.createCheckoutSession.mockReset();
@@ -242,6 +249,11 @@ describe("billing routes", () => {
       trialEligible: true,
     });
 
+    entitlements.listCheckoutPlans.mockResolvedValue([
+      { key: "growth", trialEligible: false },
+      { key: "starter", trialEligible: true },
+    ]);
+
     port.findPriceByLookupKey.mockResolvedValue({
       id: "price_starter",
       lookupKey: "starter_monthly",
@@ -256,7 +268,7 @@ describe("billing routes", () => {
     });
   });
 
-  it("serves checkout, portal, and status on the tenant surface", () => {
+  it("serves checkout, portal, status, and plans on the tenant surface", () => {
     expect(
       billingRoutes(deps()).map((item) => ({
         method: item.method,
@@ -267,99 +279,108 @@ describe("billing routes", () => {
       { method: "POST", pattern: "/v1/billing/checkout", surface: "tenant" },
       { method: "POST", pattern: "/v1/billing/portal", surface: "tenant" },
       { method: "POST", pattern: "/v1/billing/status", surface: "tenant" },
+      { method: "POST", pattern: "/v1/billing/plans", surface: "tenant" },
     ]);
   });
 
-  describe("common guards (checkout, portal & status)", () => {
-    it.each(["/v1/billing/checkout", "/v1/billing/portal", "/v1/billing/status"])(
-      "answers 404 on a foreign hostname for %s",
-      async (path) => {
-        const target = route(path);
-        const payload =
-          path === "/v1/billing/checkout"
-            ? { communitySlug: "parish", planKey: "starter" }
-            : { communitySlug: "parish" };
+  describe("common guards (checkout, portal, status & plans)", () => {
+    it.each([
+      "/v1/billing/checkout",
+      "/v1/billing/portal",
+      "/v1/billing/status",
+      "/v1/billing/plans",
+    ])("answers 404 on a foreign hostname for %s", async (path) => {
+      const target = route(path);
+      const payload =
+        path === "/v1/billing/checkout"
+          ? { communitySlug: "parish", planKey: "starter" }
+          : { communitySlug: "parish" };
 
-        const authHostRes = await withRequest({ requestId: REQUEST_ID }, async () =>
-          target.handle(request(path, AUTH_HOSTNAME, payload, "Bearer token")),
-        );
-        expect(authHostRes.status).toBe(404);
-        expect(await authHostRes.text()).toBe("");
+      const authHostRes = await withRequest({ requestId: REQUEST_ID }, async () =>
+        target.handle(request(path, AUTH_HOSTNAME, payload, "Bearer token")),
+      );
+      expect(authHostRes.status).toBe(404);
+      expect(await authHostRes.text()).toBe("");
 
-        const webhooksHostRes = await withRequest({ requestId: REQUEST_ID }, async () =>
-          target.handle(request(path, WEBHOOKS_HOSTNAME, payload, "Bearer token")),
-        );
-        expect(webhooksHostRes.status).toBe(404);
-        expect(await webhooksHostRes.text()).toBe("");
-      },
-    );
+      const webhooksHostRes = await withRequest({ requestId: REQUEST_ID }, async () =>
+        target.handle(request(path, WEBHOOKS_HOSTNAME, payload, "Bearer token")),
+      );
+      expect(webhooksHostRes.status).toBe(404);
+      expect(await webhooksHostRes.text()).toBe("");
+    });
 
-    it.each(["/v1/billing/checkout", "/v1/billing/portal", "/v1/billing/status"])(
-      "answers 400 on an extra field including organisationId for %s",
-      async (path) => {
-        const target = route(path);
-        const payload =
-          path === "/v1/billing/checkout"
-            ? {
-                communitySlug: "parish",
-                planKey: "starter",
-                organisationId: "00000000-0000-4000-8000-000000000099",
-              }
-            : {
-                communitySlug: "parish",
-                organisationId: "00000000-0000-4000-8000-000000000099",
-              };
+    it.each([
+      "/v1/billing/checkout",
+      "/v1/billing/portal",
+      "/v1/billing/status",
+      "/v1/billing/plans",
+    ])("answers 400 on an extra field including organisationId for %s", async (path) => {
+      const target = route(path);
+      const payload =
+        path === "/v1/billing/checkout"
+          ? {
+              communitySlug: "parish",
+              planKey: "starter",
+              organisationId: "00000000-0000-4000-8000-000000000099",
+            }
+          : {
+              communitySlug: "parish",
+              organisationId: "00000000-0000-4000-8000-000000000099",
+            };
 
-        const res = await withRequest({ requestId: REQUEST_ID }, async () =>
-          target.handle(request(path, API_HOSTNAME, payload, "Bearer token")),
-        );
-        expect(res.status).toBe(400);
-        expect(await res.text()).toBe("");
-      },
-    );
+      const res = await withRequest({ requestId: REQUEST_ID }, async () =>
+        target.handle(request(path, API_HOSTNAME, payload, "Bearer token")),
+      );
+      expect(res.status).toBe(400);
+      expect(await res.text()).toBe("");
+    });
 
-    it.each(["/v1/billing/checkout", "/v1/billing/portal", "/v1/billing/status"])(
-      "answers 401 with no session for %s",
-      async (path) => {
-        const target = route(path);
-        const payload =
-          path === "/v1/billing/checkout"
-            ? { communitySlug: "parish", planKey: "starter" }
-            : { communitySlug: "parish" };
+    it.each([
+      "/v1/billing/checkout",
+      "/v1/billing/portal",
+      "/v1/billing/status",
+      "/v1/billing/plans",
+    ])("answers 401 with no session for %s", async (path) => {
+      const target = route(path);
+      const payload =
+        path === "/v1/billing/checkout"
+          ? { communitySlug: "parish", planKey: "starter" }
+          : { communitySlug: "parish" };
 
-        const noTokenRes = await withRequest({ requestId: REQUEST_ID }, async () =>
-          target.handle(request(path, API_HOSTNAME, payload)),
-        );
-        expect(noTokenRes.status).toBe(401);
-        expect(await noTokenRes.text()).toBe("");
+      const noTokenRes = await withRequest({ requestId: REQUEST_ID }, async () =>
+        target.handle(request(path, API_HOSTNAME, payload)),
+      );
+      expect(noTokenRes.status).toBe(401);
+      expect(await noTokenRes.text()).toBe("");
 
-        identity.readSession.mockResolvedValueOnce(null);
-        const invalidSessionRes = await withRequest({ requestId: REQUEST_ID }, async () =>
-          target.handle(request(path, API_HOSTNAME, payload, "Bearer token")),
-        );
-        expect(invalidSessionRes.status).toBe(401);
-        expect(await invalidSessionRes.text()).toBe("");
-      },
-    );
+      identity.readSession.mockResolvedValueOnce(null);
+      const invalidSessionRes = await withRequest({ requestId: REQUEST_ID }, async () =>
+        target.handle(request(path, API_HOSTNAME, payload, "Bearer token")),
+      );
+      expect(invalidSessionRes.status).toBe(401);
+      expect(await invalidSessionRes.text()).toBe("");
+    });
 
-    it.each(["/v1/billing/checkout", "/v1/billing/portal", "/v1/billing/status"])(
-      "answers 403 for an unknown slug with no audit append for %s",
-      async (path) => {
-        tenancy.findCommunityBySlug.mockResolvedValueOnce(null);
-        const target = route(path);
-        const payload =
-          path === "/v1/billing/checkout"
-            ? { communitySlug: "unknown-slug", planKey: "starter" }
-            : { communitySlug: "unknown-slug" };
+    it.each([
+      "/v1/billing/checkout",
+      "/v1/billing/portal",
+      "/v1/billing/status",
+      "/v1/billing/plans",
+    ])("answers 403 for an unknown slug with no audit append for %s", async (path) => {
+      tenancy.findCommunityBySlug.mockResolvedValueOnce(null);
+      const target = route(path);
+      const payload =
+        path === "/v1/billing/checkout"
+          ? { communitySlug: "unknown-slug", planKey: "starter" }
+          : { communitySlug: "unknown-slug" };
 
-        const res = await withRequest({ requestId: REQUEST_ID }, async () =>
-          target.handle(request(path, API_HOSTNAME, payload, "Bearer token")),
-        );
-        expect(res.status).toBe(403);
-        expect(await res.text()).toBe("");
-        expect(db.appendAuditEvent).not.toHaveBeenCalled();
-      },
-    );
+      const res = await withRequest({ requestId: REQUEST_ID }, async () =>
+        target.handle(request(path, API_HOSTNAME, payload, "Bearer token")),
+      );
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+      expect(db.appendAuditEvent).not.toHaveBeenCalled();
+    });
 
     it.each(["/v1/billing/checkout", "/v1/billing/portal", "/v1/billing/status"])(
       "answers 403 for a stranger with one audit append for %s",
@@ -1183,6 +1204,273 @@ describe("billing routes", () => {
       );
 
       expect(checkoutCalls.map((c) => c.role)).toEqual(["identity", "platform", "app", "platform"]);
+    });
+  });
+
+  describe("POST /v1/billing/plans", () => {
+    it("returns the plans list for caller with billing.manage", async () => {
+      access.holdsPermission.mockImplementation(
+        async (_tx: unknown, _userId: string, permission: string) => {
+          return permission === "billing.manage";
+        },
+      );
+      entitlements.listCheckoutPlans.mockResolvedValue([
+        { key: "growth", trialEligible: false },
+        { key: "starter", trialEligible: true },
+      ]);
+      const target = route("/v1/billing/plans");
+      const res = await withRequest({ requestId: REQUEST_ID }, async () =>
+        target.handle(
+          request("/v1/billing/plans", API_HOSTNAME, { communitySlug: "parish" }, "Bearer token"),
+        ),
+      );
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json).toEqual({
+        plans: [
+          { key: "growth", trialAvailable: false },
+          { key: "starter", trialAvailable: true },
+        ],
+      });
+    });
+
+    it("answers 403 with one audit append for a caller holding billing.view but not billing.manage (pin 8)", async () => {
+      const auditor = bundle("org_auditor") ?? [];
+      access.holdsPermission.mockImplementation(
+        async (_tx: unknown, _userId: string, permission: string) => {
+          return auditor.includes(permission as never);
+        },
+      );
+      const target = route("/v1/billing/plans");
+      const res = await withRequest({ requestId: REQUEST_ID }, async () =>
+        target.handle(
+          request("/v1/billing/plans", API_HOSTNAME, { communitySlug: "parish" }, "Bearer token"),
+        ),
+      );
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+      expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
+      expect(db.appendAuditEvent).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          actorKind: "user",
+          actorId: USER,
+          action: "billing.permission.denied",
+          purpose: "billing.permission.denied",
+          targetIds: [ORG, COMMUNITY],
+        }),
+      );
+    });
+
+    it("answers 403 for a stranger with one audit append", async () => {
+      access.holdsPermission.mockImplementation(async () => false);
+      access.holdsAnyGrant.mockImplementation(async () => false);
+      const target = route("/v1/billing/plans");
+      const res = await withRequest({ requestId: REQUEST_ID }, async () =>
+        target.handle(
+          request("/v1/billing/plans", API_HOSTNAME, { communitySlug: "parish" }, "Bearer token"),
+        ),
+      );
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+      expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
+      expect(db.appendAuditEvent).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          actorKind: "user",
+          actorId: USER,
+          action: "billing.permission.denied",
+          purpose: "billing.permission.denied",
+          targetIds: [ORG, COMMUNITY],
+        }),
+      );
+    });
+
+    it("a trial-eligible plan reads trialAvailable: false when trial_used_at is set and true when it is not (pin 9)", async () => {
+      entitlements.listCheckoutPlans.mockResolvedValue([{ key: "starter", trialEligible: true }]);
+      const target = route("/v1/billing/plans");
+
+      // Case 1: trialUsedAt is null -> trialAvailable: true
+      billing.readAccount.mockResolvedValueOnce({
+        organisationId: ORG,
+        mode: "self_serve",
+        stripeCustomerId: "cus_test1",
+        stripeSubscriptionId: null,
+        stripeStatus: null,
+        planLookupKey: "starter_monthly",
+        quantity: 2,
+        currentPeriodEnd: null,
+        trialEnd: null,
+        trialUsedAt: null,
+        unpaidSince: null,
+        graceUntil: null,
+        taxRateId: null,
+        syncedAt: null,
+      });
+      const resTrue = await withRequest({ requestId: REQUEST_ID }, async () =>
+        target.handle(
+          request("/v1/billing/plans", API_HOSTNAME, { communitySlug: "parish" }, "Bearer token"),
+        ),
+      );
+      expect(resTrue.status).toBe(200);
+      expect(await resTrue.json()).toEqual({
+        plans: [{ key: "starter", trialAvailable: true }],
+      });
+
+      // Case 2: trialUsedAt is set -> trialAvailable: false
+      billing.readAccount.mockResolvedValueOnce({
+        organisationId: ORG,
+        mode: "self_serve",
+        stripeCustomerId: "cus_test1",
+        stripeSubscriptionId: null,
+        stripeStatus: null,
+        planLookupKey: "starter_monthly",
+        quantity: 2,
+        currentPeriodEnd: null,
+        trialEnd: null,
+        trialUsedAt: new Date("2026-09-01T00:00:00.000Z"),
+        unpaidSince: null,
+        graceUntil: null,
+        taxRateId: null,
+        syncedAt: null,
+      });
+      const resFalse = await withRequest({ requestId: REQUEST_ID }, async () =>
+        target.handle(
+          request("/v1/billing/plans", API_HOSTNAME, { communitySlug: "parish" }, "Bearer token"),
+        ),
+      );
+      expect(resFalse.status).toBe(200);
+      expect(await resFalse.json()).toEqual({
+        plans: [{ key: "starter", trialAvailable: false }],
+      });
+    });
+
+    it("with currentSettings null every plan reads trialAvailable: false without 503", async () => {
+      entitlements.listCheckoutPlans.mockResolvedValue([
+        { key: "starter", trialEligible: true },
+        { key: "growth", trialEligible: false },
+      ]);
+      billing.currentSettings.mockResolvedValueOnce(null);
+      const target = route("/v1/billing/plans");
+      const res = await withRequest({ requestId: REQUEST_ID }, async () =>
+        target.handle(
+          request("/v1/billing/plans", API_HOSTNAME, { communitySlug: "parish" }, "Bearer token"),
+        ),
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        plans: [
+          { key: "starter", trialAvailable: false },
+          { key: "growth", trialAvailable: false },
+        ],
+      });
+    });
+
+    it("calls readAccount with the organisationId returned by findCommunityBySlug and ignores another organisation's account", async () => {
+      const OTHER_ORG = "00000000-0000-4000-8000-000000000099";
+      entitlements.listCheckoutPlans.mockResolvedValue([{ key: "starter", trialEligible: true }]);
+      billing.readAccount.mockImplementation(async (_sql: unknown, orgId: string) => {
+        if (orgId === ORG) {
+          return {
+            organisationId: ORG,
+            mode: "self_serve",
+            stripeCustomerId: "cus_test1",
+            stripeSubscriptionId: null,
+            stripeStatus: null,
+            planLookupKey: "starter_monthly",
+            quantity: 2,
+            currentPeriodEnd: null,
+            trialEnd: null,
+            trialUsedAt: null,
+            unpaidSince: null,
+            graceUntil: null,
+            taxRateId: null,
+            syncedAt: null,
+          };
+        }
+        if (orgId === OTHER_ORG) {
+          return {
+            organisationId: OTHER_ORG,
+            mode: "self_serve",
+            stripeCustomerId: "cus_test2",
+            stripeSubscriptionId: null,
+            stripeStatus: null,
+            planLookupKey: "starter_monthly",
+            quantity: 1,
+            currentPeriodEnd: null,
+            trialEnd: null,
+            trialUsedAt: new Date("2026-01-01T00:00:00.000Z"),
+            unpaidSince: null,
+            graceUntil: null,
+            taxRateId: null,
+            syncedAt: null,
+          };
+        }
+        return null;
+      });
+
+      const target = route("/v1/billing/plans");
+      const res = await withRequest({ requestId: REQUEST_ID }, async () =>
+        target.handle(
+          request("/v1/billing/plans", API_HOSTNAME, { communitySlug: "parish" }, "Bearer token"),
+        ),
+      );
+      expect(res.status).toBe(200);
+      expect(billing.readAccount).toHaveBeenCalledWith(expect.anything(), ORG);
+      expect(await res.json()).toEqual({
+        plans: [{ key: "starter", trialAvailable: true }],
+      });
+    });
+
+    it("the response parses with plansResponse and each plan's keys are exactly key and trialAvailable (pin 19)", async () => {
+      entitlements.listCheckoutPlans.mockResolvedValue([
+        { key: "starter", trialEligible: true },
+        { key: "growth", trialEligible: false },
+      ]);
+      const target = route("/v1/billing/plans");
+      const res = await withRequest({ requestId: REQUEST_ID }, async () =>
+        target.handle(
+          request("/v1/billing/plans", API_HOSTNAME, { communitySlug: "parish" }, "Bearer token"),
+        ),
+      );
+      expect(res.status).toBe(200);
+      const json: unknown = await res.json();
+      const parseResult = plansResponse.safeParse(json);
+      expect(parseResult.success).toBe(true);
+      if (parseResult.success) {
+        expect(parseResult.data.plans.length).toBe(2);
+        for (const plan of parseResult.data.plans) {
+          expect(Object.keys(plan).sort()).toEqual(["key", "trialAvailable"].sort());
+        }
+      }
+    });
+
+    it("pins roles and scope for plans success", async () => {
+      checkoutCalls.length = 0;
+      db.withAppTransaction.mockClear();
+
+      const target = route("/v1/billing/plans");
+      const res = await withRequest({ requestId: REQUEST_ID }, async () =>
+        target.handle(
+          request("/v1/billing/plans", API_HOSTNAME, { communitySlug: "parish" }, "Bearer token"),
+        ),
+      );
+      expect(res.status).toBe(200);
+
+      expect(db.withAppTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        { orgId: ORG, communityId: COMMUNITY },
+        expect.anything(),
+      );
+
+      expect(checkoutCalls.map((c) => c.role)).toEqual([
+        "identity",
+        "platform",
+        "app",
+        "platform",
+        "platform",
+        "platform",
+      ]);
     });
   });
 });

@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { checkoutBody, portalBody, statusBody, urlResponse, statusResponse } from "./billing.js";
+import {
+  checkoutBody,
+  portalBody,
+  statusBody,
+  plansBody,
+  urlResponse,
+  statusResponse,
+  plansResponse,
+} from "./billing.js";
 
 describe("billing contracts", () => {
   describe("checkoutBody", () => {
@@ -156,6 +164,90 @@ describe("billing contracts", () => {
         canManage: false,
       });
       expect(parsed.success).toBe(false);
+    });
+  });
+
+  describe("plansBody", () => {
+    it("accepts valid communitySlug", () => {
+      const parsed = plansBody.safeParse({
+        communitySlug: "parish",
+      });
+      expect(parsed.success).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data).toEqual({
+          communitySlug: "parish",
+        });
+      }
+    });
+
+    it("rejects an organisationId field", () => {
+      const parsed = plansBody.safeParse({
+        communitySlug: "parish",
+        organisationId: "00000000-0000-4000-8000-000000000010",
+      });
+      expect(parsed.success).toBe(false);
+    });
+
+    it("rejects extra fields", () => {
+      const parsed = plansBody.safeParse({
+        communitySlug: "parish",
+        extra: "forbidden",
+      });
+      expect(parsed.success).toBe(false);
+    });
+
+    it("rejects missing communitySlug", () => {
+      expect(plansBody.safeParse({}).success).toBe(false);
+    });
+
+    it("rejects empty communitySlug", () => {
+      expect(plansBody.safeParse({ communitySlug: "" }).success).toBe(false);
+    });
+  });
+
+  describe("plansResponse", () => {
+    it("accepts valid plans array", () => {
+      const parsed = plansResponse.safeParse({
+        plans: [
+          { key: "starter", trialAvailable: true },
+          { key: "growth", trialAvailable: false },
+        ],
+      });
+      expect(parsed.success).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data).toEqual({
+          plans: [
+            { key: "starter", trialAvailable: true },
+            { key: "growth", trialAvailable: false },
+          ],
+        });
+      }
+    });
+
+    it("rejects extra field on root", () => {
+      const parsed = plansResponse.safeParse({
+        plans: [{ key: "starter", trialAvailable: true }],
+        extra: "forbidden",
+      });
+      expect(parsed.success).toBe(false);
+    });
+
+    it("rejects extra field on plan item (including amount)", () => {
+      const parsed = plansResponse.safeParse({
+        plans: [{ key: "starter", trialAvailable: true, amount: 1000 }],
+      });
+      expect(parsed.success).toBe(false);
+    });
+
+    it("rejects non-boolean trialAvailable", () => {
+      const parsed = plansResponse.safeParse({
+        plans: [{ key: "starter", trialAvailable: "yes" }],
+      });
+      expect(parsed.success).toBe(false);
+    });
+
+    it("rejects missing plans key", () => {
+      expect(plansResponse.safeParse({}).success).toBe(false);
     });
   });
 });

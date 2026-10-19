@@ -490,7 +490,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
     expect(webhookRoute?.largeBody).toBe("webhooks");
   });
 
-  it("registers the three billing routes and the webhook route in productionRoutes and run", () => {
+  it("registers the billing routes and the webhook route in productionRoutes and run", () => {
     const startServerSpy = vi.spyOn(serverModule, "startServer").mockReturnValue({} as never);
     try {
       const routes = productionRoutes(envWithBilling(), pem);
@@ -498,6 +498,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
         { method: "POST", pattern: "/v1/billing/checkout", surface: "tenant" },
         { method: "POST", pattern: "/v1/billing/portal", surface: "tenant" },
         { method: "POST", pattern: "/v1/billing/status", surface: "tenant" },
+        { method: "POST", pattern: "/v1/billing/plans", surface: "tenant" },
         { method: "POST", pattern: "/v1/stripe/webhook", surface: "tenant", largeBody: "webhooks" },
       ];
 
@@ -546,7 +547,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
         (route as { billing?: string }).billing,
       ]),
     );
-    expect(routes).toHaveLength(21);
+    expect(routes).toHaveLength(22);
     expect(markings).toEqual(
       new Map([
         ["GET /health", "exempt"],
@@ -560,6 +561,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
         ["POST /v1/billing/checkout", "exempt"],
         ["POST /v1/billing/portal", "exempt"],
         ["POST /v1/billing/status", "exempt"],
+        ["POST /v1/billing/plans", "exempt"],
         ["POST /v1/stripe/webhook", "exempt"],
         ["POST /v1/access/grants/list", "read"],
         ["POST /v1/entitlements/list", "read"],

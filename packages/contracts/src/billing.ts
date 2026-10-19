@@ -25,6 +25,25 @@ export const statusBody = z
   })
   .strict();
 
+export const plansBody = z
+  .object({
+    communitySlug: slug,
+  })
+  .strict();
+
+export const plansResponse = z
+  .object({
+    plans: z.array(
+      z
+        .object({
+          key: z.string(),
+          trialAvailable: z.boolean(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
 export const urlResponse = z
   .object({
     url: z.string(),

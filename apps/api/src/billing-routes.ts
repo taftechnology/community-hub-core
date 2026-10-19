@@ -1,5 +1,5 @@
 import { holdsAnyGrant, holdsPermission } from "@community-hub/access";
-import { checkoutBody, portalBody, statusBody } from "@community-hub/contracts/billing";
+import { checkoutBody, portalBody, statusBody, plansBody } from "@community-hub/contracts/billing";
 import { appendAuditEvent, withAppTransaction } from "@community-hub/db";
 import {
   BillingUnavailable,
@@ -10,7 +10,12 @@ import {
   trialDaysFor,
   type StripeBilling,
 } from "@community-hub/billing";
-import { currentPlan, planBilling, planByLookupKey } from "@community-hub/entitlements";
+import {
+  currentPlan,
+  listCheckoutPlans,
+  planBilling,
+  planByLookupKey,
+} from "@community-hub/entitlements";
 import { readSession } from "@community-hub/identity";
 import { getRequestContext } from "@community-hub/kernel";
 import { findCommunityBySlug, listCommunityIds } from "@community-hub/tenancy";
@@ -383,6 +388,45 @@ export function billingRoutes(deps: BillingRoutesDeps): GateRoute[] {
     );
   }
 
+  async function handlePlans(request: Request): Promise<Response> {
+    const hidden = foreignHost(request);
+    if (hidden !== undefined) {
+      return finish(request, hidden);
+    }
+    const body = await parse(request, plansBody);
+    if (body === undefined) {
+      return finish(request, empty(400));
+    }
+    const actor = await sessionUser(request);
+    if (actor instanceof Response) {
+      return finish(request, actor);
+    }
+    const scope = await communityScope(body.communitySlug);
+    if (scope === null) {
+      return finish(request, empty(403));
+    }
+    const allowed = await authorise(scope, actor.userId, MANAGE);
+    if (!allowed) {
+      return finish(request, empty(403));
+    }
+
+    const plans = await deps.checkout("platform", (sql) => listCheckoutPlans(asSql(sql)));
+    const settings = await deps.checkout("platform", (sql) => currentSettings(asSql(sql)));
+    const account = await deps.checkout("platform", (sql) => readAccount(asSql(sql), scope.orgId));
+
+    const planItems = plans.map((plan) => {
+      const trialAvailable =
+        settings !== null &&
+        trialDaysFor({ trialEligible: plan.trialEligible }, account, settings) !== undefined;
+      return {
+        key: plan.key,
+        trialAvailable,
+      };
+    });
+
+    return finish(request, Response.json({ plans: planItems }));
+  }
+
   return [
     {
       method: "POST",
@@ -404,6 +448,13 @@ export function billingRoutes(deps: BillingRoutesDeps): GateRoute[] {
       surface: "tenant",
       billing: "exempt",
       handle: handleStatus,
+    },
+    {
+      method: "POST",
+      pattern: "/v1/billing/plans",
+      surface: "tenant",
+      billing: "exempt",
+      handle: handlePlans,
     },
   ];
 }
