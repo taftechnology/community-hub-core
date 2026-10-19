@@ -135,7 +135,7 @@ export type BillingDeps = {
   readonly webhooksHostname: string;
   readonly adminOrigin?: string | undefined;
   readonly log: (message: string, fields?: BillingLogFields) => void;
-  readonly guardLog?: ((message: string, fields: BillingLogFields) => void) | undefined;
+  readonly guardLog: (message: string, fields: BillingLogFields) => void;
 };
 
 export function bindServices(

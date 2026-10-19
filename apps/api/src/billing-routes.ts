@@ -48,7 +48,7 @@ export type BillingRoutesDeps = {
   readonly adminOrigin?: string | undefined;
   readonly port: StripeBilling;
   readonly log: BillingRouteLog;
-  readonly guardLog?: ((message: string, fields: BillingLogFields) => void) | undefined;
+  readonly guardLog: (message: string, fields: BillingLogFields) => void;
 };
 
 function empty(status: number): Response {
@@ -137,7 +137,7 @@ export function billingRoutes(deps: BillingRoutesDeps): GateRoute[] {
       {
         checkout: deps.checkout,
         now: deps.now,
-        guardLog: deps.guardLog ?? deps.log,
+        guardLog: deps.guardLog,
       },
       scope,
       userId,

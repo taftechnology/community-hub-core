@@ -166,6 +166,7 @@ describe("access flow", () => {
           now: () => now,
           apiHostname: API_HOSTNAME,
           log: () => undefined,
+          guardLog: () => undefined,
         }),
       ],
     });

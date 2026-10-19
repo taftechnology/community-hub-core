@@ -105,6 +105,7 @@ describe("entitlement flow", () => {
       log: (message, fields) => {
         logs.push({ message, fields });
       },
+      guardLog: () => undefined,
     });
     const list = routes.find((item) => item.pattern === "/v1/entitlements/list");
     const toggle = routes.find((item) => item.pattern === "/v1/entitlements/toggle");

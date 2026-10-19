@@ -89,7 +89,7 @@ export type AccessDeps = {
   now: () => Date;
   apiHostname: string;
   log: AccessLog;
-  guardLog?: ((message: string, fields: BillingLogFields) => void) | undefined;
+  guardLog: (message: string, fields: BillingLogFields) => void;
 };
 
 function empty(status: number): Response {
@@ -325,7 +325,7 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
       {
         checkout: deps.checkout,
         now: deps.now,
-        guardLog: deps.guardLog ?? deps.log,
+        guardLog: deps.guardLog,
       },
       scope,
       userId,

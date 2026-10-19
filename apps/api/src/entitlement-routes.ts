@@ -32,7 +32,7 @@ export type EntitlementDeps = {
   now: () => Date;
   apiHostname: string;
   log: EntitlementLog;
-  guardLog?: ((message: string, fields: BillingLogFields) => void) | undefined;
+  guardLog: (message: string, fields: BillingLogFields) => void;
 };
 
 function empty(status: number): Response {
@@ -159,7 +159,7 @@ export function entitlementRoutes(deps: EntitlementDeps): GateRoute[] {
       {
         checkout: deps.checkout,
         now: deps.now,
-        guardLog: deps.guardLog ?? deps.log,
+        guardLog: deps.guardLog,
       },
       scope,
       userId,

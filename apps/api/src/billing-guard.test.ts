@@ -40,6 +40,7 @@ import type { Role } from "./checkout.js";
 const ORG = "00000000-0000-4000-8000-000000000010";
 const COMMUNITY = "00000000-0000-4000-8000-000000000011";
 const USER = "00000000-0000-4000-8000-000000000002";
+const FIXED_NOW = new Date("2026-10-19T00:00:00.000Z");
 
 describe("billing-guard", () => {
   const checkoutRoles: Role[] = [];
@@ -51,7 +52,7 @@ describe("billing-guard", () => {
         checkoutRoles.push(role);
         return run({} as never);
       },
-      now: () => new Date("2026-10-19T00:00:00.000Z"),
+      now: () => FIXED_NOW,
       guardLog: (message, fields) => {
         logCalls.push({ message, fields: fields as Record<string, unknown> });
       },
@@ -102,6 +103,7 @@ describe("billing-guard", () => {
     expect(res).toBeNull();
     expect(checkoutRoles).toEqual(["app"]);
     expect(billing.assertWritable).not.toHaveBeenCalled();
+    expect(access.holdsAnyGrant).toHaveBeenCalledWith(expect.anything(), USER);
   });
 
   describe("grant plus each state (pin 11)", () => {
@@ -123,6 +125,13 @@ describe("billing-guard", () => {
         expect(res?.status).toBe(expectedStatus);
         expect(await res?.text()).toBe("");
         expect(checkoutRoles).toEqual(["app", "platform"]);
+        expect(db.withAppTransaction).toHaveBeenCalledWith(
+          expect.anything(),
+          { orgId: ORG, communityId: COMMUNITY },
+          expect.any(Function),
+        );
+        expect(access.holdsAnyGrant).toHaveBeenCalledWith(expect.anything(), USER);
+        expect(billing.assertWritable).toHaveBeenCalledWith(expect.anything(), ORG, FIXED_NOW);
       },
     );
 
@@ -139,6 +148,13 @@ describe("billing-guard", () => {
 
         expect(res).toBeNull();
         expect(checkoutRoles).toEqual(["app", "platform"]);
+        expect(db.withAppTransaction).toHaveBeenCalledWith(
+          expect.anything(),
+          { orgId: ORG, communityId: COMMUNITY },
+          expect.any(Function),
+        );
+        expect(access.holdsAnyGrant).toHaveBeenCalledWith(expect.anything(), USER);
+        expect(billing.assertWritable).toHaveBeenCalledWith(expect.anything(), ORG, FIXED_NOW);
       },
     );
   });
@@ -194,5 +210,6 @@ describe("billing-guard", () => {
       organisationId: ORG,
     });
     expect(Object.keys(logCalls[0]?.fields ?? {})).toEqual(["path", "organisationId"]);
+    expect(billing.assertWritable).toHaveBeenCalledWith(expect.anything(), ORG, FIXED_NOW);
   });
 });

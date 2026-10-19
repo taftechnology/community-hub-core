@@ -153,6 +153,7 @@ describe("billing flow (two organisations)", () => {
       adminOrigin: ADMIN_ORIGIN,
       port: fakePort,
       log: () => undefined,
+      guardLog: () => undefined,
     });
 
     const checkoutRoute = routes.find((item) => item.pattern === "/v1/billing/checkout");

@@ -51,9 +51,11 @@ vi.mock("@community-hub/db", async () => {
   return { ...actual, withAppTransaction: dbMock.withAppTransaction };
 });
 
+import { withRequest } from "@community-hub/kernel";
 import { readServiceEnv } from "./env.js";
 import { bindServices, boot, listeningServer, productionRoutes, run } from "./index.js";
 import { accessRoutes } from "./access-routes.js";
+import { entitlementRoutes } from "./entitlement-routes.js";
 import * as serverModule from "./server.js";
 import { rejectingStripeBilling } from "./billing/stripe-adapter.js";
 
@@ -572,6 +574,62 @@ describe("api boot wiring of the billing adapter and logger", () => {
       level: "info",
       message: "billing_write_blocked",
       path: "/v1/access/grants",
+      organisationId: "12345678-1234-4234-8234-1234567890ab",
+    });
+    expect(logger.getDroppedFieldCount()).toBe(0);
+  });
+
+  it("a 402 through entitlementRoutes(bound.entitlements) on /v1/entitlements/toggle writes exactly one billing_write_blocked line with path and organisationId and 0 dropped fields", async () => {
+    identityMock.readSession.mockResolvedValue({ userId: "u-1" });
+    tenancyMock.findCommunityBySlug.mockResolvedValue({
+      id: "comm-1",
+      organisationId: "12345678-1234-4234-8234-1234567890ab",
+    });
+    accessMock.holdsAnyGrant.mockResolvedValue(true);
+    billingMock.assertWritable.mockImplementation(() => {
+      throw new BillingReadOnly("read_only");
+    });
+
+    const written: string[] = [];
+    const logger = createLogger({ write: (line) => written.push(line) });
+    const bound = bindServices(envWithBilling(), pem, logger);
+    const routes = entitlementRoutes(bound.entitlements);
+    const toggleRoute = routes.find(
+      (r) => r.method === "POST" && r.pattern === "/v1/entitlements/toggle",
+    );
+    expect(toggleRoute).toBeDefined();
+
+    const req = new Request("http://localhost/v1/entitlements/toggle", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer valid-token",
+        "x-community-hub-hostname": "au.api.example.test",
+      },
+      body: JSON.stringify({
+        communitySlug: "slug-1",
+        key: "feature.test",
+        enabled: true,
+      }),
+    });
+
+    const res = await withRequest(
+      { requestId: "66666666-6666-4666-8666-666666666666" },
+      async () =>
+        toggleRoute!.handle(req, {
+          billing: toggleRoute!.billing,
+          pattern: toggleRoute!.pattern,
+        }),
+    );
+
+    expect(res.status).toBe(402);
+    expect(await res.text()).toBe("");
+    expect(written).toHaveLength(1);
+    const logLine = JSON.parse(written[0] ?? "{}") as Record<string, unknown>;
+    expect(logLine).toEqual({
+      level: "info",
+      message: "billing_write_blocked",
+      path: "/v1/entitlements/toggle",
       organisationId: "12345678-1234-4234-8234-1234567890ab",
     });
     expect(logger.getDroppedFieldCount()).toBe(0);

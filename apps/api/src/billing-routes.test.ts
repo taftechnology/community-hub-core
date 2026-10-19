@@ -119,6 +119,7 @@ function deps(overrides: Partial<BillingRoutesDeps> = {}): BillingRoutesDeps {
     log: (message, fields) => {
       logCalls.push({ message, fields });
     },
+    guardLog: () => undefined,
     ...overrides,
   };
 }
