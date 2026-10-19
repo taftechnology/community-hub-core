@@ -21,8 +21,8 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 |              |                                                                   |
 | ------------ | ----------------------------------------------------------------- |
 | Phase        | 1 — Core platform                                                 |
-| Last shipped | `ses-sign-in-proof`                                               |
-| Next chunk   | `stripe-billing` (blocked on Q8)                                  |
+| Last shipped | `stripe-billing`                                                  |
+| Next chunk   | `billing-read-only`                                               |
 | Phase 0      | 26 rows: 25 done, 1 superseded (`api-au-hostname`), 0 not started |
 | Later phases | not started                                                       |
 
@@ -96,7 +96,7 @@ Architecture: monorepo, CI, Terraform for AWS in `ap-southeast-2`, kernel, db wi
 | done       | `db-migrate-command`         | The image gains `/app/db-migrate.js`, which applies the product migrations as the master login, refuses to run before `db-bootstrap`, and prints the tags it applied. It has not been run on staging. Spec `docs/specs/2026-10-12-db-migrate-command.md`.                                                                                                                                                                                                                          |
 | done       | `staging-proof-run`          | The distroless image runs on Fargate. `db-bootstrap` then `db-migrate` applied the ten product migrations to RDS and a second run applied none. The sign-in-code route answers 503 with no mail vendor; role and entitlement routes refuse a request with no session; the service re-read a changed database secret and recovered without a restart. Staging was re-parked the same day. Spec `docs/specs/2026-10-12-staging-proof-run.md`.                                        |
 
-Next is `stripe-billing` (blocked on Q8).
+Next is `billing-read-only`.
 
 SQS, EventBridge, file storage, and the admin static-file distribution are not rows here. Each waits for the first chunk that uses it.
 
@@ -110,20 +110,22 @@ Shipped with the skeleton (not separate chunks): `@community-hub/kernel` `health
 
 Vertical slices. Nav items appear in the frozen order (see [Admin navigation](#admin-navigation-frozen)) and stay **hidden** until entitled.
 
-| Status      | Chunk                  | What                                                                                                                                                                                  |
-| ----------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| done        | `admin-shell`          | The shell is static, Dashboard only, and makes no data call. Spec `docs/specs/2026-10-07-admin-shell.md`.                                                                             |
-| done        | `tenancy-implicit-org` | Organisation and community rows in the `platform` schema. IDs, slugs, and region. Not a separate control plane. Spec `docs/specs/2026-10-10-tenancy-implicit-org.md`.                 |
-| done        | `identity-otp`         | The regional service. OTP and passkeys as designed. No email on a gateway. Spec `docs/specs/2026-10-11-identity-otp.md`.                                                              |
-| done        | `people-households`    | Person, Household, GuardianLink, `is_minor`. Tags + activity log land here. Spec `docs/specs/2026-10-11-people-households.md`.                                                        |
-| done        | `access-roles`         | Settings → Users & Roles. Spec `docs/specs/2026-10-12-access-roles.md`.                                                                                                               |
-| done        | `entitlements-plans`   | Plans and allocations in the platform schema. Community toggles; nav hide/show. Spec docs/specs/2026-10-12-entitlements-plans.md.                                                     |
-| done        | `first-owner`          | Operator-run one-off that provisions the organisation and community (if absent) and the first owner. No HTTP route, no claim link yet. Spec `docs/specs/2026-10-13-first-owner.md`.   |
-| done        | `email-provider`       | Sign-in codes go through SES in Sydney behind the mail port; staging SES identity and DNS applied; live proof in `ses-sign-in-proof`. Spec `docs/specs/2026-10-14-email-provider.md`. |
-| done        | `ses-sign-in-proof`    | Real email OTP sign-in through SES on staging-au (sandbox); first owner provisioned; P1–P5 passed; staging re-parked. Spec `docs/specs/2026-10-15-ses-sign-in-proof.md`.              |
-| not started | `stripe-billing`       | Our subscriptions. Webhooks on the Sydney hostname. The regional service does the work. Not `exec`. Not GivingJar.                                                                    |
-| not started | `ops-console`          | Routes on the regional service. Passkeys. The `platform` role has no `app` privileges. No Cloudflare Access.                                                                          |
-| not started | `usage-facts`          | `core/usage` skeleton (community × feature × day). Facts grow as modules ship.                                                                                                        |
+| Status      | Chunk                  | What                                                                                                                                                                                                                                                                        |
+| ----------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| done        | `admin-shell`          | The shell is static, Dashboard only, and makes no data call. Spec `docs/specs/2026-10-07-admin-shell.md`.                                                                                                                                                                   |
+| done        | `tenancy-implicit-org` | Organisation and community rows in the `platform` schema. IDs, slugs, and region. Not a separate control plane. Spec `docs/specs/2026-10-10-tenancy-implicit-org.md`.                                                                                                       |
+| done        | `identity-otp`         | The regional service. OTP and passkeys as designed. No email on a gateway. Spec `docs/specs/2026-10-11-identity-otp.md`.                                                                                                                                                    |
+| done        | `people-households`    | Person, Household, GuardianLink, `is_minor`. Tags + activity log land here. Spec `docs/specs/2026-10-11-people-households.md`.                                                                                                                                              |
+| done        | `access-roles`         | Settings → Users & Roles. Spec `docs/specs/2026-10-12-access-roles.md`.                                                                                                                                                                                                     |
+| done        | `entitlements-plans`   | Plans and allocations in the platform schema. Community toggles; nav hide/show. Spec docs/specs/2026-10-12-entitlements-plans.md.                                                                                                                                           |
+| done        | `first-owner`          | Operator-run one-off that provisions the organisation and community (if absent) and the first owner. No HTTP route, no claim link yet. Spec `docs/specs/2026-10-13-first-owner.md`.                                                                                         |
+| done        | `email-provider`       | Sign-in codes go through SES in Sydney behind the mail port; staging SES identity and DNS applied; live proof in `ses-sign-in-proof`. Spec `docs/specs/2026-10-14-email-provider.md`.                                                                                       |
+| done        | `ses-sign-in-proof`    | Real email OTP sign-in through SES on staging-au (sandbox); first owner provisioned; P1–P5 passed; staging re-parked. Spec `docs/specs/2026-10-15-ses-sign-in-proof.md`.                                                                                                    |
+| done        | `stripe-billing`       | Stripe subscriptions for organisations through the regional service; signed webhooks on the webhooks hostname; Checkout, Portal and status routes; `billing-admin` one-off; billing secret applied while parked in Apply 0. Spec `docs/specs/2026-10-17-stripe-billing.md`. |
+| not started | `billing-read-only`    | The 402 write guard, the `billing` marking on routes, the shell banner, Settings → General Settings billing.                                                                                                                                                                |
+| not started | `stripe-billing-proof` | Unpark, live test-mode proof, the real webhook signing secret, re-park.                                                                                                                                                                                                     |
+| not started | `ops-console`          | Routes on the regional service. Passkeys. The `platform` role has no `app` privileges. No Cloudflare Access.                                                                                                                                                                |
+| not started | `usage-facts`          | `core/usage` skeleton (community × feature × day). Facts grow as modules ship.                                                                                                                                                                                              |
 
 Phase 1 does **not** fill Enquires, Engagement, Family Records, Membership, Records, Certifications, Volunteers, Forms, Communication, Mobile App, Website & CMS, Donations, or E-commerce.
 
@@ -243,7 +245,7 @@ From architecture §26. Do not invent answers in a spec.
 | Q2  | Phase 4 Jellycube vs thin renderer; contract freeze row in Phase 2                                                             |
 | Q13 | Closed for forms, donations, and RSVPs: they post to the Sydney hostname. Which account serves Jellycube sites is not decided. |
 | Q3  | Closed by ADR 0011. There is no identity library.                                                                              |
-| Q8  | Plan contents and pricing (entitlements)                                                                                       |
+| Q8  | Q8a decided (spec 2026-10-17); Q8b plan contents and prices open                                                               |
 | Q9  | EmailProvider (Settings → Email Settings)                                                                                      |
 | Q12 | Closed. Feature flags are `platform` tables. There is no vendor.                                                               |
 
@@ -263,7 +265,7 @@ The distroless image ran on Fargate in `staging-proof-run`: health stayed 200, t
 
 With one task on Fargate Spot, the service was interrupted twice in eight minutes during the proof run and staging had no running task for a minute or two each time until ECS started a replacement.
 
-The webhooks hostname answers a preflight with the admin origin allowed, because the gateway's CORS configuration is shared by the api, auth and webhooks hostnames. Recorded in the proof run; not fixed there.
+The webhooks hostname answers a preflight with the admin origin allowed, because the gateway's CORS configuration is shared by the api, auth and webhooks hostnames. Recorded in the proof run; stays open, as Stripe sends no preflight and no credentials.
 
 Reloading an admin deep link (`/sign-in`, `/settings/users`, `/settings/modules`) returns 403 from CloudFront. The signed-out browser pass must start at `/`.
 
@@ -289,7 +291,7 @@ SES production access is still pending (account in the sandbox, 200 a day, verif
 
 ## Next spec
 
-The next chunk is **stripe-billing**. Billing is still blocked on plan tiers/pricing (Q8).
+The next chunk is **billing-read-only**. Q8b (plan contents and prices) is still open.
 
 ---
 

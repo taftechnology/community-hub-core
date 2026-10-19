@@ -1672,6 +1672,24 @@ When switching an organisation slug to invoiced with an existing active subscrip
       --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/billing-admin.js\",\"seed-test-catalogue\"]}]}" \
       --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
 
+### Evidence (2026-10-18)
+
+- Read-only plan before the apply, at `c7671d1`, without the lock: 1 to add, 2 to change, 0 to destroy, at exactly:
+  - create `module.db_secrets.aws_secretsmanager_secret.billing`
+  - update in place `module.db_secrets.aws_kms_key.secrets` — the key-policy change adds only the `-billing-` secret pattern
+  - update in place `module.envelope.aws_iam_role_policy.task_secrets` — keeps its three statements plus the new `ReadBillingSecret` (its resource was unknown in the plan until the secret existed)
+  - no task definition (staging parked).
+- **Apply 0** at commit `c7671d1`, by the owner, from a saved plan file outside the repository: 1 added, 2 changed, 0 destroyed. Completed 2026-10-18T20:52Z. Saved plan file deleted.
+- Test-mode restricted key created in the Stripe dashboard to `### Restricted key permissions`, put on the secret through the silent prompt and stdin. Webhook secret is the placeholder.
+- Read-backs (yes/no): secret exists — yes, encrypted with the same secrets key; current version — yes, 1 version; task role can read it — yes (`secretsmanager:GetSecretValue` allowed, `kms:Decrypt` allowed); execution role can read it — no (`implicitDeny`).
+- Follow-up plan after the apply: no changes. Staging still parked: 0 database instances, 0 ECS clusters.
+
+### Findings from Apply 0
+
+1. None from the apply itself (the change set matched the plan exactly).
+2. The `task_secrets` resource shows as unknown in a plan taken before the secret exists — expected, not a defect.
+3. A known test limit: the assert that forbids a secret version reads only `infra/modules/aws-db-secrets/main.tf`, so a version added in another file of that module would not fail it (the plan's own assert; follow-up if wanted).
+
 ## Restore drill
 
 Quarterly, and only against staging. Restore the staging database to a new instance from point-in-time recovery. Record the time taken against the 4-hour target. Then delete the restored instance, because it bills by the hour. This drill does not restore production. Reading `SHOW max_connections` belongs to `first-running-task`, not to this drill.
