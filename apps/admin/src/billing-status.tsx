@@ -122,15 +122,16 @@ export function BillingStatusProvider({ children }: { children: ReactNode }) {
     await loadStatus(currentSlug, () => generation.current === mine);
   }, [loadStatus]);
 
-  const isInitialMount = useRef(true);
+  const lastCommunity = useRef<string | null>(null);
 
   useEffect(() => {
     const mine = ++generation.current;
     setStatus(null);
-    if (!isInitialMount.current) {
+    const key = `${slug ?? ""}|${version}`;
+    if (lastCommunity.current !== null && lastCommunity.current !== key) {
       setReturnMessage(null);
     }
-    isInitialMount.current = false;
+    lastCommunity.current = key;
     if (!slug) {
       return;
     }
