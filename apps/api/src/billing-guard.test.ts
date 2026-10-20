@@ -212,4 +212,22 @@ describe("billing-guard", () => {
     expect(Object.keys(logCalls[0]?.fields ?? {})).toEqual(["path", "organisationId"]);
     expect(billing.assertWritable).toHaveBeenCalledWith(expect.anything(), ORG, FIXED_NOW);
   });
+
+  it("returns empty 402 for an error named BillingReadOnly that is not an instance of the imported class", async () => {
+    const duplicate = new Error("Organisation is read-only");
+    duplicate.name = "BillingReadOnly";
+    billing.assertWritable.mockRejectedValueOnce(duplicate);
+    const deps = makeDeps();
+
+    const res = await guardWrite(deps, { orgId: ORG, communityId: COMMUNITY }, USER, {
+      billing: "write",
+      pattern: "/v1/access/grants",
+    });
+
+    expect(res).not.toBeNull();
+    expect(res?.status).toBe(402);
+    expect(await res?.text()).toBe("");
+    expect(logCalls).toHaveLength(1);
+    expect(logCalls[0]?.message).toBe("billing_write_blocked");
+  });
 });

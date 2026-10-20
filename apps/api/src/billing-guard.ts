@@ -42,7 +42,10 @@ export async function guardWrite(
     );
     return null;
   } catch (error) {
-    if (error instanceof BillingReadOnly) {
+    if (
+      error instanceof BillingReadOnly ||
+      (error instanceof Error && error.name === "BillingReadOnly")
+    ) {
       deps.guardLog("billing_write_blocked", {
         path: context.pattern,
         organisationId: scope.orgId,

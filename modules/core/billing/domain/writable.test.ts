@@ -38,9 +38,12 @@ describe("BillingReadOnly", () => {
     expect(error).toBeInstanceOf(Error);
     expect(error.name).toBe("BillingReadOnly");
     expect(error.state).toBe("read_only");
-    expect(error.message).toContain("read_only");
+    expect(error.message).toBe("Organisation is read-only");
+    expect(error.message).not.toMatch(/\b(none|read_only|ok|grace|retrying|invoiced)\b/);
 
     const noneError = new BillingReadOnly("none");
     expect(noneError.state).toBe("none");
+    expect(noneError.message).toBe("Organisation is read-only");
+    expect(noneError.message).not.toMatch(/\b(none|read_only|ok|grace|retrying|invoiced)\b/);
   });
 });

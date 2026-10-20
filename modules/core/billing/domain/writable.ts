@@ -4,7 +4,7 @@ export class BillingReadOnly extends Error {
   readonly state: BillingState;
 
   constructor(state: BillingState) {
-    super(`Organisation is read-only (billing state: ${state})`);
+    super("Organisation is read-only");
     this.name = "BillingReadOnly";
     this.state = state;
   }
