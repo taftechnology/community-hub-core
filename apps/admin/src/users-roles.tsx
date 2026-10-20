@@ -1,8 +1,9 @@
-import { Button } from "@community-hub/ui";
+import { Alert, Button } from "@community-hub/ui";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 
 import { post } from "./api";
+import { useBillingStatus } from "./billing-status";
 import { useCommunity } from "./community";
 import { directoryOrigins, readAccessToken } from "./directory";
 
@@ -133,7 +134,7 @@ function grantLine(grant: GrantView): string {
   return `${grant.userId} ${role}`.trim();
 }
 
-type Outcome = "ok" | Notice | "signed-out";
+type Outcome = "ok" | Notice | "signed-out" | "payment-required";
 
 function outcomeOf(response: Response | "unavailable"): Outcome {
   if (response === "unavailable") {
@@ -141,6 +142,9 @@ function outcomeOf(response: Response | "unavailable"): Outcome {
   }
   if (response.status === 401) {
     return "signed-out";
+  }
+  if (response.status === 402) {
+    return "payment-required";
   }
   if (response.status === 403) {
     return "forbidden";
@@ -157,6 +161,8 @@ function outcomeOf(response: Response | "unavailable"): Outcome {
 export function UsersRolesPage() {
   const [token, setToken] = useState(() => readAccessToken());
   const { slug, version } = useCommunity();
+  const { status, refresh } = useBillingStatus();
+  const [readOnlyBlocked, setReadOnlyBlocked] = useState(false);
   const [directory, setDirectory] = useState<Directory | undefined>(undefined);
   const [notice, setNotice] = useState<Notice | undefined>(undefined);
   const [userId, setUserId] = useState("");
@@ -166,6 +172,11 @@ export function UsersRolesPage() {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const origins = directoryOrigins();
   const generation = useRef(0);
+
+  const isReadOnly =
+    status?.state === "none" ||
+    status?.state === "read_only" ||
+    readOnlyBlocked;
 
   function show(outcome: Notice | "signed-out"): void {
     if (outcome === "signed-out") {
@@ -189,7 +200,7 @@ export function UsersRolesPage() {
       if (!isCurrent()) {
         return;
       }
-      show(outcome === "ok" ? "unavailable" : outcome);
+      show(outcome === "ok" || outcome === "payment-required" ? "unavailable" : outcome);
       return;
     }
     try {
@@ -216,6 +227,7 @@ export function UsersRolesPage() {
     const mine = ++generation.current;
     setDirectory(undefined);
     setNotice(undefined);
+    setReadOnlyBlocked(false);
     if (slug) {
       void load(slug, () => generation.current === mine);
     }
@@ -229,6 +241,12 @@ export function UsersRolesPage() {
       return;
     }
     const outcome = outcomeOf(response);
+    if (outcome === "payment-required") {
+      setReadOnlyBlocked(true);
+      setNotice(undefined);
+      void refresh();
+      return;
+    }
     if (outcome !== "ok") {
       show(outcome);
       return;
@@ -276,6 +294,12 @@ export function UsersRolesPage() {
   return (
     <>
       <h1>Users & Roles</h1>
+      {isReadOnly ? (
+        <Alert live="polite">
+          <span>Read-only until billing is settled</span>{" "}
+          <Link to="/settings/general">General Settings</Link>
+        </Alert>
+      ) : null}
       {notice === "forbidden" ? <p>You cannot manage roles</p> : null}
       {notice === "conflict" ? <p>That change was rejected</p> : null}
       {notice === "unavailable" ? <p>Directory unavailable</p> : null}
@@ -288,7 +312,7 @@ export function UsersRolesPage() {
               {directory.grants.map((grant) => (
                 <li key={grant.grantId}>
                   <span>{grantLine(grant)}</span>
-                  {canManageRoles ? (
+                  {canManageRoles && !isReadOnly ? (
                     <Button
                       type="button"
                       onClick={() => {
@@ -313,7 +337,7 @@ export function UsersRolesPage() {
                   <span>
                     {customRole.key} {customRole.permissions.join(" ")}
                   </span>
-                  {canManageRoles ? (
+                  {canManageRoles && !isReadOnly ? (
                     <Button
                       type="button"
                       onClick={() => {
@@ -349,7 +373,7 @@ export function UsersRolesPage() {
             </ul>
           )}
           {limitReached ? <p>Custom role limit reached</p> : null}
-          {limitReached || !canManageRoles ? null : (
+          {limitReached || !canManageRoles || isReadOnly ? null : (
             <form
               onSubmit={(event: FormEvent<HTMLFormElement>) => {
                 event.preventDefault();
@@ -384,7 +408,7 @@ export function UsersRolesPage() {
               <Button type="submit">Create custom role</Button>
             </form>
           )}
-          {canManageRoles ? (
+          {canManageRoles && !isReadOnly ? (
             <form
               onSubmit={(event: FormEvent<HTMLFormElement>) => {
                 event.preventDefault();
@@ -418,7 +442,7 @@ export function UsersRolesPage() {
               <Button type="submit">Grant</Button>
             </form>
           ) : null}
-          {canManageUsers ? (
+          {canManageUsers && !isReadOnly ? (
             <form
               onSubmit={(event: FormEvent<HTMLFormElement>) => {
                 event.preventDefault();

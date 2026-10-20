@@ -1,7 +1,9 @@
+import { Alert } from "@community-hub/ui";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 
 import { post } from "./api";
+import { useBillingStatus } from "./billing-status";
 import { useCommunity } from "./community";
 import { directoryOrigins, readAccessToken } from "./directory";
 
@@ -31,7 +33,7 @@ function readModules(value: unknown): { keys: ModuleKey[]; canManage: boolean } 
   };
 }
 
-type Outcome = "ok" | Notice | "signed-out";
+type Outcome = "ok" | Notice | "signed-out" | "payment-required";
 
 function outcomeOf(response: Response | "unavailable"): Outcome {
   if (response === "unavailable") {
@@ -39,6 +41,9 @@ function outcomeOf(response: Response | "unavailable"): Outcome {
   }
   if (response.status === 401) {
     return "signed-out";
+  }
+  if (response.status === 402) {
+    return "payment-required";
   }
   if (response.status === 403) {
     return "forbidden";
@@ -55,11 +60,18 @@ function outcomeOf(response: Response | "unavailable"): Outcome {
 export function ModuleTogglesPage() {
   const [token, setToken] = useState(() => readAccessToken());
   const { slug, version } = useCommunity();
+  const { status, refresh } = useBillingStatus();
+  const [readOnlyBlocked, setReadOnlyBlocked] = useState(false);
   const [modules, setModules] = useState<ModuleKey[] | undefined>(undefined);
   const [canManage, setCanManage] = useState(false);
   const [notice, setNotice] = useState<Notice | undefined>(undefined);
   const origins = directoryOrigins();
   const generation = useRef(0);
+
+  const isReadOnly =
+    status?.state === "none" ||
+    status?.state === "read_only" ||
+    readOnlyBlocked;
 
   function show(outcome: Notice | "signed-out"): void {
     if (outcome === "signed-out") {
@@ -83,7 +95,7 @@ export function ModuleTogglesPage() {
       if (!isCurrent()) {
         return;
       }
-      show(outcome === "ok" ? "unavailable" : outcome);
+      show(outcome === "ok" || outcome === "payment-required" ? "unavailable" : outcome);
       return;
     }
     try {
@@ -112,6 +124,7 @@ export function ModuleTogglesPage() {
     setModules(undefined);
     setCanManage(false);
     setNotice(undefined);
+    setReadOnlyBlocked(false);
     if (slug) {
       void load(slug, () => generation.current === mine);
     }
@@ -128,6 +141,12 @@ export function ModuleTogglesPage() {
       return;
     }
     const outcome = outcomeOf(response);
+    if (outcome === "payment-required") {
+      setReadOnlyBlocked(true);
+      setNotice(undefined);
+      void refresh();
+      return;
+    }
     if (outcome !== "ok") {
       show(outcome);
       return;
@@ -158,6 +177,12 @@ export function ModuleTogglesPage() {
   return (
     <>
       <h1>Module Toggles</h1>
+      {isReadOnly ? (
+        <Alert live="polite">
+          <span>Read-only until billing is settled</span>{" "}
+          <Link to="/settings/general">General Settings</Link>
+        </Alert>
+      ) : null}
       {notice === "forbidden" ? <p>You cannot manage modules</p> : null}
       {notice === "rejected" ? <p>That change was rejected</p> : null}
       {notice === "unavailable" ? <p>Directory unavailable</p> : null}
@@ -167,7 +192,7 @@ export function ModuleTogglesPage() {
         <ul>
           {modules.map((row) => (
             <li key={row.key}>
-              {canManage ? (
+              {canManage && !isReadOnly ? (
                 <label>
                   <input
                     type="checkbox"
