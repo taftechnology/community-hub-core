@@ -11,14 +11,18 @@ import {
 import { type BillingStatus, post } from "./api";
 import { useCommunity } from "./community";
 
+export type BillingStatusReadiness = "loading" | "ready" | "unavailable";
+
 export type BillingStatusContextValue = {
   status: BillingStatus | null;
+  readiness: BillingStatusReadiness;
   refresh: () => Promise<void>;
   returnMessage: string | null;
 };
 
 export const BillingStatusContext = createContext<BillingStatusContextValue>({
   status: null,
+  readiness: "unavailable",
   refresh: async () => {},
   returnMessage: null,
 });
@@ -55,11 +59,23 @@ function readAndStripBillingParam(): string | null {
   }
 }
 
+type StoredStatus = {
+  key: string;
+  status: BillingStatus | null;
+  readiness: "ready" | "unavailable";
+};
+
 export function BillingStatusProvider({ children }: { children: ReactNode }) {
   const { slug, version } = useCommunity();
-  const [stored, setStored] = useState<{ key: string; status: BillingStatus } | null>(null);
+  const [stored, setStored] = useState<StoredStatus | null>(null);
   const currentKey = `${slug ?? ""}|${version}`;
-  const status = stored && stored.key === currentKey ? stored.status : null;
+  const forCurrent = stored && stored.key === currentKey ? stored : null;
+  const status = forCurrent?.status ?? null;
+  const readiness: BillingStatusReadiness = !slug
+    ? "unavailable"
+    : forCurrent
+      ? forCurrent.readiness
+      : "loading";
 
   const [billingParam] = useState(() => readAndStripBillingParam());
   const [returnMessage, setReturnMessage] = useState<string | null>(() => {
@@ -95,7 +111,7 @@ export function BillingStatusProvider({ children }: { children: ReactNode }) {
         if (!isCurrent()) {
           return;
         }
-        setStored(null);
+        setStored({ key: requestKey, status: null, readiness: "unavailable" });
         return;
       }
       try {
@@ -104,15 +120,15 @@ export function BillingStatusProvider({ children }: { children: ReactNode }) {
           return;
         }
         if (isBillingStatus(body)) {
-          setStored({ key: requestKey, status: body });
+          setStored({ key: requestKey, status: body, readiness: "ready" });
         } else {
-          setStored(null);
+          setStored({ key: requestKey, status: null, readiness: "unavailable" });
         }
       } catch {
         if (!isCurrent()) {
           return;
         }
-        setStored(null);
+        setStored({ key: requestKey, status: null, readiness: "unavailable" });
       }
     },
     [],
@@ -167,7 +183,7 @@ export function BillingStatusProvider({ children }: { children: ReactNode }) {
   }, [billingParam, refresh, loadStatus]);
 
   return (
-    <BillingStatusContext.Provider value={{ status, refresh, returnMessage }}>
+    <BillingStatusContext.Provider value={{ status, readiness, refresh, returnMessage }}>
       {children}
     </BillingStatusContext.Provider>
   );

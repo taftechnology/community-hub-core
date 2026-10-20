@@ -161,7 +161,7 @@ function outcomeOf(response: Response | "unavailable"): Outcome {
 export function UsersRolesPage() {
   const [token, setToken] = useState(() => readAccessToken());
   const { slug, version } = useCommunity();
-  const { status, refresh } = useBillingStatus();
+  const { status, readiness, refresh } = useBillingStatus();
   const [readOnlyBlocked, setReadOnlyBlocked] = useState(false);
   const [directory, setDirectory] = useState<Directory | undefined>(undefined);
   const [notice, setNotice] = useState<Notice | undefined>(undefined);
@@ -174,6 +174,7 @@ export function UsersRolesPage() {
   const generation = useRef(0);
 
   const isReadOnly = status?.state === "none" || status?.state === "read_only" || readOnlyBlocked;
+  const hideWrites = readiness === "loading" || isReadOnly;
 
   function show(outcome: Notice | "signed-out"): void {
     if (outcome === "signed-out") {
@@ -306,7 +307,7 @@ export function UsersRolesPage() {
               {directory.grants.map((grant) => (
                 <li key={grant.grantId}>
                   <span>{grantLine(grant)}</span>
-                  {canManageRoles && !isReadOnly ? (
+                  {canManageRoles && !hideWrites ? (
                     <Button
                       type="button"
                       onClick={() => {
@@ -331,7 +332,7 @@ export function UsersRolesPage() {
                   <span>
                     {customRole.key} {customRole.permissions.join(" ")}
                   </span>
-                  {canManageRoles && !isReadOnly ? (
+                  {canManageRoles && !hideWrites ? (
                     <Button
                       type="button"
                       onClick={() => {
@@ -367,7 +368,7 @@ export function UsersRolesPage() {
             </ul>
           )}
           {limitReached ? <p>Custom role limit reached</p> : null}
-          {limitReached || !canManageRoles || isReadOnly ? null : (
+          {limitReached || !canManageRoles || hideWrites ? null : (
             <form
               onSubmit={(event: FormEvent<HTMLFormElement>) => {
                 event.preventDefault();
@@ -402,7 +403,7 @@ export function UsersRolesPage() {
               <Button type="submit">Create custom role</Button>
             </form>
           )}
-          {canManageRoles && !isReadOnly ? (
+          {canManageRoles && !hideWrites ? (
             <form
               onSubmit={(event: FormEvent<HTMLFormElement>) => {
                 event.preventDefault();
@@ -436,7 +437,7 @@ export function UsersRolesPage() {
               <Button type="submit">Grant</Button>
             </form>
           ) : null}
-          {canManageUsers && !isReadOnly ? (
+          {canManageUsers && !hideWrites ? (
             <form
               onSubmit={(event: FormEvent<HTMLFormElement>) => {
                 event.preventDefault();

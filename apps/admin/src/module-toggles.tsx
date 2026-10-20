@@ -60,7 +60,7 @@ function outcomeOf(response: Response | "unavailable"): Outcome {
 export function ModuleTogglesPage() {
   const [token, setToken] = useState(() => readAccessToken());
   const { slug, version } = useCommunity();
-  const { status, refresh } = useBillingStatus();
+  const { status, readiness, refresh } = useBillingStatus();
   const [readOnlyBlocked, setReadOnlyBlocked] = useState(false);
   const [modules, setModules] = useState<ModuleKey[] | undefined>(undefined);
   const [canManage, setCanManage] = useState(false);
@@ -69,6 +69,7 @@ export function ModuleTogglesPage() {
   const generation = useRef(0);
 
   const isReadOnly = status?.state === "none" || status?.state === "read_only" || readOnlyBlocked;
+  const hideWrites = readiness === "loading" || isReadOnly;
 
   function show(outcome: Notice | "signed-out"): void {
     if (outcome === "signed-out") {
@@ -186,7 +187,7 @@ export function ModuleTogglesPage() {
         <ul>
           {modules.map((row) => (
             <li key={row.key}>
-              {canManage && !isReadOnly ? (
+              {canManage && !hideWrites ? (
                 <label>
                   <input
                     type="checkbox"

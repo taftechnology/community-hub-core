@@ -681,6 +681,63 @@ it("keeps write controls visible and hides read-only alert when billing status i
   expect(screen.queryByText("Read-only until billing is settled")).toBeNull();
 });
 
+it("hides Grant while status is loading after switching to a read_only community", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  let resolveCathedralStatus!: (value: Response) => void;
+  const cathedralStatusPromise = new Promise<Response>((resolve) => {
+    resolveCathedralStatus = resolve;
+  });
+
+  vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const url = String(input);
+    if (url.includes("/v1/billing/status")) {
+      const body = JSON.parse(String((init as RequestInit).body)) as { communitySlug?: string };
+      if (body.communitySlug === "parish") {
+        return Promise.resolve(billingStatusResponse("ok"));
+      }
+      if (body.communitySlug === "cathedral") {
+        return cathedralStatusPromise;
+      }
+    }
+    if (url.includes("/v1/access/grants/list")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify(
+            directory(1, [ownerGrant], ["access.roles.manage", "access.users.manage"]),
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    }
+    return Promise.resolve(new Response(null, { status: 404 }));
+  });
+
+  await showUsers();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  expect(await screen.findByRole("button", { name: "Grant" })).toBeTruthy();
+
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "cathedral" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  expect(await screen.findByText(USER, { exact: false })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Grant" })).toBeNull();
+  expect(screen.queryByText("Read-only until billing is settled")).toBeNull();
+
+  resolveCathedralStatus(billingStatusResponse("read_only"));
+  await act(async () => {
+    await cathedralStatusPromise;
+  });
+
+  expect(await screen.findByText("Read-only until billing is settled")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Grant" })).toBeNull();
+});
+
 it("handles 402 on mutation by showing read-only alert, hiding write controls, and calling refresh exactly once", async () => {
   sessionStorage.setItem("community-hub.access-token", TOKEN);
   let statusCalls = 0;

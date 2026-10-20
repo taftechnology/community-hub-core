@@ -57,6 +57,7 @@ function renderBannerWithStatus(
       <BillingStatusContext.Provider
         value={{
           status,
+          readiness: status ? "ready" : "unavailable",
           refresh: vi.fn(),
           returnMessage,
         }}
@@ -494,6 +495,7 @@ describe("BillingBanner and Shell Billing Return", () => {
           <BillingStatusContext.Provider
             value={{
               status,
+              readiness: "ready",
               refresh: vi.fn(),
               returnMessage: null,
             }}
@@ -512,6 +514,7 @@ describe("BillingBanner and Shell Billing Return", () => {
           <BillingStatusContext.Provider
             value={{
               status,
+              readiness: "ready",
               refresh: vi.fn(),
               returnMessage: null,
             }}
@@ -582,6 +585,7 @@ describe("BillingBanner and Shell Billing Return", () => {
                   canView: true,
                   canManage: true,
                 },
+                readiness: "ready",
                 refresh: vi.fn(),
                 returnMessage: null,
               }}

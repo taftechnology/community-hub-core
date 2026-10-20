@@ -53,6 +53,7 @@ function renderGeneralSettings(options: {
         <BillingStatusContext.Provider
           value={{
             status,
+            readiness: status ? "ready" : "unavailable",
             refresh,
             returnMessage,
           }}
@@ -528,6 +529,7 @@ describe("GeneralSettingsPage - Settings -> General Settings -> Billing", () => 
           <BillingStatusContext.Provider
             value={{
               status: currentStatus,
+              readiness: "ready",
               refresh: refreshMock,
               returnMessage: null,
             }}
@@ -939,6 +941,7 @@ describe("GeneralSettingsPage - Settings -> General Settings -> Billing", () => 
             <BillingStatusContext.Provider
               value={{
                 status,
+                readiness: "ready",
                 refresh: vi.fn(),
                 returnMessage: null,
               }}
@@ -1465,6 +1468,7 @@ describe("GeneralSettingsPage - Settings -> General Settings -> Billing", () => 
                     canView: true,
                     canManage: true,
                   },
+                  readiness: "ready",
                   refresh: vi.fn(),
                   returnMessage: null,
                 }}
