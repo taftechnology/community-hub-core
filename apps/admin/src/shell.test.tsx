@@ -43,10 +43,14 @@ it("renders Dashboard and Users & Roles from the frozen labels", () => {
   const links = within(nav).getAllByRole("link");
   expect(links.map((link) => link.textContent)).toEqual([
     "Dashboard",
+    "General Settings",
     "Users & Roles",
     "Module Toggles",
   ]);
   expect(within(nav).getByRole("link", { name: "Dashboard" }).getAttribute("href")).toBe("/");
+  expect(within(nav).getByRole("link", { name: "General Settings" }).getAttribute("href")).toBe(
+    "/settings/general",
+  );
   expect(within(nav).getByRole("link", { name: "Users & Roles" }).getAttribute("href")).toBe(
     "/settings/users",
   );
@@ -66,7 +70,6 @@ it("renders Dashboard and Users & Roles from the frozen labels", () => {
     }
     expect(screen.queryByText(label)).toBeNull();
   }
-  expect(screen.queryByText("General Settings")).toBeNull();
   expect(screen.queryByText("Email Settings")).toBeNull();
 });
 

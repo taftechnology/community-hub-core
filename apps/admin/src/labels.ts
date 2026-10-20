@@ -16,3 +16,8 @@ export const labels = [
   "E-commerce",
   "Settings",
 ] as const;
+
+export const planLabels: Readonly<Record<string, string>> = {
+  starter: "Starter",
+  growth: "Growth",
+};

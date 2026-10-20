@@ -18,6 +18,7 @@ export function AdminNav() {
       <Link to="/">{dashboard}</Link>
       <div>
         <span>{settings}</span>
+        <Link to="/settings/general">General Settings</Link>
         <Link to="/settings/users">Users & Roles</Link>
         <Link to="/settings/modules">Module Toggles</Link>
       </div>
