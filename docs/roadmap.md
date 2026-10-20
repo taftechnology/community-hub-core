@@ -21,8 +21,8 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 |              |                                                                   |
 | ------------ | ----------------------------------------------------------------- |
 | Phase        | 1 — Core platform                                                 |
-| Last shipped | `stripe-billing`                                                  |
-| Next chunk   | `billing-read-only`                                               |
+| Last shipped | `billing-read-only`                                               |
+| Next chunk   | `stripe-billing-proof`                                            |
 | Phase 0      | 26 rows: 25 done, 1 superseded (`api-au-hostname`), 0 not started |
 | Later phases | not started                                                       |
 
@@ -96,7 +96,7 @@ Architecture: monorepo, CI, Terraform for AWS in `ap-southeast-2`, kernel, db wi
 | done       | `db-migrate-command`         | The image gains `/app/db-migrate.js`, which applies the product migrations as the master login, refuses to run before `db-bootstrap`, and prints the tags it applied. It has not been run on staging. Spec `docs/specs/2026-10-12-db-migrate-command.md`.                                                                                                                                                                                                                          |
 | done       | `staging-proof-run`          | The distroless image runs on Fargate. `db-bootstrap` then `db-migrate` applied the ten product migrations to RDS and a second run applied none. The sign-in-code route answers 503 with no mail vendor; role and entitlement routes refuse a request with no session; the service re-read a changed database secret and recovered without a restart. Staging was re-parked the same day. Spec `docs/specs/2026-10-12-staging-proof-run.md`.                                        |
 
-Next is `billing-read-only`.
+Next is `stripe-billing-proof`.
 
 SQS, EventBridge, file storage, and the admin static-file distribution are not rows here. Each waits for the first chunk that uses it.
 
@@ -122,7 +122,7 @@ Vertical slices. Nav items appear in the frozen order (see [Admin navigation](#a
 | done        | `email-provider`       | Sign-in codes go through SES in Sydney behind the mail port; staging SES identity and DNS applied; live proof in `ses-sign-in-proof`. Spec `docs/specs/2026-10-14-email-provider.md`.                                                                                       |
 | done        | `ses-sign-in-proof`    | Real email OTP sign-in through SES on staging-au (sandbox); first owner provisioned; P1–P5 passed; staging re-parked. Spec `docs/specs/2026-10-15-ses-sign-in-proof.md`.                                                                                                    |
 | done        | `stripe-billing`       | Stripe subscriptions for organisations through the regional service; signed webhooks on the webhooks hostname; Checkout, Portal and status routes; `billing-admin` one-off; billing secret applied while parked in Apply 0. Spec `docs/specs/2026-10-17-stripe-billing.md`. |
-| not started | `billing-read-only`    | The 402 write guard, the `billing` marking on routes, the shell banner, Settings → General Settings billing.                                                                                                                                                                |
+| done        | `billing-read-only`    | The 402 write guard on `write` routes, the route marking, the shell billing banner, and Settings → General Settings → Billing. Spec `docs/specs/2026-10-19-billing-read-only.md`.                                                                                           |
 | not started | `stripe-billing-proof` | Unpark, live test-mode proof, the real webhook signing secret, re-park.                                                                                                                                                                                                     |
 | not started | `ops-console`          | Routes on the regional service. Passkeys. The `platform` role has no `app` privileges. No Cloudflare Access.                                                                                                                                                                |
 | not started | `usage-facts`          | `core/usage` skeleton (community × feature × day). Facts grow as modules ship.                                                                                                                                                                                              |
@@ -291,7 +291,7 @@ SES production access is still pending (account in the sandbox, 200 a day, verif
 
 ## Next spec
 
-The next chunk is **billing-read-only**. Q8b (plan contents and prices) is still open.
+The next chunk is **stripe-billing-proof**. Q8b (plan contents and prices) is still open. It also carries the deferred staging verification of `billing-read-only` (owner decision, 2026-10-19).
 
 ---
 
