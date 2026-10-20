@@ -136,6 +136,7 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
       method: "POST",
       pattern: "/v1/auth/email-otp/start",
       surface: "tenant",
+      billing: "exempt",
       handle: async (request) => {
         const denied = await onAuth(request);
         if (denied !== undefined) {
@@ -166,6 +167,7 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
       method: "POST",
       pattern: "/v1/auth/email-otp/verify",
       surface: "tenant",
+      billing: "exempt",
       handle: async (request) => {
         const denied = await onAuth(request);
         if (denied !== undefined) {
@@ -189,6 +191,7 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
       method: "POST",
       pattern: "/v1/auth/passkey/register/options",
       surface: "tenant",
+      billing: "exempt",
       handle: async (request) => {
         const denied = await onAuth(request);
         if (denied !== undefined) {
@@ -244,6 +247,7 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
       method: "POST",
       pattern: "/v1/auth/passkey/register/verify",
       surface: "tenant",
+      billing: "exempt",
       handle: async (request) => {
         const denied = await onAuth(request);
         if (denied !== undefined) {
@@ -290,6 +294,7 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
       method: "POST",
       pattern: "/v1/auth/passkey/authenticate/options",
       surface: "tenant",
+      billing: "exempt",
       handle: async (request) => {
         const denied = await onAuth(request);
         if (denied !== undefined) {
@@ -315,6 +320,7 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
       method: "POST",
       pattern: "/v1/auth/passkey/authenticate/verify",
       surface: "tenant",
+      billing: "exempt",
       handle: async (request) => {
         const denied = await onAuth(request);
         if (denied !== undefined) {
@@ -341,6 +347,7 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
       method: "POST",
       pattern: "/v1/auth/session/refresh",
       surface: "tenant",
+      billing: "exempt",
       handle: async (request) => {
         const denied = await onAuth(request);
         if (denied !== undefined) {

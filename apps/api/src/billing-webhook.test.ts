@@ -14,7 +14,18 @@ import type { createPlatformSql } from "@community-hub/db";
 
 type Sql = ReturnType<typeof createPlatformSql>;
 
-import { billingWebhookRoutes, type BillingWebhookDeps } from "./billing-webhook.js";
+import {
+  billingWebhookRoutes as rawBillingWebhookRoutes,
+  type BillingWebhookDeps,
+} from "./billing-webhook.js";
+
+function billingWebhookRoutes(deps: BillingWebhookDeps) {
+  return rawBillingWebhookRoutes(deps).map((route) => ({
+    ...route,
+    handle: (req: Request, context = { billing: route.billing, pattern: route.pattern }) =>
+      route.handle(req, context),
+  }));
+}
 import { createStripeBilling } from "./billing/stripe-adapter.js";
 import type { BillingSecret } from "./billing/secret.js";
 

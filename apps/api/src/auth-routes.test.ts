@@ -18,6 +18,16 @@ vi.mock("@community-hub/identity", async () => {
   return { ...actual, ...identity };
 });
 
+const billing = vi.hoisted(() => ({
+  assertWritable: vi.fn(),
+}));
+
+vi.mock("@community-hub/billing", async () => {
+  const actual =
+    await vi.importActual<typeof import("@community-hub/billing")>("@community-hub/billing");
+  return { ...actual, assertWritable: billing.assertWritable };
+});
+
 import { OtpMailUnavailable } from "@community-hub/identity";
 
 import { authRoutes, type AuthDeps } from "./auth-routes.js";
@@ -57,7 +67,11 @@ function route(path: string, bound: AuthDeps = deps()) {
   if (found === undefined) {
     throw new Error(`missing ${path}`);
   }
-  return found;
+  return {
+    ...found,
+    handle: (request: Request, context = { billing: found.billing, pattern: found.pattern }) =>
+      found.handle(request, context),
+  };
 }
 
 describe("auth routes", () => {
@@ -229,5 +243,21 @@ describe("auth routes", () => {
     );
     expect(response.status).toBe(503);
     expect(await response.text()).toBe("");
+  });
+
+  it("/v1/auth/session/refresh answers normally and assertWritable is not called", async () => {
+    billing.assertWritable.mockRejectedValue(new Error("should not be called"));
+    const session = {
+      userId: "user-1",
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresIn: 900 as const,
+    };
+    identity.refreshSession.mockResolvedValueOnce(session);
+    const refreshed = await route("/v1/auth/session/refresh").handle(
+      request("/v1/auth/session/refresh", AUTH_HOSTNAME, { refreshToken: "refresh-token" }),
+    );
+    expect(refreshed.status).toBe(200);
+    expect(billing.assertWritable).not.toHaveBeenCalled();
   });
 });

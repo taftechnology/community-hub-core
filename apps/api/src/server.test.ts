@@ -67,6 +67,7 @@ const health: GateRoute = {
   method: "GET",
   pattern: "/health",
   surface: "all",
+  billing: "exempt",
   handle: () => Response.json({ ok: true }),
 };
 
@@ -134,6 +135,7 @@ describe("startServer", () => {
           method: "GET",
           pattern: "/quick",
           surface: "tenant",
+          billing: "exempt",
           handle: async () => {
             await new Promise((resolve) => setTimeout(resolve, 10));
             return Response.json({ ok: true });
@@ -143,6 +145,7 @@ describe("startServer", () => {
           method: "GET",
           pattern: "/hang",
           surface: "tenant",
+          billing: "exempt",
           handle: () => new Promise(() => {}),
         },
       ],
@@ -239,6 +242,7 @@ describe("startServer", () => {
           method: "GET",
           pattern: "/partial",
           surface: "tenant",
+          billing: "exempt",
           handle: () => new Response("ok"),
         },
       ],
@@ -306,6 +310,7 @@ describe("startServer", () => {
           method: "GET",
           pattern: "/boom",
           surface: "tenant",
+          billing: "exempt",
           handle: () => {
             throw new Error("marker-handler");
           },
@@ -366,6 +371,7 @@ describe("startServer", () => {
           method: "POST",
           pattern: "/v1/auth/email-otp/start",
           surface: "tenant",
+          billing: "exempt",
           handle: () => {
             calls += 1;
             return new Response(null, { status: 204 });
@@ -400,6 +406,7 @@ describe("startServer", () => {
           method: "POST",
           pattern: "/v1/stripe/webhook",
           surface: "tenant",
+          billing: "exempt",
           largeBody: "webhooks",
           handle: () => {
             calls += 1;
@@ -434,6 +441,7 @@ describe("startServer", () => {
           method: "POST",
           pattern: "/v1/stripe/webhook",
           surface: "tenant",
+          billing: "exempt",
           largeBody: "webhooks",
           handle: () => {
             calls += 1;
@@ -469,6 +477,7 @@ describe("startServer", () => {
           method: "POST",
           pattern: "/v1/access/grants",
           surface: "tenant",
+          billing: "write",
           handle: () => {
             calls += 1;
             return new Response(null, { status: 204 });
@@ -503,6 +512,7 @@ describe("startServer", () => {
           method: "POST",
           pattern: "/v1/stripe/webhook",
           surface: "tenant",
+          billing: "exempt",
           largeBody: "webhooks",
           handle: () => {
             calls += 1;
@@ -538,6 +548,7 @@ describe("startServer", () => {
           method: "POST",
           pattern: "/v1/stripe/webhook",
           surface: "tenant",
+          billing: "exempt",
           largeBody: "webhooks",
           handle: () => {
             calls += 1;
@@ -581,6 +592,7 @@ describe("startServer", () => {
           method: "POST",
           pattern: "/v1/stripe/webhook",
           surface: "tenant",
+          billing: "exempt",
           largeBody: "webhooks",
           handle: () => {
             calls += 1;

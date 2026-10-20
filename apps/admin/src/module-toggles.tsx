@@ -1,8 +1,11 @@
-import { Button } from "@community-hub/ui";
-import { type FormEvent, useState } from "react";
+import { Alert } from "@community-hub/ui";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 
-import { clearAccessToken, directoryOrigins, readAccessToken } from "./directory";
+import { post } from "./api";
+import { useBillingStatus } from "./billing-status";
+import { useCommunity } from "./community";
+import { directoryOrigins, readAccessToken } from "./directory";
 
 type ModuleKey = {
   key: string;
@@ -30,7 +33,7 @@ function readModules(value: unknown): { keys: ModuleKey[]; canManage: boolean } 
   };
 }
 
-type Outcome = "ok" | Notice | "signed-out";
+type Outcome = "ok" | Notice | "signed-out" | "payment-required";
 
 function outcomeOf(response: Response | "unavailable"): Outcome {
   if (response === "unavailable") {
@@ -38,6 +41,9 @@ function outcomeOf(response: Response | "unavailable"): Outcome {
   }
   if (response.status === 401) {
     return "signed-out";
+  }
+  if (response.status === 402) {
+    return "payment-required";
   }
   if (response.status === 403) {
     return "forbidden";
@@ -53,12 +59,17 @@ function outcomeOf(response: Response | "unavailable"): Outcome {
 
 export function ModuleTogglesPage() {
   const [token, setToken] = useState(() => readAccessToken());
-  const [community, setCommunity] = useState("");
-  const [slug, setSlug] = useState("");
+  const { slug, version } = useCommunity();
+  const { status, readiness, refresh } = useBillingStatus();
+  const [readOnlyBlocked, setReadOnlyBlocked] = useState(false);
   const [modules, setModules] = useState<ModuleKey[] | undefined>(undefined);
   const [canManage, setCanManage] = useState(false);
   const [notice, setNotice] = useState<Notice | undefined>(undefined);
   const origins = directoryOrigins();
+  const generation = useRef(0);
+
+  const isReadOnly = status?.state === "none" || status?.state === "read_only" || readOnlyBlocked;
+  const hideWrites = readiness === "loading" || isReadOnly;
 
   function show(outcome: Notice | "signed-out"): void {
     if (outcome === "signed-out") {
@@ -69,57 +80,68 @@ export function ModuleTogglesPage() {
     setNotice(outcome);
   }
 
-  async function post(path: string, body: unknown): Promise<Response | "unavailable"> {
-    if (origins === undefined || token === null) {
-      return "unavailable";
-    }
-    try {
-      const response = await fetch(`${origins.api}${path}`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(body),
-      });
-      if (response.status === 401) {
-        clearAccessToken();
-      }
-      return response;
-    } catch {
-      return "unavailable";
-    }
-  }
-
-  async function load(communitySlug: string): Promise<void> {
+  async function load(communitySlug: string, isCurrent: () => boolean = () => true): Promise<void> {
     const response = await post("/v1/entitlements/list", { communitySlug });
+    if (!isCurrent()) {
+      return;
+    }
     const outcome = outcomeOf(response);
     if (outcome !== "ok" || response === "unavailable") {
-      show(outcome === "ok" ? "unavailable" : outcome);
+      if (!isCurrent()) {
+        return;
+      }
+      show(outcome === "ok" || outcome === "payment-required" ? "unavailable" : outcome);
       return;
     }
     try {
-      const parsed = readModules(await response.json());
+      const body: unknown = await response.json();
+      if (!isCurrent()) {
+        return;
+      }
+      const parsed = readModules(body);
       if (parsed === undefined) {
         setNotice("unavailable");
         return;
       }
       setNotice(undefined);
-      setSlug(communitySlug);
       setModules(parsed.keys);
       setCanManage(parsed.canManage);
     } catch {
+      if (!isCurrent()) {
+        return;
+      }
       setNotice("unavailable");
     }
   }
 
+  useEffect(() => {
+    const mine = ++generation.current;
+    setModules(undefined);
+    setCanManage(false);
+    setNotice(undefined);
+    setReadOnlyBlocked(false);
+    if (slug) {
+      void load(slug, () => generation.current === mine);
+    }
+  }, [slug, version]);
+
   async function turn(key: string, enabled: boolean): Promise<void> {
+    const mine = generation.current;
     const response = await post("/v1/entitlements/toggle", {
       communitySlug: slug,
       key,
       enabled,
     });
+    if (generation.current !== mine) {
+      return;
+    }
     const outcome = outcomeOf(response);
+    if (outcome === "payment-required") {
+      setReadOnlyBlocked(true);
+      setNotice(undefined);
+      void refresh();
+      return;
+    }
     if (outcome !== "ok") {
       show(outcome);
       return;
@@ -150,23 +172,12 @@ export function ModuleTogglesPage() {
   return (
     <>
       <h1>Module Toggles</h1>
-      <form
-        onSubmit={(event: FormEvent<HTMLFormElement>) => {
-          event.preventDefault();
-          void load(community);
-        }}
-      >
-        <label>
-          Community
-          <input
-            value={community}
-            onChange={(event) => {
-              setCommunity(event.target.value);
-            }}
-          />
-        </label>
-        <Button type="submit">Load</Button>
-      </form>
+      {isReadOnly ? (
+        <Alert live="polite">
+          <span>Read-only until billing is settled</span>{" "}
+          <Link to="/settings/general">General Settings</Link>
+        </Alert>
+      ) : null}
       {notice === "forbidden" ? <p>You cannot manage modules</p> : null}
       {notice === "rejected" ? <p>That change was rejected</p> : null}
       {notice === "unavailable" ? <p>Directory unavailable</p> : null}
@@ -176,7 +187,7 @@ export function ModuleTogglesPage() {
         <ul>
           {modules.map((row) => (
             <li key={row.key}>
-              {canManage ? (
+              {canManage && !hideWrites ? (
                 <label>
                   <input
                     type="checkbox"

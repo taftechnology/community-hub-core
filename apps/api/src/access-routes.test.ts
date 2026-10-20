@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { BillingReadOnly } from "@community-hub/billing";
 
 const identity = vi.hoisted(() => ({
   readSession: vi.fn(),
@@ -25,8 +26,13 @@ const access = vi.hoisted(() => {
     deleteCustomRole: vi.fn(),
     linkUser: vi.fn(),
     unlinkUser: vi.fn(),
+    holdsAnyGrant: vi.fn(),
   };
 });
+
+const billing = vi.hoisted(() => ({
+  assertWritable: vi.fn(),
+}));
 
 const db = vi.hoisted(() => ({
   withAppTransaction: vi.fn(),
@@ -49,7 +55,14 @@ vi.mock("@community-hub/access", () => ({
   deleteCustomRole: access.deleteCustomRole,
   linkUser: access.linkUser,
   unlinkUser: access.unlinkUser,
+  holdsAnyGrant: access.holdsAnyGrant,
 }));
+
+vi.mock("@community-hub/billing", async () => {
+  const actual =
+    await vi.importActual<typeof import("@community-hub/billing")>("@community-hub/billing");
+  return { ...actual, assertWritable: billing.assertWritable };
+});
 
 vi.mock("@community-hub/db", async () => {
   const actual = await vi.importActual<typeof import("@community-hub/db")>("@community-hub/db");
@@ -107,6 +120,7 @@ function deps(log: AccessDeps["log"] = () => undefined): AccessDeps {
     now: () => new Date("2026-10-11T00:00:00.000Z"),
     apiHostname: API_HOSTNAME,
     log,
+    guardLog: () => undefined,
   };
 }
 
@@ -130,7 +144,11 @@ function route(path: string, bound: AccessDeps = deps()) {
   if (found === undefined) {
     throw new Error(`missing ${path}`);
   }
-  return found;
+  return {
+    ...found,
+    handle: (request: Request, context = { billing: found.billing, pattern: found.pattern }) =>
+      found.handle(request, context),
+  };
 }
 
 describe("access routes", () => {
@@ -142,6 +160,10 @@ describe("access routes", () => {
     access.grantRole.mockReset();
     access.linkUser.mockReset();
     access.unlinkUser.mockReset();
+    access.holdsAnyGrant.mockReset();
+    access.holdsAnyGrant.mockResolvedValue(true);
+    billing.assertWritable.mockReset();
+    billing.assertWritable.mockResolvedValue("ok");
     db.withAppTransaction.mockReset();
     db.appendAuditEvent.mockReset();
     db.withAppTransaction.mockImplementation(
@@ -403,5 +425,60 @@ describe("access routes", () => {
     );
     expect(planted.status).toBe(400);
     expect(access.grantRole).not.toHaveBeenCalled();
+  });
+
+  it("a member without access.roles.manage gets 402 on POST /v1/access/grants in read_only and 403 in ok", async () => {
+    access.grantRole.mockRejectedValue(new access.AccessError("forbidden"));
+    billing.assertWritable.mockRejectedValue(new BillingReadOnly("read_only"));
+
+    const blocked = await route("/v1/access/grants").handle(
+      request(
+        "/v1/access/grants",
+        API_HOSTNAME,
+        { communitySlug: "parish", userId: USER, roleKey: "member" },
+        `Bearer ${TOKEN}`,
+      ),
+    );
+    expect(blocked.status).toBe(402);
+    expect(await blocked.text()).toBe("");
+    expect(access.grantRole).not.toHaveBeenCalled();
+
+    billing.assertWritable.mockResolvedValue("ok");
+    const allowed = await route("/v1/access/grants").handle(
+      request(
+        "/v1/access/grants",
+        API_HOSTNAME,
+        { communitySlug: "parish", userId: USER, roleKey: "member" },
+        `Bearer ${TOKEN}`,
+      ),
+    );
+    expect(allowed.status).toBe(403);
+    expect(await allowed.text()).toBe("");
+    expect(access.grantRole).toHaveBeenCalled();
+  });
+
+  it("grants/list answers 200 in read_only and when assertWritable rejects", async () => {
+    billing.assertWritable.mockRejectedValue(new BillingReadOnly("read_only"));
+    const listedReadOnly = await route("/v1/access/grants/list").handle(
+      request(
+        "/v1/access/grants/list",
+        API_HOSTNAME,
+        { communitySlug: "parish" },
+        `Bearer ${TOKEN}`,
+      ),
+    );
+    expect(listedReadOnly.status).toBe(200);
+
+    billing.assertWritable.mockRejectedValue(new Error("platform db outage"));
+    const listedOutage = await route("/v1/access/grants/list").handle(
+      request(
+        "/v1/access/grants/list",
+        API_HOSTNAME,
+        { communitySlug: "parish" },
+        `Bearer ${TOKEN}`,
+      ),
+    );
+    expect(listedOutage.status).toBe(200);
+    expect(billing.assertWritable).not.toHaveBeenCalled();
   });
 });

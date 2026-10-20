@@ -4,11 +4,58 @@ import { fileURLToPath } from "node:url";
 import { createLogger } from "@community-hub/observability";
 import { OtpMailUnavailable } from "@community-hub/identity";
 import { SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
-import { BillingUnavailable } from "@community-hub/billing";
+import { BillingReadOnly, BillingUnavailable } from "@community-hub/billing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const accessMock = vi.hoisted(() => ({
+  holdsAnyGrant: vi.fn(),
+}));
+const billingMock = vi.hoisted(() => ({
+  assertWritable: vi.fn(),
+}));
+const identityMock = vi.hoisted(() => ({
+  readSession: vi.fn(),
+}));
+const tenancyMock = vi.hoisted(() => ({
+  findCommunityBySlug: vi.fn(),
+}));
+const dbMock = vi.hoisted(() => ({
+  withAppTransaction: vi.fn(
+    async (_sql: unknown, _scope: unknown, run: (tx: unknown) => Promise<unknown>) =>
+      run({} as never),
+  ),
+}));
+
+vi.mock("@community-hub/identity", async () => {
+  const actual =
+    await vi.importActual<typeof import("@community-hub/identity")>("@community-hub/identity");
+  return { ...actual, readSession: identityMock.readSession };
+});
+vi.mock("@community-hub/billing", async () => {
+  const actual =
+    await vi.importActual<typeof import("@community-hub/billing")>("@community-hub/billing");
+  return { ...actual, assertWritable: billingMock.assertWritable };
+});
+vi.mock("@community-hub/access", async () => {
+  const actual =
+    await vi.importActual<typeof import("@community-hub/access")>("@community-hub/access");
+  return { ...actual, holdsAnyGrant: accessMock.holdsAnyGrant };
+});
+vi.mock("@community-hub/tenancy", async () => {
+  const actual =
+    await vi.importActual<typeof import("@community-hub/tenancy")>("@community-hub/tenancy");
+  return { ...actual, findCommunityBySlug: tenancyMock.findCommunityBySlug };
+});
+vi.mock("@community-hub/db", async () => {
+  const actual = await vi.importActual<typeof import("@community-hub/db")>("@community-hub/db");
+  return { ...actual, withAppTransaction: dbMock.withAppTransaction };
+});
+
+import { withRequest } from "@community-hub/kernel";
 import { readServiceEnv } from "./env.js";
 import { bindServices, boot, listeningServer, productionRoutes, run } from "./index.js";
+import { accessRoutes } from "./access-routes.js";
+import { entitlementRoutes } from "./entitlement-routes.js";
 import * as serverModule from "./server.js";
 import { rejectingStripeBilling } from "./billing/stripe-adapter.js";
 
@@ -73,6 +120,7 @@ describe("api entrypoint", () => {
         method: "GET",
         pattern: "/health",
         surface: "all",
+        billing: "exempt",
         handle: () => Response.json({ ok: true }),
       },
     ]);
@@ -98,6 +146,7 @@ describe("api entrypoint", () => {
         method: "GET",
         pattern: "/other",
         surface: "all",
+        billing: "exempt",
         handle: () => new Response(null, { status: 204 }),
       },
     ]);
@@ -130,6 +179,7 @@ describe("api entrypoint", () => {
           method: "GET",
           pattern: "/health",
           surface: "all",
+          billing: "exempt",
           handle: () => Response.json({ ok: true }),
         },
       ],
@@ -477,6 +527,112 @@ describe("api boot wiring of the billing adapter and logger", () => {
     expect(logger.getDroppedFieldCount()).toBe(0);
   });
 
+  it("a 402 from an access write route through bindServices writes one billing_write_blocked line with path and organisationId and 0 dropped fields (pin 13)", async () => {
+    identityMock.readSession.mockResolvedValue({ userId: "u-1" });
+    tenancyMock.findCommunityBySlug.mockResolvedValue({
+      id: "comm-1",
+      organisationId: "12345678-1234-4234-8234-1234567890ab",
+    });
+    accessMock.holdsAnyGrant.mockResolvedValue(true);
+    billingMock.assertWritable.mockImplementation(() => {
+      throw new BillingReadOnly("read_only");
+    });
+
+    const written: string[] = [];
+    const logger = createLogger({ write: (line) => written.push(line) });
+    const bound = bindServices(envWithBilling(), pem, logger);
+    const routes = accessRoutes(bound.access);
+    const grantsRoute = routes.find(
+      (r) => r.method === "POST" && r.pattern === "/v1/access/grants",
+    );
+    expect(grantsRoute).toBeDefined();
+
+    const req = new Request("http://localhost/v1/access/grants", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer valid-token",
+        "x-community-hub-hostname": "au.api.example.test",
+      },
+      body: JSON.stringify({
+        communitySlug: "slug-1",
+        userId: "11111111-1111-4111-8111-111111111111",
+        roleKey: "member",
+      }),
+    });
+
+    const res = await grantsRoute!.handle(req, {
+      billing: grantsRoute!.billing,
+      pattern: grantsRoute!.pattern,
+    });
+
+    expect(res.status).toBe(402);
+    expect(await res.text()).toBe("");
+    expect(written).toHaveLength(1);
+    const logLine = JSON.parse(written[0] ?? "{}") as Record<string, unknown>;
+    expect(logLine).toEqual({
+      level: "info",
+      message: "billing_write_blocked",
+      path: "/v1/access/grants",
+      organisationId: "12345678-1234-4234-8234-1234567890ab",
+    });
+    expect(logger.getDroppedFieldCount()).toBe(0);
+  });
+
+  it("a 402 through entitlementRoutes(bound.entitlements) on /v1/entitlements/toggle writes exactly one billing_write_blocked line with path and organisationId and 0 dropped fields", async () => {
+    identityMock.readSession.mockResolvedValue({ userId: "u-1" });
+    tenancyMock.findCommunityBySlug.mockResolvedValue({
+      id: "comm-1",
+      organisationId: "12345678-1234-4234-8234-1234567890ab",
+    });
+    accessMock.holdsAnyGrant.mockResolvedValue(true);
+    billingMock.assertWritable.mockImplementation(() => {
+      throw new BillingReadOnly("read_only");
+    });
+
+    const written: string[] = [];
+    const logger = createLogger({ write: (line) => written.push(line) });
+    const bound = bindServices(envWithBilling(), pem, logger);
+    const routes = entitlementRoutes(bound.entitlements);
+    const toggleRoute = routes.find(
+      (r) => r.method === "POST" && r.pattern === "/v1/entitlements/toggle",
+    );
+    expect(toggleRoute).toBeDefined();
+
+    const req = new Request("http://localhost/v1/entitlements/toggle", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer valid-token",
+        "x-community-hub-hostname": "au.api.example.test",
+      },
+      body: JSON.stringify({
+        communitySlug: "slug-1",
+        key: "feature.test",
+        enabled: true,
+      }),
+    });
+
+    const res = await withRequest({ requestId: "66666666-6666-4666-8666-666666666666" }, async () =>
+      toggleRoute!.handle(req, {
+        billing: toggleRoute!.billing,
+        pattern: toggleRoute!.pattern,
+      }),
+    );
+
+    expect(res.status).toBe(402);
+    expect(await res.text()).toBe("");
+    expect(written).toHaveLength(1);
+    const logLine = JSON.parse(written[0] ?? "{}") as Record<string, unknown>;
+    expect(logLine).toEqual({
+      level: "info",
+      message: "billing_write_blocked",
+      path: "/v1/entitlements/toggle",
+      organisationId: "12345678-1234-4234-8234-1234567890ab",
+    });
+    expect(logger.getDroppedFieldCount()).toBe(0);
+  });
+
   it("productionRoutes includes POST /v1/stripe/webhook with largeBody webhooks", () => {
     const routes = productionRoutes(envWithBilling(), pem);
     const webhookRoute = routes.find(
@@ -487,7 +643,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
     expect(webhookRoute?.largeBody).toBe("webhooks");
   });
 
-  it("registers the three billing routes and the webhook route in productionRoutes and run", () => {
+  it("registers the billing routes and the webhook route in productionRoutes and run", () => {
     const startServerSpy = vi.spyOn(serverModule, "startServer").mockReturnValue({} as never);
     try {
       const routes = productionRoutes(envWithBilling(), pem);
@@ -495,6 +651,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
         { method: "POST", pattern: "/v1/billing/checkout", surface: "tenant" },
         { method: "POST", pattern: "/v1/billing/portal", surface: "tenant" },
         { method: "POST", pattern: "/v1/billing/status", surface: "tenant" },
+        { method: "POST", pattern: "/v1/billing/plans", surface: "tenant" },
         { method: "POST", pattern: "/v1/stripe/webhook", surface: "tenant", largeBody: "webhooks" },
       ];
 
@@ -533,5 +690,42 @@ describe("api boot wiring of the billing adapter and logger", () => {
     } finally {
       startServerSpy.mockRestore();
     }
+  });
+
+  it("marks every production route as exempt, read, or write matching the spec exactly", () => {
+    const routes = productionRoutes(envWithBilling(), pem);
+    const markings = new Map(
+      routes.map((route) => [
+        `${route.method} ${route.pattern}`,
+        (route as { billing?: string }).billing,
+      ]),
+    );
+    expect(routes).toHaveLength(22);
+    expect(markings).toEqual(
+      new Map([
+        ["GET /health", "exempt"],
+        ["POST /v1/auth/email-otp/start", "exempt"],
+        ["POST /v1/auth/email-otp/verify", "exempt"],
+        ["POST /v1/auth/passkey/register/options", "exempt"],
+        ["POST /v1/auth/passkey/register/verify", "exempt"],
+        ["POST /v1/auth/passkey/authenticate/options", "exempt"],
+        ["POST /v1/auth/passkey/authenticate/verify", "exempt"],
+        ["POST /v1/auth/session/refresh", "exempt"],
+        ["POST /v1/billing/checkout", "exempt"],
+        ["POST /v1/billing/portal", "exempt"],
+        ["POST /v1/billing/status", "exempt"],
+        ["POST /v1/billing/plans", "exempt"],
+        ["POST /v1/stripe/webhook", "exempt"],
+        ["POST /v1/access/grants/list", "read"],
+        ["POST /v1/entitlements/list", "read"],
+        ["POST /v1/access/grants", "write"],
+        ["POST /v1/access/grants/revoke", "write"],
+        ["POST /v1/access/custom-roles", "write"],
+        ["POST /v1/access/custom-roles/delete", "write"],
+        ["POST /v1/access/user-links", "write"],
+        ["POST /v1/access/user-links/delete", "write"],
+        ["POST /v1/entitlements/toggle", "write"],
+      ]),
+    );
   });
 });

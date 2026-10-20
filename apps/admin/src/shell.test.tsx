@@ -43,10 +43,14 @@ it("renders Dashboard and Users & Roles from the frozen labels", () => {
   const links = within(nav).getAllByRole("link");
   expect(links.map((link) => link.textContent)).toEqual([
     "Dashboard",
+    "General Settings",
     "Users & Roles",
     "Module Toggles",
   ]);
   expect(within(nav).getByRole("link", { name: "Dashboard" }).getAttribute("href")).toBe("/");
+  expect(within(nav).getByRole("link", { name: "General Settings" }).getAttribute("href")).toBe(
+    "/settings/general",
+  );
   expect(within(nav).getByRole("link", { name: "Users & Roles" }).getAttribute("href")).toBe(
     "/settings/users",
   );
@@ -66,13 +70,26 @@ it("renders Dashboard and Users & Roles from the frozen labels", () => {
     }
     expect(screen.queryByText(label)).toBeNull();
   }
-  expect(screen.queryByText("General Settings")).toBeNull();
   expect(screen.queryByText("Email Settings")).toBeNull();
 });
 
 it("names Refresh and reports no axe violations", async () => {
   const { container } = render(<Shell />);
   expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy();
+
+  const results = await axe.run(container, {
+    rules: {
+      "color-contrast": { enabled: false },
+    },
+  });
+
+  expect(resultIds(results, "violations")).toEqual([]);
+});
+
+it("renders the community picker in the shell with no axe violations", async () => {
+  const { container } = render(<Shell />);
+  expect(screen.getByRole("textbox", { name: "Community" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Set" })).toBeTruthy();
 
   const results = await axe.run(container, {
     rules: {

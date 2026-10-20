@@ -1,8 +1,11 @@
-import { Button } from "@community-hub/ui";
-import { type FormEvent, useState } from "react";
+import { Alert, Button } from "@community-hub/ui";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 
-import { clearAccessToken, directoryOrigins, readAccessToken } from "./directory";
+import { post } from "./api";
+import { useBillingStatus } from "./billing-status";
+import { useCommunity } from "./community";
+import { directoryOrigins, readAccessToken } from "./directory";
 
 type GrantView = {
   grantId: string;
@@ -131,7 +134,7 @@ function grantLine(grant: GrantView): string {
   return `${grant.userId} ${role}`.trim();
 }
 
-type Outcome = "ok" | Notice | "signed-out";
+type Outcome = "ok" | Notice | "signed-out" | "payment-required";
 
 function outcomeOf(response: Response | "unavailable"): Outcome {
   if (response === "unavailable") {
@@ -139,6 +142,9 @@ function outcomeOf(response: Response | "unavailable"): Outcome {
   }
   if (response.status === 401) {
     return "signed-out";
+  }
+  if (response.status === 402) {
+    return "payment-required";
   }
   if (response.status === 403) {
     return "forbidden";
@@ -154,8 +160,9 @@ function outcomeOf(response: Response | "unavailable"): Outcome {
 
 export function UsersRolesPage() {
   const [token, setToken] = useState(() => readAccessToken());
-  const [community, setCommunity] = useState("");
-  const [slug, setSlug] = useState("");
+  const { slug, version } = useCommunity();
+  const { status, readiness, refresh } = useBillingStatus();
+  const [readOnlyBlocked, setReadOnlyBlocked] = useState(false);
   const [directory, setDirectory] = useState<Directory | undefined>(undefined);
   const [notice, setNotice] = useState<Notice | undefined>(undefined);
   const [userId, setUserId] = useState("");
@@ -164,6 +171,10 @@ export function UsersRolesPage() {
   const [customKey, setCustomKey] = useState("");
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const origins = directoryOrigins();
+  const generation = useRef(0);
+
+  const isReadOnly = status?.state === "none" || status?.state === "read_only" || readOnlyBlocked;
+  const hideWrites = readiness === "loading" || isReadOnly;
 
   function show(outcome: Notice | "signed-out"): void {
     if (outcome === "signed-out") {
@@ -174,57 +185,68 @@ export function UsersRolesPage() {
     setNotice(outcome);
   }
 
-  async function post(path: string, body: unknown): Promise<Response | "unavailable"> {
-    if (origins === undefined || token === null) {
-      return "unavailable";
-    }
-    try {
-      const response = await fetch(`${origins.api}${path}`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(body),
-      });
-      if (response.status === 401) {
-        clearAccessToken();
-      }
-      return response;
-    } catch {
-      return "unavailable";
-    }
-  }
-
-  async function load(communitySlug: string): Promise<void> {
+  async function load(communitySlug: string, isCurrent: () => boolean = () => true): Promise<void> {
     const response = await post("/v1/access/grants/list", { communitySlug });
+    if (!isCurrent()) {
+      return;
+    }
     const outcome = outcomeOf(response);
     if (outcome !== "ok" || response === "unavailable") {
-      show(outcome === "ok" ? "unavailable" : outcome);
+      if (!isCurrent()) {
+        return;
+      }
+      show(outcome === "ok" || outcome === "payment-required" ? "unavailable" : outcome);
       return;
     }
     try {
-      const parsed = readDirectory(await response.json());
+      const body: unknown = await response.json();
+      if (!isCurrent()) {
+        return;
+      }
+      const parsed = readDirectory(body);
       if (parsed === undefined) {
         setNotice("unavailable");
         return;
       }
       setNotice(undefined);
-      setSlug(communitySlug);
       setDirectory(parsed);
     } catch {
+      if (!isCurrent()) {
+        return;
+      }
       setNotice("unavailable");
     }
   }
 
+  useEffect(() => {
+    const mine = ++generation.current;
+    setDirectory(undefined);
+    setNotice(undefined);
+    setReadOnlyBlocked(false);
+    if (slug) {
+      void load(slug, () => generation.current === mine);
+    }
+  }, [slug, version]);
+
   async function mutate(path: string, body: unknown): Promise<void> {
+    const mine = generation.current;
+    const isCurrent = () => generation.current === mine;
     const response = await post(path, body);
+    if (!isCurrent()) {
+      return;
+    }
     const outcome = outcomeOf(response);
+    if (outcome === "payment-required") {
+      setReadOnlyBlocked(true);
+      setNotice(undefined);
+      void refresh();
+      return;
+    }
     if (outcome !== "ok") {
       show(outcome);
       return;
     }
-    await load(slug);
+    await load(slug, isCurrent);
   }
 
   function toggle(permission: string): void {
@@ -267,23 +289,12 @@ export function UsersRolesPage() {
   return (
     <>
       <h1>Users & Roles</h1>
-      <form
-        onSubmit={(event: FormEvent<HTMLFormElement>) => {
-          event.preventDefault();
-          void load(community);
-        }}
-      >
-        <label>
-          Community
-          <input
-            value={community}
-            onChange={(event) => {
-              setCommunity(event.target.value);
-            }}
-          />
-        </label>
-        <Button type="submit">Load</Button>
-      </form>
+      {isReadOnly ? (
+        <Alert live="polite">
+          <span>Read-only until billing is settled</span>{" "}
+          <Link to="/settings/general">General Settings</Link>
+        </Alert>
+      ) : null}
       {notice === "forbidden" ? <p>You cannot manage roles</p> : null}
       {notice === "conflict" ? <p>That change was rejected</p> : null}
       {notice === "unavailable" ? <p>Directory unavailable</p> : null}
@@ -296,7 +307,7 @@ export function UsersRolesPage() {
               {directory.grants.map((grant) => (
                 <li key={grant.grantId}>
                   <span>{grantLine(grant)}</span>
-                  {canManageRoles ? (
+                  {canManageRoles && !hideWrites ? (
                     <Button
                       type="button"
                       onClick={() => {
@@ -321,7 +332,7 @@ export function UsersRolesPage() {
                   <span>
                     {customRole.key} {customRole.permissions.join(" ")}
                   </span>
-                  {canManageRoles ? (
+                  {canManageRoles && !hideWrites ? (
                     <Button
                       type="button"
                       onClick={() => {
@@ -357,7 +368,7 @@ export function UsersRolesPage() {
             </ul>
           )}
           {limitReached ? <p>Custom role limit reached</p> : null}
-          {limitReached || !canManageRoles ? null : (
+          {limitReached || !canManageRoles || hideWrites ? null : (
             <form
               onSubmit={(event: FormEvent<HTMLFormElement>) => {
                 event.preventDefault();
@@ -392,7 +403,7 @@ export function UsersRolesPage() {
               <Button type="submit">Create custom role</Button>
             </form>
           )}
-          {canManageRoles ? (
+          {canManageRoles && !hideWrites ? (
             <form
               onSubmit={(event: FormEvent<HTMLFormElement>) => {
                 event.preventDefault();
@@ -426,7 +437,7 @@ export function UsersRolesPage() {
               <Button type="submit">Grant</Button>
             </form>
           ) : null}
-          {canManageUsers ? (
+          {canManageUsers && !hideWrites ? (
             <form
               onSubmit={(event: FormEvent<HTMLFormElement>) => {
                 event.preventDefault();
