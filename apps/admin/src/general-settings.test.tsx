@@ -36,7 +36,12 @@ function renderGeneralSettings(options: {
   refresh?: () => Promise<void>;
   returnMessage?: string | null;
 }) {
-  const { status, slug = "parish", refresh = vi.fn().mockResolvedValue(undefined), returnMessage = null } = options;
+  const {
+    status,
+    slug = "parish",
+    refresh = vi.fn().mockResolvedValue(undefined),
+    returnMessage = null,
+  } = options;
   if (slug) {
     sessionStorage.setItem("community-hub.community", slug);
   } else {
@@ -102,7 +107,9 @@ describe("GeneralSettingsPage - Settings -> General Settings -> Billing", () => 
       expect(screen.getByRole("heading", { level: 1, name: "General Settings" })).toBeTruthy();
       expect(screen.queryByText("Billing status unavailable")).toBeNull();
       expect(screen.queryByText("Billing is handled by invoice.")).toBeNull();
-      expect(screen.queryByText("You do not have access to billing for this organisation.")).toBeNull();
+      expect(
+        screen.queryByText("You do not have access to billing for this organisation."),
+      ).toBeNull();
     });
 
     it("renders 'Billing status unavailable' when status is null but community is chosen", () => {
@@ -125,7 +132,9 @@ describe("GeneralSettingsPage - Settings -> General Settings -> Billing", () => 
         },
       });
 
-      expect(screen.getByText("You do not have access to billing for this organisation.")).toBeTruthy();
+      expect(
+        screen.getByText("You do not have access to billing for this organisation."),
+      ).toBeTruthy();
       expect(screen.queryByRole("button", { name: "Manage billing" })).toBeNull();
       expect(screen.queryByRole("button", { name: "Start subscription" })).toBeNull();
     });
@@ -169,8 +178,12 @@ describe("GeneralSettingsPage - Settings -> General Settings -> Billing", () => 
       expect(screen.getByText("Active")).toBeTruthy();
       expect(screen.getByText("Starter")).toBeTruthy();
       expect(screen.getByText("4")).toBeTruthy();
-      expect(screen.getByText(new Date("2026-12-31T00:00:00.000Z").toLocaleDateString())).toBeTruthy();
-      expect(screen.getByText(new Date("2026-10-25T00:00:00.000Z").toLocaleDateString())).toBeTruthy();
+      expect(
+        screen.getByText(new Date("2026-12-31T00:00:00.000Z").toLocaleDateString()),
+      ).toBeTruthy();
+      expect(
+        screen.getByText(new Date("2026-10-25T00:00:00.000Z").toLocaleDateString()),
+      ).toBeTruthy();
 
       // View-only caller does NOT see manage actions
       expect(screen.queryByRole("button", { name: "Manage billing" })).toBeNull();
@@ -192,7 +205,9 @@ describe("GeneralSettingsPage - Settings -> General Settings -> Billing", () => 
       });
 
       expect(screen.getByText("Read-only")).toBeTruthy();
-      expect(screen.getByText(new Date("2026-11-05T00:00:00.000Z").toLocaleDateString())).toBeTruthy();
+      expect(
+        screen.getByText(new Date("2026-11-05T00:00:00.000Z").toLocaleDateString()),
+      ).toBeTruthy();
     });
   });
 
@@ -417,7 +432,8 @@ describe("GeneralSettingsPage - Settings -> General Settings -> Billing", () => 
     });
 
     it("Checkout 409 in none offers Portal via 'Finish payment' button", async () => {
-      const fetchSpy = vi.spyOn(globalThis, "fetch")
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
         .mockResolvedValueOnce(
           mockResponse(200, { plans: [{ key: "starter", trialAvailable: true }] }),
         )
@@ -764,9 +780,11 @@ describe("GeneralSettingsPage - Settings -> General Settings -> Billing", () => 
     });
 
     it("never treats non-200 plans response (403) with valid plans JSON as success", async () => {
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-        mockResponse(403, { plans: [{ key: "starter", trialAvailable: true }] }),
-      );
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce(
+          mockResponse(403, { plans: [{ key: "starter", trialAvailable: true }] }),
+        );
 
       renderGeneralSettings({
         status: {
@@ -787,9 +805,11 @@ describe("GeneralSettingsPage - Settings -> General Settings -> Billing", () => 
     });
 
     it("never treats non-200 plans response (500) with valid plans JSON as success", async () => {
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-        mockResponse(500, { plans: [{ key: "starter", trialAvailable: true }] }),
-      );
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce(
+          mockResponse(500, { plans: [{ key: "starter", trialAvailable: true }] }),
+        );
 
       renderGeneralSettings({
         status: {

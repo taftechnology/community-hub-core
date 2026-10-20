@@ -209,9 +209,7 @@ it("posts the toggle and keeps the slug out of the url", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Set" }));
   fireEvent.click(await screen.findByRole("switch", { name: "people.directory" }));
 
-  const call = fetchSpy.mock.calls.find((c) =>
-    String(c[0]).includes("/v1/entitlements/toggle"),
-  );
+  const call = fetchSpy.mock.calls.find((c) => String(c[0]).includes("/v1/entitlements/toggle"));
   expect(String(call?.[0])).toBe("https://au.api.example.test/v1/entitlements/toggle");
   expect(String(call?.[0])).not.toContain("parish");
   expect(String(call?.[0])).not.toContain(TOKEN);
@@ -335,10 +333,10 @@ it("ignores a stale response that arrives after the slug has changed", async () 
     }
     if (body.communitySlug === "abbey") {
       return Promise.resolve(
-        new Response(
-          JSON.stringify({ keys: [], canManage: true }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
+        new Response(JSON.stringify({ keys: [], canManage: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
       );
     }
     return Promise.resolve(new Response(null, { status: 404 }));
@@ -387,10 +385,10 @@ it("retries fetching when Set is pressed again with the same slug", async () => 
         return Promise.resolve(new Response(null, { status: 403 }));
       }
       return Promise.resolve(
-        new Response(
-          JSON.stringify({ keys: [], canManage: true }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
+        new Response(JSON.stringify({ keys: [], canManage: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
       );
     }
     return Promise.resolve(new Response(null, { status: 200 }));
@@ -506,9 +504,9 @@ it.each(["none", "read_only"])(
     });
     fireEvent.click(screen.getByRole("button", { name: "Set" }));
 
-    const readOnlyAlert = (await screen.findByText("Read-only until billing is settled")).closest<HTMLElement>(
-      '[data-slot="alert"]',
-    )!;
+    const readOnlyAlert = (
+      await screen.findByText("Read-only until billing is settled")
+    ).closest<HTMLElement>('[data-slot="alert"]')!;
     expect(within(readOnlyAlert).getByRole("link").getAttribute("href")).toBe("/settings/general");
     expect(screen.queryByRole("switch")).toBeNull();
     expect(screen.getByText("people.directory")).toBeTruthy();
@@ -622,9 +620,9 @@ it("handles 402 on toggle by showing read-only alert, hiding switch, and calling
 
   fireEvent.click(toggle);
 
-  const readOnlyAlert = (await screen.findByText("Read-only until billing is settled")).closest<HTMLElement>(
-    '[data-slot="alert"]',
-  )!;
+  const readOnlyAlert = (
+    await screen.findByText("Read-only until billing is settled")
+  ).closest<HTMLElement>('[data-slot="alert"]')!;
   expect(within(readOnlyAlert).getByRole("link").getAttribute("href")).toBe("/settings/general");
   expect(statusCalls).toBe(2);
   expect(screen.queryByRole("switch")).toBeNull();
@@ -735,9 +733,9 @@ it("resets read-only blocked state when switching community after a 402 toggle",
 
   fireEvent.click(toggle);
 
-  const readOnlyAlert = (await screen.findByText("Read-only until billing is settled")).closest<HTMLElement>(
-    '[data-slot="alert"]',
-  )!;
+  const readOnlyAlert = (
+    await screen.findByText("Read-only until billing is settled")
+  ).closest<HTMLElement>('[data-slot="alert"]')!;
   expect(within(readOnlyAlert).getByRole("link").getAttribute("href")).toBe("/settings/general");
   expect(statusCalls).toBe(2);
   expect(toggleCalls).toBe(1);

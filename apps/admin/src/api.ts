@@ -1,12 +1,6 @@
 import { clearAccessToken, directoryOrigins, readAccessToken } from "./directory";
 
-export type BillingState =
-  | "invoiced"
-  | "none"
-  | "ok"
-  | "retrying"
-  | "grace"
-  | "read_only";
+export type BillingState = "invoiced" | "none" | "ok" | "retrying" | "grace" | "read_only";
 
 export type BillingStatus = {
   state: BillingState;

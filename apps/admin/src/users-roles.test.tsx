@@ -232,7 +232,9 @@ it("clears rows and write controls when switching to a community that answers 40
     if (body.communitySlug === "parish") {
       return Promise.resolve(
         new Response(
-          JSON.stringify(directory(1, [ownerGrant], ["access.roles.manage", "access.users.manage"])),
+          JSON.stringify(
+            directory(1, [ownerGrant], ["access.roles.manage", "access.users.manage"]),
+          ),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
       );
@@ -276,10 +278,10 @@ it("ignores a stale response that arrives after the slug has changed", async () 
     }
     if (body.communitySlug === "abbey") {
       return Promise.resolve(
-        new Response(
-          JSON.stringify(directory(0, [], ["access.roles.manage"])),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
+        new Response(JSON.stringify(directory(0, [], ["access.roles.manage"])), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
       );
     }
     return Promise.resolve(new Response(null, { status: 404 }));
@@ -300,10 +302,10 @@ it("ignores a stale response that arrives after the slug has changed", async () 
   expect(await screen.findByText("No role grants")).toBeTruthy();
 
   resolveCathedral(
-    new Response(
-      JSON.stringify(directory(0, [ownerGrant], ["access.roles.manage"])),
-      { status: 200, headers: { "content-type": "application/json" } },
-    ),
+    new Response(JSON.stringify(directory(0, [ownerGrant], ["access.roles.manage"])), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
   );
 
   await act(async () => {
@@ -324,10 +326,10 @@ it("retries fetching when Set is pressed again with the same slug", async () => 
         return Promise.resolve(new Response(null, { status: 403 }));
       }
       return Promise.resolve(
-        new Response(
-          JSON.stringify(directory(0, [ownerGrant], ["access.roles.manage"])),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
+        new Response(JSON.stringify(directory(0, [ownerGrant], ["access.roles.manage"])), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
       );
     }
     return Promise.resolve(new Response(null, { status: 200 }));
@@ -364,7 +366,9 @@ it("ignores a write that finishes after switching to a forbidden community", asy
     if (body.communitySlug === "parish") {
       return Promise.resolve(
         new Response(
-          JSON.stringify(directory(1, [ownerGrant], ["access.roles.manage", "access.users.manage"])),
+          JSON.stringify(
+            directory(1, [ownerGrant], ["access.roles.manage", "access.users.manage"]),
+          ),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
       );
@@ -422,7 +426,9 @@ it("ignores a write that finishes with 401 after switching to a forbidden commun
         parishLists++;
         return Promise.resolve(
           new Response(
-            JSON.stringify(directory(1, [ownerGrant], ["access.roles.manage", "access.users.manage"])),
+            JSON.stringify(
+              directory(1, [ownerGrant], ["access.roles.manage", "access.users.manage"]),
+            ),
             { status: 200, headers: { "content-type": "application/json" } },
           ),
         );
@@ -483,7 +489,9 @@ it("ignores a follow-up reload that finishes after switching to a forbidden comm
         if (parishListCalls === 1) {
           return Promise.resolve(
             new Response(
-              JSON.stringify(directory(1, [ownerGrant], ["access.roles.manage", "access.users.manage"])),
+              JSON.stringify(
+                directory(1, [ownerGrant], ["access.roles.manage", "access.users.manage"]),
+              ),
               { status: 200, headers: { "content-type": "application/json" } },
             ),
           );
@@ -518,10 +526,10 @@ it("ignores a follow-up reload that finishes after switching to a forbidden comm
   expect(await screen.findByText("You cannot manage roles")).toBeTruthy();
 
   resolveParishReload(
-    new Response(
-      JSON.stringify(directory(0, [ownerGrant], ["access.roles.manage"])),
-      { status: 200, headers: { "content-type": "application/json" } },
-    ),
+    new Response(JSON.stringify(directory(0, [ownerGrant], ["access.roles.manage"])), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
   );
 
   await act(async () => {
@@ -578,9 +586,9 @@ it.each(["none", "read_only"])(
     });
     fireEvent.click(screen.getByRole("button", { name: "Set" }));
 
-    const readOnlyAlert = (await screen.findByText("Read-only until billing is settled")).closest<HTMLElement>(
-      '[data-slot="alert"]',
-    )!;
+    const readOnlyAlert = (
+      await screen.findByText("Read-only until billing is settled")
+    ).closest<HTMLElement>('[data-slot="alert"]')!;
     expect(within(readOnlyAlert).getByRole("link").getAttribute("href")).toBe("/settings/general");
 
     expect(screen.getByText(USER, { exact: false })).toBeTruthy();
@@ -709,9 +717,9 @@ it("handles 402 on mutation by showing read-only alert, hiding write controls, a
 
   fireEvent.click(revokeButton);
 
-  const readOnlyAlert = (await screen.findByText("Read-only until billing is settled")).closest<HTMLElement>(
-    '[data-slot="alert"]',
-  )!;
+  const readOnlyAlert = (
+    await screen.findByText("Read-only until billing is settled")
+  ).closest<HTMLElement>('[data-slot="alert"]')!;
   expect(within(readOnlyAlert).getByRole("link").getAttribute("href")).toBe("/settings/general");
   expect(statusCalls).toBe(2);
 
@@ -831,9 +839,9 @@ it("resets read-only blocked state when switching community after a 402 write", 
 
   fireEvent.click(revokeButton);
 
-  const readOnlyAlert = (await screen.findByText("Read-only until billing is settled")).closest<HTMLElement>(
-    '[data-slot="alert"]',
-  )!;
+  const readOnlyAlert = (
+    await screen.findByText("Read-only until billing is settled")
+  ).closest<HTMLElement>('[data-slot="alert"]')!;
   expect(within(readOnlyAlert).getByRole("link").getAttribute("href")).toBe("/settings/general");
   expect(statusCalls).toBe(2);
   expect(revokeCalls).toBe(1);

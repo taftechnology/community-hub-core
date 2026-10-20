@@ -628,10 +628,20 @@ describe("BillingBanner and Shell Billing Return", () => {
           });
         }
         if (url.includes("/v1/access/grants/list")) {
-          return new Response(JSON.stringify({ grants: [], customRoles: [], builtIn: [], userLinks: [], catalogue: [], permissions: [] }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          });
+          return new Response(
+            JSON.stringify({
+              grants: [],
+              customRoles: [],
+              builtIn: [],
+              userLinks: [],
+              catalogue: [],
+              permissions: [],
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          );
         }
         return new Response(null, { status: 404 });
       });
@@ -667,7 +677,9 @@ describe("BillingBanner and Shell Billing Return", () => {
           String(c[0]).includes("/v1/billing/status"),
         );
         expect(statusCallsAfterChange).toHaveLength(2);
-        expect(statusCallsAfterChange[1]?.[1]?.body).toBe(JSON.stringify({ communitySlug: "cathedral" }));
+        expect(statusCallsAfterChange[1]?.[1]?.body).toBe(
+          JSON.stringify({ communitySlug: "cathedral" }),
+        );
       });
     });
 
@@ -933,9 +945,7 @@ describe("BillingBanner and Shell Billing Return", () => {
       sessionStorage.setItem("community-hub.community", "parish");
       window.history.replaceState(null, "", "/?billing=done");
 
-      vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-        mockStatusResponse(none),
-      );
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () => mockStatusResponse(none));
 
       render(
         <StrictMode>
@@ -994,9 +1004,7 @@ describe("BillingBanner and Shell Billing Return", () => {
       sessionStorage.setItem("community-hub.community", "parish");
       window.history.replaceState(null, "", "/?billing=cancelled");
 
-      vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-        mockStatusResponse(none),
-      );
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () => mockStatusResponse(none));
 
       render(
         <StrictMode>

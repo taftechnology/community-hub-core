@@ -2,12 +2,7 @@ import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  bootstrapOwner,
-  createCustomRole,
-  grantRole,
-  linkUser,
-} from "@community-hub/access";
+import { bootstrapOwner, createCustomRole, grantRole, linkUser } from "@community-hub/access";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import { applyProductMigrations, newId, withAppTransaction } from "@community-hub/db";
 import {
@@ -316,17 +311,14 @@ describe("billing guard against a real database", () => {
         prepare: async (setup) => {
           const subjectUserId = newId();
           const grant = await withRequest({ requestId: REQUEST_ID }, () =>
-            withAppTransaction(
-              app,
-              { orgId: setup.orgId, communityId: setup.communityId },
-              (tx) =>
-                grantRole(tx, {
-                  now: setup.now,
-                  userId: subjectUserId,
-                  roleKey: "member",
-                  customRoleId: null,
-                  actorUserId: setup.ownerUserId,
-                }),
+            withAppTransaction(app, { orgId: setup.orgId, communityId: setup.communityId }, (tx) =>
+              grantRole(tx, {
+                now: setup.now,
+                userId: subjectUserId,
+                roleKey: "member",
+                customRoleId: null,
+                actorUserId: setup.ownerUserId,
+              }),
             ),
           );
           return {
@@ -366,16 +358,13 @@ describe("billing guard against a real database", () => {
           counter += 1;
           const key = `crd_${counter}_${newId().replaceAll("-", "").slice(0, 8)}`;
           const role = await withRequest({ requestId: REQUEST_ID }, () =>
-            withAppTransaction(
-              app,
-              { orgId: setup.orgId, communityId: setup.communityId },
-              (tx) =>
-                createCustomRole(tx, {
-                  now: setup.now,
-                  key,
-                  permissions: ["access.roles.view"],
-                  actorUserId: setup.ownerUserId,
-                }),
+            withAppTransaction(app, { orgId: setup.orgId, communityId: setup.communityId }, (tx) =>
+              createCustomRole(tx, {
+                now: setup.now,
+                key,
+                permissions: ["access.roles.view"],
+                actorUserId: setup.ownerUserId,
+              }),
             ),
           );
           return {
@@ -560,196 +549,184 @@ describe("billing guard against a real database", () => {
     await app.end({ timeout: 1 });
   });
 
-  it(
-    "guards every write route through the gate: 2xx and row count changes in ok, 402 with empty body and unchanged rows in read_only (pin 14)",
-    async () => {
-      const env = envFor(PORT);
-      const prodRoutes = productionRoutes(env, pem);
-      const prodWriteKeys = new Set(
-        prodRoutes
-          .filter((r) => (r as { billing?: string }).billing === "write")
-          .map((r) => `${r.method} ${r.pattern}`),
+  it("guards every write route through the gate: 2xx and row count changes in ok, 402 with empty body and unchanged rows in read_only (pin 14)", async () => {
+    const env = envFor(PORT);
+    const prodRoutes = productionRoutes(env, pem);
+    const prodWriteKeys = new Set(
+      prodRoutes
+        .filter((r) => (r as { billing?: string }).billing === "write")
+        .map((r) => `${r.method} ${r.pattern}`),
+    );
+
+    // Verify fixture map covers exactly all write routes
+    expect(new Set(fixtureMap.keys())).toEqual(prodWriteKeys);
+
+    for (const [key, fixture] of fixtureMap) {
+      // 1. Fresh setup with A 'ok'
+      const setupOk = await createFreshSetup("ok");
+      const preparedOk = await fixture.prepare(setupOk);
+      const countBeforeOk = await preparedOk.count();
+      const resOk = await post(fixture.path, preparedOk.body, setupOk.token);
+
+      expect(resOk.status, `expected 2xx for ${key} in ok state`).toBeGreaterThanOrEqual(200);
+      expect(resOk.status, `expected 2xx for ${key} in ok state`).toBeLessThan(300);
+
+      const countAfterOk = await preparedOk.count();
+      expect(countAfterOk, `expected row count change for ${key} in ok state`).not.toBe(
+        countBeforeOk,
       );
 
-      // Verify fixture map covers exactly all write routes
-      expect(new Set(fixtureMap.keys())).toEqual(prodWriteKeys);
+      // 2. Fresh setup with A 'read_only'
+      const setupRo = await createFreshSetup("read_only");
+      const preparedRo = await fixture.prepare(setupRo);
+      const countBeforeRo = await preparedRo.count();
+      const resRo = await post(fixture.path, preparedRo.body, setupRo.token);
 
-      for (const [key, fixture] of fixtureMap) {
-        // 1. Fresh setup with A 'ok'
-        const setupOk = await createFreshSetup("ok");
-        const preparedOk = await fixture.prepare(setupOk);
-        const countBeforeOk = await preparedOk.count();
-        const resOk = await post(fixture.path, preparedOk.body, setupOk.token);
+      expect(resRo.status, `expected 402 for ${key} in read_only state`).toBe(402);
+      expect(await resRo.text(), `expected empty body for ${key} in read_only state`).toBe("");
 
-        expect(resOk.status, `expected 2xx for ${key} in ok state`).toBeGreaterThanOrEqual(200);
-        expect(resOk.status, `expected 2xx for ${key} in ok state`).toBeLessThan(300);
+      const countAfterRo = await preparedRo.count();
+      expect(countAfterRo, `expected row count unchanged for ${key} in read_only state`).toBe(
+        countBeforeRo,
+      );
+    }
+  }, 30_000);
 
-        const countAfterOk = await preparedOk.count();
-        expect(countAfterOk, `expected row count change for ${key} in ok state`).not.toBe(
-          countBeforeOk,
-        );
+  it("enforces tenant and billing boundaries across two organisations in both orders (pin 15)", async () => {
+    // Order (i): A read_only, B ok
+    {
+      const setupA = await createFreshSetup("read_only");
+      const setupB = await createFreshSetup("ok");
 
-        // 2. Fresh setup with A 'read_only'
-        const setupRo = await createFreshSetup("read_only");
-        const preparedRo = await fixture.prepare(setupRo);
-        const countBeforeRo = await preparedRo.count();
-        const resRo = await post(fixture.path, preparedRo.body, setupRo.token);
+      // Grant-holder of A writing to A -> 402, empty body
+      const resAA = await post(
+        "/v1/access/grants",
+        { communitySlug: setupA.slug, userId: newId(), roleKey: "member" },
+        setupA.token,
+      );
+      expect(resAA.status).toBe(402);
+      expect(await resAA.text()).toBe("");
 
-        expect(resRo.status, `expected 402 for ${key} in read_only state`).toBe(402);
-        expect(await resRo.text(), `expected empty body for ${key} in read_only state`).toBe("");
+      // Grant-holder of B writing to B -> 200
+      const resBB = await post(
+        "/v1/access/grants",
+        { communitySlug: setupB.slug, userId: newId(), roleKey: "member" },
+        setupB.token,
+      );
+      expect(resBB.status).toBe(200);
 
-        const countAfterRo = await preparedRo.count();
-        expect(countAfterRo, `expected row count unchanged for ${key} in read_only state`).toBe(
-          countBeforeRo,
-        );
-      }
-    },
-    30_000,
-  );
+      // Grant-holder of B writing to A's community -> 403, empty body (pin 15)
+      const resBA = await post(
+        "/v1/access/grants",
+        { communitySlug: setupA.slug, userId: newId(), roleKey: "member" },
+        setupB.token,
+      );
+      expect(resBA.status).toBe(403);
+      expect(await resBA.text()).toBe("");
 
-  it(
-    "enforces tenant and billing boundaries across two organisations in both orders (pin 15)",
-    async () => {
-      // Order (i): A read_only, B ok
-      {
-        const setupA = await createFreshSetup("read_only");
-        const setupB = await createFreshSetup("ok");
+      // Grant-holder of A writing to B's community -> 403, empty body
+      const resAB = await post(
+        "/v1/access/grants",
+        { communitySlug: setupB.slug, userId: newId(), roleKey: "member" },
+        setupA.token,
+      );
+      expect(resAB.status).toBe(403);
+      expect(await resAB.text()).toBe("");
+    }
 
-        // Grant-holder of A writing to A -> 402, empty body
-        const resAA = await post(
-          "/v1/access/grants",
-          { communitySlug: setupA.slug, userId: newId(), roleKey: "member" },
-          setupA.token,
-        );
-        expect(resAA.status).toBe(402);
-        expect(await resAA.text()).toBe("");
+    // Order (ii): A ok, B read_only
+    {
+      const setupA = await createFreshSetup("ok");
+      const setupB = await createFreshSetup("read_only");
 
-        // Grant-holder of B writing to B -> 200
-        const resBB = await post(
-          "/v1/access/grants",
-          { communitySlug: setupB.slug, userId: newId(), roleKey: "member" },
-          setupB.token,
-        );
-        expect(resBB.status).toBe(200);
+      // Grant-holder of A writing to A -> 200
+      const resAA = await post(
+        "/v1/access/grants",
+        { communitySlug: setupA.slug, userId: newId(), roleKey: "member" },
+        setupA.token,
+      );
+      expect(resAA.status).toBe(200);
 
-        // Grant-holder of B writing to A's community -> 403, empty body (pin 15)
-        const resBA = await post(
-          "/v1/access/grants",
-          { communitySlug: setupA.slug, userId: newId(), roleKey: "member" },
-          setupB.token,
-        );
-        expect(resBA.status).toBe(403);
-        expect(await resBA.text()).toBe("");
+      // Grant-holder of B writing to B -> 402, empty body
+      const resBB = await post(
+        "/v1/access/grants",
+        { communitySlug: setupB.slug, userId: newId(), roleKey: "member" },
+        setupB.token,
+      );
+      expect(resBB.status).toBe(402);
+      expect(await resBB.text()).toBe("");
 
-        // Grant-holder of A writing to B's community -> 403, empty body
-        const resAB = await post(
-          "/v1/access/grants",
-          { communitySlug: setupB.slug, userId: newId(), roleKey: "member" },
-          setupA.token,
-        );
-        expect(resAB.status).toBe(403);
-        expect(await resAB.text()).toBe("");
-      }
+      // Grant-holder of A writing to B's community -> 403, empty body (pin 15)
+      const resAB = await post(
+        "/v1/access/grants",
+        { communitySlug: setupB.slug, userId: newId(), roleKey: "member" },
+        setupA.token,
+      );
+      expect(resAB.status).toBe(403);
+      expect(await resAB.text()).toBe("");
 
-      // Order (ii): A ok, B read_only
-      {
-        const setupA = await createFreshSetup("ok");
-        const setupB = await createFreshSetup("read_only");
+      // Grant-holder of B writing to A's community -> 403, empty body
+      const resBA = await post(
+        "/v1/access/grants",
+        { communitySlug: setupA.slug, userId: newId(), roleKey: "member" },
+        setupB.token,
+      );
+      expect(resBA.status).toBe(403);
+      expect(await resBA.text()).toBe("");
+    }
+  }, 30_000);
 
-        // Grant-holder of A writing to A -> 200
-        const resAA = await post(
-          "/v1/access/grants",
-          { communitySlug: setupA.slug, userId: newId(), roleKey: "member" },
-          setupA.token,
-        );
-        expect(resAA.status).toBe(200);
+  it("answers stranger in read_only with the same 403 and audit count as in ok without reading billing", async () => {
+    counter += 1;
+    const strangerSession = await signIn(`stranger${counter}@example.test`);
 
-        // Grant-holder of B writing to B -> 402, empty body
-        const resBB = await post(
-          "/v1/access/grants",
-          { communitySlug: setupB.slug, userId: newId(), roleKey: "member" },
-          setupB.token,
-        );
-        expect(resBB.status).toBe(402);
-        expect(await resBB.text()).toBe("");
-
-        // Grant-holder of A writing to B's community -> 403, empty body (pin 15)
-        const resAB = await post(
-          "/v1/access/grants",
-          { communitySlug: setupB.slug, userId: newId(), roleKey: "member" },
-          setupA.token,
-        );
-        expect(resAB.status).toBe(403);
-        expect(await resAB.text()).toBe("");
-
-        // Grant-holder of B writing to A's community -> 403, empty body
-        const resBA = await post(
-          "/v1/access/grants",
-          { communitySlug: setupA.slug, userId: newId(), roleKey: "member" },
-          setupB.token,
-        );
-        expect(resBA.status).toBe(403);
-        expect(await resBA.text()).toBe("");
-      }
-    },
-    30_000,
-  );
-
-  it(
-    "answers stranger in read_only with the same 403 and audit count as in ok without reading billing",
-    async () => {
-      counter += 1;
-      const strangerSession = await signIn(`stranger${counter}@example.test`);
-
-      async function countAuditDenied(setup: OrgSetup): Promise<number> {
-        return withAppTransaction(
-          app,
-          { orgId: setup.orgId, communityId: setup.communityId },
-          async (tx) => {
-            const rows = await tx<{ n: number }[]>`
+    async function countAuditDenied(setup: OrgSetup): Promise<number> {
+      return withAppTransaction(
+        app,
+        { orgId: setup.orgId, communityId: setup.communityId },
+        async (tx) => {
+          const rows = await tx<{ n: number }[]>`
               select count(*)::int as n
               from app.audit_events
               where action = 'access.permission.denied'
             `;
-            return rows[0]!.n;
-          },
-        );
-      }
-
-      // 1. Stranger against ok organisation
-      const setupOk = await createFreshSetup("ok");
-      const auditBeforeOk = await countAuditDenied(setupOk);
-      billingSpy.mockClear();
-
-      const resOk = await post(
-        "/v1/access/grants",
-        { communitySlug: setupOk.slug, userId: newId(), roleKey: "member" },
-        strangerSession.accessToken,
+          return rows[0]!.n;
+        },
       );
-      expect(resOk.status).toBe(403);
-      expect(await resOk.text()).toBe("");
-      const auditAfterOk = await countAuditDenied(setupOk);
-      const auditDeltaOk = auditAfterOk - auditBeforeOk;
-      expect(auditDeltaOk).toBe(1);
-      expect(billingSpy).not.toHaveBeenCalled();
+    }
 
-      // 2. Stranger against read_only organisation
-      const setupRo = await createFreshSetup("read_only");
-      const auditBeforeRo = await countAuditDenied(setupRo);
-      billingSpy.mockClear();
+    // 1. Stranger against ok organisation
+    const setupOk = await createFreshSetup("ok");
+    const auditBeforeOk = await countAuditDenied(setupOk);
+    billingSpy.mockClear();
 
-      const resRo = await post(
-        "/v1/access/grants",
-        { communitySlug: setupRo.slug, userId: newId(), roleKey: "member" },
-        strangerSession.accessToken,
-      );
-      expect(resRo.status).toBe(resOk.status);
-      expect(await resRo.text()).toBe("");
-      const auditAfterRo = await countAuditDenied(setupRo);
-      const auditDeltaRo = auditAfterRo - auditBeforeRo;
-      expect(auditDeltaRo).toBe(auditDeltaOk);
-      expect(billingSpy).not.toHaveBeenCalled();
-    },
-    30_000,
-  );
+    const resOk = await post(
+      "/v1/access/grants",
+      { communitySlug: setupOk.slug, userId: newId(), roleKey: "member" },
+      strangerSession.accessToken,
+    );
+    expect(resOk.status).toBe(403);
+    expect(await resOk.text()).toBe("");
+    const auditAfterOk = await countAuditDenied(setupOk);
+    const auditDeltaOk = auditAfterOk - auditBeforeOk;
+    expect(auditDeltaOk).toBe(1);
+    expect(billingSpy).not.toHaveBeenCalled();
+
+    // 2. Stranger against read_only organisation
+    const setupRo = await createFreshSetup("read_only");
+    const auditBeforeRo = await countAuditDenied(setupRo);
+    billingSpy.mockClear();
+
+    const resRo = await post(
+      "/v1/access/grants",
+      { communitySlug: setupRo.slug, userId: newId(), roleKey: "member" },
+      strangerSession.accessToken,
+    );
+    expect(resRo.status).toBe(resOk.status);
+    expect(await resRo.text()).toBe("");
+    const auditAfterRo = await countAuditDenied(setupRo);
+    const auditDeltaRo = auditAfterRo - auditBeforeRo;
+    expect(auditDeltaRo).toBe(auditDeltaOk);
+    expect(billingSpy).not.toHaveBeenCalled();
+  }, 30_000);
 });

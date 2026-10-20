@@ -117,9 +117,7 @@ export function BillingBanner() {
 
     if (text) {
       const canManage = status.canManage;
-      const message = canManage
-        ? text
-        : `${text}. Ask an organisation owner or billing contact`;
+      const message = canManage ? text : `${text}. Ask an organisation owner or billing contact`;
 
       statusAlert = (
         <Alert live={live} variant={variant}>

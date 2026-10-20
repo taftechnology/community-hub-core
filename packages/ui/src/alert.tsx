@@ -11,10 +11,8 @@ const alertVariants = cva(
     variants: {
       variant: {
         default: "bg-background text-foreground border-border",
-        destructive:
-          "bg-background text-destructive border-destructive [&>svg]:text-current",
-        warning:
-          "bg-muted text-foreground border-border [&>svg]:text-current",
+        destructive: "bg-background text-destructive border-destructive [&>svg]:text-current",
+        warning: "bg-muted text-foreground border-border [&>svg]:text-current",
       },
     },
     defaultVariants: {
@@ -42,9 +40,7 @@ function Alert({
       className={cn(alertVariants({ variant }), className)}
       {...props}
     >
-      {variant === "warning" && (
-        <span className="font-medium mr-1">Warning:</span>
-      )}
+      {variant === "warning" && <span className="font-medium mr-1">Warning:</span>}
       {children}
     </div>
   );
@@ -60,10 +56,7 @@ function AlertTitle({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-function AlertDescription({
-  className,
-  ...props
-}: React.ComponentProps<"div">) {
+function AlertDescription({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="alert-description"

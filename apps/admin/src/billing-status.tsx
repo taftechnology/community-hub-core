@@ -47,8 +47,7 @@ function readAndStripBillingParam(): string | null {
     const billing = url.searchParams.get("billing");
     url.searchParams.delete("billing");
     const nextSearch = url.searchParams.toString();
-    const nextUrl =
-      url.pathname + (nextSearch ? `?${nextSearch}` : "") + url.hash;
+    const nextUrl = url.pathname + (nextSearch ? `?${nextSearch}` : "") + url.hash;
     window.history.replaceState(window.history.state, "", nextUrl);
     return billing;
   } catch {

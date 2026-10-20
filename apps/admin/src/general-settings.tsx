@@ -54,8 +54,7 @@ export function GeneralSettingsPage() {
       return;
     }
     const shouldLoadPlans =
-      status.state === "none" ||
-      (status.state === "read_only" && !status.grace_until);
+      status.state === "none" || (status.state === "read_only" && !status.grace_until);
     if (!shouldLoadPlans) {
       return;
     }
@@ -251,8 +250,7 @@ export function GeneralSettingsPage() {
 
   const showPlanList =
     status?.canManage &&
-    (status.state === "none" ||
-      (status.state === "read_only" && !status.grace_until));
+    (status.state === "none" || (status.state === "read_only" && !status.grace_until));
 
   return (
     <>
@@ -298,9 +296,7 @@ export function GeneralSettingsPage() {
               {status.current_period_end && (
                 <div>
                   <dt>Current period end</dt>
-                  <dd>
-                    {new Date(status.current_period_end).toLocaleDateString()}
-                  </dd>
+                  <dd>{new Date(status.current_period_end).toLocaleDateString()}</dd>
                 </div>
               )}
               {status.trial_end && (
@@ -343,14 +339,9 @@ export function GeneralSettingsPage() {
                           <li key={plan.key}>
                             <div>
                               <span>{planLabels[plan.key] ?? plan.key}</span>
-                              {plan.trialAvailable && (
-                                <span>Includes a free trial</span>
-                              )}
+                              {plan.trialAvailable && <span>Includes a free trial</span>}
                             </div>
-                            <Button
-                              type="button"
-                              onClick={() => void handleCheckout(plan.key)}
-                            >
+                            <Button type="button" onClick={() => void handleCheckout(plan.key)}>
                               Start subscription
                             </Button>
                           </li>

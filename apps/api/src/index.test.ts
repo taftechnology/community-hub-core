@@ -613,13 +613,11 @@ describe("api boot wiring of the billing adapter and logger", () => {
       }),
     });
 
-    const res = await withRequest(
-      { requestId: "66666666-6666-4666-8666-666666666666" },
-      async () =>
-        toggleRoute!.handle(req, {
-          billing: toggleRoute!.billing,
-          pattern: toggleRoute!.pattern,
-        }),
+    const res = await withRequest({ requestId: "66666666-6666-4666-8666-666666666666" }, async () =>
+      toggleRoute!.handle(req, {
+        billing: toggleRoute!.billing,
+        pattern: toggleRoute!.pattern,
+      }),
     );
 
     expect(res.status).toBe(402);

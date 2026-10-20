@@ -173,10 +173,7 @@ export function UsersRolesPage() {
   const origins = directoryOrigins();
   const generation = useRef(0);
 
-  const isReadOnly =
-    status?.state === "none" ||
-    status?.state === "read_only" ||
-    readOnlyBlocked;
+  const isReadOnly = status?.state === "none" || status?.state === "read_only" || readOnlyBlocked;
 
   function show(outcome: Notice | "signed-out"): void {
     if (outcome === "signed-out") {
@@ -187,10 +184,7 @@ export function UsersRolesPage() {
     setNotice(outcome);
   }
 
-  async function load(
-    communitySlug: string,
-    isCurrent: () => boolean = () => true,
-  ): Promise<void> {
+  async function load(communitySlug: string, isCurrent: () => boolean = () => true): Promise<void> {
     const response = await post("/v1/access/grants/list", { communitySlug });
     if (!isCurrent()) {
       return;
