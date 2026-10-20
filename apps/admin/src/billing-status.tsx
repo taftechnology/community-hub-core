@@ -58,7 +58,10 @@ function readAndStripBillingParam(): string | null {
 
 export function BillingStatusProvider({ children }: { children: ReactNode }) {
   const { slug, version } = useCommunity();
-  const [status, setStatus] = useState<BillingStatus | null>(null);
+  const [stored, setStored] = useState<{ key: string; status: BillingStatus } | null>(null);
+  const currentKey = `${slug ?? ""}|${version}`;
+  const status = stored && stored.key === currentKey ? stored.status : null;
+
   const [billingParam] = useState(() => readAndStripBillingParam());
   const [returnMessage, setReturnMessage] = useState<string | null>(() => {
     if (billingParam === "done") {
@@ -70,16 +73,19 @@ export function BillingStatusProvider({ children }: { children: ReactNode }) {
     return null;
   });
   const slugRef = useRef(slug);
+  const versionRef = useRef(version);
   const generation = useRef(0);
   const portalRefreshed = useRef(false);
 
   useEffect(() => {
     slugRef.current = slug;
-  }, [slug]);
+    versionRef.current = version;
+  }, [slug, version]);
 
   const loadStatus = useCallback(
     async (
       communitySlug: string,
+      requestKey: string,
       isCurrent: () => boolean = () => true,
     ): Promise<void> => {
       const response = await post("/v1/billing/status", { communitySlug });
@@ -90,7 +96,7 @@ export function BillingStatusProvider({ children }: { children: ReactNode }) {
         if (!isCurrent()) {
           return;
         }
-        setStatus(null);
+        setStored(null);
         return;
       }
       try {
@@ -99,15 +105,15 @@ export function BillingStatusProvider({ children }: { children: ReactNode }) {
           return;
         }
         if (isBillingStatus(body)) {
-          setStatus(body);
+          setStored({ key: requestKey, status: body });
         } else {
-          setStatus(null);
+          setStored(null);
         }
       } catch {
         if (!isCurrent()) {
           return;
         }
-        setStatus(null);
+        setStored(null);
       }
     },
     [],
@@ -119,14 +125,15 @@ export function BillingStatusProvider({ children }: { children: ReactNode }) {
       return;
     }
     const mine = generation.current;
-    await loadStatus(currentSlug, () => generation.current === mine);
+    const reqKey = `${currentSlug}|${versionRef.current}`;
+    await loadStatus(currentSlug, reqKey, () => generation.current === mine);
   }, [loadStatus]);
 
   const lastCommunity = useRef<string | null>(null);
 
   useEffect(() => {
     const mine = ++generation.current;
-    setStatus(null);
+    setStored(null);
     const key = `${slug ?? ""}|${version}`;
     if (lastCommunity.current !== null && lastCommunity.current !== key) {
       setReturnMessage(null);
@@ -135,7 +142,7 @@ export function BillingStatusProvider({ children }: { children: ReactNode }) {
     if (!slug) {
       return;
     }
-    void loadStatus(slug, () => generation.current === mine);
+    void loadStatus(slug, key, () => generation.current === mine);
   }, [slug, version, loadStatus]);
 
   useEffect(() => {
@@ -146,7 +153,8 @@ export function BillingStatusProvider({ children }: { children: ReactNode }) {
         if (!currentSlug || generation.current !== mine) {
           return;
         }
-        await loadStatus(currentSlug, () => generation.current === mine);
+        const reqKey = `${currentSlug}|${versionRef.current}`;
+        await loadStatus(currentSlug, reqKey, () => generation.current === mine);
         if (generation.current === mine) {
           setReturnMessage(null);
         }

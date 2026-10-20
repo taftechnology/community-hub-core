@@ -24,7 +24,11 @@ const STATE_WORDS: Record<BillingState, string> = {
 export function GeneralSettingsPage() {
   const { slug, version } = useCommunity();
   const { status, refresh } = useBillingStatus();
+  const statusRef = useRef(status);
+  statusRef.current = status;
   const generation = useRef(0);
+  const lastCommunityKey = useRef<string | null>(null);
+  const lastPlansKey = useRef<string | null>(null);
 
   const [plans, setPlans] = useState<BillingPlan[] | undefined>(undefined);
   const [contactSupport, setContactSupport] = useState(false);
@@ -33,12 +37,16 @@ export function GeneralSettingsPage() {
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
-    generation.current++;
-    setPlans(undefined);
-    setContactSupport(false);
-    setOfferPortal(false);
-    setHidePortal(false);
-    setNotice(null);
+    const communityKey = `${slug ?? ""}|${version}`;
+    if (lastCommunityKey.current !== communityKey) {
+      lastCommunityKey.current = communityKey;
+      generation.current++;
+      setPlans(undefined);
+      setContactSupport(false);
+      setOfferPortal(false);
+      setHidePortal(false);
+      setNotice(null);
+    }
   }, [slug, version]);
 
   useEffect(() => {
@@ -51,6 +59,12 @@ export function GeneralSettingsPage() {
     if (!shouldLoadPlans) {
       return;
     }
+
+    const plansKey = `${slug}|${version}|${status.state}|${status.grace_until ?? ""}`;
+    if (lastPlansKey.current === plansKey) {
+      return;
+    }
+    lastPlansKey.current = plansKey;
 
     const mine = generation.current;
     async function fetchPlans() {
@@ -116,11 +130,12 @@ export function GeneralSettingsPage() {
       return;
     }
     if (response.status === 409) {
-      if (status?.state === "none") {
+      const current = statusRef.current;
+      if (current?.state === "none") {
         setOfferPortal(true);
         return;
       }
-      if (status?.state === "read_only" && !status?.grace_until) {
+      if (current?.state === "read_only" && !current?.grace_until) {
         setContactSupport(true);
         return;
       }
@@ -183,6 +198,7 @@ export function GeneralSettingsPage() {
     }
     if (response.status === 409) {
       setHidePortal(true);
+      setOfferPortal(false);
       await refresh();
       return;
     }

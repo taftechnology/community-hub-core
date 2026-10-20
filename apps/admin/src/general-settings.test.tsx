@@ -1,11 +1,11 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import axe from "axe-core";
-import { StrictMode } from "react";
+import { StrictMode, useState } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { BillingStatus } from "./api";
-import { BillingStatusContext } from "./billing-status";
+import { BillingStatusContext, BillingStatusProvider } from "./billing-status";
 import { CommunityProvider, useCommunity } from "./community";
 import { GeneralSettingsPage } from "./general-settings";
 
@@ -315,6 +315,30 @@ describe("GeneralSettingsPage - Settings -> General Settings -> Billing", () => 
       expect(fetchSpy).not.toHaveBeenCalled();
       expect(screen.queryByRole("button", { name: "Start subscription" })).toBeNull();
     });
+
+    it("does NOT render 'Start subscription' or fetch plans in ok, retrying, and grace with canManage: true", async () => {
+      const states = ["ok", "retrying", "grace"] as const;
+      for (const st of states) {
+        cleanup();
+        const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+        renderGeneralSettings({
+          status: {
+            state: st,
+            planKey: "starter",
+            trial_end: null,
+            grace_until: st === "grace" ? "2026-11-10T00:00:00.000Z" : null,
+            canView: true,
+            canManage: true,
+          },
+        });
+
+        await flush();
+
+        expect(screen.queryByRole("button", { name: "Start subscription" })).toBeNull();
+        expect(fetchSpy).not.toHaveBeenCalled();
+      }
+    });
   });
 
   describe("Security pin 17: actions need canManage", () => {
@@ -464,24 +488,78 @@ describe("GeneralSettingsPage - Settings -> General Settings -> Billing", () => 
 
     it("Checkout other 409 triggers refresh", async () => {
       const refreshMock = vi.fn().mockResolvedValue(undefined);
+      let resolveCheckout!: (res: Response) => void;
+      const checkoutPromise = new Promise<Response>((res) => {
+        resolveCheckout = res;
+      });
+
       vi.spyOn(globalThis, "fetch")
         .mockResolvedValueOnce(
           mockResponse(200, { plans: [{ key: "starter", trialAvailable: true }] }),
         )
-        .mockResolvedValueOnce(mockResponse(409, { error: "conflict" }));
+        .mockImplementationOnce(() => checkoutPromise);
 
-      renderGeneralSettings({
-        status: {
-          state: "retrying",
+      function DynamicStatusContainer() {
+        const [currentStatus, setCurrentStatus] = useState<BillingStatus>({
+          state: "none",
           trial_end: null,
           grace_until: null,
           canView: true,
           canManage: true,
-        },
-        refresh: refreshMock,
-      });
+        });
+
+        return (
+          <BillingStatusContext.Provider
+            value={{
+              status: currentStatus,
+              refresh: refreshMock,
+              returnMessage: null,
+            }}
+          >
+            <button
+              type="button"
+              onClick={() =>
+                setCurrentStatus({
+                  state: "ok",
+                  trial_end: null,
+                  grace_until: null,
+                  canView: true,
+                  canManage: true,
+                })
+              }
+            >
+              Update Status
+            </button>
+            <GeneralSettingsPage />
+          </BillingStatusContext.Provider>
+        );
+      }
+
+      sessionStorage.setItem("community-hub.community", "parish");
+      render(
+        <MemoryRouter>
+          <CommunityProvider>
+            <DynamicStatusContainer />
+          </CommunityProvider>
+        </MemoryRouter>,
+      );
 
       await flush();
+
+      // Click "Start subscription"
+      fireEvent.click(screen.getByRole("button", { name: "Start subscription" }));
+
+      // While checkout is in flight, swap status to "ok" (not "none" and not ended "read_only")
+      fireEvent.click(screen.getByRole("button", { name: "Update Status" }));
+      await flush();
+
+      // Resolve checkout with 409
+      resolveCheckout(mockResponse(409, { error: "conflict" }));
+      await flush();
+
+      expect(refreshMock).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole("button", { name: "Finish payment" })).toBeNull();
+      expect(screen.queryByText("Contact support")).toBeNull();
     });
   });
 
@@ -533,6 +611,45 @@ describe("GeneralSettingsPage - Settings -> General Settings -> Billing", () => 
       await flush();
 
       expect(screen.queryByRole("button", { name: "Manage billing" })).toBeNull();
+      expect(refreshMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("Portal 409 reached from 'Finish payment' hides 'Finish payment' and refreshes status", async () => {
+      const refreshMock = vi.fn().mockResolvedValue(undefined);
+      vi.spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce(
+          mockResponse(200, { plans: [{ key: "starter", trialAvailable: true }] }),
+        )
+        .mockResolvedValueOnce(mockResponse(409, { error: "checkout_conflict" }))
+        .mockResolvedValueOnce(mockResponse(409, { error: "portal_conflict" }));
+
+      renderGeneralSettings({
+        status: {
+          state: "none",
+          trial_end: null,
+          grace_until: null,
+          canView: true,
+          canManage: true,
+        },
+        refresh: refreshMock,
+      });
+
+      await flush();
+
+      // Click Start subscription -> triggers Checkout 409 in "none"
+      fireEvent.click(screen.getByRole("button", { name: "Start subscription" }));
+      await flush();
+
+      // "Finish payment" button appears
+      const finishBtn = screen.getByRole("button", { name: "Finish payment" });
+      expect(finishBtn).toBeTruthy();
+
+      // Click "Finish payment" -> triggers Portal 409
+      fireEvent.click(finishBtn);
+      await flush();
+
+      // "Finish payment" must be hidden and refresh called
+      expect(screen.queryByRole("button", { name: "Finish payment" })).toBeNull();
       expect(refreshMock).toHaveBeenCalledTimes(1);
     });
   });
@@ -644,6 +761,144 @@ describe("GeneralSettingsPage - Settings -> General Settings -> Billing", () => 
 
       expect(assignMock).not.toHaveBeenCalled();
       expect(screen.getByText("Billing is unavailable, try again shortly")).toBeTruthy();
+    });
+
+    it("never treats non-200 plans response (403) with valid plans JSON as success", async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        mockResponse(403, { plans: [{ key: "starter", trialAvailable: true }] }),
+      );
+
+      renderGeneralSettings({
+        status: {
+          state: "none",
+          trial_end: null,
+          grace_until: null,
+          canView: true,
+          canManage: true,
+        },
+      });
+
+      await flush();
+
+      expect(screen.queryByRole("button", { name: "Start subscription" })).toBeNull();
+      expect(screen.queryByText("Starter")).toBeNull();
+      expect(screen.getByText("Billing is unavailable, try again shortly")).toBeTruthy();
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("never treats non-200 plans response (500) with valid plans JSON as success", async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        mockResponse(500, { plans: [{ key: "starter", trialAvailable: true }] }),
+      );
+
+      renderGeneralSettings({
+        status: {
+          state: "none",
+          trial_end: null,
+          grace_until: null,
+          canView: true,
+          canManage: true,
+        },
+      });
+
+      await flush();
+
+      expect(screen.queryByRole("button", { name: "Start subscription" })).toBeNull();
+      expect(screen.queryByText("Starter")).toBeNull();
+      expect(screen.getByText("Billing is unavailable, try again shortly")).toBeTruthy();
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("Portal shows 'This plan is not available yet' on 422 without raw error text", async () => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        mockResponse(422, { error: "unsupported_portal_action" }),
+      );
+
+      renderGeneralSettings({
+        status: {
+          state: "ok",
+          trial_end: null,
+          grace_until: null,
+          canView: true,
+          canManage: true,
+        },
+      });
+
+      await flush();
+
+      fireEvent.click(screen.getByRole("button", { name: "Manage billing" }));
+      await flush();
+
+      expect(screen.getByText("This plan is not available yet")).toBeTruthy();
+      expect(screen.queryByText("unsupported_portal_action")).toBeNull();
+    });
+
+    it("Portal shows 'Billing is unavailable, try again shortly' on 503 without raw error text", async () => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        mockResponse(503, { error: "stripe_gateway_timeout" }),
+      );
+
+      renderGeneralSettings({
+        status: {
+          state: "ok",
+          trial_end: null,
+          grace_until: null,
+          canView: true,
+          canManage: true,
+        },
+      });
+
+      await flush();
+
+      fireEvent.click(screen.getByRole("button", { name: "Manage billing" }));
+      await flush();
+
+      expect(screen.getByText("Billing is unavailable, try again shortly")).toBeTruthy();
+      expect(screen.queryByText("stripe_gateway_timeout")).toBeNull();
+    });
+
+    it("plans shows 'This plan is not available yet' on 422 without raw error text", async () => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        mockResponse(422, { error: "catalog_unavailable" }),
+      );
+
+      renderGeneralSettings({
+        status: {
+          state: "none",
+          trial_end: null,
+          grace_until: null,
+          canView: true,
+          canManage: true,
+        },
+      });
+
+      await flush();
+
+      expect(screen.getByText("This plan is not available yet")).toBeTruthy();
+      expect(screen.queryByText("catalog_unavailable")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Start subscription" })).toBeNull();
+    });
+
+    it("plans shows 'Billing is unavailable, try again shortly' on 503 without raw error text", async () => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        mockResponse(503, { error: "database_down" }),
+      );
+
+      renderGeneralSettings({
+        status: {
+          state: "none",
+          trial_end: null,
+          grace_until: null,
+          canView: true,
+          canManage: true,
+        },
+      });
+
+      await flush();
+
+      expect(screen.getByText("Billing is unavailable, try again shortly")).toBeTruthy();
+      expect(screen.queryByText("database_down")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Start subscription" })).toBeNull();
     });
   });
 
@@ -937,12 +1192,241 @@ describe("GeneralSettingsPage - Settings -> General Settings -> Billing", () => 
       // Button is still present for parish-b (not hidden by stale parish-a 409)
       expect(screen.queryByRole("button", { name: "Manage billing" })).toBeTruthy();
     });
+
+    it("regression: switching community from none (manage) to ok (view-only) never requests plans for B or shows notice", async () => {
+      sessionStorage.setItem("community-hub.community", "parish-a");
+
+      const plansCallsForB: unknown[] = [];
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+        const urlStr = typeof url === "string" ? url : (url as Request).url;
+        const body = init?.body ? JSON.parse(init.body as string) : {};
+
+        if (urlStr.includes("/v1/billing/status")) {
+          if (body.communitySlug === "parish-a") {
+            return mockResponse(200, {
+              state: "none",
+              trial_end: null,
+              grace_until: null,
+              canView: true,
+              canManage: true,
+            });
+          }
+          if (body.communitySlug === "parish-b") {
+            return mockResponse(200, {
+              state: "ok",
+              planKey: "starter",
+              trial_end: null,
+              grace_until: null,
+              canView: true,
+              canManage: false,
+            });
+          }
+        }
+
+        if (urlStr.includes("/v1/billing/plans")) {
+          if (body.communitySlug === "parish-a") {
+            return mockResponse(200, {
+              plans: [{ key: "starter", trialAvailable: true }],
+            });
+          }
+          if (body.communitySlug === "parish-b") {
+            plansCallsForB.push(body);
+            return mockResponse(403, { error: "forbidden" });
+          }
+        }
+
+        return mockResponse(200, {});
+      });
+
+      function SwitchableWithRealProviders() {
+        const { setSlug } = useCommunity();
+        return (
+          <>
+            <button type="button" onClick={() => setSlug("parish-b")}>
+              Switch
+            </button>
+            <GeneralSettingsPage />
+          </>
+        );
+      }
+
+      render(
+        <MemoryRouter>
+          <CommunityProvider>
+            <BillingStatusProvider>
+              <SwitchableWithRealProviders />
+            </BillingStatusProvider>
+          </CommunityProvider>
+        </MemoryRouter>,
+      );
+
+      await flush();
+
+      expect(screen.getByText("Starter")).toBeTruthy();
+
+      fireEvent.click(screen.getByRole("button", { name: "Switch" }));
+      await flush();
+
+      expect(plansCallsForB).toHaveLength(0);
+      expect(screen.queryByText("Billing is unavailable, try again shortly")).toBeNull();
+    });
+
+    it("discards plans response when community switches after fetch resolves but before json() resolves", async () => {
+      sessionStorage.setItem("community-hub.community", "parish-a");
+
+      let resolveJsonPlans!: (body: unknown) => void;
+      const jsonPromise = new Promise((resolve) => {
+        resolveJsonPlans = resolve;
+      });
+
+      const heldResponse = {
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: () => jsonPromise,
+      } as unknown as Response;
+
+      vi.spyOn(globalThis, "fetch").mockImplementation((url, init) => {
+        if (typeof url === "string" && url.includes("/v1/billing/plans")) {
+          const body = JSON.parse(init?.body as string);
+          if (body.communitySlug === "parish-a") {
+            return Promise.resolve(heldResponse);
+          }
+          return Promise.resolve(mockResponse(200, { plans: [] }));
+        }
+        return Promise.resolve(mockResponse(200, {}));
+      });
+
+      render(
+        <SwitchableContainer
+          status={{
+            state: "none",
+            trial_end: null,
+            grace_until: null,
+            canView: true,
+            canManage: true,
+          }}
+        />,
+      );
+
+      await flush();
+
+      fireEvent.click(screen.getByRole("button", { name: "Switch" }));
+      await flush();
+
+      resolveJsonPlans({
+        plans: [{ key: "starter", trialAvailable: true }],
+      });
+      await flush();
+
+      expect(screen.queryByText("Starter")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Start subscription" })).toBeNull();
+    });
+
+    it("discards Checkout response when community switches after fetch resolves but before json() resolves", async () => {
+      sessionStorage.setItem("community-hub.community", "parish-a");
+
+      let resolveJsonCheckout!: (body: unknown) => void;
+      const jsonPromise = new Promise((resolve) => {
+        resolveJsonCheckout = resolve;
+      });
+
+      const heldResponse = {
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: () => jsonPromise,
+      } as unknown as Response;
+
+      vi.spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce(
+          mockResponse(200, { plans: [{ key: "starter", trialAvailable: true }] }),
+        )
+        .mockImplementation((url) => {
+          if (typeof url === "string" && url.includes("/v1/billing/checkout")) {
+            return Promise.resolve(heldResponse);
+          }
+          return Promise.resolve(mockResponse(200, {}));
+        });
+
+      render(
+        <SwitchableContainer
+          status={{
+            state: "none",
+            trial_end: null,
+            grace_until: null,
+            canView: true,
+            canManage: true,
+          }}
+        />,
+      );
+
+      await flush();
+
+      fireEvent.click(screen.getByRole("button", { name: "Start subscription" }));
+      await flush();
+
+      fireEvent.click(screen.getByRole("button", { name: "Switch" }));
+      await flush();
+
+      resolveJsonCheckout({
+        url: "https://checkout.stripe.example.test/session-post-json-stale",
+      });
+      await flush();
+
+      expect(assignMock).not.toHaveBeenCalled();
+    });
+
+    it("discards Portal response when community switches after fetch resolves but before json() resolves", async () => {
+      sessionStorage.setItem("community-hub.community", "parish-a");
+
+      let resolveJsonPortal!: (body: unknown) => void;
+      const jsonPromise = new Promise((resolve) => {
+        resolveJsonPortal = resolve;
+      });
+
+      const heldResponse = {
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: () => jsonPromise,
+      } as unknown as Response;
+
+      vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
+        if (typeof url === "string" && url.includes("/v1/billing/portal")) {
+          return Promise.resolve(heldResponse);
+        }
+        return Promise.resolve(mockResponse(200, {}));
+      });
+
+      render(
+        <SwitchableContainer
+          status={{
+            state: "ok",
+            trial_end: null,
+            grace_until: null,
+            canView: true,
+            canManage: true,
+          }}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Manage billing" }));
+      await flush();
+
+      fireEvent.click(screen.getByRole("button", { name: "Switch" }));
+      await flush();
+
+      resolveJsonPortal({
+        url: "https://billing.stripe.example.test/session-portal-post-json-stale",
+      });
+      await flush();
+
+      expect(assignMock).not.toHaveBeenCalled();
+    });
   });
 
   describe("StrictMode and Accessibility (axe)", () => {
     it("renders cleanly in StrictMode", async () => {
       sessionStorage.setItem("community-hub.community", "parish");
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
         mockResponse(200, {
           plans: [{ key: "starter", trialAvailable: true }],
         }),
@@ -976,6 +1460,7 @@ describe("GeneralSettingsPage - Settings -> General Settings -> Billing", () => 
 
       expect(screen.getByRole("heading", { level: 1, name: "General Settings" })).toBeTruthy();
       expect(screen.getByText("Starter")).toBeTruthy();
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
     });
 
     it("reports no axe violations across states", async () => {
