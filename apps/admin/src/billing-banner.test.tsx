@@ -543,6 +543,56 @@ describe("BillingBanner and Shell Billing Return", () => {
         unmount();
       }
     });
+
+    it("role='alert' again when switching from one read_only community to another", () => {
+      const status: BillingStatus = {
+        state: "read_only",
+        trial_end: null,
+        grace_until: null,
+        canView: true,
+        canManage: true,
+      };
+
+      sessionStorage.setItem("community-hub.community", "parish");
+
+      function tree() {
+        return (
+          <MemoryRouter>
+            <CommunityProvider>
+              <CommunityPicker />
+              <BillingStatusContext.Provider
+                value={{
+                  status,
+                  readiness: "ready",
+                  refresh: vi.fn(),
+                  returnMessage: null,
+                }}
+              >
+                <BillingBanner />
+              </BillingStatusContext.Provider>
+            </CommunityProvider>
+          </MemoryRouter>
+        );
+      }
+
+      const { rerender } = render(tree());
+
+      expect(screen.getByRole("alert")).toBeTruthy();
+      expect(screen.queryByRole("status")).toBeNull();
+
+      rerender(tree());
+
+      expect(screen.getByRole("status")).toBeTruthy();
+      expect(screen.queryByRole("alert")).toBeNull();
+
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: "cathedral" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      expect(screen.getByRole("alert")).toBeTruthy();
+      expect(screen.queryByRole("status")).toBeNull();
+    });
   });
 
   describe("portal action button triggers POST /v1/billing/portal", () => {
@@ -614,6 +664,88 @@ describe("BillingBanner and Shell Billing Return", () => {
         );
         expect(assignMock).toHaveBeenCalledWith("https://billing.stripe.example.test/session-1");
       });
+    });
+
+    it("does not navigate when the community changes before the Portal response resolves", async () => {
+      let resolvePortal!: (res: Response) => void;
+      const portalPromise = new Promise<Response>((resolve) => {
+        resolvePortal = resolve;
+      });
+
+      vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+        if (String(input).includes("/v1/billing/portal")) {
+          return portalPromise;
+        }
+        return Promise.resolve(new Response(null, { status: 404 }));
+      });
+
+      const assignMock = vi.fn();
+      const loc = window.location;
+      vi.stubGlobal("location", {
+        ancestorOrigins: loc.ancestorOrigins,
+        href: loc.href,
+        origin: loc.origin,
+        protocol: loc.protocol,
+        host: loc.host,
+        hostname: loc.hostname,
+        port: loc.port,
+        pathname: loc.pathname,
+        search: loc.search,
+        hash: loc.hash,
+        assign: assignMock,
+        replace: loc.replace.bind(loc),
+        reload: loc.reload.bind(loc),
+      });
+
+      render(
+        <MemoryRouter>
+          <CommunityProvider>
+            <CommunityPicker />
+            <BillingStatusContext.Provider
+              value={{
+                status: {
+                  state: "retrying",
+                  trial_end: null,
+                  grace_until: null,
+                  canView: true,
+                  canManage: true,
+                },
+                readiness: "ready",
+                refresh: vi.fn(),
+                returnMessage: null,
+              }}
+            >
+              <BillingBanner />
+            </BillingStatusContext.Provider>
+          </CommunityProvider>
+        </MemoryRouter>,
+      );
+
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: "parish" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      fireEvent.click(screen.getByRole("button", { name: "Update card" }));
+
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: "cathedral" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      resolvePortal(
+        new Response(JSON.stringify({ url: "https://billing.stripe.example.test/session-stale" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+      await act(async () => {
+        await portalPromise;
+      });
+      await flush();
+
+      expect(assignMock).not.toHaveBeenCalled();
     });
   });
 

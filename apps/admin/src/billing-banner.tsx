@@ -18,9 +18,18 @@ function isTrialEndingSoon(trialEnd: string | null | undefined): boolean {
 }
 
 export function BillingBanner() {
-  const { slug } = useCommunity();
+  const { slug, version } = useCommunity();
   const { status, returnMessage } = useBillingStatus();
+  const communityKey = `${slug ?? ""}|${version}`;
   const prevReadOnlyRef = useRef(false);
+  const lastCommunityKeyRef = useRef(communityKey);
+  const generation = useRef(0);
+
+  if (lastCommunityKeyRef.current !== communityKey) {
+    lastCommunityKeyRef.current = communityKey;
+    prevReadOnlyRef.current = false;
+    generation.current++;
+  }
 
   const isFirstReadOnly = status?.state === "read_only" && !prevReadOnlyRef.current;
 
@@ -33,12 +42,19 @@ export function BillingBanner() {
   }, [status?.state]);
 
   async function handlePortal(): Promise<void> {
+    const mine = generation.current;
     const response = await post("/v1/billing/portal", { communitySlug: slug });
+    if (generation.current !== mine) {
+      return;
+    }
     if (response === "unavailable" || response.status !== 200) {
       return;
     }
     try {
       const body: unknown = await response.json();
+      if (generation.current !== mine) {
+        return;
+      }
       if (
         typeof body === "object" &&
         body !== null &&
