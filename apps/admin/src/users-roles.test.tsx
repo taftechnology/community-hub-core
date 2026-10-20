@@ -783,6 +783,85 @@ it("ignores a 402 mutation response that arrives after switching community", asy
   expect(statusCalls).toBe(2);
 });
 
+it("resets read-only blocked state when switching community after a 402 write", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  let statusCalls = 0;
+  let revokeCalls = 0;
+  let listCalls = 0;
+
+  vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+    const url = String(input);
+    if (url.includes("/v1/billing/status")) {
+      statusCalls++;
+      return Promise.resolve(billingStatusResponse("ok"));
+    }
+    if (url.includes("/v1/access/grants/revoke")) {
+      revokeCalls++;
+      return Promise.resolve(new Response(null, { status: 402 }));
+    }
+    if (url.includes("/v1/access/grants/list")) {
+      listCalls++;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify(
+            directory(1, [ownerGrant], ["access.roles.manage", "access.users.manage"]),
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    }
+    return Promise.resolve(new Response(null, { status: 404 }));
+  });
+
+  await showUsers();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  const revokeButton = await screen.findByRole("button", { name: "Revoke" });
+  expect(screen.getByRole("button", { name: "Grant" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Create custom role" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Delete custom role" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Link" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Unlink" })).toBeTruthy();
+  expect(screen.queryByText("Read-only until billing is settled")).toBeNull();
+  expect(statusCalls).toBe(1);
+  expect(listCalls).toBe(1);
+
+  fireEvent.click(revokeButton);
+
+  const readOnlyAlert = (await screen.findByText("Read-only until billing is settled")).closest<HTMLElement>(
+    '[data-slot="alert"]',
+  )!;
+  expect(within(readOnlyAlert).getByRole("link").getAttribute("href")).toBe("/settings/general");
+  expect(statusCalls).toBe(2);
+  expect(revokeCalls).toBe(1);
+
+  expect(screen.queryByRole("button", { name: "Grant" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Revoke" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Create custom role" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete custom role" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Link" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Unlink" })).toBeNull();
+
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "cathedral" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  expect(await screen.findByRole("button", { name: "Revoke" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Grant" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Create custom role" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Delete custom role" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Link" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Unlink" })).toBeTruthy();
+  expect(screen.queryByText("Read-only until billing is settled")).toBeNull();
+  expect(statusCalls).toBe(3);
+  expect(listCalls).toBe(2);
+  expect(revokeCalls).toBe(1);
+});
+
 it("renders Users & Roles in StrictMode cleanly", async () => {
   sessionStorage.setItem("community-hub.access-token", TOKEN);
   vi.spyOn(globalThis, "fetch").mockImplementation((input) => {

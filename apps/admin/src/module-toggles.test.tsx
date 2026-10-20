@@ -691,6 +691,71 @@ it("ignores a 402 toggle response that arrives after switching community", async
   expect(statusCalls).toBe(2);
 });
 
+it("resets read-only blocked state when switching community after a 402 toggle", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  let statusCalls = 0;
+  let toggleCalls = 0;
+  let listCalls = 0;
+
+  vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+    const url = String(input);
+    if (url.includes("/v1/billing/status")) {
+      statusCalls++;
+      return Promise.resolve(billingStatusResponse("ok"));
+    }
+    if (url.includes("/v1/entitlements/toggle")) {
+      toggleCalls++;
+      return Promise.resolve(new Response(null, { status: 402 }));
+    }
+    if (url.includes("/v1/entitlements/list")) {
+      listCalls++;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            keys: [{ key: "people.directory", enabled: true }],
+            canManage: true,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    }
+    return Promise.resolve(new Response(null, { status: 404 }));
+  });
+
+  await showModules();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  const toggle = await screen.findByRole("switch", { name: "people.directory" });
+  expect(screen.queryByText("Read-only until billing is settled")).toBeNull();
+  expect(statusCalls).toBe(1);
+  expect(listCalls).toBe(1);
+
+  fireEvent.click(toggle);
+
+  const readOnlyAlert = (await screen.findByText("Read-only until billing is settled")).closest<HTMLElement>(
+    '[data-slot="alert"]',
+  )!;
+  expect(within(readOnlyAlert).getByRole("link").getAttribute("href")).toBe("/settings/general");
+  expect(statusCalls).toBe(2);
+  expect(toggleCalls).toBe(1);
+  expect(screen.queryByRole("switch")).toBeNull();
+  expect(screen.getByText("people.directory")).toBeTruthy();
+
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "cathedral" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  expect(await screen.findByRole("switch", { name: "people.directory" })).toBeTruthy();
+  expect(screen.queryByText("Read-only until billing is settled")).toBeNull();
+  expect(statusCalls).toBe(3);
+  expect(listCalls).toBe(2);
+  expect(toggleCalls).toBe(1);
+});
+
 it("renders Module Toggles in StrictMode cleanly", async () => {
   sessionStorage.setItem("community-hub.access-token", TOKEN);
   vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
