@@ -1690,6 +1690,1000 @@ When switching an organisation slug to invoiced with an existing active subscrip
 2. The `task_secrets` resource shows as unknown in a plan taken before the secret exists — expected, not a defect.
 3. A known test limit: the assert that forbids a secret version reads only `infra/modules/aws-db-secrets/main.tf`, so a version added in another file of that module would not fail it (the plan's own assert; follow-up if wanted).
 
+## Stripe billing proof
+
+This section is the operator path for Stripe billing proof on staging (`docs/specs/2026-10-21-stripe-billing-proof.md`). The human owner runs every apply, secret write, Stripe dashboard action, browser step, and held-value command. The owner's assistant is read-only.
+
+### General rules
+
+The opening paragraph of **Staging proof run** applies: the owner applies, the assistant is read-only, and a failed proof or a second failure on one step is a stop and a re-park.
+
+Stop after any failed proof, or after a second failure on the same step (AGENTS.md section 12). Then re-park before further attempts. The 24-hour target and 48-hour hard stop are measured from Apply 1 completion to the start of the re-park apply; the owner runs the re-park at that hard stop even if proofs remain.
+
+Shell variables and placeholders only. Never paste an account id, ARN, hostname, email address, OTP code, token, slug, Stripe object id, Stripe URL, or Stripe key into evidence. Say "the api hostname", "the auth hostname", "the webhooks hostname", and "the admin origin". Values that come from AWS at run time are held in shell variables and never recorded. In zsh write `${VAR}:text`, not `$VAR:text`. Do not put an inline `#` comment inside a command string. One pasteable command per indented block. Evidence rules: counts, statuses, key sets, lengths, and yes/no facts only.
+
+- A Spot interruption is not a failure; rerun that step once.
+- A webhook delivery that fails and later succeeds on Stripe's retry is not a failure: record both.
+- Stream-scoped `get-log-events` calls for one-offs are exempt from `--start-time`, because each stream is unique to its task. Every `filter-log-events` call carries `--start-time`.
+- Before any command that uses a held value, `setopt pipefail`.
+
+### Shell variables
+
+Hold these in the shell. Never record their values.
+
+| Variable                     | Meaning                                                                                          |
+| ---------------------------- | ------------------------------------------------------------------------------------------------ |
+| `${AWS_PROFILE}`             | Apply and one-off profile (default `ch-admin`)                                                   |
+| `${ZONE_NAME}`               | Apex hosted zone name from `staging_zone_id`                                                     |
+| `${AUTH_HOST}`               | Auth hostname (`auth.au.${ZONE_NAME}`)                                                           |
+| `${API_HOST}`                | Tenant API hostname (`au.api.${ZONE_NAME}`)                                                      |
+| `${WEBHOOKS_HOST}`           | Webhooks hostname (`webhooks.au.${ZONE_NAME}`)                                                   |
+| `${BILLING_SECRET_ID}`       | Billing secret identifier / ARN in Secrets Manager (never recorded)                              |
+| `${DB_INSTANCE_ID}`          | RDS database instance identifier (`ch-staging-postgres`)                                         |
+| `${CLUSTER}`                 | ECS cluster name for staging (`ch-staging`)                                                      |
+| `${SERVICE}`                 | ECS service name for staging (`ch-staging`)                                                      |
+| `${SERVICE_TASK_DEFINITION}` | Service task definition family (`ch-staging`)                                                    |
+| `${OPS_TASK_DEFINITION}`     | Ops task definition family (`ch-staging-db-ops`)                                                 |
+| `${SUBNET}`                  | Staging public subnet id (from Terraform / describe; never recorded)                             |
+| `${TASK_SECURITY_GROUP}`     | Task security group id (from Terraform / describe; never recorded)                               |
+| `${LOG_GROUP}`               | Service log group `/community-hub/ch-staging/service` (streams use prefixes `service`, `db-ops`) |
+| `${API_ACCESS_LOG_GROUP}`    | API access log group `/community-hub/ch-staging/api-access`                                      |
+| `${PLAN_FILE}`               | Saved plan file path outside the repository (never committed; deleted after apply)               |
+| `${WINDOW_START_MS}`         | Proof window start in epoch milliseconds (set before S1; never recorded)                         |
+| `${WINDOW_END_MS}`           | Proof window end in epoch milliseconds (set in subsection 10; never recorded)                    |
+| `${ORG_SLUG}`                | Organisation synthetic slug (generated once with `ORG_SLUG="proof-$(openssl rand -hex 4)"`)      |
+| `${COMMUNITY_SLUG}`          | Community synthetic slug (generated once with `COMMUNITY_SLUG="proof-$(openssl rand -hex 4)"`)   |
+| `${ACCESS_TOKEN}`            | Current session access token (never recorded)                                                    |
+| `${REFRESH_TOKEN}`           | Current session refresh token (never recorded)                                                   |
+| `${TOKENS}`                  | Session response JSON payload (never recorded)                                                   |
+| `${ACCESS_TOKENS}`           | zsh array of every token held, so S12 counts earlier tokens too                                  |
+| `${REFRESH_TOKENS}`          | zsh array of every token held, so S12 counts earlier tokens too                                  |
+| `${OTP_CODES}`               | zsh array of every code used, in the shell and in the browser                                    |
+| `${PROOF_EMAIL}`             | Fixed synthetic email (`proof-billing@example.com`)                                              |
+| `${PROOF_NAME}`              | Synthetic name (set once with `PROOF_NAME="Proof$(openssl rand -hex 4)"`)                        |
+| `${START_CALLS}`             | Sign-in counter (cap at most 5 for the run)                                                      |
+| `${STRIPE_CALLS_FLOOR}`      | Calculated minimum expected count of successful Stripe calls                                     |
+
+Initialize shell tracking variables:
+
+    OTP_CODES=()
+
+    ACCESS_TOKENS=()
+
+    REFRESH_TOKENS=()
+
+    START_CALLS=0
+
+    PROOF_EMAIL="proof-billing@example.com"
+
+    PROOF_NAME="Proof$(openssl rand -hex 4)"
+
+    ORG_SLUG="proof-$(openssl rand -hex 4)"
+
+    COMMUNITY_SLUG="proof-$(openssl rand -hex 4)"
+
+### Stripe dashboard (owner, test mode, while parked)
+
+In the Stripe dashboard, in test mode while staging is parked, verify the configuration against spec Order step 1. Record each check as yes/no only.
+
+1. Customer Portal: configured as `stripe-billing` requires (update card enabled, view and pay invoices enabled, cancel at period end only enabled, no plan switching).
+2. Retry schedule: ends with "mark the subscription unpaid" (`stripe-billing` D13; Settings -> Subscriptions and emails -> Manage failed payments for subscriptions).
+3. Webhook endpoint: an endpoint on `${WEBHOOKS_HOST}` at `/v1/stripe/webhook` configured to send exactly these six event types:
+   - `checkout.session.completed`
+   - `customer.subscription.created`
+   - `customer.subscription.updated`
+   - `customer.subscription.deleted`
+   - `invoice.paid`
+   - `invoice.payment_failed`
+4. Restricted key: matches **Restricted key permissions** under **Stripe billing** above. If the existing key cannot be revealed again, create a new restricted key matching those permissions and revoke the old key.
+
+### Webhook secret (owner, while parked)
+
+The owner puts the test-mode values on the billing secret using the **Put the test-mode values** method. Prompt for both keys without echo, pipe the JSON payload into stdin, and unset the shell variables:
+
+    read -rs "STRIPE_KEY?Stripe restricted key: "
+
+    print
+
+    read -rs "WEBHOOK_SECRET?Stripe webhook signing secret: "
+
+    print
+
+    printf '{"secret_key":"%s","webhook_secret":"%s"}' "${STRIPE_KEY}" "${WEBHOOK_SECRET}" | aws secretsmanager put-secret-value --profile ${AWS_PROFILE} --region ap-southeast-2 --secret-id ${BILLING_SECRET_ID} --secret-string file:///dev/stdin >/dev/null
+
+    unset STRIPE_KEY WEBHOOK_SECRET
+
+Assistant checks (read-only):
+
+Check that the secret has an `AWSCURRENT` version dated after Apply 0 completion (2026-10-18T20:52Z):
+
+    aws secretsmanager list-secret-version-ids --profile ${AWS_PROFILE} --region ap-southeast-2 --secret-id ${BILLING_SECRET_ID} --query 'Versions[?contains(VersionStages, `AWSCURRENT`)].CreatedDate' --output text
+
+Answer yes/no only: is the created date after 2026-10-18T20:52Z?
+
+Check that the secret has an `AWSPREVIOUS` version present:
+
+    aws secretsmanager list-secret-version-ids --profile ${AWS_PROFILE} --region ap-southeast-2 --secret-id ${BILLING_SECRET_ID} --query 'Versions[?contains(VersionStages, `AWSPREVIOUS`)].CreatedDate' --output text
+
+Answer yes/no only: is one version present? Print the yes/no answers only.
+
+Owner checks (in shell, without echoing values):
+
+Read the secret into memory:
+
+    SECRET_JSON=$(aws secretsmanager get-secret-value --profile ${AWS_PROFILE} --region ap-southeast-2 --secret-id ${BILLING_SECRET_ID} --query 'SecretString' --output text)
+
+Confirm `webhook_secret` starts with `whsec_` and is not equal to the placeholder:
+
+    print -r -- "${SECRET_JSON}" | jq -r '(.webhook_secret | startswith("whsec_")) and .webhook_secret != "whsec_placeholder_until_stripe_billing_proof"'
+
+Expected: `true`. Answer yes/no only.
+
+Confirm `secret_key` starts with `rk_test_`:
+
+    print -r -- "${SECRET_JSON}" | jq -r '(.secret_key | startswith("rk_test_"))'
+
+Expected: `true`. Answer yes/no only.
+
+Unset the secret variable:
+
+    unset SECRET_JSON
+
+### Pre-checks
+
+Hold `${DEPLOY_SHA}` as the latest `main` commit that contains `5709fa1` (`billing-read-only` merge):
+
+    git fetch origin
+
+    DEPLOY_SHA=$(git rev-parse origin/main)
+
+    git merge-base --is-ancestor 5709fa1 ${DEPLOY_SHA} && print ok
+
+Expected: `ok`.
+
+Run pre-checks (assistant, read-only; any failure is a stop before spend):
+
+1. Publish and admin-publish conclusions for that commit (record conclusion only):
+
+   RUN_ID=$(gh run list --commit ${DEPLOY_SHA} --workflow ci.yml --json databaseId --jq '.[0].databaseId')
+
+   gh run view ${RUN_ID} --json jobs --jq '.jobs[] | select(.name=="publish" or .name=="admin-publish") | {name,conclusion}'
+
+Expected: both `success`.
+
+2. Image digest for that tag (record digest length only; never the registry host):
+
+   DIGEST=$(aws ecr describe-images --profile ${AWS_PROFILE} --region ap-southeast-2 --repository-name ch-staging/service --image-ids imageTag=${DEPLOY_SHA} --query 'imageDetails[0].imageDigest' --output text)
+
+   print ${#DIGEST}
+
+Expected: `71`.
+
+3. Scan status and CRITICAL count for that tag:
+
+   aws ecr describe-image-scan-findings --profile ${AWS_PROFILE} --region ap-southeast-2 --repository-name ch-staging/service --image-id imageTag=${DEPLOY_SHA} --query '{status:imageScanStatus.status,critical:imageScanFindings.findingSeverityCounts.CRITICAL || `0`}' --output json
+
+Expected: `COMPLETE` and `0` critical findings.
+
+4. Confirm repository variables `ADMIN_API_ORIGIN` and `ADMIN_AUTH_ORIGIN` are present. Record "both origins present" and "no placeholder"; never URLs.
+
+5. Migration journal tags at `${DEPLOY_SHA}` (expect the eleven tags `0000_schemas` to `0010_silly_lila_cheney` in journal order):
+
+   git show ${DEPLOY_SHA}:packages/db/drizzle/meta/_journal.json | jq -r '.entries[].tag'
+
+6. The three SES checks: run as in **SES sign-in proof → Prerequisites** (domain identity and DKIM status `SUCCESS`, account production access `False`, and owner address verification `SUCCESS`).
+
+7. Confirm staging is still parked (read-only counts):
+
+   aws rds describe-db-instances --profile ${AWS_PROFILE} --region ap-southeast-2 --query 'length(DBInstances)' --output text
+
+Expected: `0`.
+
+    aws ecs list-clusters --profile ${AWS_PROFILE} --region ap-southeast-2 --query 'length(clusterArns)' --output text
+
+Expected: `0`.
+
+8. Write `service_image` line into `staging.local.tfvars`:
+   From `infra/regions/au`, the owner writes the `service_image` line into `env/staging.local.tfvars` using the block in **SES sign-in proof → Apply 1**, and confirms the count check prints 1:
+
+   grep -c '^service_image' env/staging.local.tfvars
+
+Expected: `1`. Without that line, about 10 of the 18 resources are not planned (`infra/regions/au/main.tf:11`, and the `service_image == null` counts in `infra/modules/aws-ingress/main.tf`).
+
+9. Read-only plan without the lock, compared with the 18 addresses:
+
+   terraform init -backend-config=backend/staging.hcl -lockfile=readonly
+
+   terraform plan -no-color -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -out=${PLAN_FILE} -input=false | grep --line-buffered '^Plan:'
+
+Expected: `Plan: 18 to add, 0 to change, 0 to destroy.`
+
+List addresses from the plan:
+
+    terraform show -json ${PLAN_FILE} | jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | "\(.change.actions | join(" ")) \(.address)"'
+
+Confirm all 18 addresses match the expected list in **Apply 1** below.
+
+    rm -f ${PLAN_FILE}
+
+**Stop if** any one of these pre-checks fails.
+
+### Apply 1
+
+The branch moves to the unpark commit (`enable_database = true`, `desired_count = 1` in `infra/regions/au/env/staging.tfvars`). The `service_image` line in `staging.local.tfvars` is reused from subsection 4.
+
+Run before-each-apply checks against the Task 2 SHA on origin.
+
+Initialize Terraform with the staging backend:
+
+    terraform init -backend-config=backend/staging.hcl -lockfile=readonly
+
+Plan to the saved file outside the repository:
+
+    terraform plan -no-color -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -out=${PLAN_FILE} -input=false | grep --line-buffered '^Plan:'
+
+Expected plan summary: exactly 18 to add, 0 to change, 0 to destroy. List addresses and actions:
+
+    terraform show -json ${PLAN_FILE} | jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | "\(.change.actions | join(" ")) \(.address)"'
+
+Expected addresses:
+
+- `module.rds[0].aws_cloudwatch_metric_alarm.cpu_credit_balance` (create)
+- `module.rds[0].aws_cloudwatch_metric_alarm.database_connections` (create)
+- `module.rds[0].aws_cloudwatch_metric_alarm.free_storage_space` (create)
+- `module.rds[0].aws_cloudwatch_metric_alarm.freeable_memory` (create)
+- `module.rds[0].aws_db_instance.this` (create)
+- `module.rds[0].aws_db_parameter_group.this` (create)
+- `module.rds[0].aws_db_subnet_group.this` (create)
+- `module.rds[0].terraform_data.prod_protection` (create)
+- `aws_ecs_task_definition.db_ops[0]` (create)
+- `aws_iam_role.db_ops_execution[0]` (create)
+- `aws_iam_role.db_ops_task[0]` (create)
+- `aws_iam_role_policy.db_ops_execution[0]` (create)
+- `module.ingress.aws_ecs_cluster.this[0]` (create)
+- `module.ingress.aws_ecs_cluster_capacity_providers.this[0]` (create)
+- `module.ingress.aws_ecs_service.this[0]` (create)
+- `module.ingress.aws_ecs_task_definition.this[0]` (create)
+- `module.ingress.aws_iam_role_policy.pull[0]` (create)
+- `module.ingress.aws_vpc_security_group_ingress_rule.task_api[0]` (create)
+
+Any other address is a stop before apply.
+
+Apply that file:
+
+    terraform apply -input=false ${PLAN_FILE} | grep --line-buffered -E ': (Creating|Still creating|Creation complete|Modifying|Still modifying|Modification complete|Destroying|Still destroying|Destruction complete)|Apply complete' | sed -l -E 's/ \[id=[^]]+\]//'
+
+Record the UTC completion time under **Cost clock and evidence** below. The 24-hour target and 48-hour hard stop start at this instant. Rate: USD 0.0468 per hour.
+
+Delete the plan file:
+
+    rm -f ${PLAN_FILE}
+
+Wait until the RDS instance is available:
+
+    aws rds describe-db-instances --profile ${AWS_PROFILE} --db-instance-identifier ${DB_INSTANCE_ID} --query 'DBInstances[0].DBInstanceStatus' --output text
+
+Expected: `available`.
+
+### One-offs
+
+Run the one-off tasks in order on the freshly unparked database.
+
+Run `db-bootstrap` and `db-migrate` as in **SES sign-in proof → One-offs**:
+
+- `db-bootstrap` expects exit 0, stdout exactly one integer (`max_connections`), stderr empty.
+- `db-migrate` expects exit 0, stdout eleven `applied <tag>` lines for 0000–0010 in journal order, then `done applied=11 total=11`, with stderr empty.
+
+Provision the first owner following the **Provision the first owner** procedure, with the owner's verified address, with these deliberate deviations from that section (which is not edited):
+
+- the `jq -n` in **Create** uses `${ORG_SLUG}` and `${COMMUNITY_SLUG}` from subsection 1 instead of its `read -rs` prompts;
+- its closing `unset` is skipped for the two slugs; only `OWNER_EMAIL` is unset, and it is prompted again for the sign-in.
+
+Prompt for owner email and create provision secret:
+
+    read -rs "OWNER_EMAIL?Owner email: "
+
+    print
+
+    jq -n --arg o "${ORG_SLUG}" --arg c "${COMMUNITY_SLUG}" --arg e "${OWNER_EMAIL}" \
+      '{organisationSlug: $o, communitySlug: $c, email: $e}' \
+      | aws secretsmanager create-secret --profile ${AWS_PROFILE} \
+        --name ${PROVISION_SECRET_NAME} --kms-key-id ${SECRETS_KEY_ARN} \
+        --secret-string file:///dev/stdin >/dev/null
+
+    unset OWNER_EMAIL
+
+Run `provision-owner.js` and delete/verify secret as in **Provision the first owner → Run** and **Delete and verify**:
+
+    PROVISION_SECRET_ARN=$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} \
+      --secret-id ${PROVISION_SECRET_NAME} --query 'ARN' --output text)
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${SERVICE_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/provision-owner.js\"],\"environment\":[{\"name\":\"PROVISION_SECRET_ARN\",\"value\":\"${PROVISION_SECRET_ARN}\"}]}]}" \
+      --query 'tasks[0].taskArn' --output text)
+
+    aws ecs wait tasks-stopped --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN}
+
+    aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN} --query 'tasks[0].[containers[0].exitCode,stoppedReason]' --output text
+
+    aws logs get-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --log-stream-name "service/service/${TASK_ARN##*/}" --query 'events[].message' --output text | tr '\t' '\n'
+
+Expected: exit 0, stdout `created`, stderr empty.
+
+    aws secretsmanager delete-secret --profile ${AWS_PROFILE} \
+      --secret-id ${PROVISION_SECRET_NAME} --force-delete-without-recovery >/dev/null
+
+    aws secretsmanager describe-secret --profile ${AWS_PROFILE} \
+      --secret-id ${PROVISION_SECRET_NAME}
+
+Expected: `describe-secret` fails with `ResourceNotFoundException`.
+
+    unset PROVISION_SECRET_ARN
+
+Run `billing-admin` commands using the existing **billing-admin commands** block form:
+
+Run `billing-admin settings`:
+
+    GST_BPS=1000
+
+    INCLUSIVE=true
+
+    TRIAL_DAYS=30
+
+    GRACE_DAYS=7
+
+    NOTE="stripe-billing-proof"
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${SERVICE_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/billing-admin.js\",\"settings\",\"--gst-bps\",\"${GST_BPS}\",\"--inclusive\",\"${INCLUSIVE}\",\"--trial-days\",\"${TRIAL_DAYS}\",\"--grace-days\",\"${GRACE_DAYS}\",\"--note\",\"${NOTE}\"]}]}" \
+      --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
+
+    aws ecs wait tasks-stopped --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN}
+
+    aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN} --query 'tasks[0].[containers[0].exitCode,stoppedReason]' --output text
+
+    aws logs get-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --log-stream-name "service/service/${TASK_ARN##*/}" --query 'events[].message' --output text | tr '\t' '\n'
+
+    unset GST_BPS INCLUSIVE TRIAL_DAYS GRACE_DAYS NOTE
+
+Expected: exit 0, stdout `tax_rate <id>`. Record only that the line starts with `tax_rate `; do not record the id.
+
+Run `billing-admin plan`:
+
+    PLAN_KEY=starter
+
+    LOOKUP_KEY=starter_monthly
+
+    TRIAL_ELIGIBLE=true
+
+    ENTITLEMENTS="module.engagement,module.forms,module.content,module.giving,people.directory,groups.basic,communications.email,giving.one_off"
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${SERVICE_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/billing-admin.js\",\"plan\",\"${PLAN_KEY}\",\"--lookup-key\",\"${LOOKUP_KEY}\",\"--trial-eligible\",\"${TRIAL_ELIGIBLE}\",\"--entitlements\",\"${ENTITLEMENTS}\"]}]}" \
+      --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
+
+    aws ecs wait tasks-stopped --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN}
+
+    aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN} --query 'tasks[0].[containers[0].exitCode,stoppedReason]' --output text
+
+    aws logs get-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --log-stream-name "service/service/${TASK_ARN##*/}" --query 'events[].message' --output text | tr '\t' '\n'
+
+    unset PLAN_KEY LOOKUP_KEY TRIAL_ELIGIBLE ENTITLEMENTS
+
+Expected: exit 0, stdout `plan_set`, stderr empty.
+
+Run `billing-admin seed-test-catalogue` (twice for idempotency):
+
+First run:
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${SERVICE_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/billing-admin.js\",\"seed-test-catalogue\"]}]}" \
+      --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
+
+    aws ecs wait tasks-stopped --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN}
+
+    aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN} --query 'tasks[0].[containers[0].exitCode,stoppedReason]' --output text
+
+    aws logs get-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --log-stream-name "service/service/${TASK_ARN##*/}" --query 'events[].message' --output text | tr '\t' '\n'
+
+Expected: exit 0, stdout `seeded`, stderr empty.
+
+Second run:
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${SERVICE_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/billing-admin.js\",\"seed-test-catalogue\"]}]}" \
+      --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
+
+    aws ecs wait tasks-stopped --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN}
+
+    aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN} --query 'tasks[0].[containers[0].exitCode,stoppedReason]' --output text
+
+    aws logs get-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --log-stream-name "service/service/${TASK_ARN##*/}" --query 'events[].message' --output text | tr '\t' '\n'
+
+Expected: exit 0, stdout `seeded`, stderr empty.
+
+The owner records in the Stripe dashboard yes/no: each of the 7 lookup keys (`starter_monthly`, `growth_monthly`, `ecommerce_monthly`, `website_monthly`, `mobile_monthly`, `branded_monthly`, and `sms_pack_monthly`) is on exactly one active price, and 7 products carry `metadata.lookup_key`.
+
+Run `billing-admin mode`:
+
+Warning: the organisation slug appears in the ECS task overrides and in CloudTrail (in Australia). That is acceptable only because the slug is synthetic.
+
+    TARGET_MODE=self_serve
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${SERVICE_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/billing-admin.js\",\"mode\",\"${ORG_SLUG}\",\"${TARGET_MODE}\"]}]}" \
+      --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
+
+    aws ecs wait tasks-stopped --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN}
+
+    aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN} --query 'tasks[0].[containers[0].exitCode,stoppedReason]' --output text
+
+    aws logs get-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --log-stream-name "service/service/${TASK_ARN##*/}" --query 'events[].message' --output text | tr '\t' '\n'
+
+    unset TARGET_MODE
+
+Expected: exit 0, stdout `none`, stderr empty.
+
+### Running-task check (assistant)
+
+Run the running-task checks as in **SES sign-in proof → Running-task check (assistant, read-only)**:
+
+    aws ecs wait services-stable --profile ${AWS_PROFILE} --cluster ${CLUSTER} --services ${SERVICE}
+
+    SERVICE_TASK_ARN=$(aws ecs list-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --service-name ${SERVICE} --desired-status RUNNING --query 'taskArns[0]' --output text)
+
+    aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks "${SERVICE_TASK_ARN}" --query 'tasks[0].containers[0].imageDigest' --output text
+
+Expected: equals the pre-checked digest `${DIGEST}`.
+
+Check environment variable names:
+
+    TASK_DEF_ARN=$(aws ecs describe-services --profile ${AWS_PROFILE} --cluster ${CLUSTER} --services ${SERVICE} --query 'services[0].taskDefinition' --output text)
+
+    aws ecs describe-task-definition --profile ${AWS_PROFILE} --task-definition "${TASK_DEF_ARN}" --query 'taskDefinition.containerDefinitions[?name==`service`].environment[].name' --output text
+
+Expected: output lists all four of `ADMIN_ORIGIN`, `BILLING_SECRET_ARN`, `MAIL_FROM_ADDRESS`, and `SES_CONFIGURATION_SET` (names only; never print values).
+
+    unset SERVICE_TASK_ARN TASK_DEF_ARN
+
+### Sign-in and refresh (owner)
+
+Run sign-in using the **SES sign-in proof → P1 and P2** commands with these changes:
+
+- each `start` increments `${START_CALLS}`;
+- each code is appended to `${OTP_CODES}`, including the codes typed into the browser, at a silent prompt;
+- after verify, `REFRESH_TOKEN=$(print -r -- "${TOKENS}" | jq -r '.refreshToken')`, and both tokens are appended to `${ACCESS_TOKENS}` and `${REFRESH_TOKENS}`.
+
+Cap: `${START_CALLS}` at most 5 for the run, and at most 5 in any 60 minutes. Browser sign-ins count, and the owner increments the counter for each.
+
+Sign-in budget:
+
+| Sign-in | Where   | Steps                                            |
+| ------- | ------- | ------------------------------------------------ |
+| 1       | shell   | S1–S12 (refreshed as below)                      |
+| 2       | browser | S10a → S3 → S4 → S10b                            |
+| 3       | browser | S5: set the card → end trial → S10c → pay        |
+| 4       | browser | S8 (Portal through "Manage billing") → S9 → S10d |
+| 5       | either  | Spare, used only for a session that expired      |
+
+If a browser session expires mid-group, the spare is used. A sixth sign-in is a stop.
+
+Sign-in 1 (shell):
+
+    read -rs "OWNER_EMAIL?Lowercase verified owner email: "
+
+    print
+
+    START_CALLS=$(( START_CALLS + 1 ))
+
+    curl -s -S -o /dev/null -w '%{http_code}\n' -X POST "https://${AUTH_HOST}/v1/auth/email-otp/start" -H 'content-type: application/json' -d "{\"email\":\"${OWNER_EMAIL}\"}"
+
+Expected: `204`.
+
+    read -rs "OTP_CODE?One-time code: "
+
+    print
+
+    OTP_CODES+=("${OTP_CODE}")
+
+    TOKENS=$(curl -s -S -X POST "https://${AUTH_HOST}/v1/auth/email-otp/verify" -H 'content-type: application/json' -d "{\"email\":\"${OWNER_EMAIL}\",\"code\":\"${OTP_CODE}\"}")
+
+    ACCESS_TOKEN=$(print -r -- "${TOKENS}" | jq -r '.accessToken')
+
+    REFRESH_TOKEN=$(print -r -- "${TOKENS}" | jq -r '.refreshToken')
+
+    ACCESS_TOKENS+=("${ACCESS_TOKEN}")
+
+    REFRESH_TOKENS+=("${REFRESH_TOKEN}")
+
+Browser sign-in procedure (Sign-ins 2, 3, 4, 5):
+The owner types the verified email into the browser sign-in page, receives the code, increments `${START_CALLS}` in the shell, enters the code into the browser, and records the code in `${OTP_CODES}` at a silent prompt in the shell:
+
+    START_CALLS=$(( START_CALLS + 1 ))
+
+    read -rs "OTP_CODE?Browser sign-in one-time code: "
+
+    print
+
+    OTP_CODES+=("${OTP_CODE}")
+
+Refresh block (run before each shell proof group):
+
+    TOKENS=$(curl -s -S -X POST "https://${AUTH_HOST}/v1/auth/session/refresh" -H 'content-type: application/json' -d "{\"refreshToken\":\"${REFRESH_TOKEN}\"}")
+
+    ACCESS_TOKEN=$(print -r -- "${TOKENS}" | jq -r '.accessToken')
+
+    REFRESH_TOKEN=$(print -r -- "${TOKENS}" | jq -r '.refreshToken')
+
+    ACCESS_TOKENS+=("${ACCESS_TOKEN}")
+
+    REFRESH_TOKENS+=("${REFRESH_TOKEN}")
+
+    [[ -n "${ACCESS_TOKEN}" && "${ACCESS_TOKEN}" != "null" ]] || print "Stop: refresh failed"
+
+A refresh that does not return an access token is a stop.
+
+### Proofs
+
+Set `WINDOW_START_MS` before S1:
+
+    WINDOW_START_MS=$(( $(date +%s) * 1000 ))
+
+Each HTTP call prints only the status using `-o /dev/null -w '%{http_code}\n'`, or pipes the body to `jq` and prints keys or one field.
+
+Each admin check below is done in the browser within 15 minutes of a browser sign-in, starting at `/`, and answered yes/no with the exact strings from spec S10. The state changes cannot be undone, so each admin check comes before the proof that moves the state on.
+
+#### S1: Status before Checkout (owner)
+
+    curl -s -S -X POST "https://${API_HOST}/v1/billing/status" -H "authorization: Bearer ${ACCESS_TOKEN}" -H 'content-type: application/json' -d "{\"communitySlug\":\"${COMMUNITY_SLUG}\"}" | jq -c 'keys'
+
+Expected: `["canManage","canView","current_period_end","grace_until","planKey","quantity","state","trial_end"]`.
+
+    curl -s -S -X POST "https://${API_HOST}/v1/billing/status" -H "authorization: Bearer ${ACCESS_TOKEN}" -H 'content-type: application/json' -d "{\"communitySlug\":\"${COMMUNITY_SLUG}\"}" | jq -c '{state,canView,canManage,planKey,quantity}'
+
+Expected: `{"state":"none","canView":true,"canManage":true,"planKey":null,"quantity":null}`.
+
+#### S2: Read-only guard (owner)
+
+Toggle with token:
+
+    curl -s -S -o /dev/null -w '%{http_code}\n' -X POST "https://${API_HOST}/v1/entitlements/toggle" -H "authorization: Bearer ${ACCESS_TOKEN}" -H 'content-type: application/json' -d "{\"communitySlug\":\"${COMMUNITY_SLUG}\",\"key\":\"module.engagement\",\"enabled\":false}"
+
+Expected: `402`.
+
+Toggle with no authorization header:
+
+    curl -s -S -o /dev/null -w '%{http_code}\n' -X POST "https://${API_HOST}/v1/entitlements/toggle" -H 'content-type: application/json' -d "{\"communitySlug\":\"${COMMUNITY_SLUG}\",\"key\":\"module.engagement\",\"enabled\":false}"
+
+Expected: `401`.
+
+Grants list:
+
+    curl -s -S -o /dev/null -w '%{http_code}\n' -X POST "https://${API_HOST}/v1/access/grants/list" -H "authorization: Bearer ${ACCESS_TOKEN}" -H 'content-type: application/json' -d "{\"communitySlug\":\"${COMMUNITY_SLUG}\"}"
+
+Expected: `200`.
+
+#### S10a: Admin at `none` (owner, browser, sign-in 2)
+
+Starting at `/`:
+
+- Banner reads "Choose a plan to start using Community Hub" with the link "Choose a plan" (yes/no).
+- Module Toggles and Users & Roles show "Read-only until billing is settled" with the link "General Settings" (yes/no).
+- General Settings → Billing lists Starter with "Includes a free trial" (yes/no).
+
+#### S3: Checkout (owner, browser, sign-in 2)
+
+Start the subscription from General Settings → Billing.
+
+- Checkout shows a 30-day trial and GST included (yes/no).
+- Pay with synthetic details:
+  - Email: `${PROOF_EMAIL}` (`proof-billing@example.com`)
+  - Name and Cardholder: `${PROOF_NAME}`
+  - Card: `4242 4242 4242 4242`
+  - Any future expiry, any CVC, and a synthetic postcode if asked.
+- The browser returns to the admin origin with only `?billing=done` in the query (yes/no).
+- "Payment received, your plan will appear shortly" shows once (yes/no).
+
+#### S4: Webhook link (assistant and owner)
+
+Within 5 minutes, the assistant checks webhook outcomes in the service logs:
+
+    aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${WINDOW_START_MS} --query 'events[].message' --output text | tr '\t' '\n' | jq -rR 'fromjson? | select(.message=="webhook") | "\(.stripeEventType) \(.outcome) \(.errorCode // "-")"' | sort | uniq -c
+
+Check that `checkout.session.completed` shows `processed` with no `errorCode`. The outcomes of `customer.subscription.created` and `invoice.paid` are recorded as observed (`processed` or `ignored`).
+
+Check key sets:
+
+    aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${WINDOW_START_MS} --query 'events[].message' --output text | tr '\t' '\n' | jq -cR 'fromjson? | select(.message=="webhook") | keys' | sort -u
+
+Expected: `checkout.session.completed` has exactly `["level","message","operation","organisationId","outcome","stripeEventId","stripeEventType"]`, and every other `webhook` line has the same set without `organisationId`.
+
+Owner checks Stripe dashboard: each delivery answered 2xx (after any retry) (yes/no).
+
+Owner checks status in shell:
+
+    curl -s -S -X POST "https://${API_HOST}/v1/billing/status" -H "authorization: Bearer ${ACCESS_TOKEN}" -H 'content-type: application/json' -d "{\"communitySlug\":\"${COMMUNITY_SLUG}\"}" | jq -c '{state,planKey,quantity}'
+
+Expected: `{"state":"ok","planKey":"starter","quantity":1}`.
+
+Confirm `trial_end` is about 30 days out (yes/no).
+
+#### S10b: Admin at `ok` (owner, browser, sign-in 2)
+
+Starting at `/`:
+
+- No billing banner (the trial ends in more than 7 days) (yes/no).
+- Write controls shown (yes/no).
+
+#### S5: Failed payment and recovery (owner, browser, sign-in 3)
+
+In the Customer Portal, the owner sets Stripe's test card that attaches but declines charges (`4000 0000 0000 0341`). In the Stripe dashboard, he ends the trial now.
+
+Assistant verifies webhook log events: `invoice.payment_failed` and `customer.subscription.updated` both `processed` with no `errorCode`.
+
+Owner checks status in shell:
+
+    curl -s -S -X POST "https://${API_HOST}/v1/billing/status" -H "authorization: Bearer ${ACCESS_TOKEN}" -H 'content-type: application/json' -d "{\"communitySlug\":\"${COMMUNITY_SLUG}\"}" | jq -r '.state'
+
+Expected: `retrying`.
+
+#### S10c: Admin at `retrying` (owner, browser, sign-in 3)
+
+Starting at `/`:
+
+- Banner reads "Payment failed, update your card" (yes/no).
+
+#### S5, continued: Pay open invoice (owner, browser, sign-in 3)
+
+In the Customer Portal, pay the open invoice with `4242 4242 4242 4242`.
+
+Assistant verifies webhook log events: `invoice.paid` `processed` with no `errorCode`.
+
+Owner checks status in shell:
+
+    curl -s -S -X POST "https://${API_HOST}/v1/billing/status" -H "authorization: Bearer ${ACCESS_TOKEN}" -H 'content-type: application/json' -d "{\"communitySlug\":\"${COMMUNITY_SLUG}\"}" | jq -r '.state'
+
+Expected: `ok`.
+
+If ending the trial does not charge at once, record "S5 not run, observed: …" and proceed to S6.
+
+#### S6: Writes resume (owner)
+
+    curl -s -S -o /dev/null -w '%{http_code}\n' -X POST "https://${API_HOST}/v1/entitlements/toggle" -H "authorization: Bearer ${ACCESS_TOKEN}" -H 'content-type: application/json' -d "{\"communitySlug\":\"${COMMUNITY_SLUG}\",\"key\":\"module.engagement\",\"enabled\":false}"
+
+Expected: `200`.
+
+Restore the setting:
+
+    curl -s -S -o /dev/null -w '%{http_code}\n' -X POST "https://${API_HOST}/v1/entitlements/toggle" -H "authorization: Bearer ${ACCESS_TOKEN}" -H 'content-type: application/json' -d "{\"communitySlug\":\"${COMMUNITY_SLUG}\",\"key\":\"module.engagement\",\"enabled\":true}"
+
+Expected: `200`.
+
+#### S7: Replay and forgery (owner and assistant)
+
+Owner: wait until the Stripe dashboard shows no pending or failed delivery for 2 minutes and two status reads in a row are equal:
+
+    curl -s -S -X POST "https://${API_HOST}/v1/billing/status" -H "authorization: Bearer ${ACCESS_TOKEN}" -H 'content-type: application/json' -d "{\"communitySlug\":\"${COMMUNITY_SLUG}\"}" | jq -c '{state,planKey,quantity,current_period_end}'
+
+Hold that value. Resend `checkout.session.completed` from the dashboard. Read status again:
+
+    curl -s -S -X POST "https://${API_HOST}/v1/billing/status" -H "authorization: Bearer ${ACCESS_TOKEN}" -H 'content-type: application/json' -d "{\"communitySlug\":\"${COMMUNITY_SLUG}\"}" | jq -c '{state,planKey,quantity,current_period_end}'
+
+Confirm status is equal before and after (yes/no).
+
+Assistant tests forged webhook call:
+
+    curl -s -S -o /dev/null -w '%{http_code}\n' -X POST "https://${WEBHOOKS_HOST}/v1/stripe/webhook" -H 'content-type: application/json' -H 'stripe-signature: t=1,v1=00' -d '{}'
+
+Expected: `400`.
+
+Assistant checks service request log:
+
+    aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${WINDOW_START_MS} --query 'events[].message' --output text | tr '\t' '\n' | jq -cR 'fromjson? | select(.message=="request" and .path=="/v1/stripe/webhook") | {path,status}'
+
+Expected: `path` `/v1/stripe/webhook` and `status` 400.
+
+Assistant tests webhook path on API hostname:
+
+    curl -s -S -o /dev/null -w '%{http_code}\n' -X POST "https://${API_HOST}/v1/stripe/webhook" -H 'content-type: application/json' -d '{}'
+
+Expected: `404`.
+
+Owner tests duplicate checkout:
+
+    curl -s -S -o /dev/null -w '%{http_code}\n' -X POST "https://${API_HOST}/v1/billing/checkout" -H "authorization: Bearer ${ACCESS_TOKEN}" -H 'content-type: application/json' -d "{\"communitySlug\":\"${COMMUNITY_SLUG}\",\"planKey\":\"starter\"}"
+
+Expected: `409`.
+
+#### S8: Portal (owner)
+
+In shell:
+
+    curl -s -S -X POST "https://${API_HOST}/v1/billing/portal" -H "authorization: Bearer ${ACCESS_TOKEN}" -H 'content-type: application/json' -d "{\"communitySlug\":\"${COMMUNITY_SLUG}\"}" | jq -r 'has("url")'
+
+Expected: `true`.
+
+In browser (sign-in 4): open the Customer Portal through "Manage billing" in General Settings. Check update card, invoices, cancel at period end, and no plan switching (yes/no). Do not cancel in Portal.
+
+#### S9: End of subscription (owner)
+
+In Stripe dashboard: cancel the subscription immediately.
+
+Within 5 minutes, assistant checks webhook log event: `customer.subscription.deleted` is `processed`.
+
+Owner checks status in shell:
+
+    curl -s -S -X POST "https://${API_HOST}/v1/billing/status" -H "authorization: Bearer ${ACCESS_TOKEN}" -H 'content-type: application/json' -d "{\"communitySlug\":\"${COMMUNITY_SLUG}\"}" | jq -r '.state'
+
+Expected: `read_only`.
+
+Owner checks write toggle:
+
+    curl -s -S -o /dev/null -w '%{http_code}\n' -X POST "https://${API_HOST}/v1/entitlements/toggle" -H "authorization: Bearer ${ACCESS_TOKEN}" -H 'content-type: application/json' -d "{\"communitySlug\":\"${COMMUNITY_SLUG}\",\"key\":\"module.engagement\",\"enabled\":false}"
+
+Expected: `402`.
+
+Owner checks checkout:
+
+    curl -s -S -X POST "https://${API_HOST}/v1/billing/checkout" -H "authorization: Bearer ${ACCESS_TOKEN}" -H 'content-type: application/json' -d "{\"communitySlug\":\"${COMMUNITY_SLUG}\",\"planKey\":\"starter\"}" | jq -r 'has("url")'
+
+Expected: `true`. Do not complete checkout.
+
+#### S10d: Admin at `read_only` (owner, browser, sign-in 4)
+
+Starting at `/`:
+
+- Banner reads "Subscription ended" with the link "Choose a plan" (yes/no).
+- "Read-only until billing is settled" shown in place of write controls (yes/no).
+
+### S11 and S12 (owner, one shell)
+
+The owner runs S11 and S12 in the same shell. Start with `setopt pipefail`, then set the proof window end timestamp:
+
+    setopt pipefail
+
+    WINDOW_END_MS=$(( $(date +%s) * 1000 ))
+
+Pull each log group once into memory. Directly after each pull, `print $?` must print `0`:
+
+    SERVICE_MSGS=$(aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${WINDOW_START_MS} --end-time ${WINDOW_END_MS} --query 'events[].message' --output text | tr '\t' '\n')
+
+    print $?
+
+    ACCESS_MSGS=$(aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${API_ACCESS_LOG_GROUP} --start-time ${WINDOW_START_MS} --end-time ${WINDOW_END_MS} --query 'events[].message' --output text | tr '\t' '\n')
+
+    print $?
+
+Expected: `0` for both pipeline exit statuses.
+
+#### S11: Restricted key check
+
+Verify 0 `stripe_call` failures:
+
+    print -r -- "${SERVICE_MSGS}" | jq -rR 'fromjson? | select(.message=="stripe") | .outcome' | sort | uniq -c
+
+Expected: 0 `failed`.
+
+Compute floor from `SERVICE_MSGS` with no held value:
+
+    STRIPE_CALLS_FLOOR=$(( $(print -r -- "${SERVICE_MSGS}" | jq -rR 'fromjson? | select(.message=="webhook" and .outcome=="processed" and (.stripeEventType | test("^(customer\\.subscription|invoice)\\."))) | .stripeEventId' | sort -u | grep -c .) + $(print -r -- "${SERVICE_MSGS}" | jq -rR 'fromjson? | select(.message=="request" and .status==200 and (.path=="/v1/billing/checkout" or .path=="/v1/billing/portal")) | .path' | grep -c .) ))
+
+    print "STRIPE_CALLS_FLOOR: ${STRIPE_CALLS_FLOOR}"
+
+    STRIPE_OK_COUNT=$(print -r -- "${SERVICE_MSGS}" | jq -rR 'fromjson? | select(.message=="stripe" and .outcome=="ok") | .outcome' | grep -c .)
+
+    print "STRIPE_OK_COUNT: ${STRIPE_OK_COUNT}"
+
+Expected: `STRIPE_OK_COUNT` is at least `${STRIPE_CALLS_FLOOR}`.
+
+#### S12: Positive controls
+
+    print -r -- "${SERVICE_MSGS}" | grep -c '"operation":"stripe_webhook"'
+
+Expected: at least the deliveries shown in the Stripe dashboard.
+
+    print -r -- "${SERVICE_MSGS}" | grep -c '"message":"billing_write_blocked"'
+
+Expected: equal to the number of 402 responses in S2 and S9 (e.g. 2).
+
+    print -r -- "${ACCESS_MSGS}" | grep -c '"routeKey"'
+
+Expected: at least the number of HTTP calls made across the proof window.
+
+Any control below its minimum is a stop.
+
+#### S12: Privacy counts
+
+Run counts against service logs and API access logs (one command per value; expected `0` each; record the printed integer):
+
+    print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${OWNER_EMAIL}"
+
+    print -r -- "${ACCESS_MSGS}" | grep -c -i -F -- "${OWNER_EMAIL}"
+
+    print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${PROOF_EMAIL}"
+
+    print -r -- "${ACCESS_MSGS}" | grep -c -i -F -- "${PROOF_EMAIL}"
+
+    print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${PROOF_NAME}"
+
+    print -r -- "${ACCESS_MSGS}" | grep -c -i -F -- "${PROOF_NAME}"
+
+    print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${ORG_SLUG}"
+
+    print -r -- "${ACCESS_MSGS}" | grep -c -i -F -- "${ORG_SLUG}"
+
+    print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${COMMUNITY_SLUG}"
+
+    print -r -- "${ACCESS_MSGS}" | grep -c -i -F -- "${COMMUNITY_SLUG}"
+
+Check OTP codes, access tokens, and refresh tokens:
+
+    for code in "${OTP_CODES[@]}"; do
+      print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${code}"
+      print -r -- "${ACCESS_MSGS}" | grep -c -i -F -- "${code}"
+    done
+
+    for token in "${ACCESS_TOKENS[@]}"; do
+      print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${token}"
+      print -r -- "${ACCESS_MSGS}" | grep -c -i -F -- "${token}"
+    done
+
+    for token in "${REFRESH_TOKENS[@]}"; do
+      print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${token}"
+      print -r -- "${ACCESS_MSGS}" | grep -c -i -F -- "${token}"
+    done
+
+Check literals:
+
+    print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "Bearer"
+
+    print -r -- "${ACCESS_MSGS}" | grep -c -i -F -- "Bearer"
+
+    print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- $'\x40'
+
+    print -r -- "${ACCESS_MSGS}" | grep -c -i -F -- $'\x40'
+
+    print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "stripe.com"
+
+    print -r -- "${ACCESS_MSGS}" | grep -c -i -F -- "stripe.com"
+
+    print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "4242424242"
+
+    print -r -- "${ACCESS_MSGS}" | grep -c -i -F -- "4242424242"
+
+    print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "4242 4242"
+
+    print -r -- "${ACCESS_MSGS}" | grep -c -i -F -- "4242 4242"
+
+Check prefixes:
+
+    for prefix in "cus_" "sub_" "cs_test_" "pi_" "in_" "txr_" "price_" "prod_" "pm_" "seti_" "rk_test_" "rk_live_" "sk_test_" "sk_live_" "whsec_"; do
+      print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${prefix}"
+      print -r -- "${ACCESS_MSGS}" | grep -c -i -F -- "${prefix}"
+    done
+
+Expected: `0` for every single check.
+
+Finish by unsetting all held values:
+
+    unset SERVICE_MSGS ACCESS_MSGS OWNER_EMAIL PROOF_EMAIL PROOF_NAME ORG_SLUG COMMUNITY_SLUG ACCESS_TOKEN REFRESH_TOKEN TOKENS OTP_CODES ACCESS_TOKENS REFRESH_TOKENS
+
+### Apply 2
+
+The branch moves to the re-park commit (`enable_database = false`, `desired_count = 0` in `infra/regions/au/env/staging.tfvars`).
+
+From `infra/regions/au`, remove `service_image` from the gitignored local var file:
+
+    sed -i '' '/^service_image/d' env/staging.local.tfvars
+
+    grep -c '^service_image' env/staging.local.tfvars
+
+Expected: `0`.
+
+Run before-each-apply checks against the Task 4 SHA on origin.
+
+Initialize Terraform with the staging backend:
+
+    terraform init -backend-config=backend/staging.hcl -lockfile=readonly
+
+Plan to the saved file outside the repository:
+
+    terraform plan -no-color -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -out=${PLAN_FILE} -input=false | grep --line-buffered '^Plan:'
+
+Expected plan summary: 0 to add, 0 to change, 18 to destroy. List addresses and actions:
+
+    terraform show -json ${PLAN_FILE} | jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | "\(.change.actions | join(" ")) \(.address)"'
+
+Expected addresses (each delete):
+
+- `module.rds[0].aws_cloudwatch_metric_alarm.cpu_credit_balance`
+- `module.rds[0].aws_cloudwatch_metric_alarm.database_connections`
+- `module.rds[0].aws_cloudwatch_metric_alarm.free_storage_space`
+- `module.rds[0].aws_cloudwatch_metric_alarm.freeable_memory`
+- `module.rds[0].aws_db_instance.this`
+- `module.rds[0].aws_db_parameter_group.this`
+- `module.rds[0].aws_db_subnet_group.this`
+- `module.rds[0].terraform_data.prod_protection`
+- `aws_ecs_task_definition.db_ops[0]`
+- `aws_iam_role.db_ops_execution[0]`
+- `aws_iam_role.db_ops_task[0]`
+- `aws_iam_role_policy.db_ops_execution[0]`
+- `module.ingress.aws_ecs_cluster.this[0]`
+- `module.ingress.aws_ecs_cluster_capacity_providers.this[0]`
+- `module.ingress.aws_ecs_service.this[0]`
+- `module.ingress.aws_ecs_task_definition.this[0]`
+- `module.ingress.aws_iam_role_policy.pull[0]`
+- `module.ingress.aws_vpc_security_group_ingress_rule.task_api[0]`
+
+Apply that file:
+
+    terraform apply -input=false ${PLAN_FILE} | grep --line-buffered -E ': (Creating|Still creating|Creation complete|Modifying|Still modifying|Modification complete|Destroying|Still destroying|Destruction complete)|Apply complete' | sed -l -E 's/ \[id=[^]]+\]//'
+
+Delete the plan file:
+
+    rm -f ${PLAN_FILE}
+
+Run a follow-up plan to confirm staging is cleanly parked:
+
+    terraform plan -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars
+
+Expected: `No changes. Your infrastructure matches the configuration.`
+
+Note: The Stripe webhook endpoint stays configured in the Stripe dashboard. Deliveries while parked fail at the gateway and are harmless, because nothing is stored.
+
+Record the UTC completion time under **Cost clock and evidence** below and calculate the total unpark duration.
+
+### Cost clock and evidence
+
+[Placeholders to be recorded in Task 3 and Task 5]
+
+#### Cost clock
+
+- Apply 1 SHA: `[placeholder]`
+- Apply 1 completed (cost anchor): `[placeholder]`
+- Apply 2 SHA: `[placeholder]`
+- Apply 2 completed: `[placeholder]`
+- Total unpark window: `[placeholder]`
+- Rate: USD 0.0468 per hour.
+
+#### Evidence
+
+[Placeholder for Task 3: transcribe counts, statuses, key sets, lengths, yes/no facts, SHAs, digests, and resource addresses only.]
+
+#### Findings from the Stripe billing proof run
+
+[Placeholder for Task 5: findings from the run in numbered list form.]
+
 ## Restore drill
 
 Quarterly, and only against staging. Restore the staging database to a new instance from point-in-time recovery. Record the time taken against the 4-hour target. Then delete the restored instance, because it bills by the hour. This drill does not restore production. Reading `SHOW max_connections` belongs to `first-running-task`, not to this drill.
