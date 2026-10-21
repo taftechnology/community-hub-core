@@ -2679,12 +2679,12 @@ Record the UTC completion time under **Cost clock and evidence** below and calcu
 
 ### Cost clock and evidence
 
-[Placeholders to be recorded in Task 3 and Task 5]
+Apply 2, the total unpark window, and the findings are recorded after the re-park.
 
 #### Cost clock
 
-- Apply 1 SHA: `[placeholder]`
-- Apply 1 completed (cost anchor): `[placeholder]`
+- Apply 1 SHA: `e5d49ab`
+- Apply 1 completed (cost anchor): `2026-10-21T05:51Z`
 - Apply 2 SHA: `[placeholder]`
 - Apply 2 completed: `[placeholder]`
 - Total unpark window: `[placeholder]`
@@ -2692,7 +2692,49 @@ Record the UTC completion time under **Cost clock and evidence** below and calcu
 
 #### Evidence
 
-[Placeholder for Task 3: transcribe counts, statuses, key sets, lengths, yes/no facts, SHAs, digests, and resource addresses only.]
+- **H0** (owner, 2026-10-21T05:16Z, parked): Stripe dashboard checks all yes; webhook secret put by silent prompt; `whsec_` and `rk_test_` prefix checks yes; AWSCURRENT newer than Apply 0; AWSPREVIOUS present (2 version stages); staging still parked.
+- **Pre-checks:**
+  - `DEPLOY_SHA` main `5709fa1`; publish and admin-publish success.
+  - Digest length 71; scan COMPLETE, 0 critical, 0 high.
+  - Both admin origins present, no placeholder.
+  - 11 migration tags.
+  - SES DKIM, verification and MAIL FROM SUCCESS; sandbox; 1 verified mailbox.
+  - Parked before: 0 RDS, 0 clusters.
+  - `service_image` count 1 (local gitignored file only). Read-only plan and the saved plan: 18 to add, 0 to change, 0 to destroy, all 18 addresses exact.
+  - Apply 1 at `e5d49ab`: 18 added, completed 2026-10-21T05:51Z.
+- **One-offs:**
+  - `db-bootstrap`: exit 0, one integer.
+  - `db-migrate`: exit 0, 11 applied, done applied=11 total=11.
+  - `provision-owner`: exit 0, created; provision secret deleted, then not found.
+  - `billing-admin settings`: exit 0, printed a tax rate id (value not recorded).
+  - `billing-admin plan starter`: exit 0, plan_set.
+  - `seed-test-catalogue`: run twice, exit 0, seeded both times. Dashboard: 7 products with lookup_key metadata, each lookup key on exactly one active price.
+  - `mode self_serve`: exit 0, none.
+- **Running-task check:** services-stable; digest matches; all four env names present (ADMIN_ORIGIN, BILLING_SECRET_ARN, MAIL_FROM_ADDRESS, SES_CONFIGURATION_SET); the task started after the H0 secret put.
+- **S1:** the eight keys; none; can view and manage.
+- **S2:** 402 / 401 / 200.
+- **S10a:** yes, yes, yes.
+- **S3:** 30-day trial with GST included; "Payment received…" shown once.
+- **S4:** checkout.session.completed processed, no error code; customer.subscription.created and invoice.paid ignored. Key sets exact. Every delivery 2xx. Status ok, starter, quantity 1. Trial ends in 29 full days (about 30).
+- **S10b:** yes, yes.
+- **S5 (run):** invoice.payment_failed and customer.subscription.updated processed, no error code; state retrying.
+- **S10c:** yes.
+- **S5, continued:** Open invoice paid in the Portal; invoice.paid processed; state ok.
+- **S6:** 200 / 200.
+- **S7:** status steady and equal after the replay (yes); forged signature 400, with exactly one 400 request line; webhook path on the api hostname 404; duplicate Checkout 409.
+- **S8:** Portal link true; Portal allows update card, invoices, cancel at period end only, no plan switching (yes x4).
+- **S9:** customer.subscription.deleted processed; read_only, 402, Checkout still offered (true).
+- **S10d:** yes, yes.
+- **S11:** 19 Stripe calls, all ok, 0 failed; floor 12.
+- **S12:** log pulls 0 failed / 0 empty (service and access). Positive controls: 10 webhook lines, 2 billing_write_blocked (= the S2 and S9 402s), 110 access lines. Every privacy count 0/0 (service/access): owner email, proof email, proof name, both slugs, 4 codes, 5 access tokens and 5 refresh tokens, Bearer, at-sign, stripe.com, card numbers, and all 15 prefixes.
+- **Sign-in start count:** 6 starts used (cap raised from 5 to 6 for the run by owner decision, keeping at most 5 per rolling 60 minutes).
+- **Spot interruptions:** none.
+- **S5 status:** recorded as run.
+- **Deviations:**
+  1. Sign-in start cap raised from 5 to 6 for the run by owner decision, keeping at most 5 per rolling 60 minutes; 6 starts used. Two browser starts were wasted: a mistyped address (SES MessageRejected, 503) and a malformed code (400, not 8 digits).
+  2. S5: "End trial now" is not in the dashboard UI. The trial was ended in the Stripe Workbench shell with `--trial-end=now --payment-behavior=allow_incomplete`. Without that flag the update fails on the decline and is rolled back.
+  3. S5 recovery: the Portal session for paying the open invoice was opened from the proof shell through `POST /v1/billing/portal` (200), because the admin session had expired.
+  4. S3: Checkout autofilled the owner's real name, email and a postcode instead of the synthetic P5 values. None of them is in any log (at-sign count 0/0). The test-mode customer will be edited or deleted in test mode after the run.
 
 #### Findings from the Stripe billing proof run
 
