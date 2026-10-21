@@ -1845,66 +1845,67 @@ Run pre-checks (assistant, read-only; any failure is a stop before spend):
 
 1. Publish and admin-publish conclusions for that commit (record conclusion only):
 
-   RUN_ID=$(gh run list --commit ${DEPLOY_SHA} --workflow ci.yml --json databaseId --jq '.[0].databaseId')
+       RUN_ID=$(gh run list --commit ${DEPLOY_SHA} --workflow ci.yml --json databaseId --jq '.[0].databaseId')
 
-   gh run view ${RUN_ID} --json jobs --jq '.jobs[] | select(.name=="publish" or .name=="admin-publish") | {name,conclusion}'
+       gh run view ${RUN_ID} --json jobs --jq '.jobs[] | select(.name=="publish" or .name=="admin-publish") | {name,conclusion}'
 
-Expected: both `success`.
+   Expected: both `success`.
 
 2. Image digest for that tag (record digest length only; never the registry host):
 
-   DIGEST=$(aws ecr describe-images --profile ${AWS_PROFILE} --region ap-southeast-2 --repository-name ch-staging/service --image-ids imageTag=${DEPLOY_SHA} --query 'imageDetails[0].imageDigest' --output text)
+       DIGEST=$(aws ecr describe-images --profile ${AWS_PROFILE} --region ap-southeast-2 --repository-name ch-staging/service --image-ids imageTag=${DEPLOY_SHA} --query 'imageDetails[0].imageDigest' --output text)
 
-   print ${#DIGEST}
+       print ${#DIGEST}
 
-Expected: `71`.
+   Expected: `71`.
 
 3. Scan status and CRITICAL count for that tag:
 
-   aws ecr describe-image-scan-findings --profile ${AWS_PROFILE} --region ap-southeast-2 --repository-name ch-staging/service --image-id imageTag=${DEPLOY_SHA} --query '{status:imageScanStatus.status,critical:imageScanFindings.findingSeverityCounts.CRITICAL || `0`}' --output json
+       aws ecr describe-image-scan-findings --profile ${AWS_PROFILE} --region ap-southeast-2 --repository-name ch-staging/service --image-id imageTag=${DEPLOY_SHA} --query '{status:imageScanStatus.status,critical:imageScanFindings.findingSeverityCounts.CRITICAL || `0`}' --output json
 
-Expected: `COMPLETE` and `0` critical findings.
+   Expected: `COMPLETE` and `0` critical findings.
 
 4. Confirm repository variables `ADMIN_API_ORIGIN` and `ADMIN_AUTH_ORIGIN` are present. Record "both origins present" and "no placeholder"; never URLs.
 
 5. Migration journal tags at `${DEPLOY_SHA}` (expect the eleven tags `0000_schemas` to `0010_silly_lila_cheney` in journal order):
 
-   git show ${DEPLOY_SHA}:packages/db/drizzle/meta/_journal.json | jq -r '.entries[].tag'
+       git show ${DEPLOY_SHA}:packages/db/drizzle/meta/_journal.json | jq -r '.entries[].tag'
 
 6. The three SES checks: run as in **SES sign-in proof → Prerequisites** (domain identity and DKIM status `SUCCESS`, account production access `False`, and owner address verification `SUCCESS`).
 
 7. Confirm staging is still parked (read-only counts):
 
-   aws rds describe-db-instances --profile ${AWS_PROFILE} --region ap-southeast-2 --query 'length(DBInstances)' --output text
+       aws rds describe-db-instances --profile ${AWS_PROFILE} --region ap-southeast-2 --query 'length(DBInstances)' --output text
 
-Expected: `0`.
+   Expected: `0`.
 
-    aws ecs list-clusters --profile ${AWS_PROFILE} --region ap-southeast-2 --query 'length(clusterArns)' --output text
+       aws ecs list-clusters --profile ${AWS_PROFILE} --region ap-southeast-2 --query 'length(clusterArns)' --output text
 
-Expected: `0`.
+   Expected: `0`.
 
 8. Write `service_image` line into `staging.local.tfvars`:
    From `infra/regions/au`, the owner writes the `service_image` line into `env/staging.local.tfvars` using the block in **SES sign-in proof → Apply 1**, and confirms the count check prints 1:
 
-   grep -c '^service_image' env/staging.local.tfvars
+       grep -c '^service_image' env/staging.local.tfvars
 
-Expected: `1`. Without that line, about 10 of the 18 resources are not planned (`infra/regions/au/main.tf:11`, and the `service_image == null` counts in `infra/modules/aws-ingress/main.tf`).
+   Expected: `1`. Without that line, about 10 of the 18 resources are not planned (`infra/regions/au/main.tf:11`, and the `service_image == null` counts in `infra/modules/aws-ingress/main.tf`).
 
 9. Read-only plan without the lock, compared with the 18 addresses:
+   It runs from `infra/regions/au` on the pushed Task 2 (unpark) SHA, after the owner has written the `service_image` line, and it is the plan check the spec assigns to the assistant.
 
-   terraform init -backend-config=backend/staging.hcl -lockfile=readonly
+       terraform init -backend-config=backend/staging.hcl -lockfile=readonly
 
-   terraform plan -no-color -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -out=${PLAN_FILE} -input=false | grep --line-buffered '^Plan:'
+       terraform plan -lock=false -no-color -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -out=${PLAN_FILE} -input=false | grep --line-buffered '^Plan:'
 
-Expected: `Plan: 18 to add, 0 to change, 0 to destroy.`
+   Expected: `Plan: 18 to add, 0 to change, 0 to destroy.`
 
-List addresses from the plan:
+   List addresses from the plan:
 
-    terraform show -json ${PLAN_FILE} | jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | "\(.change.actions | join(" ")) \(.address)"'
+       terraform show -json ${PLAN_FILE} | jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | "\(.change.actions | join(" ")) \(.address)"'
 
-Confirm all 18 addresses match the expected list in **Apply 1** below.
+   Confirm all 18 addresses match the expected list in **Apply 1** below.
 
-    rm -f ${PLAN_FILE}
+       rm -f ${PLAN_FILE}
 
 **Stop if** any one of these pre-checks fails.
 
@@ -2019,9 +2020,9 @@ Expected: exit 0, stdout `created`, stderr empty.
       --secret-id ${PROVISION_SECRET_NAME} --force-delete-without-recovery >/dev/null
 
     aws secretsmanager describe-secret --profile ${AWS_PROFILE} \
-      --secret-id ${PROVISION_SECRET_NAME}
+      --secret-id ${PROVISION_SECRET_NAME} --query 'Name' --output text >/dev/null
 
-Expected: `describe-secret` fails with `ResourceNotFoundException`.
+Expected: `describe-secret` fails with `ResourceNotFoundException`. Repeat until it fails with ResourceNotFoundException (deletion is asynchronous, SES Finding 3).
 
     unset PROVISION_SECRET_ARN
 
@@ -2241,15 +2242,19 @@ Refresh block (run before each shell proof group):
 
     TOKENS=$(curl -s -S -X POST "https://${AUTH_HOST}/v1/auth/session/refresh" -H 'content-type: application/json' -d "{\"refreshToken\":\"${REFRESH_TOKEN}\"}")
 
-    ACCESS_TOKEN=$(print -r -- "${TOKENS}" | jq -r '.accessToken')
+    NEW_ACCESS=$(print -r -- "${TOKENS}" | jq -r '.accessToken')
 
-    REFRESH_TOKEN=$(print -r -- "${TOKENS}" | jq -r '.refreshToken')
+    NEW_REFRESH=$(print -r -- "${TOKENS}" | jq -r '.refreshToken')
+
+    [[ -n "${NEW_ACCESS}" && "${NEW_ACCESS}" != "null" ]] || print "Stop: refresh failed"
+
+    ACCESS_TOKEN="${NEW_ACCESS}"
+
+    REFRESH_TOKEN="${NEW_REFRESH}"
 
     ACCESS_TOKENS+=("${ACCESS_TOKEN}")
 
     REFRESH_TOKENS+=("${REFRESH_TOKEN}")
-
-    [[ -n "${ACCESS_TOKEN}" && "${ACCESS_TOKEN}" != "null" ]] || print "Stop: refresh failed"
 
 A refresh that does not return an access token is a stop.
 
@@ -2258,6 +2263,8 @@ A refresh that does not return an access token is a stop.
 Set `WINDOW_START_MS` before S1:
 
     WINDOW_START_MS=$(( $(date +%s) * 1000 ))
+
+The owner prints `${WINDOW_START_MS}` (an epoch integer, not personal data) and gives it to the assistant, who runs `read -r "WINDOW_START_MS?Window start (epoch ms): "`.
 
 Each HTTP call prints only the status using `-o /dev/null -w '%{http_code}\n'`, or pipes the body to `jq` and prints keys or one field.
 
@@ -2311,7 +2318,7 @@ Start the subscription from General Settings → Billing.
   - Name and Cardholder: `${PROOF_NAME}`
   - Card: `4242 4242 4242 4242`
   - Any future expiry, any CVC, and a synthetic postcode if asked.
-- The browser returns to the admin origin with only `?billing=done` in the query (yes/no).
+- The browser returns to the admin. The query is fixed in code to `?billing=done` (`apps/api/src/billing-routes.ts:254`), and the admin strips it on load, so the message below is the evidence.
 - "Payment received, your plan will appear shortly" shows once (yes/no).
 
 #### S4: Webhook link (assistant and owner)
@@ -2324,7 +2331,7 @@ Check that `checkout.session.completed` shows `processed` with no `errorCode`. T
 
 Check key sets:
 
-    aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${WINDOW_START_MS} --query 'events[].message' --output text | tr '\t' '\n' | jq -cR 'fromjson? | select(.message=="webhook") | keys' | sort -u
+    aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${WINDOW_START_MS} --query 'events[].message' --output text | tr '\t' '\n' | jq -rR 'fromjson? | select(.message=="webhook") | "\(.stripeEventType) \(keys | tostring)"' | sort -u
 
 Expected: `checkout.session.completed` has exactly `["level","message","operation","organisationId","outcome","stripeEventId","stripeEventType"]`, and every other `webhook` line has the same set without `organisationId`.
 
@@ -2349,7 +2356,7 @@ Starting at `/`:
 
 In the Customer Portal, the owner sets Stripe's test card that attaches but declines charges (`4000 0000 0000 0341`). In the Stripe dashboard, he ends the trial now.
 
-Assistant verifies webhook log events: `invoice.payment_failed` and `customer.subscription.updated` both `processed` with no `errorCode`.
+Assistant reruns the S4 outcome command: `invoice.payment_failed` and `customer.subscription.updated` both `processed` with no `errorCode`.
 
 Owner checks status in shell:
 
@@ -2367,7 +2374,7 @@ Starting at `/`:
 
 In the Customer Portal, pay the open invoice with `4242 4242 4242 4242`.
 
-Assistant verifies webhook log events: `invoice.paid` `processed` with no `errorCode`.
+Assistant reruns the S4 outcome command: `invoice.paid` `processed` with no `errorCode`.
 
 Owner checks status in shell:
 
@@ -2409,9 +2416,9 @@ Expected: `400`.
 
 Assistant checks service request log:
 
-    aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${WINDOW_START_MS} --query 'events[].message' --output text | tr '\t' '\n' | jq -cR 'fromjson? | select(.message=="request" and .path=="/v1/stripe/webhook") | {path,status}'
+    aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${WINDOW_START_MS} --query 'events[].message' --output text | tr '\t' '\n' | jq -cR 'fromjson? | select(.message=="request" and .path=="/v1/stripe/webhook" and .status==400) | {path,status}'
 
-Expected: `path` `/v1/stripe/webhook` and `status` 400.
+Expected: exactly one line, `{"path":"/v1/stripe/webhook","status":400}`.
 
 Assistant tests webhook path on API hostname:
 
@@ -2439,7 +2446,7 @@ In browser (sign-in 4): open the Customer Portal through "Manage billing" in Gen
 
 In Stripe dashboard: cancel the subscription immediately.
 
-Within 5 minutes, assistant checks webhook log event: `customer.subscription.deleted` is `processed`.
+Within 5 minutes, assistant reruns the S4 outcome command: `customer.subscription.deleted` is `processed`.
 
 Owner checks status in shell:
 
@@ -2496,7 +2503,7 @@ Expected: 0 `failed`.
 
 Compute floor from `SERVICE_MSGS` with no held value:
 
-    STRIPE_CALLS_FLOOR=$(( $(print -r -- "${SERVICE_MSGS}" | jq -rR 'fromjson? | select(.message=="webhook" and .outcome=="processed" and (.stripeEventType | test("^(customer\\.subscription|invoice)\\."))) | .stripeEventId' | sort -u | grep -c .) + $(print -r -- "${SERVICE_MSGS}" | jq -rR 'fromjson? | select(.message=="request" and .status==200 and (.path=="/v1/billing/checkout" or .path=="/v1/billing/portal")) | .path' | grep -c .) ))
+    STRIPE_CALLS_FLOOR=$(( $(print -r -- "${SERVICE_MSGS}" | jq -rR 'fromjson? | select(.message=="webhook" and .outcome=="processed" and (.stripeEventType | test("^(customer\\.subscription|invoice)\\."))) | .stripeEventId' | sort -u | grep -c .) + $(print -r -- "${SERVICE_MSGS}" | jq -rR 'fromjson? | select(.message=="request" and .method=="POST" and .status==200 and (.path=="/v1/billing/checkout" or .path=="/v1/billing/portal")) | .path' | grep -c .) ))
 
     print "STRIPE_CALLS_FLOOR: ${STRIPE_CALLS_FLOOR}"
 
@@ -2549,16 +2556,19 @@ Run counts against service logs and API access logs (one command per value; expe
 Check OTP codes, access tokens, and refresh tokens:
 
     for code in "${OTP_CODES[@]}"; do
+      [[ -n "${code}" ]] || continue
       print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${code}"
       print -r -- "${ACCESS_MSGS}" | grep -c -i -F -- "${code}"
     done
 
     for token in "${ACCESS_TOKENS[@]}"; do
+      [[ -n "${token}" ]] || continue
       print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${token}"
       print -r -- "${ACCESS_MSGS}" | grep -c -i -F -- "${token}"
     done
 
     for token in "${REFRESH_TOKENS[@]}"; do
+      [[ -n "${token}" ]] || continue
       print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${token}"
       print -r -- "${ACCESS_MSGS}" | grep -c -i -F -- "${token}"
     done
@@ -2596,7 +2606,7 @@ Expected: `0` for every single check.
 
 Finish by unsetting all held values:
 
-    unset SERVICE_MSGS ACCESS_MSGS OWNER_EMAIL PROOF_EMAIL PROOF_NAME ORG_SLUG COMMUNITY_SLUG ACCESS_TOKEN REFRESH_TOKEN TOKENS OTP_CODES ACCESS_TOKENS REFRESH_TOKENS
+    unset SERVICE_MSGS ACCESS_MSGS OWNER_EMAIL PROOF_EMAIL PROOF_NAME ORG_SLUG COMMUNITY_SLUG ACCESS_TOKEN REFRESH_TOKEN TOKENS OTP_CODE OTP_CODES ACCESS_TOKENS REFRESH_TOKENS START_CALLS WINDOW_START_MS WINDOW_END_MS STRIPE_CALLS_FLOOR STRIPE_OK_COUNT TASK_ARN
 
 ### Apply 2
 
@@ -2658,6 +2668,10 @@ Run a follow-up plan to confirm staging is cleanly parked:
     terraform plan -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars
 
 Expected: `No changes. Your infrastructure matches the configuration.`
+
+Finish by unsetting remaining deployment variables:
+
+    unset DEPLOY_SHA DIGEST RUN_ID
 
 Note: The Stripe webhook endpoint stays configured in the Stripe dashboard. Deliveries while parked fail at the gateway and are harmless, because nothing is stored.
 
