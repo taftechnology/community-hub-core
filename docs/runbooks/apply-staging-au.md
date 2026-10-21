@@ -2679,15 +2679,13 @@ Record the UTC completion time under **Cost clock and evidence** below and calcu
 
 ### Cost clock and evidence
 
-Apply 2, the total unpark window, and the findings are recorded after the re-park.
-
 #### Cost clock
 
 - Apply 1 SHA: `e5d49ab`
 - Apply 1 completed (cost anchor): `2026-10-21T05:51Z`
-- Apply 2 SHA: `[placeholder]`
-- Apply 2 completed: `[placeholder]`
-- Total unpark window: `[placeholder]`
+- Apply 2 SHA: `09a9f32`
+- Apply 2 completed: `2026-10-21T16:35Z`
+- Total unpark window: `10 h 44 min, about USD 0.50 (inside the 24-hour target)`
 - Rate: USD 0.0468 per hour.
 
 #### Evidence
@@ -2734,11 +2732,23 @@ Apply 2, the total unpark window, and the findings are recorded after the re-par
   1. Sign-in start cap raised from 5 to 6 for the run by owner decision, keeping at most 5 per rolling 60 minutes; 6 starts used. Two browser starts were wasted: a mistyped address (SES MessageRejected, 503) and a malformed code (400, not 8 digits).
   2. S5: "End trial now" is not in the dashboard UI. The trial was ended in the Stripe Workbench shell with `--trial-end=now --payment-behavior=allow_incomplete`. Without that flag the update fails on the decline and is rolled back.
   3. S5 recovery: the Portal session for paying the open invoice was opened from the proof shell through `POST /v1/billing/portal` (200), because the admin session had expired.
-  4. S3: Checkout autofilled the owner's real name, email and a postcode instead of the synthetic P5 values. None of them is in any log (at-sign count 0/0). The test-mode customer will be edited or deleted in test mode after the run.
+  4. S3: Checkout autofilled the owner's real name, email and a postcode instead of the synthetic P5 values. None of them is in any log (at-sign count 0/0). The test-mode customer will be edited or deleted in test mode after the run. The test-mode customer was deleted in the Stripe dashboard after the run.
+- **Apply 2:**
+  - Apply 2 at `09a9f32`. `service_image` count 0 in the local file.
+  - Saved plan: 0 to add, 0 to change, 18 to destroy; the same 18 addresses as Apply 1, all deletes.
+  - Applied: 0 added, 0 changed, 18 destroyed; completed 2026-10-21T16:35Z. Plan file deleted.
+  - Follow-up plan: no changes.
+  - Read-only after: 0 RDS instances, 0 ECS clusters. The billing secret and the SES domain identity remain.
 
 #### Findings from the Stripe billing proof run
 
-[Placeholder for Task 5: findings from the run in numbered list form.]
+1. Admin: `sign-in.tsx` treats the sign-in start as failed unless the reply is 200, but the API answers 204, so "Send code" always looks failed although the code is sent.
+2. Admin: after sign-in, billing status is not fetched when a community is already remembered in sessionStorage. The page shows "Billing status unavailable" with no Manage billing button until a reload.
+3. The editor's chat input sometimes sends a command to a different shell than the proof shell. Type commands that use held values directly into the proof shell.
+4. "End trial now" is not in the Stripe dashboard UI. End the trial from the Stripe Workbench shell with `--trial-end=now --payment-behavior=allow_incomplete`; without that flag the update fails on the decline card and is rolled back.
+5. Browser autofill in Checkout replaced the synthetic P5 details with the owner's own. Check every Checkout field before paying, or use a browser profile without autofill. The test-mode customer was deleted after the run.
+6. Two browser sign-in starts were spent on a mistyped address (SES MessageRejected, answered 503) and a malformed code (400). The cap was raised to 6 starts for the run by owner decision, keeping at most 5 per rolling hour.
+7. `modules/core/people/domain/boundaries.test.ts` and `modules/core/access/domain/boundaries.test.ts` read every file in `infra/regions/au/env/`, including the gitignored `staging.local.tfvars`, so they fail in a checkout whose local file holds `service_image`. This predates the chunk.
 
 ## Restore drill
 
