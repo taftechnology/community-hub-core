@@ -2197,7 +2197,9 @@ Sign-in budget:
 | 4       | browser | S8 (Portal through "Manage billing") → S9 → S10d |
 | 5       | either  | Spare, used only for a session that expired      |
 
-If a browser session expires mid-group, the spare is used. A sixth sign-in is a stop.
+If a browser session expires mid-group, the spare is used. A sixth sign-in is a stop. Cap stays at 5; a raise needs a written owner decision recorded as a deviation (as in this run).
+
+Warning: a mistyped address (SES sandbox rejection, 503) or a malformed code (anything but exactly 8 digits, 400) still uses a start from the cap. Confirm the address before "Send code". Enter only the 8 digits. The admin's "Send code" can look failed while the email still arrives (Finding 1), so do not press it again. Treat the spare as last resort.
 
 Sign-in 1 (shell):
 
@@ -2302,6 +2304,8 @@ Expected: `200`.
 
 #### S10a: Admin at `none` (owner, browser, sign-in 2)
 
+If the admin shows "Billing status unavailable" or no "Manage billing" button after sign-in, reload the page once (the token is kept for the tab; Finding 2). The same reload applies to later admin checks (S10b–S10d and S8).
+
 Starting at `/`:
 
 - Banner reads "Choose a plan to start using Community Hub" with the link "Choose a plan" (yes/no).
@@ -2314,6 +2318,7 @@ Start the subscription from General Settings → Billing.
 
 - Checkout shows a 30-day trial and GST included (yes/no).
 - Pay with synthetic details:
+  - Before paying, type every Checkout field by hand with the synthetic values below. Decline any browser or Stripe Link autofill. Check no real name, email or postcode is present; if one appears, clear it before paying (Finding 5).
   - Email: `${PROOF_EMAIL}` (`proof-billing@example.com`)
   - Name and Cardholder: `${PROOF_NAME}`
   - Card: `4242 4242 4242 4242`
@@ -2354,7 +2359,11 @@ Starting at `/`:
 
 #### S5: Failed payment and recovery (owner, browser, sign-in 3)
 
-In the Customer Portal, the owner sets Stripe's test card that attaches but declines charges (`4000 0000 0000 0341`). In the Stripe dashboard, he ends the trial now.
+In the Customer Portal, the owner sets Stripe's test card that attaches but declines charges (`4000 0000 0000 0341`). The dashboard may not offer "End trial now"; end the trial in the Stripe dashboard's Workbench shell (Developers -> Workbench -> Shell) with
+
+    stripe subscriptions update <subscription id from the dashboard> --trial-end=now --payment-behavior=allow_incomplete
+
+Without `--payment-behavior=allow_incomplete` the update fails on the decline and is rolled back. The subscription must come back with status `past_due`. Never paste the CLI output or ids into evidence (Finding 4).
 
 Assistant reruns the S4 outcome command: `invoice.payment_failed` and `customer.subscription.updated` both `processed` with no `errorCode`.
 
@@ -2373,6 +2382,12 @@ Starting at `/`:
 #### S5, continued: Pay open invoice (owner, browser, sign-in 3)
 
 In the Customer Portal, pay the open invoice with `4242 4242 4242 4242`.
+
+If the admin session has expired when the Portal is needed, open the Portal from the proof shell instead, without printing the link (Deviation 3):
+
+    PORTAL_JSON=$(curl -s -S -w '\n%{http_code}' -X POST "https://${API_HOST}/v1/billing/portal" -H "authorization: Bearer ${ACCESS_TOKEN}" -H 'content-type: application/json' -d "{\"communitySlug\":\"${COMMUNITY_SLUG}\"}") && print "portal: ${PORTAL_JSON##*$'\n'}" && open "$(print -r -- "${PORTAL_JSON%$'\n'*}" | jq -r '.url')"; unset PORTAL_JSON
+
+Expected: `portal: 200`.
 
 Assistant reruns the S4 outcome command: `invoice.paid` `processed` with no `errorCode`.
 
