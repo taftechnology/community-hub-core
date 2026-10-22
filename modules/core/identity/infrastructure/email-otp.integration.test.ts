@@ -9,7 +9,7 @@ import { createPlaintextDirectSql, createPlaintextIdentitySql } from "@community
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { OtpMailUnavailable, type OtpMail } from "../domain/otp-mail.js";
-import { startEmailOtp, verifyEmailOtp } from "../public/index.js";
+import { startEmailOtp, verifyEmailOtp, type OtpPurpose } from "../public/index.js";
 
 const KEY_ARN = `arn:aws:kms:ap-southeast-2:123456789012:key/mrk-${"ab".repeat(16)}`;
 const CONTEXT = { key_kind: "identity", region: "au", key_version: "1" } as const;
@@ -439,6 +439,170 @@ describe("email one-time code", () => {
         now,
       });
       expect({ ...sql.options.parsers }).toEqual(parsers);
+    });
+  });
+
+  it("defaults purpose to sign_in when omitted", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const mail = new MemoryMail();
+    const kms = createLocalKmsPort();
+    await withSql(async (sql) => {
+      await startEmailOtp(sql, kms, KEY_ARN, mail, { email: "ada@example.com", now });
+      const rows = await sql<{ purpose: string }[]>`
+        select purpose from identity.otp_challenges
+      `;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.purpose).toBe("sign_in");
+    });
+  });
+
+  it("a sign-in start leaves an enrolment challenge open", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const mail = new MemoryMail();
+    const kms = createLocalKmsPort();
+    const enrolmentPurpose: OtpPurpose = "operator_enrolment";
+    const signInPurpose: OtpPurpose = "sign_in";
+    await withSql(async (sql) => {
+      // 1. Start an operator_enrolment challenge
+      await startEmailOtp(sql, kms, KEY_ARN, mail, {
+        email: "ada@example.com",
+        now,
+        purpose: enrolmentPurpose,
+      });
+      expect(mail.last?.code).toMatch(/^\d{8}$/);
+
+      const enrolmentRows = await sql<{ id: string; purpose: string; consumed_at: Date | null }[]>`
+        select id, purpose, consumed_at from identity.otp_challenges where purpose = 'operator_enrolment'
+      `;
+      expect(enrolmentRows).toHaveLength(1);
+      expect(enrolmentRows[0]?.consumed_at).toBeNull();
+      expect(enrolmentRows[0]?.purpose).toBe("operator_enrolment");
+
+      // 2. Start a sign_in challenge for the same address
+      await startEmailOtp(sql, kms, KEY_ARN, mail, {
+        email: "ada@example.com",
+        now,
+        purpose: signInPurpose,
+      });
+      expect(mail.last?.code).toMatch(/^\d{8}$/);
+
+      // The enrolment challenge must still be open
+      const afterSignInStart = await sql<
+        { id: string; purpose: string; consumed_at: Date | null }[]
+      >`
+        select id, purpose, consumed_at from identity.otp_challenges order by purpose
+      `;
+      expect(afterSignInStart).toHaveLength(2);
+      const enrolmentAfter = afterSignInStart.find((r) => r.purpose === "operator_enrolment");
+      const signInAfter = afterSignInStart.find((r) => r.purpose === "sign_in");
+      expect(enrolmentAfter?.consumed_at).toBeNull();
+      expect(signInAfter?.consumed_at).toBeNull();
+
+      // 3. Second way: start another operator_enrolment challenge
+      // It supersedes the old operator_enrolment challenge, but leaves the sign_in challenge open
+      await startEmailOtp(sql, kms, KEY_ARN, mail, {
+        email: "ada@example.com",
+        now,
+        purpose: "operator_enrolment",
+      });
+      const openAfterSecondEnrolment = await sql<{ purpose: string; consumed_at: Date | null }[]>`
+        select purpose, consumed_at from identity.otp_challenges where consumed_at is null
+      `;
+      expect(openAfterSecondEnrolment).toHaveLength(2);
+      expect(openAfterSecondEnrolment.map((r) => r.purpose).sort()).toEqual([
+        "operator_enrolment",
+        "sign_in",
+      ]);
+
+      // 4. Start another sign_in challenge
+      // It supersedes the old sign_in challenge, but leaves the operator_enrolment challenge open
+      await startEmailOtp(sql, kms, KEY_ARN, mail, {
+        email: "ada@example.com",
+        now,
+        purpose: "sign_in",
+      });
+      const openAfterSecondSignIn = await sql<{ purpose: string; consumed_at: Date | null }[]>`
+        select purpose, consumed_at from identity.otp_challenges where consumed_at is null
+      `;
+      expect(openAfterSecondSignIn).toHaveLength(2);
+      expect(openAfterSecondSignIn.map((r) => r.purpose).sort()).toEqual([
+        "operator_enrolment",
+        "sign_in",
+      ]);
+    });
+  });
+
+  it("five enrolment starts do not use the sign-in cap", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const mail = new MemoryMail();
+    const kms = createLocalKmsPort();
+    await withSql(async (sql) => {
+      // 5 enrolment starts
+      for (let i = 0; i < 5; i += 1) {
+        await startEmailOtp(sql, kms, KEY_ARN, mail, {
+          email: "ada@example.com",
+          now,
+          purpose: "operator_enrolment",
+        });
+      }
+      expect(mail.sends).toBe(5);
+
+      // A 6th enrolment start hits the cap for operator_enrolment
+      await startEmailOtp(sql, kms, KEY_ARN, mail, {
+        email: "ada@example.com",
+        now,
+        purpose: "operator_enrolment",
+      });
+      expect(mail.sends).toBe(5);
+
+      // But a sign_in start for the same address does not use the enrolment cap
+      await startEmailOtp(sql, kms, KEY_ARN, mail, {
+        email: "ada@example.com",
+        now,
+        purpose: "sign_in",
+      });
+      expect(mail.sends).toBe(6);
+
+      // And sign_in can be verified
+      const verified = await verifyEmailOtp(sql, kms, KEY_ARN, {
+        email: "ada@example.com",
+        code: mail.last?.code ?? "",
+        now,
+      });
+      expect(verified).not.toBeNull();
+    });
+  });
+
+  it("sign-in verify ignores enrolment challenges", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const mail = new MemoryMail();
+    const kms = createLocalKmsPort();
+    await withSql(async (sql) => {
+      await startEmailOtp(sql, kms, KEY_ARN, mail, {
+        email: "ada@example.com",
+        now,
+        purpose: "operator_enrolment",
+      });
+      const enrolmentCode = mail.last?.code ?? "";
+      expect(enrolmentCode).toMatch(/^\d{8}$/);
+
+      // verifyEmailOtp is only for sign_in, so it must ignore the operator_enrolment challenge
+      const verified = await verifyEmailOtp(sql, kms, KEY_ARN, {
+        email: "ada@example.com",
+        code: enrolmentCode,
+        now,
+      });
+      expect(verified).toBeNull();
+
+      // The enrolment challenge is untouched
+      const rows = await sql<{ consumed_at: Date | null; attempts: number }[]>`
+        select consumed_at, attempts
+        from identity.otp_challenges
+        where purpose = 'operator_enrolment'
+      `;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.consumed_at).toBeNull();
+      expect(rows[0]?.attempts).toBe(0);
     });
   });
 });
