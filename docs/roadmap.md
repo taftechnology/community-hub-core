@@ -297,10 +297,6 @@ Migration `0010`'s plan update is a no-op on a new database, so every new enviro
 
 A missing Stripe permission surfaces only as `STRIPE_API`.
 
-Admin sign-in treats the start reply as failed unless 200, but the API answers 204, so "Send code" always looks failed (runbook Stripe billing proof finding 1).
-
-Admin billing status is not fetched after sign-in when a community is already remembered in sessionStorage (finding 2).
-
 Stripe dashboard has no "End trial now"; the runbook's S5 step should use the Workbench shell with `--payment-behavior=allow_incomplete` (finding 4).
 
 The people and access `boundaries.test.ts` files read the gitignored `staging.local.tfvars` too, so they fail in a checkout whose local file holds `service_image` (finding 7).
