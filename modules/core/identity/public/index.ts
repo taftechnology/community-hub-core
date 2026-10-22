@@ -8,6 +8,11 @@ export {
   beginPasskeyRegistration,
   finishPasskeyAuthentication,
   finishPasskeyRegistration,
+  verifyPasskeyAssertion,
+  type PasskeyAuthenticationOptions,
+  type PasskeyOnStored,
+  type PasskeyRegistrationOnStored,
+  type PasskeyRegistrationOptions,
 } from "../infrastructure/passkey.js";
 export {
   readSession,
