@@ -1261,4 +1261,306 @@ describe("passkeys", () => {
       expect(authChallenges[0]?.rp_id).toBe(RP_ID);
     });
   });
+
+  it("required user verification is in the options", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const kms = createLocalKmsPort();
+    await withSql(async (sql) => {
+      const created = await insertIdentityUser(sql, kms, KEY_ARN, { email: "ada@example.com" });
+
+      const regRequired = await beginPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+        userVerification: "required",
+      });
+      expect(regRequired.authenticatorSelection.userVerification).toBe("required");
+
+      const regChallenge = await sql<{ user_verification: string }[]>`
+        select user_verification from identity.passkey_challenges where challenge = ${regRequired.challenge}
+      `;
+      expect(regChallenge[0]?.user_verification).toBe("required");
+
+      const authRequired = await beginPasskeyAuthentication(sql, {
+        rpId: RP_ID,
+        now,
+        userVerification: "required",
+      });
+      expect(authRequired.userVerification).toBe("required");
+
+      const authChallenge = await sql<{ user_verification: string }[]>`
+        select user_verification from identity.passkey_challenges where challenge = ${authRequired.challenge}
+      `;
+      expect(authChallenge[0]?.user_verification).toBe("required");
+
+      const regDefault = await beginPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+      });
+      expect(regDefault.authenticatorSelection.userVerification).toBe("preferred");
+
+      const authDefault = await beginPasskeyAuthentication(sql, {
+        rpId: RP_ID,
+        now,
+      });
+      expect(authDefault.userVerification).toBeUndefined();
+    });
+  });
+
+  it("registration without UV fails when required", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const kms = createLocalKmsPort();
+    const key = await signer();
+    const credentialId = new Uint8Array(16).fill(61);
+    const credentialIdUv = new Uint8Array(16).fill(62);
+    const credentialIdPreferred = new Uint8Array(16).fill(63);
+
+    await withSql(async (sql) => {
+      const created = await insertIdentityUser(sql, kms, KEY_ARN, { email: "ada@example.com" });
+
+      const regRequired = await beginPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+        userVerification: "required",
+      });
+
+      // Without UV flag (0x41 = AT | UP, UV bit 0x04 is 0)
+      const authDataWithoutUv = authenticatorData({
+        rpId: RP_ID,
+        signCount: 0,
+        credentialId,
+        cose: coseKey(key.x, key.y),
+        flags: 0x41,
+      });
+
+      await expect(
+        finishPasskeyRegistration(sql, {
+          userId: created.userId,
+          rpId: RP_ID,
+          now,
+          clientDataJSON: clientData("webauthn.create", regRequired.challenge, ORIGIN),
+          attestationObject: attestationObject(authDataWithoutUv),
+        }),
+      ).rejects.toMatchObject({ code: "invalid_ceremony" });
+
+      // Positive control: with UV flag (0x45 = AT | UP | UV)
+      const authDataWithUv = authenticatorData({
+        rpId: RP_ID,
+        signCount: 0,
+        credentialId: credentialIdUv,
+        cose: coseKey(key.x, key.y),
+        flags: 0x45,
+      });
+
+      await finishPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+        clientDataJSON: clientData("webauthn.create", regRequired.challenge, ORIGIN),
+        attestationObject: attestationObject(authDataWithUv),
+      });
+
+      const stored = await sql<{ n: number }[]>`
+        select count(*)::int as n from identity.passkey_credentials where credential_id = ${credentialIdUv}
+      `;
+      expect(stored).toEqual([{ n: 1 }]);
+
+      // Positive control: preferred ceremony succeeds without UV flag
+      const regPreferred = await beginPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+        userVerification: "preferred",
+      });
+      const authDataPreferred = authenticatorData({
+        rpId: RP_ID,
+        signCount: 0,
+        credentialId: credentialIdPreferred,
+        cose: coseKey(key.x, key.y),
+        flags: 0x41,
+      });
+      await finishPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+        clientDataJSON: clientData("webauthn.create", regPreferred.challenge, ORIGIN),
+        attestationObject: attestationObject(authDataPreferred),
+      });
+    });
+  });
+
+  it("authentication without UV fails when required", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const kms = createLocalKmsPort();
+    const key = await signer();
+    const credentialId = new Uint8Array(16).fill(71);
+
+    await withSql(async (sql) => {
+      const created = await insertIdentityUser(sql, kms, KEY_ARN, { email: "ada@example.com" });
+      const reg = await beginPasskeyRegistration(sql, { userId: created.userId, rpId: RP_ID, now });
+      await finishPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+        clientDataJSON: clientData("webauthn.create", reg.challenge, ORIGIN),
+        attestationObject: attestationObject(
+          authenticatorData({
+            rpId: RP_ID,
+            signCount: 0,
+            credentialId,
+            cose: coseKey(key.x, key.y),
+          }),
+        ),
+      });
+
+      // Authentication with required UV, but authenticatorData without UV (flags: 0x01)
+      const authOptions = await beginPasskeyAuthentication(sql, {
+        rpId: RP_ID,
+        now,
+        userVerification: "required",
+      });
+      const authDataWithoutUv = authenticatorData({ rpId: RP_ID, signCount: 1, flags: 0x01 });
+      const clientWithoutUv = clientData("webauthn.get", authOptions.challenge, ORIGIN);
+      const signatureWithoutUv = await key.sign(
+        concat([authDataWithoutUv, await sha256(clientWithoutUv)]),
+      );
+
+      const rejected = await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        rpId: RP_ID,
+        now,
+        credentialId,
+        clientDataJSON: clientWithoutUv,
+        authenticatorData: authDataWithoutUv,
+        signature: signatureWithoutUv,
+      });
+      expect(rejected).toBeNull();
+
+      // Positive control: with UV flag (flags: 0x05 = UP | UV)
+      const authOptionsWithUv = await beginPasskeyAuthentication(sql, {
+        rpId: RP_ID,
+        now,
+        userVerification: "required",
+      });
+      const authDataWithUv = authenticatorData({ rpId: RP_ID, signCount: 2, flags: 0x05 });
+      const clientWithUv = clientData("webauthn.get", authOptionsWithUv.challenge, ORIGIN);
+      const signatureWithUv = await key.sign(concat([authDataWithUv, await sha256(clientWithUv)]));
+
+      const accepted = await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        rpId: RP_ID,
+        now,
+        credentialId,
+        clientDataJSON: clientWithUv,
+        authenticatorData: authDataWithUv,
+        signature: signatureWithUv,
+      });
+      expect(accepted).toMatchObject({ userId: created.userId, expiresIn: 900 });
+
+      // Positive control: preferred authentication succeeds without UV flag
+      const authOptionsPreferred = await beginPasskeyAuthentication(sql, {
+        rpId: RP_ID,
+        now,
+        userVerification: "preferred",
+      });
+      const authDataPreferred = authenticatorData({ rpId: RP_ID, signCount: 3, flags: 0x01 });
+      const clientPreferred = clientData("webauthn.get", authOptionsPreferred.challenge, ORIGIN);
+      const signaturePreferred = await key.sign(
+        concat([authDataPreferred, await sha256(clientPreferred)]),
+      );
+
+      const acceptedPreferred = await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        rpId: RP_ID,
+        now,
+        credentialId,
+        clientDataJSON: clientPreferred,
+        authenticatorData: authDataPreferred,
+        signature: signaturePreferred,
+      });
+      expect(acceptedPreferred).toMatchObject({ userId: created.userId, expiresIn: 900 });
+    });
+  });
+
+  it("excludeExisting lists this RP ID only", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const kms = createLocalKmsPort();
+    const key = await signer();
+    const opsRpId = "ops.example.test";
+    const opsOrigin = "https://ops.example.test";
+    const authCredId = new Uint8Array(16).fill(81);
+    const opsCredId = new Uint8Array(16).fill(82);
+
+    await withSql(async (sql) => {
+      const created = await insertIdentityUser(sql, kms, KEY_ARN, { email: "ada@example.com" });
+
+      // Register credential 1 for RP_ID (auth.example.test)
+      const regAuth = await beginPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+      });
+      await finishPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+        clientDataJSON: clientData("webauthn.create", regAuth.challenge, ORIGIN),
+        attestationObject: attestationObject(
+          authenticatorData({
+            rpId: RP_ID,
+            signCount: 0,
+            credentialId: authCredId,
+            cose: coseKey(key.x, key.y),
+          }),
+        ),
+      });
+
+      // Register credential 2 for opsRpId (ops.example.test)
+      const regOps = await beginPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: opsRpId,
+        now,
+      });
+      await finishPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: opsRpId,
+        now,
+        clientDataJSON: clientData("webauthn.create", regOps.challenge, opsOrigin),
+        attestationObject: attestationObject(
+          authenticatorData({
+            rpId: opsRpId,
+            signCount: 0,
+            credentialId: opsCredId,
+            cose: coseKey(key.x, key.y),
+          }),
+        ),
+      });
+
+      // Begin registration for RP_ID with excludeExisting: true
+      const optionsWithExclude = await beginPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+        excludeExisting: true,
+      });
+      expect(optionsWithExclude.excludeCredentials).toEqual([
+        { type: "public-key", id: authCredId },
+      ]);
+
+      // Begin registration with excludeExisting: false or omitted
+      const optionsWithoutExclude = await beginPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+      });
+      expect(optionsWithoutExclude.excludeCredentials).toBeUndefined();
+
+      const optionsWithFalse = await beginPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+        excludeExisting: false,
+      });
+      expect(optionsWithFalse.excludeCredentials).toBeUndefined();
+    });
+  });
 });

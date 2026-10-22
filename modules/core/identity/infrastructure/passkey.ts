@@ -10,6 +10,7 @@ import { createSession, type SessionTokens } from "./session.js";
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
 const MAX_CREDENTIAL_ID_BYTES = 1023;
 const UP = 0x01;
+const UV = 0x04;
 const AT = 0x40;
 
 export type PasskeyRegistrationOptions = {
@@ -18,17 +19,25 @@ export type PasskeyRegistrationOptions = {
   user: { id: Uint8Array; name: string; displayName: string };
   pubKeyCredParams: [{ type: "public-key"; alg: -7 }];
   attestation: "none";
-  authenticatorSelection: { userVerification: "preferred"; residentKey: "required" };
+  authenticatorSelection: { userVerification: "preferred" | "required"; residentKey: "required" };
+  excludeCredentials?: { type: "public-key"; id: Uint8Array }[];
 };
 
 export type PasskeyAuthenticationOptions = {
   challenge: Uint8Array;
   rpId: string;
+  userVerification?: "required";
 };
 
 export async function beginPasskeyRegistration(
   sql: Sql,
-  input: { userId: string; rpId: string; now: Date },
+  input: {
+    userId: string;
+    rpId: string;
+    now: Date;
+    userVerification?: "preferred" | "required";
+    excludeExisting?: boolean;
+  },
 ): Promise<PasskeyRegistrationOptions> {
   const users = await sql<{ id: string }[]>`
     select id from identity.users where id = ${input.userId}
@@ -36,14 +45,15 @@ export async function beginPasskeyRegistration(
   if (users[0] === undefined) {
     throw new IdentityError("invalid_ceremony");
   }
+  const userVerification = input.userVerification ?? "preferred";
   const challenge = new Uint8Array(32);
   crypto.getRandomValues(challenge);
   const expiresAt = new Date(input.now.getTime() + FIVE_MINUTES_MS).toISOString();
   await sql`
-    insert into identity.passkey_challenges (id, user_id, kind, challenge, expires_at, rp_id)
-    values (${newId()}, ${input.userId}, 'register', ${challenge}, ${expiresAt}::timestamptz, ${input.rpId})
+    insert into identity.passkey_challenges (id, user_id, kind, challenge, expires_at, rp_id, user_verification)
+    values (${newId()}, ${input.userId}, 'register', ${challenge}, ${expiresAt}::timestamptz, ${input.rpId}, ${userVerification})
   `;
-  return {
+  const options: PasskeyRegistrationOptions = {
     challenge,
     rp: { id: input.rpId },
     user: {
@@ -53,8 +63,21 @@ export async function beginPasskeyRegistration(
     },
     pubKeyCredParams: [{ type: "public-key", alg: -7 }],
     attestation: "none",
-    authenticatorSelection: { userVerification: "preferred", residentKey: "required" },
+    authenticatorSelection: { userVerification, residentKey: "required" },
   };
+  if (input.excludeExisting) {
+    const existing = await sql<{ credential_id: Uint8Array }[]>`
+      select credential_id
+      from identity.passkey_credentials
+      where user_id = ${input.userId}
+        and rp_id = ${input.rpId}
+    `;
+    options.excludeCredentials = existing.map((c) => ({
+      type: "public-key",
+      id: new Uint8Array(c.credential_id),
+    }));
+  }
+  return options;
 }
 
 export async function finishPasskeyRegistration(
@@ -75,8 +98,8 @@ export async function finishPasskeyRegistration(
   }
   const challenge = decodeBase64Url(client.challenge);
   const now = input.now.toISOString();
-  const rows = await sql<{ id: string }[]>`
-    select id from identity.passkey_challenges
+  const rows = await sql<{ id: string; user_verification: string }[]>`
+    select id, user_verification from identity.passkey_challenges
     where user_id = ${input.userId}
       and kind = 'register'
       and challenge = ${challenge}
@@ -93,6 +116,10 @@ export async function finishPasskeyRegistration(
   if ((auth.flags & UP) === 0 || (auth.flags & AT) === 0) {
     throw new IdentityError("invalid_ceremony");
   }
+  if (row.user_verification === "required" && (auth.flags & UV) === 0) {
+    throw new IdentityError("invalid_ceremony");
+  }
+
   if (!sameBytes(auth.rpIdHash, await sha256(new TextEncoder().encode(input.rpId)))) {
     throw new IdentityError("invalid_ceremony");
   }
@@ -145,16 +172,25 @@ export async function finishPasskeyRegistration(
 
 export async function beginPasskeyAuthentication(
   sql: Sql,
-  input: { rpId: string; now: Date },
+  input: {
+    rpId: string;
+    now: Date;
+    userVerification?: "preferred" | "required";
+  },
 ): Promise<PasskeyAuthenticationOptions> {
+  const userVerification = input.userVerification ?? "preferred";
   const challenge = new Uint8Array(32);
   crypto.getRandomValues(challenge);
   const expiresAt = new Date(input.now.getTime() + FIVE_MINUTES_MS).toISOString();
   await sql`
-    insert into identity.passkey_challenges (id, user_id, kind, challenge, expires_at, rp_id)
-    values (${newId()}, null, 'authenticate', ${challenge}, ${expiresAt}::timestamptz, ${input.rpId})
+    insert into identity.passkey_challenges (id, user_id, kind, challenge, expires_at, rp_id, user_verification)
+    values (${newId()}, null, 'authenticate', ${challenge}, ${expiresAt}::timestamptz, ${input.rpId}, ${userVerification})
   `;
-  return { challenge, rpId: input.rpId };
+  const options: PasskeyAuthenticationOptions = { challenge, rpId: input.rpId };
+  if (userVerification === "required") {
+    options.userVerification = "required";
+  }
+  return options;
 }
 
 export async function finishPasskeyAuthentication(
@@ -194,8 +230,8 @@ export async function finishPasskeyAuthentication(
     }
     const challenge = decodeBase64Url(client.challenge);
     const now = input.now.toISOString();
-    const rows = await sql<{ id: string }[]>`
-      select id from identity.passkey_challenges
+    const rows = await sql<{ id: string; user_verification: string }[]>`
+      select id, user_verification from identity.passkey_challenges
       where user_id is null
         and kind = 'authenticate'
         and challenge = ${challenge}
@@ -211,6 +247,10 @@ export async function finishPasskeyAuthentication(
     if ((auth.flags & UP) === 0 || (auth.flags & AT) !== 0) {
       return null;
     }
+    if (row.user_verification === "required" && (auth.flags & UV) === 0) {
+      return null;
+    }
+
     if (!sameBytes(auth.rpIdHash, await sha256(new TextEncoder().encode(input.rpId)))) {
       return null;
     }
