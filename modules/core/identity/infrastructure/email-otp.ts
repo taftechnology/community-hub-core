@@ -1,4 +1,3 @@
-import type { webcrypto } from "node:crypto";
 import { type KmsPort } from "@community-hub/crypto";
 import { newId } from "@community-hub/db";
 import type { Sql } from "postgres";
@@ -12,6 +11,7 @@ import {
   emailBlindIndex,
   findOrCreateUserByKeys,
 } from "./email-lookup.js";
+import { hmac } from "./hmac.js";
 import { createSession, type SessionTokens } from "./session.js";
 
 const TEN_MINUTES_MS = 10 * 60 * 1000;
@@ -22,22 +22,6 @@ function eightDigits(): string {
   return eightDigitsFrom((bytes) => {
     crypto.getRandomValues(bytes);
   });
-}
-
-async function hmac(
-  bidxKey: webcrypto.CryptoKey,
-  purpose: string,
-  message: Uint8Array,
-): Promise<Uint8Array> {
-  if (purpose.includes("\0")) {
-    throw new Error("purpose must not contain NUL");
-  }
-  const purposeBytes = new TextEncoder().encode(purpose);
-  const input = new Uint8Array(purposeBytes.byteLength + 1 + message.byteLength);
-  input.set(purposeBytes, 0);
-  input[purposeBytes.byteLength] = 0x00;
-  input.set(message, purposeBytes.byteLength + 1);
-  return new Uint8Array(await crypto.subtle.sign("HMAC", bidxKey, input));
 }
 
 export async function startEmailOtp(

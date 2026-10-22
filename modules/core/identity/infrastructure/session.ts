@@ -3,6 +3,7 @@ import { deriveKeys, unwrapKmsRoot, type KmsPort } from "@community-hub/crypto";
 import { newId } from "@community-hub/db";
 import type { Sql } from "postgres";
 
+import { hmac } from "./hmac.js";
 import { ensureIdentityKey } from "./identity-key.js";
 
 const CONTEXT = { key_kind: "identity", region: "au", key_version: "1" } as const;
@@ -209,19 +210,6 @@ function decodeToken(token: string): Uint8Array | null {
   }
   const raw = new Uint8Array(Buffer.from(token, "base64url"));
   return raw.byteLength === 32 ? raw : null;
-}
-
-async function hmac(
-  bidxKey: webcrypto.CryptoKey,
-  purpose: string,
-  message: Uint8Array,
-): Promise<Uint8Array> {
-  const purposeBytes = new TextEncoder().encode(purpose);
-  const input = new Uint8Array(purposeBytes.byteLength + 1 + message.byteLength);
-  input.set(purposeBytes, 0);
-  input[purposeBytes.byteLength] = 0x00;
-  input.set(message, purposeBytes.byteLength + 1);
-  return new Uint8Array(await crypto.subtle.sign("HMAC", bidxKey, input));
 }
 
 async function bidxKey(sql: Sql, kms: KmsPort, keyArn: string): Promise<webcrypto.CryptoKey> {
