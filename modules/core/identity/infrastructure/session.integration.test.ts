@@ -3,11 +3,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres, { type Sql } from "postgres";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
-import { applyProductMigrations } from "@community-hub/db";
+import { applyProductMigrations, newId } from "@community-hub/db";
 import { createPlaintextDirectSql, createPlaintextIdentitySql } from "@community-hub/db/plaintext";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import type { OtpMail } from "../domain/otp-mail.js";
+import { insertIdentityUser } from "./identity-user.js";
 import { readSession, refreshSession, startEmailOtp, verifyEmailOtp } from "../public/index.js";
 
 const KEY_ARN = `arn:aws:kms:ap-southeast-2:123456789012:key/mrk-${"ab".repeat(16)}`;
@@ -368,4 +369,60 @@ describe("sessions", () => {
       await observer.end({ timeout: 1 });
     }
   }, 15_000);
+});
+
+describe("the sessions check constraint", () => {
+  it("rejects invalid combinations of kind and absolute_expires_at, and unknown kinds", async () => {
+    const runtime = loadRuntime();
+    const sql = createPlaintextIdentitySql(identityUrl(runtime));
+    const kms = createLocalKmsPort();
+    try {
+      const email = `constraint-${newId()}@example.test`;
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, { email });
+      const now = new Date("2026-10-22T00:00:00.000Z");
+      const accessHash = crypto.getRandomValues(new Uint8Array(32));
+      const refreshHash = crypto.getRandomValues(new Uint8Array(32));
+
+      // 1. operator row without absolute_expires_at fails with 23514
+      await expect(
+        sql`
+          insert into identity.sessions (
+            id, user_id, refresh_family, access_hash, refresh_hash,
+            access_expires_at, refresh_expires_at, kind, absolute_expires_at
+          ) values (
+            ${newId()}, ${userId}, ${newId()}, ${accessHash}, ${refreshHash},
+            ${now}, ${now}, 'operator', null
+          )
+        `,
+      ).rejects.toMatchObject({ code: "23514" });
+
+      // 2. tenant row with absolute_expires_at fails with 23514
+      await expect(
+        sql`
+          insert into identity.sessions (
+            id, user_id, refresh_family, access_hash, refresh_hash,
+            access_expires_at, refresh_expires_at, kind, absolute_expires_at
+          ) values (
+            ${newId()}, ${userId}, ${newId()}, ${accessHash}, ${refreshHash},
+            ${now}, ${now}, 'tenant', ${now}
+          )
+        `,
+      ).rejects.toMatchObject({ code: "23514" });
+
+      // 3. row with kind = 'admin' fails with 23514
+      await expect(
+        sql`
+          insert into identity.sessions (
+            id, user_id, refresh_family, access_hash, refresh_hash,
+            access_expires_at, refresh_expires_at, kind, absolute_expires_at
+          ) values (
+            ${newId()}, ${userId}, ${newId()}, ${accessHash}, ${refreshHash},
+            ${now}, ${now}, 'admin', null
+          )
+        `,
+      ).rejects.toMatchObject({ code: "23514" });
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
 });
