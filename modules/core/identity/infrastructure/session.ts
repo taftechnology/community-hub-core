@@ -184,6 +184,7 @@ export async function refreshSession(
         and refresh_expires_at > ${now}::timestamptz
         and replaced_by is null
         and revoked_at is null
+        -- Intentional defence in depth: the locate select already refuses other kinds.
         and kind = any(${sql.array([...kinds])})
       returning id, user_id, refresh_family, kind, absolute_expires_at
     `;

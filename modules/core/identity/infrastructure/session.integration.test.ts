@@ -909,4 +909,125 @@ describe("session kinds and absolute expiry", () => {
       await sql.end({ timeout: 1 });
     }
   });
+
+  it("presenting a rotated operator refresh token with default kinds does not revoke the family", async () => {
+    const now = new Date("2026-10-22T00:00:00.000Z");
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `pin2-locate-${newId()}@example.test`,
+      });
+      const absExp = new Date(now.getTime() + 60 * 60 * 1000);
+      const original = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "operator",
+        absoluteExpiresAt: absExp,
+      });
+
+      // Refresh with kinds: ["operator"] to get a successor (original token is now rotated)
+      const rotated = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: original.refreshToken,
+        now: new Date(now.getTime() + 10 * 1000),
+        kinds: ["operator"],
+      });
+      expect(rotated).not.toBeNull();
+      if (rotated === null) {
+        throw new Error("successor session was not created");
+      }
+
+      // Present the ORIGINAL token to refreshSession with default kinds: expect null
+      const defaultRefresh = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: original.refreshToken,
+        now: new Date(now.getTime() + 20 * 1000),
+      });
+      expect(defaultRefresh).toBeNull();
+
+      // The successor's row and family are not revoked
+      const successorRows = await sql<{ refresh_family: string; revoked_at: Date | null }[]>`
+        select refresh_family, revoked_at
+        from identity.sessions
+        where user_id = ${userId} and replaced_by is null
+      `;
+      expect(successorRows).toHaveLength(1);
+      expect(successorRows[0]?.revoked_at).toBeNull();
+
+      const liveFamilyRows = await sql<{ n: number }[]>`
+        select count(*)::int as n
+        from identity.sessions
+        where refresh_family = ${successorRows[0]!.refresh_family} and revoked_at is null
+      `;
+      expect(Number(liveFamilyRows[0]?.n)).toBe(1);
+
+      // And the successor still refreshes with kinds: ["operator"]
+      const refreshedSuccessor = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: rotated.refreshToken,
+        now: new Date(now.getTime() + 30 * 1000),
+        kinds: ["operator"],
+      });
+      expect(refreshedSuccessor).not.toBeNull();
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("operator access token ends at absolute expiry on refresh", async () => {
+    const now = new Date("2026-10-22T00:00:00.000Z");
+    const absoluteExpiresAt = new Date(now.getTime() + 60 * 60 * 1000);
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `pin3c-ref-${newId()}@example.test`,
+      });
+      const session = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "operator",
+        absoluteExpiresAt,
+      });
+
+      // Refresh at absolute - 5 min with kinds: ["operator"]
+      const refreshNow = new Date(absoluteExpiresAt.getTime() - 5 * 60 * 1000);
+      const refreshed = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: session.refreshToken,
+        now: refreshNow,
+        kinds: ["operator"],
+      });
+      expect(refreshed).not.toBeNull();
+      if (refreshed === null) {
+        throw new Error("refreshSession returned null");
+      }
+
+      // Successor's access_expires_at equals absoluteExpiresAt
+      const successorRows = await sql<{ access_expires_at: Date }[]>`
+        select access_expires_at
+        from identity.sessions
+        where user_id = ${userId} and replaced_by is null
+      `;
+      expect(successorRows).toHaveLength(1);
+      expect(successorRows[0]?.access_expires_at).toEqual(absoluteExpiresAt);
+
+      // readSessionWithKind (kinds: ["operator"]) succeeds 1 minute before absolute
+      const beforeAbs = new Date(absoluteExpiresAt.getTime() - 60 * 1000);
+      expect(
+        await readSessionWithKind(sql, kms, KEY_ARN, {
+          accessToken: refreshed.accessToken,
+          now: beforeAbs,
+          kinds: ["operator"],
+        }),
+      ).toEqual({ userId, kind: "operator" });
+
+      // readSessionWithKind (kinds: ["operator"]) returns null 1 minute after absolute
+      const afterAbs = new Date(absoluteExpiresAt.getTime() + 60 * 1000);
+      expect(
+        await readSessionWithKind(sql, kms, KEY_ARN, {
+          accessToken: refreshed.accessToken,
+          now: afterAbs,
+          kinds: ["operator"],
+        }),
+      ).toBeNull();
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
 });
