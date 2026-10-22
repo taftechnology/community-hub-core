@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import axe from "axe-core";
 import { afterEach, beforeEach } from "vitest";
 
@@ -114,4 +114,25 @@ it("names the sign-in controls and reports no axe violations", async () => {
     rules: { "color-contrast": { enabled: false } },
   });
   expect(resultIds(results, "violations")).toEqual([]);
+});
+
+it("shows the code-entry step and no sign-in failed message on 204 start response", async () => {
+  const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.endsWith("/v1/auth/email-otp/start")) {
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`unexpected ${url}`);
+  });
+
+  await showSignIn();
+  fireEvent.change(screen.getByRole("textbox", { name: "Email" }), { target: { value: EMAIL } });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Send code" }));
+  });
+
+  expect(screen.getByRole("textbox", { name: "Code" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Verify" })).toBeTruthy();
+  expect(screen.queryByText("Sign-in failed")).toBeNull();
+  expect(fetchSpy).toHaveBeenCalled();
 });

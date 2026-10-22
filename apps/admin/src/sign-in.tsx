@@ -48,7 +48,7 @@ export function SignInPage() {
     event.preventDefault();
     setFailed(false);
     const response = await postAuth("/v1/auth/email-otp/start", { email });
-    setFailed(response === undefined || response.status !== 200);
+    setFailed(response === undefined || !response.ok);
   }
 
   async function verify(event: FormEvent<HTMLFormElement>): Promise<void> {
