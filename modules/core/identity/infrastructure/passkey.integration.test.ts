@@ -1000,4 +1000,265 @@ describe("passkeys", () => {
       ).resolves.toBeNull();
     });
   });
+
+  it("authentication refuses a credential for another RP ID", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const kms = createLocalKmsPort();
+    const key = await signer();
+    const credentialId = new Uint8Array(16).fill(21);
+    const opsRpId = "ops.example.test";
+    await withSql(async (sql) => {
+      const created = await insertIdentityUser(sql, kms, KEY_ARN, { email: "ada@example.com" });
+      await sql`
+        insert into identity.passkey_credentials (id, user_id, credential_id, cose_key, sign_count, rp_id)
+        values (
+          ${crypto.randomUUID()},
+          ${created.userId},
+          ${credentialId},
+          ${coseKey(key.x, key.y)},
+          0,
+          ${opsRpId}
+        )
+      `;
+      const options = await beginPasskeyAuthentication(sql, { rpId: RP_ID, now });
+      const authData = authenticatorData({ rpId: RP_ID, signCount: 1 });
+      const client = clientData("webauthn.get", options.challenge, ORIGIN);
+      const signature = await key.sign(concat([authData, await sha256(client)]));
+      const result = await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        rpId: RP_ID,
+        now,
+        credentialId,
+        clientDataJSON: client,
+        authenticatorData: authData,
+        signature,
+      });
+      expect(result).toBeNull();
+    });
+  });
+
+  it("a legacy credential needs acceptLegacy", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const kms = createLocalKmsPort();
+    const key = await signer();
+    const credentialId = new Uint8Array(16).fill(22);
+    await withSql(async (sql) => {
+      const created = await insertIdentityUser(sql, kms, KEY_ARN, { email: "ada@example.com" });
+      await sql`
+        insert into identity.passkey_credentials (id, user_id, credential_id, cose_key, sign_count, rp_id)
+        values (
+          ${crypto.randomUUID()},
+          ${created.userId},
+          ${credentialId},
+          ${coseKey(key.x, key.y)},
+          0,
+          null
+        )
+      `;
+      const options = await beginPasskeyAuthentication(sql, { rpId: RP_ID, now });
+      const authData = authenticatorData({ rpId: RP_ID, signCount: 1 });
+      const client = clientData("webauthn.get", options.challenge, ORIGIN);
+      const signature = await key.sign(concat([authData, await sha256(client)]));
+
+      const refused = await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        rpId: RP_ID,
+        now,
+        credentialId,
+        clientDataJSON: client,
+        authenticatorData: authData,
+        signature,
+        acceptLegacy: false,
+      });
+      expect(refused).toBeNull();
+
+      const accepted = await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        rpId: RP_ID,
+        now,
+        credentialId,
+        clientDataJSON: client,
+        authenticatorData: authData,
+        signature,
+      });
+      expect(accepted).toMatchObject({ userId: created.userId, expiresIn: 900 });
+    });
+  });
+
+  it("a legacy challenge needs acceptLegacy", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const kms = createLocalKmsPort();
+    const key = await signer();
+    const expiresAt = new Date(now.getTime() + 5 * 60 * 1000).toISOString();
+    await withSql(async (sql) => {
+      const created = await insertIdentityUser(sql, kms, KEY_ARN, { email: "ada@example.com" });
+
+      const regChallenge = new Uint8Array(32).fill(31);
+      await sql`
+        insert into identity.passkey_challenges (id, user_id, kind, challenge, expires_at, rp_id)
+        values (${crypto.randomUUID()}, ${created.userId}, 'register', ${regChallenge}, ${expiresAt}::timestamptz, null)
+      `;
+      const regCredId = new Uint8Array(16).fill(32);
+      const regAuthData = authenticatorData({
+        rpId: RP_ID,
+        signCount: 0,
+        credentialId: regCredId,
+        cose: coseKey(key.x, key.y),
+      });
+
+      await expect(
+        finishPasskeyRegistration(sql, {
+          userId: created.userId,
+          rpId: RP_ID,
+          now,
+          clientDataJSON: clientData("webauthn.create", regChallenge, ORIGIN),
+          attestationObject: attestationObject(regAuthData),
+          acceptLegacy: false,
+        }),
+      ).rejects.toMatchObject({ code: "invalid_ceremony" });
+
+      await finishPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+        clientDataJSON: clientData("webauthn.create", regChallenge, ORIGIN),
+        attestationObject: attestationObject(regAuthData),
+      });
+
+      const authChallenge = new Uint8Array(32).fill(33);
+      await sql`
+        insert into identity.passkey_challenges (id, user_id, kind, challenge, expires_at, rp_id)
+        values (${crypto.randomUUID()}, null, 'authenticate', ${authChallenge}, ${expiresAt}::timestamptz, null)
+      `;
+      const authData = authenticatorData({ rpId: RP_ID, signCount: 1 });
+      const authClient = clientData("webauthn.get", authChallenge, ORIGIN);
+      const authSig = await key.sign(concat([authData, await sha256(authClient)]));
+
+      const refused = await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        rpId: RP_ID,
+        now,
+        credentialId: regCredId,
+        clientDataJSON: authClient,
+        authenticatorData: authData,
+        signature: authSig,
+        acceptLegacy: false,
+      });
+      expect(refused).toBeNull();
+
+      const accepted = await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        rpId: RP_ID,
+        now,
+        credentialId: regCredId,
+        clientDataJSON: authClient,
+        authenticatorData: authData,
+        signature: authSig,
+      });
+      expect(accepted).toMatchObject({ userId: created.userId, expiresIn: 900 });
+    });
+  });
+
+  it("a challenge begun for another RP ID is refused", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const kms = createLocalKmsPort();
+    const key = await signer();
+    const opsRpId = "ops.example.test";
+    const credentialId = new Uint8Array(16).fill(41);
+    await withSql(async (sql) => {
+      const created = await insertIdentityUser(sql, kms, KEY_ARN, { email: "ada@example.com" });
+      const reg = await beginPasskeyRegistration(sql, { userId: created.userId, rpId: RP_ID, now });
+      await finishPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+        clientDataJSON: clientData("webauthn.create", reg.challenge, ORIGIN),
+        attestationObject: attestationObject(
+          authenticatorData({
+            rpId: RP_ID,
+            signCount: 0,
+            credentialId,
+            cose: coseKey(key.x, key.y),
+          }),
+        ),
+      });
+
+      const options = await beginPasskeyAuthentication(sql, { rpId: opsRpId, now });
+      const authData = authenticatorData({ rpId: RP_ID, signCount: 1 });
+      const client = clientData("webauthn.get", options.challenge, ORIGIN);
+      const signature = await key.sign(concat([authData, await sha256(client)]));
+
+      const result = await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        rpId: RP_ID,
+        now,
+        credentialId,
+        clientDataJSON: client,
+        authenticatorData: authData,
+        signature,
+      });
+      expect(result).toBeNull();
+
+      const regOptions = await beginPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: opsRpId,
+        now,
+      });
+      await expect(
+        finishPasskeyRegistration(sql, {
+          userId: created.userId,
+          rpId: RP_ID,
+          now,
+          clientDataJSON: clientData("webauthn.create", regOptions.challenge, ORIGIN),
+          attestationObject: attestationObject(
+            authenticatorData({
+              rpId: RP_ID,
+              signCount: 0,
+              credentialId: new Uint8Array(16).fill(42),
+              cose: coseKey(key.x, key.y),
+            }),
+          ),
+        }),
+      ).rejects.toMatchObject({ code: "invalid_ceremony" });
+    });
+  });
+
+  it("a tenant registration with no options stores the RP ID", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const kms = createLocalKmsPort();
+    const key = await signer();
+    const credentialId = new Uint8Array(16).fill(51);
+    await withSql(async (sql) => {
+      const created = await insertIdentityUser(sql, kms, KEY_ARN, { email: "ada@example.com" });
+      const options = await beginPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+      });
+      const regChallenges = await sql<{ rp_id: string | null }[]>`
+        select rp_id from identity.passkey_challenges where challenge = ${options.challenge}
+      `;
+      expect(regChallenges[0]?.rp_id).toBe(RP_ID);
+
+      await finishPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+        clientDataJSON: clientData("webauthn.create", options.challenge, ORIGIN),
+        attestationObject: attestationObject(
+          authenticatorData({
+            rpId: RP_ID,
+            signCount: 0,
+            credentialId,
+            cose: coseKey(key.x, key.y),
+          }),
+        ),
+      });
+
+      const credentials = await sql<{ rp_id: string | null }[]>`
+        select rp_id from identity.passkey_credentials where credential_id = ${credentialId}
+      `;
+      expect(credentials[0]?.rp_id).toBe(RP_ID);
+
+      const authOptions = await beginPasskeyAuthentication(sql, { rpId: RP_ID, now });
+      const authChallenges = await sql<{ rp_id: string | null }[]>`
+        select rp_id from identity.passkey_challenges where challenge = ${authOptions.challenge}
+      `;
+      expect(authChallenges[0]?.rp_id).toBe(RP_ID);
+    });
+  });
 });

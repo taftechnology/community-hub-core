@@ -40,8 +40,8 @@ export async function beginPasskeyRegistration(
   crypto.getRandomValues(challenge);
   const expiresAt = new Date(input.now.getTime() + FIVE_MINUTES_MS).toISOString();
   await sql`
-    insert into identity.passkey_challenges (id, user_id, kind, challenge, expires_at)
-    values (${newId()}, ${input.userId}, 'register', ${challenge}, ${expiresAt}::timestamptz)
+    insert into identity.passkey_challenges (id, user_id, kind, challenge, expires_at, rp_id)
+    values (${newId()}, ${input.userId}, 'register', ${challenge}, ${expiresAt}::timestamptz, ${input.rpId})
   `;
   return {
     challenge,
@@ -65,8 +65,10 @@ export async function finishPasskeyRegistration(
     now: Date;
     clientDataJSON: Uint8Array;
     attestationObject: Uint8Array;
+    acceptLegacy?: boolean;
   },
 ): Promise<void> {
+  const acceptLegacy = input.acceptLegacy ?? true;
   const client = readClientData(input.clientDataJSON);
   if (client.type !== "webauthn.create" || !originMatches(client.origin, input.rpId)) {
     throw new IdentityError("invalid_ceremony");
@@ -80,6 +82,7 @@ export async function finishPasskeyRegistration(
       and challenge = ${challenge}
       and consumed_at is null
       and expires_at >= ${now}::timestamptz
+      and (rp_id = ${input.rpId} or (rp_id is null and ${acceptLegacy}))
   `;
   const row = rows[0];
   if (row === undefined) {
@@ -121,13 +124,14 @@ export async function finishPasskeyRegistration(
         throw new IdentityError("invalid_ceremony");
       }
       await tx`
-        insert into identity.passkey_credentials (id, user_id, credential_id, cose_key, sign_count)
+        insert into identity.passkey_credentials (id, user_id, credential_id, cose_key, sign_count, rp_id)
         values (
           ${newId()},
           ${input.userId},
           ${auth.credentialId},
           ${auth.coseKey},
-          ${auth.signCount}
+          ${auth.signCount},
+          ${input.rpId}
         )
       `;
     });
@@ -147,8 +151,8 @@ export async function beginPasskeyAuthentication(
   crypto.getRandomValues(challenge);
   const expiresAt = new Date(input.now.getTime() + FIVE_MINUTES_MS).toISOString();
   await sql`
-    insert into identity.passkey_challenges (id, user_id, kind, challenge, expires_at)
-    values (${newId()}, null, 'authenticate', ${challenge}, ${expiresAt}::timestamptz)
+    insert into identity.passkey_challenges (id, user_id, kind, challenge, expires_at, rp_id)
+    values (${newId()}, null, 'authenticate', ${challenge}, ${expiresAt}::timestamptz, ${input.rpId})
   `;
   return { challenge, rpId: input.rpId };
 }
@@ -164,11 +168,13 @@ export async function finishPasskeyAuthentication(
     clientDataJSON: Uint8Array;
     authenticatorData: Uint8Array;
     signature: Uint8Array;
+    acceptLegacy?: boolean;
   },
 ): Promise<SessionTokens | null> {
   if (input.credentialId.byteLength > MAX_CREDENTIAL_ID_BYTES) {
     return null;
   }
+  const acceptLegacy = input.acceptLegacy ?? true;
   try {
     const credentials = await sql<
       { id: string; user_id: string; cose_key: Uint8Array; sign_count: number | string }[]
@@ -176,6 +182,7 @@ export async function finishPasskeyAuthentication(
       select id, user_id, cose_key, sign_count
       from identity.passkey_credentials
       where credential_id = ${input.credentialId}
+        and (rp_id = ${input.rpId} or (rp_id is null and ${acceptLegacy}))
     `;
     const credential = credentials[0];
     if (credential === undefined) {
@@ -194,6 +201,7 @@ export async function finishPasskeyAuthentication(
         and challenge = ${challenge}
         and consumed_at is null
         and expires_at >= ${now}::timestamptz
+        and (rp_id = ${input.rpId} or (rp_id is null and ${acceptLegacy}))
     `;
     const row = rows[0];
     if (row === undefined) {
