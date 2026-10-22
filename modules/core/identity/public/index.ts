@@ -9,4 +9,10 @@ export {
   finishPasskeyAuthentication,
   finishPasskeyRegistration,
 } from "../infrastructure/passkey.js";
-export { readSession, refreshSession, type SessionTokens } from "../infrastructure/session.js";
+export {
+  readSession,
+  readSessionWithKind,
+  refreshSession,
+  type SessionKind,
+  type SessionTokens,
+} from "../infrastructure/session.js";
