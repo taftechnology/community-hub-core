@@ -14,12 +14,14 @@ type CommunityContextValue = {
   slug: string;
   version: number;
   setSlug: (slug: string) => void;
+  refresh: () => void;
 };
 
 const CommunityContext = createContext<CommunityContextValue>({
   slug: "",
   version: 0,
   setSlug: () => {},
+  refresh: () => {},
 });
 
 export function useCommunity(): CommunityContextValue {
@@ -49,8 +51,12 @@ export function CommunityProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  function refresh(): void {
+    setVersion((v) => v + 1);
+  }
+
   return (
-    <CommunityContext.Provider value={{ slug, version, setSlug }}>
+    <CommunityContext.Provider value={{ slug, version, setSlug, refresh }}>
       {children}
     </CommunityContext.Provider>
   );

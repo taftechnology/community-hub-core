@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import axe from "axe-core";
 import { afterEach, beforeEach } from "vitest";
 
@@ -114,4 +114,109 @@ it("names the sign-in controls and reports no axe violations", async () => {
     rules: { "color-contrast": { enabled: false } },
   });
   expect(resultIds(results, "violations")).toEqual([]);
+});
+
+it("shows the code-entry step and no sign-in failed message on 204 start response", async () => {
+  const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.endsWith("/v1/auth/email-otp/start")) {
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`unexpected ${url}`);
+  });
+
+  await showSignIn();
+  fireEvent.change(screen.getByRole("textbox", { name: "Email" }), { target: { value: EMAIL } });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Send code" }));
+  });
+
+  expect(screen.getByRole("textbox", { name: "Code" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Verify" })).toBeTruthy();
+  expect(screen.queryByText("Sign-in failed")).toBeNull();
+  expect(fetchSpy).toHaveBeenCalled();
+});
+
+it("fetches billing status again after sign-in with remembered community", async () => {
+  sessionStorage.setItem("community-hub.community", "parish");
+  sessionStorage.setItem("community-hub.access-token", "expired-token");
+
+  const billingStatusCalls: { url: string; headers: Headers }[] = [];
+
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    const headers = new Headers(init?.headers);
+    if (url.endsWith("/v1/billing/status")) {
+      billingStatusCalls.push({ url, headers });
+      if (billingStatusCalls.length === 1) {
+        return new Response(JSON.stringify({ error: "unauthorized" }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          state: "none",
+          trial_end: null,
+          grace_until: null,
+          canView: true,
+          canManage: true,
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+    if (url.endsWith("/v1/auth/email-otp/start")) {
+      return new Response(null, { status: 204 });
+    }
+    if (url.endsWith("/v1/auth/email-otp/verify")) {
+      return new Response(
+        JSON.stringify({
+          accessToken: TOKEN,
+          userId: "00000000-0000-4000-8000-000000000002",
+          refreshToken: REFRESH,
+          expiresIn: 900,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (url.endsWith("/v1/access/grants/list")) {
+      return new Response(
+        JSON.stringify({
+          grants: [],
+          customRoles: [],
+          catalogue: [],
+          builtIn: [],
+          userLinks: [],
+          permissions: [],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    throw new Error(`unexpected ${url}`);
+  });
+
+  await showSignIn();
+
+  // Initial billing status call completed and 401 cleared the expired token
+  await act(async () => {});
+  expect(billingStatusCalls.length).toBe(1);
+  expect(sessionStorage.getItem("community-hub.access-token")).toBeNull();
+
+  // Complete sign-in
+  fireEvent.change(screen.getByRole("textbox", { name: "Email" }), { target: { value: EMAIL } });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Send code" }));
+  });
+  fireEvent.change(screen.getByRole("textbox", { name: "Code" }), { target: { value: CODE } });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+  });
+
+  // Second billing status call with bearer token and banner rendering
+  expect(billingStatusCalls.length).toBe(2);
+  expect(billingStatusCalls[1]?.headers.get("authorization")).toBe(`Bearer ${TOKEN}`);
+  expect(await screen.findByText("Choose a plan to start using Community Hub")).toBeTruthy();
 });

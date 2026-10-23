@@ -2,6 +2,7 @@ import { Button } from "@community-hub/ui";
 import { type FormEvent, useState } from "react";
 import { useNavigate } from "react-router";
 
+import { useCommunity } from "./community";
 import { directoryOrigins, storeAccessToken } from "./directory";
 
 async function accessToken(response: Response): Promise<string | undefined> {
@@ -20,6 +21,7 @@ async function accessToken(response: Response): Promise<string | undefined> {
 export function SignInPage() {
   const navigate = useNavigate();
   const origins = directoryOrigins();
+  const { refresh } = useCommunity();
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [failed, setFailed] = useState(false);
@@ -48,7 +50,7 @@ export function SignInPage() {
     event.preventDefault();
     setFailed(false);
     const response = await postAuth("/v1/auth/email-otp/start", { email });
-    setFailed(response === undefined || response.status !== 200);
+    setFailed(response === undefined || !response.ok);
   }
 
   async function verify(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -64,6 +66,7 @@ export function SignInPage() {
       return;
     }
     storeAccessToken(token);
+    refresh();
     await navigate("/settings/users");
   }
 
