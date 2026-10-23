@@ -697,6 +697,47 @@ describe("session kinds and absolute expiry", () => {
     }
   });
 
+  it("reports expiresIn from the stored access expiry for capped operator sessions", async () => {
+    const now = new Date("2026-10-22T00:00:00.000Z");
+    const absExp = new Date(now.getTime() + 5 * 60 * 1000);
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `expires-in-${newId()}@example.test`,
+      });
+
+      const tenant = await createSession(sql, kms, KEY_ARN, { userId, now });
+      expect(tenant.expiresIn).toBe(900);
+
+      const operator = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "operator",
+        absoluteExpiresAt: absExp,
+      });
+      expect(operator.expiresIn).toBeGreaterThan(0);
+      expect(operator.expiresIn).toBeLessThanOrEqual(300);
+
+      const rotated = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: operator.refreshToken,
+        now,
+        kinds: ["operator"],
+      });
+      expect(rotated).not.toBeNull();
+      expect(rotated!.expiresIn).toBeGreaterThan(0);
+      expect(rotated!.expiresIn).toBeLessThanOrEqual(300);
+
+      const tenantRotated = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: tenant.refreshToken,
+        now,
+      });
+      expect(tenantRotated).not.toBeNull();
+      expect(tenantRotated!.expiresIn).toBe(900);
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
   it("a tenant session created with no options reads, refreshes and carries kind = 'tenant' in the row", async () => {
     const now = new Date("2026-10-22T00:00:00.000Z");
     const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));

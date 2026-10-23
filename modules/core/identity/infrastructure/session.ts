@@ -17,8 +17,12 @@ export type SessionTokens = {
   userId: string;
   accessToken: string;
   refreshToken: string;
-  expiresIn: 900;
+  expiresIn: number;
 };
+
+function accessExpiresInSeconds(now: Date, accessExpiresAt: Date): number {
+  return Math.max(0, Math.min(900, Math.floor((accessExpiresAt.getTime() - now.getTime()) / 1000)));
+}
 
 export async function createSession(
   sql: Sql,
@@ -77,7 +81,7 @@ export async function createSession(
     userId: input.userId,
     accessToken: minted.accessToken,
     refreshToken: minted.refreshToken,
-    expiresIn: 900,
+    expiresIn: accessExpiresInSeconds(input.now, accessExpiresAt),
   };
 }
 
@@ -217,7 +221,7 @@ export async function refreshSession(
           ${row.absolute_expires_at ? row.absolute_expires_at.toISOString() : null}::timestamptz
         )
       `;
-      return row;
+      return { userId: row.user_id, accessExpiresAt };
     }
     const existing = await tx<{ replaced_by: string | null }[]>`
       select replaced_by
@@ -239,10 +243,10 @@ export async function refreshSession(
     return null;
   }
   return {
-    userId: claimed.user_id,
+    userId: claimed.userId,
     accessToken: minted.accessToken,
     refreshToken: minted.refreshToken,
-    expiresIn: 900,
+    expiresIn: accessExpiresInSeconds(input.now, claimed.accessExpiresAt),
   };
 }
 
