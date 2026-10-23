@@ -1,4 +1,3 @@
-import type { webcrypto } from "node:crypto";
 import { type KmsPort } from "@community-hub/crypto";
 import { newId } from "@community-hub/db";
 import type { Sql } from "postgres";
@@ -12,11 +11,14 @@ import {
   emailBlindIndex,
   findOrCreateUserByKeys,
 } from "./email-lookup.js";
+import { hmac } from "./hmac.js";
 import { createSession, type SessionTokens } from "./session.js";
 
 const TEN_MINUTES_MS = 10 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 const CODES_PER_HOUR = 5;
+
+export type OtpPurpose = "sign_in" | "operator_enrolment";
 
 function eightDigits(): string {
   return eightDigitsFrom((bytes) => {
@@ -24,30 +26,15 @@ function eightDigits(): string {
   });
 }
 
-async function hmac(
-  bidxKey: webcrypto.CryptoKey,
-  purpose: string,
-  message: Uint8Array,
-): Promise<Uint8Array> {
-  if (purpose.includes("\0")) {
-    throw new Error("purpose must not contain NUL");
-  }
-  const purposeBytes = new TextEncoder().encode(purpose);
-  const input = new Uint8Array(purposeBytes.byteLength + 1 + message.byteLength);
-  input.set(purposeBytes, 0);
-  input[purposeBytes.byteLength] = 0x00;
-  input.set(message, purposeBytes.byteLength + 1);
-  return new Uint8Array(await crypto.subtle.sign("HMAC", bidxKey, input));
-}
-
 export async function startEmailOtp(
   sql: Sql,
   kms: KmsPort,
   keyArn: string,
   mail: OtpMail,
-  input: { email: string; now: Date },
+  input: { email: string; now: Date; purpose?: OtpPurpose },
 ): Promise<void> {
   const email = normaliseEmail(input.email);
+  const purpose = input.purpose ?? "sign_in";
   const { bidx } = await deriveIdentityEmailKeys(sql, kms, keyArn);
   const emailBidx = await emailBlindIndex(bidx, email);
   const windowStart = new Date(input.now.getTime() - HOUR_MS + TEN_MINUTES_MS).toISOString();
@@ -64,6 +51,7 @@ export async function startEmailOtp(
       select count(*)::int as n
       from identity.otp_challenges
       where email_bidx = ${emailBidx}
+        and purpose = ${purpose}
         and expires_at > ${windowStart}::timestamptz
     `;
     if ((recent[0]?.n ?? 0) >= CODES_PER_HOUR) {
@@ -72,11 +60,13 @@ export async function startEmailOtp(
     await tx`
       update identity.otp_challenges
       set consumed_at = ${now}::timestamptz
-      where email_bidx = ${emailBidx} and consumed_at is null
+      where email_bidx = ${emailBidx}
+        and purpose = ${purpose}
+        and consumed_at is null
     `;
     await tx`
-      insert into identity.otp_challenges (id, email_bidx, code_hash, attempts, expires_at)
-      values (${challengeId}, ${emailBidx}, ${codeHash}, 0, ${expiresAt}::timestamptz)
+      insert into identity.otp_challenges (id, email_bidx, code_hash, attempts, expires_at, purpose)
+      values (${challengeId}, ${emailBidx}, ${codeHash}, 0, ${expiresAt}::timestamptz, ${purpose})
     `;
     return true;
   });
@@ -129,6 +119,7 @@ export async function verifyEmailOtp(
       select id
       from identity.otp_challenges
       where email_bidx = ${emailBidx}
+        and purpose = 'sign_in'
         and consumed_at is null
         and expires_at >= ${now}::timestamptz
         and attempts < 5

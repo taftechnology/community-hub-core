@@ -60,10 +60,13 @@ export function identityTables(identity: PgSchema) {
       attempts: integer("attempts").notNull(),
       expiresAt: tz("expires_at").notNull(),
       consumedAt: tz("consumed_at"),
+      purpose: text("purpose").notNull().default("sign_in"),
     },
     (t) => [
       check("otp_challenges_attempts", sql`${t.attempts} >= 0 and ${t.attempts} <= 5`),
+      check("otp_challenges_purpose", sql`${t.purpose} in ('sign_in', 'operator_enrolment')`),
       index("otp_challenges_email_bidx_idx").on(t.emailBidx),
+      index("otp_challenges_email_bidx_purpose_idx").on(t.emailBidx, t.purpose),
     ],
   );
 
@@ -77,6 +80,7 @@ export function identityTables(identity: PgSchema) {
       credentialId: bytea("credential_id").notNull(),
       coseKey: bytea("cose_key").notNull(),
       signCount: bigint("sign_count", { mode: "number" }).notNull(),
+      rpId: text("rp_id"),
     },
     (t) => [
       unique("passkey_credentials_credential_id_unique").on(t.credentialId),
@@ -93,10 +97,16 @@ export function identityTables(identity: PgSchema) {
       challenge: bytea("challenge").notNull(),
       expiresAt: tz("expires_at").notNull(),
       consumedAt: tz("consumed_at"),
+      rpId: text("rp_id"),
+      userVerification: text("user_verification").notNull().default("preferred"),
     },
     (t) => [
       unique("passkey_challenges_challenge_unique").on(t.challenge),
       check("passkey_challenges_kind", sql`${t.kind} in ('register', 'authenticate')`),
+      check(
+        "passkey_challenges_user_verification",
+        sql`${t.userVerification} in ('preferred', 'required')`,
+      ),
     ],
   );
 
@@ -114,11 +124,18 @@ export function identityTables(identity: PgSchema) {
       refreshExpiresAt: tz("refresh_expires_at").notNull(),
       replacedBy: uuid("replaced_by"),
       revokedAt: tz("revoked_at"),
+      kind: text("kind").notNull().default("tenant"),
+      absoluteExpiresAt: tz("absolute_expires_at"),
     },
     (t) => [
       unique("sessions_access_hash_unique").on(t.accessHash),
       unique("sessions_refresh_hash_unique").on(t.refreshHash),
       index("sessions_refresh_family_idx").on(t.refreshFamily),
+      check("sessions_kind", sql`${t.kind} in ('tenant', 'operator', 'enrolment')`),
+      check(
+        "sessions_absolute_expiry",
+        sql`(${t.kind} = 'operator') = (${t.absoluteExpiresAt} is not null)`,
+      ),
     ],
   );
 

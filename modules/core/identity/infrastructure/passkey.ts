@@ -1,7 +1,7 @@
 import type { webcrypto } from "node:crypto";
 import type { KmsPort } from "@community-hub/crypto";
 import { newId } from "@community-hub/db";
-import type { Sql } from "postgres";
+import type { Sql, TransactionSql } from "postgres";
 
 import { decodeCbor, decodeCoseEc2 } from "../domain/cbor.js";
 import { IdentityError } from "../domain/error.js";
@@ -10,6 +10,7 @@ import { createSession, type SessionTokens } from "./session.js";
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
 const MAX_CREDENTIAL_ID_BYTES = 1023;
 const UP = 0x01;
+const UV = 0x04;
 const AT = 0x40;
 
 export type PasskeyRegistrationOptions = {
@@ -18,17 +19,32 @@ export type PasskeyRegistrationOptions = {
   user: { id: Uint8Array; name: string; displayName: string };
   pubKeyCredParams: [{ type: "public-key"; alg: -7 }];
   attestation: "none";
-  authenticatorSelection: { userVerification: "preferred"; residentKey: "required" };
+  authenticatorSelection: { userVerification: "preferred" | "required"; residentKey: "required" };
+  excludeCredentials?: { type: "public-key"; id: Uint8Array }[];
 };
 
 export type PasskeyAuthenticationOptions = {
   challenge: Uint8Array;
   rpId: string;
+  userVerification?: "required";
 };
+
+export type PasskeyOnStored = (
+  tx: TransactionSql,
+  input: { userId: string; credentialId: Uint8Array },
+) => Promise<void> | void;
+
+export type PasskeyRegistrationOnStored = PasskeyOnStored;
 
 export async function beginPasskeyRegistration(
   sql: Sql,
-  input: { userId: string; rpId: string; now: Date },
+  input: {
+    userId: string;
+    rpId: string;
+    now: Date;
+    userVerification?: "preferred" | "required";
+    excludeExisting?: boolean;
+  },
 ): Promise<PasskeyRegistrationOptions> {
   const users = await sql<{ id: string }[]>`
     select id from identity.users where id = ${input.userId}
@@ -36,14 +52,15 @@ export async function beginPasskeyRegistration(
   if (users[0] === undefined) {
     throw new IdentityError("invalid_ceremony");
   }
+  const userVerification = input.userVerification ?? "preferred";
   const challenge = new Uint8Array(32);
   crypto.getRandomValues(challenge);
   const expiresAt = new Date(input.now.getTime() + FIVE_MINUTES_MS).toISOString();
   await sql`
-    insert into identity.passkey_challenges (id, user_id, kind, challenge, expires_at)
-    values (${newId()}, ${input.userId}, 'register', ${challenge}, ${expiresAt}::timestamptz)
+    insert into identity.passkey_challenges (id, user_id, kind, challenge, expires_at, rp_id, user_verification)
+    values (${newId()}, ${input.userId}, 'register', ${challenge}, ${expiresAt}::timestamptz, ${input.rpId}, ${userVerification})
   `;
-  return {
+  const options: PasskeyRegistrationOptions = {
     challenge,
     rp: { id: input.rpId },
     user: {
@@ -53,8 +70,21 @@ export async function beginPasskeyRegistration(
     },
     pubKeyCredParams: [{ type: "public-key", alg: -7 }],
     attestation: "none",
-    authenticatorSelection: { userVerification: "preferred", residentKey: "required" },
+    authenticatorSelection: { userVerification, residentKey: "required" },
   };
+  if (input.excludeExisting) {
+    const existing = await sql<{ credential_id: Uint8Array }[]>`
+      select credential_id
+      from identity.passkey_credentials
+      where user_id = ${input.userId}
+        and rp_id = ${input.rpId}
+    `;
+    options.excludeCredentials = existing.map((c) => ({
+      type: "public-key",
+      id: new Uint8Array(c.credential_id),
+    }));
+  }
+  return options;
 }
 
 export async function finishPasskeyRegistration(
@@ -65,21 +95,25 @@ export async function finishPasskeyRegistration(
     now: Date;
     clientDataJSON: Uint8Array;
     attestationObject: Uint8Array;
+    acceptLegacy?: boolean;
+    onStored?: PasskeyOnStored;
   },
 ): Promise<void> {
+  const acceptLegacy = input.acceptLegacy ?? true;
   const client = readClientData(input.clientDataJSON);
   if (client.type !== "webauthn.create" || !originMatches(client.origin, input.rpId)) {
     throw new IdentityError("invalid_ceremony");
   }
   const challenge = decodeBase64Url(client.challenge);
   const now = input.now.toISOString();
-  const rows = await sql<{ id: string }[]>`
-    select id from identity.passkey_challenges
+  const rows = await sql<{ id: string; user_verification: string }[]>`
+    select id, user_verification from identity.passkey_challenges
     where user_id = ${input.userId}
       and kind = 'register'
       and challenge = ${challenge}
       and consumed_at is null
       and expires_at >= ${now}::timestamptz
+      and (rp_id = ${input.rpId} or (rp_id is null and ${acceptLegacy}))
   `;
   const row = rows[0];
   if (row === undefined) {
@@ -90,16 +124,22 @@ export async function finishPasskeyRegistration(
   if ((auth.flags & UP) === 0 || (auth.flags & AT) === 0) {
     throw new IdentityError("invalid_ceremony");
   }
+  if (row.user_verification === "required" && (auth.flags & UV) === 0) {
+    throw new IdentityError("invalid_ceremony");
+  }
+
   if (!sameBytes(auth.rpIdHash, await sha256(new TextEncoder().encode(input.rpId)))) {
     throw new IdentityError("invalid_ceremony");
   }
-  if (auth.credentialId === null || auth.coseKey === null) {
+  const credentialId = auth.credentialId;
+  const coseKey = auth.coseKey;
+  if (credentialId === null || coseKey === null) {
     throw new IdentityError("invalid_ceremony");
   }
-  if (auth.credentialId.byteLength > MAX_CREDENTIAL_ID_BYTES) {
+  if (credentialId.byteLength > MAX_CREDENTIAL_ID_BYTES) {
     throw new IdentityError("invalid_ceremony");
   }
-  const point = decodeCoseEc2(auth.coseKey);
+  const point = decodeCoseEc2(coseKey);
   try {
     await importP256(point.x, point.y);
   } catch (error) {
@@ -121,15 +161,19 @@ export async function finishPasskeyRegistration(
         throw new IdentityError("invalid_ceremony");
       }
       await tx`
-        insert into identity.passkey_credentials (id, user_id, credential_id, cose_key, sign_count)
+        insert into identity.passkey_credentials (id, user_id, credential_id, cose_key, sign_count, rp_id)
         values (
           ${newId()},
           ${input.userId},
-          ${auth.credentialId},
-          ${auth.coseKey},
-          ${auth.signCount}
+          ${credentialId},
+          ${coseKey},
+          ${auth.signCount},
+          ${input.rpId}
         )
       `;
+      if (input.onStored !== undefined) {
+        await input.onStored(tx, { userId: input.userId, credentialId });
+      }
     });
   } catch (error) {
     if (isCredentialConflict(error)) {
@@ -141,22 +185,29 @@ export async function finishPasskeyRegistration(
 
 export async function beginPasskeyAuthentication(
   sql: Sql,
-  input: { rpId: string; now: Date },
+  input: {
+    rpId: string;
+    now: Date;
+    userVerification?: "preferred" | "required";
+  },
 ): Promise<PasskeyAuthenticationOptions> {
+  const userVerification = input.userVerification ?? "preferred";
   const challenge = new Uint8Array(32);
   crypto.getRandomValues(challenge);
   const expiresAt = new Date(input.now.getTime() + FIVE_MINUTES_MS).toISOString();
   await sql`
-    insert into identity.passkey_challenges (id, user_id, kind, challenge, expires_at)
-    values (${newId()}, null, 'authenticate', ${challenge}, ${expiresAt}::timestamptz)
+    insert into identity.passkey_challenges (id, user_id, kind, challenge, expires_at, rp_id, user_verification)
+    values (${newId()}, null, 'authenticate', ${challenge}, ${expiresAt}::timestamptz, ${input.rpId}, ${userVerification})
   `;
-  return { challenge, rpId: input.rpId };
+  const options: PasskeyAuthenticationOptions = { challenge, rpId: input.rpId };
+  if (userVerification === "required") {
+    options.userVerification = "required";
+  }
+  return options;
 }
 
-export async function finishPasskeyAuthentication(
+export async function verifyPasskeyAssertion(
   sql: Sql,
-  kms: KmsPort,
-  keyArn: string,
   input: {
     rpId: string;
     now: Date;
@@ -164,11 +215,13 @@ export async function finishPasskeyAuthentication(
     clientDataJSON: Uint8Array;
     authenticatorData: Uint8Array;
     signature: Uint8Array;
+    acceptLegacy?: boolean;
   },
-): Promise<SessionTokens | null> {
+): Promise<{ userId: string } | null> {
   if (input.credentialId.byteLength > MAX_CREDENTIAL_ID_BYTES) {
     return null;
   }
+  const acceptLegacy = input.acceptLegacy ?? true;
   try {
     const credentials = await sql<
       { id: string; user_id: string; cose_key: Uint8Array; sign_count: number | string }[]
@@ -176,6 +229,7 @@ export async function finishPasskeyAuthentication(
       select id, user_id, cose_key, sign_count
       from identity.passkey_credentials
       where credential_id = ${input.credentialId}
+        and (rp_id = ${input.rpId} or (rp_id is null and ${acceptLegacy}))
     `;
     const credential = credentials[0];
     if (credential === undefined) {
@@ -187,13 +241,14 @@ export async function finishPasskeyAuthentication(
     }
     const challenge = decodeBase64Url(client.challenge);
     const now = input.now.toISOString();
-    const rows = await sql<{ id: string }[]>`
-      select id from identity.passkey_challenges
+    const rows = await sql<{ id: string; user_verification: string }[]>`
+      select id, user_verification from identity.passkey_challenges
       where user_id is null
         and kind = 'authenticate'
         and challenge = ${challenge}
         and consumed_at is null
         and expires_at >= ${now}::timestamptz
+        and (rp_id = ${input.rpId} or (rp_id is null and ${acceptLegacy}))
     `;
     const row = rows[0];
     if (row === undefined) {
@@ -203,6 +258,10 @@ export async function finishPasskeyAuthentication(
     if ((auth.flags & UP) === 0 || (auth.flags & AT) !== 0) {
       return null;
     }
+    if (row.user_verification === "required" && (auth.flags & UV) === 0) {
+      return null;
+    }
+
     if (!sameBytes(auth.rpIdHash, await sha256(new TextEncoder().encode(input.rpId)))) {
       return null;
     }
@@ -237,13 +296,34 @@ export async function finishPasskeyAuthentication(
     if (!consumed) {
       return null;
     }
-    return createSession(sql, kms, keyArn, { userId: credential.user_id, now: input.now });
+    return { userId: credential.user_id };
   } catch (error) {
     if (error instanceof IdentityError && error.code === "invalid_ceremony") {
       return null;
     }
     throw error;
   }
+}
+
+export async function finishPasskeyAuthentication(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: {
+    rpId: string;
+    now: Date;
+    credentialId: Uint8Array;
+    clientDataJSON: Uint8Array;
+    authenticatorData: Uint8Array;
+    signature: Uint8Array;
+    acceptLegacy?: boolean;
+  },
+): Promise<SessionTokens | null> {
+  const verified = await verifyPasskeyAssertion(sql, input);
+  if (verified === null) {
+    return null;
+  }
+  return createSession(sql, kms, keyArn, { userId: verified.userId, now: input.now });
 }
 
 function originMatches(origin: string, rpId: string): boolean {

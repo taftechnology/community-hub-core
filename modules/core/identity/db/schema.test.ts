@@ -18,6 +18,14 @@ function identitySql(): string {
   return readFileSync(path.join(DRIZZLE, matches[0] ?? ""), "utf8");
 }
 
+function migration0011Sql(): string {
+  const files = readdirSync(DRIZZLE).filter(
+    (name) => name.startsWith("0011_") && name.endsWith(".sql"),
+  );
+  expect(files).toHaveLength(1);
+  return readFileSync(path.join(DRIZZLE, files[0] ?? ""), "utf8");
+}
+
 describe("identity tables", () => {
   it("creates the six tables without org_id or row level security", () => {
     const sql = identitySql();
@@ -54,5 +62,33 @@ describe("identity tables", () => {
       'CREATE INDEX "sessions_refresh_family_idx" ON "identity"."sessions" USING btree ("refresh_family")',
     );
     expect(sql).not.toContain("CREATE UNIQUE INDEX");
+  });
+
+  describe("migration 0011", () => {
+    it("contains each column, check and index for operator identity primitives", () => {
+      const sql = migration0011Sql();
+
+      // Columns
+      expect(sql).toContain('"kind"');
+      expect(sql).toContain('"absolute_expires_at"');
+      expect(sql).toContain('"purpose"');
+      expect(sql).toContain('"rp_id"');
+      expect(sql).toContain('"user_verification"');
+
+      // Checks
+      expect(sql).toContain("sessions_kind");
+      expect(sql).toContain("sessions_absolute_expiry");
+      expect(sql).toContain("otp_challenges_purpose");
+      expect(sql).toContain("passkey_challenges_user_verification");
+
+      // Index
+      expect(sql).toContain("otp_challenges_email_bidx_purpose_idx");
+
+      // Prohibited operations
+      expect(sql).not.toMatch(/\bDROP\b/i);
+      expect(sql).not.toMatch(/\bGRANT\b/i);
+      expect(sql).not.toMatch(/\bREVOKE\b/i);
+      expect(sql).not.toMatch(/ALTER\s+COLUMN\b.*?\bTYPE\b/i);
+    });
   });
 });
