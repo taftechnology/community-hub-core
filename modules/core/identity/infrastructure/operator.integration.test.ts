@@ -22,6 +22,7 @@ import {
   revokeOperator,
   startOperatorEnrolment,
   verifyOperatorEnrolment,
+  type VerifyOperatorEnrolmentResult,
 } from "./operator.js";
 import { readSession, readSessionWithKind, refreshSession } from "./session.js";
 
@@ -1092,6 +1093,61 @@ describe("startOperatorEnrolment and verifyOperatorEnrolment", () => {
     });
   });
 
+  describe("operator_enrolment rate cap", () => {
+    it("five startOperatorEnrolment calls inside an hour send five mails, sixth sends none, and sign_in does not count toward it", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-rate-cap@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      const enrolmentCode = "A".repeat(26);
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+
+      const { bidx } = await deriveIdentityEmailKeys(identitySql, kms, KEY_ARN);
+      const emailBidx = await emailBlindIndex(bidx, email);
+
+      const mail = createCapturingMail();
+
+      // A sign_in challenge for the same address (via startEmailOtp) does not count toward it
+      await startEmailOtp(identitySql, kms, KEY_ARN, mail, {
+        email,
+        now,
+        purpose: "sign_in",
+      });
+      expect(mail.sent).toHaveLength(1);
+
+      // Five startOperatorEnrolment calls inside an hour for an address with an open grant send five mails
+      for (let i = 0; i < 5; i++) {
+        const callTime = new Date(now.getTime() + (i + 1) * 60 * 1000);
+        await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, {
+          email,
+          now: callTime,
+        });
+      }
+      expect(mail.sent).toHaveLength(6);
+
+      // The sixth inserts no challenge and sends no mail
+      const sixthTime = new Date(now.getTime() + 6 * 60 * 1000);
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, {
+        email,
+        now: sixthTime,
+      });
+      expect(mail.sent).toHaveLength(6);
+
+      const [opChallenges] = await identitySql<{ count: string }[]>`
+        select count(*)::text as count
+        from identity.otp_challenges
+        where email_bidx = ${emailBidx}
+          and purpose = 'operator_enrolment'
+      `;
+      expect(Number(opChallenges?.count ?? 0)).toBe(5);
+    });
+  });
+
   describe("pin 1a: verify never returns an operator session", () => {
     it("enrolment verification yields only an enrolment session", async () => {
       const now = new Date("2026-10-24T12:00:00.000Z");
@@ -1273,7 +1329,8 @@ describe("startOperatorEnrolment and verifyOperatorEnrolment", () => {
         now,
       });
       const mail = createCapturingMail();
-      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, { email, now });
+      const startAt = new Date(now.getTime() + 24 * 60 * 60 * 1000 - 60 * 1000);
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, { email, now: startAt });
       const emailCode = mail.sent[0]!.code;
 
       const afterWindow = new Date(now.getTime() + 24 * 60 * 60 * 1000 + 1000);
@@ -1285,6 +1342,34 @@ describe("startOperatorEnrolment and verifyOperatorEnrolment", () => {
         now: afterWindow,
       });
       expect(res).toBeNull();
+    });
+
+    it("enrolment succeeds just before the window expires", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-win-ctrl@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      const enrolmentCode = "A".repeat(26);
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+      const mail = createCapturingMail();
+      const startAt = new Date(now.getTime() + 24 * 60 * 60 * 1000 - 60 * 1000);
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, { email, now: startAt });
+      const emailCode = mail.sent[0]!.code;
+
+      const beforeWindow = new Date(now.getTime() + 24 * 60 * 60 * 1000 - 30 * 1000);
+      const res = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode,
+        enrolmentCode,
+        opsRpId: "ops.example.test",
+        now: beforeWindow,
+      });
+      expect(res?.kind).toBe("enrolment");
     });
 
     it("enrolment fails after activation", async () => {
@@ -1349,6 +1434,107 @@ describe("startOperatorEnrolment and verifyOperatorEnrolment", () => {
         now,
       });
       expect(res).toBeNull();
+    });
+
+    it("a grant revoked while verification waits for the user lock refuses enrolment", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-lock-rev@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      const enrolmentCode = "A".repeat(26);
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+      const mail = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, { email, now });
+      const emailCode = mail.sent[0]!.code;
+
+      const holder = createPlaintextDirectSql(runtime.productOnlyUrl);
+      const observer = createPlaintextDirectSql(runtime.productOnlyUrl);
+
+      let releaseHolder: () => void = () => undefined;
+      const holderGate = new Promise<void>((resolve) => {
+        releaseHolder = resolve;
+      });
+
+      let lockAcquired: () => void = () => undefined;
+      const lockHeld = new Promise<void>((resolve) => {
+        lockAcquired = resolve;
+      });
+
+      let pendingVerify: Promise<VerifyOperatorEnrolmentResult> | undefined;
+
+      try {
+        const holderPromise = holder.begin(async (tx) => {
+          await tx`select pg_advisory_xact_lock(hashtextextended('operator:' || ${user.userId}::text, 0))`;
+          await tx`
+            update identity.operator_grants
+            set revoked_at = ${now}
+            where user_id = ${user.userId}
+          `;
+          lockAcquired();
+          await holderGate;
+        });
+
+        await lockHeld;
+
+        let settled = false;
+        pendingVerify = verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+          email,
+          emailCode,
+          enrolmentCode,
+          opsRpId: "ops.example.test",
+          now,
+        }).finally(() => {
+          settled = true;
+        });
+
+        const started = Date.now();
+        let waiting = false;
+        while (Date.now() - started < 5_000) {
+          if (settled) {
+            break;
+          }
+          const waitingRows = await observer<{ n: number }[]>`
+            select count(*)::int as n
+            from pg_stat_activity
+            where datname = current_database()
+              and state = 'active'
+              and wait_event_type = 'Lock'
+              and pid <> pg_backend_pid()
+          `;
+          if ((waitingRows[0]?.n ?? 0) >= 1) {
+            waiting = true;
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+
+        if (!waiting && !settled) {
+          throw new Error("verifyOperatorEnrolment did not wait on the user lock within 5s");
+        }
+
+        releaseHolder();
+        await holderPromise;
+
+        const result = await pendingVerify;
+        expect(result).toBeNull();
+
+        const [sessionCount] = await identitySql<{ count: string }[]>`
+          select count(*)::text as count
+          from identity.sessions
+          where user_id = ${user.userId}
+        `;
+        expect(Number(sessionCount?.count ?? 0)).toBe(0);
+      } finally {
+        releaseHolder();
+        await pendingVerify?.catch(() => undefined);
+        await holder.end({ timeout: 1 });
+        await observer.end({ timeout: 1 });
+      }
     });
   });
 

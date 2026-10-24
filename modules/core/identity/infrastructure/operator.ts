@@ -459,6 +459,7 @@ export async function verifyOperatorEnrolment(
     select id from identity.users where email_bidx = ${emailBidx}
   `;
 
+  // O13's equal-statement rule applies to startOperatorEnrolment; verify may skip the HMAC/grant select for an unknown user.
   const normalisedCode = normaliseEnrolmentCode(input.enrolmentCode);
   let enrolmentOk = false;
   let enrolmentCodeHash: Uint8Array | null = null;
