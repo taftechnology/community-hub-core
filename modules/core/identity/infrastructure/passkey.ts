@@ -36,6 +36,11 @@ export type PasskeyOnStored = (
 
 export type PasskeyRegistrationOnStored = PasskeyOnStored;
 
+export type PasskeyBeforeStore = (
+  tx: TransactionSql,
+  input: { userId: string },
+) => Promise<void> | void;
+
 export async function beginPasskeyRegistration(
   sql: Sql,
   input: {
@@ -97,6 +102,7 @@ export async function finishPasskeyRegistration(
     attestationObject: Uint8Array;
     acceptLegacy?: boolean;
     onStored?: PasskeyOnStored;
+    beforeStore?: PasskeyBeforeStore;
   },
 ): Promise<void> {
   const acceptLegacy = input.acceptLegacy ?? true;
@@ -159,6 +165,9 @@ export async function finishPasskeyRegistration(
       `;
       if (consumed[0] === undefined) {
         throw new IdentityError("invalid_ceremony");
+      }
+      if (input.beforeStore !== undefined) {
+        await input.beforeStore(tx, { userId: input.userId });
       }
       await tx`
         insert into identity.passkey_credentials (id, user_id, credential_id, cose_key, sign_count, rp_id)

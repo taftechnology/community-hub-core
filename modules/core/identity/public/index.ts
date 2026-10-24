@@ -10,6 +10,7 @@ export {
   finishPasskeyRegistration,
   verifyPasskeyAssertion,
   type PasskeyAuthenticationOptions,
+  type PasskeyBeforeStore,
   type PasskeyOnStored,
   type PasskeyRegistrationOnStored,
   type PasskeyRegistrationOptions,
@@ -18,6 +19,7 @@ export {
   readSession,
   readSessionWithKind,
   refreshSession,
+  type RefreshCheck,
   type SessionKind,
   type SessionTokens,
 } from "../infrastructure/session.js";

@@ -18,6 +18,8 @@ import {
   startEmailOtp,
   verifyEmailOtp,
 } from "../public/index.js";
+import { deriveIdentityEmailKeys } from "./email-lookup.js";
+import { createSessionInTransaction, sessionAccessHash, type RefreshCheck } from "./session.js";
 
 const KEY_ARN = `arn:aws:kms:ap-southeast-2:123456789012:key/mrk-${"ab".repeat(16)}`;
 
@@ -1067,6 +1069,335 @@ describe("session kinds and absolute expiry", () => {
           kinds: ["operator"],
         }),
       ).toBeNull();
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("a refusing refresh check leaves the session unclaimed", async () => {
+    const now = new Date("2026-10-22T00:00:00.000Z");
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `pin-t3b-${newId()}@example.test`,
+      });
+      const absoluteExpiresAt = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+      const opSession = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "operator",
+        absoluteExpiresAt,
+      });
+
+      // 1. Operator session: check receives userId and absoluteExpiresAt as a Date
+      let checkCalled = false;
+      let checkReceived: { userId: string; absoluteExpiresAt: Date | null } | undefined;
+      const refusingCheck: RefreshCheck = async (_tx, row) => {
+        checkCalled = true;
+        checkReceived = row;
+        return false;
+      };
+
+      const refused = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: opSession.refreshToken,
+        now: new Date(now.getTime() + 60 * 1000),
+        kinds: ["operator"],
+        check: refusingCheck,
+      });
+
+      expect(checkCalled).toBe(true);
+      expect(checkReceived).toBeDefined();
+      expect(checkReceived?.userId).toBe(userId);
+      expect(checkReceived?.absoluteExpiresAt).toEqual(absoluteExpiresAt);
+      expect(refused).toBeNull();
+
+      // Row remains unclaimed: replaced_by is null, revoked_at is null
+      const unclaimedRows = await sql<{ replaced_by: string | null; revoked_at: Date | null }[]>`
+        select replaced_by, revoked_at
+        from identity.sessions
+        where user_id = ${userId} and kind = 'operator'
+      `;
+      expect(unclaimedRows).toHaveLength(1);
+      expect(unclaimedRows[0]?.replaced_by).toBeNull();
+      expect(unclaimedRows[0]?.revoked_at).toBeNull();
+
+      // No successor row was created
+      const totalRows = await sql<{ count: string | number }[]>`
+        select count(*)::int as count from identity.sessions where user_id = ${userId}
+      `;
+      expect(Number(totalRows[0]?.count)).toBe(1);
+
+      // The same refresh token refreshes successfully with no check
+      const refreshedNoCheck = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: opSession.refreshToken,
+        now: new Date(now.getTime() + 120 * 1000),
+        kinds: ["operator"],
+      });
+      expect(refreshedNoCheck).not.toBeNull();
+      expect(refreshedNoCheck?.userId).toBe(userId);
+
+      // 2. Tenant session: check receives null absoluteExpiresAt
+      const tenantSession = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+      });
+
+      let tenantCheckReceived: { userId: string; absoluteExpiresAt: Date | null } | undefined;
+      const tenantRefusingCheck: RefreshCheck = async (_tx, row) => {
+        tenantCheckReceived = row;
+        return false;
+      };
+
+      const tenantRefused = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: tenantSession.refreshToken,
+        now: new Date(now.getTime() + 60 * 1000),
+        kinds: ["tenant"],
+        check: tenantRefusingCheck,
+      });
+
+      expect(tenantRefused).toBeNull();
+      expect(tenantCheckReceived?.userId).toBe(userId);
+      expect(tenantCheckReceived?.absoluteExpiresAt).toBeNull();
+
+      // 3. A check returning true behaves exactly like no check
+      let trueCheckCalled = false;
+      const acceptingCheck: RefreshCheck = async () => {
+        trueCheckCalled = true;
+        return true;
+      };
+      const refreshedWithTrue = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: tenantSession.refreshToken,
+        now: new Date(now.getTime() + 120 * 1000),
+        kinds: ["tenant"],
+        check: acceptingCheck,
+      });
+      expect(trueCheckCalled).toBe(true);
+      expect(refreshedWithTrue).not.toBeNull();
+      expect(refreshedWithTrue?.userId).toBe(userId);
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("createSessionInTransaction produces equal rows to createSession and reads with readSessionWithKind", async () => {
+    const now = new Date("2026-10-22T00:00:00.000Z");
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `pin-t3-tx-${newId()}@example.test`,
+      });
+      const { bidx } = await deriveIdentityEmailKeys(sql, kms, KEY_ARN);
+
+      // 1. Tenant session
+      const normalTenant = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+      });
+      const normalTenantHash = await sessionAccessHash(sql, kms, KEY_ARN, normalTenant.accessToken);
+      const [normalTenantRow] = await sql<
+        {
+          kind: string;
+          access_expires_at: Date;
+          refresh_expires_at: Date;
+          absolute_expires_at: Date | null;
+        }[]
+      >`
+        select kind, access_expires_at, refresh_expires_at, absolute_expires_at
+        from identity.sessions where access_hash = ${normalTenantHash}
+      `;
+
+      const txTenant = await sql.begin((tx) =>
+        createSessionInTransaction(tx, bidx, {
+          userId,
+          now,
+          kind: "tenant",
+        }),
+      );
+      const txTenantHash = await sessionAccessHash(sql, kms, KEY_ARN, txTenant.accessToken);
+      const [txTenantRow] = await sql<
+        {
+          kind: string;
+          access_expires_at: Date;
+          refresh_expires_at: Date;
+          absolute_expires_at: Date | null;
+        }[]
+      >`
+        select kind, access_expires_at, refresh_expires_at, absolute_expires_at
+        from identity.sessions where access_hash = ${txTenantHash}
+      `;
+      expect(txTenantRow?.kind).toBe("tenant");
+      expect(txTenantRow?.kind).toBe(normalTenantRow?.kind);
+      expect(txTenantRow?.access_expires_at).toEqual(normalTenantRow?.access_expires_at);
+      expect(txTenantRow?.refresh_expires_at).toEqual(normalTenantRow?.refresh_expires_at);
+      expect(txTenantRow?.absolute_expires_at).toBeNull();
+      expect(txTenantRow?.absolute_expires_at).toEqual(normalTenantRow?.absolute_expires_at);
+      expect(txTenant.expiresIn).toBe(normalTenant.expiresIn);
+
+      const readTenant = await readSessionWithKind(sql, kms, KEY_ARN, {
+        accessToken: txTenant.accessToken,
+        now,
+        kinds: ["tenant"],
+      });
+      expect(readTenant).toEqual({ userId, kind: "tenant" });
+
+      // 2. Enrolment session
+      const normalEnrolment = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "enrolment",
+      });
+      const normalEnrolHash = await sessionAccessHash(
+        sql,
+        kms,
+        KEY_ARN,
+        normalEnrolment.accessToken,
+      );
+      const [normalEnrolRow] = await sql<
+        {
+          kind: string;
+          access_expires_at: Date;
+          refresh_expires_at: Date;
+          absolute_expires_at: Date | null;
+        }[]
+      >`
+        select kind, access_expires_at, refresh_expires_at, absolute_expires_at
+        from identity.sessions where access_hash = ${normalEnrolHash}
+      `;
+
+      const txEnrolment = await sql.begin((tx) =>
+        createSessionInTransaction(tx, bidx, {
+          userId,
+          now,
+          kind: "enrolment",
+        }),
+      );
+      const txEnrolHash = await sessionAccessHash(sql, kms, KEY_ARN, txEnrolment.accessToken);
+      const [txEnrolRow] = await sql<
+        {
+          kind: string;
+          access_expires_at: Date;
+          refresh_expires_at: Date;
+          absolute_expires_at: Date | null;
+        }[]
+      >`
+        select kind, access_expires_at, refresh_expires_at, absolute_expires_at
+        from identity.sessions where access_hash = ${txEnrolHash}
+      `;
+      expect(txEnrolRow?.kind).toBe("enrolment");
+      expect(txEnrolRow?.kind).toBe(normalEnrolRow?.kind);
+      expect(txEnrolRow?.access_expires_at).toEqual(normalEnrolRow?.access_expires_at);
+      expect(txEnrolRow?.refresh_expires_at).toEqual(normalEnrolRow?.refresh_expires_at);
+      expect(txEnrolRow?.absolute_expires_at).toBeNull();
+      expect(txEnrolRow?.absolute_expires_at).toEqual(normalEnrolRow?.absolute_expires_at);
+      expect(txEnrolment.expiresIn).toBe(normalEnrolment.expiresIn);
+
+      const readEnrolment = await readSessionWithKind(sql, kms, KEY_ARN, {
+        accessToken: txEnrolment.accessToken,
+        now,
+        kinds: ["enrolment"],
+      });
+      expect(readEnrolment).toEqual({ userId, kind: "enrolment" });
+
+      // 3. Operator session
+      const absoluteExpiresAt = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+      const normalOperator = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "operator",
+        absoluteExpiresAt,
+      });
+      const normalOpHash = await sessionAccessHash(sql, kms, KEY_ARN, normalOperator.accessToken);
+      const [normalOpRow] = await sql<
+        {
+          kind: string;
+          access_expires_at: Date;
+          refresh_expires_at: Date;
+          absolute_expires_at: Date | null;
+        }[]
+      >`
+        select kind, access_expires_at, refresh_expires_at, absolute_expires_at
+        from identity.sessions where access_hash = ${normalOpHash}
+      `;
+
+      const txOperator = await sql.begin((tx) =>
+        createSessionInTransaction(tx, bidx, {
+          userId,
+          now,
+          kind: "operator",
+          absoluteExpiresAt,
+        }),
+      );
+      const txOpHash = await sessionAccessHash(sql, kms, KEY_ARN, txOperator.accessToken);
+      const [txOpRow] = await sql<
+        {
+          kind: string;
+          access_expires_at: Date;
+          refresh_expires_at: Date;
+          absolute_expires_at: Date | null;
+        }[]
+      >`
+        select kind, access_expires_at, refresh_expires_at, absolute_expires_at
+        from identity.sessions where access_hash = ${txOpHash}
+      `;
+      expect(txOpRow?.kind).toBe("operator");
+      expect(txOpRow?.kind).toBe(normalOpRow?.kind);
+      expect(txOpRow?.access_expires_at).toEqual(normalOpRow?.access_expires_at);
+      expect(txOpRow?.refresh_expires_at).toEqual(normalOpRow?.refresh_expires_at);
+      expect(txOpRow?.absolute_expires_at).toEqual(absoluteExpiresAt);
+      expect(txOpRow?.absolute_expires_at).toEqual(normalOpRow?.absolute_expires_at);
+      expect(txOperator.expiresIn).toBe(normalOperator.expiresIn);
+
+      const readOperator = await readSessionWithKind(sql, kms, KEY_ARN, {
+        accessToken: txOperator.accessToken,
+        now,
+        kinds: ["operator"],
+      });
+      expect(readOperator).toEqual({ userId, kind: "operator" });
+
+      // throws for operator without absoluteExpiresAt
+      await expect(
+        sql.begin((tx) =>
+          createSessionInTransaction(tx, bidx, {
+            userId,
+            now,
+            kind: "operator",
+          }),
+        ),
+      ).rejects.toBeInstanceOf(IdentityError);
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("sessionAccessHash returns null for malformed tokens and stored access hash for valid tokens", async () => {
+    const now = new Date("2026-10-22T00:00:00.000Z");
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `pin-t3-hash-${newId()}@example.test`,
+      });
+      // Malformed tokens
+      expect(await sessionAccessHash(sql, kms, KEY_ARN, "")).toBeNull();
+      expect(await sessionAccessHash(sql, kms, KEY_ARN, "short")).toBeNull();
+      expect(await sessionAccessHash(sql, kms, KEY_ARN, "not!base64url===")).toBeNull();
+
+      // Valid token for created session
+      const session = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+      });
+      const computedHash = await sessionAccessHash(sql, kms, KEY_ARN, session.accessToken);
+      expect(computedHash).not.toBeNull();
+      expect(computedHash).toBeInstanceOf(Uint8Array);
+
+      const rows = await sql<{ access_hash: Uint8Array }[]>`
+        select access_hash from identity.sessions where user_id = ${userId}
+      `;
+      expect(rows).toHaveLength(1);
+      expect(computedHash).toEqual(new Uint8Array(rows[0]!.access_hash));
     } finally {
       await sql.end({ timeout: 1 });
     }

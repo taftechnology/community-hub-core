@@ -1808,4 +1808,120 @@ describe("passkeys", () => {
       expect(replay).toBeNull();
     });
   });
+
+  it("beforeStore runs before the credential exists", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const kms = createLocalKmsPort();
+    const key = await signer();
+    await withSql(async (sql) => {
+      const created = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `beforestore-${crypto.randomUUID()}@example.test`,
+      });
+
+      // 1. A throwing hook leaves no credential, challenge unconsumed, and error propagates
+      const reg1 = await beginPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+      });
+      const credId1 = new Uint8Array(16).fill(1);
+      const authData1 = authenticatorData({
+        rpId: RP_ID,
+        signCount: 0,
+        credentialId: credId1,
+        cose: coseKey(key.x, key.y),
+      });
+      const hookError = new Error("beforeStore abort");
+      await expect(
+        finishPasskeyRegistration(sql, {
+          userId: created.userId,
+          rpId: RP_ID,
+          now,
+          clientDataJSON: clientData("webauthn.create", reg1.challenge, ORIGIN),
+          attestationObject: attestationObject(authData1),
+          beforeStore: async () => {
+            throw hookError;
+          },
+        }),
+      ).rejects.toThrow("beforeStore abort");
+
+      const credRows1 = await sql<{ n: number }[]>`
+        select count(*)::int as n from identity.passkey_credentials where user_id = ${created.userId}
+      `;
+      expect(credRows1).toEqual([{ n: 0 }]);
+
+      const challengeRows1 = await sql<{ consumed_at: Date | null }[]>`
+        select consumed_at from identity.passkey_challenges where challenge = ${reg1.challenge}
+      `;
+      expect(challengeRows1).toHaveLength(1);
+      expect(challengeRows1[0]?.consumed_at).toBeNull();
+
+      // 2. Inside beforeStore, count(*) of user's credentials through tx is 0
+      let hookRan = false;
+      let countDuringHook = -1;
+      let hookUserId = "";
+      const reg2 = await beginPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+      });
+      const credId2 = new Uint8Array(16).fill(2);
+      const authData2 = authenticatorData({
+        rpId: RP_ID,
+        signCount: 0,
+        credentialId: credId2,
+        cose: coseKey(key.x, key.y),
+      });
+
+      await finishPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+        clientDataJSON: clientData("webauthn.create", reg2.challenge, ORIGIN),
+        attestationObject: attestationObject(authData2),
+        beforeStore: async (tx, input) => {
+          hookRan = true;
+          hookUserId = input.userId;
+          const rows = await tx<{ n: number }[]>`
+            select count(*)::int as n from identity.passkey_credentials where user_id = ${input.userId}
+          `;
+          countDuringHook = rows[0]?.n ?? -1;
+        },
+      });
+
+      expect(hookRan).toBe(true);
+      expect(hookUserId).toBe(created.userId);
+      expect(countDuringHook).toBe(0);
+
+      const credRows2 = await sql<{ n: number }[]>`
+        select count(*)::int as n from identity.passkey_credentials where user_id = ${created.userId}
+      `;
+      expect(credRows2).toEqual([{ n: 1 }]);
+
+      // 3. With no hook, tenant registration behaves as today
+      const reg3 = await beginPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+      });
+      const credId3 = new Uint8Array(16).fill(3);
+      const authData3 = authenticatorData({
+        rpId: RP_ID,
+        signCount: 0,
+        credentialId: credId3,
+        cose: coseKey(key.x, key.y),
+      });
+      await finishPasskeyRegistration(sql, {
+        userId: created.userId,
+        rpId: RP_ID,
+        now,
+        clientDataJSON: clientData("webauthn.create", reg3.challenge, ORIGIN),
+        attestationObject: attestationObject(authData3),
+      });
+      const credRows3 = await sql<{ n: number }[]>`
+        select count(*)::int as n from identity.passkey_credentials where user_id = ${created.userId}
+      `;
+      expect(credRows3).toEqual([{ n: 2 }]);
+    });
+  });
 });
