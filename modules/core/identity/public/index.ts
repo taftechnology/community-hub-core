@@ -23,3 +23,11 @@ export {
   type SessionKind,
   type SessionTokens,
 } from "../infrastructure/session.js";
+export {
+  grantOperator,
+  recoverOperator,
+  revokeOperator,
+  type GrantOperatorInput,
+  type RecoverOperatorInput,
+  type RevokeOperatorInput,
+} from "../infrastructure/operator.js";
