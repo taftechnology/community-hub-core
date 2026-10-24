@@ -9,7 +9,7 @@ Spec: docs/specs/2026-10-22-ops-operator-identity.md
 **Architecture:** One expand migration (`0012`) adds `identity.operator_grants` and `identity.operator_events` and revokes the privileges the spec names. `session.ts` gains a refresh check hook and an in-transaction session insert; `passkey.ts` gains a `beforeStore` hook. A new `operator.ts` holds the operator functions; two small domain files hold the platform role keys and enrolment code normalising.
 
 Slug: ops-operator-identity
-Status: draft
+Status: approved (2026-10-24, Abdus Salam)
 
 ## Who does what
 
