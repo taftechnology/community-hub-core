@@ -27,7 +27,12 @@ export {
   grantOperator,
   recoverOperator,
   revokeOperator,
+  startOperatorEnrolment,
+  verifyOperatorEnrolment,
   type GrantOperatorInput,
   type RecoverOperatorInput,
   type RevokeOperatorInput,
+  type StartOperatorEnrolmentInput,
+  type VerifyOperatorEnrolmentInput,
+  type VerifyOperatorEnrolmentResult,
 } from "../infrastructure/operator.js";

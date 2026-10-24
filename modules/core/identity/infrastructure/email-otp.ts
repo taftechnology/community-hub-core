@@ -14,9 +14,9 @@ import {
 import { hmac } from "./hmac.js";
 import { createSession, type SessionTokens } from "./session.js";
 
-const TEN_MINUTES_MS = 10 * 60 * 1000;
-const HOUR_MS = 60 * 60 * 1000;
-const CODES_PER_HOUR = 5;
+export const TEN_MINUTES_MS = 10 * 60 * 1000;
+export const HOUR_MS = 60 * 60 * 1000;
+export const CODES_PER_HOUR = 5;
 
 export type OtpPurpose = "sign_in" | "operator_enrolment";
 

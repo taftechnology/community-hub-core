@@ -11,8 +11,19 @@ import {
 import type { Sql } from "postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { IdentityError } from "../domain/error.js";
+import { type OtpMail, OtpMailUnavailable, rejectingOtpMail } from "../domain/otp-mail.js";
+import { deriveIdentityEmailKeys, emailBlindIndex } from "./email-lookup.js";
+import { startEmailOtp, verifyEmailOtp } from "./email-otp.js";
 import { insertIdentityUser } from "./identity-user.js";
-import { grantOperator, recoverOperator, revokeOperator } from "./operator.js";
+import {
+  grantOperator,
+  recoverOperator,
+  revokeOperator,
+  startOperatorEnrolment,
+  verifyOperatorEnrolment,
+} from "./operator.js";
+import { readSession, readSessionWithKind, refreshSession } from "./session.js";
 
 const KEY_ARN = `arn:aws:kms:ap-southeast-2:123456789012:key/mrk-${"ab".repeat(16)}`;
 
@@ -474,6 +485,24 @@ describe("grantOperator, revokeOperator and recoverOperator", () => {
           pos_raw_req: 0,
           pos_norm_req: 0,
         });
+
+        // Carry-over from Task 4 review: refused grant's error message contains no enrolment code text
+        const invalidCode = "A".repeat(25) + "=";
+        let grantError: unknown;
+        try {
+          await grantOperator(identitySql, kms, KEY_ARN, {
+            userId: user.userId,
+            roleKeys: ["platform_admin"],
+            enrolmentCode: invalidCode,
+            opsRpId: "ops.example.test",
+            now,
+          });
+        } catch (err) {
+          grantError = err;
+        }
+        expect(grantError).toBeInstanceOf(IdentityError);
+        expect((grantError as IdentityError).code).toBe("invalid_grant");
+        expect((grantError as Error).message).not.toContain(invalidCode);
       } finally {
         spyLog.mockRestore();
         spyInfo.mockRestore();
@@ -986,6 +1015,627 @@ describe("grantOperator, revokeOperator and recoverOperator", () => {
         select request_id from identity.operator_events where user_id = ${user.userId} and action = 'revoked'
       `;
       expect(event2?.request_id).toBe(validUuid);
+    });
+  });
+});
+
+function createCapturingMail(): OtpMail & { sent: { to: string; code: string }[] } {
+  const sent: { to: string; code: string }[] = [];
+  return {
+    sent,
+    async send(input) {
+      sent.push(input);
+    },
+  };
+}
+
+describe("startOperatorEnrolment and verifyOperatorEnrolment", () => {
+  const kms = createLocalKmsPort();
+  let identitySql: Sql;
+  let directSql: Sql;
+  const runtime = loadRuntime();
+
+  beforeAll(async () => {
+    directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    identitySql = createPlaintextIdentitySql(roleUrl(runtime, "identity"));
+    await directSql`delete from identity.operator_events`;
+    await directSql`delete from identity.operator_grants`;
+    await directSql`delete from identity.sessions`;
+    await directSql`delete from identity.passkey_credentials`;
+    await directSql`delete from identity.identity_keys`;
+    await directSql`delete from identity.otp_challenges`;
+    await directSql`delete from identity.users`;
+  });
+
+  afterAll(async () => {
+    try {
+      await directSql`delete from identity.operator_events`;
+      await directSql`delete from identity.operator_grants`;
+      await directSql`delete from identity.sessions`;
+      await directSql`delete from identity.passkey_credentials`;
+      await directSql`delete from identity.identity_keys`;
+      await directSql`delete from identity.otp_challenges`;
+      await directSql`delete from identity.users`;
+    } finally {
+      await identitySql.end({ timeout: 1 });
+      await directSql.end({ timeout: 1 });
+    }
+  });
+
+  describe("pin 10: enrolment start inserts before lookup, no mail without grant", () => {
+    it("enrolment start for an address with no grant inserts a challenge and sends nothing", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const mail = createCapturingMail();
+      const email = "op-nogrant@example.test";
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, {
+        email,
+        now,
+      });
+
+      const { bidx } = await deriveIdentityEmailKeys(identitySql, kms, KEY_ARN);
+      const emailBidx = await emailBlindIndex(bidx, email);
+      const [challenge] = await identitySql<{ count: string }[]>`
+        select count(*)::text as count
+        from identity.otp_challenges
+        where email_bidx = ${emailBidx}
+          and purpose = 'operator_enrolment'
+      `;
+      expect(Number(challenge?.count ?? 0)).toBe(1);
+      expect(mail.sent).toHaveLength(0);
+
+      const [events] = await identitySql<{ count: string }[]>`
+        select count(*)::text as count
+        from identity.operator_events
+        where action = 'enrolment_started'
+      `;
+      expect(Number(events?.count ?? 0)).toBe(0);
+    });
+  });
+
+  describe("pin 1a: verify never returns an operator session", () => {
+    it("enrolment verification yields only an enrolment session", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-pin1a@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      const enrolmentCode = "A".repeat(26);
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+
+      const mail = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, { email, now });
+      expect(mail.sent).toHaveLength(1);
+      const emailCode = mail.sent[0]!.code;
+
+      const result = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode,
+        enrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+      expect(result).not.toBeNull();
+      expect(result?.kind).toBe("enrolment");
+      if (result?.kind === "enrolment") {
+        const [sessionRow] = await identitySql<
+          { kind: string; absolute_expires_at: Date | null }[]
+        >`
+          select kind, absolute_expires_at
+          from identity.sessions
+          where user_id = ${user.userId}
+        `;
+        expect(sessionRow?.kind).toBe("enrolment");
+        expect(sessionRow?.absolute_expires_at).toBeNull();
+
+        const refreshed = await refreshSession(identitySql, kms, KEY_ARN, {
+          refreshToken: result.session.refreshToken,
+          now,
+          kinds: ["tenant", "operator", "enrolment"],
+        });
+        expect(refreshed).toBeNull();
+      }
+    });
+  });
+
+  describe("pin 1b: verify never creates a user", () => {
+    it("verification for an unknown address creates no user", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-unknown-user@example.test";
+      const mail = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, { email, now });
+
+      const { bidx } = await deriveIdentityEmailKeys(identitySql, kms, KEY_ARN);
+      const emailBidx = await emailBlindIndex(bidx, email);
+
+      const [challenge] = await identitySql<{ code_hash: Uint8Array }[]>`
+        select code_hash from identity.otp_challenges where email_bidx = ${emailBidx}
+      `;
+      expect(challenge).toBeDefined();
+
+      const result = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode: "12345678",
+        enrolmentCode: "A".repeat(26),
+        opsRpId: "ops.example.test",
+        now,
+      });
+      expect(result).toBeNull();
+
+      const [userCount] = await identitySql<{ count: string }[]>`
+        select count(*)::text as count from identity.users where email_bidx = ${emailBidx}
+      `;
+      expect(Number(userCount?.count ?? 0)).toBe(0);
+    });
+  });
+
+  describe("pin 2: wrong enrolment code counts one attempt; consumed at five", () => {
+    it("a wrong enrolment code with a right email code counts an attempt", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-pin2@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      const rightEnrolmentCode = "A".repeat(26);
+      const wrongEnrolmentCode = "B".repeat(26);
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode: rightEnrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+
+      const mail = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, { email, now });
+      const emailCode = mail.sent[0]!.code;
+
+      const { bidx } = await deriveIdentityEmailKeys(identitySql, kms, KEY_ARN);
+      const emailBidx = await emailBlindIndex(bidx, email);
+
+      // 1st wrong attempt
+      const res1 = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode,
+        enrolmentCode: wrongEnrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+      expect(res1).toBeNull();
+      const [c1] = await identitySql<{ attempts: number; consumed_at: Date | null }[]>`
+        select attempts, consumed_at
+        from identity.otp_challenges
+        where email_bidx = ${emailBidx} and purpose = 'operator_enrolment'
+      `;
+      expect(c1?.attempts).toBe(1);
+      expect(c1?.consumed_at).toBeNull();
+
+      // attempts 2, 3, 4
+      for (let i = 2; i <= 4; i++) {
+        const res = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+          email,
+          emailCode,
+          enrolmentCode: wrongEnrolmentCode,
+          opsRpId: "ops.example.test",
+          now,
+        });
+        expect(res).toBeNull();
+        const [ci] = await identitySql<{ attempts: number; consumed_at: Date | null }[]>`
+          select attempts, consumed_at
+          from identity.otp_challenges
+          where email_bidx = ${emailBidx} and purpose = 'operator_enrolment'
+        `;
+        expect(ci?.attempts).toBe(i);
+        expect(ci?.consumed_at).toBeNull();
+      }
+
+      // 5th wrong attempt consumes
+      const res5 = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode,
+        enrolmentCode: wrongEnrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+      expect(res5).toBeNull();
+      const [c5] = await identitySql<{ attempts: number; consumed_at: Date | null }[]>`
+        select attempts, consumed_at
+        from identity.otp_challenges
+        where email_bidx = ${emailBidx} and purpose = 'operator_enrolment'
+      `;
+      expect(c5?.attempts).toBe(5);
+      expect(c5?.consumed_at).not.toBeNull();
+
+      // Now even with both right codes, verification fails
+      const resRight = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode,
+        enrolmentCode: rightEnrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+      expect(resRight).toBeNull();
+    });
+  });
+
+  describe("pin 4: enrolment fails after window, activation, revocation", () => {
+    it("enrolment fails after the window", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-win-exp@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      const enrolmentCode = "A".repeat(26);
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+      const mail = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, { email, now });
+      const emailCode = mail.sent[0]!.code;
+
+      const afterWindow = new Date(now.getTime() + 24 * 60 * 60 * 1000 + 1000);
+      const res = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode,
+        enrolmentCode,
+        opsRpId: "ops.example.test",
+        now: afterWindow,
+      });
+      expect(res).toBeNull();
+    });
+
+    it("enrolment fails after activation", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-act-fail@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      const enrolmentCode = "A".repeat(26);
+      const { grantIds } = await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+      const mail = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, { email, now });
+      const emailCode = mail.sent[0]!.code;
+
+      await identitySql`
+        update identity.operator_grants
+        set activated_at = ${now}
+        where id = ${grantIds[0]!}
+      `;
+
+      const res = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode,
+        enrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+      expect(res).toBeNull();
+    });
+
+    it("enrolment fails after revocation", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-rev-fail@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      const enrolmentCode = "A".repeat(26);
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+      const mail = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, { email, now });
+      const emailCode = mail.sent[0]!.code;
+
+      await revokeOperator(identitySql, {
+        userId: user.userId,
+        opsRpId: "ops.example.test",
+        now,
+      });
+
+      const res = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode,
+        enrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+      expect(res).toBeNull();
+    });
+  });
+
+  describe("enrolment verification plus cases", () => {
+    it("gives an enrolment session that reads with readSessionWithKind(['enrolment']) and not with default readSession", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-session-kinds@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      const enrolmentCode = "A".repeat(26);
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+      const mail = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, { email, now });
+      const emailCode = mail.sent[0]!.code;
+
+      const result = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode,
+        enrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+      expect(result?.kind).toBe("enrolment");
+      if (result?.kind === "enrolment") {
+        const readWithEnrol = await readSessionWithKind(identitySql, kms, KEY_ARN, {
+          accessToken: result.session.accessToken,
+          now,
+          kinds: ["enrolment"],
+        });
+        expect(readWithEnrol?.userId).toBe(user.userId);
+
+        const readDefault = await readSession(identitySql, kms, KEY_ARN, {
+          accessToken: result.session.accessToken,
+          now,
+        });
+        expect(readDefault).toBeNull();
+      }
+    });
+
+    it("a sign_in challenge for the same address is neither used nor consumed", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-coexist-challenges@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      const enrolmentCode = "A".repeat(26);
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+
+      const tenantMail = createCapturingMail();
+      await startEmailOtp(identitySql, kms, KEY_ARN, tenantMail, {
+        email,
+        now,
+        purpose: "sign_in",
+      });
+      expect(tenantMail.sent).toHaveLength(1);
+      const tenantCode = tenantMail.sent[0]!.code;
+
+      const opMail = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, opMail, { email, now });
+      expect(opMail.sent).toHaveLength(1);
+      const opCode = opMail.sent[0]!.code;
+
+      const opResult = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode: opCode,
+        enrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+      expect(opResult?.kind).toBe("enrolment");
+
+      const { bidx } = await deriveIdentityEmailKeys(identitySql, kms, KEY_ARN);
+      const emailBidx = await emailBlindIndex(bidx, email);
+      const [signInChallenge] = await identitySql<{ attempts: number; consumed_at: Date | null }[]>`
+        select attempts, consumed_at
+        from identity.otp_challenges
+        where email_bidx = ${emailBidx}
+          and purpose = 'sign_in'
+      `;
+      expect(signInChallenge?.consumed_at).toBeNull();
+      expect(signInChallenge?.attempts).toBe(0);
+
+      const tenantSession = await verifyEmailOtp(identitySql, kms, KEY_ARN, {
+        email,
+        code: tenantCode,
+        now,
+      });
+      expect(tenantSession).not.toBeNull();
+      expect(tenantSession?.userId).toBe(user.userId);
+    });
+
+    it("a malformed enrolment code counts an attempt", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-malformed-code@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      const enrolmentCode = "A".repeat(26);
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+      const mail = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, { email, now });
+      const emailCode = mail.sent[0]!.code;
+
+      const { bidx } = await deriveIdentityEmailKeys(identitySql, kms, KEY_ARN);
+      const emailBidx = await emailBlindIndex(bidx, email);
+
+      const res = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode,
+        enrolmentCode: "A".repeat(25),
+        opsRpId: "ops.example.test",
+        now,
+      });
+      expect(res).toBeNull();
+
+      const [challenge] = await identitySql<{ attempts: number }[]>`
+        select attempts from identity.otp_challenges where email_bidx = ${emailBidx} and purpose = 'operator_enrolment'
+      `;
+      expect(challenge?.attempts).toBe(1);
+    });
+
+    it("an existing operator granted a new role with two ops credentials gets { kind: 'activated' } and the new grant becomes active", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-two-creds-act@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+
+      // Existing operator has an active grant
+      const firstEnrolmentCode = "A".repeat(26);
+      const { grantIds: initialGrantIds } = await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode: firstEnrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+      await identitySql`
+        update identity.operator_grants
+        set activated_at = ${now}
+        where id = ${initialGrantIds[0]!}
+      `;
+
+      // Holds two ops passkey credentials
+      await insertTestPasskeyCredential(identitySql, {
+        userId: user.userId,
+        rpId: "ops.example.test",
+      });
+      await insertTestPasskeyCredential(identitySql, {
+        userId: user.userId,
+        rpId: "ops.example.test",
+      });
+
+      // Now granted a new role
+      const newEnrolmentCode = "B".repeat(26);
+      const { grantIds: newGrantIds } = await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_support"],
+        enrolmentCode: newEnrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+
+      const enrolSessionId = await insertTestSession(identitySql, {
+        userId: user.userId,
+        kind: "enrolment",
+        now,
+      });
+
+      const mail = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, { email, now });
+      const emailCode = mail.sent[0]!.code;
+
+      const res = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode,
+        enrolmentCode: newEnrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+      expect(res).toEqual({ kind: "activated" });
+
+      const [grant] = await identitySql<{ activated_at: Date | null }[]>`
+        select activated_at from identity.operator_grants where id = ${newGrantIds[0]!}
+      `;
+      expect(grant?.activated_at).toEqual(now);
+
+      const [enrolSession] = await identitySql<{ revoked_at: Date | null }[]>`
+        select revoked_at from identity.sessions where id = ${enrolSessionId}
+      `;
+      expect(enrolSession?.revoked_at).toEqual(now);
+
+      const [actEvent] = await identitySql<{ action: string; role_key: string }[]>`
+        select action, role_key
+        from identity.operator_events
+        where user_id = ${user.userId} and action = 'activated' and role_key = 'platform_support'
+      `;
+      expect(actEvent?.role_key).toBe("platform_support");
+    });
+
+    it("the same enrolment code works again after a first successful verification while the grant is open with a new email code", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-reuse-code@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      const enrolmentCode = "A".repeat(26);
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+
+      const mail1 = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail1, { email, now });
+      const emailCode1 = mail1.sent[0]!.code;
+
+      const res1 = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode: emailCode1,
+        enrolmentCode,
+        opsRpId: "ops.example.test",
+        now,
+      });
+      expect(res1?.kind).toBe("enrolment");
+
+      const now2 = new Date(now.getTime() + 1000);
+      const mail2 = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail2, { email, now: now2 });
+      const emailCode2 = mail2.sent[0]!.code;
+
+      const res2 = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode: emailCode2,
+        enrolmentCode,
+        opsRpId: "ops.example.test",
+        now: now2,
+      });
+      expect(res2?.kind).toBe("enrolment");
+    });
+
+    it("enrolment_started is appended only after a successful send and deleted on send failure", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-mail-fail@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode: "A".repeat(26),
+        opsRpId: "ops.example.test",
+        now,
+      });
+
+      const { bidx } = await deriveIdentityEmailKeys(identitySql, kms, KEY_ARN);
+      const emailBidx = await emailBlindIndex(bidx, email);
+
+      await expect(
+        startOperatorEnrolment(identitySql, kms, KEY_ARN, rejectingOtpMail, { email, now }),
+      ).rejects.toBeInstanceOf(OtpMailUnavailable);
+
+      const [ch1] = await identitySql<{ count: string }[]>`
+        select count(*)::text as count from identity.otp_challenges where email_bidx = ${emailBidx}
+      `;
+      expect(Number(ch1?.count ?? 0)).toBe(0);
+
+      const [ev1] = await identitySql<{ count: string }[]>`
+        select count(*)::text as count from identity.operator_events where user_id = ${user.userId} and action = 'enrolment_started'
+      `;
+      expect(Number(ev1?.count ?? 0)).toBe(0);
+
+      const mail = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, { email, now });
+      const [ev2] = await identitySql<{ count: string }[]>`
+        select count(*)::text as count from identity.operator_events where user_id = ${user.userId} and action = 'enrolment_started'
+      `;
+      expect(Number(ev2?.count ?? 0)).toBe(1);
     });
   });
 });
