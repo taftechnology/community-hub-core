@@ -1,4 +1,5 @@
-export type IdentityErrorCode = "invalid_email" | "email_unavailable" | "invalid_ceremony";
+export type IdentityErrorCode =
+  "invalid_email" | "email_unavailable" | "invalid_ceremony" | "invalid_grant";
 
 export class IdentityError extends Error {
   readonly code: IdentityErrorCode;
