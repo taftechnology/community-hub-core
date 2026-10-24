@@ -24,14 +24,18 @@ export {
   type SessionTokens,
 } from "../infrastructure/session.js";
 export {
+  beginOperatorAuthentication,
   beginOperatorPasskeyRegistration,
+  finishOperatorAuthentication,
   finishOperatorPasskeyRegistration,
   grantOperator,
   recoverOperator,
   revokeOperator,
   startOperatorEnrolment,
   verifyOperatorEnrolment,
+  type BeginOperatorAuthenticationInput,
   type BeginOperatorPasskeyRegistrationInput,
+  type FinishOperatorAuthenticationInput,
   type FinishOperatorPasskeyRegistrationInput,
   type GrantOperatorInput,
   type RecoverOperatorInput,

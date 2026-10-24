@@ -12,8 +12,11 @@ import { deriveIdentityEmailKeys, emailBlindIndex } from "./email-lookup.js";
 import { CODES_PER_HOUR, HOUR_MS, TEN_MINUTES_MS } from "./email-otp.js";
 import { hmac } from "./hmac.js";
 import {
+  beginPasskeyAuthentication,
   beginPasskeyRegistration,
   finishPasskeyRegistration,
+  verifyPasskeyAssertion,
+  type PasskeyAuthenticationOptions,
   type PasskeyRegistrationOptions,
 } from "./passkey.js";
 import {
@@ -443,6 +446,44 @@ export async function startOperatorEnrolment(
   });
 }
 
+async function activateOpenGrants(
+  tx: TransactionSql,
+  input: {
+    userId: string;
+    now: Date;
+    requestId?: string | undefined;
+  },
+): Promise<number> {
+  const activatedGrants = await tx<{ id: string; role_key: PlatformRoleKey }[]>`
+    update identity.operator_grants
+    set activated_at = ${input.now}
+    where user_id = ${input.userId}
+      and revoked_at is null
+      and activated_at is null
+      and enrolment_expires_at > ${input.now}
+    returning id, role_key
+  `;
+  for (const grant of activatedGrants) {
+    await appendOperatorEvent(tx, {
+      userId: input.userId,
+      action: "activated",
+      roleKey: grant.role_key,
+      requestId: input.requestId,
+      now: input.now,
+    });
+  }
+  if (activatedGrants.length > 0) {
+    await tx`
+      update identity.sessions
+      set revoked_at = ${input.now}
+      where user_id = ${input.userId}
+        and revoked_at is null
+        and kind = 'enrolment'
+    `;
+  }
+  return activatedGrants.length;
+}
+
 export async function verifyOperatorEnrolment(
   sql: Sql,
   kms: KmsPort,
@@ -550,31 +591,11 @@ export async function verifyOperatorEnrolment(
     const hasTwoOrMoreOpsCreds = Number(opsCredCount?.count ?? 0) >= 2;
 
     if (hasTwoOrMoreOpsCreds) {
-      const activatedGrants = await tx<{ id: string; role_key: PlatformRoleKey }[]>`
-        update identity.operator_grants
-        set activated_at = ${input.now}
-        where user_id = ${user.id}
-          and revoked_at is null
-          and activated_at is null
-          and enrolment_expires_at > ${input.now}
-        returning id, role_key
-      `;
-      for (const grant of activatedGrants) {
-        await appendOperatorEvent(tx, {
-          userId: user.id,
-          action: "activated",
-          roleKey: grant.role_key,
-          requestId: input.requestId,
-          now: input.now,
-        });
-      }
-      await tx`
-        update identity.sessions
-        set revoked_at = ${input.now}
-        where user_id = ${user.id}
-          and revoked_at is null
-          and kind = 'enrolment'
-      `;
+      await activateOpenGrants(tx, {
+        userId: user.id,
+        now: input.now,
+        requestId: input.requestId,
+      });
       return { kind: "activated" as const };
     }
 
@@ -704,18 +725,32 @@ export async function finishOperatorPasskeyRegistration(
           throw new RegistrationSentinelError();
         }
 
-        const [grant] = await tx<{ id: string }[]>`
-          select id
-          from identity.operator_grants
-          where user_id = ${session.userId}
-            and revoked_at is null
-            and (
-              activated_at is not null
-              or (activated_at is null and enrolment_expires_at > ${input.now})
-            )
-          limit 1
-        `;
-        if (!grant) {
+        if (sessionRow.kind === "enrolment") {
+          const [openGrant] = await tx<{ id: string }[]>`
+            select id
+            from identity.operator_grants
+            where user_id = ${session.userId}
+              and revoked_at is null
+              and activated_at is null
+              and enrolment_expires_at > ${input.now}
+            limit 1
+          `;
+          if (!openGrant) {
+            throw new RegistrationSentinelError();
+          }
+        } else if (sessionRow.kind === "operator") {
+          const [activeGrant] = await tx<{ id: string }[]>`
+            select id
+            from identity.operator_grants
+            where user_id = ${session.userId}
+              and revoked_at is null
+              and activated_at is not null
+            limit 1
+          `;
+          if (!activeGrant) {
+            throw new RegistrationSentinelError();
+          }
+        } else {
           throw new RegistrationSentinelError();
         }
       },
@@ -736,33 +771,11 @@ export async function finishOperatorPasskeyRegistration(
         const count = Number(opsCredCount?.count ?? 0);
 
         if (count >= 2) {
-          const activatedGrants = await tx<{ id: string; role_key: PlatformRoleKey }[]>`
-            update identity.operator_grants
-            set activated_at = ${input.now}
-            where user_id = ${session.userId}
-              and revoked_at is null
-              and activated_at is null
-              and enrolment_expires_at > ${input.now}
-            returning id, role_key
-          `;
-          for (const grant of activatedGrants) {
-            await appendOperatorEvent(tx, {
-              userId: session.userId,
-              action: "activated",
-              roleKey: grant.role_key,
-              requestId: input.requestId,
-              now: input.now,
-            });
-          }
-          if (activatedGrants.length > 0) {
-            await tx`
-              update identity.sessions
-              set revoked_at = ${input.now}
-              where user_id = ${session.userId}
-                and revoked_at is null
-                and kind = 'enrolment'
-            `;
-          }
+          await activateOpenGrants(tx, {
+            userId: session.userId,
+            now: input.now,
+            requestId: input.requestId,
+          });
         }
       },
     });
@@ -776,4 +789,94 @@ export async function finishOperatorPasskeyRegistration(
     }
     throw error;
   }
+}
+
+export type BeginOperatorAuthenticationInput = {
+  opsRpId: string;
+  now: Date;
+};
+
+export type FinishOperatorAuthenticationInput = {
+  opsRpId: string;
+  now: Date;
+  credentialId: Uint8Array;
+  clientDataJSON: Uint8Array;
+  authenticatorData: Uint8Array;
+  signature: Uint8Array;
+  requestId?: string | undefined;
+};
+
+export async function beginOperatorAuthentication(
+  sql: Sql,
+  input: BeginOperatorAuthenticationInput,
+): Promise<PasskeyAuthenticationOptions> {
+  return beginPasskeyAuthentication(sql, {
+    rpId: input.opsRpId,
+    now: input.now,
+    userVerification: "required",
+  });
+}
+
+export async function finishOperatorAuthentication(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: FinishOperatorAuthenticationInput,
+): Promise<SessionTokens | null> {
+  const verified = await verifyPasskeyAssertion(sql, {
+    rpId: input.opsRpId,
+    acceptLegacy: false,
+    now: input.now,
+    credentialId: input.credentialId,
+    clientDataJSON: input.clientDataJSON,
+    authenticatorData: input.authenticatorData,
+    signature: input.signature,
+  });
+
+  if (verified === null) {
+    return null;
+  }
+
+  const { bidx } = await deriveIdentityEmailKeys(sql, kms, keyArn);
+
+  return sql.begin(async (tx) => {
+    await lockOperatorUser(tx, verified.userId);
+
+    const [activeGrant] = await tx<{ id: string }[]>`
+      select id
+      from identity.operator_grants
+      where user_id = ${verified.userId}
+        and revoked_at is null
+        and activated_at is not null
+      limit 1
+    `;
+
+    if (activeGrant !== undefined) {
+      const absoluteExpiresAt = new Date(input.now.getTime() + 8 * 60 * 60 * 1000);
+      const session = await createSessionInTransaction(tx, bidx, {
+        userId: verified.userId,
+        now: input.now,
+        kind: "operator",
+        absoluteExpiresAt,
+      });
+
+      await appendOperatorEvent(tx, {
+        userId: verified.userId,
+        action: "signed_in",
+        requestId: input.requestId,
+        now: input.now,
+      });
+
+      return session;
+    } else {
+      await appendOperatorEvent(tx, {
+        userId: verified.userId,
+        action: "sign_in_refused",
+        requestId: input.requestId,
+        now: input.now,
+      });
+
+      return null;
+    }
+  });
 }
