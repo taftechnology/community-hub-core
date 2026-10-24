@@ -26,6 +26,14 @@ function migration0011Sql(): string {
   return readFileSync(path.join(DRIZZLE, files[0] ?? ""), "utf8");
 }
 
+function migration0012Sql(): string {
+  const files = readdirSync(DRIZZLE).filter(
+    (name) => name.startsWith("0012_") && name.endsWith(".sql"),
+  );
+  expect(files).toHaveLength(1);
+  return readFileSync(path.join(DRIZZLE, files[0] ?? ""), "utf8");
+}
+
 describe("identity tables", () => {
   it("creates the six tables without org_id or row level security", () => {
     const sql = identitySql();
@@ -89,6 +97,55 @@ describe("identity tables", () => {
       expect(sql).not.toMatch(/\bGRANT\b/i);
       expect(sql).not.toMatch(/\bREVOKE\b/i);
       expect(sql).not.toMatch(/ALTER\s+COLUMN\b.*?\bTYPE\b/i);
+    });
+  });
+
+  describe("migration 0012", () => {
+    it("contains each column, check, index and revokes for operator tables", () => {
+      const sql = migration0012Sql();
+
+      // Tables
+      expect(sql).toContain('CREATE TABLE "identity"."operator_grants"');
+      expect(sql).toContain('CREATE TABLE "identity"."operator_events"');
+
+      // operator_grants columns
+      expect(sql).toContain('"id" uuid');
+      expect(sql).toContain('"user_id" uuid');
+      expect(sql).toContain('"role_key" text');
+      expect(sql).toContain('"enrolment_code_hash" "bytea"');
+      expect(sql).toContain('"granted_at" timestamp with time zone');
+      expect(sql).toContain('"enrolment_expires_at" timestamp with time zone');
+      expect(sql).toContain('"activated_at" timestamp with time zone');
+      expect(sql).toContain('"revoked_at" timestamp with time zone');
+
+      // operator_events columns
+      expect(sql).toContain('"action" text');
+      expect(sql).toContain('"request_id" text');
+      expect(sql).toContain('"occurred_at" timestamp with time zone');
+
+      // Checks
+      expect(sql).toContain("operator_grants_role_key");
+      expect(sql).toContain("operator_events_action");
+      expect(sql).toContain("operator_events_role_key");
+
+      // Indexes
+      expect(sql).toContain("operator_grants_user_role_live");
+      expect(sql).toContain("operator_grants_user_id_idx");
+
+      // Revokes
+      expect(sql).toContain(
+        "REVOKE UPDATE, DELETE, TRUNCATE ON TABLE identity.operator_events FROM identity;",
+      );
+      expect(sql).toContain(
+        "REVOKE DELETE, TRUNCATE ON TABLE identity.operator_grants FROM identity;",
+      );
+
+      // Prohibited operations
+      expect(sql).not.toMatch(/\bDROP\b/i);
+      expect(sql).not.toMatch(/\bGRANT\b/i);
+      expect(sql).not.toMatch(/ALTER TABLE (?!("identity"\.)?"operator_)/i);
+      expect(sql).not.toMatch(/\borg_id\b/i);
+      expect(sql).not.toContain("ROW LEVEL SECURITY");
     });
   });
 });

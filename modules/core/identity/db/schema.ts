@@ -8,6 +8,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
   type PgSchema,
 } from "drizzle-orm/pg-core";
@@ -139,6 +140,54 @@ export function identityTables(identity: PgSchema) {
     ],
   );
 
+  const operatorGrants = identity.table(
+    "operator_grants",
+    {
+      id: uuid("id").primaryKey(),
+      userId: uuid("user_id")
+        .notNull()
+        .references(() => users.id),
+      roleKey: text("role_key").notNull(),
+      enrolmentCodeHash: bytea("enrolment_code_hash").notNull(),
+      grantedAt: tz("granted_at").notNull(),
+      enrolmentExpiresAt: tz("enrolment_expires_at").notNull(),
+      activatedAt: tz("activated_at"),
+      revokedAt: tz("revoked_at"),
+    },
+    (t) => [
+      check(
+        "operator_grants_role_key",
+        sql`${t.roleKey} in ('platform_admin', 'platform_support', 'platform_security')`,
+      ),
+      uniqueIndex("operator_grants_user_role_live")
+        .on(t.userId, t.roleKey)
+        .where(sql`${t.revokedAt} is null`),
+      index("operator_grants_user_id_idx").on(t.userId),
+    ],
+  );
+
+  const operatorEvents = identity.table(
+    "operator_events",
+    {
+      id: uuid("id").primaryKey(),
+      userId: uuid("user_id").notNull(),
+      action: text("action").notNull(),
+      roleKey: text("role_key"),
+      requestId: text("request_id"),
+      occurredAt: tz("occurred_at").notNull(),
+    },
+    (t) => [
+      check(
+        "operator_events_action",
+        sql`${t.action} in ('granted', 'revoked', 'recovery_regrant', 'enrolment_started', 'passkey_registered', 'activated', 'signed_in', 'sign_in_refused', 'signed_out')`,
+      ),
+      check(
+        "operator_events_role_key",
+        sql`(${t.roleKey} is not null) = (${t.action} in ('granted', 'revoked', 'activated'))`,
+      ),
+    ],
+  );
+
   return {
     users,
     identityKeys,
@@ -146,5 +195,7 @@ export function identityTables(identity: PgSchema) {
     passkeyCredentials,
     passkeyChallenges,
     sessions,
+    operatorGrants,
+    operatorEvents,
   };
 }

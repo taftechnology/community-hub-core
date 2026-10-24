@@ -48,6 +48,8 @@ export const otpChallenges = identityRows.otpChallenges;
 export const passkeyCredentials = identityRows.passkeyCredentials;
 export const passkeyChallenges = identityRows.passkeyChallenges;
 export const identitySessions = identityRows.sessions;
+export const operatorGrants = identityRows.operatorGrants;
+export const operatorEvents = identityRows.operatorEvents;
 
 const peopleRows = peopleTables(appNamespace, { encryptedColumn, blindIndexColumn });
 

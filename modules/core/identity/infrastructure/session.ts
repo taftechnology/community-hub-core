@@ -1,7 +1,7 @@
 import type { webcrypto } from "node:crypto";
 import { deriveKeys, unwrapKmsRoot, type KmsPort } from "@community-hub/crypto";
 import { newId } from "@community-hub/db";
-import type { Sql } from "postgres";
+import type { Sql, TransactionSql } from "postgres";
 
 import { IdentityError } from "../domain/error.js";
 import { hmac } from "./hmac.js";
@@ -20,22 +20,30 @@ export type SessionTokens = {
   expiresIn: number;
 };
 
+/**
+ * A check that returns false ends the request with no claim, no successor and
+ * no replay or family-revoke handling, so callers should refuse only when the
+ * session must not continue anyway (revoked grant, past the absolute expiry).
+ */
+export type RefreshCheck = (
+  tx: TransactionSql,
+  row: { userId: string; absoluteExpiresAt: Date | null },
+) => Promise<boolean>;
+
 function accessExpiresInSeconds(now: Date, accessExpiresAt: Date): number {
   return Math.max(0, Math.min(900, Math.floor((accessExpiresAt.getTime() - now.getTime()) / 1000)));
 }
 
-export async function createSession(
-  sql: Sql,
-  kms: KmsPort,
-  keyArn: string,
-  input: {
-    userId: string;
-    now: Date;
-    refreshFamily?: string;
-    kind?: SessionKind;
-    absoluteExpiresAt?: Date;
-  },
-): Promise<SessionTokens> {
+function computeSessionExpiries(input: {
+  now: Date;
+  kind?: SessionKind;
+  absoluteExpiresAt?: Date;
+}): {
+  kind: SessionKind;
+  accessExpiresAt: Date;
+  refreshExpiresAt: Date;
+  absoluteExpiresAt: Date | null;
+} {
   const kind: SessionKind = input.kind ?? "tenant";
   if (kind === "operator") {
     if (!input.absoluteExpiresAt || input.absoluteExpiresAt.getTime() <= input.now.getTime()) {
@@ -64,6 +72,28 @@ export async function createSession(
     refreshExpiresAt = new Date(input.now.getTime() + REFRESH_MS);
   }
 
+  return {
+    kind,
+    accessExpiresAt,
+    refreshExpiresAt,
+    absoluteExpiresAt: input.absoluteExpiresAt ?? null,
+  };
+}
+
+export async function createSession(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: {
+    userId: string;
+    now: Date;
+    refreshFamily?: string;
+    kind?: SessionKind;
+    absoluteExpiresAt?: Date;
+  },
+): Promise<SessionTokens> {
+  const { kind, accessExpiresAt, refreshExpiresAt, absoluteExpiresAt } =
+    computeSessionExpiries(input);
   const minted = await mint(sql, kms, keyArn);
   const refreshFamily = input.refreshFamily ?? newId();
   await insertSession(sql, {
@@ -75,7 +105,7 @@ export async function createSession(
     accessExpiresAt,
     refreshExpiresAt,
     kind,
-    absoluteExpiresAt: input.absoluteExpiresAt ?? null,
+    absoluteExpiresAt,
   });
   return {
     userId: input.userId,
@@ -83,6 +113,56 @@ export async function createSession(
     refreshToken: minted.refreshToken,
     expiresIn: accessExpiresInSeconds(input.now, accessExpiresAt),
   };
+}
+
+// Internal helper; not exported from public/.
+export async function createSessionInTransaction(
+  tx: TransactionSql,
+  bidx: webcrypto.CryptoKey,
+  input: {
+    userId: string;
+    now: Date;
+    refreshFamily?: string;
+    kind?: SessionKind;
+    absoluteExpiresAt?: Date;
+  },
+): Promise<SessionTokens> {
+  const { kind, accessExpiresAt, refreshExpiresAt, absoluteExpiresAt } =
+    computeSessionExpiries(input);
+  const minted = await mintWithBidx(bidx);
+  const refreshFamily = input.refreshFamily ?? newId();
+  await insertSession(tx, {
+    id: newId(),
+    userId: input.userId,
+    refreshFamily,
+    accessHash: minted.accessHash,
+    refreshHash: minted.refreshHash,
+    accessExpiresAt,
+    refreshExpiresAt,
+    kind,
+    absoluteExpiresAt,
+  });
+  return {
+    userId: input.userId,
+    accessToken: minted.accessToken,
+    refreshToken: minted.refreshToken,
+    expiresIn: accessExpiresInSeconds(input.now, accessExpiresAt),
+  };
+}
+
+// Internal helper; not exported from public/.
+export async function sessionAccessHash(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  accessToken: string,
+): Promise<Uint8Array | null> {
+  const raw = decodeToken(accessToken);
+  if (raw === null) {
+    return null;
+  }
+  const bidx = await bidxKey(sql, kms, keyArn);
+  return hmac(bidx, "identity.access", raw);
 }
 
 export async function readSession(
@@ -144,7 +224,12 @@ export async function refreshSession(
   sql: Sql,
   kms: KmsPort,
   keyArn: string,
-  input: { refreshToken: string; now: Date; kinds?: readonly SessionKind[] },
+  input: {
+    refreshToken: string;
+    now: Date;
+    kinds?: readonly SessionKind[];
+    check?: RefreshCheck;
+  },
 ): Promise<SessionTokens | null> {
   const raw = decodeToken(input.refreshToken);
   if (raw === null) {
@@ -173,6 +258,24 @@ export async function refreshSession(
     await tx`
       select pg_advisory_xact_lock(hashtextextended('family:' || ${family}::text, 0))
     `;
+    if (input.check !== undefined) {
+      const candidates = await tx<{ user_id: string; absolute_expires_at: Date | null }[]>`
+        select user_id, absolute_expires_at
+        from identity.sessions
+        where refresh_hash = ${refreshHash}
+          and kind = any(${sql.array([...kinds])})
+      `;
+      const cand = candidates[0];
+      if (cand !== undefined) {
+        const ok = await input.check(tx, {
+          userId: cand.user_id,
+          absoluteExpiresAt: cand.absolute_expires_at,
+        });
+        if (!ok) {
+          return null;
+        }
+      }
+    }
     const rows = await tx<
       {
         id: string;
@@ -250,6 +353,22 @@ export async function refreshSession(
   };
 }
 
+async function mintWithBidx(bidx: webcrypto.CryptoKey): Promise<{
+  accessToken: string;
+  refreshToken: string;
+  accessHash: Uint8Array;
+  refreshHash: Uint8Array;
+}> {
+  const accessRaw = randomBytes();
+  const refreshRaw = randomBytes();
+  return {
+    accessToken: Buffer.from(accessRaw).toString("base64url"),
+    refreshToken: Buffer.from(refreshRaw).toString("base64url"),
+    accessHash: await hmac(bidx, "identity.access", accessRaw),
+    refreshHash: await hmac(bidx, "identity.refresh", refreshRaw),
+  };
+}
+
 async function mint(
   sql: Sql,
   kms: KmsPort,
@@ -261,18 +380,11 @@ async function mint(
   refreshHash: Uint8Array;
 }> {
   const bidx = await bidxKey(sql, kms, keyArn);
-  const accessRaw = randomBytes();
-  const refreshRaw = randomBytes();
-  return {
-    accessToken: Buffer.from(accessRaw).toString("base64url"),
-    refreshToken: Buffer.from(refreshRaw).toString("base64url"),
-    accessHash: await hmac(bidx, "identity.access", accessRaw),
-    refreshHash: await hmac(bidx, "identity.refresh", refreshRaw),
-  };
+  return mintWithBidx(bidx);
 }
 
 async function insertSession(
-  sql: Sql,
+  sql: Sql | TransactionSql,
   input: {
     id: string;
     userId: string;
