@@ -198,6 +198,7 @@ describe("access flow", () => {
           values (${otherCommunityId}, ${otherOrganisationId}, ${otherSlug}, 'au')
         `;
       });
+      await identity`delete from identity.identity_keys`;
       const started = await post(AUTH_HOSTNAME, "/v1/auth/email-otp/start", { email });
       expect(started.status).toBe(204);
       const verified = await post(AUTH_HOSTNAME, "/v1/auth/email-otp/verify", {
@@ -262,6 +263,7 @@ describe("access flow", () => {
         await identity`delete from identity.sessions where user_id = ${userId}::uuid`;
         await identity`delete from identity.users where id = ${userId}::uuid`;
       }
+      await identity`delete from identity.identity_keys`;
       await identity.end({ timeout: 1 });
       await platform.end({ timeout: 1 });
       await app.end({ timeout: 1 });
