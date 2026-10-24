@@ -488,6 +488,7 @@ describe("billing guard against a real database", () => {
     app = createPlaintextAppSql(roleUrl(runtime, "app"));
     kms = createLocalKmsPort();
     mail = new MemoryMail();
+    await identity`delete from identity.identity_keys`;
 
     const env = envFor(PORT);
     const serverRoutes = [
@@ -544,6 +545,7 @@ describe("billing guard against a real database", () => {
       await identity`delete from identity.sessions where user_id in ${identity(userIds)}`;
       await identity`delete from identity.users where id in ${identity(userIds)}`;
     }
+    await identity`delete from identity.identity_keys`;
     await identity.end({ timeout: 1 });
     await platform.end({ timeout: 1 });
     await app.end({ timeout: 1 });
