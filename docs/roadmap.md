@@ -21,8 +21,8 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 |              |                                                                   |
 | ------------ | ----------------------------------------------------------------- |
 | Phase        | 1 — Core platform                                                 |
-| Last shipped | `ops-identity-primitives`                                         |
-| Next chunk   | `ops-operator-identity`                                           |
+| Last shipped | `ops-operator-identity`                                           |
+| Next chunk   | `ops-console-api`                                                 |
 | Phase 0      | 26 rows: 25 done, 1 superseded (`api-au-hostname`), 0 not started |
 | Later phases | not started                                                       |
 
@@ -96,7 +96,7 @@ Architecture: monorepo, CI, Terraform for AWS in `ap-southeast-2`, kernel, db wi
 | done       | `db-migrate-command`         | The image gains `/app/db-migrate.js`, which applies the product migrations as the master login, refuses to run before `db-bootstrap`, and prints the tags it applied. It has not been run on staging. Spec `docs/specs/2026-10-12-db-migrate-command.md`.                                                                                                                                                                                                                          |
 | done       | `staging-proof-run`          | The distroless image runs on Fargate. `db-bootstrap` then `db-migrate` applied the ten product migrations to RDS and a second run applied none. The sign-in-code route answers 503 with no mail vendor; role and entitlement routes refuse a request with no session; the service re-read a changed database secret and recovered without a restart. Staging was re-parked the same day. Spec `docs/specs/2026-10-12-staging-proof-run.md`.                                        |
 
-Next is `ops-operator-identity`.
+Next is `ops-console-api`.
 
 SQS, EventBridge, file storage, and the admin static-file distribution are not rows here. Each waits for the first chunk that uses it.
 
@@ -125,7 +125,7 @@ Vertical slices. Nav items appear in the frozen order (see [Admin navigation](#a
 | done        | `billing-read-only`       | The 402 write guard on `write` routes, the route marking, the shell billing banner, and Settings → General Settings → Billing. Spec `docs/specs/2026-10-19-billing-read-only.md`.                                                                                                                                                                                   |
 | done        | `stripe-billing-proof`    | Live test-mode proof on staging-au of Checkout, the signed webhook, failed payment and recovery, Portal and end of subscription, with `billing-read-only`'s deferred staging verification (402 guard and admin read-only) included; staging unparked 10 h 44 min (about USD 0.50) and re-parked the same day. Spec `docs/specs/2026-10-21-stripe-billing-proof.md`. |
 | done        | `ops-identity-primitives` | Operator identity primitives refactor with no tenant behaviour change. Spec `docs/specs/2026-10-22-ops-identity-primitives.md`.                                                                                                                                                                                                                                     |
-| not started | `ops-operator-identity`   | Grants, enrolment, operator sessions, and operator events.                                                                                                                                                                                                                                                                                                          |
+| done        | `ops-operator-identity`   | Operator grants, enrolment by email code plus owner-issued code, ops passkeys, eight-hour operator sessions, and the operator event record, as identity module functions. Spec `docs/specs/2026-10-22-ops-operator-identity.md`.                                                                                                                                    |
 | not started | `ops-console-api`         | Gate change for static files, ops routes, read-only directory, and `ops-operator` one-off.                                                                                                                                                                                                                                                                          |
 | not started | `ops-console-ui`          | Operator console interface in `apps/ops`.                                                                                                                                                                                                                                                                                                                           |
 | not started | `ops-console-proof`       | A staging proof chunk follows the UI.                                                                                                                                                                                                                                                                                                                               |
@@ -309,7 +309,7 @@ The people and access `boundaries.test.ts` files read the gitignored `staging.lo
 
 ## Next spec
 
-The next chunk is **ops-operator-identity**. Q8b (plan contents and prices) is still open.
+The next chunk is **ops-console-api**. Q8b (plan contents and prices) is still open.
 
 ---
 

@@ -1,6 +1,6 @@
 # ADR 0015: Interim single-owner recovery for operator passkeys
 
-- Status: proposed
+- Status: accepted (2026-10-24)
 - Date: 2026-10-24
 - Spec: `docs/specs/2026-10-22-ops-operator-identity.md` (O14, O15)
 - Departs from: architecture §11.4 (recovery by two `platform_security` people)
