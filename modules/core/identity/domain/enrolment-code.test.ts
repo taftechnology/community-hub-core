@@ -23,6 +23,19 @@ describe("normaliseEnrolmentCode", () => {
     expect(normaliseEnrolmentCode("A".repeat(25) + "=")).toBeNull();
     expect(normaliseEnrolmentCode("=" + "A".repeat(25))).toBeNull();
     expect(normaliseEnrolmentCode("A".repeat(12) + "=" + "A".repeat(13))).toBeNull();
+    expect(normaliseEnrolmentCode("abcd" + "A".repeat(22) + "=")).toBeNull();
+  });
+
+  it("refuses non-ASCII characters that upper-case to ASCII base32", () => {
+    expect(normaliseEnrolmentCode("ß" + "A".repeat(24))).toBeNull();
+    expect(normaliseEnrolmentCode("ı" + "A".repeat(25))).toBeNull();
+    expect(normaliseEnrolmentCode("ſ" + "A".repeat(25))).toBeNull();
+    expect(normaliseEnrolmentCode("ﬁ" + "A".repeat(24))).toBeNull();
+  });
+
+  it("refuses non-space whitespace like NBSP and tab", () => {
+    expect(normaliseEnrolmentCode("\u00a0" + "A".repeat(26))).toBeNull();
+    expect(normaliseEnrolmentCode("A".repeat(13) + "\t" + "A".repeat(13))).toBeNull();
   });
 
   it("normalises lower case, spaces and hyphens", () => {

@@ -1,4 +1,4 @@
-const BASE32_ALPHABET = /^[A-Z2-7]+$/;
+const RAW_BASE32 = /^[A-Za-z2-7]+$/;
 const MIN_LENGTH = 26;
 const MAX_LENGTH = 128;
 
@@ -10,12 +10,13 @@ const MAX_LENGTH = 128;
  * - Never strips '=' padding; input containing '=' is refused.
  */
 export function normaliseEnrolmentCode(input: string): string | null {
-  const cleaned = input.toUpperCase().replace(/[\s-]/g, "");
-  if (cleaned.length < MIN_LENGTH || cleaned.length > MAX_LENGTH) {
+  const stripped = input.replace(/[ -]/g, "");
+  if (!RAW_BASE32.test(stripped)) {
     return null;
   }
-  if (!BASE32_ALPHABET.test(cleaned)) {
+  const uppercased = stripped.toUpperCase();
+  if (uppercased.length < MIN_LENGTH || uppercased.length > MAX_LENGTH) {
     return null;
   }
-  return cleaned;
+  return uppercased;
 }
