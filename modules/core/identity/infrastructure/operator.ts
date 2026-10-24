@@ -22,6 +22,7 @@ import {
 import {
   createSessionInTransaction,
   readSessionWithKind,
+  refreshSession,
   sessionAccessHash,
   type SessionTokens,
 } from "./session.js";
@@ -878,5 +879,129 @@ export async function finishOperatorAuthentication(
 
       return null;
     }
+  });
+}
+
+export type ReadOperatorSessionInput = {
+  accessToken: string;
+  now: Date;
+};
+
+export async function readOperatorSession(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: ReadOperatorSessionInput,
+): Promise<{ userId: string; roles: PlatformRoleKey[] } | null> {
+  const session = await readSessionWithKind(sql, kms, keyArn, {
+    accessToken: input.accessToken,
+    now: input.now,
+    kinds: ["operator"],
+  });
+  if (session === null) {
+    return null;
+  }
+
+  const activeGrants = await sql<{ role_key: PlatformRoleKey }[]>`
+    select role_key
+    from identity.operator_grants
+    where user_id = ${session.userId}
+      and revoked_at is null
+      and activated_at is not null
+    order by role_key asc
+  `;
+
+  if (activeGrants.length === 0) {
+    return null;
+  }
+
+  return {
+    userId: session.userId,
+    roles: activeGrants.map((g) => g.role_key),
+  };
+}
+
+export type RefreshOperatorSessionInput = {
+  refreshToken: string;
+  now: Date;
+};
+
+export async function refreshOperatorSession(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: RefreshOperatorSessionInput,
+): Promise<SessionTokens | null> {
+  return refreshSession(sql, kms, keyArn, {
+    refreshToken: input.refreshToken,
+    now: input.now,
+    kinds: ["operator"],
+    check: async (tx, row) => {
+      if (
+        row.absoluteExpiresAt === null ||
+        input.now.getTime() >= row.absoluteExpiresAt.getTime()
+      ) {
+        return false;
+      }
+      await lockOperatorUser(tx, row.userId);
+      const [activeGrant] = await tx<{ id: string }[]>`
+        select id
+        from identity.operator_grants
+        where user_id = ${row.userId}
+          and revoked_at is null
+          and activated_at is not null
+        limit 1
+      `;
+      return activeGrant !== undefined;
+    },
+  });
+}
+
+export type EndOperatorSessionInput = {
+  accessToken: string;
+  now: Date;
+  requestId?: string | undefined;
+};
+
+export async function endOperatorSession(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: EndOperatorSessionInput,
+): Promise<void> {
+  const accessHash = await sessionAccessHash(sql, kms, keyArn, input.accessToken);
+  if (accessHash === null) {
+    return;
+  }
+
+  const rows = await sql<{ id: string; user_id: string; refresh_family: string }[]>`
+    select id, user_id, refresh_family
+    from identity.sessions
+    where access_hash = ${accessHash}
+      and kind = 'operator'
+    limit 1
+  `;
+  const row = rows[0];
+  if (row === undefined) {
+    return;
+  }
+
+  const nowIso = input.now.toISOString();
+  await sql.begin(async (tx) => {
+    await tx`
+      select pg_advisory_xact_lock(hashtextextended('family:' || ${row.refresh_family}::text, 0))
+    `;
+    await tx`
+      update identity.sessions
+      set revoked_at = ${nowIso}::timestamptz
+      where refresh_family = ${row.refresh_family}
+        and revoked_at is null
+    `;
+    await appendOperatorEvent(tx, {
+      userId: row.user_id,
+      action: "signed_out",
+      requestId: input.requestId,
+      now: input.now,
+    });
   });
 }

@@ -21,11 +21,14 @@ import { insertIdentityUser } from "./identity-user.js";
 import {
   beginOperatorAuthentication,
   beginOperatorPasskeyRegistration,
+  endOperatorSession,
   finishOperatorAuthentication,
   finishOperatorPasskeyRegistration,
   grantOperator,
   lockOperatorUser,
+  readOperatorSession,
   recoverOperator,
+  refreshOperatorSession,
   revokeOperator,
   startOperatorEnrolment,
   verifyOperatorEnrolment,
@@ -33,6 +36,7 @@ import {
 } from "./operator.js";
 import { beginPasskeyRegistration } from "./passkey.js";
 import {
+  createSession,
   createSessionInTransaction,
   readSession,
   readSessionWithKind,
@@ -152,6 +156,51 @@ async function signer(): Promise<{
     signRaw: async (data) =>
       new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, webKey, data)),
   };
+}
+
+function pauseOnSessionInsert(sql: Sql): {
+  bound: Sql;
+  reached: Promise<void>;
+  release: () => void;
+} {
+  let releaseInsert = (): void => undefined;
+  const released = new Promise<void>((resolve) => {
+    releaseInsert = resolve;
+  });
+  let markReached = (): void => undefined;
+  const reached = new Promise<void>((resolve) => {
+    markReached = resolve;
+  });
+  let armed = true;
+  const originalBegin = sql.begin.bind(sql);
+  const bound = new Proxy(sql, {
+    apply(target, thisArg, argArray) {
+      return Reflect.apply(target, thisArg, argArray);
+    },
+    get(target, prop, receiver) {
+      if (prop === "begin") {
+        return (fn: (tx: Sql) => Promise<unknown>) =>
+          originalBegin(async (tx) => {
+            const wrapped = new Proxy(tx, {
+              apply(txTarget, txThis, txArgs) {
+                const strings = txArgs[0];
+                const text = Array.isArray(strings) ? strings.join("") : "";
+                if (armed && text.includes("insert into identity.sessions")) {
+                  armed = false;
+                  markReached();
+                  return released.then(() => Reflect.apply(txTarget, txThis, txArgs));
+                }
+                return Reflect.apply(txTarget, txThis, txArgs);
+              },
+            });
+            return fn(wrapped as unknown as Sql);
+          });
+      }
+      const value: unknown = Reflect.get(target, prop, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return { bound, reached, release: releaseInsert };
 }
 
 beforeAll(async () => {
@@ -3367,8 +3416,12 @@ describe("startOperatorEnrolment and verifyOperatorEnrolment", () => {
           await releasePromise;
         });
 
+        const holderStart = Date.now();
         while (!holderAcquired) {
-          await new Promise((r) => setTimeout(r, 10));
+          if (Date.now() - holderStart > 5_000) {
+            throw new Error("Timed out waiting for holder to acquire lock");
+          }
+          await Promise.race([holderPromise, new Promise((r) => setTimeout(r, 20))]);
         }
 
         let settled = false;
@@ -3486,6 +3539,530 @@ describe("startOperatorEnrolment and verifyOperatorEnrolment", () => {
         where user_id = ${user.userId}
       `;
       expect(Number(sessions?.count ?? 0)).toBe(0);
+    });
+  });
+
+  describe("readOperatorSession, refreshOperatorSession and endOperatorSession", () => {
+    async function createActiveOperator(
+      email: string,
+      now: Date,
+      roleKeys: readonly string[] = ["platform_admin"],
+    ) {
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      const opsRpId = "ops.example.test";
+      const enrolmentCode = "A".repeat(26);
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys,
+        enrolmentCode,
+        opsRpId,
+        now,
+      });
+      const mail = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, { email, now });
+      const res = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode: mail.sent[0]!.code,
+        enrolmentCode,
+        opsRpId,
+        now,
+      });
+      const session = (res as { kind: "enrolment"; session: SessionTokens }).session;
+
+      const opts1 = await beginOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        opsRpId,
+        now,
+      });
+      const k1 = await signer();
+      const c1 = crypto.getRandomValues(new Uint8Array(32));
+      await finishOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        opsRpId,
+        now,
+        clientDataJSON: clientData("webauthn.create", opts1!.challenge, `https://${opsRpId}`),
+        attestationObject: attestationObject(
+          authenticatorData({
+            rpId: opsRpId,
+            signCount: 0,
+            credentialId: c1,
+            cose: coseKey(k1.x, k1.y),
+            flags: 0x45,
+          }),
+        ),
+      });
+
+      const opts2 = await beginOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        opsRpId,
+        now,
+      });
+      const k2 = await signer();
+      const c2 = crypto.getRandomValues(new Uint8Array(32));
+      await finishOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        opsRpId,
+        now,
+        clientDataJSON: clientData("webauthn.create", opts2!.challenge, `https://${opsRpId}`),
+        attestationObject: attestationObject(
+          authenticatorData({
+            rpId: opsRpId,
+            signCount: 0,
+            credentialId: c2,
+            cose: coseKey(k2.x, k2.y),
+            flags: 0x45,
+          }),
+        ),
+      });
+
+      return {
+        userId: user.userId,
+        email,
+        opsRpId,
+        credentials: [
+          { credentialId: c1, key: k1 },
+          { credentialId: c2, key: k2 },
+        ],
+      };
+    }
+
+    async function signInOperator(
+      op: {
+        userId: string;
+        opsRpId: string;
+        credentials: {
+          credentialId: Uint8Array;
+          key: { sign: (data: Uint8Array) => Promise<Uint8Array> };
+        }[];
+      },
+      now: Date,
+    ): Promise<SessionTokens> {
+      const auth = await beginOperatorAuthentication(identitySql, {
+        opsRpId: op.opsRpId,
+        now,
+      });
+      const cred = op.credentials[0]!;
+      const authData = authenticatorData({ rpId: op.opsRpId, signCount: 1, flags: 0x05 });
+      const client = clientData("webauthn.get", auth.challenge, `https://${op.opsRpId}`);
+      const sig = await cred.key.sign(concat([authData, sha256(client)]));
+      const session = await finishOperatorAuthentication(identitySql, kms, KEY_ARN, {
+        opsRpId: op.opsRpId,
+        now,
+        credentialId: cred.credentialId,
+        clientDataJSON: client,
+        authenticatorData: authData,
+        signature: sig,
+      });
+      if (!session) {
+        throw new Error("signInOperator returned null");
+      }
+      return session;
+    }
+
+    describe("pin 8: readOperatorSession refuses tenant, enrolment, and grantless sessions", () => {
+      it("readOperatorSession refuses tenant, enrolment, and grantless sessions", async () => {
+        const now = new Date("2026-10-24T14:00:00.000Z");
+        const op = await createActiveOperator("op-read-8-valid@example.test", now);
+        const opSession = await signInOperator(op, now);
+
+        // 1. Create a tenant session for the operator
+        const tenantSession = await createSession(identitySql, kms, KEY_ARN, {
+          userId: op.userId,
+          now,
+          kind: "tenant",
+        });
+        const tenantRead = await readOperatorSession(identitySql, kms, KEY_ARN, {
+          accessToken: tenantSession.accessToken,
+          now,
+        });
+        expect(tenantRead).toBeNull();
+
+        // 2. Create an enrolment session for the active operator
+        const enrolmentSession = await createSession(identitySql, kms, KEY_ARN, {
+          userId: op.userId,
+          now,
+          kind: "enrolment",
+        });
+        const enrolRead = await readOperatorSession(identitySql, kms, KEY_ARN, {
+          accessToken: enrolmentSession.accessToken,
+          now,
+        });
+        expect(enrolRead).toBeNull();
+
+        // 3. Verify operator session reads while grant is active
+        const validRead = await readOperatorSession(identitySql, kms, KEY_ARN, {
+          accessToken: opSession.accessToken,
+          now,
+        });
+        expect(validRead).toEqual({
+          userId: op.userId,
+          roles: ["platform_admin"],
+        });
+
+        // 4. Operator session whose user has NO active grant (revoked)
+        await directSql`
+          update identity.operator_grants
+          set revoked_at = ${now}
+          where user_id = ${op.userId}
+        `;
+        const grantlessRead = await readOperatorSession(identitySql, kms, KEY_ARN, {
+          accessToken: opSession.accessToken,
+          now,
+        });
+        expect(grantlessRead).toBeNull();
+      });
+    });
+
+    it("readOperatorSession returns all active roles, sorted", async () => {
+      const now = new Date("2026-10-24T14:10:00.000Z");
+      const op = await createActiveOperator("op-read-roles@example.test", now, [
+        "platform_security",
+        "platform_admin",
+      ]);
+      const opSession = await signInOperator(op, now);
+
+      const read = await readOperatorSession(identitySql, kms, KEY_ARN, {
+        accessToken: opSession.accessToken,
+        now,
+      });
+      expect(read).toEqual({
+        userId: op.userId,
+        roles: ["platform_admin", "platform_security"],
+      });
+
+      // If an inactive grant exists (e.g. revoked), it is excluded
+      await directSql`
+        update identity.operator_grants
+        set revoked_at = ${now}
+        where user_id = ${op.userId}
+          and role_key = 'platform_security'
+      `;
+      const readAfterRevokeOne = await readOperatorSession(identitySql, kms, KEY_ARN, {
+        accessToken: opSession.accessToken,
+        now,
+      });
+      expect(readAfterRevokeOne).toEqual({
+        userId: op.userId,
+        roles: ["platform_admin"],
+      });
+    });
+
+    describe("pin 9: revoke vs refresh leaves no live successor", () => {
+      it("a refresh racing a revoke leaves no unrevoked operator session", async () => {
+        const now = new Date("2026-10-24T14:20:00.000Z");
+        const op = await createActiveOperator("op-race-9@example.test", now);
+        const session = await signInOperator(op, now);
+
+        const { bound, reached, release } = pauseOnSessionInsert(identitySql);
+
+        const revokeSql = createPlaintextIdentitySql(roleUrl(runtime, "identity"));
+        const observer = createPlaintextDirectSql(runtime.productOnlyUrl);
+
+        const refreshPromise = refreshOperatorSession(bound, kms, KEY_ARN, {
+          refreshToken: session.refreshToken,
+          now: new Date(now.getTime() + 60_000),
+        });
+
+        let revokeSettled = false;
+        let revokePromise: Promise<void> | undefined;
+
+        try {
+          await Promise.race([
+            reached,
+            refreshPromise.then(() => {
+              throw new Error("refresh finished without reaching session insert");
+            }),
+          ]);
+
+          revokePromise = revokeOperator(revokeSql, {
+            userId: op.userId,
+            opsRpId: op.opsRpId,
+            now: new Date(now.getTime() + 120_000),
+          }).finally(() => {
+            revokeSettled = true;
+          });
+
+          // Poll pg_stat_activity until revoke waits on a lock or has settled (20 ms, 5 s cap)
+          const started = Date.now();
+          let waiting = false;
+          while (Date.now() - started < 5_000) {
+            if (revokeSettled) break;
+            const waitingRows = await observer<{ pid: number }[]>`
+              select pid
+              from pg_stat_activity
+              where datname = current_database()
+                and state = 'active'
+                and wait_event_type = 'Lock'
+                and pid <> pg_backend_pid()
+            `;
+            if (waitingRows.length > 0) {
+              waiting = true;
+              break;
+            }
+            await new Promise((r) => setTimeout(r, 20));
+          }
+          expect(waiting || revokeSettled).toBe(true);
+        } finally {
+          release();
+          await Promise.allSettled([refreshPromise, revokePromise]);
+          await revokeSql.end({ timeout: 1 });
+          await observer.end({ timeout: 1 });
+        }
+
+        const [refreshed] = await Promise.all([refreshPromise, revokePromise]);
+
+        const [unrevoked] = await directSql<{ count: string }[]>`
+          select count(*)::text as count
+          from identity.sessions
+          where user_id = ${op.userId}
+            and revoked_at is null
+        `;
+        expect(Number(unrevoked?.count ?? 0)).toBe(0);
+
+        if (refreshed) {
+          const successorRead = await readOperatorSession(identitySql, kms, KEY_ARN, {
+            accessToken: refreshed.accessToken,
+            now: new Date(now.getTime() + 180_000),
+          });
+          expect(successorRead).toBeNull();
+
+          const successorRefresh = await refreshOperatorSession(identitySql, kms, KEY_ARN, {
+            refreshToken: refreshed.refreshToken,
+            now: new Date(now.getTime() + 180_000),
+          });
+          expect(successorRefresh).toBeNull();
+        }
+      });
+
+      it("after revoke, the old session neither reads nor refreshes", async () => {
+        const now = new Date("2026-10-24T14:30:00.000Z");
+        const op = await createActiveOperator("op-revoke-simple-9@example.test", now);
+        const session = await signInOperator(op, now);
+
+        await revokeOperator(identitySql, {
+          userId: op.userId,
+          opsRpId: op.opsRpId,
+          now: new Date(now.getTime() + 60_000),
+        });
+
+        const readRes = await readOperatorSession(identitySql, kms, KEY_ARN, {
+          accessToken: session.accessToken,
+          now: new Date(now.getTime() + 120_000),
+        });
+        expect(readRes).toBeNull();
+
+        const refreshRes = await refreshOperatorSession(identitySql, kms, KEY_ARN, {
+          refreshToken: session.refreshToken,
+          now: new Date(now.getTime() + 120_000),
+        });
+        expect(refreshRes).toBeNull();
+      });
+    });
+
+    describe("pin 15: operator refresh refuses at or after absolute_expires_at", () => {
+      it("operator refresh refuses at the absolute expiry even if the row allows it", async () => {
+        const now = new Date("2026-10-24T14:40:00.000Z");
+        const op = await createActiveOperator("op-abs-15@example.test", now);
+        const session = await signInOperator(op, now);
+
+        const [storedSession] = await directSql<{ id: string; absolute_expires_at: Date }[]>`
+          select id, absolute_expires_at
+          from identity.sessions
+          where user_id = ${op.userId}
+            and kind = 'operator'
+          limit 1
+        `;
+        expect(storedSession).toBeDefined();
+        const absExpiresAt = storedSession!.absolute_expires_at;
+
+        // Set refresh_expires_at past absolute_expires_at
+        await directSql`
+          update identity.sessions
+          set refresh_expires_at = ${absExpiresAt}::timestamptz + interval '1 day'
+          where id = ${storedSession!.id}
+        `;
+
+        const [countBefore] = await directSql<{ count: string }[]>`
+          select count(*)::text as count
+          from identity.sessions
+          where user_id = ${op.userId}
+        `;
+
+        const refreshAtAbsolute = await refreshOperatorSession(identitySql, kms, KEY_ARN, {
+          refreshToken: session.refreshToken,
+          now: absExpiresAt,
+        });
+        expect(refreshAtAbsolute).toBeNull();
+
+        const refreshAtPlusOneSecond = await refreshOperatorSession(identitySql, kms, KEY_ARN, {
+          refreshToken: session.refreshToken,
+          now: new Date(absExpiresAt.getTime() + 1000),
+        });
+        expect(refreshAtPlusOneSecond).toBeNull();
+
+        // Mints nothing: session count for user remains unchanged
+        const [countAfter] = await directSql<{ count: string }[]>`
+          select count(*)::text as count
+          from identity.sessions
+          where user_id = ${op.userId}
+        `;
+        expect(Number(countAfter?.count ?? 0)).toBe(Number(countBefore?.count ?? 0));
+      });
+    });
+
+    describe("pin 16: an enrolment session never refreshes", () => {
+      it("an enrolment refresh token never refreshes", async () => {
+        const now = new Date("2026-10-24T14:50:00.000Z");
+        const user = await insertIdentityUser(identitySql, kms, KEY_ARN, {
+          email: "op-enrol-ref-16@example.test",
+        });
+        const enrolmentCode = "A".repeat(26);
+        await grantOperator(identitySql, kms, KEY_ARN, {
+          userId: user.userId,
+          roleKeys: ["platform_admin"],
+          enrolmentCode,
+          opsRpId: "ops.example.test",
+          now,
+        });
+        const mail = createCapturingMail();
+        await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, {
+          email: "op-enrol-ref-16@example.test",
+          now,
+        });
+        const verifyRes = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+          email: "op-enrol-ref-16@example.test",
+          emailCode: mail.sent[0]!.code,
+          enrolmentCode,
+          opsRpId: "ops.example.test",
+          now,
+        });
+        const session = (verifyRes as { kind: "enrolment"; session: SessionTokens }).session;
+
+        const opRefresh = await refreshOperatorSession(identitySql, kms, KEY_ARN, {
+          refreshToken: session.refreshToken,
+          now,
+        });
+        expect(opRefresh).toBeNull();
+
+        const directRefresh = await refreshSession(identitySql, kms, KEY_ARN, {
+          refreshToken: session.refreshToken,
+          now,
+          kinds: ["tenant", "operator", "enrolment"],
+        });
+        expect(directRefresh).toBeNull();
+      });
+    });
+
+    describe("pin 17: operator refresh refuses after the grant is revoked", () => {
+      it("operator refresh refuses after the grant is revoked", async () => {
+        const now = new Date("2026-10-24T15:00:00.000Z");
+        const op = await createActiveOperator("op-revoke-17@example.test", now);
+        const session = await signInOperator(op, now);
+
+        // Revoke the grant by direct update (sessions left unrevoked)
+        await directSql`
+          update identity.operator_grants
+          set revoked_at = ${now}
+          where user_id = ${op.userId}
+        `;
+
+        const refreshRes = await refreshOperatorSession(identitySql, kms, KEY_ARN, {
+          refreshToken: session.refreshToken,
+          now: new Date(now.getTime() + 60_000),
+        });
+        expect(refreshRes).toBeNull();
+
+        // Presented session remains unclaimed
+        const [presented] = await directSql<{ replaced_by: string | null }[]>`
+          select replaced_by
+          from identity.sessions
+          where user_id = ${op.userId}
+            and kind = 'operator'
+        `;
+        expect(presented?.replaced_by).toBeNull();
+      });
+    });
+
+    describe("pin 21: ending a session that was just refreshed leaves no live successor", () => {
+      it("ending a session that was just refreshed leaves no live successor", async () => {
+        const now = new Date("2026-10-24T15:10:00.000Z");
+        const op = await createActiveOperator("op-end-21@example.test", now);
+        const session1 = await signInOperator(op, now);
+
+        const session2 = await refreshOperatorSession(identitySql, kms, KEY_ARN, {
+          refreshToken: session1.refreshToken,
+          now: new Date(now.getTime() + 60_000),
+        });
+        expect(session2).not.toBeNull();
+
+        // End with the OLD access token
+        await endOperatorSession(identitySql, kms, KEY_ARN, {
+          accessToken: session1.accessToken,
+          now: new Date(now.getTime() + 120_000),
+        });
+
+        const successorRead = await readOperatorSession(identitySql, kms, KEY_ARN, {
+          accessToken: session2!.accessToken,
+          now: new Date(now.getTime() + 180_000),
+        });
+        expect(successorRead).toBeNull();
+
+        const successorRefresh = await refreshOperatorSession(identitySql, kms, KEY_ARN, {
+          refreshToken: session2!.refreshToken,
+          now: new Date(now.getTime() + 180_000),
+        });
+        expect(successorRefresh).toBeNull();
+      });
+    });
+
+    it("refresh 10 minutes before absolute_expires_at returns expiresIn 600", async () => {
+      const t0 = new Date("2026-10-24T15:20:00.000Z");
+      const op = await createActiveOperator("op-expires-in-600@example.test", t0);
+      const session = await signInOperator(op, t0);
+
+      const refreshTime = new Date(t0.getTime() + 8 * 60 * 60 * 1000 - 10 * 60 * 1000);
+      const refreshed = await refreshOperatorSession(identitySql, kms, KEY_ARN, {
+        refreshToken: session.refreshToken,
+        now: refreshTime,
+      });
+      expect(refreshed).not.toBeNull();
+      expect(refreshed!.expiresIn).toBe(600);
+    });
+
+    it("an ended session neither reads nor refreshes and writes signed_out", async () => {
+      const now = new Date("2026-10-24T15:30:00.000Z");
+      const op = await createActiveOperator("op-end-signed-out@example.test", now);
+      const session = await signInOperator(op, now);
+      const requestId = newId();
+
+      const endNow = new Date(now.getTime() + 60_000);
+      await endOperatorSession(identitySql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        now: endNow,
+        requestId,
+      });
+
+      const read = await readOperatorSession(identitySql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        now: new Date(now.getTime() + 120_000),
+      });
+      expect(read).toBeNull();
+
+      const refreshed = await refreshOperatorSession(identitySql, kms, KEY_ARN, {
+        refreshToken: session.refreshToken,
+        now: new Date(now.getTime() + 120_000),
+      });
+      expect(refreshed).toBeNull();
+
+      const [event] = await directSql<{ action: string; request_id: string; occurred_at: Date }[]>`
+        select action, request_id, occurred_at
+        from identity.operator_events
+        where user_id = ${op.userId}
+          and action = 'signed_out'
+      `;
+      expect(event).toBeDefined();
+      expect(event!.request_id).toBe(requestId);
+      expect(event!.occurred_at.toISOString()).toBe(endNow.toISOString());
     });
   });
 });

@@ -20,6 +20,11 @@ export type SessionTokens = {
   expiresIn: number;
 };
 
+/**
+ * A check that returns false ends the request with no claim, no successor and
+ * no replay or family-revoke handling, so callers should refuse only when the
+ * session must not continue anyway (revoked grant, past the absolute expiry).
+ */
 export type RefreshCheck = (
   tx: TransactionSql,
   row: { userId: string; absoluteExpiresAt: Date | null },
@@ -110,6 +115,7 @@ export async function createSession(
   };
 }
 
+// Internal helper; not exported from public/.
 export async function createSessionInTransaction(
   tx: TransactionSql,
   bidx: webcrypto.CryptoKey,
@@ -144,6 +150,7 @@ export async function createSessionInTransaction(
   };
 }
 
+// Internal helper; not exported from public/.
 export async function sessionAccessHash(
   sql: Sql,
   kms: KmsPort,
