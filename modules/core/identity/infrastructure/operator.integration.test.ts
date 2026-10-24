@@ -1,3 +1,4 @@
+import { createHash, generateKeyPairSync, sign as signDer } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,20 +12,31 @@ import {
 import type { Sql } from "postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { encodeCbor, type Cbor } from "../domain/cbor.js";
 import { IdentityError } from "../domain/error.js";
 import { type OtpMail, OtpMailUnavailable, rejectingOtpMail } from "../domain/otp-mail.js";
 import { deriveIdentityEmailKeys, emailBlindIndex } from "./email-lookup.js";
 import { startEmailOtp, verifyEmailOtp } from "./email-otp.js";
 import { insertIdentityUser } from "./identity-user.js";
 import {
+  beginOperatorPasskeyRegistration,
+  finishOperatorPasskeyRegistration,
   grantOperator,
+  lockOperatorUser,
   recoverOperator,
   revokeOperator,
   startOperatorEnrolment,
   verifyOperatorEnrolment,
   type VerifyOperatorEnrolmentResult,
 } from "./operator.js";
-import { readSession, readSessionWithKind, refreshSession } from "./session.js";
+import { beginPasskeyRegistration } from "./passkey.js";
+import {
+  createSessionInTransaction,
+  readSession,
+  readSessionWithKind,
+  refreshSession,
+  type SessionTokens,
+} from "./session.js";
 
 const KEY_ARN = `arn:aws:kms:ap-southeast-2:123456789012:key/mrk-${"ab".repeat(16)}`;
 
@@ -46,6 +58,105 @@ function roleUrl(runtime: Runtime, role: "app" | "identity" | "platform"): strin
   const password = encodeURIComponent(runtime.passwords[role]);
   return `postgres://${role}:${password}@127.0.0.1:5432/hub_product_only`;
 }
+
+function concat(parts: Uint8Array[]): Uint8Array {
+  const length = parts.reduce((sum, part) => sum + part.byteLength, 0);
+  const out = new Uint8Array(length);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.byteLength;
+  }
+  return out;
+}
+
+function clientData(type: string, challenge: Uint8Array, origin: string): Uint8Array {
+  return new TextEncoder().encode(
+    JSON.stringify({
+      type,
+      challenge: Buffer.from(challenge).toString("base64url"),
+      origin,
+    }),
+  );
+}
+
+function coseKey(x: Uint8Array, y: Uint8Array): Uint8Array {
+  return encodeCbor(
+    new Map<Cbor, Cbor>([
+      [1, 2],
+      [3, -7],
+      [-1, 1],
+      [-2, x],
+      [-3, y],
+    ]),
+  );
+}
+
+function authenticatorData(input: {
+  rpId: string;
+  signCount: number;
+  credentialId?: Uint8Array;
+  cose?: Uint8Array;
+  flags?: number;
+}): Uint8Array {
+  const rpIdHash = new Uint8Array(createHash("sha256").update(Buffer.from(input.rpId)).digest());
+  const attested = input.credentialId !== undefined && input.cose !== undefined;
+  const flags = input.flags ?? (attested ? 0x41 : 0x01);
+  const count = new Uint8Array(4);
+  new DataView(count.buffer).setUint32(0, input.signCount);
+  const parts: Uint8Array[] = [rpIdHash, Uint8Array.of(flags), count];
+  if (attested && input.credentialId && input.cose) {
+    const length = new Uint8Array(2);
+    new DataView(length.buffer).setUint16(0, input.credentialId.byteLength);
+    parts.push(new Uint8Array(16), length, input.credentialId, input.cose);
+  }
+  return concat(parts);
+}
+
+function attestationObject(authData: Uint8Array): Uint8Array {
+  return encodeCbor(
+    new Map<Cbor, Cbor>([
+      ["fmt", "none"],
+      ["attStmt", new Map<Cbor, Cbor>()],
+      ["authData", authData],
+    ]),
+  );
+}
+
+async function signer(): Promise<{
+  x: Uint8Array;
+  y: Uint8Array;
+  sign: (data: Uint8Array) => Promise<Uint8Array>;
+  signRaw: (data: Uint8Array) => Promise<Uint8Array>;
+}> {
+  const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const jwk = publicKey.export({ format: "jwk" });
+  const webKey = await crypto.subtle.importKey(
+    "pkcs8",
+    privateKey.export({ format: "der", type: "pkcs8" }),
+    { name: "ECDSA", namedCurve: "P-256" },
+    false,
+    ["sign"],
+  );
+  return {
+    x: new Uint8Array(Buffer.from(jwk.x ?? "", "base64url")),
+    y: new Uint8Array(Buffer.from(jwk.y ?? "", "base64url")),
+    sign: async (data) =>
+      new Uint8Array(signDer("sha256", Buffer.from(data), { key: privateKey, dsaEncoding: "der" })),
+    signRaw: async (data) =>
+      new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, webKey, data)),
+  };
+}
+
+beforeAll(async () => {
+  const runtime = loadRuntime();
+  const direct = createPlaintextDirectSql(runtime.productOnlyUrl);
+  try {
+    await applyProductMigrations(direct);
+  } finally {
+    await direct.end({ timeout: 1 });
+  }
+});
 
 describe("operator tables privileges", () => {
   const kms = createLocalKmsPort();
@@ -1822,6 +1933,972 @@ describe("startOperatorEnrolment and verifyOperatorEnrolment", () => {
         select count(*)::text as count from identity.operator_events where user_id = ${user.userId} and action = 'enrolment_started'
       `;
       expect(Number(ev2?.count ?? 0)).toBe(1);
+    });
+  });
+
+  describe("operator passkey registration security pins", () => {
+    const kms = createLocalKmsPort();
+    let identitySql: Sql;
+    let directSql: Sql;
+    const runtime = loadRuntime();
+
+    beforeAll(async () => {
+      directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+      identitySql = createPlaintextIdentitySql(roleUrl(runtime, "identity"));
+      await directSql`delete from identity.operator_events`;
+      await directSql`delete from identity.operator_grants`;
+      await directSql`delete from identity.sessions`;
+      await directSql`delete from identity.passkey_credentials`;
+      await directSql`delete from identity.passkey_challenges`;
+      await directSql`delete from identity.identity_keys`;
+      await directSql`delete from identity.otp_challenges`;
+      await directSql`delete from identity.users`;
+    });
+
+    afterAll(async () => {
+      try {
+        await directSql`delete from identity.operator_events`;
+        await directSql`delete from identity.operator_grants`;
+        await directSql`delete from identity.sessions`;
+        await directSql`delete from identity.passkey_credentials`;
+        await directSql`delete from identity.passkey_challenges`;
+        await directSql`delete from identity.identity_keys`;
+        await directSql`delete from identity.otp_challenges`;
+        await directSql`delete from identity.users`;
+      } finally {
+        await identitySql.end({ timeout: 1 });
+        await directSql.end({ timeout: 1 });
+      }
+    });
+
+    it("two tenant passkeys and one ops passkey do not activate (pin 5a)", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-pin5a@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      const opsRpId = "ops.example.test";
+      const tenantRpId = "auth.example.test";
+
+      for (let i = 0; i < 2; i++) {
+        const credId = crypto.getRandomValues(new Uint8Array(32));
+        const k = await signer();
+        await directSql`
+          insert into identity.passkey_credentials (id, user_id, credential_id, cose_key, sign_count, rp_id)
+          values (${newId()}, ${user.userId}, ${credId}, ${coseKey(k.x, k.y)}, 0, ${tenantRpId})
+        `;
+      }
+
+      const enrolmentCode = "A".repeat(26);
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode,
+        opsRpId,
+        now,
+      });
+
+      const mail = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, { email, now });
+      const res = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode: mail.sent[0]!.code,
+        enrolmentCode,
+        opsRpId,
+        now,
+      });
+      expect(res?.kind).toBe("enrolment");
+      const session = (res as { kind: "enrolment"; session: SessionTokens }).session;
+
+      const regOpts = await beginOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        opsRpId,
+        now,
+      });
+      expect(regOpts).not.toBeNull();
+      const opsKey = await signer();
+      const opsCredId = crypto.getRandomValues(new Uint8Array(32));
+      const authData = authenticatorData({
+        rpId: opsRpId,
+        signCount: 0,
+        credentialId: opsCredId,
+        cose: coseKey(opsKey.x, opsKey.y),
+        flags: 0x45,
+      });
+      const ok = await finishOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        opsRpId,
+        now,
+        clientDataJSON: clientData("webauthn.create", regOpts!.challenge, `https://${opsRpId}`),
+        attestationObject: attestationObject(authData),
+      });
+      expect(ok).toBe(true);
+
+      const [totalCreds] = await identitySql<{ count: string }[]>`
+        select count(*)::text as count from identity.passkey_credentials where user_id = ${user.userId}
+      `;
+      expect(Number(totalCreds?.count ?? 0)).toBe(3);
+
+      const [opsCreds] = await identitySql<{ count: string }[]>`
+        select count(*)::text as count from identity.passkey_credentials where user_id = ${user.userId} and rp_id = ${opsRpId}
+      `;
+      expect(Number(opsCreds?.count ?? 0)).toBe(1);
+
+      const [grant] = await identitySql<{ activated_at: Date | null }[]>`
+        select activated_at from identity.operator_grants where user_id = ${user.userId}
+      `;
+      expect(grant?.activated_at).toBeNull();
+
+      const read = await readSessionWithKind(identitySql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        now,
+        kinds: ["enrolment"],
+      });
+      expect(read).not.toBeNull();
+    });
+
+    it("a second ops passkey after the window is not stored and the grant stays inactive (pin 5b)", async () => {
+      const t0 = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-pin5b@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      const opsRpId = "ops.example.test";
+      const enrolmentCode = "A".repeat(26);
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode,
+        opsRpId,
+        now: t0,
+      });
+
+      const t1 = new Date(t0.getTime() + 60 * 60 * 1000);
+      const mail1 = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail1, { email, now: t1 });
+      const res1 = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode: mail1.sent[0]!.code,
+        enrolmentCode,
+        opsRpId,
+        now: t1,
+      });
+      expect(res1?.kind).toBe("enrolment");
+      const session1 = (res1 as { kind: "enrolment"; session: SessionTokens }).session;
+
+      const regOpts1 = await beginOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session1.accessToken,
+        opsRpId,
+        now: t1,
+      });
+      expect(regOpts1).not.toBeNull();
+      const key1 = await signer();
+      const credId1 = crypto.getRandomValues(new Uint8Array(32));
+      const authData1 = authenticatorData({
+        rpId: opsRpId,
+        signCount: 0,
+        credentialId: credId1,
+        cose: coseKey(key1.x, key1.y),
+        flags: 0x45,
+      });
+      const ok1 = await finishOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session1.accessToken,
+        opsRpId,
+        now: t1,
+        clientDataJSON: clientData("webauthn.create", regOpts1!.challenge, `https://${opsRpId}`),
+        attestationObject: attestationObject(authData1),
+      });
+      expect(ok1).toBe(true);
+
+      const [grant1] = await identitySql<{ activated_at: Date | null }[]>`
+        select activated_at from identity.operator_grants where user_id = ${user.userId}
+      `;
+      expect(grant1?.activated_at).toBeNull();
+
+      const windowMs = 24 * 60 * 60 * 1000;
+      const enrolmentExpiresAt = new Date(t0.getTime() + windowMs);
+      const tNearEnd = new Date(enrolmentExpiresAt.getTime() - 5 * 60 * 1000);
+      const mail2 = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail2, { email, now: tNearEnd });
+      const res2 = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode: mail2.sent[0]!.code,
+        enrolmentCode,
+        opsRpId,
+        now: tNearEnd,
+      });
+      expect(res2?.kind).toBe("enrolment");
+      const session2 = (res2 as { kind: "enrolment"; session: SessionTokens }).session;
+
+      const tBegin = new Date(tNearEnd.getTime() + 60 * 1000);
+      const regOpts2 = await beginOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session2.accessToken,
+        opsRpId,
+        now: tBegin,
+      });
+      expect(regOpts2).not.toBeNull();
+
+      const tAfterWindow = new Date(enrolmentExpiresAt.getTime() + 1000);
+      const key2 = await signer();
+      const credId2 = crypto.getRandomValues(new Uint8Array(32));
+      const authData2 = authenticatorData({
+        rpId: opsRpId,
+        signCount: 0,
+        credentialId: credId2,
+        cose: coseKey(key2.x, key2.y),
+        flags: 0x45,
+      });
+      const ok2 = await finishOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session2.accessToken,
+        opsRpId,
+        now: tAfterWindow,
+        clientDataJSON: clientData("webauthn.create", regOpts2!.challenge, `https://${opsRpId}`),
+        attestationObject: attestationObject(authData2),
+      });
+      expect(ok2).toBe(false);
+
+      const [opsCredsAfter] = await identitySql<{ count: string }[]>`
+        select count(*)::text as count from identity.passkey_credentials where user_id = ${user.userId} and rp_id = ${opsRpId}
+      `;
+      expect(Number(opsCredsAfter?.count ?? 0)).toBe(1);
+
+      const [grantAfter] = await identitySql<{ activated_at: Date | null }[]>`
+        select activated_at from identity.operator_grants where user_id = ${user.userId}
+      `;
+      expect(grantAfter?.activated_at).toBeNull();
+    });
+
+    it("operator registration options require UV and exclude ops passkeys (pin 7)", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-pin7@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      const opsRpId = "ops.example.test";
+      const tenantRpId = "auth.example.test";
+      const enrolmentCode = "A".repeat(26);
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode,
+        opsRpId,
+        now,
+      });
+      const mail = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, { email, now });
+      const res = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode: mail.sent[0]!.code,
+        enrolmentCode,
+        opsRpId,
+        now,
+      });
+      const session = (res as { kind: "enrolment"; session: SessionTokens }).session;
+
+      const tenantCredId = crypto.getRandomValues(new Uint8Array(32));
+      const opsCredId = crypto.getRandomValues(new Uint8Array(32));
+      const k1 = await signer();
+      const k2 = await signer();
+      await directSql`
+        insert into identity.passkey_credentials (id, user_id, credential_id, cose_key, sign_count, rp_id)
+        values
+          (${newId()}, ${user.userId}, ${tenantCredId}, ${coseKey(k1.x, k1.y)}, 0, ${tenantRpId}),
+          (${newId()}, ${user.userId}, ${opsCredId}, ${coseKey(k2.x, k2.y)}, 0, ${opsRpId})
+      `;
+
+      const opts = await beginOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        opsRpId,
+        now,
+      });
+      expect(opts).not.toBeNull();
+      expect(opts!.authenticatorSelection.userVerification).toBe("required");
+      expect(opts!.authenticatorSelection.residentKey).toBe("required");
+      expect(opts!.excludeCredentials).toBeDefined();
+      expect(opts!.excludeCredentials).toHaveLength(1);
+      expect(opts!.excludeCredentials![0]!.id).toEqual(opsCredId);
+    });
+
+    it("after revoke and re-grant the grant activates only on two new ops passkeys (pin 18c)", async () => {
+      const t0 = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-pin18c@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      const opsRpId = "ops.example.test";
+      const enrolmentCode = "A".repeat(26);
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode,
+        opsRpId,
+        now: t0,
+      });
+
+      const mail1 = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail1, { email, now: t0 });
+      const res1 = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode: mail1.sent[0]!.code,
+        enrolmentCode,
+        opsRpId,
+        now: t0,
+      });
+      const session1 = (res1 as { kind: "enrolment"; session: SessionTokens }).session;
+      const opts1 = await beginOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session1.accessToken,
+        opsRpId,
+        now: t0,
+      });
+      const k1 = await signer();
+      const c1 = crypto.getRandomValues(new Uint8Array(32));
+      await finishOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session1.accessToken,
+        opsRpId,
+        now: t0,
+        clientDataJSON: clientData("webauthn.create", opts1!.challenge, `https://${opsRpId}`),
+        attestationObject: attestationObject(
+          authenticatorData({
+            rpId: opsRpId,
+            signCount: 0,
+            credentialId: c1,
+            cose: coseKey(k1.x, k1.y),
+            flags: 0x45,
+          }),
+        ),
+      });
+
+      const [cCount1] = await identitySql<{ count: string }[]>`
+        select count(*)::text as count from identity.passkey_credentials where user_id = ${user.userId} and rp_id = ${opsRpId}
+      `;
+      expect(Number(cCount1?.count ?? 0)).toBe(1);
+
+      const tRevoke = new Date(t0.getTime() + 60 * 60 * 1000);
+      await revokeOperator(identitySql, { userId: user.userId, opsRpId, now: tRevoke });
+
+      const tReGrant = new Date(t0.getTime() + 2 * 60 * 60 * 1000);
+      const newEnrolmentCode = "B".repeat(26);
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode: newEnrolmentCode,
+        opsRpId,
+        now: tReGrant,
+      });
+
+      const mail2 = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail2, { email, now: tReGrant });
+      const res2 = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode: mail2.sent[0]!.code,
+        enrolmentCode: newEnrolmentCode,
+        opsRpId,
+        now: tReGrant,
+      });
+      const session2 = (res2 as { kind: "enrolment"; session: SessionTokens }).session;
+
+      const opts2 = await beginOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session2.accessToken,
+        opsRpId,
+        now: tReGrant,
+      });
+      const k2 = await signer();
+      const c2 = crypto.getRandomValues(new Uint8Array(32));
+      const okNew1 = await finishOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session2.accessToken,
+        opsRpId,
+        now: tReGrant,
+        clientDataJSON: clientData("webauthn.create", opts2!.challenge, `https://${opsRpId}`),
+        attestationObject: attestationObject(
+          authenticatorData({
+            rpId: opsRpId,
+            signCount: 0,
+            credentialId: c2,
+            cose: coseKey(k2.x, k2.y),
+            flags: 0x45,
+          }),
+        ),
+      });
+      expect(okNew1).toBe(true);
+
+      const [grantMid] = await identitySql<{ activated_at: Date | null }[]>`
+        select activated_at from identity.operator_grants where user_id = ${user.userId} and revoked_at is null
+      `;
+      expect(grantMid?.activated_at).toBeNull();
+
+      const opts3 = await beginOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session2.accessToken,
+        opsRpId,
+        now: tReGrant,
+      });
+      const k3 = await signer();
+      const c3 = crypto.getRandomValues(new Uint8Array(32));
+      const okNew2 = await finishOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session2.accessToken,
+        opsRpId,
+        now: tReGrant,
+        clientDataJSON: clientData("webauthn.create", opts3!.challenge, `https://${opsRpId}`),
+        attestationObject: attestationObject(
+          authenticatorData({
+            rpId: opsRpId,
+            signCount: 0,
+            credentialId: c3,
+            cose: coseKey(k3.x, k3.y),
+            flags: 0x45,
+          }),
+        ),
+      });
+      expect(okNew2).toBe(true);
+
+      const [grantEnd] = await identitySql<{ activated_at: Date | null }[]>`
+        select activated_at from identity.operator_grants where user_id = ${user.userId} and revoked_at is null
+      `;
+      expect(grantEnd?.activated_at).not.toBeNull();
+    });
+
+    it("registration waits for the user lock before inserting (pin 18d)", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-pin18d@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      const opsRpId = "ops.example.test";
+      const enrolmentCode = "A".repeat(26);
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode,
+        opsRpId,
+        now,
+      });
+      const mail = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, { email, now });
+      const res = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode: mail.sent[0]!.code,
+        enrolmentCode,
+        opsRpId,
+        now,
+      });
+      const session = (res as { kind: "enrolment"; session: SessionTokens }).session;
+
+      const opts = await beginOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        opsRpId,
+        now,
+      });
+      expect(opts).not.toBeNull();
+      const key = await signer();
+      const credId = crypto.getRandomValues(new Uint8Array(32));
+      const authData = authenticatorData({
+        rpId: opsRpId,
+        signCount: 0,
+        credentialId: credId,
+        cose: coseKey(key.x, key.y),
+        flags: 0x45,
+      });
+      const clientDataJSON = clientData("webauthn.create", opts!.challenge, `https://${opsRpId}`);
+      const attestationObjectData = attestationObject(authData);
+
+      const observer = createPlaintextDirectSql(runtime.productOnlyUrl);
+      const direct = createPlaintextDirectSql(runtime.productOnlyUrl);
+
+      let releaseHolder!: () => void;
+      const holdPromise = new Promise<void>((resolve) => {
+        releaseHolder = resolve;
+      });
+      let holderAcquired = false;
+
+      const holderPromise = direct.begin(async (tx) => {
+        await lockOperatorUser(tx, user.userId);
+        holderAcquired = true;
+        await tx`update identity.operator_grants set revoked_at = ${now} where user_id = ${user.userId}`;
+        await tx`update identity.sessions set revoked_at = ${now} where user_id = ${user.userId}`;
+        await holdPromise;
+      });
+
+      const acquireStarted = Date.now();
+      while (!holderAcquired && Date.now() - acquireStarted < 3_000) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(holderAcquired).toBe(true);
+
+      let settled = false;
+      let finishPromise: Promise<boolean> | undefined;
+      try {
+        finishPromise = finishOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+          accessToken: session.accessToken,
+          opsRpId,
+          now,
+          clientDataJSON,
+          attestationObject: attestationObjectData,
+        }).finally(() => {
+          settled = true;
+        });
+
+        const started = Date.now();
+        let waiting = false;
+        let waitingPid: number | null = null;
+        while (Date.now() - started < 5_000) {
+          if (settled) break;
+          const waitingRows = await observer<{ pid: number }[]>`
+            select pid
+            from pg_stat_activity
+            where datname = current_database()
+              and state = 'active'
+              and wait_event_type = 'Lock'
+              and pid <> pg_backend_pid()
+          `;
+          if (waitingRows.length > 0) {
+            waiting = true;
+            waitingPid = waitingRows[0]!.pid;
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+
+        if (!waiting && !settled) {
+          throw new Error(
+            "finishOperatorPasskeyRegistration did not wait on the user lock within 5s",
+          );
+        }
+
+        expect(waitingPid).not.toBeNull();
+
+        const [credLockCount] = await observer<{ n: number }[]>`
+          select count(*)::int as n
+          from pg_locks l
+          join pg_class c on c.oid = l.relation
+          join pg_namespace n on n.oid = c.relnamespace
+          where l.pid = ${waitingPid}
+            and n.nspname = 'identity'
+            and c.relname = 'passkey_credentials'
+            and l.mode = 'RowExclusiveLock'
+        `;
+        expect(credLockCount?.n ?? 0).toBe(0);
+
+        releaseHolder();
+        await holderPromise;
+
+        const result = await finishPromise;
+        expect(result).toBe(false);
+
+        const [finalCreds] = await identitySql<{ count: string }[]>`
+          select count(*)::text as count from identity.passkey_credentials where user_id = ${user.userId}
+        `;
+        expect(Number(finalCreds?.count ?? 0)).toBe(0);
+      } finally {
+        releaseHolder();
+        await finishPromise?.catch(() => undefined);
+        await holderPromise.catch(() => undefined);
+        await direct.end({ timeout: 1 });
+        await observer.end({ timeout: 1 });
+      }
+    });
+
+    it("operator registration refuses a null-RP challenge (pin 20)", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-pin20@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      const opsRpId = "ops.example.test";
+      const enrolmentCode = "A".repeat(26);
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode,
+        opsRpId,
+        now,
+      });
+      const mail = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, { email, now });
+      const res = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode: mail.sent[0]!.code,
+        enrolmentCode,
+        opsRpId,
+        now,
+      });
+      const session = (res as { kind: "enrolment"; session: SessionTokens }).session;
+
+      const challenge = new Uint8Array(32);
+      crypto.getRandomValues(challenge);
+      const expiresAt = new Date(now.getTime() + 5 * 60 * 1000).toISOString();
+      await directSql`
+        insert into identity.passkey_challenges (id, user_id, kind, challenge, expires_at, rp_id, user_verification)
+        values (${newId()}, ${user.userId}, 'register', ${challenge}, ${expiresAt}::timestamptz, null, 'required')
+      `;
+
+      const key = await signer();
+      const credId = crypto.getRandomValues(new Uint8Array(32));
+      const authData = authenticatorData({
+        rpId: opsRpId,
+        signCount: 0,
+        credentialId: credId,
+        cose: coseKey(key.x, key.y),
+        flags: 0x45,
+      });
+      const clientDataJSON = clientData("webauthn.create", challenge, `https://${opsRpId}`);
+      const attestationObjectData = attestationObject(authData);
+
+      const result = await finishOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        opsRpId,
+        now,
+        clientDataJSON,
+        attestationObject: attestationObjectData,
+      });
+      expect(result).toBe(false);
+
+      const [stored] = await identitySql<{ count: string }[]>`
+        select count(*)::text as count from identity.passkey_credentials where user_id = ${user.userId}
+      `;
+      expect(Number(stored?.count ?? 0)).toBe(0);
+    });
+  });
+
+  describe("operator passkey registration plus cases", () => {
+    const kms = createLocalKmsPort();
+    let identitySql: Sql;
+    let directSql: Sql;
+    const runtime = loadRuntime();
+
+    beforeAll(async () => {
+      directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+      identitySql = createPlaintextIdentitySql(roleUrl(runtime, "identity"));
+      await directSql`delete from identity.operator_events`;
+      await directSql`delete from identity.operator_grants`;
+      await directSql`delete from identity.sessions`;
+      await directSql`delete from identity.passkey_credentials`;
+      await directSql`delete from identity.passkey_challenges`;
+      await directSql`delete from identity.identity_keys`;
+      await directSql`delete from identity.otp_challenges`;
+      await directSql`delete from identity.users`;
+    });
+
+    afterAll(async () => {
+      try {
+        await directSql`delete from identity.operator_events`;
+        await directSql`delete from identity.operator_grants`;
+        await directSql`delete from identity.sessions`;
+        await directSql`delete from identity.passkey_credentials`;
+        await directSql`delete from identity.passkey_challenges`;
+        await directSql`delete from identity.identity_keys`;
+        await directSql`delete from identity.otp_challenges`;
+        await directSql`delete from identity.users`;
+      } finally {
+        await identitySql.end({ timeout: 1 });
+        await directSql.end({ timeout: 1 });
+      }
+    });
+
+    it("two ops passkeys inside the window activate every open grant of the user and revoke the enrolment session", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-plus-activate@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      const opsRpId = "ops.example.test";
+      const enrolmentCode = "A".repeat(26);
+      const requestId = newId();
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin", "platform_support"],
+        enrolmentCode,
+        opsRpId,
+        now,
+      });
+      const mail = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, { email, now });
+      const res = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode: mail.sent[0]!.code,
+        enrolmentCode,
+        opsRpId,
+        now,
+      });
+      const session = (res as { kind: "enrolment"; session: SessionTokens }).session;
+
+      const opts1 = await beginOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        opsRpId,
+        now,
+      });
+      const k1 = await signer();
+      const c1 = crypto.getRandomValues(new Uint8Array(32));
+      const ok1 = await finishOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        opsRpId,
+        now,
+        clientDataJSON: clientData("webauthn.create", opts1!.challenge, `https://${opsRpId}`),
+        attestationObject: attestationObject(
+          authenticatorData({
+            rpId: opsRpId,
+            signCount: 0,
+            credentialId: c1,
+            cose: coseKey(k1.x, k1.y),
+            flags: 0x45,
+          }),
+        ),
+        requestId,
+      });
+      expect(ok1).toBe(true);
+
+      const grants1 = await identitySql<{ activated_at: Date | null }[]>`
+        select activated_at from identity.operator_grants where user_id = ${user.userId}
+      `;
+      expect(grants1).toHaveLength(2);
+      expect(grants1[0]?.activated_at).toBeNull();
+      expect(grants1[1]?.activated_at).toBeNull();
+
+      const read1 = await readSessionWithKind(identitySql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        now,
+        kinds: ["enrolment"],
+      });
+      expect(read1?.userId).toBe(user.userId);
+
+      const opts2 = await beginOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        opsRpId,
+        now,
+      });
+      const k2 = await signer();
+      const c2 = crypto.getRandomValues(new Uint8Array(32));
+      const ok2 = await finishOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        opsRpId,
+        now,
+        clientDataJSON: clientData("webauthn.create", opts2!.challenge, `https://${opsRpId}`),
+        attestationObject: attestationObject(
+          authenticatorData({
+            rpId: opsRpId,
+            signCount: 0,
+            credentialId: c2,
+            cose: coseKey(k2.x, k2.y),
+            flags: 0x45,
+          }),
+        ),
+        requestId,
+      });
+      expect(ok2).toBe(true);
+
+      const grants2 = await identitySql<{ activated_at: Date | null; role_key: string }[]>`
+        select activated_at, role_key from identity.operator_grants where user_id = ${user.userId}
+      `;
+      expect(grants2).toHaveLength(2);
+      expect(grants2[0]?.activated_at).toEqual(now);
+      expect(grants2[1]?.activated_at).toEqual(now);
+
+      const activatedEvents = await identitySql<
+        { role_key: string; action: string; request_id: string }[]
+      >`
+        select role_key, action, request_id from identity.operator_events where user_id = ${user.userId} and action = 'activated' order by role_key
+      `;
+      expect(activatedEvents).toHaveLength(2);
+      expect(activatedEvents.map((e) => e.role_key).sort()).toEqual([
+        "platform_admin",
+        "platform_support",
+      ]);
+      expect(activatedEvents[0]?.request_id).toBe(requestId);
+
+      const readAfter = await readSessionWithKind(identitySql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        now,
+        kinds: ["enrolment"],
+      });
+      expect(readAfter).toBeNull();
+    });
+
+    it("a revoked enrolment session cannot finish", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-plus-revoked-finish@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      const opsRpId = "ops.example.test";
+      const enrolmentCode = "A".repeat(26);
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode,
+        opsRpId,
+        now,
+      });
+      const mail = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, { email, now });
+      const res = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode: mail.sent[0]!.code,
+        enrolmentCode,
+        opsRpId,
+        now,
+      });
+      const session = (res as { kind: "enrolment"; session: SessionTokens }).session;
+
+      const opts = await beginOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        opsRpId,
+        now,
+      });
+      expect(opts).not.toBeNull();
+
+      await directSql`
+        update identity.sessions set revoked_at = ${now} where user_id = ${user.userId}
+      `;
+
+      const k = await signer();
+      const c = crypto.getRandomValues(new Uint8Array(32));
+      const result = await finishOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        opsRpId,
+        now,
+        clientDataJSON: clientData("webauthn.create", opts!.challenge, `https://${opsRpId}`),
+        attestationObject: attestationObject(
+          authenticatorData({
+            rpId: opsRpId,
+            signCount: 0,
+            credentialId: c,
+            cose: coseKey(k.x, k.y),
+            flags: 0x45,
+          }),
+        ),
+      });
+      expect(result).toBe(false);
+
+      const [stored] = await identitySql<{ count: string }[]>`
+        select count(*)::text as count from identity.passkey_credentials where user_id = ${user.userId}
+      `;
+      expect(Number(stored?.count ?? 0)).toBe(0);
+    });
+
+    it("an operator session can add a third ops passkey without changing grants", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-plus-third-passkey@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      const opsRpId = "ops.example.test";
+      const enrolmentCode = "A".repeat(26);
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode,
+        opsRpId,
+        now,
+      });
+
+      const c1 = crypto.getRandomValues(new Uint8Array(32));
+      const c2 = crypto.getRandomValues(new Uint8Array(32));
+      const k1 = await signer();
+      const k2 = await signer();
+      await directSql`
+        insert into identity.passkey_credentials (id, user_id, credential_id, cose_key, sign_count, rp_id)
+        values
+          (${newId()}, ${user.userId}, ${c1}, ${coseKey(k1.x, k1.y)}, 0, ${opsRpId}),
+          (${newId()}, ${user.userId}, ${c2}, ${coseKey(k2.x, k2.y)}, 0, ${opsRpId})
+      `;
+      await directSql`
+        update identity.operator_grants set activated_at = ${now} where user_id = ${user.userId}
+      `;
+
+      const { bidx } = await deriveIdentityEmailKeys(identitySql, kms, KEY_ARN);
+      const operatorSession = await identitySql.begin(async (tx) => {
+        return createSessionInTransaction(tx, bidx, {
+          userId: user.userId,
+          now,
+          kind: "operator",
+          absoluteExpiresAt: new Date(now.getTime() + 8 * 60 * 60 * 1000),
+        });
+      });
+
+      const opts = await beginOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: operatorSession.accessToken,
+        opsRpId,
+        now,
+      });
+      expect(opts).not.toBeNull();
+      expect(opts!.excludeCredentials).toHaveLength(2);
+
+      const k3 = await signer();
+      const c3 = crypto.getRandomValues(new Uint8Array(32));
+      const ok = await finishOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: operatorSession.accessToken,
+        opsRpId,
+        now,
+        clientDataJSON: clientData("webauthn.create", opts!.challenge, `https://${opsRpId}`),
+        attestationObject: attestationObject(
+          authenticatorData({
+            rpId: opsRpId,
+            signCount: 0,
+            credentialId: c3,
+            cose: coseKey(k3.x, k3.y),
+            flags: 0x45,
+          }),
+        ),
+      });
+      expect(ok).toBe(true);
+
+      const [totalCreds] = await identitySql<{ count: string }[]>`
+        select count(*)::text as count from identity.passkey_credentials where user_id = ${user.userId} and rp_id = ${opsRpId}
+      `;
+      expect(Number(totalCreds?.count ?? 0)).toBe(3);
+
+      const [grant] = await identitySql<{ activated_at: Date }[]>`
+        select activated_at from identity.operator_grants where user_id = ${user.userId}
+      `;
+      expect(grant?.activated_at).toEqual(now);
+
+      const readOp = await readSessionWithKind(identitySql, kms, KEY_ARN, {
+        accessToken: operatorSession.accessToken,
+        now,
+        kinds: ["operator"],
+      });
+      expect(readOp?.userId).toBe(user.userId);
+    });
+
+    it("a tenant (auth.example.test) registration challenge cannot be finished through the operator function", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const email = "op-plus-tenant-chal@example.test";
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, { email });
+      const opsRpId = "ops.example.test";
+      const enrolmentCode = "A".repeat(26);
+      await grantOperator(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        roleKeys: ["platform_admin"],
+        enrolmentCode,
+        opsRpId,
+        now,
+      });
+      const mail = createCapturingMail();
+      await startOperatorEnrolment(identitySql, kms, KEY_ARN, mail, { email, now });
+      const res = await verifyOperatorEnrolment(identitySql, kms, KEY_ARN, {
+        email,
+        emailCode: mail.sent[0]!.code,
+        enrolmentCode,
+        opsRpId,
+        now,
+      });
+      const session = (res as { kind: "enrolment"; session: SessionTokens }).session;
+
+      const tenantOpts = await beginPasskeyRegistration(identitySql, {
+        userId: user.userId,
+        rpId: "auth.example.test",
+        now,
+      });
+
+      const k = await signer();
+      const c = crypto.getRandomValues(new Uint8Array(32));
+      const authData = authenticatorData({
+        rpId: "auth.example.test",
+        signCount: 0,
+        credentialId: c,
+        cose: coseKey(k.x, k.y),
+        flags: 0x45,
+      });
+      const clientDataJSON = clientData(
+        "webauthn.create",
+        tenantOpts.challenge,
+        "https://auth.example.test",
+      );
+      const attestationObjectData = attestationObject(authData);
+
+      const result = await finishOperatorPasskeyRegistration(identitySql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        opsRpId,
+        now,
+        clientDataJSON,
+        attestationObject: attestationObjectData,
+      });
+      expect(result).toBe(false);
+
+      const [stored] = await identitySql<{ count: string }[]>`
+        select count(*)::text as count from identity.passkey_credentials where user_id = ${user.userId} and rp_id = ${opsRpId}
+      `;
+      expect(Number(stored?.count ?? 0)).toBe(0);
     });
   });
 });

@@ -11,7 +11,17 @@ import { isPlatformRoleKey, type PlatformRoleKey } from "../domain/platform-role
 import { deriveIdentityEmailKeys, emailBlindIndex } from "./email-lookup.js";
 import { CODES_PER_HOUR, HOUR_MS, TEN_MINUTES_MS } from "./email-otp.js";
 import { hmac } from "./hmac.js";
-import { createSessionInTransaction, type SessionTokens } from "./session.js";
+import {
+  beginPasskeyRegistration,
+  finishPasskeyRegistration,
+  type PasskeyRegistrationOptions,
+} from "./passkey.js";
+import {
+  createSessionInTransaction,
+  readSessionWithKind,
+  sessionAccessHash,
+  type SessionTokens,
+} from "./session.js";
 
 const ENROLMENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -575,4 +585,195 @@ export async function verifyOperatorEnrolment(
     });
     return { kind: "enrolment" as const, session };
   });
+}
+
+export type BeginOperatorPasskeyRegistrationInput = {
+  accessToken: string;
+  opsRpId: string;
+  now: Date;
+};
+
+export type FinishOperatorPasskeyRegistrationInput = {
+  accessToken: string;
+  opsRpId: string;
+  now: Date;
+  clientDataJSON: Uint8Array;
+  attestationObject: Uint8Array;
+  requestId?: string | undefined;
+};
+
+class RegistrationSentinelError extends Error {
+  constructor() {
+    super("registration_precondition_failed");
+  }
+}
+
+export async function beginOperatorPasskeyRegistration(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: BeginOperatorPasskeyRegistrationInput,
+): Promise<PasskeyRegistrationOptions | null> {
+  const session = await readSessionWithKind(sql, kms, keyArn, {
+    accessToken: input.accessToken,
+    now: input.now,
+    kinds: ["enrolment", "operator"],
+  });
+  if (session === null) {
+    return null;
+  }
+
+  if (session.kind === "enrolment") {
+    const [openGrant] = await sql<{ id: string }[]>`
+      select id from identity.operator_grants
+      where user_id = ${session.userId}
+        and revoked_at is null
+        and activated_at is null
+        and enrolment_expires_at > ${input.now}
+      limit 1
+    `;
+    if (!openGrant) {
+      return null;
+    }
+  } else if (session.kind === "operator") {
+    const [activeGrant] = await sql<{ id: string }[]>`
+      select id from identity.operator_grants
+      where user_id = ${session.userId}
+        and revoked_at is null
+        and activated_at is not null
+      limit 1
+    `;
+    if (!activeGrant) {
+      return null;
+    }
+  } else {
+    return null;
+  }
+
+  return beginPasskeyRegistration(sql, {
+    userId: session.userId,
+    rpId: input.opsRpId,
+    now: input.now,
+    userVerification: "required",
+    excludeExisting: true,
+  });
+}
+
+export async function finishOperatorPasskeyRegistration(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: FinishOperatorPasskeyRegistrationInput,
+): Promise<boolean> {
+  const session = await readSessionWithKind(sql, kms, keyArn, {
+    accessToken: input.accessToken,
+    now: input.now,
+    kinds: ["enrolment", "operator"],
+  });
+  if (session === null) {
+    return false;
+  }
+
+  const accessHash = await sessionAccessHash(sql, kms, keyArn, input.accessToken);
+  if (accessHash === null) {
+    return false;
+  }
+
+  try {
+    await finishPasskeyRegistration(sql, {
+      userId: session.userId,
+      rpId: input.opsRpId,
+      now: input.now,
+      clientDataJSON: input.clientDataJSON,
+      attestationObject: input.attestationObject,
+      acceptLegacy: false,
+      beforeStore: async (tx) => {
+        await lockOperatorUser(tx, session.userId);
+
+        const [sessionRow] = await tx<{ id: string; kind: string }[]>`
+          select id, kind
+          from identity.sessions
+          where access_hash = ${accessHash}
+            and user_id = ${session.userId}
+            and revoked_at is null
+            and access_expires_at > ${input.now}
+            and kind in ('enrolment', 'operator')
+          limit 1
+        `;
+        if (!sessionRow) {
+          throw new RegistrationSentinelError();
+        }
+
+        const [grant] = await tx<{ id: string }[]>`
+          select id
+          from identity.operator_grants
+          where user_id = ${session.userId}
+            and revoked_at is null
+            and (
+              activated_at is not null
+              or (activated_at is null and enrolment_expires_at > ${input.now})
+            )
+          limit 1
+        `;
+        if (!grant) {
+          throw new RegistrationSentinelError();
+        }
+      },
+      onStored: async (tx) => {
+        await appendOperatorEvent(tx, {
+          userId: session.userId,
+          action: "passkey_registered",
+          requestId: input.requestId,
+          now: input.now,
+        });
+
+        const [opsCredCount] = await tx<{ count: string }[]>`
+          select count(*)::text as count
+          from identity.passkey_credentials
+          where user_id = ${session.userId}
+            and rp_id = ${input.opsRpId}
+        `;
+        const count = Number(opsCredCount?.count ?? 0);
+
+        if (count >= 2) {
+          const activatedGrants = await tx<{ id: string; role_key: PlatformRoleKey }[]>`
+            update identity.operator_grants
+            set activated_at = ${input.now}
+            where user_id = ${session.userId}
+              and revoked_at is null
+              and activated_at is null
+              and enrolment_expires_at > ${input.now}
+            returning id, role_key
+          `;
+          for (const grant of activatedGrants) {
+            await appendOperatorEvent(tx, {
+              userId: session.userId,
+              action: "activated",
+              roleKey: grant.role_key,
+              requestId: input.requestId,
+              now: input.now,
+            });
+          }
+          if (activatedGrants.length > 0) {
+            await tx`
+              update identity.sessions
+              set revoked_at = ${input.now}
+              where user_id = ${session.userId}
+                and revoked_at is null
+                and kind = 'enrolment'
+            `;
+          }
+        }
+      },
+    });
+    return true;
+  } catch (error) {
+    if (error instanceof RegistrationSentinelError) {
+      return false;
+    }
+    if (error instanceof IdentityError && error.code === "invalid_ceremony") {
+      return false;
+    }
+    throw error;
+  }
 }
