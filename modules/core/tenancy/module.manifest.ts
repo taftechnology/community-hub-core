@@ -7,6 +7,7 @@ export default defineModule({
   publishes: [],
   subscribes: [],
   ports: [],
+  permissions: ["ops.directory.view"],
   dataClasses: {
     "organisations.id": "internal",
     "organisations.slug": "internal",
