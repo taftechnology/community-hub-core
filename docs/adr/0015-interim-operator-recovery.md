@@ -15,7 +15,7 @@ Architecture §11.4 says a platform operator who loses passkeys is recovered by 
 1. Until two-person recovery is built, the owner alone recovers an operator through the owner-run `ops-operator` one-off, which calls `recoverOperator(userId, roleKeys, enrolmentCode)`.
 2. Recovery revokes every grant and every `operator` and `enrolment` session of the user, deletes the user's ops-hostname passkeys, and grants again with a new 24-hour enrolment window and a new owner-generated enrolment code, in one transaction. The operator then enrols two new passkeys with an email code and the enrolment code.
 3. Every recovery writes a `recovery_regrant` row in `identity.operator_events`, alongside the `revoked` and `granted` rows.
-4. The `ops-console-api` runbook section for recovery exists before the first production use.
+4. The `ops-operator-oneoff` runbook section for recovery exists before the first production use.
 5. Two-person recovery replaces this path. On the review date, or when a second `platform_security` person joins, whichever is first, this ADR is superseded by one that builds it or records a new review date with a reason.
 
 ## Consequences
