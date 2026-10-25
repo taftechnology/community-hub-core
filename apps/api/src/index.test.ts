@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLogger } from "@community-hub/observability";
@@ -154,6 +155,31 @@ describe("api entrypoint", () => {
     expect(code).toBe(1);
     expect(stderr).toEqual(["routes\n"]);
     expect(stderr.join("")).not.toContain("/other");
+    expect(listeningServer()).toBeUndefined();
+  });
+
+  it("writes static when OPS_STATIC_DIR points at a missing directory", () => {
+    const stderr: string[] = [];
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      stderr.push(String(chunk));
+      return true;
+    });
+    const env = source();
+    env.ENVELOPE_KEY_ARN = `arn:aws:kms:ap-southeast-2:123456789012:key/mrk-${"ab".repeat(16)}`;
+    env.OPS_STATIC_DIR = path.join(os.tmpdir(), `missing-static-dir-${Date.now()}`);
+
+    const code = run(env, pem, [
+      {
+        method: "GET",
+        pattern: "/health",
+        surface: "all",
+        billing: "exempt",
+        handle: () => new Response(null, { status: 204 }),
+      },
+    ]);
+
+    expect(code).toBe(1);
+    expect(stderr).toEqual(["static\n"]);
     expect(listeningServer()).toBeUndefined();
   });
 

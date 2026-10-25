@@ -28,6 +28,7 @@ import { readServiceEnv, IMAGE_CERT_PATH, type ServiceEnv } from "./env.js";
 import { RoutesRejected, type GateRoute } from "./gate.js";
 import { createAwsKmsPort } from "./kms/aws-kms-adapter.js";
 import { createSesOtpMail } from "./mail/ses-otp-mail.js";
+import { loadOpsStatic, StaticRejected } from "./ops-static.js";
 import { secretsManagerReader } from "./secrets.js";
 import { startServer } from "./server.js";
 
@@ -67,6 +68,8 @@ export function run(source: NodeJS.ProcessEnv, pem: string, routes: readonly Gat
   }
   try {
     const bound = bindServices(read.env, pem);
+    const staticRoutes =
+      read.env.OPS_STATIC_DIR !== undefined ? loadOpsStatic(read.env.OPS_STATIC_DIR) : [];
     current = startServer({
       env: read.env,
       routes: [
@@ -76,11 +79,16 @@ export function run(source: NodeJS.ProcessEnv, pem: string, routes: readonly Gat
         ...entitlementRoutes(bound.entitlements),
         ...billingWebhookRoutes(bound.billing),
         ...billingRoutes(bound.billing),
+        ...staticRoutes,
       ],
     });
   } catch (error) {
     if (error instanceof RoutesRejected) {
       process.stderr.write("routes\n");
+      return 1;
+    }
+    if (error instanceof StaticRejected) {
+      process.stderr.write("static\n");
       return 1;
     }
     throw error;
@@ -291,6 +299,7 @@ export function bindServices(
 
 export function productionRoutes(env: ServiceEnv, pem: string): readonly GateRoute[] {
   const bound = bindServices(env, pem);
+  const staticRoutes = env.OPS_STATIC_DIR !== undefined ? loadOpsStatic(env.OPS_STATIC_DIR) : [];
   return [
     healthRoute,
     ...authRoutes(bound.auth),
@@ -298,6 +307,7 @@ export function productionRoutes(env: ServiceEnv, pem: string): readonly GateRou
     ...entitlementRoutes(bound.entitlements),
     ...billingWebhookRoutes(bound.billing),
     ...billingRoutes(bound.billing),
+    ...staticRoutes,
   ];
 }
 

@@ -326,4 +326,30 @@ describe("readServiceEnv", () => {
       expect(readServiceEnv(source, pem)).toEqual({ ok: false });
     });
   });
+
+  describe("OPS_STATIC_DIR", () => {
+    it("sets OPS_STATIC_DIR when present, and omits it when unset or empty", () => {
+      const unset = complete();
+      delete unset.OPS_STATIC_DIR;
+      const readUnset = readServiceEnv(unset, pem);
+      expect(readUnset.ok).toBe(true);
+      if (readUnset.ok) {
+        expect("OPS_STATIC_DIR" in readUnset.env).toBe(false);
+      }
+
+      const empty = { ...complete(), OPS_STATIC_DIR: "" };
+      const readEmpty = readServiceEnv(empty, pem);
+      expect(readEmpty.ok).toBe(true);
+      if (readEmpty.ok) {
+        expect("OPS_STATIC_DIR" in readEmpty.env).toBe(false);
+      }
+
+      const set = { ...complete(), OPS_STATIC_DIR: "/var/www/ops" };
+      const readSet = readServiceEnv(set, pem);
+      expect(readSet.ok).toBe(true);
+      if (readSet.ok) {
+        expect(readSet.env.OPS_STATIC_DIR).toBe("/var/www/ops");
+      }
+    });
+  });
 });
