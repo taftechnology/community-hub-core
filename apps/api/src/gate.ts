@@ -15,6 +15,7 @@ export type GateRoute = {
   billing: BillingMarking;
   handle: (request: Request, context: RouteContext) => Response | Promise<Response>;
   largeBody?: "webhooks";
+  static?: true;
 };
 
 export class RoutesRejected extends Error {
@@ -52,6 +53,22 @@ export type GateLogFields = {
 
 const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
 const GATEWAY_REQUEST_ID = /^[A-Za-z0-9+/=_-]{1,128}$/;
+const STATIC_NAME = /^[A-Za-z0-9._-]+$/;
+
+function isValidStaticPattern(pattern: string): boolean {
+  if (pattern === "/") {
+    return true;
+  }
+  if (pattern.startsWith("/assets/")) {
+    const name = pattern.slice("/assets/".length);
+    return name !== "." && name !== ".." && STATIC_NAME.test(name);
+  }
+  if (pattern.startsWith("/")) {
+    const name = pattern.slice("/".length);
+    return name !== "." && name !== ".." && STATIC_NAME.test(name);
+  }
+  return false;
+}
 
 export function assertRoutes(routes: readonly GateRoute[]): void {
   const seen = new Set<string>();
@@ -73,12 +90,42 @@ export function assertRoutes(routes: readonly GateRoute[]): void {
     ) {
       throw new RoutesRejected();
     }
+    if (route.static !== undefined) {
+      if (
+        route.static !== true ||
+        route.method !== "GET" ||
+        route.surface !== "ops" ||
+        route.billing !== "exempt" ||
+        route.largeBody !== undefined ||
+        !isValidStaticPattern(route.pattern)
+      ) {
+        throw new RoutesRejected();
+      }
+    }
     const key = `${route.method} ${route.pattern}`;
     if (seen.has(key)) {
       throw new RoutesRejected();
     }
     seen.add(key);
   }
+}
+
+const OPS_HOST_HEADERS: ReadonlyArray<readonly [string, string]> = [
+  ["X-Content-Type-Options", "nosniff"],
+  ["Referrer-Policy", "same-origin"],
+  ["Strict-Transport-Security", "max-age=31536000"],
+];
+
+function wrapOpsResponse(response: Response): Response {
+  const headers = new Headers(response.headers);
+  for (const [name, value] of OPS_HOST_HEADERS) {
+    headers.set(name, value);
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 function knownHostnames(hostnames: Hostnames): {
@@ -177,6 +224,8 @@ export function createGate(options: {
       hostname = header;
     }
 
+    let response: Response;
+
     if (reason !== undefined) {
       await releaseUnreadBody(request);
       const fields: GateLogFields = {
@@ -193,19 +242,23 @@ export function createGate(options: {
         fields.gatewayRequestId = gatewayId;
       }
       options.info("request", fields);
-      return new Response(null, { status: 404 });
-    }
-
-    if (request.method === "OPTIONS" && (header === known.api || header === known.auth)) {
+      response = new Response(null, { status: 404 });
+    } else if (request.method === "OPTIONS" && (header === known.api || header === known.auth)) {
       await releaseUnreadBody(request);
       options.info("request", {
         method: request.method,
         path,
         status: 204,
       });
-      return new Response(null, { status: 204 });
+      response = new Response(null, { status: 204 });
+    } else {
+      response = await kernel(request);
     }
 
-    return kernel(request);
+    if (header === known.ops) {
+      return wrapOpsResponse(response);
+    }
+
+    return response;
   };
 }
