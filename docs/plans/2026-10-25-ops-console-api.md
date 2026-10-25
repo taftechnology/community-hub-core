@@ -9,7 +9,7 @@ Spec: docs/specs/2026-10-25-ops-console-api.md
 **Architecture:** `server.ts` learns to send several `Set-Cookie` headers. The gate gains a `static` route flag and adds the ops-host security headers to every ops-host response. Three new `apps/api` files hold static serving, cookies and `Origin`, and the ops routes. Tenancy gains one read function and the permission key; contracts gain the ops schemas.
 
 Slug: ops-console-api
-Status: draft
+Status: approved (2026-10-25, Abdus Salam)
 
 ## Who does what
 
