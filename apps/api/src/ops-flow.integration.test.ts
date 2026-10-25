@@ -221,6 +221,7 @@ type OpsFetchOptions = {
   rawBody?: string;
   origin?: string | null | undefined;
   omitOrigin?: boolean;
+  omitContentType?: boolean;
   cookie?: string;
   hostname?: string;
   authorization?: string;
@@ -254,7 +255,7 @@ async function opsFetch(
   }
 
   const hasBody = method !== "GET" && method !== "HEAD";
-  if (hasBody) {
+  if (hasBody && !options.omitContentType) {
     headers.set("content-type", "application/json");
   }
 
@@ -487,7 +488,13 @@ describe("ops flow integration", () => {
   async function signInOperator(key: { sign: (d: Uint8Array) => Uint8Array }, credId: Uint8Array) {
     const optsRes = await opsFetch(PORT, "/v1/ops/passkey/authenticate/options", { body: {} });
     expect(optsRes.status).toBe(200);
-    const opts = (await optsRes.json()) as { challenge: string };
+    const opts = (await optsRes.json()) as {
+      challenge: string;
+      rpId: string;
+      userVerification: string;
+    };
+    expect(opts.rpId).toBe(RP_ID);
+    expect(opts.userVerification).toBe("required");
     const authAuthData = authenticatorData({ signCount: 1, flags: 0x05 });
     const authClient = clientData("webauthn.get", bytesFrom(opts.challenge));
     const sig = key.sign(concat([authAuthData, sha256(authClient)]));
@@ -571,6 +578,10 @@ describe("ops flow integration", () => {
       "/v1/ops/enrolment/verify",
       "/v1/ops/passkey/register/options",
       "/v1/ops/passkey/register/verify",
+      "/v1/ops/passkey/authenticate/options",
+      "/v1/ops/passkey/authenticate/verify",
+      "/v1/ops/session/refresh",
+      "/v1/ops/session/end",
     ];
 
     const countsBefore = await getCounts(directSql);
@@ -592,6 +603,29 @@ describe("ops flow integration", () => {
       expect(resValidOrigin.status).toBe(400);
       expect(await resValidOrigin.text()).toBe("");
     }
+
+    const countsAfter = await getCounts(directSql);
+    expect(countsAfter).toEqual(countsBefore);
+  });
+
+  it("deviation 7: missing Content-Type on a state-changing ops POST is 400 with no state change", async () => {
+    const email = "op-missing-ct@example.test";
+    const user = await findOrCreateUserByEmail(identitySql, kms, KEY_ARN, { email });
+    await grantOperator(identitySql, kms, KEY_ARN, {
+      userId: user.userId,
+      roleKeys: ["platform_admin"],
+      enrolmentCode: ENROLMENT_CODE,
+      opsRpId: RP_ID,
+      now,
+    });
+
+    const countsBefore = await getCounts(directSql);
+    const res = await opsFetch(PORT, "/v1/ops/enrolment/start", {
+      body: { email },
+      omitContentType: true,
+    });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("");
 
     const countsAfter = await getCounts(directSql);
     expect(countsAfter).toEqual(countsBefore);
