@@ -10,7 +10,13 @@ import {
   createPlaintextIdentitySql,
   createPlaintextPlatformSql,
 } from "@community-hub/db/plaintext";
-import { findOrCreateUserByEmail, grantOperator, type OtpMail } from "@community-hub/identity";
+import {
+  beginOperatorAuthentication,
+  findOrCreateUserByEmail,
+  finishOperatorAuthentication,
+  grantOperator,
+  type OtpMail,
+} from "@community-hub/identity";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { Checkout } from "./checkout.js";
@@ -131,6 +137,10 @@ function concat(parts: Uint8Array[]): Uint8Array {
     offset += part.byteLength;
   }
   return out;
+}
+
+function sha256(data: Uint8Array): Uint8Array {
+  return new Uint8Array(createHash("sha256").update(data).digest());
 }
 
 function clientData(type: string, challenge: Uint8Array, originOverride?: string): Uint8Array {
@@ -547,10 +557,13 @@ describe("ops flow integration", () => {
       });
       expect(resReject.status).toBe(204);
 
-      await pollUntil(
-        () => loggedMessages.includes("ops_enrolment_start_failed"),
-        "waiting for ops_enrolment_start_failed log",
-      );
+      await pollUntil(() => {
+        if (spy.mock.calls.length > 0) {
+          throw new Error("unhandledRejection triggered: missing .catch handler");
+        }
+        return loggedMessages.includes("ops_enrolment_start_failed");
+      }, "waiting for ops_enrolment_start_failed log");
+      await new Promise((r) => setImmediate(r));
       expect(spy).not.toHaveBeenCalled();
     } finally {
       process.removeListener("unhandledRejection", spy);
@@ -760,5 +773,148 @@ describe("ops flow integration", () => {
       cookie: `__Host-ops_at=${accessToken}`,
     });
     expect(furtherOpts.status).toBe(401);
+  });
+
+  it("operator session registers an additional passkey without being signed out", async () => {
+    const email = "op-reg-operator-session@example.test";
+    const user = await findOrCreateUserByEmail(identitySql, kms, KEY_ARN, { email });
+    await grantOperator(identitySql, kms, KEY_ARN, {
+      userId: user.userId,
+      roleKeys: ["platform_admin"],
+      enrolmentCode: ENROLMENT_CODE,
+      opsRpId: RP_ID,
+      now,
+    });
+
+    // 1. Enrolment start
+    const startRes = await opsFetch(PORT, "/v1/ops/enrolment/start", {
+      body: { email },
+    });
+    expect(startRes.status).toBe(204);
+    await pollUntil(() => testMail.last?.to === email, "waiting for OTP mail");
+    const code = testMail.last!.code;
+
+    // 2. Enrolment verify
+    const verifyRes = await opsFetch(PORT, "/v1/ops/enrolment/verify", {
+      body: {
+        email,
+        emailCode: code,
+        enrolmentCode: ENROLMENT_CODE,
+      },
+    });
+    expect(verifyRes.status).toBe(200);
+    const setCookies = verifyRes.headers.getSetCookie();
+    const atCookieHeader = setCookies.find((c) => c.startsWith("__Host-ops_at="));
+    const tokenMatch = /^__Host-ops_at=([^;]+)/.exec(atCookieHeader!);
+    const enrolmentAccessToken = tokenMatch![1]!;
+
+    // 3. Register passkey 1
+    const optsRes1 = await opsFetch(PORT, "/v1/ops/passkey/register/options", {
+      body: {},
+      cookie: `__Host-ops_at=${enrolmentAccessToken}`,
+    });
+    expect(optsRes1.status).toBe(200);
+    const options1 = (await optsRes1.json()) as { challenge: string };
+    const challenge1 = bytesFrom(options1.challenge);
+
+    const key1 = await signer();
+    const credId1 = new Uint8Array(16).fill(11);
+    const authData1 = authenticatorData({
+      signCount: 0,
+      credentialId: credId1,
+      cose: coseKey(key1.x, key1.y),
+      flags: 0x45,
+    });
+    const validClient1 = clientData("webauthn.create", challenge1);
+    const regRes1 = await opsFetch(PORT, "/v1/ops/passkey/register/verify", {
+      body: {
+        clientDataJSON: b64(validClient1),
+        attestationObject: b64(attestationObject(authData1)),
+      },
+      cookie: `__Host-ops_at=${enrolmentAccessToken}`,
+    });
+    expect(regRes1.status).toBe(200);
+    expect(((await regRes1.json()) as { activated: boolean }).activated).toBe(false);
+
+    // 4. Register passkey 2 -> activates operator
+    const optsRes2 = await opsFetch(PORT, "/v1/ops/passkey/register/options", {
+      body: {},
+      cookie: `__Host-ops_at=${enrolmentAccessToken}`,
+    });
+    expect(optsRes2.status).toBe(200);
+    const options2 = (await optsRes2.json()) as { challenge: string };
+    const challenge2 = bytesFrom(options2.challenge);
+
+    const key2 = await signer();
+    const credId2 = new Uint8Array(16).fill(12);
+    const authData2 = authenticatorData({
+      signCount: 0,
+      credentialId: credId2,
+      cose: coseKey(key2.x, key2.y),
+      flags: 0x45,
+    });
+    const validClient2 = clientData("webauthn.create", challenge2);
+    const regRes2 = await opsFetch(PORT, "/v1/ops/passkey/register/verify", {
+      body: {
+        clientDataJSON: b64(validClient2),
+        attestationObject: b64(attestationObject(authData2)),
+      },
+      cookie: `__Host-ops_at=${enrolmentAccessToken}`,
+    });
+    expect(regRes2.status).toBe(200);
+    expect(((await regRes2.json()) as { activated: boolean }).activated).toBe(true);
+
+    // 5. Sign the operator in through the identity public functions directly
+    const auth = await beginOperatorAuthentication(identitySql, {
+      opsRpId: RP_ID,
+      now,
+    });
+    const authAuthData = authenticatorData({ signCount: 1, flags: 0x05 });
+    const authClient = clientData("webauthn.get", auth.challenge);
+    const sig = await key1.sign(concat([authAuthData, sha256(authClient)]));
+
+    const tokens = await finishOperatorAuthentication(identitySql, kms, KEY_ARN, {
+      opsRpId: RP_ID,
+      now,
+      credentialId: credId1,
+      clientDataJSON: authClient,
+      authenticatorData: authAuthData,
+      signature: sig,
+    });
+    expect(tokens).not.toBeNull();
+    const operatorAccessToken = tokens!.accessToken;
+
+    // 6. register/options -> 200 with operator session
+    const optsRes3 = await opsFetch(PORT, "/v1/ops/passkey/register/options", {
+      body: {},
+      cookie: `__Host-ops_at=${operatorAccessToken}`,
+    });
+    expect(optsRes3.status).toBe(200);
+    const options3 = (await optsRes3.json()) as { challenge: string };
+    const challenge3 = bytesFrom(options3.challenge);
+
+    // 7. register/verify for a third passkey -> 200 {"activated": false} with no set-cookie clearing __Host-ops_at
+    const key3 = await signer();
+    const credId3 = new Uint8Array(16).fill(13);
+    const authData3 = authenticatorData({
+      signCount: 0,
+      credentialId: credId3,
+      cose: coseKey(key3.x, key3.y),
+      flags: 0x45,
+    });
+    const validClient3 = clientData("webauthn.create", challenge3);
+    const regRes3 = await opsFetch(PORT, "/v1/ops/passkey/register/verify", {
+      body: {
+        clientDataJSON: b64(validClient3),
+        attestationObject: b64(attestationObject(authData3)),
+      },
+      cookie: `__Host-ops_at=${operatorAccessToken}`,
+    });
+    expect(regRes3.status).toBe(200);
+    const regData3 = (await regRes3.json()) as { activated: boolean };
+    expect(regData3.activated).toBe(false);
+
+    const regCookies = regRes3.headers.getSetCookie();
+    expect(regCookies.some((c) => c.startsWith("__Host-ops_at="))).toBe(false);
   });
 });

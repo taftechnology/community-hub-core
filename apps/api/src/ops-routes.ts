@@ -19,6 +19,7 @@ import {
 import type { Checkout } from "./checkout.js";
 import type { GateRoute } from "./gate.js";
 import {
+  clearCookie,
   clearSessionCookies,
   OPS_ACCESS_COOKIE,
   OPS_REFRESH_COOKIE,
@@ -141,10 +142,7 @@ export function opsRoutes(deps: OpsDeps): GateRoute[] {
 
         const headers = new Headers();
         setSessionCookies(headers, { access: result.session.accessToken });
-        headers.append(
-          "set-cookie",
-          `${OPS_REFRESH_COOKIE}=; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`,
-        );
+        clearCookie(headers, OPS_REFRESH_COOKIE);
         return jsonResponse(200, { status: "enrolment" }, headers);
       },
     },
@@ -163,6 +161,16 @@ export function opsRoutes(deps: OpsDeps): GateRoute[] {
         }
         const token = readOpsCookie(request, OPS_ACCESS_COOKIE);
         if (token === undefined) {
+          return empty(401);
+        }
+        const session = await deps.checkout("identity", (sql) =>
+          readSessionWithKind(sql, deps.kms, deps.keyArn, {
+            accessToken: token,
+            now: deps.now(),
+            kinds: ["enrolment", "operator"],
+          }),
+        );
+        if (session === null) {
           return empty(401);
         }
         const options = (await deps.checkout("identity", (sql) =>
@@ -208,6 +216,16 @@ export function opsRoutes(deps: OpsDeps): GateRoute[] {
         if (token === undefined) {
           return empty(401);
         }
+        const session = await deps.checkout("identity", (sql) =>
+          readSessionWithKind(sql, deps.kms, deps.keyArn, {
+            accessToken: token,
+            now: deps.now(),
+            kinds: ["enrolment", "operator"],
+          }),
+        );
+        if (session === null) {
+          return empty(401);
+        }
         const ok = (await deps.checkout("identity", (sql) =>
           finishOperatorPasskeyRegistration(sql, deps.kms, deps.keyArn, {
             accessToken: token,
@@ -222,20 +240,18 @@ export function opsRoutes(deps: OpsDeps): GateRoute[] {
           return empty(400);
         }
 
-        const enrolmentSession = await deps.checkout("identity", (sql) =>
-          readSessionWithKind(sql, deps.kms, deps.keyArn, {
-            accessToken: token,
-            now: deps.now(),
-            kinds: ["enrolment"],
-          }),
-        );
-        const activated = enrolmentSession === null;
+        const activated =
+          session.kind === "enrolment" &&
+          (await deps.checkout("identity", (sql) =>
+            readSessionWithKind(sql, deps.kms, deps.keyArn, {
+              accessToken: token,
+              now: deps.now(),
+              kinds: ["enrolment"],
+            }),
+          )) === null;
         const headers = new Headers();
         if (activated) {
-          headers.append(
-            "set-cookie",
-            `${OPS_ACCESS_COOKIE}=; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`,
-          );
+          clearCookie(headers, OPS_ACCESS_COOKIE);
         }
         return jsonResponse(200, { activated }, headers);
       },

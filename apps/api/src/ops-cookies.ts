@@ -19,15 +19,13 @@ export function setSessionCookies(headers: Headers, tokens: SessionTokensInput):
   }
 }
 
+export function clearCookie(headers: Headers, name: string): void {
+  headers.append("set-cookie", `${name}=; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`);
+}
+
 export function clearSessionCookies(headers: Headers): void {
-  headers.append(
-    "set-cookie",
-    `${OPS_ACCESS_COOKIE}=; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`,
-  );
-  headers.append(
-    "set-cookie",
-    `${OPS_REFRESH_COOKIE}=; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`,
-  );
+  clearCookie(headers, OPS_ACCESS_COOKIE);
+  clearCookie(headers, OPS_REFRESH_COOKIE);
 }
 
 export function readOpsCookie(request: Request, name: string): string | undefined {
