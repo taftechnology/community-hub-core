@@ -1,7 +1,7 @@
 # Spec: Ops console API — ops routes, operator cookies, static serving and the directory
 
 Slug: ops-console-api
-Status: draft
+Status: approved (2026-10-25, Abdus Salam)
 Depends on: `docs/specs/2026-10-22-ops-operator-identity.md` (merged in PR #62)
 Architecture refs: §8.5 (`architecture.md:484`), §11.4, §12.1, §17, §19 Ops console; ADR 0009, ADR 0015; AGENTS.md §1 rules 1, 2, 5, 8; §3 (split), §6 API and UI, Tenancy and data, Cost
 
