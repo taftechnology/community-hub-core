@@ -29,6 +29,7 @@ import { RoutesRejected, type GateRoute } from "./gate.js";
 import { createAwsKmsPort } from "./kms/aws-kms-adapter.js";
 import { createSesOtpMail } from "./mail/ses-otp-mail.js";
 import { loadOpsStatic, StaticRejected } from "./ops-static.js";
+import { DEFAULT_OPS_PERMISSIONS, opsRoutes, type OpsDeps } from "./ops-routes.js";
 import { secretsManagerReader } from "./secrets.js";
 import { startServer } from "./server.js";
 
@@ -79,6 +80,7 @@ export function run(source: NodeJS.ProcessEnv, pem: string, routes: readonly Gat
         ...entitlementRoutes(bound.entitlements),
         ...billingWebhookRoutes(bound.billing),
         ...billingRoutes(bound.billing),
+        ...opsRoutes(bound.ops),
         ...staticRoutes,
       ],
     });
@@ -155,6 +157,7 @@ export function bindServices(
   access: AccessDeps;
   entitlements: EntitlementDeps;
   billing: BillingDeps;
+  ops: OpsDeps;
 } {
   const readSecret = secretsManagerReader(
     new SecretsManagerClient({ region: env.AWS_REGION }) as Parameters<
@@ -294,6 +297,20 @@ export function bindServices(
       },
     },
     billing,
+    ops: {
+      checkout: shared.checkout,
+      get kms() {
+        return shared.kms;
+      },
+      keyArn: shared.keyArn,
+      mail,
+      now: shared.now,
+      opsHostname: env.OPS_HOSTNAME,
+      permissions: DEFAULT_OPS_PERMISSIONS,
+      log: (message: string) => {
+        logger.info(message);
+      },
+    },
   };
 }
 
@@ -307,6 +324,7 @@ export function productionRoutes(env: ServiceEnv, pem: string): readonly GateRou
     ...entitlementRoutes(bound.entitlements),
     ...billingWebhookRoutes(bound.billing),
     ...billingRoutes(bound.billing),
+    ...opsRoutes(bound.ops),
     ...staticRoutes,
   ];
 }
