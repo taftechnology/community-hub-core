@@ -54,6 +54,7 @@ export type ServiceEnv = {
   SES_CONFIGURATION_SET?: string;
   BILLING_SECRET_ARN?: string;
   ADMIN_ORIGIN?: string;
+  OPS_STATIC_DIR?: string;
 };
 
 export function text(source: NodeJS.ProcessEnv, key: string): string | undefined {
@@ -229,6 +230,11 @@ export function readServiceEnv(
   if (billingSecretArn !== undefined && adminOrigin !== undefined) {
     env.BILLING_SECRET_ARN = billingSecretArn;
     env.ADMIN_ORIGIN = adminOrigin;
+  }
+
+  const opsStaticDir = text(source, "OPS_STATIC_DIR");
+  if (opsStaticDir !== undefined) {
+    env.OPS_STATIC_DIR = opsStaticDir;
   }
 
   return {

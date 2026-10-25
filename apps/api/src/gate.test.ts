@@ -464,6 +464,141 @@ describe("createGate", () => {
       pattern: "/v1/access/grants/list",
     });
   });
+
+  it("static routes answer only on the ops host", async () => {
+    const lines: Line[] = [];
+    const handle = vi.fn(() => new Response("asset-content", { status: 200 }));
+    const gate = createGate({
+      hostnames: HOSTS,
+      routes: [
+        {
+          method: "GET",
+          pattern: "/assets/app-1a2b.js",
+          surface: "ops",
+          billing: "exempt",
+          static: true,
+          handle,
+        },
+      ],
+      info: (_message, fields) => {
+        lines.push(fields as unknown as Line);
+      },
+    });
+
+    const apiResponse = await call(gate, "10.0.0.8", HOSTS.api, "GET", "/assets/app-1a2b.js");
+    expect(apiResponse.status).toBe(404);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]?.path).toBe("/assets/app-1a2b.js");
+    expect(lines[0]?.reason).toBe("ops_route_on_other_hostname");
+    expect(lines[0]?.hostname).toBe(HOSTS.api);
+    expect(handle).not.toHaveBeenCalled();
+
+    const opsResponse = await call(gate, "10.0.0.8", HOSTS.ops, "GET", "/assets/app-1a2b.js");
+    expect(opsResponse.status).toBe(200);
+    expect(await opsResponse.text()).toBe("asset-content");
+    expect(handle).toHaveBeenCalledOnce();
+  });
+
+  it("adds the ops-host headers to every ops-host response", async () => {
+    const gate = createGate({
+      hostnames: HOSTS,
+      routes: [
+        {
+          method: "GET",
+          pattern: "/health",
+          surface: "all",
+          billing: "exempt",
+          handle: () => Response.json({ ok: true }),
+        },
+        {
+          method: "GET",
+          pattern: "/v1/ops/test",
+          surface: "ops",
+          billing: "exempt",
+          handle: () => new Response("ops-ok", { status: 200 }),
+        },
+        {
+          method: "GET",
+          pattern: "/v1/tenant/test",
+          surface: "tenant",
+          billing: "read",
+          handle: () => new Response("tenant-ok", { status: 200 }),
+        },
+      ],
+      info: () => undefined,
+    });
+
+    const ops404 = await call(gate, "10.0.0.8", HOSTS.ops, "GET", "/unknown");
+    expect(ops404.status).toBe(404);
+    expect(ops404.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(ops404.headers.get("referrer-policy")).toBe("same-origin");
+    expect(ops404.headers.get("strict-transport-security")).toBe("max-age=31536000");
+
+    const ops200 = await call(gate, "10.0.0.8", HOSTS.ops, "GET", "/v1/ops/test");
+    expect(ops200.status).toBe(200);
+    expect(ops200.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(ops200.headers.get("referrer-policy")).toBe("same-origin");
+    expect(ops200.headers.get("strict-transport-security")).toBe("max-age=31536000");
+
+    const opsHealth = await call(gate, "10.0.0.8", HOSTS.ops, "GET", "/health");
+    expect(opsHealth.status).toBe(200);
+    expect(opsHealth.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(opsHealth.headers.get("referrer-policy")).toBe("same-origin");
+    expect(opsHealth.headers.get("strict-transport-security")).toBe("max-age=31536000");
+
+    const api404 = await call(gate, "10.0.0.8", HOSTS.api, "GET", "/unknown");
+    expect(api404.status).toBe(404);
+    expect(api404.headers.get("x-content-type-options")).toBeNull();
+    expect(api404.headers.get("referrer-policy")).toBeNull();
+    expect(api404.headers.get("strict-transport-security")).toBeNull();
+
+    const api200 = await call(gate, "10.0.0.8", HOSTS.api, "GET", "/v1/tenant/test");
+    expect(api200.status).toBe(200);
+    expect(api200.headers.get("x-content-type-options")).toBeNull();
+    expect(api200.headers.get("referrer-policy")).toBeNull();
+    expect(api200.headers.get("strict-transport-security")).toBeNull();
+
+    const apiHealth = await call(gate, "10.0.0.8", HOSTS.api, "GET", "/health");
+    expect(apiHealth.status).toBe(200);
+    expect(apiHealth.headers.get("x-content-type-options")).toBeNull();
+    expect(apiHealth.headers.get("referrer-policy")).toBeNull();
+    expect(apiHealth.headers.get("strict-transport-security")).toBeNull();
+  });
+
+  it("keeps multiple set-cookie values after the gate's wrap on the ops host", async () => {
+    const gate = createGate({
+      hostnames: HOSTS,
+      routes: [
+        {
+          method: "GET",
+          pattern: "/v1/ops/cookies",
+          surface: "ops",
+          billing: "exempt",
+          handle: () => {
+            const response = new Response(null, { status: 200 });
+            response.headers.append(
+              "set-cookie",
+              "__Host-ops_at=token1; Secure; HttpOnly; SameSite=Strict; Path=/",
+            );
+            response.headers.append(
+              "set-cookie",
+              "__Host-ops_rt=token2; Secure; HttpOnly; SameSite=Strict; Path=/",
+            );
+            return response;
+          },
+        },
+      ],
+      info: () => undefined,
+    });
+
+    const response = await call(gate, "10.0.0.8", HOSTS.ops, "GET", "/v1/ops/cookies");
+    expect(response.status).toBe(200);
+    expect(response.headers.getSetCookie()).toEqual([
+      "__Host-ops_at=token1; Secure; HttpOnly; SameSite=Strict; Path=/",
+      "__Host-ops_rt=token2; Secure; HttpOnly; SameSite=Strict; Path=/",
+    ]);
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+  });
 });
 
 describe("createGate when a route throws", () => {
@@ -642,5 +777,37 @@ describe("assertRoutes", () => {
         },
       ]),
     ).toThrow(RoutesRejected);
+  });
+
+  it("rejects malformed static routes", () => {
+    const handle = () => new Response(null, { status: 204 });
+    const validBase: GateRoute = {
+      method: "GET",
+      pattern: "/",
+      surface: "ops",
+      billing: "exempt",
+      static: true,
+      handle,
+    };
+
+    expect(() => assertRoutes([{ ...validBase, method: "POST" }])).toThrow(RoutesRejected);
+
+    expect(() => assertRoutes([{ ...validBase, surface: "tenant" }])).toThrow(RoutesRejected);
+
+    expect(() => assertRoutes([{ ...validBase, billing: "read" }])).toThrow(RoutesRejected);
+
+    expect(() => assertRoutes([{ ...validBase, largeBody: "webhooks" }])).toThrow(RoutesRejected);
+
+    for (const pattern of ["/assets/a/b.js", "/assets/..", "/x y", "/assets/"]) {
+      expect(() => assertRoutes([{ ...validBase, pattern }])).toThrow(RoutesRejected);
+    }
+
+    expect(() =>
+      assertRoutes([
+        { ...validBase, pattern: "/" },
+        { ...validBase, pattern: "/favicon.ico" },
+        { ...validBase, pattern: "/assets/app-1a2b.js" },
+      ]),
+    ).not.toThrow();
   });
 });

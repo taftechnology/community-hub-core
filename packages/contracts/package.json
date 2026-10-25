@@ -22,6 +22,10 @@
     "./billing": {
       "types": "./dist/billing.d.ts",
       "import": "./dist/billing.js"
+    },
+    "./ops": {
+      "types": "./dist/ops.d.ts",
+      "import": "./dist/ops.js"
     }
   },
   "scripts": {

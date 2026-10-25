@@ -1,4 +1,10 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type OutgoingHttpHeaders,
+  type Server,
+  type ServerResponse,
+} from "node:http";
 
 import { createLogger } from "@community-hub/observability";
 
@@ -65,10 +71,16 @@ async function readPostBody(req: IncomingMessage, maxBytes: number): Promise<Uin
 
 async function writeResponse(res: ServerResponse, response: Response): Promise<void> {
   const bytes = Buffer.from(await response.arrayBuffer());
-  const headers: Record<string, string> = {};
+  const headers: OutgoingHttpHeaders = {};
   response.headers.forEach((value, key) => {
-    headers[key] = value;
+    if (key.toLowerCase() !== "set-cookie") {
+      headers[key] = value;
+    }
   });
+  const cookies = response.headers.getSetCookie();
+  if (cookies.length > 0) {
+    headers["set-cookie"] = cookies;
+  }
   res.writeHead(response.status, headers);
   res.end(bytes);
 }

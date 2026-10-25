@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { ServerResponse } from "node:http";
+import http, { type IncomingMessage, ServerResponse } from "node:http";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -614,5 +614,84 @@ describe("startServer", () => {
     });
     expect(response.status).toBe(200);
     expect(calls).toBe(1);
+  });
+
+  it("writes every Set-Cookie value", async () => {
+    const env = envFor(18466);
+    const server = startServer({
+      env,
+      routes: [
+        health,
+        {
+          method: "GET",
+          pattern: "/cookies",
+          surface: "tenant",
+          billing: "exempt",
+          handle: () => {
+            const headers = new Headers();
+            headers.set("content-type", "text/plain");
+            headers.append("set-cookie", "alpha=one; Path=/; HttpOnly");
+            headers.append("set-cookie", "beta=two; Path=/; HttpOnly");
+            return new Response("ok", { status: 200, headers });
+          },
+        },
+        {
+          method: "GET",
+          pattern: "/no-cookies",
+          surface: "tenant",
+          billing: "exempt",
+          handle: () =>
+            new Response("plain", {
+              status: 200,
+              headers: {
+                "content-type": "text/plain",
+                "x-custom-header": "test-value",
+              },
+            }),
+        },
+      ],
+    });
+    servers.push(server);
+    await listening(server);
+
+    const cookieResponse = await new Promise<IncomingMessage>((resolve, reject) => {
+      const req = http.get(
+        "http://127.0.0.1:18466/cookies",
+        {
+          headers: { "x-community-hub-hostname": env.API_HOSTNAME },
+        },
+        (res) => {
+          res.resume();
+          res.on("end", () => resolve(res));
+        },
+      );
+      req.on("error", reject);
+    });
+
+    expect(cookieResponse.statusCode).toBe(200);
+    expect(cookieResponse.headers["content-type"]).toBe("text/plain");
+    expect(cookieResponse.headers["set-cookie"]).toEqual([
+      "alpha=one; Path=/; HttpOnly",
+      "beta=two; Path=/; HttpOnly",
+    ]);
+
+    const plainResponse = await new Promise<IncomingMessage>((resolve, reject) => {
+      const req = http.get(
+        "http://127.0.0.1:18466/no-cookies",
+        {
+          headers: { "x-community-hub-hostname": env.API_HOSTNAME },
+        },
+        (res) => {
+          res.resume();
+          res.on("end", () => resolve(res));
+        },
+      );
+      req.on("error", reject);
+    });
+
+    expect(plainResponse.statusCode).toBe(200);
+    expect(plainResponse.headers["set-cookie"]).toBeUndefined();
+    expect(plainResponse.headers["content-type"]).toBe("text/plain");
+    expect(plainResponse.headers["x-custom-header"]).toBe("test-value");
   });
 });
