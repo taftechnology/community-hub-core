@@ -292,9 +292,24 @@ describe("Sign-in screen", () => {
       </MemoryRouter>,
     );
 
+    const statusMsg = await screen.findByRole("status");
+    expect(statusMsg.textContent).toBe(ENROL_COMPLETE_MESSAGE);
+    expect(statusMsg.className).not.toContain("text-destructive");
+  });
+
+  it("renders error message in role alert", async () => {
+    const deps = stubDeps();
+    render(
+      <MemoryRouter>
+        <AuthProvider initialStatus="signed-out" initialMessage={SESSION_ENDED_MESSAGE}>
+          <SignIn deps={deps} />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toBe(ENROL_COMPLETE_MESSAGE);
-    expect(alert.className).not.toContain("text-destructive");
+    expect(alert.textContent).toBe(SESSION_ENDED_MESSAGE);
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("passes axe checks with each carried message", async () => {

@@ -114,7 +114,7 @@ describe("Enrol screen", () => {
 
     // Lands on Sign in with success alert
     expect(await screen.findByRole("heading", { level: 1, name: "Sign in" })).toBeDefined();
-    const alert = await screen.findByRole("alert");
+    const alert = await screen.findByRole("status");
     expect(alert.textContent).toBe(ENROL_COMPLETE_MESSAGE);
     expect(alert.className).not.toContain("text-destructive");
   });
@@ -296,7 +296,7 @@ describe("Enrol screen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Verify" }));
 
     await screen.findByRole("heading", { level: 1, name: "Sign in" });
-    const alert = await screen.findByRole("alert");
+    const alert = await screen.findByRole("status");
     expect(alert.textContent).toBe(ENROL_ALREADY_ACTIVE_MESSAGE);
     expect(alert.className).not.toContain("text-destructive");
   });
@@ -773,12 +773,12 @@ describe("Enrol screen", () => {
     fireEvent.keyDown(createButton4, { key: "Enter", code: "Enter" });
     fireEvent.click(createButton4);
 
-    // Land on Sign in with alert in role="alert"
+    // Land on Sign in with alert in role="status"
     const h1SignIn = await screen.findByRole("heading", { level: 1, name: "Sign in" });
     await waitFor(() => {
       expect(document.activeElement).toBe(h1SignIn);
     });
-    const alert = await screen.findByRole("alert");
+    const alert = await screen.findByRole("status");
     expect(alert).toBeDefined();
   });
 

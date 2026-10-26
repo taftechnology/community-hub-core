@@ -38,6 +38,7 @@ export function SignIn({ deps }: SignInProps) {
     !errorMessage &&
     (carriedMessage === ENROL_COMPLETE_MESSAGE || carriedMessage === ENROL_ALREADY_ACTIVE_MESSAGE);
   const alertVariant = isDefaultVariant ? "default" : "destructive";
+  const alertRole = isDefaultVariant ? "status" : "alert";
 
   const handleSignIn = async () => {
     if (isPending) {
@@ -108,7 +109,7 @@ export function SignIn({ deps }: SignInProps) {
         Sign in
       </h1>
       {displayMessage && (
-        <Alert role="alert" variant={alertVariant}>
+        <Alert role={alertRole} variant={alertVariant}>
           {displayMessage}
         </Alert>
       )}
