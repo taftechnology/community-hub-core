@@ -11,7 +11,7 @@ Spec: docs/specs/2026-10-26-ops-console-ui.md
 **Tech stack:** React 19.3, React Router 7.18 (`createHashRouter`), Vite 8.3, Tailwind 4.3, Vitest 4 (jsdom), axe-core 4.13, Zod in `packages/contracts` (types only in `apps/ops`).
 
 Slug: ops-console-ui
-Status: draft
+Status: approved (2026-10-26, Abdus Salam)
 
 ## Who does what
 
