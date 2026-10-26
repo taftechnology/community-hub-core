@@ -59,6 +59,46 @@ export const opsActivatedResponse = activatedResponse;
 export const passkeyRegisterVerifyResponse = activatedResponse;
 export const opsPasskeyRegisterVerifyResponse = activatedResponse;
 
+export const passkeyRegisterOptionsResponse = z.strictObject({
+  challenge: bytes,
+  rp: z.strictObject({
+    id: z.string(),
+    name: z.string(),
+  }),
+  user: z.strictObject({
+    id: bytes,
+    name: z.string(),
+    displayName: z.string(),
+  }),
+  pubKeyCredParams: z.array(
+    z.strictObject({
+      type: z.literal("public-key"),
+      alg: z.number().int(),
+    }),
+  ),
+  attestation: z.literal("none"),
+  authenticatorSelection: z.strictObject({
+    userVerification: z.enum(["preferred", "required"]),
+    residentKey: z.literal("required"),
+  }),
+  excludeCredentials: z.array(
+    z.strictObject({
+      type: z.literal("public-key"),
+      id: bytes,
+    }),
+  ),
+});
+export const opsPasskeyRegisterOptionsResponse = passkeyRegisterOptionsResponse;
+export type PasskeyRegisterOptionsResponse = z.infer<typeof passkeyRegisterOptionsResponse>;
+
+export const passkeyAuthenticateOptionsResponse = z.strictObject({
+  challenge: bytes,
+  rpId: z.string(),
+  userVerification: z.literal("required").optional(),
+});
+export const opsPasskeyAuthenticateOptionsResponse = passkeyAuthenticateOptionsResponse;
+export type PasskeyAuthenticateOptionsResponse = z.infer<typeof passkeyAuthenticateOptionsResponse>;
+
 export const rolesResponse = z.strictObject({
   roles: z.array(z.string()),
 });

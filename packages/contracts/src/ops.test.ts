@@ -15,15 +15,19 @@ import {
   opsExpiresInResponse,
   opsMeResponse,
   opsPasskeyAuthenticateOptionsBody,
+  opsPasskeyAuthenticateOptionsResponse,
   opsPasskeyAuthenticateVerifyBody,
   opsPasskeyRegisterOptionsBody,
+  opsPasskeyRegisterOptionsResponse,
   opsPasskeyRegisterVerifyBody,
   opsRolesResponse,
   opsSessionEndBody,
   opsSessionRefreshBody,
   passkeyAuthenticateOptionsBody,
+  passkeyAuthenticateOptionsResponse,
   passkeyAuthenticateVerifyBody,
   passkeyRegisterOptionsBody,
+  passkeyRegisterOptionsResponse,
   passkeyRegisterVerifyBody,
   rolesResponse,
   sessionEndBody,
@@ -302,5 +306,116 @@ describe("ops response schemas", () => {
     expect(directoryResponse.safeParse({ organisations: [], truncated: "false" }).success).toBe(
       false,
     );
+  });
+
+  it("passkey register options accepts a full valid body, accepts excludeCredentials as empty, and rejects invalid structures", () => {
+    const valid = {
+      challenge: "AQID",
+      rp: {
+        id: "ops.example.test",
+        name: "Community Hub operations",
+      },
+      user: {
+        id: "AQID",
+        name: "Community Hub operator",
+        displayName: "Community Hub operator",
+      },
+      pubKeyCredParams: [{ type: "public-key" as const, alg: -7 }],
+      attestation: "none" as const,
+      authenticatorSelection: {
+        userVerification: "preferred" as const,
+        residentKey: "required" as const,
+      },
+      excludeCredentials: [{ type: "public-key" as const, id: "AQID" }],
+    };
+
+    expect(passkeyRegisterOptionsResponse.safeParse(valid).success).toBe(true);
+    expect(opsPasskeyRegisterOptionsResponse.safeParse(valid).success).toBe(true);
+    expect(
+      passkeyRegisterOptionsResponse.safeParse({ ...valid, excludeCredentials: [] }).success,
+    ).toBe(true);
+
+    // missing rp.name
+    expect(
+      passkeyRegisterOptionsResponse.safeParse({
+        ...valid,
+        rp: { id: valid.rp.id },
+      }).success,
+    ).toBe(false);
+
+    // missing excludeCredentials
+    const withoutExcludeCredentials: Record<string, unknown> = { ...valid };
+    delete withoutExcludeCredentials.excludeCredentials;
+    expect(passkeyRegisterOptionsResponse.safeParse(withoutExcludeCredentials).success).toBe(false);
+
+    // an extra top-level key
+    expect(
+      passkeyRegisterOptionsResponse.safeParse({
+        ...valid,
+        extra: 1,
+      }).success,
+    ).toBe(false);
+
+    // an extra key inside rp
+    expect(
+      passkeyRegisterOptionsResponse.safeParse({
+        ...valid,
+        rp: { ...valid.rp, extra: 1 },
+      }).success,
+    ).toBe(false);
+
+    // attestation: "direct"
+    expect(
+      passkeyRegisterOptionsResponse.safeParse({
+        ...valid,
+        attestation: "direct",
+      }).success,
+    ).toBe(false);
+
+    // residentKey: "preferred"
+    expect(
+      passkeyRegisterOptionsResponse.safeParse({
+        ...valid,
+        authenticatorSelection: {
+          ...valid.authenticatorSelection,
+          residentKey: "preferred",
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("passkey authenticate options passes with and without userVerification, and rejects preferred or extra keys", () => {
+    const valid = {
+      challenge: "AQID",
+      rpId: "ops.example.test",
+    };
+
+    expect(passkeyAuthenticateOptionsResponse.safeParse(valid).success).toBe(true);
+    expect(opsPasskeyAuthenticateOptionsResponse.safeParse(valid).success).toBe(true);
+    expect(
+      passkeyAuthenticateOptionsResponse.safeParse({
+        ...valid,
+        userVerification: "required",
+      }).success,
+    ).toBe(true);
+    expect(
+      opsPasskeyAuthenticateOptionsResponse.safeParse({
+        ...valid,
+        userVerification: "required",
+      }).success,
+    ).toBe(true);
+
+    expect(
+      passkeyAuthenticateOptionsResponse.safeParse({
+        ...valid,
+        userVerification: "preferred",
+      }).success,
+    ).toBe(false);
+    expect(
+      passkeyAuthenticateOptionsResponse.safeParse({
+        ...valid,
+        extra: 1,
+      }).success,
+    ).toBe(false);
   });
 });
