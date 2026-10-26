@@ -155,6 +155,74 @@ describe("webauthn", () => {
       expect(isRegisterOptions("string")).toBe(false);
     });
 
+    it("isRegisterOptions checks pubKeyCredParams, attestation and authenticatorSelection", () => {
+      // Valid baseline with userVerification preferred is also valid
+      const withPreferredUV: PasskeyRegisterOptionsResponse = {
+        ...sampleRegisterResponse,
+        authenticatorSelection: {
+          userVerification: "preferred",
+          residentKey: "required",
+        },
+      };
+      expect(isRegisterOptions(withPreferredUV)).toBe(true);
+
+      // pubKeyCredParams missing or invalid
+      const missingParams = { ...sampleRegisterResponse } as Record<string, unknown>;
+      delete missingParams.pubKeyCredParams;
+      expect(isRegisterOptions(missingParams)).toBe(false);
+
+      expect(isRegisterOptions({ ...sampleRegisterResponse, pubKeyCredParams: [] })).toBe(false);
+      expect(
+        isRegisterOptions({
+          ...sampleRegisterResponse,
+          pubKeyCredParams: [{ type: "wrong", alg: -7 }],
+        }),
+      ).toBe(false);
+      expect(
+        isRegisterOptions({
+          ...sampleRegisterResponse,
+          pubKeyCredParams: [{ type: "public-key", alg: "not-a-number" }],
+        }),
+      ).toBe(false);
+
+      // attestation missing or not "none"
+      const missingAttestation = { ...sampleRegisterResponse } as Record<string, unknown>;
+      delete missingAttestation.attestation;
+      expect(isRegisterOptions(missingAttestation)).toBe(false);
+      expect(isRegisterOptions({ ...sampleRegisterResponse, attestation: "direct" })).toBe(false);
+      expect(isRegisterOptions({ ...sampleRegisterResponse, attestation: "indirect" })).toBe(false);
+
+      // authenticatorSelection missing or invalid
+      const missingAuthSel = { ...sampleRegisterResponse } as Record<string, unknown>;
+      delete missingAuthSel.authenticatorSelection;
+      expect(isRegisterOptions(missingAuthSel)).toBe(false);
+
+      expect(
+        isRegisterOptions({
+          ...sampleRegisterResponse,
+          authenticatorSelection: { userVerification: "discouraged", residentKey: "required" },
+        }),
+      ).toBe(false);
+      expect(
+        isRegisterOptions({
+          ...sampleRegisterResponse,
+          authenticatorSelection: { userVerification: "required", residentKey: "preferred" },
+        }),
+      ).toBe(false);
+      expect(
+        isRegisterOptions({
+          ...sampleRegisterResponse,
+          authenticatorSelection: { userVerification: "required", residentKey: "discouraged" },
+        }),
+      ).toBe(false);
+      expect(
+        isRegisterOptions({
+          ...sampleRegisterResponse,
+          authenticatorSelection: null,
+        }),
+      ).toBe(false);
+    });
+
     it("isAuthenticateOptions accepts valid options and rejects invalid shapes", () => {
       expect(isAuthenticateOptions(sampleAuthenticateResponse)).toBe(true);
       expect(isAuthenticateOptions({ challenge: "AQID", rpId: "ops.example.test" })).toBe(true);

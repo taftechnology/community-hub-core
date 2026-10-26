@@ -604,6 +604,41 @@ describe("Enrol screen", () => {
     u5();
   });
 
+  it("options missing authenticatorSelection show the generic text, and create is not called", async () => {
+    const optionsWithoutAuthSel = {
+      ...sampleRegisterOptions1,
+    } as Record<string, unknown>;
+    delete optionsWithoutAuthSel.authenticatorSelection;
+
+    const deps = stubDeps({
+      "POST /v1/ops/enrolment/start": { status: 204 },
+      "POST /v1/ops/enrolment/verify": { status: 200, body: { status: "enrolment" } },
+      "POST /v1/ops/passkey/register/options": {
+        status: 200,
+        body: optionsWithoutAuthSel,
+      },
+    });
+
+    renderAt("#/enrol", deps);
+    fireEvent.change(await screen.findByLabelText("Email"), { target: { value: testEmail } });
+    fireEvent.click(screen.getByRole("button", { name: "Send code" }));
+    await screen.findByRole("heading", { level: 1, name: "Enter your codes" });
+    fireEvent.change(screen.getByLabelText("Email code"), {
+      target: { value: testEmailCode },
+    });
+    fireEvent.change(screen.getByLabelText("Enrolment code"), {
+      target: { value: testEnrolmentCode },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+    await screen.findByRole("heading", { level: 1, name: "Register your first passkey" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Create passkey" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe(GENERIC_ERROR_MESSAGE);
+    expect(deps.credentials.create).not.toHaveBeenCalled();
+  });
+
   it("pin 8: button is disabled while pending and double clicks make only one options request", async () => {
     let resolveCreate!: (val: unknown) => void;
     const pendingPromise = new Promise((res) => {

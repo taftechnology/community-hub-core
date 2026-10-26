@@ -35,6 +35,32 @@ export function isRegisterOptions(value: unknown): value is PasskeyRegisterOptio
   ) {
     return false;
   }
+  if (
+    !Array.isArray(obj.pubKeyCredParams) ||
+    obj.pubKeyCredParams.length === 0 ||
+    !obj.pubKeyCredParams.every(
+      (p) =>
+        typeof p === "object" &&
+        p !== null &&
+        (p as Record<string, unknown>).type === "public-key" &&
+        typeof (p as Record<string, unknown>).alg === "number",
+    )
+  ) {
+    return false;
+  }
+  if (obj.attestation !== "none") {
+    return false;
+  }
+  if (typeof obj.authenticatorSelection !== "object" || obj.authenticatorSelection === null) {
+    return false;
+  }
+  const authSel = obj.authenticatorSelection as Record<string, unknown>;
+  if (
+    (authSel.userVerification !== "preferred" && authSel.userVerification !== "required") ||
+    authSel.residentKey !== "required"
+  ) {
+    return false;
+  }
   if (!Array.isArray(obj.excludeCredentials)) {
     return false;
   }
