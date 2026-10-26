@@ -196,6 +196,47 @@ describe("Shell unsupported browser", () => {
     expect(alert.textContent).toBe(SIGN_OUT_NETWORK_ERROR_MESSAGE);
   });
 
+  it("sign-out with session/end answering 503 shows the close-the-browser text", async () => {
+    const deps = stubDeps({
+      "GET /v1/ops/me": { status: 200, body: { roleKeys: ["ops.directory.view"] } },
+      "POST /v1/ops/session/end": { status: 503 },
+    });
+
+    renderAt("#/", deps);
+    const signoutBtn = await screen.findByRole("button", { name: SIGN_OUT_BUTTON_LABEL });
+
+    fireEvent.click(signoutBtn);
+
+    await screen.findByRole("heading", { level: 1, name: "Sign in" });
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe(SIGN_OUT_NETWORK_ERROR_MESSAGE);
+  });
+
+  it("double-clicking sign-out sends only one session/end request", async () => {
+    let resolveEnd!: (val: unknown) => void;
+    const pendingEnd = new Promise((res) => {
+      resolveEnd = res;
+    });
+
+    const deps = stubDeps({
+      "GET /v1/ops/me": { status: 200, body: { roleKeys: ["ops.directory.view"] } },
+      "POST /v1/ops/session/end": () => pendingEnd as unknown as Response,
+    });
+
+    renderAt("#/", deps);
+    const signoutBtn = await screen.findByRole("button", { name: SIGN_OUT_BUTTON_LABEL });
+
+    fireEvent.click(signoutBtn);
+    expect(signoutBtn.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(signoutBtn);
+
+    resolveEnd(new Response(null, { status: 204 }));
+
+    await screen.findByRole("heading", { level: 1, name: "Sign in" });
+    const endCalls = deps.calls.filter((c) => c.path === "/v1/ops/session/end");
+    expect(endCalls.length).toBe(1);
+  });
+
   it("focuses the page h1 after navigation", async () => {
     const deps = stubDeps({
       "GET /v1/ops/me": { status: 401 },

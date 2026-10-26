@@ -51,6 +51,7 @@ function EnrolRoute({ deps }: { deps: OpsDeps }) {
 function ShellLayout({ deps }: { deps: OpsDeps }) {
   const [status, setStatus] = useState<AuthStatus>("unknown");
   const [message, setMessage] = useState<string | undefined>(undefined);
+  const [isSignOutPending, setIsSignOutPending] = useState(false);
   const location = useLocation();
 
   const sessionClient = useMemo(
@@ -96,11 +97,21 @@ function ShellLayout({ deps }: { deps: OpsDeps }) {
   }, [runProbe]);
 
   const handleSignOut = async () => {
-    const res = await sessionClient.signOut();
-    if (res.kind === "network") {
-      signedOut(SIGN_OUT_NETWORK_ERROR_MESSAGE);
-    } else {
-      signedOut();
+    if (isSignOutPending) {
+      return;
+    }
+    setIsSignOutPending(true);
+    try {
+      const res = await sessionClient.signOut();
+      const isSuccessOr401 =
+        res.kind === "response" && ((res.status >= 200 && res.status < 300) || res.status === 401);
+      if (!isSuccessOr401) {
+        signedOut(SIGN_OUT_NETWORK_ERROR_MESSAGE);
+      } else {
+        signedOut();
+      }
+    } finally {
+      setIsSignOutPending(false);
     }
   };
 
@@ -127,7 +138,13 @@ function ShellLayout({ deps }: { deps: OpsDeps }) {
               <a href="#/" className="text-sm font-medium text-foreground hover:underline">
                 Directory
               </a>
-              <Button type="button" variant="outline" size="sm" onClick={handleSignOut}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={isSignOutPending}
+                onClick={handleSignOut}
+              >
                 {SIGN_OUT_BUTTON_LABEL}
               </Button>
             </nav>
