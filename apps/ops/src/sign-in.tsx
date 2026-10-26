@@ -7,6 +7,8 @@ import { useAuthState } from "./auth-state.js";
 import type { OpsDeps } from "./deps.js";
 import { useFocusHeading } from "./focus.js";
 import {
+  ENROL_ALREADY_ACTIVE_MESSAGE,
+  ENROL_COMPLETE_MESSAGE,
   GENERIC_ERROR_MESSAGE,
   SIGN_IN_BUTTON_LABEL,
   SIGN_IN_ENROL_LINK,
@@ -32,6 +34,10 @@ export function SignIn({ deps }: SignInProps) {
   const [isPending, setIsPending] = useState(false);
 
   const displayMessage = errorMessage ?? carriedMessage;
+  const isDefaultVariant =
+    !errorMessage &&
+    (carriedMessage === ENROL_COMPLETE_MESSAGE || carriedMessage === ENROL_ALREADY_ACTIVE_MESSAGE);
+  const alertVariant = isDefaultVariant ? "default" : "destructive";
 
   const handleSignIn = async () => {
     if (isPending) {
@@ -102,7 +108,7 @@ export function SignIn({ deps }: SignInProps) {
         Sign in
       </h1>
       {displayMessage && (
-        <Alert role="alert" variant="destructive">
+        <Alert role="alert" variant={alertVariant}>
           {displayMessage}
         </Alert>
       )}

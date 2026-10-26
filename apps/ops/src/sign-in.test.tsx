@@ -1,16 +1,20 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import axe from "axe-core";
+import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { AuthProvider } from "./auth-state.js";
 import { decode } from "./base64url.js";
 import {
   CEREMONY_CANCELLED_MESSAGE,
   CEREMONY_DEFAULT_MESSAGE,
+  ENROL_COMPLETE_MESSAGE,
   GENERIC_ERROR_MESSAGE,
   SIGN_IN_BUTTON_LABEL,
   SIGN_IN_ENROL_LINK,
   SIGN_IN_NOT_ACCEPTED_MESSAGE,
 } from "./messages.js";
+import { SignIn } from "./sign-in.js";
 import { renderAt, stubDeps, watchStorage } from "./test-support.js";
 
 const sampleOptions = {
@@ -273,5 +277,20 @@ describe("Sign-in screen", () => {
       rules: { "color-contrast": { enabled: false } },
     });
     expect(results.violations).toEqual([]);
+  });
+
+  it("renders carried enrolment complete message with default alert tone", async () => {
+    const deps = stubDeps();
+    render(
+      <MemoryRouter>
+        <AuthProvider initialStatus="signed-out" initialMessage={ENROL_COMPLETE_MESSAGE}>
+          <SignIn deps={deps} />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe(ENROL_COMPLETE_MESSAGE);
+    expect(alert.className).not.toContain("text-destructive");
   });
 });

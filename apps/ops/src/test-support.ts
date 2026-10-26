@@ -65,19 +65,31 @@ export type StorageWatcher = StorageCall[] & {
 
 export function watchStorage(): StorageWatcher {
   const calls = [] as unknown as StorageWatcher;
-  calls.calls = calls;
+  Object.defineProperty(calls, "calls", { value: calls, enumerable: false });
 
-  const localSpy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
-    this: Storage,
-    key: string,
-    value: string,
-  ) {
-    if (typeof window !== "undefined" && this === window.localStorage) {
-      calls.push({ type: "local", key, value: String(value) });
-    } else if (typeof window !== "undefined" && this === window.sessionStorage) {
-      calls.push({ type: "session", key, value: String(value) });
-    }
-  });
+  const winLocal = typeof window !== "undefined" ? window.localStorage : undefined;
+  const winSession = typeof window !== "undefined" ? window.sessionStorage : undefined;
+
+  const storageProto =
+    winSession !== undefined
+      ? Object.getPrototypeOf(winSession)
+      : typeof Storage !== "undefined"
+        ? Storage.prototype
+        : undefined;
+
+  const localSpy = storageProto
+    ? vi.spyOn(storageProto as Storage, "setItem").mockImplementation(function (
+        this: Storage,
+        key: string,
+        value: string,
+      ) {
+        if (winLocal && this === winLocal) {
+          calls.push({ type: "local", key, value: String(value) });
+        } else {
+          calls.push({ type: "session", key, value: String(value) });
+        }
+      })
+    : undefined;
 
   const cookieDesc =
     (typeof Document !== "undefined" &&
@@ -95,7 +107,7 @@ export function watchStorage(): StorageWatcher {
   }
 
   calls.restore = () => {
-    localSpy.mockRestore();
+    localSpy?.mockRestore();
     cookieSpy?.mockRestore();
   };
 

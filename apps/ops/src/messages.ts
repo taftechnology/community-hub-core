@@ -31,6 +31,16 @@ export const ENROL_SECOND_PASSKEY_MESSAGE =
 export const ENROL_COMPLETE_MESSAGE = "Enrolment complete. Sign in.";
 export const ENROL_PASSKEY_NOT_SAVED_MESSAGE = "That passkey was not saved. Try again.";
 export const ENROL_SESSION_ENDED_MESSAGE = "Your enrolment session ended. Start again.";
+export const ENROL_SEND_CODE_BUTTON_LABEL = "Send code";
+export const ENROL_VERIFY_BUTTON_LABEL = "Verify";
+export const ENROL_CREATE_PASSKEY_BUTTON_LABEL = "Create passkey";
+export const ENROL_STEP_1_HEADING = "Enrol";
+export const ENROL_STEP_2_HEADING = "Enter your codes";
+export const ENROL_STEP_3_HEADING = "Register your first passkey";
+export const ENROL_STEP_4_HEADING = "Add a second passkey";
+export const ENROL_EMAIL_LABEL = "Email";
+export const ENROL_EMAIL_CODE_LABEL = "Email code";
+export const ENROL_ENROLMENT_CODE_LABEL = "Enrolment code";
 
 // U13
 export const DIRECTORY_FORBIDDEN_MESSAGE = "Your role does not include the directory.";

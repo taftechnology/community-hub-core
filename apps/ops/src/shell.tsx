@@ -22,6 +22,7 @@ import {
 } from "./messages.js";
 import { createSessionClient } from "./session.js";
 import { SignIn } from "./sign-in.js";
+import { Enrol } from "./enrol.js";
 
 function DirectoryRoute() {
   const { status } = useAuthState();
@@ -48,14 +49,8 @@ function SignInRoute({ deps }: { deps: OpsDeps }) {
   return <SignIn deps={deps} />;
 }
 
-function EnrolRoute() {
-  useFocusHeading();
-
-  return (
-    <h1 tabIndex={-1} className="text-2xl font-bold tracking-tight text-foreground outline-none">
-      Enrol
-    </h1>
-  );
+function EnrolRoute({ deps }: { deps: OpsDeps }) {
+  return <Enrol deps={deps} />;
 }
 
 function ShellLayout({ deps }: { deps: OpsDeps }) {
@@ -182,7 +177,7 @@ export function createOpsRouter(deps: OpsDeps) {
         },
         {
           path: "/enrol",
-          element: <EnrolRoute />,
+          element: <EnrolRoute deps={deps} />,
         },
       ],
     },
