@@ -8,14 +8,17 @@ import { decode } from "./base64url.js";
 import {
   CEREMONY_CANCELLED_MESSAGE,
   CEREMONY_DEFAULT_MESSAGE,
+  ENROL_ALREADY_ACTIVE_MESSAGE,
   ENROL_COMPLETE_MESSAGE,
   GENERIC_ERROR_MESSAGE,
+  SESSION_ENDED_MESSAGE,
   SIGN_IN_BUTTON_LABEL,
   SIGN_IN_ENROL_LINK,
   SIGN_IN_NOT_ACCEPTED_MESSAGE,
+  SIGN_OUT_NETWORK_ERROR_MESSAGE,
 } from "./messages.js";
 import { SignIn } from "./sign-in.js";
-import { renderAt, stubDeps, watchStorage } from "./test-support.js";
+import { renderAt, stored, stubDeps, watchStorage } from "./test-support.js";
 
 const sampleOptions = {
   challenge: "dGVzdC1jaGFsbGVuZ2U",
@@ -227,6 +230,7 @@ describe("Sign-in screen", () => {
       await screen.findByRole("heading", { level: 1, name: "Directory" });
 
       expect(watcher.calls).toHaveLength(0);
+      expect(stored()).toEqual({ local: 0, session: 0 });
       expect(location.href).not.toContain("cred-1");
     } finally {
       watcher.restore();
@@ -291,5 +295,31 @@ describe("Sign-in screen", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe(ENROL_COMPLETE_MESSAGE);
     expect(alert.className).not.toContain("text-destructive");
+  });
+
+  it("passes axe checks with each carried message", async () => {
+    const deps = stubDeps();
+    const carriedMessages = [
+      SESSION_ENDED_MESSAGE,
+      ENROL_COMPLETE_MESSAGE,
+      ENROL_ALREADY_ACTIVE_MESSAGE,
+      SIGN_OUT_NETWORK_ERROR_MESSAGE,
+    ];
+
+    for (const msg of carriedMessages) {
+      const { container, unmount } = render(
+        <MemoryRouter>
+          <AuthProvider initialStatus="signed-out" initialMessage={msg}>
+            <SignIn deps={deps} />
+          </AuthProvider>
+        </MemoryRouter>,
+      );
+
+      const results = await axe.run(container, {
+        rules: { "color-contrast": { enabled: false } },
+      });
+      expect(results.violations).toEqual([]);
+      unmount();
+    }
   });
 });

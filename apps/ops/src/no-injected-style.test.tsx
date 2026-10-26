@@ -1,25 +1,39 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { createRoot } from "react-dom/client";
+import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { AuthProvider } from "./auth-state.js";
 import type { OpsDeps } from "./deps.js";
 import { ErrorBoundary } from "./error-boundary.js";
 import {
+  CEREMONY_CANCELLED_MESSAGE,
+  CEREMONY_SAME_DEVICE_MESSAGE,
+  DIRECTORY_TRUNCATED_MESSAGE,
+  ENROL_ALREADY_ACTIVE_MESSAGE,
+  ENROL_COMPLETE_MESSAGE,
   ENROL_CREATE_PASSKEY_BUTTON_LABEL,
   ENROL_EMAIL_CODE_LABEL,
   ENROL_EMAIL_LABEL,
   ENROL_ENROLMENT_CODE_LABEL,
+  ENROL_PASSKEY_NOT_SAVED_MESSAGE,
   ENROL_SEND_CODE_BUTTON_LABEL,
+  ENROL_SESSION_ENDED_MESSAGE,
   ENROL_STEP_1_HEADING,
   ENROL_STEP_2_HEADING,
   ENROL_STEP_3_HEADING,
   ENROL_STEP_4_HEADING,
   ENROL_VERIFY_BUTTON_LABEL,
+  ENROL_WRONG_CODES_MESSAGE,
+  SESSION_ENDED_MESSAGE,
   SIGN_IN_BUTTON_LABEL,
+  SIGN_IN_NOT_ACCEPTED_MESSAGE,
+  SIGN_OUT_NETWORK_ERROR_MESSAGE,
   TRY_AGAIN_BUTTON_LABEL,
 } from "./messages.js";
 import { rootOptions } from "./root-options.js";
 import { Shell } from "./shell.js";
+import { SignIn } from "./sign-in.js";
 import { fakeLocks, renderAt, stubDeps } from "./test-support.js";
 
 const validDeps: OpsDeps = {
@@ -185,6 +199,41 @@ describe("No injected styles across every screen (pin 3)", () => {
       resolveOptions(new Response(JSON.stringify(sampleOptions), { status: 200 }));
       unmountSignIn();
 
+      // State 6b: Sign-in with each carried message
+      const carriedMessages = [
+        SESSION_ENDED_MESSAGE,
+        ENROL_COMPLETE_MESSAGE,
+        ENROL_ALREADY_ACTIVE_MESSAGE,
+        SIGN_OUT_NETWORK_ERROR_MESSAGE,
+      ];
+      for (const msg of carriedMessages) {
+        const { unmount: unmountCarried } = render(
+          <MemoryRouter>
+            <AuthProvider initialStatus="signed-out" initialMessage={msg}>
+              <SignIn deps={validDeps} />
+            </AuthProvider>
+          </MemoryRouter>,
+        );
+        await screen.findByText(msg);
+        unmountCarried();
+      }
+
+      // State 6c: Sign-in with its own error text
+      const depsSignInError = stubDeps({
+        "POST /v1/ops/passkey/authenticate/options": { status: 200, body: sampleOptions },
+        "POST /v1/ops/passkey/authenticate/verify": { status: 401 },
+      });
+      const { unmount: unmountSignInError } = render(
+        <MemoryRouter>
+          <AuthProvider initialStatus="signed-out">
+            <SignIn deps={depsSignInError} />
+          </AuthProvider>
+        </MemoryRouter>,
+      );
+      fireEvent.click(await screen.findByRole("button", { name: SIGN_IN_BUTTON_LABEL }));
+      await screen.findByText(SIGN_IN_NOT_ACCEPTED_MESSAGE);
+      unmountSignInError();
+
       // State 7: Enrolment steps 1-4
       const depsEnrol = stubDeps({
         "POST /v1/ops/enrolment/start": { status: 204 },
@@ -219,6 +268,132 @@ describe("No injected styles across every screen (pin 3)", () => {
       await screen.findByRole("heading", { level: 1, name: ENROL_STEP_4_HEADING });
       unmountEnrol();
 
+      // State 7b: Enrolment error - wrong codes
+      const depsWrongCodes = stubDeps({
+        "POST /v1/ops/enrolment/start": { status: 204 },
+        "POST /v1/ops/enrolment/verify": { status: 401 },
+      });
+      const { unmount: unmountWrongCodes } = renderAt("#/enrol", depsWrongCodes);
+      fireEvent.change(await screen.findByLabelText(ENROL_EMAIL_LABEL), {
+        target: { value: "operator@example.test" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: ENROL_SEND_CODE_BUTTON_LABEL }));
+      await screen.findByRole("heading", { level: 1, name: ENROL_STEP_2_HEADING });
+      fireEvent.change(screen.getByLabelText(ENROL_EMAIL_CODE_LABEL), {
+        target: { value: "12345678" },
+      });
+      fireEvent.change(screen.getByLabelText(ENROL_ENROLMENT_CODE_LABEL), {
+        target: { value: "ABCD-EFGH" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: ENROL_VERIFY_BUTTON_LABEL }));
+      await screen.findByText(ENROL_WRONG_CODES_MESSAGE);
+      unmountWrongCodes();
+
+      // State 7c: Enrolment error - enrolment session ended
+      const depsSessionEnded = stubDeps({
+        "POST /v1/ops/enrolment/start": { status: 204 },
+        "POST /v1/ops/enrolment/verify": { status: 200, body: { status: "enrolment" } },
+        "POST /v1/ops/passkey/register/options": { status: 401 },
+      });
+      const { unmount: unmountSessionEnded } = renderAt("#/enrol", depsSessionEnded);
+      fireEvent.change(await screen.findByLabelText(ENROL_EMAIL_LABEL), {
+        target: { value: "operator@example.test" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: ENROL_SEND_CODE_BUTTON_LABEL }));
+      await screen.findByRole("heading", { level: 1, name: ENROL_STEP_2_HEADING });
+      fireEvent.change(screen.getByLabelText(ENROL_EMAIL_CODE_LABEL), {
+        target: { value: "12345678" },
+      });
+      fireEvent.change(screen.getByLabelText(ENROL_ENROLMENT_CODE_LABEL), {
+        target: { value: "ABCD-EFGH" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: ENROL_VERIFY_BUTTON_LABEL }));
+      await screen.findByRole("heading", { level: 1, name: ENROL_STEP_3_HEADING });
+      fireEvent.click(screen.getByRole("button", { name: ENROL_CREATE_PASSKEY_BUTTON_LABEL }));
+      await screen.findByText(ENROL_SESSION_ENDED_MESSAGE);
+      unmountSessionEnded();
+
+      // State 7d: Enrolment error - not saved
+      const depsNotSaved = stubDeps({
+        "POST /v1/ops/enrolment/start": { status: 204 },
+        "POST /v1/ops/enrolment/verify": { status: 200, body: { status: "enrolment" } },
+        "POST /v1/ops/passkey/register/options": { status: 200, body: sampleRegisterOptions },
+        "POST /v1/ops/passkey/register/verify": { status: 400 },
+      });
+      const { unmount: unmountNotSaved } = renderAt("#/enrol", depsNotSaved);
+      fireEvent.change(await screen.findByLabelText(ENROL_EMAIL_LABEL), {
+        target: { value: "operator@example.test" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: ENROL_SEND_CODE_BUTTON_LABEL }));
+      await screen.findByRole("heading", { level: 1, name: ENROL_STEP_2_HEADING });
+      fireEvent.change(screen.getByLabelText(ENROL_EMAIL_CODE_LABEL), {
+        target: { value: "12345678" },
+      });
+      fireEvent.change(screen.getByLabelText(ENROL_ENROLMENT_CODE_LABEL), {
+        target: { value: "ABCD-EFGH" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: ENROL_VERIFY_BUTTON_LABEL }));
+      await screen.findByRole("heading", { level: 1, name: ENROL_STEP_3_HEADING });
+      fireEvent.click(screen.getByRole("button", { name: ENROL_CREATE_PASSKEY_BUTTON_LABEL }));
+      await screen.findByText(ENROL_PASSKEY_NOT_SAVED_MESSAGE);
+      unmountNotSaved();
+
+      // State 7e: Enrolment error - same device
+      const depsSameDevice = stubDeps({
+        "POST /v1/ops/enrolment/start": { status: 204 },
+        "POST /v1/ops/enrolment/verify": { status: 200, body: { status: "enrolment" } },
+        "POST /v1/ops/passkey/register/options": { status: 200, body: sampleRegisterOptions },
+      });
+      depsSameDevice.credentials.create = vi
+        .fn()
+        .mockRejectedValue(
+          new DOMException("The authenticator was already registered", "InvalidStateError"),
+        );
+      const { unmount: unmountSameDevice } = renderAt("#/enrol", depsSameDevice);
+      fireEvent.change(await screen.findByLabelText(ENROL_EMAIL_LABEL), {
+        target: { value: "operator@example.test" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: ENROL_SEND_CODE_BUTTON_LABEL }));
+      await screen.findByRole("heading", { level: 1, name: ENROL_STEP_2_HEADING });
+      fireEvent.change(screen.getByLabelText(ENROL_EMAIL_CODE_LABEL), {
+        target: { value: "12345678" },
+      });
+      fireEvent.change(screen.getByLabelText(ENROL_ENROLMENT_CODE_LABEL), {
+        target: { value: "ABCD-EFGH" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: ENROL_VERIFY_BUTTON_LABEL }));
+      await screen.findByRole("heading", { level: 1, name: ENROL_STEP_3_HEADING });
+      fireEvent.click(screen.getByRole("button", { name: ENROL_CREATE_PASSKEY_BUTTON_LABEL }));
+      await screen.findByText(CEREMONY_SAME_DEVICE_MESSAGE);
+      unmountSameDevice();
+
+      // State 7f: Enrolment error - cancelled
+      const depsCancelled = stubDeps({
+        "POST /v1/ops/enrolment/start": { status: 204 },
+        "POST /v1/ops/enrolment/verify": { status: 200, body: { status: "enrolment" } },
+        "POST /v1/ops/passkey/register/options": { status: 200, body: sampleRegisterOptions },
+      });
+      depsCancelled.credentials.create = vi
+        .fn()
+        .mockRejectedValue(new DOMException("User cancelled", "NotAllowedError"));
+      const { unmount: unmountCancelled } = renderAt("#/enrol", depsCancelled);
+      fireEvent.change(await screen.findByLabelText(ENROL_EMAIL_LABEL), {
+        target: { value: "operator@example.test" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: ENROL_SEND_CODE_BUTTON_LABEL }));
+      await screen.findByRole("heading", { level: 1, name: ENROL_STEP_2_HEADING });
+      fireEvent.change(screen.getByLabelText(ENROL_EMAIL_CODE_LABEL), {
+        target: { value: "12345678" },
+      });
+      fireEvent.change(screen.getByLabelText(ENROL_ENROLMENT_CODE_LABEL), {
+        target: { value: "ABCD-EFGH" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: ENROL_VERIFY_BUTTON_LABEL }));
+      await screen.findByRole("heading", { level: 1, name: ENROL_STEP_3_HEADING });
+      fireEvent.click(screen.getByRole("button", { name: ENROL_CREATE_PASSKEY_BUTTON_LABEL }));
+      await screen.findByText(CEREMONY_CANCELLED_MESSAGE);
+      unmountCancelled();
+
       // State 8: Directory loading
       let resolveDir!: (val: unknown) => void;
       const pendingDir = new Promise((res) => {
@@ -250,6 +425,24 @@ describe("No injected styles across every screen (pin 3)", () => {
       const { unmount: unmountDirEmpty } = renderAt("#/", depsDirEmpty);
       await screen.findByRole("heading", { level: 1, name: "Directory" });
       unmountDirEmpty();
+
+      // State 10b: Directory truncated
+      const depsDirTruncated = stubDeps({
+        "GET /v1/ops/me": { status: 200, body: { roleKeys: ["ops.directory.view"] } },
+        "GET /v1/ops/directory": { status: 200, body: { ...sampleDirectory, truncated: true } },
+      });
+      const { unmount: unmountDirTruncated } = renderAt("#/", depsDirTruncated);
+      await screen.findByText(DIRECTORY_TRUNCATED_MESSAGE);
+      unmountDirTruncated();
+
+      // State 10c: Directory 403
+      const depsDir403 = stubDeps({
+        "GET /v1/ops/me": { status: 200, body: { roleKeys: ["ops.directory.view"] } },
+        "GET /v1/ops/directory": { status: 403 },
+      });
+      const { unmount: unmountDir403 } = renderAt("#/", depsDir403);
+      await screen.findByRole("alert");
+      unmountDir403();
 
       // State 11: Directory failed
       const depsDirFailed = stubDeps({

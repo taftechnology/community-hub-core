@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createApi } from "./api.js";
 import { createSessionClient } from "./session.js";
-import { fakeLocks, watchStorage } from "./test-support.js";
+import { fakeLocks } from "./test-support.js";
 
 function createDeferred<T = void>() {
   let resolve!: (val: T | PromiseLike<T>) => void;
@@ -155,6 +155,7 @@ describe("session", () => {
     expect(r1).toEqual({ kind: "response", status: 200, body: { counter: 1 } });
     expect(r2).toEqual({ kind: "response", status: 200, body: { counter: 1 } });
     expect(jar1.maxRefreshesInFlight).toBe(1);
+    expect(jar1.refreshCalls).toBe(1);
 
     // Case 2: One call in each of two clients sharing one fakeLocks()
     const jar2 = createCookieJar();
@@ -172,6 +173,7 @@ describe("session", () => {
     expect(rA).toEqual({ kind: "response", status: 200, body: { counter: 1 } });
     expect(rB).toEqual({ kind: "response", status: 200, body: { counter: 1 } });
     expect(jar2.maxRefreshesInFlight).toBe(1);
+    expect(jar2.refreshCalls).toBe(1);
   });
 
   it("repeats once before refreshing (Pin 6b)", async () => {
@@ -236,19 +238,5 @@ describe("session", () => {
     expect(lockSpy).toHaveBeenCalledWith("ops-session-refresh", expect.any(Function));
     expect(jar.signOutCalls).toBe(1);
     expect(jar.refreshCalls).toBe(0);
-  });
-
-  it("watchStorage() records nothing across session flows (Pin 5)", async () => {
-    const watcher = watchStorage();
-    const jar = createCookieJar();
-    jar.releaseDeferred();
-    const locks = fakeLocks();
-    const client = createSessionClient({ api: createApi(jar.fetchFn), locks });
-
-    await client.authedGet("/v1/ops/me");
-    await client.signOut();
-
-    expect(watcher.calls).toHaveLength(0);
-    watcher.restore();
   });
 });

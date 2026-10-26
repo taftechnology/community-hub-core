@@ -620,10 +620,11 @@ describe.skipIf(process.env.RUN_IMAGE_TESTS !== "1")("regional service image", (
       expect(index.headers["cache-control"]).toBe("no-cache");
       expect(index.headers["x-content-type-options"]).toBe("nosniff");
 
-      const assetMatches = index.body.match(/\/assets\/[A-Za-z0-9._-]+/g) ?? [];
-      const assetPaths = [...new Set(assetMatches)];
-      expect(assetPaths.length).toBeGreaterThan(0);
-      for (const assetPath of assetPaths) {
+      const jsAssets = [...new Set(index.body.match(/\/assets\/[A-Za-z0-9._-]+\.js/g) ?? [])];
+      const cssAssets = [...new Set(index.body.match(/\/assets\/[A-Za-z0-9._-]+\.css/g) ?? [])];
+      expect(jsAssets).toHaveLength(1);
+      expect(cssAssets).toHaveLength(1);
+      for (const assetPath of [...jsAssets, ...cssAssets]) {
         const asset = execFetch(container.id, assetPath, "ops.au.example.test");
         expect(asset.status).toBe(200);
         expect(asset.headers["cache-control"]).toBe("public, max-age=31536000, immutable");

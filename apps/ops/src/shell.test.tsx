@@ -12,7 +12,7 @@ import {
   TRY_AGAIN_BUTTON_LABEL,
 } from "./messages.js";
 import { Shell } from "./shell.js";
-import { fakeLocks, renderAt, stubDeps, watchStorage } from "./test-support.js";
+import { fakeLocks, renderAt, stored, stubDeps, watchStorage } from "./test-support.js";
 
 const validDeps: OpsDeps = {
   fetch: globalThis.fetch,
@@ -225,6 +225,7 @@ describe("Shell unsupported browser", () => {
       await screen.findByRole("heading", { level: 1, name: "Sign in" });
 
       expect(watcher.calls).toHaveLength(0);
+      expect(stored()).toEqual({ local: 0, session: 0 });
     } finally {
       watcher.restore();
     }

@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import axe from "axe-core";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { decode, encode } from "./base64url.js";
 import {
@@ -17,7 +17,7 @@ import {
   ENROL_WRONG_CODES_MESSAGE,
   GENERIC_ERROR_MESSAGE,
 } from "./messages.js";
-import { renderAt, stubDeps, watchStorage } from "./test-support.js";
+import { renderAt, stored, stubDeps, watchStorage } from "./test-support.js";
 
 const testEmail = "operator@example.test";
 const testEmailCode = "12345678";
@@ -224,6 +224,7 @@ describe("Enrol screen", () => {
       expect(location.href).not.toContain(testEnrolmentCode);
 
       expect(watcher.calls).toHaveLength(0);
+      expect(stored()).toEqual({ local: 0, session: 0 });
     } finally {
       watcher.restore();
     }
@@ -785,5 +786,112 @@ describe("Enrol screen", () => {
     await screen.findByRole("heading", { level: 1, name: "Add a second passkey" });
     results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
     expect(results.violations).toEqual([]);
+  });
+
+  it("axe checks pass across each enrolment error state", async () => {
+    // 1. wrong codes error
+    const depsWrongCodes = stubDeps({
+      ...happyRoutes(),
+      "POST /v1/ops/enrolment/verify": { status: 401 },
+    });
+    const { container: c1, unmount: u1 } = renderAt("#/enrol", depsWrongCodes);
+    fireEvent.change(await screen.findByLabelText("Email"), { target: { value: testEmail } });
+    fireEvent.click(screen.getByRole("button", { name: "Send code" }));
+    await screen.findByRole("heading", { level: 1, name: "Enter your codes" });
+    fireEvent.change(screen.getByLabelText("Email code"), { target: { value: testEmailCode } });
+    fireEvent.change(screen.getByLabelText("Enrolment code"), {
+      target: { value: testEnrolmentCode },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+    await screen.findByText(ENROL_WRONG_CODES_MESSAGE);
+    let results = await axe.run(c1, { rules: { "color-contrast": { enabled: false } } });
+    expect(results.violations).toEqual([]);
+    u1();
+
+    // 2. enrolment session ended (options 401 in step 3)
+    const depsSessionEnded = stubDeps({
+      ...happyRoutes(),
+      "POST /v1/ops/passkey/register/options": { status: 401 },
+    });
+    const { container: c2, unmount: u2 } = renderAt("#/enrol", depsSessionEnded);
+    fireEvent.change(await screen.findByLabelText("Email"), { target: { value: testEmail } });
+    fireEvent.click(screen.getByRole("button", { name: "Send code" }));
+    await screen.findByRole("heading", { level: 1, name: "Enter your codes" });
+    fireEvent.change(screen.getByLabelText("Email code"), { target: { value: testEmailCode } });
+    fireEvent.change(screen.getByLabelText("Enrolment code"), {
+      target: { value: testEnrolmentCode },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+    await screen.findByRole("heading", { level: 1, name: "Register your first passkey" });
+    fireEvent.click(screen.getByRole("button", { name: "Create passkey" }));
+    await screen.findByText(ENROL_SESSION_ENDED_MESSAGE);
+    results = await axe.run(c2, { rules: { "color-contrast": { enabled: false } } });
+    expect(results.violations).toEqual([]);
+    u2();
+
+    // 3. not saved (verify 400 in step 3)
+    const depsNotSaved = stubDeps({
+      ...happyRoutes(),
+      "POST /v1/ops/passkey/register/verify": { status: 400 },
+    });
+    const { container: c3, unmount: u3 } = renderAt("#/enrol", depsNotSaved);
+    fireEvent.change(await screen.findByLabelText("Email"), { target: { value: testEmail } });
+    fireEvent.click(screen.getByRole("button", { name: "Send code" }));
+    await screen.findByRole("heading", { level: 1, name: "Enter your codes" });
+    fireEvent.change(screen.getByLabelText("Email code"), { target: { value: testEmailCode } });
+    fireEvent.change(screen.getByLabelText("Enrolment code"), {
+      target: { value: testEnrolmentCode },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+    await screen.findByRole("heading", { level: 1, name: "Register your first passkey" });
+    fireEvent.click(screen.getByRole("button", { name: "Create passkey" }));
+    await screen.findByText(ENROL_PASSKEY_NOT_SAVED_MESSAGE);
+    results = await axe.run(c3, { rules: { "color-contrast": { enabled: false } } });
+    expect(results.violations).toEqual([]);
+    u3();
+
+    // 4. same device (InvalidStateError in step 3)
+    const depsSameDevice = stubDeps(happyRoutes());
+    depsSameDevice.credentials.create = vi
+      .fn()
+      .mockRejectedValue(
+        new DOMException("The authenticator was already registered", "InvalidStateError"),
+      );
+    const { container: c4, unmount: u4 } = renderAt("#/enrol", depsSameDevice);
+    fireEvent.change(await screen.findByLabelText("Email"), { target: { value: testEmail } });
+    fireEvent.click(screen.getByRole("button", { name: "Send code" }));
+    await screen.findByRole("heading", { level: 1, name: "Enter your codes" });
+    fireEvent.change(screen.getByLabelText("Email code"), { target: { value: testEmailCode } });
+    fireEvent.change(screen.getByLabelText("Enrolment code"), {
+      target: { value: testEnrolmentCode },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+    await screen.findByRole("heading", { level: 1, name: "Register your first passkey" });
+    fireEvent.click(screen.getByRole("button", { name: "Create passkey" }));
+    await screen.findByText(CEREMONY_SAME_DEVICE_MESSAGE);
+    results = await axe.run(c4, { rules: { "color-contrast": { enabled: false } } });
+    expect(results.violations).toEqual([]);
+    u4();
+
+    // 5. cancelled (NotAllowedError in step 3)
+    const depsCancelled = stubDeps(happyRoutes());
+    depsCancelled.credentials.create = vi
+      .fn()
+      .mockRejectedValue(new DOMException("User cancelled", "NotAllowedError"));
+    const { container: c5, unmount: u5 } = renderAt("#/enrol", depsCancelled);
+    fireEvent.change(await screen.findByLabelText("Email"), { target: { value: testEmail } });
+    fireEvent.click(screen.getByRole("button", { name: "Send code" }));
+    await screen.findByRole("heading", { level: 1, name: "Enter your codes" });
+    fireEvent.change(screen.getByLabelText("Email code"), { target: { value: testEmailCode } });
+    fireEvent.change(screen.getByLabelText("Enrolment code"), {
+      target: { value: testEnrolmentCode },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+    await screen.findByRole("heading", { level: 1, name: "Register your first passkey" });
+    fireEvent.click(screen.getByRole("button", { name: "Create passkey" }));
+    await screen.findByText(CEREMONY_CANCELLED_MESSAGE);
+    results = await axe.run(c5, { rules: { "color-contrast": { enabled: false } } });
+    expect(results.violations).toEqual([]);
+    u5();
   });
 });

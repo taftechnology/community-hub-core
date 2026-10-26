@@ -54,42 +54,83 @@ export function fakeLocks(): LockLike {
 }
 
 export type StorageCall =
-  | { type: "local"; key: string; value: string }
-  | { type: "session"; key: string; value: string }
+  | { type: "local" | "session"; method?: "setItem"; key: string; value: string }
+  | { type: "local" | "session"; method: "removeItem"; key: string }
+  | { type: "local" | "session"; method: "clear" }
   | { type: "cookie"; value: string };
 
 export type StorageWatcher = StorageCall[] & {
   calls: StorageCall[];
   restore: () => void;
+  stored: () => { local: number; session: number };
 };
+
+if (
+  typeof window !== "undefined" &&
+  (!window.localStorage || typeof window.localStorage.setItem !== "function") &&
+  (window as unknown as { _localStorage?: Storage })._localStorage
+) {
+  Object.defineProperty(window, "localStorage", {
+    value: (window as unknown as { _localStorage: Storage })._localStorage,
+    configurable: true,
+    writable: true,
+  });
+}
+
+export function stored(): { local: number; session: number } {
+  const win = typeof window !== "undefined" ? window : undefined;
+  const local = win?.localStorage ? win.localStorage.length : 0;
+  const session = win?.sessionStorage ? win.sessionStorage.length : 0;
+  return { local, session };
+}
 
 export function watchStorage(): StorageWatcher {
   const calls = [] as unknown as StorageWatcher;
   Object.defineProperty(calls, "calls", { value: calls, enumerable: false });
+  calls.stored = stored;
 
-  const winLocal = typeof window !== "undefined" ? window.localStorage : undefined;
+  const winLocal =
+    typeof window !== "undefined"
+      ? window.localStorage || (window as unknown as { _localStorage?: Storage })._localStorage
+      : undefined;
   const winSession = typeof window !== "undefined" ? window.sessionStorage : undefined;
 
-  const storageProto =
-    winSession !== undefined
-      ? Object.getPrototypeOf(winSession)
-      : typeof Storage !== "undefined"
-        ? Storage.prototype
-        : undefined;
+  const storageProtos = new Set<Storage>();
+  if (typeof Storage !== "undefined" && Storage.prototype) {
+    storageProtos.add(Storage.prototype);
+  }
+  if (winLocal) {
+    storageProtos.add(Object.getPrototypeOf(winLocal));
+  }
+  if (winSession) {
+    storageProtos.add(Object.getPrototypeOf(winSession));
+  }
 
-  const localSpy = storageProto
-    ? vi.spyOn(storageProto as Storage, "setItem").mockImplementation(function (
+  const spies: Array<ReturnType<typeof vi.spyOn>> = [];
+
+  for (const proto of storageProtos) {
+    spies.push(
+      vi.spyOn(proto, "setItem").mockImplementation(function (
         this: Storage,
         key: string,
         value: string,
       ) {
-        if (winLocal && this === winLocal) {
-          calls.push({ type: "local", key, value: String(value) });
-        } else {
-          calls.push({ type: "session", key, value: String(value) });
-        }
-      })
-    : undefined;
+        const isLocal = winLocal && this === winLocal;
+        const type = isLocal ? "local" : "session";
+        calls.push({ type, method: "setItem", key, value: String(value) });
+      }),
+      vi.spyOn(proto, "removeItem").mockImplementation(function (this: Storage, key: string) {
+        const isLocal = winLocal && this === winLocal;
+        const type = isLocal ? "local" : "session";
+        calls.push({ type, method: "removeItem", key });
+      }),
+      vi.spyOn(proto, "clear").mockImplementation(function (this: Storage) {
+        const isLocal = winLocal && this === winLocal;
+        const type = isLocal ? "local" : "session";
+        calls.push({ type, method: "clear" });
+      }),
+    );
+  }
 
   const cookieDesc =
     (typeof Document !== "undefined" &&
@@ -107,7 +148,9 @@ export function watchStorage(): StorageWatcher {
   }
 
   calls.restore = () => {
-    localSpy?.mockRestore();
+    for (const spy of spies) {
+      spy.mockRestore();
+    }
     cookieSpy?.mockRestore();
   };
 
