@@ -237,6 +237,70 @@ describe("runProvisionOwner secret", () => {
       expect(mFindOrg).not.toHaveBeenCalled();
     },
   );
+
+  it.each([
+    ["null", "null"],
+    ["an array", "[]"],
+    ["a string", JSON.stringify("text")],
+  ])("fails when the secret JSON is %s", async (_, raw) => {
+    const h = harness({ readSecret: async () => raw });
+    expect(await h.run()).toEqual(failure("secret"));
+    expect(mFindOrg).not.toHaveBeenCalled();
+  });
+});
+
+describe("runProvisionOwner opsOperator refusal", () => {
+  it.each([
+    [
+      "opsOperator alone",
+      JSON.stringify({
+        opsOperator: { action: "revoke", email: "operator@example.test" },
+      }),
+    ],
+    [
+      "valid owner fields plus opsOperator",
+      JSON.stringify({
+        organisationSlug: ORG_SLUG,
+        communitySlug: COMMUNITY_SLUG,
+        email: EMAIL,
+        opsOperator: { action: "revoke", email: "operator@example.test" },
+      }),
+    ],
+  ])("refuses a payload carrying opsOperator with shape: %s", async (_, payload) => {
+    const read: string[] = [];
+    const source = new Proxy({ PROVISION_SECRET_ARN: ARN } as NodeJS.ProcessEnv, {
+      get(target, prop) {
+        if (typeof prop === "string") {
+          read.push(prop);
+        }
+        return target[prop as string];
+      },
+    });
+    const readSecret = vi.fn(async () => payload);
+
+    const result = await runProvisionOwner({
+      source,
+      readSecret,
+      platform: fakeSql,
+      app: fakeSql,
+      identity: fakeSql,
+      kms: fakeKms,
+      keyArn: KEY_ARN,
+      now: () => new Date("2026-10-13T00:00:00+11:00"),
+    });
+
+    expect(result).toEqual({ exitCode: 1, stdout: "", stderr: "shape\n" });
+    expect(mFindOrg).not.toHaveBeenCalled();
+    expect(mFindCommunity).not.toHaveBeenCalled();
+    expect(mCreateImplicit).not.toHaveBeenCalled();
+    expect(mFindOrCreate).not.toHaveBeenCalled();
+    expect(mFindUser).not.toHaveBeenCalled();
+    expect(mBootstrap).not.toHaveBeenCalled();
+    expect(
+      read.every((key) => key === "PROVISION_SECRET_ARN"),
+      `environment keys read: ${JSON.stringify(read)}`,
+    ).toBe(true);
+  });
 });
 
 describe("runProvisionOwner organisation resolution", () => {

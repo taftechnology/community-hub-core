@@ -4064,5 +4064,32 @@ describe("startOperatorEnrolment and verifyOperatorEnrolment", () => {
       expect(event!.request_id).toBe(requestId);
       expect(event!.occurred_at.toISOString()).toBe(endNow.toISOString());
     });
+
+    it("ending a session twice writes one signed_out", async () => {
+      const now = new Date("2026-10-24T15:30:00.000Z");
+      const op = await createActiveOperator("op-end-twice@example.test", now);
+      const session = await signInOperator(op, now);
+      const requestId = newId();
+
+      const endNow = new Date(now.getTime() + 60_000);
+      await endOperatorSession(identitySql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        now: endNow,
+        requestId,
+      });
+      await endOperatorSession(identitySql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        now: new Date(endNow.getTime() + 1_000),
+        requestId,
+      });
+
+      const events = await directSql<{ action: string; request_id: string }[]>`
+        select action, request_id
+        from identity.operator_events
+        where user_id = ${op.userId}
+          and action = 'signed_out'
+      `;
+      expect(events).toHaveLength(1);
+    });
   });
 });

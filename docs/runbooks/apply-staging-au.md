@@ -178,6 +178,8 @@ The journal table records each file's `when` value, not the time it ran. The ECS
 
 ## Provision the first owner
 
+The operator administration tool ([`ops-operator.md`](ops-operator.md)) shares the one fixed secret name (`${PROVISION_SECRET_NAME}`) with this provision tool; the two tools refuse each other's payloads and are never run at the same time.
+
 The organisation slug, the community slug, and the owner email reach the task only inside a short-lived Secrets Manager secret under the one fixed name `${PROVISION_SECRET_NAME}`. The task reads it once, by ARN, passed as the `PROVISION_SECRET_ARN` environment override. A human runs every step. An agent does not. This runs as a one-off override of the service task definition, not the `db_ops` task definition; it adds no HTTP route and no change to the `db_ops` task role. This section is written and reviewed in this chunk; its first live execution on `staging-au` is deferred to the email chunk's own staging run, the same way **Apply product migrations** shipped its command before a later chunk exercised it (spec Definition of done).
 
 Shell variables and placeholders only, as in the rest of this file: never paste an account id, an ARN, a hostname, the resolved secret name, or the email into the file or the evidence. The slug and email values are prompted for at run time so they never land in shell history as typed command text. In zsh write `${VAR}:text`, not `$VAR:text`.

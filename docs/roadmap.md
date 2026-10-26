@@ -21,8 +21,8 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 |              |                                                                   |
 | ------------ | ----------------------------------------------------------------- |
 | Phase        | 1 — Core platform                                                 |
-| Last shipped | `ops-console-api`                                                 |
-| Next chunk   | `ops-operator-oneoff`                                             |
+| Last shipped | `ops-operator-oneoff`                                             |
+| Next chunk   | `ops-console-ui`                                                  |
 | Phase 0      | 26 rows: 25 done, 1 superseded (`api-au-hostname`), 0 not started |
 | Later phases | not started                                                       |
 
@@ -96,7 +96,7 @@ Architecture: monorepo, CI, Terraform for AWS in `ap-southeast-2`, kernel, db wi
 | done       | `db-migrate-command`         | The image gains `/app/db-migrate.js`, which applies the product migrations as the master login, refuses to run before `db-bootstrap`, and prints the tags it applied. It has not been run on staging. Spec `docs/specs/2026-10-12-db-migrate-command.md`.                                                                                                                                                                                                                          |
 | done       | `staging-proof-run`          | The distroless image runs on Fargate. `db-bootstrap` then `db-migrate` applied the ten product migrations to RDS and a second run applied none. The sign-in-code route answers 503 with no mail vendor; role and entitlement routes refuse a request with no session; the service re-read a changed database secret and recovered without a restart. Staging was re-parked the same day. Spec `docs/specs/2026-10-12-staging-proof-run.md`.                                        |
 
-Next is `ops-operator-oneoff`.
+Next is `ops-console-ui`.
 
 SQS, EventBridge, file storage, and the admin static-file distribution are not rows here. Each waits for the first chunk that uses it.
 
@@ -127,7 +127,7 @@ Vertical slices. Nav items appear in the frozen order (see [Admin navigation](#a
 | done        | `ops-identity-primitives` | Operator identity primitives refactor with no tenant behaviour change. Spec `docs/specs/2026-10-22-ops-identity-primitives.md`.                                                                                                                                                                                                                                     |
 | done        | `ops-operator-identity`   | Operator grants, enrolment by email code plus owner-issued code, ops passkeys, eight-hour operator sessions, and the operator event record, as identity module functions. Spec `docs/specs/2026-10-22-ops-operator-identity.md`.                                                                                                                                    |
 | done        | `ops-console-api`         | Ops routes, cookie-held operator sessions, static serving on the ops host, and the read-only directory. Spec `docs/specs/2026-10-25-ops-console-api.md`.                                                                                                                                                                                                            |
-| not started | `ops-operator-oneoff`     | The `ops-operator` one-off, the `provision-owner` shape refusal, the operator runbook including recovery, and the PR #62 follow-ups.                                                                                                                                                                                                                                |
+| done        | `ops-operator-oneoff`     | The `ops-operator` one-off, the `provision-owner` shape refusal, the operator runbook including recovery, and the PR #62 follow-ups. Spec `docs/specs/2026-10-26-ops-operator-oneoff.md`.                                                                                                                                                                           |
 | not started | `ops-console-ui`          | Operator console interface in `apps/ops`.                                                                                                                                                                                                                                                                                                                           |
 | not started | `ops-console-proof`       | A staging proof chunk follows the UI.                                                                                                                                                                                                                                                                                                                               |
 | not started | `usage-facts`             | `core/usage` skeleton (community × feature × day). Facts grow as modules ship.                                                                                                                                                                                                                                                                                      |
@@ -310,7 +310,7 @@ The people and access `boundaries.test.ts` files read the gitignored `staging.lo
 
 ## Next spec
 
-The next chunk is **ops-operator-oneoff**. Q8b (plan contents and prices) is still open.
+The next chunk is **ops-console-ui**. Q8b (plan contents and prices) is still open.
 
 ---
 
