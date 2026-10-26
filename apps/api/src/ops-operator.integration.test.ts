@@ -61,6 +61,9 @@ beforeAll(async () => {
   await applyProductMigrations(directSql);
   await directSql`delete from identity.operator_events`;
   await directSql`delete from identity.operator_grants`;
+  await directSql`delete from identity.sessions`;
+  await directSql`delete from identity.passkey_credentials`;
+  await directSql`delete from identity.users`;
   await identitySql`delete from identity.identity_keys`;
 });
 
@@ -68,6 +71,9 @@ afterAll(async () => {
   try {
     await directSql`delete from identity.operator_events`;
     await directSql`delete from identity.operator_grants`;
+    await directSql`delete from identity.sessions`;
+    await directSql`delete from identity.passkey_credentials`;
+    await directSql`delete from identity.users`;
   } finally {
     await identitySql.end({ timeout: 1 });
     await directSql.end({ timeout: 1 });
