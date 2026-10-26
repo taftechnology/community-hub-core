@@ -20,35 +20,10 @@ import {
   findOrganisationBySlug,
 } from "@community-hub/tenancy";
 
-import { sqlstate } from "./db-ops-error.js";
 import { IMAGE_CERT_PATH, readServiceEnv, type ServiceEnv } from "./env.js";
 import { createAwsKmsPort } from "./kms/aws-kms-adapter.js";
+import { classify, PROVISION_SECRET_ARN } from "./one-off-failure.js";
 import { secretsManagerReader } from "./secrets.js";
-
-/**
- * The one fixed secret this command reads: a Secrets Manager secret whose
- * resource name ends with `-provision-owner-` plus the six-character random
- * suffix Secrets Manager appends. `${name}` is not known at runtime, so the
- * check is on the `-provision-owner-??????` tail, not a fully-known literal.
- */
-const PROVISION_SECRET_ARN =
-  /^arn:aws:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[^\s:]+-provision-owner-[A-Za-z0-9]{6}$/;
-
-/** Node/postgres.js connection-level error codes that are a `connect` failure, not `fail`. */
-const CONNECT_CODES = new Set([
-  "ECONNREFUSED",
-  "ECONNRESET",
-  "ENOTFOUND",
-  "ETIMEDOUT",
-  "EPIPE",
-  "EHOSTUNREACH",
-  "ENETUNREACH",
-  "EAI_AGAIN",
-  "CONNECT_TIMEOUT",
-  "CONNECTION_CLOSED",
-  "CONNECTION_ENDED",
-  "CONNECTION_DESTROYED",
-]);
 
 /** The `postgres` Sql type, taken from a db export so this package need not depend on `postgres`. */
 type Sql = ReturnType<typeof createPlatformSql>;
@@ -80,45 +55,6 @@ function ok(stdout: "created\n" | "already_bootstrapped\n"): ProvisionOwnerResul
 
 function failed(stderr: string): ProvisionOwnerResult {
   return { exitCode: 1, stdout: "", stderr };
-}
-
-/** The adapter wraps every envelope-key failure as `Error("kms_failed")`. */
-function isKmsFailure(error: unknown): boolean {
-  return error instanceof Error && error.message === "kms_failed";
-}
-
-/** True when the error (or a cause one level down) carries a connection-level code. */
-function isConnectionError(error: unknown): boolean {
-  const seen = new Set<unknown>();
-  let current: unknown = error;
-  while (typeof current === "object" && current !== null && !seen.has(current)) {
-    seen.add(current);
-    const code = (current as { code?: unknown }).code;
-    if (typeof code === "string" && CONNECT_CODES.has(code)) {
-      return true;
-    }
-    current = (current as { cause?: unknown }).cause;
-  }
-  return false;
-}
-
-/**
- * The failure word for an uncaught error, reading nothing from the error but its
- * class of failure. `kms` for an envelope-key failure, `connect`/`connect <SQLSTATE>`
- * for a database connection failure, `fail` for anything else.
- */
-function classify(error: unknown): string {
-  if (isKmsFailure(error)) {
-    return "kms\n";
-  }
-  const code = sqlstate(error);
-  if (code !== undefined) {
-    return `connect ${code}\n`;
-  }
-  if (isConnectionError(error)) {
-    return "connect\n";
-  }
-  return "fail\n";
 }
 
 /** Parses the secret JSON, returning undefined unless all three fields are present. */
