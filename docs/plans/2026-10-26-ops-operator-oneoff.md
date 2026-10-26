@@ -9,7 +9,7 @@ Spec: docs/specs/2026-10-26-ops-operator-oneoff.md
 **Architecture:** The one-off failure classification and ARN pattern move from `provision-owner.ts` into a shared `one-off-failure.ts`. `provision-owner` gains a three-way parse with a `shape` refusal. A new `ops-operator.ts` mirrors `provision-owner`'s structure (`runOpsOperator(deps)`, a `Main` backstop, an entry point) and opens only the identity connection. Identity's `endOperatorSession` writes `signed_out` only when it revoked a row, and two internal helpers are documented and pinned as test-only. A new runbook documents every step.
 
 Slug: ops-operator-oneoff
-Status: draft
+Status: approved (2026-10-26, Abdus Salam)
 
 ## Who does what
 
