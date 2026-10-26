@@ -234,6 +234,39 @@ describe("ops-operator", () => {
         expect(connectionCalls).toHaveLength(0);
       }
     });
+
+    it("refuses non-object opsOperator and invalid field types with shape", async () => {
+      const extraMalformedPayloads = [
+        { opsOperator: null },
+        { opsOperator: [] },
+        { opsOperator: "x" },
+        // revoke with an unknown key beside the two valid ones
+        { opsOperator: { action: "revoke", email: EMAIL, extraKey: "val" } },
+        // non-string email
+        {
+          opsOperator: {
+            action: "grant",
+            email: 123,
+            roleKeys: ["platform_admin"],
+            enrolmentCode: CODE,
+          },
+        },
+      ];
+
+      for (const payload of extraMalformedPayloads) {
+        const { deps, connectionCalls, readSecret } = makeDeps();
+        readSecret.mockResolvedValue(JSON.stringify(payload));
+
+        const result = await runOpsOperator(deps);
+        expect(result).toEqual({ exitCode: 1, stdout: "", stderr: "shape\n" });
+        expect(mFindOrCreate).not.toHaveBeenCalled();
+        expect(mFindUser).not.toHaveBeenCalled();
+        expect(mGrant).not.toHaveBeenCalled();
+        expect(mRevoke).not.toHaveBeenCalled();
+        expect(mRecover).not.toHaveBeenCalled();
+        expect(connectionCalls).toHaveLength(0);
+      }
+    });
   });
 
   describe("Security pin 3: only fixed words on every outcome", () => {
@@ -326,6 +359,32 @@ describe("ops-operator", () => {
         expect(result).toEqual({ exitCode: 1, stdout: "", stderr: "refused\n" });
       }
     });
+
+    it("maps grantOperator rejection with IdentityError to refused", async () => {
+      const { deps } = makeDeps();
+      mGrant.mockRejectedValueOnce(new IdentityError("invalid_grant"));
+
+      const result = await runOpsOperator(deps);
+      expect(result).toEqual({ exitCode: 1, stdout: "", stderr: "refused\n" });
+    });
+
+    it("maps recoverOperator rejection with IdentityError to refused", async () => {
+      const { deps, readSecret } = makeDeps();
+      readSecret.mockResolvedValue(
+        JSON.stringify({
+          opsOperator: {
+            action: "recover",
+            email: EMAIL,
+            roleKeys: ["platform_admin"],
+            enrolmentCode: CODE,
+          },
+        }),
+      );
+      mRecover.mockRejectedValueOnce(new IdentityError("invalid_grant"));
+
+      const result = await runOpsOperator(deps);
+      expect(result).toEqual({ exitCode: 1, stdout: "", stderr: "refused\n" });
+    });
   });
 
   describe("B3a pre-checks before any write", () => {
@@ -403,6 +462,29 @@ describe("ops-operator", () => {
         expect(result).toEqual({ exitCode: 0, stdout: "granted\n", stderr: "" });
         expect(mGrant).toHaveBeenCalledTimes(2);
       }
+    });
+
+    it("refuses recover with a 25-character code before any identity call", async () => {
+      const { deps, connectionCalls, readSecret } = makeDeps();
+      readSecret.mockResolvedValue(
+        JSON.stringify({
+          opsOperator: {
+            action: "recover",
+            email: EMAIL,
+            roleKeys: ["platform_admin"],
+            enrolmentCode: "A".repeat(25),
+          },
+        }),
+      );
+
+      const result = await runOpsOperator(deps);
+      expect(result).toEqual({ exitCode: 1, stdout: "", stderr: "refused\n" });
+      expect(mFindOrCreate).not.toHaveBeenCalled();
+      expect(mFindUser).not.toHaveBeenCalled();
+      expect(mGrant).not.toHaveBeenCalled();
+      expect(mRevoke).not.toHaveBeenCalled();
+      expect(mRecover).not.toHaveBeenCalled();
+      expect(connectionCalls).toHaveLength(0);
     });
   });
 
