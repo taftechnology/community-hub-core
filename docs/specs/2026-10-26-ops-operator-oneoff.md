@@ -1,7 +1,7 @@
 # Spec: Ops operator one-off — grant, revoke and recover operators, and the operator runbook
 
 Slug: ops-operator-oneoff
-Status: draft
+Status: approved (2026-10-26, Abdus Salam)
 Depends on: `docs/specs/2026-10-22-ops-operator-identity.md` (PR #62), `docs/specs/2026-10-25-ops-console-api.md` (PR #63)
 Architecture refs: §11.4; ADR 0015 (interim single-owner recovery); AGENTS.md §1 rules 1, 5, 8; §6 Residency; §13 (runbooks)
 
