@@ -1,7 +1,7 @@
 # Spec: Ops console UI — enrolment, passkey sign-in and the directory in `apps/ops`
 
 Slug: ops-console-ui
-Status: draft
+Status: approved (2026-10-26, Abdus Salam)
 Depends on: `docs/specs/2026-10-25-ops-console-api.md` (merged in PR #63), `docs/specs/2026-10-26-ops-operator-oneoff.md` (merged in PR #64)
 Architecture refs: §8.5 Ops console (`architecture.md:484`), §11.4, §19 Ops console, §20; D16; ADR 0015; AGENTS.md §1 rules 5, 6, 8; §6 API and UI, Cost
 
@@ -121,11 +121,11 @@ New response schemas `passkeyRegisterOptionsResponse` and `passkeyAuthenticateOp
 - **Safari refuses a ceremony after an `await`.** Named for `ops-console-proof` (U9).
 - **A token or code leaks to script storage, the URL or a log.** HttpOnly cookies (PR #63), pins 4, 5 and 9, U15.
 - **The ARM image build cannot run Vite.** The lockfile already carries the `linux-arm64-gnu` bindings for Rolldown, Lightning CSS and Tailwind Oxide. CI Stage 3 builds the ARM image on every pull request.
-- **Size.** About 650–800 source lines: `apps/ops` about 600–700, the route and contracts about 40, the Dockerfile about 5, config about 60. Tests are about 1,000–1,300 lines. That is around the ~800-line guide for source and over it with tests. A split into "sign-in and directory" then "enrolment" would ship a console nobody can reach, because an operator must enrol before signing in. **Owner to accept the size.**
+- **Size.** About 650–800 source lines: `apps/ops` about 600–700, the route and contracts about 40, the Dockerfile about 5, config about 60. Tests are about 1,000–1,300 lines. That is around the ~800-line guide for source and over it with tests. A split into "sign-in and directory" then "enrolment" would ship a console nobody can reach, because an operator must enrol before signing in. Accepted by the owner, 2026-10-26.
 
 ## Out-of-band
 
-- **Owner decision (Abdus):** the size.
+- **Owner decisions (Abdus, 2026-10-26):** approved U12 (route fixes), U6–U7 (on-demand refresh serialised by Web Locks) and the size.
 - **Carry-forwards honoured:**
   - Hashed names and no unhashed top-level file (U2).
   - `Content-Type: application/json` (U3).
