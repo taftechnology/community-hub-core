@@ -48,10 +48,16 @@ export type OperatorAction =
   | "sign_in_refused"
   | "signed_out";
 
+/**
+ * Internal to identity; exported only so identity's own tests can take the real lock and write events; never re-export from public/.
+ */
 export async function lockOperatorUser(tx: TransactionSql, userId: string): Promise<void> {
   await tx`select pg_advisory_xact_lock(hashtextextended('operator:' || ${userId}::text, 0))`;
 }
 
+/**
+ * Internal to identity; exported only so identity's own tests can take the real lock and write events; never re-export from public/.
+ */
 export async function appendOperatorEvent(
   tx: TransactionSql,
   input: {
@@ -991,17 +997,20 @@ export async function endOperatorSession(
     await tx`
       select pg_advisory_xact_lock(hashtextextended('family:' || ${row.refresh_family}::text, 0))
     `;
-    await tx`
+    const revoked = await tx<{ id: string }[]>`
       update identity.sessions
       set revoked_at = ${nowIso}::timestamptz
       where refresh_family = ${row.refresh_family}
         and revoked_at is null
+      returning id
     `;
-    await appendOperatorEvent(tx, {
-      userId: row.user_id,
-      action: "signed_out",
-      requestId: input.requestId,
-      now: input.now,
-    });
+    if (revoked.length > 0) {
+      await appendOperatorEvent(tx, {
+        userId: row.user_id,
+        action: "signed_out",
+        requestId: input.requestId,
+        now: input.now,
+      });
+    }
   });
 }
