@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import axe from "axe-core";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -245,7 +245,9 @@ describe("Shell unsupported browser", () => {
 
     renderAt("#/sign-in", deps);
     const h1 = await screen.findByRole("heading", { level: 1, name: "Sign in" });
-    expect(document.activeElement).toBe(h1);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(h1);
+    });
   });
 
   it("pin 5: watchStorage records nothing across the probe, U7 refresh and sign-out", async () => {

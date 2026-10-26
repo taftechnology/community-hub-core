@@ -725,7 +725,9 @@ describe("Enrol screen", () => {
 
     // Step 1 focus
     const h1Step1 = await screen.findByRole("heading", { level: 1, name: "Enrol" });
-    expect(document.activeElement).toBe(h1Step1);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(h1Step1);
+    });
 
     const emailInput = screen.getByLabelText("Email");
     emailInput.focus();
@@ -737,7 +739,9 @@ describe("Enrol screen", () => {
 
     // Step 2 focus
     const h1Step2 = await screen.findByRole("heading", { level: 1, name: "Enter your codes" });
-    expect(document.activeElement).toBe(h1Step2);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(h1Step2);
+    });
 
     const emailCodeInput = screen.getByLabelText("Email code");
     emailCodeInput.focus();
@@ -757,7 +761,9 @@ describe("Enrol screen", () => {
       level: 1,
       name: "Register your first passkey",
     });
-    expect(document.activeElement).toBe(h1Step3);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(h1Step3);
+    });
 
     const createButton3 = screen.getByRole("button", { name: "Create passkey" });
     createButton3.focus();
@@ -766,7 +772,9 @@ describe("Enrol screen", () => {
 
     // Step 4 focus
     const h1Step4 = await screen.findByRole("heading", { level: 1, name: "Add a second passkey" });
-    expect(document.activeElement).toBe(h1Step4);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(h1Step4);
+    });
 
     const createButton4 = screen.getByRole("button", { name: "Create passkey" });
     createButton4.focus();
