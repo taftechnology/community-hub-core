@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 
 import { SESSION_ENDED_MESSAGE } from "./messages.js";
+import type { SessionClient } from "./session.js";
 
 export type AuthStatus = "unknown" | "checking" | "signed-in" | "signed-out" | "failed";
 
@@ -11,6 +12,7 @@ export type AuthContextValue = {
   signedOut: (message?: string) => void;
   ended: () => void;
   retry: () => void;
+  sessionClient?: SessionClient | undefined;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -29,6 +31,7 @@ export type AuthProviderProps = {
   onRetry?: () => void;
   initialStatus?: AuthStatus;
   initialMessage?: string;
+  sessionClient?: SessionClient | undefined;
 };
 
 export function AuthProvider({
@@ -37,6 +40,7 @@ export function AuthProvider({
   onRetry,
   initialStatus = "unknown",
   initialMessage,
+  sessionClient,
 }: AuthProviderProps) {
   const [status, setStatus] = useState<AuthStatus>(initialStatus);
   const [message, setMessage] = useState<string | undefined>(initialMessage);
@@ -72,8 +76,9 @@ export function AuthProvider({
       signedOut,
       ended,
       retry,
+      sessionClient,
     };
-  }, [value, status, message, signedIn, signedOut, ended, retry]);
+  }, [value, status, message, signedIn, signedOut, ended, retry, sessionClient]);
 
   return <AuthContext.Provider value={contextValue}>{children}</AuthContext.Provider>;
 }

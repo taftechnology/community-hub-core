@@ -10,7 +10,6 @@ import {
   type AuthStatus,
 } from "./auth-state.js";
 import type { OpsDeps } from "./deps.js";
-import { useFocusHeading } from "./focus.js";
 import {
   CHECKING_SESSION_MESSAGE,
   GENERIC_ERROR_MESSAGE,
@@ -23,20 +22,16 @@ import {
 import { createSessionClient } from "./session.js";
 import { SignIn } from "./sign-in.js";
 import { Enrol } from "./enrol.js";
+import { Directory } from "./directory.js";
 
 function DirectoryRoute() {
   const { status } = useAuthState();
-  useFocusHeading();
 
   if (status === "signed-out") {
     return <Navigate to="/sign-in" replace />;
   }
 
-  return (
-    <h1 tabIndex={-1} className="text-2xl font-bold tracking-tight text-foreground outline-none">
-      Directory
-    </h1>
-  );
+  return <Directory />;
 }
 
 function SignInRoute({ deps }: { deps: OpsDeps }) {
@@ -117,8 +112,9 @@ function ShellLayout({ deps }: { deps: OpsDeps }) {
       signedOut,
       ended,
       retry,
+      sessionClient,
     }),
-    [status, message, signedIn, signedOut, ended, retry],
+    [status, message, signedIn, signedOut, ended, retry, sessionClient],
   );
 
   return (
@@ -138,7 +134,7 @@ function ShellLayout({ deps }: { deps: OpsDeps }) {
           )}
         </header>
         <main className="mx-auto max-w-lg p-6">
-          {status === "checking" && (
+          {(status === "unknown" || status === "checking") && location.pathname !== "/enrol" && (
             <p role="status" className="text-sm text-muted-foreground">
               {CHECKING_SESSION_MESSAGE}
             </p>
@@ -155,7 +151,8 @@ function ShellLayout({ deps }: { deps: OpsDeps }) {
               </div>
             </div>
           )}
-          {status !== "failed" && <Outlet />}
+          {((status !== "unknown" && status !== "checking" && status !== "failed") ||
+            location.pathname === "/enrol") && <Outlet />}
         </main>
       </div>
     </AuthProvider>

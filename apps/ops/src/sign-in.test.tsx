@@ -40,9 +40,8 @@ describe("Sign-in screen", () => {
 
     renderAt("#/sign-in", deps);
 
-    expect(screen.getByRole("link", { name: SIGN_IN_ENROL_LINK }).getAttribute("href")).toBe(
-      "#/enrol",
-    );
+    const enrolLink = await screen.findByRole("link", { name: SIGN_IN_ENROL_LINK });
+    expect(enrolLink.getAttribute("href")).toBe("#/enrol");
 
     const button = await screen.findByRole("button", { name: SIGN_IN_BUTTON_LABEL });
     fireEvent.click(button);

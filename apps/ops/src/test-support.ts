@@ -232,7 +232,13 @@ export function stubDeps(routes: StubRoutes = {}, overrides?: Partial<OpsDeps>):
           : routeState[matchedKey]!.shift()!;
 
       if (typeof handler === "function") {
-        const req = input instanceof Request ? input : new Request(urlStr, init);
+        const req =
+          input instanceof Request
+            ? input
+            : new Request(
+                urlStr.startsWith("/") ? `https://ops.example.test${urlStr}` : urlStr,
+                init,
+              );
         return await handler(req);
       }
       return formatStubResponse(handler);

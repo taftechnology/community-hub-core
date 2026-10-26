@@ -6,6 +6,7 @@ import type { OpsDeps } from "./deps.js";
 import {
   CHECKING_SESSION_MESSAGE,
   GENERIC_ERROR_MESSAGE,
+  SIGN_IN_BUTTON_LABEL,
   SIGN_OUT_BUTTON_LABEL,
   SIGN_OUT_NETWORK_ERROR_MESSAGE,
   TRY_AGAIN_BUTTON_LABEL,
@@ -67,14 +68,20 @@ describe("Shell unsupported browser", () => {
   });
 
   it("renders route headings when browser is supported", async () => {
-    history.replaceState(null, "", "#/");
-    const { unmount } = render(<Shell deps={validDeps} />);
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Directory");
+    const authedDeps = stubDeps({
+      "GET /v1/ops/me": { status: 200, body: { roleKeys: ["ops.directory.view"] } },
+      "GET /v1/ops/directory": { status: 200, body: { organisations: [], truncated: false } },
+    });
+    const { unmount } = renderAt("#/", authedDeps);
+    expect((await screen.findByRole("heading", { level: 1 })).textContent).toBe("Directory");
     unmount();
 
-    history.replaceState(null, "", "#/sign-in");
-    const { unmount: unmountSignIn } = render(<Shell deps={validDeps} />);
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Sign in");
+    const unauthedDeps = stubDeps({
+      "GET /v1/ops/me": { status: 401 },
+      "POST /v1/ops/session/refresh": { status: 401 },
+    });
+    const { unmount: unmountSignIn } = renderAt("#/sign-in", unauthedDeps);
+    expect((await screen.findByRole("heading", { level: 1 })).textContent).toBe("Sign in");
     unmountSignIn();
 
     history.replaceState(null, "", "#/enrol");
@@ -302,5 +309,67 @@ describe("Shell unsupported browser", () => {
 
     // Clean up pending promise
     resolveMe(new Response(JSON.stringify({}), { status: 200 }));
+  });
+
+  it("on #/ with me held pending, no request to /v1/ops/directory is made and no Directory heading is shown until me answers 200", async () => {
+    let resolveMe!: () => void;
+    const pendingMe = new Promise<void>((res) => {
+      resolveMe = res;
+    });
+
+    const deps = stubDeps({
+      "GET /v1/ops/me": async () => {
+        await pendingMe;
+        return new Response(JSON.stringify({ roleKeys: ["ops.directory.view"] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+      "GET /v1/ops/directory": {
+        status: 200,
+        body: { organisations: [], truncated: false },
+      },
+    });
+
+    renderAt("#/", deps);
+
+    expect(screen.getByRole("status").textContent).toBe(CHECKING_SESSION_MESSAGE);
+    expect(screen.queryByRole("heading", { level: 1, name: "Directory" })).toBeNull();
+    const directoryCallsBefore = deps.calls.filter((c) => c.path === "/v1/ops/directory");
+    expect(directoryCallsBefore).toHaveLength(0);
+
+    await act(async () => {
+      resolveMe();
+    });
+
+    await screen.findByRole("heading", { level: 1, name: "Directory" });
+    const directoryCallsAfter = deps.calls.filter((c) => c.path === "/v1/ops/directory");
+    expect(directoryCallsAfter.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("on #/sign-in with me held pending, the sign-in button is not shown until the probe settles", async () => {
+    let resolveMe!: () => void;
+    const pendingMe = new Promise<void>((res) => {
+      resolveMe = res;
+    });
+
+    const deps = stubDeps({
+      "GET /v1/ops/me": async () => {
+        await pendingMe;
+        return new Response(null, { status: 401 });
+      },
+      "POST /v1/ops/session/refresh": { status: 401 },
+    });
+
+    renderAt("#/sign-in", deps);
+
+    expect(screen.getByRole("status").textContent).toBe(CHECKING_SESSION_MESSAGE);
+    expect(screen.queryByRole("button", { name: SIGN_IN_BUTTON_LABEL })).toBeNull();
+
+    await act(async () => {
+      resolveMe();
+    });
+
+    await screen.findByRole("button", { name: SIGN_IN_BUTTON_LABEL });
   });
 });

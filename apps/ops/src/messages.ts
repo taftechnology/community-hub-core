@@ -43,6 +43,12 @@ export const ENROL_EMAIL_CODE_LABEL = "Email code";
 export const ENROL_ENROLMENT_CODE_LABEL = "Enrolment code";
 
 // U13
+export const DIRECTORY_HEADING = "Directory";
+export const DIRECTORY_TABLE_CAPTION = "Organisations";
+export const DIRECTORY_COLUMN_ORGANISATION = "Organisation";
+export const DIRECTORY_COLUMN_KIND = "Kind";
+export const DIRECTORY_COLUMN_REGION = "Region";
+export const DIRECTORY_COLUMN_COMMUNITIES = "Communities";
 export const DIRECTORY_FORBIDDEN_MESSAGE = "Your role does not include the directory.";
 export const DIRECTORY_TRUNCATED_MESSAGE = "Showing the first 500 organisations.";
 export const DIRECTORY_EMPTY_MESSAGE = "No organisations yet.";
