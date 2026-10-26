@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  passkeyAuthenticateOptionsResponse,
+  passkeyRegisterOptionsResponse,
+} from "@community-hub/contracts/ops";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import { applyProductMigrations, newId } from "@community-hub/db";
 import {
@@ -1568,5 +1572,179 @@ describe("ops flow integration", () => {
       cookie: `__Host-ops_at=${at3}`,
     });
     expect(meAfterRes.status).toBe(401);
+  });
+
+  it("pin U12: register options carry rp.name, fixed labels and excludeCredentials", async () => {
+    const email = "op-pin-u12@example.test";
+    const user = await findOrCreateUserByEmail(identitySql, kms, KEY_ARN, { email });
+    await grantOperator(identitySql, kms, KEY_ARN, {
+      userId: user.userId,
+      roleKeys: ["platform_admin"],
+      enrolmentCode: ENROLMENT_CODE,
+      opsRpId: RP_ID,
+      now,
+    });
+
+    // 1. Enrolment start and verify
+    const startRes = await opsFetch(PORT, "/v1/ops/enrolment/start", { body: { email } });
+    expect(startRes.status).toBe(204);
+    await pollUntil(() => testMail.last?.to === email, "waiting for OTP mail");
+    const emailCode = testMail.last!.code;
+
+    const verifyRes = await opsFetch(PORT, "/v1/ops/enrolment/verify", {
+      body: { email, emailCode, enrolmentCode: ENROLMENT_CODE },
+    });
+    expect(verifyRes.status).toBe(200);
+    const atHeader = verifyRes.headers.getSetCookie().find((c) => c.startsWith("__Host-ops_at="));
+    const enrolmentAccessToken = /^__Host-ops_at=([^;]+)/.exec(atHeader!)![1]!;
+
+    // (a) An enrolment session before any passkey gets rp.name === "Community Hub operations",
+    // user.name and user.displayName === "Community Hub operator", and excludeCredentials deep-equal to [].
+    const optsRes1 = await opsFetch(PORT, "/v1/ops/passkey/register/options", {
+      body: {},
+      cookie: `__Host-ops_at=${enrolmentAccessToken}`,
+    });
+    expect(optsRes1.status).toBe(200);
+    const opts1 = (await optsRes1.json()) as {
+      challenge: string;
+      rp: { id: string; name?: string };
+      user: { id: string; name: string; displayName: string };
+      excludeCredentials?: unknown[];
+    };
+    expect(opts1.rp.name).toBe("Community Hub operations");
+    expect(opts1.user.name).toBe("Community Hub operator");
+    expect(opts1.user.displayName).toBe("Community Hub operator");
+    expect(opts1.excludeCredentials).toEqual([]);
+
+    // Register passkey 1
+    const key1 = await signer();
+    const credId1 = new Uint8Array(16).fill(21);
+    const authData1 = authenticatorData({
+      signCount: 0,
+      credentialId: credId1,
+      cose: coseKey(key1.x, key1.y),
+      flags: 0x45,
+    });
+    const regRes1 = await opsFetch(PORT, "/v1/ops/passkey/register/verify", {
+      body: {
+        clientDataJSON: b64(clientData("webauthn.create", bytesFrom(opts1.challenge))),
+        attestationObject: b64(attestationObject(authData1)),
+      },
+      cookie: `__Host-ops_at=${enrolmentAccessToken}`,
+    });
+    expect(regRes1.status).toBe(200);
+
+    // (b) After the first passkey is registered, the next options for the same enrolment session
+    // list exactly that credential id, base64url.
+    const optsRes2 = await opsFetch(PORT, "/v1/ops/passkey/register/options", {
+      body: {},
+      cookie: `__Host-ops_at=${enrolmentAccessToken}`,
+    });
+    expect(optsRes2.status).toBe(200);
+    const opts2 = (await optsRes2.json()) as {
+      challenge: string;
+      rp: { id: string; name?: string };
+      user: { id: string; name: string; displayName: string };
+      excludeCredentials?: { type: string; id: string }[];
+    };
+    expect(opts2.excludeCredentials).toEqual([{ type: "public-key", id: b64(credId1) }]);
+
+    // Register passkey 2 to activate operator
+    const key2 = await signer();
+    const credId2 = new Uint8Array(16).fill(22);
+    const authData2 = authenticatorData({
+      signCount: 0,
+      credentialId: credId2,
+      cose: coseKey(key2.x, key2.y),
+      flags: 0x45,
+    });
+    const regRes2 = await opsFetch(PORT, "/v1/ops/passkey/register/verify", {
+      body: {
+        clientDataJSON: b64(clientData("webauthn.create", bytesFrom(opts2.challenge))),
+        attestationObject: b64(attestationObject(authData2)),
+      },
+      cookie: `__Host-ops_at=${enrolmentAccessToken}`,
+    });
+    expect(regRes2.status).toBe(200);
+    expect(((await regRes2.json()) as { activated: boolean }).activated).toBe(true);
+
+    // Sign in as operator
+    const { verifyRes: signInRes } = await signInOperator(key1, credId1);
+    expect(signInRes.status).toBe(200);
+    const operatorAtCookie = signInRes.headers
+      .getSetCookie()
+      .find((c) => c.startsWith("__Host-ops_at="));
+    const operatorAccessToken = /^__Host-ops_at=([^;]+)/.exec(operatorAtCookie!)![1]!;
+
+    // (c) An operator session (signed in after two passkeys, as in "operator session registers an additional passkey…")
+    // lists both credential ids.
+    const optsRes3 = await opsFetch(PORT, "/v1/ops/passkey/register/options", {
+      body: {},
+      cookie: `__Host-ops_at=${operatorAccessToken}`,
+    });
+    expect(optsRes3.status).toBe(200);
+    const opts3 = (await optsRes3.json()) as {
+      challenge: string;
+      rp: { id: string; name?: string };
+      user: { id: string; name: string; displayName: string };
+      excludeCredentials?: { type: string; id: string }[];
+    };
+    expect(opts3.excludeCredentials).toHaveLength(2);
+    expect(opts3.excludeCredentials).toEqual(
+      expect.arrayContaining([
+        { type: "public-key", id: b64(credId1) },
+        { type: "public-key", id: b64(credId2) },
+      ]),
+    );
+
+    // (d) No response body contains the test address or the user id.
+    for (const body of [opts1, opts2, opts3]) {
+      const text = JSON.stringify(body);
+      expect(text).not.toContain(email);
+      expect(text).not.toContain(user.userId);
+    }
+  });
+
+  it("register and authenticate options match the contract schemas", async () => {
+    const email = "op-options-contract@example.test";
+    const user = await findOrCreateUserByEmail(identitySql, kms, KEY_ARN, { email });
+    await grantOperator(identitySql, kms, KEY_ARN, {
+      userId: user.userId,
+      roleKeys: ["platform_admin"],
+      enrolmentCode: ENROLMENT_CODE,
+      opsRpId: RP_ID,
+      now,
+    });
+
+    const startRes = await opsFetch(PORT, "/v1/ops/enrolment/start", { body: { email } });
+    expect(startRes.status).toBe(204);
+    await pollUntil(() => testMail.last?.to === email, "waiting for OTP mail");
+    const emailCode = testMail.last!.code;
+
+    const verifyRes = await opsFetch(PORT, "/v1/ops/enrolment/verify", {
+      body: { email, emailCode, enrolmentCode: ENROLMENT_CODE },
+    });
+    expect(verifyRes.status).toBe(200);
+    const atHeader = verifyRes.headers.getSetCookie().find((c) => c.startsWith("__Host-ops_at="));
+    const enrolmentAccessToken = /^__Host-ops_at=([^;]+)/.exec(atHeader!)![1]!;
+
+    // Register options
+    const regRes = await opsFetch(PORT, "/v1/ops/passkey/register/options", {
+      body: {},
+      cookie: `__Host-ops_at=${enrolmentAccessToken}`,
+    });
+    expect(regRes.status).toBe(200);
+    const regBody: unknown = await regRes.json();
+    const parsedReg = passkeyRegisterOptionsResponse.parse(regBody);
+    expect(parsedReg).toBeDefined();
+
+    // Authenticate options
+    const authRes = await opsFetch(PORT, "/v1/ops/passkey/authenticate/options", {
+      body: {},
+    });
+    expect(authRes.status).toBe(200);
+    const authBody: unknown = await authRes.json();
+    const parsedAuth = passkeyAuthenticateOptionsResponse.parse(authBody);
+    expect(parsedAuth).toBeDefined();
   });
 });
