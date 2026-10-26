@@ -11,7 +11,7 @@ The operator administration tool shares the one fixed secret name (`${PROVISION_
 - **Never run `ops-operator` and `provision-owner` at the same time.** Only one run of either tool happens at a time.
 - **Delete and verify runs after every execution.** The secret exists only between **Create** and **Delete and verify**; it is destroyed with `--force-delete-without-recovery` immediately after every run, on success, on any failure word, and even when the task never started.
 - **Shell variables and placeholders only.** Never paste an account id, an ARN, a hostname, the resolved secret name, an email address, an enrolment code, or an IP address into this runbook or into evidence. In zsh write `${VAR}:text`, not `$VAR:text`.
-- **No live secret or credential in evidence.** The enrolment code and email address are confidential. The enrolment code is generated offline on the owner's machine, displayed once, and delivered out of band to the operator. It is never committed, logged, or pasted into evidence.
+- **Evidence is counts, statuses, lengths and the one-off's fixed result words only.** Never an ARN, secret name, hostname, address or code. The enrolment code and email address are confidential. The enrolment code is generated offline on the owner's machine, displayed once, and delivered out of band to the operator. It is never committed, logged, or pasted into evidence.
 
 ## Prerequisites
 
@@ -54,7 +54,7 @@ Generate a 160-bit (32 character) unpadded Base32 enrolment code offline on the 
 
     print -r -- "${ENROLMENT_CODE}"
 
-The `print` command displays the code once. Copy the code and transmit it to the operator through a secure out-of-band channel (e.g. encrypted messaging, password manager, or in person).
+The `print` command displays the code once. The owner hands the enrolment code to the operator through a private channel other than email — encrypted messaging, a password manager share, or in person — because email already carries the other factor (the `operator_enrolment` email code) and a single mailbox compromise would yield both.
 
 Immediately after copying the code, clear the screen and terminal scrollback in the same terminal tab:
 
