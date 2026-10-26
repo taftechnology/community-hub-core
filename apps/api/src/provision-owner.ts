@@ -57,16 +57,19 @@ function failed(stderr: string): ProvisionOwnerResult {
   return { exitCode: 1, stdout: "", stderr };
 }
 
-/** Parses the secret JSON, returning undefined unless all three fields are present. */
-function parseSecret(raw: string): SecretInput | undefined {
+/** Parses the secret JSON, returning "secret", "shape" or the validated input. */
+function parseSecret(raw: string): "shape" | "secret" | SecretInput {
   let value: unknown;
   try {
     value = JSON.parse(raw);
   } catch {
-    return undefined;
+    return "secret";
   }
-  if (typeof value !== "object" || value === null) {
-    return undefined;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return "secret";
+  }
+  if (Object.hasOwn(value, "opsOperator")) {
+    return "shape";
   }
   const record = value as Record<string, unknown>;
   const { organisationSlug, communitySlug, email } = record;
@@ -78,7 +81,7 @@ function parseSecret(raw: string): SecretInput | undefined {
     typeof email !== "string" ||
     email.length === 0
   ) {
-    return undefined;
+    return "secret";
   }
   return { organisationSlug, communitySlug, email };
 }
@@ -91,16 +94,19 @@ export async function runProvisionOwner(deps: ProvisionOwnerDeps): Promise<Provi
     return failed("env\n");
   }
 
-  let input: SecretInput | undefined;
+  let parsed: "shape" | "secret" | SecretInput;
   try {
-    input = parseSecret(await deps.readSecret(arn));
+    parsed = parseSecret(await deps.readSecret(arn));
   } catch {
     return failed("secret\n");
   }
-  if (input === undefined) {
+  if (parsed === "shape") {
+    return failed("shape\n");
+  }
+  if (parsed === "secret") {
     return failed("secret\n");
   }
-  const { organisationSlug, communitySlug, email } = input;
+  const { organisationSlug, communitySlug, email } = parsed;
 
   try {
     const organisation = await findOrganisationBySlug(deps.platform, organisationSlug);
