@@ -55,4 +55,17 @@ describe("logging guards", () => {
       spy.mockRestore();
     }
   });
+
+  it("src has no setInterval; session.ts has no setTimeout or setInterval", () => {
+    const files = listSourceFiles(srcDir);
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const content = fs.readFileSync(file, "utf8");
+      const relative = path.relative(srcDir, file);
+      expect(content, `setInterval found in ${relative}`).not.toMatch(/\bsetInterval\s*\(/);
+      if (path.basename(file) === "session.ts") {
+        expect(content, `setTimeout found in ${relative}`).not.toMatch(/\bsetTimeout\s*\(/);
+      }
+    }
+  });
 });

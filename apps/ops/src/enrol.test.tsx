@@ -174,23 +174,30 @@ describe("Enrol screen", () => {
 
   it("pin 5: watchStorage records nothing, location holds no email or codes, autocomplete is off", async () => {
     const watcher = watchStorage();
+    const encodedEmail = encodeURIComponent(testEmail);
+    const assertLocationHoldsNothingPersonal = () => {
+      expect(location.href).not.toContain(testEmail);
+      expect(location.href).not.toContain(testEmailCode);
+      expect(location.href).not.toContain(testEnrolmentCode);
+      expect(location.href).not.toContain(encodedEmail);
+      const decodedHashAndSearch =
+        decodeURIComponent(location.hash) + decodeURIComponent(location.search);
+      expect(decodedHashAndSearch).not.toContain(testEmailCode);
+      expect(decodedHashAndSearch).not.toContain(testEnrolmentCode);
+    };
     try {
       const deps = stubDeps(happyRoutes());
       renderAt("#/enrol", deps);
 
       // Step 1 check
-      expect(location.href).not.toContain(testEmail);
-      expect(location.href).not.toContain(testEmailCode);
-      expect(location.href).not.toContain(testEnrolmentCode);
+      assertLocationHoldsNothingPersonal();
 
       fireEvent.change(await screen.findByLabelText("Email"), { target: { value: testEmail } });
       fireEvent.click(screen.getByRole("button", { name: "Send code" }));
 
       // Step 2 check
       await screen.findByRole("heading", { level: 1, name: "Enter your codes" });
-      expect(location.href).not.toContain(testEmail);
-      expect(location.href).not.toContain(testEmailCode);
-      expect(location.href).not.toContain(testEnrolmentCode);
+      assertLocationHoldsNothingPersonal();
 
       const enrolmentInput = screen.getByLabelText("Enrolment code");
       expect(enrolmentInput.getAttribute("autocomplete")).toBe("off");
@@ -205,23 +212,17 @@ describe("Enrol screen", () => {
 
       // Step 3 check
       await screen.findByRole("heading", { level: 1, name: "Register your first passkey" });
-      expect(location.href).not.toContain(testEmail);
-      expect(location.href).not.toContain(testEmailCode);
-      expect(location.href).not.toContain(testEnrolmentCode);
+      assertLocationHoldsNothingPersonal();
       fireEvent.click(screen.getByRole("button", { name: "Create passkey" }));
 
       // Step 4 check
       await screen.findByRole("heading", { level: 1, name: "Add a second passkey" });
-      expect(location.href).not.toContain(testEmail);
-      expect(location.href).not.toContain(testEmailCode);
-      expect(location.href).not.toContain(testEnrolmentCode);
+      assertLocationHoldsNothingPersonal();
       fireEvent.click(screen.getByRole("button", { name: "Create passkey" }));
 
       // Land on Sign-in
       await screen.findByRole("heading", { level: 1, name: "Sign in" });
-      expect(location.href).not.toContain(testEmail);
-      expect(location.href).not.toContain(testEmailCode);
-      expect(location.href).not.toContain(testEnrolmentCode);
+      assertLocationHoldsNothingPersonal();
 
       expect(watcher.calls).toHaveLength(0);
       expect(stored()).toEqual({ local: 0, session: 0 });

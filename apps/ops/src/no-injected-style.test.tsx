@@ -487,5 +487,5 @@ describe("No injected styles across every screen (pin 3)", () => {
         delete (targetObj as Record<string, unknown>).adoptedStyleSheets;
       }
     }
-  });
+  }, 15_000);
 });

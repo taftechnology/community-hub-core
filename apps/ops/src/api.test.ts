@@ -6,10 +6,12 @@ describe("api", () => {
   it("every POST is relative JSON with no Authorization (Pin 4)", async () => {
     let capturedUrl: string | undefined;
     let capturedInit: RequestInit | undefined;
+    const inits: (RequestInit | undefined)[] = [];
 
     const fakeFetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
       capturedUrl = url;
       capturedInit = init;
+      inits.push(init);
       return new Response(JSON.stringify({ ok: true }), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -17,6 +19,8 @@ describe("api", () => {
     });
 
     const api = createApi(fakeFetch as typeof fetch);
+
+    await api.get("/v1/ops/me");
 
     // Default body is "{}"
     const res1 = await api.post("/v1/ops/session/refresh");
@@ -36,6 +40,13 @@ describe("api", () => {
     // keepalive option passed through
     await api.post("/v1/ops/test", {}, { keepalive: true });
     expect(capturedInit?.keepalive).toBe(true);
+
+    expect(inits.length).toBeGreaterThan(0);
+    for (const init of inits) {
+      const credentials = init?.credentials;
+      expect(credentials === undefined || credentials === "same-origin").toBe(true);
+      expect(credentials).not.toBe("omit");
+    }
   });
 
   it("throws synchronously for absolute or non-ops paths", () => {
