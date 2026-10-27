@@ -48,6 +48,9 @@ export const DEFAULT_OPS_PERMISSIONS: ReadonlyMap<string, readonly string[]> = n
   ["platform_security", ["ops.directory.view"]],
 ]);
 
+export const OPS_RP_NAME = "Community Hub operations";
+export const OPS_USER_LABEL = "Community Hub operator";
+
 export type OpsDeps = {
   checkout: Checkout<OpsSql>;
   kms: KmsPort;
@@ -198,15 +201,22 @@ export function opsRoutes(deps: OpsDeps): GateRoute[] {
 
         return jsonResponse(200, {
           challenge: base64url(options.challenge),
-          rp: options.rp,
+          rp: {
+            id: options.rp.id,
+            name: OPS_RP_NAME,
+          },
           user: {
             id: base64url(options.user.id),
-            name: options.user.name,
-            displayName: options.user.displayName,
+            name: OPS_USER_LABEL,
+            displayName: OPS_USER_LABEL,
           },
           pubKeyCredParams: options.pubKeyCredParams,
           attestation: options.attestation,
           authenticatorSelection: options.authenticatorSelection,
+          excludeCredentials: (options.excludeCredentials ?? []).map((c) => ({
+            type: "public-key",
+            id: base64url(c.id),
+          })),
         });
       },
     },

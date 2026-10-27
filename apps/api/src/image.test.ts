@@ -111,6 +111,32 @@ function loopbackBody(id: string): { status: number; stdout: string; stderr: str
   return { status: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
 }
 
+function execFetch(
+  id: string,
+  requestPath: string,
+  hostname: string,
+): { status: number; headers: Record<string, string>; body: string } {
+  const code = [
+    `const response = await fetch('http://127.0.0.1:8080' + ${JSON.stringify(requestPath)}, {`,
+    `  headers: { 'x-community-hub-hostname': ${JSON.stringify(hostname)} },`,
+    `});`,
+    `const body = await response.text();`,
+    `const headers = Object.fromEntries(response.headers.entries());`,
+    `process.stdout.write(JSON.stringify({ status: response.status, headers, body }));`,
+  ].join(" ");
+  const result = spawnSync("docker", ["exec", id, "node", "--input-type=module", "-e", code], {
+    encoding: "utf8",
+  });
+  if (result.status !== 0) {
+    throw new Error(`execFetch failed: ${result.stderr || result.stdout}`);
+  }
+  return JSON.parse(result.stdout) as {
+    status: number;
+    headers: Record<string, string>;
+    body: string;
+  };
+}
+
 describe("service image build", () => {
   it("builds policy, tenancy, people, and access before the service", () => {
     const dockerfile = readFileSync(path.join(root, "apps/api/Dockerfile"), "utf8");
@@ -130,6 +156,35 @@ describe("service image build", () => {
     ]) {
       expect(filters, name).toContain(name);
     }
+  });
+
+  it("builds and serves the ops bundle", () => {
+    const dockerfile = readFileSync(path.join(root, "apps/api/Dockerfile"), "utf8");
+    const lines = dockerfile.split(/\r?\n/);
+    const firstBuildIndex = lines.findIndex(
+      (line) => line.includes("pnpm --filter") && line.trimEnd().endsWith(" build"),
+    );
+    expect(firstBuildIndex).toBeGreaterThanOrEqual(0);
+    expect(lines[firstBuildIndex]).not.toContain("@community-hub/ops");
+
+    const opsBuildIndex = lines.findIndex(
+      (line) => line.trim() === "RUN pnpm --filter @community-hub/ops build",
+    );
+    expect(opsBuildIndex).toBeGreaterThan(firstBuildIndex);
+
+    const runtimeAssemblyIndex = dockerfile.indexOf("mkdir -p /runtime");
+    expect(runtimeAssemblyIndex).toBeGreaterThanOrEqual(0);
+    const copyPasswdIndex = dockerfile.indexOf("COPY --from=os /etc/passwd", runtimeAssemblyIndex);
+    const runtimeAssembly = dockerfile.slice(runtimeAssemblyIndex, copyPasswdIndex);
+    expect(runtimeAssembly).toContain("cp -a apps/ops/dist /runtime/ops");
+
+    const lastFromIndex = dockerfile.lastIndexOf("FROM ");
+    expect(lastFromIndex).toBeGreaterThanOrEqual(0);
+    const finalStage = dockerfile.slice(lastFromIndex);
+    expect(finalStage).toContain("ENV OPS_STATIC_DIR=/app/ops");
+    expect(finalStage).toMatch(/^\s*USER\s+node\s*$/m);
+    expect(finalStage).not.toMatch(/^\s*USER\s+root\s*$/m);
+    expect(finalStage).not.toMatch(/^\s*USER\s+0\s*$/m);
   });
 });
 
@@ -553,5 +608,35 @@ describe.skipIf(process.env.RUN_IMAGE_TESTS !== "1")("regional service image", (
     expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe("env\n");
+  }, 600_000);
+
+  it("serves the ops console on the ops host", async () => {
+    ensureImage();
+    const container = startContainer();
+    try {
+      await waitForHealth(container.id);
+
+      const index = execFetch(container.id, "/", "ops.au.example.test");
+      expect(index.status).toBe(200);
+      expect(index.headers["content-type"]?.startsWith("text/html")).toBe(true);
+      expect(index.headers["content-security-policy"]).toContain("script-src 'self'");
+      expect(index.headers["cache-control"]).toBe("no-cache");
+      expect(index.headers["x-content-type-options"]).toBe("nosniff");
+
+      const jsAssets = [...new Set(index.body.match(/\/assets\/[A-Za-z0-9._-]+\.js/g) ?? [])];
+      const cssAssets = [...new Set(index.body.match(/\/assets\/[A-Za-z0-9._-]+\.css/g) ?? [])];
+      expect(jsAssets).toHaveLength(1);
+      expect(cssAssets).toHaveLength(1);
+      for (const assetPath of [...jsAssets, ...cssAssets]) {
+        const asset = execFetch(container.id, assetPath, "ops.au.example.test");
+        expect(asset.status).toBe(200);
+        expect(asset.headers["cache-control"]).toBe("public, max-age=31536000, immutable");
+      }
+
+      const apiRoot = execFetch(container.id, "/", "au.api.example.test");
+      expect(apiRoot.status).toBe(404);
+    } finally {
+      spawnSync("docker", ["rm", "-f", container.id]);
+    }
   }, 600_000);
 });
