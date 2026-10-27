@@ -59,7 +59,7 @@ export const TRY_AGAIN_BUTTON_LABEL = "Try again";
 // U14
 export const SIGN_OUT_BUTTON_LABEL = "Sign out";
 export const SIGN_OUT_NETWORK_ERROR_MESSAGE =
-  "Could not reach the server. Close the browser to end the session.";
+  "Could not confirm sign-out. Close the browser to end the session.";
 
 // U15
 export const CRASH_MESSAGE = "Something went wrong. Reload the page.";
