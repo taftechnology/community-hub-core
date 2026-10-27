@@ -2784,7 +2784,7 @@ Shell variables and placeholders only. Never paste an account id, ARN, hostname,
 - A Spot interruption is not a failure; rerun that step once.
 - Stream-scoped `get-log-events` calls for one-offs are exempt from `--start-time`, because each stream is unique to its task. Every `filter-log-events` call carries `--start-time`.
 - Before any command that uses a held value, run `setopt pipefail`.
-- One-offs never overlap. Every Grant, Recover and Revoke starts with `ops-operator.md` **Check the name is free** and ends with **Delete and verify**.
+- One-offs never overlap. Every `provision-owner`, Grant, Recover and Revoke starts with **Check the name is free** and ends with **Delete and verify** plus the poll.
 - **Shell loss.** If the proof shell is lost before O13, the held values are gone. Stop the proofs and re-park. Record O13 as "not countable for the lost values", which is a finding. Do not reconstruct a value from memory.
 - Arrays are iterated as unquoted `${ARRAY}`.
 - New lines write the at-sign as `$'\x40'`.
@@ -2800,6 +2800,9 @@ Hold these in the shell. Never record their values.
 | `${ZONE_NAME}`               | Apex hosted zone name from `staging_zone_id`                                                     |
 | `${OPS_HOST}`                | Ops hostname (`ops.au.${ZONE_NAME}`)                                                             |
 | `${API_HOST}`                | Tenant API hostname (`au.api.${ZONE_NAME}`)                                                      |
+| `${DEPLOY_SHA}`              | Commit SHA of latest `main` containing `fd59b1e`                                                 |
+| `${DIGEST}`                  | ECR image digest for `${DEPLOY_SHA}` (never recorded)                                            |
+| `${RUN_ID}`                  | GitHub Actions run id for the publish workflow run                                               |
 | `${PROVISION_SECRET_NAME}`   | The one fixed secret name (`${name}-provision-owner`)                                            |
 | `${SECRETS_KEY_ARN}`         | KMS customer-managed key ARN for Secrets Manager encryption                                      |
 | `${DB_INSTANCE_ID}`          | RDS database instance identifier (`ch-staging-postgres`)                                         |
@@ -2809,21 +2812,24 @@ Hold these in the shell. Never record their values.
 | `${OPS_TASK_DEFINITION}`     | Ops task definition family (`ch-staging-db-ops`)                                                 |
 | `${SUBNET}`                  | Staging public subnet id (from Terraform / describe; never recorded)                             |
 | `${TASK_SECURITY_GROUP}`     | Task security group id (from Terraform / describe; never recorded)                               |
+| `${TASK_ARN}`                | ECS task ARN for running one-off tasks (never recorded)                                          |
 | `${LOG_GROUP}`               | Service log group `/community-hub/ch-staging/service` (streams use prefixes `service`, `db-ops`) |
 | `${OPS_ACCESS_LOG_GROUP}`    | Ops access log group `/community-hub/ch-staging/ops-access`                                      |
 | `${API_ACCESS_LOG_GROUP}`    | API access log group `/community-hub/ch-staging/api-access`                                      |
 | `${PLAN_FILE}`               | Saved plan file path outside the repository (never committed; deleted after apply)               |
 | `${HELD_EMAIL}`              | Verified operator email entered at a silent prompt (never recorded)                              |
+| `${LOCAL_PART}`              | Local part of verified operator email (`${HELD_EMAIL%%$'\x40'*}`)                                |
 | `${HELD_ORG_SLUG}`           | Organisation synthetic slug (`proof-$(openssl rand -hex 4)`)                                     |
 | `${HELD_COMMUNITY_SLUG}`     | Community synthetic slug (`proof-$(openssl rand -hex 4)`)                                        |
 | `${HELD_ENROLMENT_CODES}`    | zsh array of generated enrolment codes                                                           |
 | `${HELD_EMAIL_CODES}`        | zsh array of email codes read from mailbox                                                       |
 | `${EMAIL_CODE_TIMES}`        | zsh array of epoch seconds when email codes were requested                                       |
+| `${ASSETS}`                  | zsh array of static asset paths extracted from ops console `index.html`                          |
 | `${PRIVACY_START_MS}`        | Privacy window start in epoch milliseconds (set before one-offs; never recorded)                 |
 | `${PROOF_START_MS}`          | Proof window start in epoch milliseconds (set before O1; never recorded)                         |
 | `${O7_START_MS}`             | O7 reload window start in epoch milliseconds (never recorded)                                    |
 | `${O7_END_MS}`               | O7 reload window end in epoch milliseconds (never recorded)                                      |
-| `${PROOF_END_MS}`            | Proof window end in epoch milliseconds (set in subsection 10; never recorded)                    |
+| `${PROOF_END_MS}`            | Proof window end in epoch milliseconds (set in **O13**; never recorded)                          |
 | `${HARD_STOP_UTC}`           | Apply 1 completion plus 48 hours                                                                 |
 
 Initialize shell tracking variables:
@@ -2846,7 +2852,7 @@ Prompt for the verified operator email address in lowercase without echo. Type t
 
     print
 
-Every held variable stays set until the final `unset` in subsection 10.
+Every held variable stays set until the final `unset` in **O13**.
 
 ### Before the unpark
 
@@ -2875,7 +2881,7 @@ Run pre-checks (assistant and owner; any failure is a stop before spend):
 
        git merge-base --is-ancestor origin/main HEAD && git merge-base --is-ancestor ${DEPLOY_SHA} HEAD && print ok
 
-   Expected: `ok`. If `origin/main` has moved, follow the Global constraints rule before pushing.
+   Expected: `ok`. The branch must contain `origin/main`, with linear history, and no pushed commit is rewritten. If a rewrite would be needed, stop and ask the owner.
 
 2. Infrastructure unchanged (assistant): confirm `infra/` has no commit between `57b2d3d` and `${DEPLOY_SHA}`:
 
@@ -2961,7 +2967,7 @@ Stop if any pre-check fails. Push the Task 2 commit after the reviewer accepts b
 
 ### Apply 1
 
-The branch moves to the unpark commit (`enable_database = true`, `desired_count = 1` in `infra/regions/au/env/staging.tfvars`). The `service_image` line in `staging.local.tfvars` is reused from subsection 3.
+The branch moves to the unpark commit (`enable_database = true`, `desired_count = 1` in `infra/regions/au/env/staging.tfvars`). The `service_image` line in `staging.local.tfvars` is reused from **Pre-checks**.
 
 Run before-each-apply checks against the Task 2 SHA on origin.
 
@@ -3054,8 +3060,16 @@ Expected: exit 0, stdout 13 `applied <tag>` lines for 0000-0012 in journal order
 
 Provision the first owner following the **Provision the first owner** procedure, with these deviations:
 
+- **Check the name is free** runs before Create;
 - **Create** uses `${HELD_ORG_SLUG}`, `${HELD_COMMUNITY_SLUG}` and `${HELD_EMAIL}` instead of prompts;
-- closing `unset` is skipped for held values.
+- closing `unset` is skipped for held values;
+- a failed `create-secret` is a stop.
+
+Confirm secret name is free:
+
+    print -r -- "$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null)" | grep -c ResourceNotFoundException
+
+Expected: `1` means the name is free.
 
 Create the provision secret:
 
@@ -3085,19 +3099,18 @@ Run `provision-owner.js`:
 
     aws logs get-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --log-stream-name "service/service/${TASK_ARN##*/}" --query 'events[].message' --output text | tr '\t' '\n'
 
-Expected: exit 0, stdout `created`, stderr empty. `already_bootstrapped` is a stop (deviation 3).
+Expected: exit 0, stdout `created`, stderr empty. `already_bootstrapped` is a stop (deviation 3). Any other result or exit means: read **Provision the first owner -> Results**, then still run Delete and verify plus the poll, then stop.
 
 Delete and verify secret:
 
     aws secretsmanager delete-secret --profile ${AWS_PROFILE} \
       --secret-id ${PROVISION_SECRET_NAME} --force-delete-without-recovery >/dev/null
 
-    aws secretsmanager describe-secret --profile ${AWS_PROFILE} \
-      --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null | grep -q ResourceNotFoundException
+    repeat 12; do gone=$(print -r -- "$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null)" | grep -c ResourceNotFoundException); (( gone == 1 )) && break; sleep 5; done; print ${gone}
 
-    unset PROVISION_SECRET_ARN TASK_ARN
+    unset PROVISION_SECRET_ARN TASK_ARN gone
 
-Expected: `describe-secret` fails with `ResourceNotFoundException`.
+Expected: `1` means deletion is confirmed.
 
 ### Running-task check
 
@@ -3135,16 +3148,18 @@ Each procedure follows `ops-operator.md`, with these deviations. `ops-operator.m
 
 - **The address:** before each **Create**, `OPERATOR_EMAIL=${HELD_EMAIL}` replaces the `read -rs` prompt;
 - **The role:** Grant and Recover set `ROLE_KEYS=platform_admin` in place of the `ROLE_KEYS` prompt;
-- **The code:** Grant and Recover run `ENROLMENT_CODE=$(python3 -c 'import base64,os;print(base64.b32encode(os.urandom(20)).decode())')` followed by `HELD_ENROLMENT_CODES+=("${ENROLMENT_CODE}")`. The `print` line is skipped (delivered via clipboard in subsection 8);
+- **The code:** Grant and Recover run `ENROLMENT_CODE=$(python3 -c 'import base64,os;print(base64.b32encode(os.urandom(20)).decode())')` followed by `HELD_ENROLMENT_CODES+=("${ENROLMENT_CODE}")`. The `print` line is skipped (delivered via clipboard in **Email codes and the clipboard**);
 - **Create's closing unset:** runs as written. It clears only the runbook's own variables; the held values are separate;
-- **Expected results:** Grant prints `granted`, Recover prints `recovered`, Revoke prints `revoked`. Each is followed by **Delete and verify**.
+- **Failure paths:** a failed `create-secret` is a stop. Any other result or exit means: read `ops-operator.md` **Results**, then still run Delete and verify plus the poll, then stop;
+- **Expected results:** Grant prints `granted`, Recover prints `recovered`, Revoke prints `revoked`. Each is followed by Delete and verify plus the poll.
 
 Execute Grant now (before Proofs O1-O12):
 
 1. Confirm secret name is free:
 
-       aws secretsmanager describe-secret --profile ${AWS_PROFILE} \
-         --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null | grep -q ResourceNotFoundException
+       print -r -- "$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null)" | grep -c ResourceNotFoundException
+
+   Expected: `1` means the name is free.
 
 2. Generate enrolment code and save to `${HELD_ENROLMENT_CODES}`:
 
@@ -3152,7 +3167,7 @@ Execute Grant now (before Proofs O1-O12):
 
        HELD_ENROLMENT_CODES+=("${ENROLMENT_CODE}")
 
-3. Create secret:
+3. Create secret (a failed `create-secret` is a stop):
 
        OPERATOR_EMAIL=${HELD_EMAIL}
 
@@ -3188,17 +3203,18 @@ Execute Grant now (before Proofs O1-O12):
        aws logs get-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} \
          --log-stream-name "service/service/${TASK_ARN##*/}" --query 'events[].message' --output text | tr '\t' '\n'
 
-   Expected: exit 0, stdout `granted`, stderr empty.
+   Expected: exit 0, stdout `granted`, stderr empty. Any other result or exit means: read `ops-operator.md` **Results**, then still run Delete and verify plus the poll, then stop.
 
 5. Delete and verify:
 
        aws secretsmanager delete-secret --profile ${AWS_PROFILE} \
          --secret-id ${PROVISION_SECRET_NAME} --force-delete-without-recovery >/dev/null
 
-       aws secretsmanager describe-secret --profile ${AWS_PROFILE} \
-         --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null | grep -q ResourceNotFoundException
+       repeat 12; do gone=$(print -r -- "$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null)" | grep -c ResourceNotFoundException); (( gone == 1 )) && break; sleep 5; done; print ${gone}
 
-       unset PROVISION_SECRET_ARN TASK_ARN
+       unset PROVISION_SECRET_ARN TASK_ARN gone
+
+   Expected: `1` means deletion is confirmed.
 
 Recover and Revoke are run at O10 and O11 with the same structure.
 
@@ -3246,26 +3262,44 @@ Run with no session, using `curl -sS --path-as-is -o /dev/null -D - -w '%{http_c
 
 1. Ops host root:
 
-       curl -sS --path-as-is -D - -o /dev/null "https://${OPS_HOST}/"
+       curl -sS --path-as-is -o /dev/null -w '%{http_code}\n' "https://${OPS_HOST}/"
 
-   Confirm status 200, and print `grep -c -i` header counts:
-   - `content-type` containing `text/html` (1)
-   - `content-security-policy` containing `script-src 'self'` (1)
-   - `cross-origin-opener-policy` containing `same-origin` (1)
-   - `x-content-type-options` containing `nosniff` (1)
-   - `referrer-policy` containing `strict-origin-when-cross-origin` (1)
-   - `strict-transport-security` (1)
-   - `cache-control` containing `no-cache` (1)
+   Expected: `200`.
+
+   Save the header block into a variable (never print the header block itself):
+
+       HEADERS=$(curl -sS --path-as-is -D - -o /dev/null "https://${OPS_HOST}/")
+
+   Check each header on the saved header block (each expected to print 1):
+
+       print -r -- "${HEADERS}" | grep -c -i "^content-security-policy:.*script-src 'self'"
+
+       print -r -- "${HEADERS}" | grep -c -i '^cross-origin-opener-policy:'
+
+       print -r -- "${HEADERS}" | grep -c -i '^x-content-type-options:'
+
+       print -r -- "${HEADERS}" | grep -c -i '^referrer-policy: same-origin'
+
+       print -r -- "${HEADERS}" | grep -c -i '^strict-transport-security:'
+
+       print -r -- "${HEADERS}" | grep -c -i '^cache-control:.*no-cache'
+
+       unset HEADERS
 
 2. Asset paths from `index.html`:
 
-       curl -sS "https://${OPS_HOST}/" | grep -o -E '/assets/[A-Za-z0-9_.-]+' | sort -u
+   Extract every `/assets/…` path from the `index.html` body fetched once into `${ASSETS}` (never printed):
 
-   For each extracted asset path:
+       ASSETS=($(curl -sS "https://${OPS_HOST}/" | grep -o -E '/assets/[A-Za-z0-9_.-]+' | sort -u))
 
-       curl -sS --path-as-is -D - -o /dev/null "https://${OPS_HOST}${ASSET_PATH}"
+   For each asset path, print only the status code and a count of `cache-control:.*immutable`:
 
-   Confirm status 200 and `cache-control` containing `immutable`.
+       for ASSET_PATH in ${ASSETS}; do
+         curl -sS --path-as-is -o /dev/null -w '%{http_code}\n' "https://${OPS_HOST}${ASSET_PATH}"
+         curl -sS --path-as-is -D - -o /dev/null "https://${OPS_HOST}${ASSET_PATH}" | grep -c -i '^cache-control:.*immutable'
+       done
+
+   Expected: for each asset path, status `200` and count `1`.
 
 3. Prohibited static routes answer 404:
 
@@ -3300,16 +3334,30 @@ Run with no session, using `curl -sS --path-as-is -o /dev/null -D - -w '%{http_c
 #### O2: CSP in the browser (owner)
 
 1. Open clean Chrome profile with DevTools open on Console tab. Navigate to `https://${OPS_HOST}/#/sign-in`, enrolment step 1 (`https://${OPS_HOST}/#/enrol`), and directory (at O5). Zero console messages containing `Content Security Policy` or `Refused to` (yes/no).
-2. Open Safari with Web Inspector open on Console tab. Repeat visits to sign-in, enrolment step 1, and directory. Zero console messages containing `Content Security Policy` or `Refused to` (yes/no).
+2. Open Safari with Web Inspector open on Console tab. Visit sign-in and enrolment step 1 (the directory is checked in Safari at O6). Zero console messages containing `Content Security Policy` or `Refused to` (yes/no).
 
 #### O3: Enrolment (owner, Chrome)
 
-1. Navigate to `https://${OPS_HOST}/`. Click "First time? Enrol with your codes".
+1. Copy console URL to clipboard without displaying:
+
+       print -rn -- "https://${OPS_HOST}/" | pbcopy
+
+   Paste into browser URL bar and navigate to `https://${OPS_HOST}/`. Click "First time? Enrol with your codes".
+
 2. Step 1 ("Enrol"): Heading displays "Enrol" and message displays "Keep this tab open and finish enrolment here." (yes/no).
-3. Run email code budget check in shell (subsection 8). Enter `${HELD_EMAIL}` in "Email" field and click "Send code".
+3. Run email code budget check in shell (**Email codes and the clipboard**). Copy verified operator email to clipboard without displaying:
+
+       print -rn -- "${HELD_EMAIL}" | pbcopy
+
+   Paste into "Email" field, then clear clipboard immediately:
+
+       pbcopy < /dev/null
+
+   Click "Send code".
+
 4. Step 2 ("Enter your codes"): Heading displays "Enter your codes" and message displays "If this address has an open grant, a code is on its way." (yes/no).
-5. Email code arrives in mailbox within 60 seconds (yes/no). Enter code at silent shell prompt and add to `${HELD_EMAIL_CODES}` (subsection 8).
-6. Copy enrolment code from `${HELD_ENROLMENT_CODES}` to clipboard with `pbcopy` (subsection 8). Paste into "Enrolment code" field, then clear clipboard with `pbcopy < /dev/null`.
+5. Email code arrives in mailbox within 60 seconds (yes/no). Enter code at silent shell prompt and add to `${HELD_EMAIL_CODES}` (**Email codes and the clipboard**).
+6. Copy enrolment code from `${HELD_ENROLMENT_CODES}` to clipboard with `pbcopy` (**Email codes and the clipboard**). Paste into "Enrolment code" field, then clear clipboard with `pbcopy < /dev/null`.
 7. Wrong code test: Enter valid email code and alter last character of enrolment code in field. Click "Verify". Page displays "Those codes were not accepted. Each wrong try uses one of a small number of attempts." (yes/no).
 8. Correct codes: Re-copy enrolment code to clipboard, paste into field, and clear clipboard immediately. Click "Verify". Ceremony advances to step 3 (yes/no).
 9. Step 3 ("Register your first passkey"): Heading displays "Register your first passkey". Click "Create passkey". Authenticate with authenticator (a). Advances to step 4 (yes/no).
@@ -3352,7 +3400,11 @@ Run with no session, using `curl -sS --path-as-is -o /dev/null -D - -w '%{http_c
 
        O7_END_MS=$(( $(date +%s) * 1000 ))
 
-7. Straight after O7, pull the service log group over the window `O7_START_MS` to `O7_END_MS`:
+7. Wait about 60 seconds after setting `O7_END_MS` before the pull, because of CloudWatch ingestion lag:
+
+       sleep 60
+
+   Then pull the service log group bounded by `O7_START_MS` and `O7_END_MS`:
 
        aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${O7_START_MS} --end-time ${O7_END_MS} --query 'events[].message' --output text | tr '\t' '\n' | jq -rR 'fromjson? | select(.message=="request" and (.path=="/v1/ops/me" or .path=="/v1/ops/session/refresh")) | "\(.path) \(.status)"' | sort | uniq -c
 
@@ -3360,7 +3412,7 @@ Run with no session, using `curl -sS --path-as-is -o /dev/null -D - -w '%{http_c
    - `/v1/ops/me` 401 is at least 2 (yes/no);
    - `/v1/ops/session/refresh` 200 is at least 1 (yes/no);
    - `/v1/ops/session/refresh` 401 is exactly 0 (yes/no).
-     Anything else is a stop (deviation 2).
+     A `/v1/ops/session/refresh` 401 is a finding against `apps/ops/src/session.ts`, the owner signs in again, and the check is not retried. Anything else is a stop (deviation 2).
 
 #### O8: Accessibility by hand (owner, Chrome)
 
@@ -3377,11 +3429,12 @@ Run with no session, using `curl -sS --path-as-is -o /dev/null -D - -w '%{http_c
 
 #### O10: Recover (owner)
 
-1. Before Recover: In Safari, reload directory tab. Directory shows (session alive) (yes/no).
+1. Before Recover: In Safari (or if Safari refused at O6, use the second Chrome profile), reload directory tab. Directory shows (session alive) (yes/no).
 2. Confirm secret name is free:
 
-       aws secretsmanager describe-secret --profile ${AWS_PROFILE} \
-         --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null | grep -q ResourceNotFoundException
+       print -r -- "$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null)" | grep -c ResourceNotFoundException
+
+   Expected: `1` means the name is free.
 
 3. Generate new enrolment code and save to `${HELD_ENROLMENT_CODES}`:
 
@@ -3389,7 +3442,7 @@ Run with no session, using `curl -sS --path-as-is -o /dev/null -D - -w '%{http_c
 
        HELD_ENROLMENT_CODES+=("${ENROLMENT_CODE}")
 
-4. Create secret with action `recover`:
+4. Create secret with action `recover` (a failed `create-secret` is a stop):
 
        OPERATOR_EMAIL=${HELD_EMAIL}
 
@@ -3425,21 +3478,31 @@ Run with no session, using `curl -sS --path-as-is -o /dev/null -D - -w '%{http_c
        aws logs get-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} \
          --log-stream-name "service/service/${TASK_ARN##*/}" --query 'events[].message' --output text | tr '\t' '\n'
 
-   Expected: exit 0, stdout `recovered`, stderr empty.
+   Expected: exit 0, stdout `recovered`, stderr empty. Any other result or exit means: read `ops-operator.md` **Results**, then still run Delete and verify plus the poll, then stop.
 
 6. Delete and verify:
 
        aws secretsmanager delete-secret --profile ${AWS_PROFILE} \
          --secret-id ${PROVISION_SECRET_NAME} --force-delete-without-recovery >/dev/null
 
-       aws secretsmanager describe-secret --profile ${AWS_PROFILE} \
-         --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null | grep -q ResourceNotFoundException
+       repeat 12; do gone=$(print -r -- "$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null)" | grep -c ResourceNotFoundException); (( gone == 1 )) && break; sleep 5; done; print ${gone}
 
-       unset PROVISION_SECRET_ARN TASK_ARN
+       unset PROVISION_SECRET_ARN TASK_ARN gone
 
-7. After Recover: In Safari, reload directory tab. Lands on "Sign in" (session revoked) (yes/no).
+   Expected: `1` means deletion is confirmed.
+
+7. After Recover: In Safari (or if Safari refused at O6, use the second Chrome profile), reload directory tab. Lands on "Sign in" (session revoked) (yes/no).
 8. In Chrome, attempt sign-in with authenticator (a). Displays "That passkey was not accepted." (yes/no).
-9. Enrol again in Chrome: Start enrolment with `${HELD_EMAIL}` and latest enrolment code from `${HELD_ENROLMENT_CODES}`. Receive email code into `${HELD_EMAIL_CODES}`.
+9. Enrol again in Chrome: follow **Email codes and the clipboard** for the budget check, the email code, the clipboard handling and the 15-minute rule. Copy verified operator email to clipboard without displaying:
+
+       print -rn -- "${HELD_EMAIL}" | pbcopy
+
+   Paste into "Email" field, then clear clipboard immediately:
+
+       pbcopy < /dev/null
+
+   Start enrolment with `${HELD_EMAIL}` and latest enrolment code from `${HELD_ENROLMENT_CODES}`. Receive email code into `${HELD_EMAIL_CODES}`.
+
 10. Step 3: Register passkey with authenticator (a). Completes step 3 (yes/no).
 11. Step 4 duplicate refusal: Try authenticator (a) again at step 4. Displays "This device already has one of your passkeys. Use a different device or security key." (yes/no).
 12. Step 4 completion: Register passkey with authenticator (b). Lands on "Sign in" with "Enrolment complete. Sign in." (yes/no).
@@ -3449,10 +3512,11 @@ Run with no session, using `curl -sS --path-as-is -o /dev/null -D - -w '%{http_c
 
 1. Confirm secret name is free:
 
-       aws secretsmanager describe-secret --profile ${AWS_PROFILE} \
-         --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null | grep -q ResourceNotFoundException
+       print -r -- "$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null)" | grep -c ResourceNotFoundException
 
-2. Create secret with action `revoke`:
+   Expected: `1` means the name is free.
+
+2. Create secret with action `revoke` (a failed `create-secret` is a stop):
 
        OPERATOR_EMAIL=${HELD_EMAIL}
 
@@ -3486,17 +3550,18 @@ Run with no session, using `curl -sS --path-as-is -o /dev/null -D - -w '%{http_c
        aws logs get-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} \
          --log-stream-name "service/service/${TASK_ARN##*/}" --query 'events[].message' --output text | tr '\t' '\n'
 
-   Expected: exit 0, stdout `revoked`, stderr empty.
+   Expected: exit 0, stdout `revoked`, stderr empty. Any other result or exit means: read `ops-operator.md` **Results**, then still run Delete and verify plus the poll, then stop.
 
 4. Delete and verify:
 
        aws secretsmanager delete-secret --profile ${AWS_PROFILE} \
          --secret-id ${PROVISION_SECRET_NAME} --force-delete-without-recovery >/dev/null
 
-       aws secretsmanager describe-secret --profile ${AWS_PROFILE} \
-         --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null | grep -q ResourceNotFoundException
+       repeat 12; do gone=$(print -r -- "$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null)" | grep -c ResourceNotFoundException); (( gone == 1 )) && break; sleep 5; done; print ${gone}
 
-       unset PROVISION_SECRET_ARN TASK_ARN
+       unset PROVISION_SECRET_ARN TASK_ARN gone
+
+   Expected: `1` means deletion is confirmed.
 
 5. After Revoke: Reload console in Chrome. Lands on "Sign in" (yes/no).
 6. Attempt sign-in with authenticator (a): Displays "That passkey was not accepted." (yes/no).
@@ -3550,89 +3615,95 @@ Expected: `0` for all pipeline exit statuses, and each count > 0.
 
 Run one `grep -c -i -F --` per value per group. Each must print 0.
 
+Note: `grep -c` prints `0` and exits 1, so under pipefail a non-zero status next to a printed `0` is expected, not a failure. Label each printed count with its group (`svc`, `ops`, `api`) and, for loops, the item number, for example `enrolment 1 svc 0`. Never print the value.
+
 Operator email:
 
-    print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${HELD_EMAIL}"
+    print -r -- "email svc $(print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${HELD_EMAIL}")"
 
-    print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "${HELD_EMAIL}"
+    print -r -- "email ops $(print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "${HELD_EMAIL}")"
 
-    print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "${HELD_EMAIL}"
+    print -r -- "email api $(print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "${HELD_EMAIL}")"
 
 Local part of operator email (count only if at least 6 characters long; otherwise record "too short to count" as a finding):
 
-    LOCAL_PART="${HELD_EMAIL%%$'\x40'*}"
+    LOCAL_PART=${HELD_EMAIL%%$'\x40'*}
 
     if (( ${#LOCAL_PART} >= 6 )); then
-      print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${LOCAL_PART}"
-      print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "${LOCAL_PART}"
-      print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "${LOCAL_PART}"
+      print -r -- "local svc $(print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${LOCAL_PART}")"
+      print -r -- "local ops $(print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "${LOCAL_PART}")"
+      print -r -- "local api $(print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "${LOCAL_PART}")"
     fi
-
-    unset LOCAL_PART
 
 Organisation slug and community slug:
 
-    print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${HELD_ORG_SLUG}"
+    print -r -- "org_slug svc $(print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${HELD_ORG_SLUG}")"
 
-    print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "${HELD_ORG_SLUG}"
+    print -r -- "org_slug ops $(print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "${HELD_ORG_SLUG}")"
 
-    print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "${HELD_ORG_SLUG}"
+    print -r -- "org_slug api $(print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "${HELD_ORG_SLUG}")"
 
-    print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${HELD_COMMUNITY_SLUG}"
+    print -r -- "community_slug svc $(print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${HELD_COMMUNITY_SLUG}")"
 
-    print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "${HELD_COMMUNITY_SLUG}"
+    print -r -- "community_slug ops $(print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "${HELD_COMMUNITY_SLUG}")"
 
-    print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "${HELD_COMMUNITY_SLUG}"
+    print -r -- "community_slug api $(print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "${HELD_COMMUNITY_SLUG}")"
 
 Each generated enrolment code (unquoted array):
 
-    for code in ${HELD_ENROLMENT_CODES}; do
-      print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${code}"
-      print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "${code}"
-      print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "${code}"
+    i=1; for code in ${HELD_ENROLMENT_CODES}; do
+      print -r -- "enrolment ${i} svc $(print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${code}")"
+      print -r -- "enrolment ${i} ops $(print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "${code}")"
+      print -r -- "enrolment ${i} api $(print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "${code}")"
+      (( i++ ))
     done
 
 Each received email code (unquoted array):
 
-    for code in ${HELD_EMAIL_CODES}; do
-      print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${code}"
-      print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "${code}"
-      print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "${code}"
+    i=1; for code in ${HELD_EMAIL_CODES}; do
+      print -r -- "email_code ${i} svc $(print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${code}")"
+      print -r -- "email_code ${i} ops $(print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "${code}")"
+      print -r -- "email_code ${i} api $(print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "${code}")"
+      (( i++ ))
     done
 
 Literals:
 
-    print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- $'\x40'
+    print -r -- "at svc $(print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- $'\x40')"
 
-    print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- $'\x40'
+    print -r -- "at ops $(print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- $'\x40')"
 
-    print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- $'\x40'
+    print -r -- "at api $(print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- $'\x40')"
 
-    print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "Bearer"
+    print -r -- "bearer svc $(print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "Bearer")"
 
-    print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "Bearer"
+    print -r -- "bearer ops $(print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "Bearer")"
 
-    print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "Bearer"
+    print -r -- "bearer api $(print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "Bearer")"
 
-    print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "__Host-ops"
+    print -r -- "host_ops svc $(print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "__Host-ops")"
 
-    print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "__Host-ops"
+    print -r -- "host_ops ops $(print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "__Host-ops")"
 
-    print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "__Host-ops"
+    print -r -- "host_ops api $(print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "__Host-ops")"
 
-    print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "Set-Cookie"
+    print -r -- "set_cookie svc $(print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "Set-Cookie")"
 
-    print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "Set-Cookie"
+    print -r -- "set_cookie ops $(print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "Set-Cookie")"
 
-    print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "Set-Cookie"
+    print -r -- "set_cookie api $(print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "Set-Cookie")"
 
 Expected: `0` for every check.
 
 #### Triage for an email-code count that is not 0
 
-If any email code count is greater than 0, run triage for that code `${C}`. Print only the field names containing the code:
+If any email code count is greater than 0, run triage for each code `${C}`. Print only the field names containing the code:
 
-    print -r -- "${SERVICE_MSGS}" | jq -rR --arg c "${C}" 'fromjson? | select(tostring | contains($c)) | [to_entries[] | select(.value | tostring | contains($c)) | .key] | join(",")' | sort | uniq -c
+    i=1; for C in ${HELD_EMAIL_CODES}; do
+      print "code ${i}"
+      print -r -- "${SERVICE_MSGS}" | jq -rR --arg c "${C}" 'fromjson? | select(tostring | contains($c)) | [to_entries[] | select(.value | tostring | contains($c)) | .key] | join(",")' | sort | uniq -c
+      (( i++ ))
+    done
 
 A match in `requestId` or `gatewayRequestId` only is cleared. Anything else is a stop.
 
@@ -3664,6 +3735,12 @@ Run these four checks in order:
 
 #### Structural check, ops access group
 
+Print count of lines that do not parse as JSON:
+
+    print -r -- "${OPS_ACCESS_MSGS}" | jq -rR 'fromjson? // "BAD"' | grep -c -x BAD
+
+Expected: `0`.
+
 Print count of lines whose `keys` are not exactly the nine `access_log_format` keys:
 
     print -r -- "${OPS_ACCESS_MSGS}" | jq -rR --argjson expected '["domainName","httpMethod","integrationErrorMessage","integrationStatus","requestId","responseLatency","responseLength","routeKey","status"]' 'fromjson? | select(keys != $expected) | keys' | grep -c .
@@ -3676,7 +3753,7 @@ Pull service logs starting from `${PROOF_START_MS}`:
 
     SERVICE_PROOF_MSGS=$(aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${PROOF_START_MS} --end-time ${PROOF_END_MS} --query 'events[].message' --output text | tr '\t' '\n')
 
-    print -r -- "${SERVICE_PROOF_MSGS}" | jq -rR 'fromjson? | select(.message=="request") | "\(.path) \(.status) \(.reason // "")"' | sort | uniq -c
+    print -r -- "${SERVICE_PROOF_MSGS}" | jq -rR 'fromjson? | select(.message=="request" and (((.path // "") | startswith("/v1/ops/")) or .reason == "ops_route_on_other_hostname" or .reason == "other_route_on_ops_hostname")) | "\(.path) \(.status) \(.reason // "")"' | sort | uniq -c
 
 Check that each floor is met (deviation 1):
 
@@ -3691,13 +3768,15 @@ Check that each floor is met (deviation 1):
 | `/v1/ops/session/refresh`                                                             | 200    | 1        |
 | `/v1/ops/session/end`                                                                 | 204    | 1        |
 | `/v1/ops/enrolment/start`                                                             | 403    | 2        |
-| any path with `reason` `ops_route_on_other_hostname` or `other_route_on_ops_hostname` | 404    | 3 (O1)   |
+| any path with `reason` `ops_route_on_other_hostname` or `other_route_on_ops_hostname` | 404    | 2 (O1)   |
+
+Only `GET /v1/ops/me` on the API host (reason `ops_route_on_other_hostname`) and `POST /v1/access/grants/list` on the ops host (reason `other_route_on_ops_hostname`) log a `reason`. `GET /` on the API host matches no route, so it logs path `unmatched` with no reason.
 
 Extra lines from retries are fine. Any control below its minimum is a stop.
 
 Finish by unsetting all held values and runbook variables:
 
-    unset SERVICE_MSGS OPS_ACCESS_MSGS API_ACCESS_MSGS SERVICE_PROOF_MSGS HELD_EMAIL HELD_ORG_SLUG HELD_COMMUNITY_SLUG HELD_ENROLMENT_CODES HELD_EMAIL_CODES EMAIL_CODE_TIMES PRIVACY_START_MS PROOF_START_MS O7_START_MS O7_END_MS PROOF_END_MS HARD_STOP_UTC
+    unset SERVICE_MSGS OPS_ACCESS_MSGS API_ACCESS_MSGS SERVICE_PROOF_MSGS HELD_EMAIL HELD_ORG_SLUG HELD_COMMUNITY_SLUG HELD_ENROLMENT_CODES HELD_EMAIL_CODES EMAIL_CODE_TIMES PRIVACY_START_MS PROOF_START_MS O7_START_MS O7_END_MS PROOF_END_MS HARD_STOP_UTC code C now n t ASSET_PATH ASSETS LOCAL_PART TASK_ARN PROVISION_SECRET_ARN i gone
 
 ### Apply 2
 
