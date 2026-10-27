@@ -3,7 +3,7 @@ Spec: docs/specs/2026-10-27-ops-console-proof.md
 # Ops console proof Implementation Plan
 
 Slug: ops-console-proof
-Status: draft
+Status: approved (2026-10-27, Abdus Salam)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
