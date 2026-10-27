@@ -182,6 +182,9 @@ describe("service image build", () => {
     expect(lastFromIndex).toBeGreaterThanOrEqual(0);
     const finalStage = dockerfile.slice(lastFromIndex);
     expect(finalStage).toContain("ENV OPS_STATIC_DIR=/app/ops");
+    expect(finalStage).toMatch(/^\s*USER\s+node\s*$/m);
+    expect(finalStage).not.toMatch(/^\s*USER\s+root\s*$/m);
+    expect(finalStage).not.toMatch(/^\s*USER\s+0\s*$/m);
   });
 });
 

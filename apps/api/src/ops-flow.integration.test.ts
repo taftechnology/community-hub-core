@@ -132,6 +132,15 @@ function bytesFrom(value: string): Uint8Array {
   return new Uint8Array(Buffer.from(value, "base64url"));
 }
 
+function uuidToBytes(uuid: string): Uint8Array {
+  const hex = uuid.replaceAll("-", "");
+  const out = new Uint8Array(16);
+  for (let index = 0; index < 16; index += 1) {
+    out[index] = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16);
+  }
+  return out;
+}
+
 function concat(parts: Uint8Array[]): Uint8Array {
   const length = parts.reduce((sum, part) => sum + part.byteLength, 0);
   const out = new Uint8Array(length);
@@ -1610,11 +1619,17 @@ describe("ops flow integration", () => {
       rp: { id: string; name?: string };
       user: { id: string; name: string; displayName: string };
       excludeCredentials?: unknown[];
+      attestation?: string;
+      authenticatorSelection?: { userVerification?: string };
     };
     expect(opts1.rp.name).toBe("Community Hub operations");
     expect(opts1.user.name).toBe("Community Hub operator");
     expect(opts1.user.displayName).toBe("Community Hub operator");
     expect(opts1.excludeCredentials).toEqual([]);
+    expect(bytesFrom(opts1.user.id)).toEqual(uuidToBytes(user.userId));
+    expect(opts1.rp.id).toBe(OPS_HOSTNAME);
+    expect(opts1.authenticatorSelection?.userVerification).toBe("required");
+    expect(opts1.attestation).toBe("none");
 
     // Register passkey 1
     const key1 = await signer();
