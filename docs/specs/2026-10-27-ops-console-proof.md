@@ -1,7 +1,7 @@
 # Spec: Ops console proof on staging
 
 Slug: ops-console-proof
-Status: draft
+Status: approved (2026-10-27, Abdus Salam)
 Architecture refs: §8.5 (Ops console row), §11.4, §19 Ops console, §20; D16, D17; ADR 0009, ADR 0015.
 
 Follows the four ops-console chunks, each of which left its staging check here:
