@@ -5,7 +5,7 @@ WORKDIR /src
 RUN corepack enable && corepack prepare pnpm@10.26.0 --activate
 COPY . .
 RUN pnpm install --frozen-lockfile
-RUN pnpm --filter @community-hub/kernel --filter @community-hub/observability --filter @community-hub/crypto --filter @community-hub/db --filter @community-hub/contracts --filter @community-hub/identity --filter @community-hub/policy --filter @community-hub/tenancy --filter @community-hub/people --filter @community-hub/access --filter @community-hub/entitlements-eval --filter @community-hub/entitlements --filter @community-hub/billing build
+RUN pnpm --filter @community-hub/kernel --filter @community-hub/observability --filter @community-hub/crypto --filter @community-hub/db --filter @community-hub/contracts --filter @community-hub/identity --filter @community-hub/policy --filter @community-hub/tenancy --filter @community-hub/usage --filter @community-hub/people --filter @community-hub/access --filter @community-hub/entitlements-eval --filter @community-hub/entitlements --filter @community-hub/billing build
 RUN pnpm --filter @community-hub/ops build
 RUN pnpm --filter @community-hub/api exec tsc -p tsconfig.emit.json
 RUN pnpm --filter @community-hub/api deploy --prod --legacy /out

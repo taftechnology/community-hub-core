@@ -7,6 +7,7 @@ import {
 import { identityTables } from "../../modules/core/identity/db/schema.js";
 import { peopleTables } from "../../modules/core/people/db/schema.js";
 import { platformTables } from "../../modules/core/tenancy/db/schema.js";
+import { usageTables } from "../../modules/core/usage/db/schema.js";
 import { blindIndexColumn, encryptedColumn } from "./src/columns.js";
 import { app as appNamespace, identity, platform } from "./src/namespaces.js";
 
@@ -71,3 +72,7 @@ export const communityRoleGrants = accessRows.communityRoleGrants;
 export const customRoles = accessRows.customRoles;
 export const customRolePermissions = accessRows.customRolePermissions;
 export const userLinks = accessRows.userLinks;
+
+const usageRows = usageTables(appNamespace);
+
+export const usageFactsDaily = usageRows.usageFactsDaily;
