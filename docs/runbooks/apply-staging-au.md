@@ -3772,7 +3772,7 @@ Check that each floor is met (deviation 1):
 | `/v1/ops/session/refresh`                                                             | 200    | 1        |
 | `/v1/ops/session/end`                                                                 | 204    | 1        |
 | `/v1/ops/enrolment/start`                                                             | 403    | 2        |
-| any path with `reason` `ops_route_on_other_hostname` or `other_route_on_ops_hostname` | 404    | 2 (O1)   |
+| any path with `reason` `ops_route_on_other_hostname` or `other_route_on_ops_hostname` | 404    | 3 (O1)   |
 
 `GET /v1/ops/me` and `GET /` on the API host log reason `ops_route_on_other_hostname`, because `/` is an ops route, and `POST /v1/access/grants/list` on the ops host logs reason `other_route_on_ops_hostname`. Background requests to other hostnames in the staging zone can also log `ops_route_on_other_hostname`, so the count is usually above the floor.
 
@@ -3903,19 +3903,20 @@ Placeholders for Tasks 3 and 5 to fill in:
   - Log pulls exit statuses and line counts: exit 0; service 2527, ops access 454, api access 26
   - Value counts (service, ops access, api access all 0): all 0 in all three: email, org slug, community slug, enrolment code (1 counted; see Deviations), email codes 1 and 2, at-sign, Bearer, `__Host-ops`, Set-Cookie. No triage needed
   - Structural checks (service allow-list key sets, ops access 9 keys): service not_json 0, outside_allow_list 0, 5 key sets, all allowed; ops access not_json 0, not_nine_keys 0
-  - Positive control counts: enrolment/start 204 x2, enrolment/verify 200 x2, enrolment/verify 401 x2, register/verify 200 x4, authenticate/verify 200 x6, authenticate/verify 401 x3, refresh 200 x1, session/end 204 x1, enrolment/start 403 x2, cross-host 404 x10. All floors met
+  - Positive control counts: enrolment/start 204 x2, enrolment/verify 200 x2, enrolment/verify 401 x2, register/verify 200 x4, authenticate/verify 200 x6, authenticate/verify 401 x3, refresh 200 x1, session/end 204 x1, enrolment/start 403 x2, cross-host 404 x10 (`/` with `ops_route_on_other_hostname` x8, `/v1/ops/me` with `ops_route_on_other_hostname` x1, `/v1/access/grants/list` with `other_route_on_ops_hostname` x1). All floors met
 - **Email codes count:**
   - Total email codes requested: 2 (enrolment/start 204 x2)
 - **Spot interruptions, retries and deviations:**
   1. Spot interruptions: none. The service started one task after Apply 1 and stayed in steady state (read-only check before Apply 2).
   2. Pre-check 7's SES command used the wrong identity name and the wrong field for production access. Corrected read-only queries were used.
-  3. The editor's terminal panel lost the proof shell three times. Enrolment code 1 was lost with it, so O13 counts only the O10 enrolment code. The privacy window and proof window starts were reconstructed from AWS timestamps (05:09:00Z and 07:35:30Z). The slugs were held again from the directory, and email code 1 from the mailbox.
+  3. The editor's terminal panel lost the proof shell three times. The approved rule (**General rules → Shell loss**) was to stop and re-park; the owner chose to continue, an owner-approved deviation. Enrolment code 1 was lost with the shell, so O13 counts only the O10 enrolment code. A retrospective check covers code 1: across all three log groups over the full privacy window (2026-10-27T05:09Z to after Apply 2), a count-only scan for any 32-character base32-shaped token, in either case, found service 0 (3409 lines), ops access 0 (465) and api access 0 (305). The pattern was first shown to match a freshly generated code in three positions. No enrolment code reached the logs. The privacy window and proof window starts were reconstructed from AWS timestamps (05:09:00Z and 07:35:30Z). The slugs were held again from the directory, and email code 1 from the mailbox.
   4. The wrong-code test moved from O3 to O10.
-  5. O7's first log window ended at 20:00Z, past the 8-hour absolute session limit, and showed refresh 401 x3. That is correct behaviour for an expired session. The O7 evidence above is from the real two-tab reload at 09:03:33Z, read by the assistant. Chrome and Safari were signed in again before O8 and O10.
+  5. The O7 evidence is from the first and real window, the two-tab reload at 09:03:33Z, read by the assistant. A later timing window the owner set at 20:00Z, 11.6 hours after the 08:23Z sign-in and past the 8-hour absolute session limit, showed refresh 401 x3. That is correct behaviour for an expired session. Chrome and Safari were signed in again before O8 and O10.
   6. The operator address's local part is 5 characters, below the runbook's 6-character minimum, so it was not counted on its own. The full address and the at-sign counted 0.
   7. `GET /` on the API host logs path `/` with reason `ops_route_on_other_hostname` (404), not `unmatched` with no reason. There were 8 such lines over the run, mostly background traffic: 4 on the API host and 4 on another hostname in the staging zone, all 404.
   8. Extra attempts: one enrolment/verify 400 during O3 (08:12Z, during a shell loss), and two enrolment/verify 401s in O10 (the wrong-code test and one failed paste) before the 200.
   9. The browser's automatic `/favicon.ico` request shows a 404 in the Console.
+  10. O12 was run by the owner's assistant (status codes only), although its heading says the owner runs it.
 - **O14: Verified-on-staging record:**
   - `ops-identity-primitives`: verified on staging by O5, O6 and O10
   - `ops-operator-identity`: verified on staging by O3–O6, O10 and O11
@@ -3934,10 +3935,10 @@ Placeholders for Tasks 3 and 5 to fill in:
 - **Findings:**
   1. Pre-check 7's SES commands named the wrong identity and the wrong production-access field. The runbook now queries the `mail.${ZONE_NAME}` identity and `ProductionAccessEnabled`.
   2. The editor's terminal panel lost the proof shell three times. The runbook now requires a standalone terminal app for the proof shell.
-  3. O7's first log window was set at 20:00Z, past the 8-hour absolute session limit. The runbook now says O7 runs within 8 hours of the O5 sign-in, and that a proof started more than 8 hours after a browser's last sign-in begins with a fresh sign-in.
+  3. A later O7 timing window was set at 20:00Z, 11.6 hours after sign-in and past the 8-hour absolute session limit. The runbook now says O7 runs within 8 hours of the O5 sign-in, and that a proof started more than 8 hours after a browser's last sign-in begins with a fresh sign-in.
   4. The 8-hour session limit was observed live: refresh succeeded 40 minutes after sign-in (09:03Z), and was refused 11.6 hours after sign-in (20:00Z, refresh 401 x3). That shows the session expires; the exact 8-hour boundary is pinned by the unit test, not by this run.
   5. The operator address's local part was 5 characters, below the 6-character minimum. The runbook now records a short local part as skipped rather than as a finding, because the full-address and at-sign counts still cover it.
-  6. `GET /` on the API host logs reason `ops_route_on_other_hostname`, because `/` is an ops route; the runbook said it logged path `unmatched` with no reason. The text is corrected. The cross-host 404 floor stays 2 and was met with 10.
+  6. `GET /` on the API host logs reason `ops_route_on_other_hostname`, because `/` is an ops route; the runbook said it logged path `unmatched` with no reason. The text is corrected. All three O1 cross-host requests log a reason, so the floor is 3, as the plan says; it was met with 10.
   7. The spec's floor for `/v1/ops/passkey/authenticate/verify` 200 is 4; the runbook's 3 is right (plan deviation 1). The run logged 6.
 
 ## Restore drill
