@@ -2786,6 +2786,8 @@ Shell variables and placeholders only. Never paste an account id, ARN, hostname,
 - Before any command that uses a held value, run `setopt pipefail`.
 - One-offs never overlap. Every `provision-owner`, Grant, Recover and Revoke starts with **Check the name is free** and ends with **Delete and verify** plus the poll.
 - **Shell loss.** If the proof shell is lost before O13, the held values are gone. Stop the proofs and re-park. Record O13 as "not countable for the lost values", which is a finding. Do not reconstruct a value from memory.
+- **Proof shell.** Run the proof shell in a standalone terminal app, not in an editor's terminal panel. In the first run the editor's panel lost the shell three times.
+- **8-hour limit.** A proof that starts more than 8 hours after a browser's last sign-in begins with a fresh sign-in in that browser.
 - Arrays are iterated as unquoted `${ARRAY}`.
 - New lines write the at-sign as `$'\x40'`.
 - Millisecond timestamps use `$(( $(date +%s) * 1000 ))`.
@@ -2846,7 +2848,7 @@ Initialize shell tracking variables:
 
     HELD_COMMUNITY_SLUG="proof-$(openssl rand -hex 4)"
 
-Prompt for the verified operator email address in lowercase without echo. Type the prompt and commands that use the variable directly into one terminal; do not click an editor's Run button while a prompt is waiting:
+Prompt for the verified operator email address in lowercase without echo. Type the prompt and commands that use the variable directly into one standalone terminal; do not click an editor's Run button while a prompt is waiting:
 
     read -rs "HELD_EMAIL?Verified operator email: "
 
@@ -2917,11 +2919,11 @@ Run pre-checks (assistant and owner; any failure is a stop before spend):
 
 7. SES domain checks (assistant, read-only, no address):
 
-       aws sesv2 get-email-identity --profile ${AWS_PROFILE} --region ap-southeast-2 --email-identity "${ZONE_NAME}" --query '{Identity:VerificationStatus,Dkim:DkimAttributes.Status}' --output json
+       aws sesv2 get-email-identity --profile ${AWS_PROFILE} --region ap-southeast-2 --email-identity "mail.${ZONE_NAME}" --query '{Identity:VerificationStatus,Dkim:DkimAttributes.Status}' --output json
 
        aws sesv2 get-email-identity --profile ${AWS_PROFILE} --region ap-southeast-2 --email-identity "mail.${ZONE_NAME}" --query 'MailFromAttributes.MailFromDomainStatus' --output text
 
-       aws sesv2 get-account --profile ${AWS_PROFILE} --region ap-southeast-2 --query 'ProductionAccess' --output text
+       aws sesv2 get-account --profile ${AWS_PROFILE} --region ap-southeast-2 --query 'ProductionAccessEnabled' --output text
 
    Expected: domain identity and DKIM status `SUCCESS`, MAIL FROM domain status `SUCCESS`, production access `False` (sandbox).
 
@@ -3388,6 +3390,8 @@ Run with no session, using `curl -sS --path-as-is -o /dev/null -D - -w '%{http_c
 
 #### O7: Refresh after expiry, two tabs (owner, Chrome)
 
+Run O7 within 8 hours of the O5 sign-in, because the session has an 8-hour absolute limit. Set `O7_START_MS` immediately before the reload and `O7_END_MS` immediately after it, never later.
+
 1. In Chrome, open the console in two separate tabs.
 2. Wait without making requests in either tab for at least 16 minutes from last directory load, so the 15-minute access token expires.
 3. Record `O7_START_MS`:
@@ -3625,7 +3629,7 @@ Operator email:
 
     print -r -- "email api $(print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "${HELD_EMAIL}")"
 
-Local part of operator email (count only if at least 6 characters long; otherwise record "too short to count" as a finding):
+Local part of operator email (count only if at least 6 characters long; a shorter local part would match unrelated text, so record "skipped (short)". The full-address and at-sign counts still cover the address):
 
     LOCAL_PART=${HELD_EMAIL%%$'\x40'*}
 
@@ -3770,7 +3774,7 @@ Check that each floor is met (deviation 1):
 | `/v1/ops/enrolment/start`                                                             | 403    | 2        |
 | any path with `reason` `ops_route_on_other_hostname` or `other_route_on_ops_hostname` | 404    | 2 (O1)   |
 
-Only `GET /v1/ops/me` on the API host (reason `ops_route_on_other_hostname`) and `POST /v1/access/grants/list` on the ops host (reason `other_route_on_ops_hostname`) log a `reason`. `GET /` on the API host matches no route, so it logs path `unmatched` with no reason.
+`GET /v1/ops/me` and `GET /` on the API host log reason `ops_route_on_other_hostname`, because `/` is an ops route, and `POST /v1/access/grants/list` on the ops host logs reason `other_route_on_ops_hostname`. Background requests to other hostnames in the staging zone can also log `ops_route_on_other_hostname`, so the count is usually above the floor.
 
 Extra lines from retries are fine. Any control below its minimum is a stop.
 
@@ -3846,10 +3850,10 @@ Placeholders for Tasks 3 and 5 to fill in:
   - Apply 1 commit SHA: `9b2cf07`
   - Apply 1 completion: 2026-10-27T05:09Z UTC
   - Hard stop (48 hours): 2026-10-29T05:09Z UTC
-  - Apply 2 commit SHA: `_`
-  - Apply 2 completion: `_` UTC
-  - Total unpark window: `_`
-  - Calculated cost at USD 0.0468 per hour: `_`
+  - Apply 2 commit SHA: `71892aa`
+  - Apply 2 completion: 2026-10-28T04:39Z UTC
+  - Total unpark window: 23 h 30 min (inside the 24-hour target)
+  - Calculated cost at USD 0.0468 per hour: about USD 1.10
 - **Before the unpark (H0):**
   - C5 authenticator (a) kind: Google Password Manager (Chrome)
   - C5 authenticator (b) kind: Mac passkey store (iCloud Keychain)
@@ -3869,7 +3873,7 @@ Placeholders for Tasks 3 and 5 to fill in:
   - Read-only plan (18 to add): saved plan 18 to add; addresses matched
 - **Apply 1:**
   - Plan and apply summary (18 added, 0 changed, 0 destroyed): 18 added; completed 2026-10-27T05:09Z
-  - RDS instance status: not reported separately; `db-bootstrap` and `db-migrate` reached the database
+  - RDS instance status: available after Apply 1, before db-bootstrap
 - **One-offs:**
   - `db-bootstrap`: exit 0 (79)
   - `db-migrate`: 13 applied, done applied=13 total=13, read from the log stream; exit code not captured (shell lost)
@@ -3903,7 +3907,7 @@ Placeholders for Tasks 3 and 5 to fill in:
 - **Email codes count:**
   - Total email codes requested: 2 (enrolment/start 204 x2)
 - **Spot interruptions, retries and deviations:**
-  1. Spot interruptions: none reported.
+  1. Spot interruptions: none. The service started one task after Apply 1 and stayed in steady state (read-only check before Apply 2).
   2. Pre-check 7's SES command used the wrong identity name and the wrong field for production access. Corrected read-only queries were used.
   3. The editor's terminal panel lost the proof shell three times. Enrolment code 1 was lost with it, so O13 counts only the O10 enrolment code. The privacy window and proof window starts were reconstructed from AWS timestamps (05:09:00Z and 07:35:30Z). The slugs were held again from the directory, and email code 1 from the mailbox.
   4. The wrong-code test moved from O3 to O10.
@@ -3919,16 +3923,22 @@ Placeholders for Tasks 3 and 5 to fill in:
   - `ops-operator-oneoff`: verified on staging by the Grant, O10 and O11
   - `ops-console-ui`: verified on staging by O2–O9
 - **Apply 2 (re-park):**
-  - `service_image` removed from local file: `_`
-  - Plan and apply summary (0 added, 0 changed, 18 destroyed): `_`
-  - Follow-up plan (no changes): `_`
-  - Live read-only check after (0 RDS, 0 ECS): `_`
+  - `service_image` removed from local file: count 0; the apply worktree was at `71892aa` and clean
+  - Plan and apply summary (0 added, 0 changed, 18 destroyed): saved plan 0 to add, 0 to change, 18 to destroy, all 18 actions delete at the same 18 addresses as Apply 1; applied 0 added, 0 changed, 18 destroyed (service 1m54s, database 1m52s)
+  - Follow-up plan (no changes): No changes, exit 0
+  - Live read-only check after (0 RDS, 0 ECS): 0 RDS instances, 0 ECS clusters, 0 RDS snapshots; the provision secret name is free
 - **Close-out:**
-  - Ops passkey entries deleted from both authenticators: `_`
-  - Chrome proof profile cleaned: `_`
-  - Universal Clipboard restored: `_`
+  - Ops passkey entries deleted from both authenticators: Google Password Manager yes; iCloud Keychain yes
+  - Chrome proof profile cleaned: deleted yes; Safari site data removed yes
+  - Universal Clipboard restored: yes (Handoff back on)
 - **Findings:**
-  - `_`
+  1. Pre-check 7's SES commands named the wrong identity and the wrong production-access field. The runbook now queries the `mail.${ZONE_NAME}` identity and `ProductionAccessEnabled`.
+  2. The editor's terminal panel lost the proof shell three times. The runbook now requires a standalone terminal app for the proof shell.
+  3. O7's first log window was set at 20:00Z, past the 8-hour absolute session limit. The runbook now says O7 runs within 8 hours of the O5 sign-in, and that a proof started more than 8 hours after a browser's last sign-in begins with a fresh sign-in.
+  4. The 8-hour session limit was observed live: refresh succeeded 40 minutes after sign-in (09:03Z), and was refused 11.6 hours after sign-in (20:00Z, refresh 401 x3). That shows the session expires; the exact 8-hour boundary is pinned by the unit test, not by this run.
+  5. The operator address's local part was 5 characters, below the 6-character minimum. The runbook now records a short local part as skipped rather than as a finding, because the full-address and at-sign counts still cover it.
+  6. `GET /` on the API host logs reason `ops_route_on_other_hostname`, because `/` is an ops route; the runbook said it logged path `unmatched` with no reason. The text is corrected. The cross-host 404 floor stays 2 and was met with 10.
+  7. The spec's floor for `/v1/ops/passkey/authenticate/verify` 200 is 4; the runbook's 3 is right (plan deviation 1). The run logged 6.
 
 ## Restore drill
 
