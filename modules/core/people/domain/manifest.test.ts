@@ -7,7 +7,7 @@ describe("core.people manifest", () => {
     expect(peopleModule).toEqual({
       key: "core.people",
       version: 1,
-      requires: [],
+      requires: ["core.usage"],
       publishes: [],
       subscribes: [],
       ports: [],

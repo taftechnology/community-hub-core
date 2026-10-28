@@ -3,7 +3,7 @@ import { defineModule } from "@community-hub/kernel/module";
 export default defineModule({
   key: "core.people",
   version: 1,
-  requires: [],
+  requires: ["core.usage"],
   publishes: [],
   subscribes: [],
   ports: [],

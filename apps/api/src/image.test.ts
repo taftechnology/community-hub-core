@@ -148,6 +148,7 @@ describe("service image build", () => {
     for (const name of [
       "@community-hub/policy",
       "@community-hub/tenancy",
+      "@community-hub/usage",
       "@community-hub/people",
       "@community-hub/access",
       "@community-hub/entitlements-eval",

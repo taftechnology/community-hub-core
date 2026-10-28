@@ -359,6 +359,9 @@ importers:
       '@community-hub/kernel':
         specifier: workspace:*
         version: link:../../../packages/kernel
+      '@community-hub/usage':
+        specifier: workspace:*
+        version: link:../usage
       drizzle-orm:
         specifier: 0.45.2
         version: 0.45.2(@cloudflare/workers-types@5.20260917.1)(postgres@3.4.9)

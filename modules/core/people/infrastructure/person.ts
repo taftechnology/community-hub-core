@@ -2,6 +2,7 @@ import type { webcrypto } from "node:crypto";
 
 import { blindIndex, decrypt, encrypt, type Ciphertext, type KmsPort } from "@community-hub/crypto";
 import { appendAuditEvent, newId, type AppTransaction } from "@community-hub/db";
+import { recordSuccess } from "@community-hub/usage";
 
 import { PeopleError } from "../domain/error.js";
 import {
@@ -288,6 +289,7 @@ export async function createPerson(
     purpose: PERSON_CREATED,
     targetIds: [personId],
   });
+  await recordSuccess(tx, "people.directory", input.now);
   return { personId, isMinor: minor };
 }
 
