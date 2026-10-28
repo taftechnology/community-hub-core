@@ -1,7 +1,7 @@
 # Spec: Usage facts
 
 Slug: usage-facts
-Status: approved (2026-10-28, Abdus Salam)
+Status: approved (2026-10-28, Adnan Bin Hossen)
 Architecture refs: §6.3, §10.2, §12.1, §19.3, §26 Q15, Q17. Implements the `usage-facts` row, the last Phase 1 row. Depends on `tenancy-implicit-org` and `people-households`, both on `main`. Staging stays parked.
 
 ## Problem
@@ -62,7 +62,7 @@ Nobody can answer "how are communities using the platform?" Architecture §19.3 
 - No `id` column. The natural key is the identity, as for `app.person_tag_links` and `app.custom_role_permissions`. This departs from the §6.3 template on purpose.
 - Row level security `community_isolation`, `FOR ALL TO public`, `USING` and `WITH CHECK` both `org_id = current_setting('app.org_id')::uuid and community_id = current_setting('app.community_id')::uuid`. `FORCE ROW LEVEL SECURITY`.
 - Grants are the defaults from `0000_schemas.sql`, then `REVOKE DELETE, TRUNCATE ON app.usage_facts_daily FROM app`. `SELECT`, `INSERT` and `UPDATE` stay, since the upsert needs all three. `identity` and `platform` get nothing.
-- No column is encrypted. Nothing here is personal data. A count of people created per community per day reveals no individual. No blind index or derived clear column applies (§12.2.1).
+- No column is encrypted. Nothing here is personal data. A row has no person dimension: no person id, no `is_minor`, nothing that tells a minor apart. A low count (for example 1 in a small community on one day) can still support inference when combined with outside knowledge. That is acceptable while the facts stay tenant-internal under row level security, with no read route and no platform copy. The chunk that builds the ops usage view decides small-count suppression, coarser windows or a minimum cohort before any count is copied to `platform`. No blind index or derived clear column applies (§12.2.1).
 - Every column goes into `modules/core/usage/module.manifest.ts` `dataClasses` and into `modules/core/usage/domain/manifest.test.ts`, in the same task as the migration.
 
 ## Rules touched
