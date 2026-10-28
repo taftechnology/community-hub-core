@@ -68,6 +68,61 @@ describe("usage_facts_daily schema and privileges", () => {
     }
   });
 
+  it("pins the live constraints and policy after every migration", async () => {
+    const runtime = loadRuntime();
+    const sql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    try {
+      const constraints = await sql<{ conname: string; def: string }[]>`
+        select conname, pg_get_constraintdef(oid) as def
+        from pg_constraint
+        where conrelid = 'app.usage_facts_daily'::regclass
+        order by conname
+      `;
+      const policies = await sql<
+        {
+          policyname: string;
+          permissive: string;
+          roles: string[];
+          cmd: string;
+          qual: string;
+          with_check: string;
+        }[]
+      >`
+        select policyname, permissive, roles, cmd, qual, with_check
+        from pg_policies
+        where schemaname = 'app' and tablename = 'usage_facts_daily'
+      `;
+      expect(constraints).toEqual([
+        {
+          conname: "usage_facts_daily_feature_key",
+          def: "CHECK ((((char_length(feature_key) >= 1) AND (char_length(feature_key) <= 64)) AND (feature_key ~ '^[a-z][a-z0-9_]*(?:[.][a-z][a-z0-9_]*)+$'::text)))",
+        },
+        {
+          conname: "usage_facts_daily_org_id_community_id_feature_key_day_pk",
+          def: "PRIMARY KEY (org_id, community_id, feature_key, day)",
+        },
+        {
+          conname: "usage_facts_daily_success_count",
+          def: "CHECK ((success_count >= 1))",
+        },
+      ]);
+      expect(policies).toEqual([
+        {
+          policyname: "community_isolation",
+          permissive: "PERMISSIVE",
+          roles: ["public"],
+          cmd: "ALL",
+          qual: "((org_id = (current_setting('app.org_id'::text))::uuid) AND (community_id = (current_setting('app.community_id'::text))::uuid))",
+          with_check:
+            "((org_id = (current_setting('app.org_id'::text))::uuid) AND (community_id = (current_setting('app.community_id'::text))::uuid))",
+        },
+      ]);
+      expect(policies[0]?.with_check).toBe(policies[0]?.qual);
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
   it("the app role cannot delete usage facts", async () => {
     const runtime = loadRuntime();
     const appSql = createPlaintextAppSql(roleUrl(runtime, "app"));
@@ -131,9 +186,12 @@ describe("usage_facts_daily schema and privileges", () => {
         expect(rows).toEqual([{ feature_key: "people.directory", success_count: 1 }]);
       });
     } finally {
-      await directSql`delete from app.usage_facts_daily where org_id = ${scope.orgId}::uuid`;
-      await directSql.end({ timeout: 1 });
-      await appSql.end({ timeout: 1 });
+      try {
+        await directSql`delete from app.usage_facts_daily where org_id = ${scope.orgId}::uuid`;
+      } finally {
+        await directSql.end({ timeout: 1 });
+        await appSql.end({ timeout: 1 });
+      }
     }
   });
 });
