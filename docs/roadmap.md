@@ -21,8 +21,8 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 |              |                                                                   |
 | ------------ | ----------------------------------------------------------------- |
 | Phase        | 1 — Core platform                                                 |
-| Last shipped | `ops-console-ui`                                                  |
-| Next chunk   | `ops-console-proof`                                               |
+| Last shipped | `ops-console-proof`                                               |
+| Next chunk   | `usage-facts`                                                     |
 | Phase 0      | 26 rows: 25 done, 1 superseded (`api-au-hostname`), 0 not started |
 | Later phases | not started                                                       |
 
@@ -96,7 +96,7 @@ Architecture: monorepo, CI, Terraform for AWS in `ap-southeast-2`, kernel, db wi
 | done       | `db-migrate-command`         | The image gains `/app/db-migrate.js`, which applies the product migrations as the master login, refuses to run before `db-bootstrap`, and prints the tags it applied. It has not been run on staging. Spec `docs/specs/2026-10-12-db-migrate-command.md`.                                                                                                                                                                                                                          |
 | done       | `staging-proof-run`          | The distroless image runs on Fargate. `db-bootstrap` then `db-migrate` applied the ten product migrations to RDS and a second run applied none. The sign-in-code route answers 503 with no mail vendor; role and entitlement routes refuse a request with no session; the service re-read a changed database secret and recovered without a restart. Staging was re-parked the same day. Spec `docs/specs/2026-10-12-staging-proof-run.md`.                                        |
 
-Next is `ops-console-proof`.
+Next is `usage-facts`.
 
 SQS, EventBridge, file storage, and the admin static-file distribution are not rows here. Each waits for the first chunk that uses it.
 
@@ -129,7 +129,7 @@ Vertical slices. Nav items appear in the frozen order (see [Admin navigation](#a
 | done        | `ops-console-api`         | Ops routes, cookie-held operator sessions, static serving on the ops host, and the read-only directory. Spec `docs/specs/2026-10-25-ops-console-api.md`.                                                                                                                                                                                                            |
 | done        | `ops-operator-oneoff`     | The `ops-operator` one-off, the `provision-owner` shape refusal, the operator runbook including recovery, and the PR #62 follow-ups. Spec `docs/specs/2026-10-26-ops-operator-oneoff.md`.                                                                                                                                                                           |
 | done        | `ops-console-ui`          | Operator console interface in `apps/ops`. Spec `docs/specs/2026-10-26-ops-console-ui.md`.                                                                                                                                                                                                                                                                           |
-| not started | `ops-console-proof`       | A staging proof chunk follows the UI.                                                                                                                                                                                                                                                                                                                               |
+| done        | `ops-console-proof`       | Live proof on staging-au of operator enrolment with two passkeys, sign-in in Chrome and Safari, refresh after expiry, sign-out, recover and revoke, and log hygiene; staging re-parked. Spec `docs/specs/2026-10-27-ops-console-proof.md`.                                                                                                                          |
 | not started | `usage-facts`             | `core/usage` skeleton (community × feature × day). Facts grow as modules ship.                                                                                                                                                                                                                                                                                      |
 
 Phase 1 does **not** fill Enquires, Engagement, Family Records, Membership, Records, Certifications, Volunteers, Forms, Communication, Mobile App, Website & CMS, Donations, or E-commerce.
@@ -306,11 +306,15 @@ Stripe dashboard has no "End trial now"; the runbook's S5 step should use the Wo
 
 The people and access `boundaries.test.ts` files read the gitignored `staging.local.tfvars` too, so they fail in a checkout whose local file holds `service_image` (finding 7).
 
+The ops console proof observed the 8-hour operator session limit live: refresh succeeded 40 minutes after sign-in (09:03Z) and was refused 11.6 hours after sign-in (20:00Z, refresh 401 x3). That shows the session expires; the exact 8-hour boundary is pinned by the unit test, not by the run.
+
+The ops access log format (`access_log_format` in `infra/modules/aws-ingress/main.tf`) is not pinned exactly by a Terraform test; the ops console proof checked its nine keys live only.
+
 ---
 
 ## Next spec
 
-The next chunk is **ops-console-proof**. Q8b (plan contents and prices) is still open.
+The next chunk is **usage-facts**. Q8b (plan contents and prices) is still open.
 
 ---
 
