@@ -4,7 +4,7 @@ Slug: ops-console-proof
 Status: approved (2026-10-27, Abdus Salam)
 Architecture refs: §8.5 (Ops console row), §11.4, §19 Ops console, §20; D16, D17; ADR 0009, ADR 0015.
 
-Follows the four ops-console chunks, each of which left its staging check here:
+Follows the five ops-console chunks, each of which left its staging check here:
 
 - `docs/specs/2026-10-22-ops-identity-primitives.md`
 - `docs/specs/2026-10-22-ops-operator-identity.md`
@@ -62,7 +62,7 @@ In:
   - the operator steps and the browser proofs;
   - the log counts, the evidence rules and the close-out list below.
 
-  It refers to the Apply 1, Apply 2 and one-off steps of **Stripe billing proof** where they are unchanged. For Grant, Recover and Revoke it refers to `ops-operator.md`, including that runbook's shell-variable table, **Check the name is free** and **Delete and verify**. It records the verified-on-staging line for each of the four ops-console chunks.
+  It refers to the Apply 1, Apply 2 and one-off steps of **Stripe billing proof** where they are unchanged. For Grant, Recover and Revoke it refers to `ops-operator.md`, including that runbook's shell-variable table, **Check the name is free** and **Delete and verify**. It records the verified-on-staging line for each of the five ops-console chunks.
 
 - An unpark commit: `enable_database = true` and `desired_count = 1` in `infra/regions/au/env/staging.tfvars`. `service_image` goes only in the gitignored `staging.local.tfvars`.
 - The run itself: read-only pre-checks, Apply 1, the one-offs, proofs O1–O14, an evidence commit, a re-park commit, Apply 2, and a plan that shows no changes.
@@ -349,6 +349,6 @@ At Apply 2, staging returns to the parked month: about USD 7.70 plus images. Thi
 - **Legal:** none.
 - **New vendor or AWS service:** none. Lighthouse is built into Chrome DevTools, runs locally, and adds nothing to the product. Rule 6 governs product surfaces.
 - **Architecture change:** none.
-- **Size:** docs plus one var-file flip each way, well under AGENTS.md §3's ~800 lines.
+- **Size:** docs only, plus one var-file flip each way; about 2,100 added lines, almost all runbook and plan text.
 - **Second fresh-context review:** required, because this run covers authentication and operator access. The owner's assistant runs it when the pull request opens.
 - **Rollback:** Apply 2 is the rollback.

@@ -525,7 +525,7 @@ Follow the new runbook section. For each step, the owner reports counts, statuse
 - [ ] All six tasks and H0–H9 are done, or dropped with a note.
 - [ ] Full CI is green on the pull request.
 - [ ] Every proof from O1 to O14 is recorded, with the positive controls and structural counts. Both applies are recorded with their SHAs. Staging is parked in AWS and in git.
-- [ ] The verified-on-staging lines for the four ops-console chunks are recorded (O14).
+- [ ] The verified-on-staging lines for the five ops-console chunks are recorded (O14).
 - [ ] The roadmap and the `AGENTS.md` row are updated in Task 6.
 - [ ] The reviewer's sign-off is recorded per task. The second-review line is closed before merge.
 - [ ] Session scratch is cleaned (§5).
