@@ -5,6 +5,7 @@ packages:
   - "modules/core/tenancy"
   - "modules/core/identity"
   - "modules/core/people"
+  - "modules/core/usage"
   - "modules/core/access"
   - "modules/core/entitlements"
   - "modules/core/billing"
