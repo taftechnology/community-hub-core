@@ -280,6 +280,16 @@ describe("recordSuccess", () => {
     const scope = scopes.orgA.community1;
     const at = new Date("2026-10-28T12:00:00.000Z");
 
+    const [pre] = await directSql<{ count: string }[]>`
+      select count(*)::text as count
+      from app.usage_facts_daily
+      where org_id = ${scope.orgId}::uuid
+        and community_id = ${scope.communityId}::uuid
+        and feature_key = 'people.directory'
+        and day = '2026-10-28'::date
+    `;
+    expect(Number(pre?.count ?? 0)).toBe(0);
+
     let releaseA!: () => void;
     const holdA = new Promise<void>((resolve) => {
       releaseA = resolve;
@@ -378,25 +388,37 @@ describe("recordSuccess", () => {
 
     try {
       await withAppTransaction(appSql, scope, async (tx) => {
-        await expect(recordSuccess(tx, "people", validDate)).rejects.toThrow(
-          new UsageError("invalid_feature_key"),
-        );
+        const attempt = recordSuccess(tx, "people", validDate);
+        await expect(attempt).rejects.toBeInstanceOf(UsageError);
+        await expect(attempt).rejects.toMatchObject({
+          name: "UsageError",
+          code: "invalid_feature_key",
+        });
+        await expect(attempt).rejects.toThrow(new UsageError("invalid_feature_key"));
         const [res] = await tx<{ ok: number }[]>`select 1 as ok`;
         expect(res?.ok).toBe(1);
       });
 
       await withAppTransaction(appSql, scope, async (tx) => {
-        await expect(recordSuccess(tx, "People.directory", validDate)).rejects.toThrow(
-          new UsageError("invalid_feature_key"),
-        );
+        const attempt = recordSuccess(tx, "People.directory", validDate);
+        await expect(attempt).rejects.toBeInstanceOf(UsageError);
+        await expect(attempt).rejects.toMatchObject({
+          name: "UsageError",
+          code: "invalid_feature_key",
+        });
+        await expect(attempt).rejects.toThrow(new UsageError("invalid_feature_key"));
         const [res] = await tx<{ ok: number }[]>`select 1 as ok`;
         expect(res?.ok).toBe(1);
       });
 
       await withAppTransaction(appSql, scope, async (tx) => {
-        await expect(recordSuccess(tx, "people.directory", new Date("not-a-date"))).rejects.toThrow(
-          new UsageError("invalid_time"),
-        );
+        const attempt = recordSuccess(tx, "people.directory", new Date("not-a-date"));
+        await expect(attempt).rejects.toBeInstanceOf(UsageError);
+        await expect(attempt).rejects.toMatchObject({
+          name: "UsageError",
+          code: "invalid_time",
+        });
+        await expect(attempt).rejects.toThrow(new UsageError("invalid_time"));
         const [res] = await tx<{ ok: number }[]>`select 1 as ok`;
         expect(res?.ok).toBe(1);
       });
