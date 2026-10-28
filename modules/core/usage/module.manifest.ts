@@ -9,5 +9,11 @@ export default defineModule({
   ports: [],
   features: [],
   permissions: [],
-  dataClasses: {},
+  dataClasses: {
+    "usage_facts_daily.org_id": "internal",
+    "usage_facts_daily.community_id": "internal",
+    "usage_facts_daily.feature_key": "internal",
+    "usage_facts_daily.day": "internal",
+    "usage_facts_daily.success_count": "internal",
+  },
 });

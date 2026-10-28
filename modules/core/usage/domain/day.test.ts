@@ -7,6 +7,7 @@ describe("utcDay", () => {
     expect(utcDay(new Date("2026-03-01T23:59:59.999Z"))).toBe("2026-03-01");
     expect(utcDay(new Date("2026-03-02T00:00:00.000Z"))).toBe("2026-03-02");
     expect(utcDay(new Date("2028-02-29T12:00:00Z"))).toBe("2028-02-29");
+    expect(utcDay(new Date("9999-12-31T23:59:59.999Z"))).toBe("9999-12-31");
   });
 
   it("throws invalid_time on invalid or out-of-range dates", () => {

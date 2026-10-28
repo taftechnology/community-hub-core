@@ -16,6 +16,7 @@
     "domain/**/*.ts",
     "public/**/*.ts",
     "db/**/*.ts",
-    "infrastructure/**/*.ts"
+    "infrastructure/**/*.ts",
+    "test/fixtures/scopes.ts"
   ]
 }

@@ -12,6 +12,9 @@ export default defineConfig({
     },
   },
   test: {
+    env: {
+      TZ: "Australia/Sydney",
+    },
     alias: {
       "@community-hub/db/plaintext": plaintext,
     },
