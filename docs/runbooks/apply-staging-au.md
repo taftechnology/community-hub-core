@@ -2767,6 +2767,1180 @@ Record the UTC completion time under **Cost clock and evidence** below and calcu
 6. Two browser sign-in starts were spent on a mistyped address (SES MessageRejected, answered 503) and a malformed code (400). The cap was raised to 6 starts for the run by owner decision, keeping at most 5 per rolling hour.
 7. `modules/core/people/domain/boundaries.test.ts` and `modules/core/access/domain/boundaries.test.ts` read every file in `infra/regions/au/env/`, including the gitignored `staging.local.tfvars`, so they fail in a checkout whose local file holds `service_image`. This predates the chunk.
 
+## Ops console proof
+
+This section is the operator path for the ops console proof on staging (`docs/specs/2026-10-27-ops-console-proof.md`). The human owner runs every apply, ECS one-off, secret step, browser step, and held-value command. The owner's assistant is read-only. Nothing in an agent task calls AWS.
+
+### General rules
+
+The opening paragraph of **Staging proof run** and **Stripe billing proof -> General rules** applies: the owner applies, the assistant is read-only, and a failed proof or a second failure on one step is a stop and a re-park.
+
+Stop after any failed proof, or after a second failure on the same step (AGENTS.md section 12). Then re-park before further attempts. The 24-hour target and 48-hour hard stop are measured from Apply 1 completion to the start of the re-park apply; the owner runs the re-park at that hard stop even if proofs remain.
+
+Apply 1 starts only when the owner can run O1-O13 in one sitting of about 3-6 hours.
+
+Shell variables and placeholders only. Never paste an account id, ARN, hostname, email address, OTP code, token, slug, cookie, credential id, or IP address into evidence. Say "the api hostname", "the auth hostname", and "the ops hostname". Values that come from AWS at run time are held in shell variables and never recorded. In zsh write `${VAR}:text`, not `$VAR:text`. Do not put an inline `#` comment inside a command string. One pasteable command per indented block. Evidence rules: counts, statuses, key sets, lengths, and yes/no facts only.
+
+- A Spot interruption is not a failure; rerun that step once.
+- Stream-scoped `get-log-events` calls for one-offs are exempt from `--start-time`, because each stream is unique to its task. Every `filter-log-events` call carries `--start-time`.
+- Before any command that uses a held value, run `setopt pipefail`.
+- One-offs never overlap. Every `provision-owner`, Grant, Recover and Revoke starts with **Check the name is free** and ends with **Delete and verify** plus the poll.
+- **Shell loss.** If the proof shell is lost before O13, the held values are gone. Stop the proofs and re-park. Record O13 as "not countable for the lost values", which is a finding. Do not reconstruct a value from memory.
+- **Proof shell.** Run the proof shell in a standalone terminal app, not in an editor's terminal panel. In the first run the editor's panel lost the shell three times.
+- **8-hour limit.** A proof that starts more than 8 hours after a browser's last sign-in begins with a fresh sign-in in that browser.
+- Arrays are iterated as unquoted `${ARRAY}`.
+- New lines write the at-sign as `$'\x40'`.
+- Millisecond timestamps use `$(( $(date +%s) * 1000 ))`.
+
+### Shell variables
+
+Hold these in the shell. Never record their values.
+
+| Variable                     | Meaning                                                                                          |
+| :--------------------------- | :----------------------------------------------------------------------------------------------- |
+| `${AWS_PROFILE}`             | Apply and one-off profile (default `ch-admin`)                                                   |
+| `${ZONE_NAME}`               | Apex hosted zone name from `staging_zone_id`                                                     |
+| `${OPS_HOST}`                | Ops hostname (`ops.au.${ZONE_NAME}`)                                                             |
+| `${API_HOST}`                | Tenant API hostname (`au.api.${ZONE_NAME}`)                                                      |
+| `${DEPLOY_SHA}`              | Commit SHA of latest `main` containing `fd59b1e`                                                 |
+| `${DIGEST}`                  | ECR image digest for `${DEPLOY_SHA}` (never recorded)                                            |
+| `${RUN_ID}`                  | GitHub Actions run id for the publish workflow run                                               |
+| `${PROVISION_SECRET_NAME}`   | The one fixed secret name (`${name}-provision-owner`)                                            |
+| `${SECRETS_KEY_ARN}`         | KMS customer-managed key ARN for Secrets Manager encryption                                      |
+| `${DB_INSTANCE_ID}`          | RDS database instance identifier (`ch-staging-postgres`)                                         |
+| `${CLUSTER}`                 | ECS cluster name for staging (`ch-staging`)                                                      |
+| `${SERVICE}`                 | ECS service name for staging (`ch-staging`)                                                      |
+| `${SERVICE_TASK_DEFINITION}` | Service task definition family (`ch-staging`)                                                    |
+| `${OPS_TASK_DEFINITION}`     | Ops task definition family (`ch-staging-db-ops`)                                                 |
+| `${SUBNET}`                  | Staging public subnet id (from Terraform / describe; never recorded)                             |
+| `${TASK_SECURITY_GROUP}`     | Task security group id (from Terraform / describe; never recorded)                               |
+| `${TASK_ARN}`                | ECS task ARN for running one-off tasks (never recorded)                                          |
+| `${LOG_GROUP}`               | Service log group `/community-hub/ch-staging/service` (streams use prefixes `service`, `db-ops`) |
+| `${OPS_ACCESS_LOG_GROUP}`    | Ops access log group `/community-hub/ch-staging/ops-access`                                      |
+| `${API_ACCESS_LOG_GROUP}`    | API access log group `/community-hub/ch-staging/api-access`                                      |
+| `${PLAN_FILE}`               | Saved plan file path outside the repository (never committed; deleted after apply)               |
+| `${HELD_EMAIL}`              | Verified operator email entered at a silent prompt (never recorded)                              |
+| `${LOCAL_PART}`              | Local part of verified operator email (`${HELD_EMAIL%%$'\x40'*}`)                                |
+| `${HELD_ORG_SLUG}`           | Organisation synthetic slug (`proof-$(openssl rand -hex 4)`)                                     |
+| `${HELD_COMMUNITY_SLUG}`     | Community synthetic slug (`proof-$(openssl rand -hex 4)`)                                        |
+| `${HELD_ENROLMENT_CODES}`    | zsh array of generated enrolment codes                                                           |
+| `${HELD_EMAIL_CODES}`        | zsh array of email codes read from mailbox                                                       |
+| `${EMAIL_CODE_TIMES}`        | zsh array of epoch seconds when email codes were requested                                       |
+| `${ASSETS}`                  | zsh array of static asset paths extracted from ops console `index.html`                          |
+| `${PRIVACY_START_MS}`        | Privacy window start in epoch milliseconds (set before one-offs; never recorded)                 |
+| `${PROOF_START_MS}`          | Proof window start in epoch milliseconds (set before O1; never recorded)                         |
+| `${O7_START_MS}`             | O7 reload window start in epoch milliseconds (never recorded)                                    |
+| `${O7_END_MS}`               | O7 reload window end in epoch milliseconds (never recorded)                                      |
+| `${PROOF_END_MS}`            | Proof window end in epoch milliseconds (set in **O13**; never recorded)                          |
+| `${HARD_STOP_UTC}`           | Apply 1 completion plus 48 hours                                                                 |
+
+Initialize shell tracking variables:
+
+    setopt pipefail
+
+    HELD_ENROLMENT_CODES=()
+
+    HELD_EMAIL_CODES=()
+
+    EMAIL_CODE_TIMES=()
+
+    HELD_ORG_SLUG="proof-$(openssl rand -hex 4)"
+
+    HELD_COMMUNITY_SLUG="proof-$(openssl rand -hex 4)"
+
+Prompt for the verified operator email address in lowercase without echo. Type the prompt and commands that use the variable directly into one standalone terminal; do not click an editor's Run button while a prompt is waiting:
+
+    read -rs "HELD_EMAIL?Verified operator email: "
+
+    print
+
+Every held variable stays set until the final `unset` in **O13**.
+
+### Before the unpark
+
+The owner verifies these conditions while staging is parked. Answer yes/no for each item. Stop if any answer is no.
+
+1. **C5:** Two authenticators from different providers are available. If (b) is a security key, it supports discoverable credentials and has a PIN set. Record the generic kind of each, for example "Mac passkey store" or "FIDO2 key" (yes/no).
+2. **C6:** A Chrome profile with no extensions exists (yes/no).
+3. Neither authenticator holds a passkey for the ops site (yes/no).
+4. **Universal Clipboard:** Disabled for the run in macOS System Settings -> General -> AirDrop & Handoff, so the clipboard does not reach a paired phone (yes/no).
+
+### Pre-checks
+
+Hold `${DEPLOY_SHA}` as the latest `main` commit that contains `fd59b1e` (`ops-console-ui` merge):
+
+    git fetch origin
+
+    DEPLOY_SHA=$(git rev-parse origin/main)
+
+    git merge-base --is-ancestor fd59b1e ${DEPLOY_SHA} && print ok
+
+Expected: `ok`.
+
+Run pre-checks (assistant and owner; any failure is a stop before spend):
+
+1. Branch ancestors (assistant): confirm branch contains origin/main and `${DEPLOY_SHA}`:
+
+       git merge-base --is-ancestor origin/main HEAD && git merge-base --is-ancestor ${DEPLOY_SHA} HEAD && print ok
+
+   Expected: `ok`. The branch must contain `origin/main`, with linear history, and no pushed commit is rewritten. If a rewrite would be needed, stop and ask the owner.
+
+2. Infrastructure unchanged (assistant): confirm `infra/` has no commit between `57b2d3d` and `${DEPLOY_SHA}`:
+
+       git log --oneline 57b2d3d..${DEPLOY_SHA} -- infra/
+
+   Expected: prints nothing.
+
+3. Publish job conclusion (assistant; record conclusion only):
+
+       RUN_ID=$(gh run list --commit ${DEPLOY_SHA} --workflow ci.yml --json databaseId --jq '.[0].databaseId')
+
+       gh run view ${RUN_ID} --json jobs --jq '.jobs[] | select(.name=="publish") | {name,conclusion}'
+
+   Expected: `publish` is `success`.
+
+4. Image digest (assistant; record digest length only, never the registry host):
+
+       DIGEST=$(aws ecr describe-images --profile ${AWS_PROFILE} --region ap-southeast-2 --repository-name ch-staging/service --image-ids imageTag=${DEPLOY_SHA} --query 'imageDetails[0].imageDigest' --output text)
+
+       print ${#DIGEST}
+
+   Expected: `71`.
+
+5. Scan status and CRITICAL count (assistant):
+
+       aws ecr describe-image-scan-findings --profile ${AWS_PROFILE} --region ap-southeast-2 --repository-name ch-staging/service --image-id imageTag=${DEPLOY_SHA} --query '{status:imageScanStatus.status,critical:imageScanFindings.findingSeverityCounts.CRITICAL || `0`}' --output json
+
+   Expected: `COMPLETE` and `0` critical findings.
+
+6. Migration journal tags at `${DEPLOY_SHA}` (assistant; expect the 13 tags `0000_schemas` to `0012_polite_bloodstrike` in journal order):
+
+       git show ${DEPLOY_SHA}:packages/db/drizzle/meta/_journal.json | jq -r '.entries[].tag'
+
+7. SES domain checks (assistant, read-only, no address):
+
+       aws sesv2 get-email-identity --profile ${AWS_PROFILE} --region ap-southeast-2 --email-identity "mail.${ZONE_NAME}" --query '{Identity:VerificationStatus,Dkim:DkimAttributes.Status}' --output json
+
+       aws sesv2 get-email-identity --profile ${AWS_PROFILE} --region ap-southeast-2 --email-identity "mail.${ZONE_NAME}" --query 'MailFromAttributes.MailFromDomainStatus' --output text
+
+       aws sesv2 get-account --profile ${AWS_PROFILE} --region ap-southeast-2 --query 'ProductionAccessEnabled' --output text
+
+   Expected: domain identity and DKIM status `SUCCESS`, MAIL FROM domain status `SUCCESS`, production access `False` (sandbox).
+
+8. SES operator email verification status (owner, own shell):
+
+       aws sesv2 get-email-identity --profile ${AWS_PROFILE} --region ap-southeast-2 --email-identity "${HELD_EMAIL}" --query 'VerificationStatus' --output text
+
+   Expected: `SUCCESS`. The address is never shown to the assistant.
+
+9. Confirm staging is still parked (assistant; read-only counts):
+
+       aws rds describe-db-instances --profile ${AWS_PROFILE} --region ap-southeast-2 --query 'length(DBInstances)' --output text
+
+       aws ecs list-clusters --profile ${AWS_PROFILE} --region ap-southeast-2 --query 'length(clusterArns)' --output text
+
+   Expected: `0` for both.
+
+10. Write `service_image` line into `staging.local.tfvars`:
+    From `infra/regions/au`, the owner writes the `service_image` line into `env/staging.local.tfvars` using the block in **SES sign-in proof -> Apply 1**, and confirms the count check prints 1:
+
+        grep -c '^service_image' env/staging.local.tfvars
+
+    Expected: `1`.
+
+11. Read-only plan without the lock, compared with the 18 addresses (assistant):
+    From `infra/regions/au` on the pushed Task 2 SHA, after the owner has written the `service_image` line:
+
+        terraform init -backend-config=backend/staging.hcl -lockfile=readonly
+
+        terraform plan -lock=false -no-color -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -out=${PLAN_FILE} -input=false | grep --line-buffered '^Plan:'
+
+    Expected: `Plan: 18 to add, 0 to change, 0 to destroy.`
+
+    List addresses from the plan:
+
+        terraform show -json ${PLAN_FILE} | jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | "\(.change.actions | join(" ")) \(.address)"'
+
+    Confirm all 18 addresses match the expected list in **Apply 1** below.
+
+        rm -f ${PLAN_FILE}
+
+Stop if any pre-check fails. Push the Task 2 commit after the reviewer accepts both Task 1 and Task 2.
+
+### Apply 1
+
+The branch moves to the unpark commit (`enable_database = true`, `desired_count = 1` in `infra/regions/au/env/staging.tfvars`). The `service_image` line in `staging.local.tfvars` is reused from **Pre-checks**.
+
+Run before-each-apply checks against the Task 2 SHA on origin.
+
+Initialize Terraform with the staging backend:
+
+    terraform init -backend-config=backend/staging.hcl -lockfile=readonly
+
+Plan to the saved file outside the repository:
+
+    terraform plan -no-color -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -out=${PLAN_FILE} -input=false | grep --line-buffered '^Plan:'
+
+Expected plan summary: exactly 18 to add, 0 to change, 0 to destroy. List addresses and actions:
+
+    terraform show -json ${PLAN_FILE} | jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | "\(.change.actions | join(" ")) \(.address)"'
+
+Expected addresses:
+
+- `module.rds[0].aws_cloudwatch_metric_alarm.cpu_credit_balance` (create)
+- `module.rds[0].aws_cloudwatch_metric_alarm.database_connections` (create)
+- `module.rds[0].aws_cloudwatch_metric_alarm.free_storage_space` (create)
+- `module.rds[0].aws_cloudwatch_metric_alarm.freeable_memory` (create)
+- `module.rds[0].aws_db_instance.this` (create)
+- `module.rds[0].aws_db_parameter_group.this` (create)
+- `module.rds[0].aws_db_subnet_group.this` (create)
+- `module.rds[0].terraform_data.prod_protection` (create)
+- `aws_ecs_task_definition.db_ops[0]` (create)
+- `aws_iam_role.db_ops_execution[0]` (create)
+- `aws_iam_role.db_ops_task[0]` (create)
+- `aws_iam_role_policy.db_ops_execution[0]` (create)
+- `module.ingress.aws_ecs_cluster.this[0]` (create)
+- `module.ingress.aws_ecs_cluster_capacity_providers.this[0]` (create)
+- `module.ingress.aws_ecs_service.this[0]` (create)
+- `module.ingress.aws_ecs_task_definition.this[0]` (create)
+- `module.ingress.aws_iam_role_policy.pull[0]` (create)
+- `module.ingress.aws_vpc_security_group_ingress_rule.task_api[0]` (create)
+
+Any other address is a stop before apply.
+
+Apply that file:
+
+    terraform apply -input=false ${PLAN_FILE} | grep --line-buffered -E ': (Creating|Still creating|Creation complete|Modifying|Still modifying|Modification complete|Destroying|Still destroying|Destruction complete)|Apply complete' | sed -l -E 's/ \[id=[^]]+\]//'
+
+Record the UTC completion time under **Cost clock and evidence** below. The 24-hour target and 48-hour hard stop start at this instant. Rate: USD 0.0468 per hour.
+
+Delete the plan file:
+
+    rm -f ${PLAN_FILE}
+
+Set the privacy window start timestamp in epoch milliseconds:
+
+    PRIVACY_START_MS=$(( $(date +%s) * 1000 ))
+
+Wait until the RDS instance is available:
+
+    aws rds describe-db-instances --profile ${AWS_PROFILE} --db-instance-identifier ${DB_INSTANCE_ID} --query 'DBInstances[0].DBInstanceStatus' --output text
+
+Expected: `available`.
+
+### One-offs
+
+Run the one-off tasks in order on the freshly unparked database.
+
+Run `db-bootstrap`:
+
+    TASK_ARN=$(aws ecs run-task --profile ${AWS_PROFILE} --cluster ${CLUSTER} --task-definition ${OPS_TASK_DEFINITION} --launch-type FARGATE --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" --overrides '{"containerOverrides":[{"name":"db-ops","command":["node","/app/db-bootstrap.js"]}]}' --query 'tasks[0].taskArn' --output text)
+
+Wait for `db-bootstrap` to stop and read the exit code:
+
+    aws ecs wait tasks-stopped --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN}
+
+    aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN} --query 'tasks[0].[containers[0].exitCode,stoppedReason]' --output text
+
+    aws logs get-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --log-stream-name "db-ops/db-ops/${TASK_ARN##*/}" --query 'events[].message' --output text | tr '\t' '\n'
+
+Expected: exit 0, stdout exactly one integer (`max_connections`), stderr empty.
+
+Run `db-migrate`:
+
+    TASK_ARN=$(aws ecs run-task --profile ${AWS_PROFILE} --cluster ${CLUSTER} --task-definition ${OPS_TASK_DEFINITION} --launch-type FARGATE --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" --overrides '{"containerOverrides":[{"name":"db-ops","command":["node","/app/db-migrate.js"]}]}' --query 'tasks[0].taskArn' --output text)
+
+Wait for `db-migrate` to stop and read the exit code:
+
+    aws ecs wait tasks-stopped --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN}
+
+    aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN} --query 'tasks[0].[containers[0].exitCode,stoppedReason]' --output text
+
+    aws logs get-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --log-stream-name "db-ops/db-ops/${TASK_ARN##*/}" --query 'events[].message' --output text | tr '\t' '\n'
+
+Expected: exit 0, stdout 13 `applied <tag>` lines for 0000-0012 in journal order, then `done applied=13 total=13`, with stderr empty.
+
+Provision the first owner following the **Provision the first owner** procedure, with these deviations:
+
+- **Check the name is free** runs before Create;
+- **Create** uses `${HELD_ORG_SLUG}`, `${HELD_COMMUNITY_SLUG}` and `${HELD_EMAIL}` instead of prompts;
+- closing `unset` is skipped for held values;
+- a failed `create-secret` is a stop.
+
+Confirm secret name is free:
+
+    print -r -- "$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null)" | grep -c ResourceNotFoundException
+
+Expected: `1` means the name is free.
+
+Create the provision secret:
+
+    jq -n --arg o "${HELD_ORG_SLUG}" --arg c "${HELD_COMMUNITY_SLUG}" --arg e "${HELD_EMAIL}" \
+      '{organisationSlug: $o, communitySlug: $c, email: $e}' \
+      | aws secretsmanager create-secret --profile ${AWS_PROFILE} \
+        --name ${PROVISION_SECRET_NAME} --kms-key-id ${SECRETS_KEY_ARN} \
+        --secret-string file:///dev/stdin >/dev/null
+
+Run `provision-owner.js`:
+
+    PROVISION_SECRET_ARN=$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} \
+      --secret-id ${PROVISION_SECRET_NAME} --query 'ARN' --output text)
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${SERVICE_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/provision-owner.js\"],\"environment\":[{\"name\":\"PROVISION_SECRET_ARN\",\"value\":\"${PROVISION_SECRET_ARN}\"}]}]}" \
+      --query 'tasks[0].taskArn' --output text)
+
+    aws ecs wait tasks-stopped --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN}
+
+    aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN} --query 'tasks[0].[containers[0].exitCode,stoppedReason]' --output text
+
+    aws logs get-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --log-stream-name "service/service/${TASK_ARN##*/}" --query 'events[].message' --output text | tr '\t' '\n'
+
+Expected: exit 0, stdout `created`, stderr empty. `already_bootstrapped` is a stop (deviation 3). Any other result or exit means: read **Provision the first owner -> Results**, then still run Delete and verify plus the poll, then stop.
+
+Delete and verify secret:
+
+    aws secretsmanager delete-secret --profile ${AWS_PROFILE} \
+      --secret-id ${PROVISION_SECRET_NAME} --force-delete-without-recovery >/dev/null
+
+    repeat 12; do gone=$(print -r -- "$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null)" | grep -c ResourceNotFoundException); (( gone == 1 )) && break; sleep 5; done; print ${gone}
+
+    unset PROVISION_SECRET_ARN TASK_ARN gone
+
+Expected: `1` means deletion is confirmed.
+
+### Running-task check
+
+The assistant runs these checks with no session:
+
+Wait until the ECS service is stable:
+
+    aws ecs wait services-stable --profile ${AWS_PROFILE} --cluster ${CLUSTER} --services ${SERVICE}
+
+Check that the running task's image digest matches the pre-checked digest:
+
+    SERVICE_TASK_ARN=$(aws ecs list-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --service-name ${SERVICE} --desired-status RUNNING --query 'taskArns[0]' --output text)
+
+    aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks "${SERVICE_TASK_ARN}" --query 'tasks[0].containers[0].imageDigest' --output text
+
+Expected: equals the pre-checked digest.
+
+Check container environment variable names:
+
+    TASK_DEF_ARN=$(aws ecs describe-services --profile ${AWS_PROFILE} --cluster ${CLUSTER} --services ${SERVICE} --query 'services[0].taskDefinition' --output text)
+
+    aws ecs describe-task-definition --profile ${AWS_PROFILE} --task-definition "${TASK_DEF_ARN}" --query 'taskDefinition.containerDefinitions[?name==`service`].environment[].name' --output text
+
+Expected: output includes `OPS_HOSTNAME`, `MAIL_FROM_ADDRESS` and `SES_CONFIGURATION_SET` (names only; other names are expected too). `OPS_STATIC_DIR` is set by the Dockerfile `ENV`, not the task definition, so O1 proves it.
+
+Never run an unqualified describe, because that prints values.
+
+Unset helper variables:
+
+    unset SERVICE_TASK_ARN TASK_DEF_ARN
+
+### Grant, Recover and Revoke
+
+Each procedure follows `ops-operator.md`, with these deviations. `ops-operator.md` itself is not edited:
+
+- **The address:** before each **Create**, `OPERATOR_EMAIL=${HELD_EMAIL}` replaces the `read -rs` prompt;
+- **The role:** Grant and Recover set `ROLE_KEYS=platform_admin` in place of the `ROLE_KEYS` prompt;
+- **The code:** Grant and Recover run `ENROLMENT_CODE=$(python3 -c 'import base64,os;print(base64.b32encode(os.urandom(20)).decode())')` followed by `HELD_ENROLMENT_CODES+=("${ENROLMENT_CODE}")`. The `print` line is skipped (delivered via clipboard in **Email codes and the clipboard**);
+- **Create's closing unset:** runs as written. It clears only the runbook's own variables; the held values are separate;
+- **Failure paths:** a failed `create-secret` is a stop. Any other result or exit means: read `ops-operator.md` **Results**, then still run Delete and verify plus the poll, then stop;
+- **Expected results:** Grant prints `granted`, Recover prints `recovered`, Revoke prints `revoked`. Each is followed by Delete and verify plus the poll.
+
+Execute Grant now (before Proofs O1-O12):
+
+1. Confirm secret name is free:
+
+       print -r -- "$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null)" | grep -c ResourceNotFoundException
+
+   Expected: `1` means the name is free.
+
+2. Generate enrolment code and save to `${HELD_ENROLMENT_CODES}`:
+
+       ENROLMENT_CODE=$(python3 -c 'import base64,os;print(base64.b32encode(os.urandom(20)).decode())')
+
+       HELD_ENROLMENT_CODES+=("${ENROLMENT_CODE}")
+
+3. Create secret (a failed `create-secret` is a stop):
+
+       OPERATOR_EMAIL=${HELD_EMAIL}
+
+       ROLE_KEYS=platform_admin
+
+       jq -n --arg a grant --arg e "${OPERATOR_EMAIL}" --arg r "${ROLE_KEYS}" --arg c "${ENROLMENT_CODE}" \
+         '{opsOperator: {action: $a, email: $e, roleKeys: ($r | gsub("\\s"; "") | split(",")), enrolmentCode: $c}}' \
+         | aws secretsmanager create-secret --profile ${AWS_PROFILE} \
+           --name ${PROVISION_SECRET_NAME} --kms-key-id ${SECRETS_KEY_ARN} \
+           --secret-string file:///dev/stdin >/dev/null
+
+       unset OPERATOR_EMAIL ROLE_KEYS ENROLMENT_CODE
+
+4. Run `ops-operator.js`:
+
+       PROVISION_SECRET_ARN=$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} \
+         --secret-id ${PROVISION_SECRET_NAME} --query 'ARN' --output text)
+
+       TASK_ARN=$(aws ecs run-task \
+         --profile ${AWS_PROFILE} \
+         --cluster ${CLUSTER} \
+         --task-definition ${SERVICE_TASK_DEFINITION} \
+         --launch-type FARGATE \
+         --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+         --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/ops-operator.js\"],\"environment\":[{\"name\":\"PROVISION_SECRET_ARN\",\"value\":\"${PROVISION_SECRET_ARN}\"}]}]}" \
+         --query 'tasks[0].taskArn' --output text)
+
+       aws ecs wait tasks-stopped --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN}
+
+       aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN} \
+         --query 'tasks[0].[containers[0].exitCode,stoppedReason]' --output text
+
+       aws logs get-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} \
+         --log-stream-name "service/service/${TASK_ARN##*/}" --query 'events[].message' --output text | tr '\t' '\n'
+
+   Expected: exit 0, stdout `granted`, stderr empty. Any other result or exit means: read `ops-operator.md` **Results**, then still run Delete and verify plus the poll, then stop.
+
+5. Delete and verify:
+
+       aws secretsmanager delete-secret --profile ${AWS_PROFILE} \
+         --secret-id ${PROVISION_SECRET_NAME} --force-delete-without-recovery >/dev/null
+
+       repeat 12; do gone=$(print -r -- "$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null)" | grep -c ResourceNotFoundException); (( gone == 1 )) && break; sleep 5; done; print ${gone}
+
+       unset PROVISION_SECRET_ARN TASK_ARN gone
+
+   Expected: `1` means deletion is confirmed.
+
+Recover and Revoke are run at O10 and O11 with the same structure.
+
+### Email codes and the clipboard
+
+Used in O3 and O10.
+
+1. **Email code budget (C10):** Run this before submitting step 1 in the browser:
+
+       now=$(date +%s); n=0; for t in ${EMAIL_CODE_TIMES}; do (( now - t < 3600 )) && n=$(( n + 1 )); done; print ${n}
+
+   If it prints 3 or more, stop and wait. A new code would be the fourth within the hour. Otherwise record the timestamp:
+
+       EMAIL_CODE_TIMES+=(${now})
+
+2. **The email code:** The owner reads it from the mailbox, enters it at a silent prompt, and stores it in `${HELD_EMAIL_CODES}`:
+
+       read -rs "CODE?Email code: "
+
+       print
+
+       HELD_EMAIL_CODES+=("${CODE}")
+
+       unset CODE
+
+3. **The enrolment code:** Copy to clipboard without displaying, paste into the field, then immediately clear the clipboard:
+
+       print -rn -- "${HELD_ENROLMENT_CODES[-1]}" | pbcopy
+
+   Paste the code into the form field, then clear the clipboard immediately:
+
+       pbcopy < /dev/null
+
+4. **The 15-minute limit (C11):** Steps 2-4 of each enrolment ceremony finish within 15 minutes of verifying the codes.
+
+### Proofs O1–O12
+
+Before O1, set the proof window start timestamp in epoch milliseconds:
+
+    PROOF_START_MS=$(( $(date +%s) * 1000 ))
+
+#### O1: Static files, headers and host checks (assistant, read-only)
+
+Run with no session, using `curl -sS --path-as-is -o /dev/null -D - -w '%{http_code}\n'`. Record status codes and `grep -c -i` header counts only:
+
+1. Ops host root:
+
+       curl -sS --path-as-is -o /dev/null -w '%{http_code}\n' "https://${OPS_HOST}/"
+
+   Expected: `200`.
+
+   Save the header block into a variable (never print the header block itself):
+
+       HEADERS=$(curl -sS --path-as-is -D - -o /dev/null "https://${OPS_HOST}/")
+
+   Check each header on the saved header block (each expected to print 1):
+
+       print -r -- "${HEADERS}" | grep -c -i "^content-security-policy:.*script-src 'self'"
+
+       print -r -- "${HEADERS}" | grep -c -i '^cross-origin-opener-policy:'
+
+       print -r -- "${HEADERS}" | grep -c -i '^x-content-type-options:'
+
+       print -r -- "${HEADERS}" | grep -c -i '^referrer-policy: same-origin'
+
+       print -r -- "${HEADERS}" | grep -c -i '^strict-transport-security:'
+
+       print -r -- "${HEADERS}" | grep -c -i '^cache-control:.*no-cache'
+
+       unset HEADERS
+
+2. Asset paths from `index.html`:
+
+   Extract every `/assets/…` path from the `index.html` body fetched once into `${ASSETS}` (never printed):
+
+       ASSETS=($(curl -sS "https://${OPS_HOST}/" | grep -o -E '/assets/[A-Za-z0-9_.-]+' | sort -u))
+
+   For each asset path, print only the status code and a count of `cache-control:.*immutable`:
+
+       for ASSET_PATH in ${ASSETS}; do
+         curl -sS --path-as-is -o /dev/null -w '%{http_code}\n' "https://${OPS_HOST}${ASSET_PATH}"
+         curl -sS --path-as-is -D - -o /dev/null "https://${OPS_HOST}${ASSET_PATH}" | grep -c -i '^cache-control:.*immutable'
+       done
+
+   Expected: for each asset path, status `200` and count `1`.
+
+3. Prohibited static routes answer 404:
+
+       curl -sS --path-as-is -o /dev/null -w '%{http_code}\n' "https://${OPS_HOST}/index.html"
+
+       curl -sS --path-as-is -o /dev/null -w '%{http_code}\n' "https://${OPS_HOST}/favicon.ico"
+
+       curl -sS --path-as-is -o /dev/null -w '%{http_code}\n' "https://${OPS_HOST}/assets/../index.html"
+
+   Expected: `404` for each.
+
+4. Unauthenticated ops route answers 401 on ops host:
+
+       curl -sS --path-as-is -o /dev/null -w '%{http_code}\n' "https://${OPS_HOST}/v1/ops/me"
+
+   Expected: `401`.
+
+5. Ops paths on API host answer 404:
+
+       curl -sS --path-as-is -o /dev/null -w '%{http_code}\n' "https://${API_HOST}/"
+
+       curl -sS --path-as-is -o /dev/null -w '%{http_code}\n' "https://${API_HOST}/v1/ops/me"
+
+   Expected: `404` for each.
+
+6. Tenant route on ops host answers 404:
+
+       curl -sS --path-as-is -o /dev/null -w '%{http_code}\n' -X POST "https://${OPS_HOST}/v1/access/grants/list" -H 'content-type: application/json' -d '{"communitySlug":"proof"}'
+
+   Expected: `404`.
+
+#### O2: CSP in the browser (owner)
+
+1. Open clean Chrome profile with DevTools open on Console tab. Navigate to `https://${OPS_HOST}/#/sign-in`, enrolment step 1 (`https://${OPS_HOST}/#/enrol`), and directory (at O5). Zero console messages containing `Content Security Policy` or `Refused to` (yes/no).
+2. Open Safari with Web Inspector open on Console tab. Visit sign-in and enrolment step 1 (the directory is checked in Safari at O6). Zero console messages containing `Content Security Policy` or `Refused to` (yes/no).
+
+#### O3: Enrolment (owner, Chrome)
+
+1. Copy console URL to clipboard without displaying:
+
+       print -rn -- "https://${OPS_HOST}/" | pbcopy
+
+   Paste into browser URL bar and navigate to `https://${OPS_HOST}/`. Click "First time? Enrol with your codes".
+
+2. Step 1 ("Enrol"): Heading displays "Enrol" and message displays "Keep this tab open and finish enrolment here." (yes/no).
+3. Run email code budget check in shell (**Email codes and the clipboard**). Copy verified operator email to clipboard without displaying:
+
+       print -rn -- "${HELD_EMAIL}" | pbcopy
+
+   Paste into "Email" field, then clear clipboard immediately:
+
+       pbcopy < /dev/null
+
+   Click "Send code".
+
+4. Step 2 ("Enter your codes"): Heading displays "Enter your codes" and message displays "If this address has an open grant, a code is on its way." (yes/no).
+5. Email code arrives in mailbox within 60 seconds (yes/no). Enter code at silent shell prompt and add to `${HELD_EMAIL_CODES}` (**Email codes and the clipboard**).
+6. Copy enrolment code from `${HELD_ENROLMENT_CODES}` to clipboard with `pbcopy` (**Email codes and the clipboard**). Paste into "Enrolment code" field, then clear clipboard with `pbcopy < /dev/null`.
+7. Wrong code test: Enter valid email code and alter last character of enrolment code in field. Click "Verify". Page displays "Those codes were not accepted. Each wrong try uses one of a small number of attempts." (yes/no).
+8. Correct codes: Re-copy enrolment code to clipboard, paste into field, and clear clipboard immediately. Click "Verify". Ceremony advances to step 3 (yes/no).
+9. Step 3 ("Register your first passkey"): Heading displays "Register your first passkey". Click "Create passkey". Authenticate with authenticator (a). Advances to step 4 (yes/no).
+10. Record which store passkey (a) went to (store name only, e.g. "Mac passkey store").
+
+#### O4: Duplicate refused (owner, Chrome)
+
+1. Step 4 ("Add a second passkey"): Heading displays "Add a second passkey" and message displays "Add a second passkey on a different device or security key." (yes/no).
+2. Duplicate passkey check: Click "Create passkey" and try authenticator (a) again. Page displays "This device already has one of your passkeys. Use a different device or security key." (yes/no). (If browser handles duplicate in its own dialog, record what it showed as a finding; not a stop).
+3. Second passkey registration: Click "Create passkey" and authenticate with authenticator (b). Lands on "Sign in" with message "Enrolment complete. Sign in." (yes/no).
+4. Record which store passkey (b) went to (store name only).
+5. 15-minute budget: Steps 2-4 finished within 15 minutes of verifying codes (yes/no).
+
+#### O5: Sign-in and cookies (owner, Chrome)
+
+1. Sign in: On "Sign in" page, click "Sign in with a passkey" and authenticate with authenticator (a). Lands on directory page (yes/no).
+2. Directory page displays heading "Directory", table caption "Organisations", and columns "Organisation", "Kind", "Region", "Communities" (yes/no).
+3. Exactly one row present: kind `implicit`, region `au`, with one community. No internal ID shown (yes/no).
+4. Page header shows "Directory" and "Sign out" (yes/no).
+5. Cookie inspection in DevTools -> Application -> Cookies: both `__Host-ops_at` and `__Host-ops_rt` have HttpOnly true, Secure true, SameSite Strict, Path `/`, no Domain, and expire at "Session" (yes/no).
+6. Console verification: In DevTools Console, `document.cookie.includes("__Host-ops")` evaluates to `false` (yes/no). Record yes/no only; never record cookie values.
+
+#### O6: Sign-in with the other authenticator (owner, Safari)
+
+1. In Safari, navigate to `https://${OPS_HOST}/`.
+2. Click "Sign in with a passkey" and authenticate with authenticator (b).
+3. Directory displays (yes/no). (Proves Safari accepts ceremony started after options call. If Safari refuses, record as finding; O10 then uses a second Chrome profile as its second signed-in browser).
+
+#### O7: Refresh after expiry, two tabs (owner, Chrome)
+
+Run O7 within 8 hours of the O5 sign-in, because the session has an 8-hour absolute limit. Set `O7_START_MS` immediately before the reload and `O7_END_MS` immediately after it, never later.
+
+1. In Chrome, open the console in two separate tabs.
+2. Wait without making requests in either tab for at least 16 minutes from last directory load, so the 15-minute access token expires.
+3. Record `O7_START_MS`:
+
+       O7_START_MS=$(( $(date +%s) * 1000 ))
+
+4. Reload both tabs within about a second.
+5. Both tabs display the directory, and neither tab displays "Sign in" (yes/no).
+6. Record `O7_END_MS`:
+
+       O7_END_MS=$(( $(date +%s) * 1000 ))
+
+7. Wait about 60 seconds after setting `O7_END_MS` before the pull, because of CloudWatch ingestion lag:
+
+       sleep 60
+
+   Then pull the service log group bounded by `O7_START_MS` and `O7_END_MS`:
+
+       aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${O7_START_MS} --end-time ${O7_END_MS} --query 'events[].message' --output text | tr '\t' '\n' | jq -rR 'fromjson? | select(.message=="request" and (.path=="/v1/ops/me" or .path=="/v1/ops/session/refresh")) | "\(.path) \(.status)"' | sort | uniq -c
+
+   Confirm log facts:
+   - `/v1/ops/me` 401 is at least 2 (yes/no);
+   - `/v1/ops/session/refresh` 200 is at least 1 (yes/no);
+   - `/v1/ops/session/refresh` 401 is exactly 0 (yes/no).
+     A `/v1/ops/session/refresh` 401 is a finding against `apps/ops/src/session.ts`, the owner signs in again, and the check is not retried. Anything else is a stop (deviation 2).
+
+#### O8: Accessibility by hand (owner, Chrome)
+
+1. Keyboard navigation: Still signed in, navigate with Tab and Enter only through directory page and "Sign out". Visible focus ring present on every control (yes/no).
+2. Lighthouse audit: Run Chrome DevTools Lighthouse in Snapshot mode, Accessibility category, Desktop device, on Directory page. Record score and IDs of any failing audits. Pass means 0 failures in `color-contrast`, `target-size`, `label` (yes/no).
+3. Zoom: Set browser zoom to 200%. Directory requires no horizontal scrolling (yes/no).
+
+#### O9: Sign-out (owner, Chrome)
+
+1. Click "Sign out". First tab lands on "Sign in" (yes/no).
+2. Reload `/` in first tab: displays "Sign in" (yes/no).
+3. Reload second tab: displays "Sign in" (may show "Your session has ended. Sign in again.") (yes/no).
+4. Sign-in page accessibility: Run Lighthouse Snapshot mode and 200% zoom check on the Sign in page. Pass means 0 failures in `color-contrast`, `target-size`, `label`, and no horizontal scrolling at 200% zoom (yes/no).
+
+#### O10: Recover (owner)
+
+1. Before Recover: In Safari (or if Safari refused at O6, use the second Chrome profile), reload directory tab. Directory shows (session alive) (yes/no).
+2. Confirm secret name is free:
+
+       print -r -- "$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null)" | grep -c ResourceNotFoundException
+
+   Expected: `1` means the name is free.
+
+3. Generate new enrolment code and save to `${HELD_ENROLMENT_CODES}`:
+
+       ENROLMENT_CODE=$(python3 -c 'import base64,os;print(base64.b32encode(os.urandom(20)).decode())')
+
+       HELD_ENROLMENT_CODES+=("${ENROLMENT_CODE}")
+
+4. Create secret with action `recover` (a failed `create-secret` is a stop):
+
+       OPERATOR_EMAIL=${HELD_EMAIL}
+
+       ROLE_KEYS=platform_admin
+
+       jq -n --arg a recover --arg e "${OPERATOR_EMAIL}" --arg r "${ROLE_KEYS}" --arg c "${ENROLMENT_CODE}" \
+         '{opsOperator: {action: $a, email: $e, roleKeys: ($r | gsub("\\s"; "") | split(",")), enrolmentCode: $c}}' \
+         | aws secretsmanager create-secret --profile ${AWS_PROFILE} \
+           --name ${PROVISION_SECRET_NAME} --kms-key-id ${SECRETS_KEY_ARN} \
+           --secret-string file:///dev/stdin >/dev/null
+
+       unset OPERATOR_EMAIL ROLE_KEYS ENROLMENT_CODE
+
+5. Run `ops-operator.js`:
+
+       PROVISION_SECRET_ARN=$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} \
+         --secret-id ${PROVISION_SECRET_NAME} --query 'ARN' --output text)
+
+       TASK_ARN=$(aws ecs run-task \
+         --profile ${AWS_PROFILE} \
+         --cluster ${CLUSTER} \
+         --task-definition ${SERVICE_TASK_DEFINITION} \
+         --launch-type FARGATE \
+         --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+         --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/ops-operator.js\"],\"environment\":[{\"name\":\"PROVISION_SECRET_ARN\",\"value\":\"${PROVISION_SECRET_ARN}\"}]}]}" \
+         --query 'tasks[0].taskArn' --output text)
+
+       aws ecs wait tasks-stopped --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN}
+
+       aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN} \
+         --query 'tasks[0].[containers[0].exitCode,stoppedReason]' --output text
+
+       aws logs get-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} \
+         --log-stream-name "service/service/${TASK_ARN##*/}" --query 'events[].message' --output text | tr '\t' '\n'
+
+   Expected: exit 0, stdout `recovered`, stderr empty. Any other result or exit means: read `ops-operator.md` **Results**, then still run Delete and verify plus the poll, then stop.
+
+6. Delete and verify:
+
+       aws secretsmanager delete-secret --profile ${AWS_PROFILE} \
+         --secret-id ${PROVISION_SECRET_NAME} --force-delete-without-recovery >/dev/null
+
+       repeat 12; do gone=$(print -r -- "$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null)" | grep -c ResourceNotFoundException); (( gone == 1 )) && break; sleep 5; done; print ${gone}
+
+       unset PROVISION_SECRET_ARN TASK_ARN gone
+
+   Expected: `1` means deletion is confirmed.
+
+7. After Recover: In Safari (or if Safari refused at O6, use the second Chrome profile), reload directory tab. Lands on "Sign in" (session revoked) (yes/no).
+8. In Chrome, attempt sign-in with authenticator (a). Displays "That passkey was not accepted." (yes/no).
+9. Enrol again in Chrome: follow **Email codes and the clipboard** for the budget check, the email code, the clipboard handling and the 15-minute rule. Copy verified operator email to clipboard without displaying:
+
+       print -rn -- "${HELD_EMAIL}" | pbcopy
+
+   Paste into "Email" field, then clear clipboard immediately:
+
+       pbcopy < /dev/null
+
+   Start enrolment with `${HELD_EMAIL}` and latest enrolment code from `${HELD_ENROLMENT_CODES}`. Receive email code into `${HELD_EMAIL_CODES}`.
+
+10. Step 3: Register passkey with authenticator (a). Completes step 3 (yes/no).
+11. Step 4 duplicate refusal: Try authenticator (a) again at step 4. Displays "This device already has one of your passkeys. Use a different device or security key." (yes/no).
+12. Step 4 completion: Register passkey with authenticator (b). Lands on "Sign in" with "Enrolment complete. Sign in." (yes/no).
+13. Sign in with authenticator (a) (selecting newest entry if picker shows two). Directory displays (yes/no).
+
+#### O11: Revoke (owner)
+
+1. Confirm secret name is free:
+
+       print -r -- "$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null)" | grep -c ResourceNotFoundException
+
+   Expected: `1` means the name is free.
+
+2. Create secret with action `revoke` (a failed `create-secret` is a stop):
+
+       OPERATOR_EMAIL=${HELD_EMAIL}
+
+       jq -n --arg e "${OPERATOR_EMAIL}" \
+         '{opsOperator: {action: "revoke", email: $e}}' \
+         | aws secretsmanager create-secret --profile ${AWS_PROFILE} \
+           --name ${PROVISION_SECRET_NAME} --kms-key-id ${SECRETS_KEY_ARN} \
+           --secret-string file:///dev/stdin >/dev/null
+
+       unset OPERATOR_EMAIL
+
+3. Run `ops-operator.js`:
+
+       PROVISION_SECRET_ARN=$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} \
+         --secret-id ${PROVISION_SECRET_NAME} --query 'ARN' --output text)
+
+       TASK_ARN=$(aws ecs run-task \
+         --profile ${AWS_PROFILE} \
+         --cluster ${CLUSTER} \
+         --task-definition ${SERVICE_TASK_DEFINITION} \
+         --launch-type FARGATE \
+         --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+         --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/ops-operator.js\"],\"environment\":[{\"name\":\"PROVISION_SECRET_ARN\",\"value\":\"${PROVISION_SECRET_ARN}\"}]}]}" \
+         --query 'tasks[0].taskArn' --output text)
+
+       aws ecs wait tasks-stopped --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN}
+
+       aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN} \
+         --query 'tasks[0].[containers[0].exitCode,stoppedReason]' --output text
+
+       aws logs get-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} \
+         --log-stream-name "service/service/${TASK_ARN##*/}" --query 'events[].message' --output text | tr '\t' '\n'
+
+   Expected: exit 0, stdout `revoked`, stderr empty. Any other result or exit means: read `ops-operator.md` **Results**, then still run Delete and verify plus the poll, then stop.
+
+4. Delete and verify:
+
+       aws secretsmanager delete-secret --profile ${AWS_PROFILE} \
+         --secret-id ${PROVISION_SECRET_NAME} --force-delete-without-recovery >/dev/null
+
+       repeat 12; do gone=$(print -r -- "$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null)" | grep -c ResourceNotFoundException); (( gone == 1 )) && break; sleep 5; done; print ${gone}
+
+       unset PROVISION_SECRET_ARN TASK_ARN gone
+
+   Expected: `1` means deletion is confirmed.
+
+5. After Revoke: Reload console in Chrome. Lands on "Sign in" (yes/no).
+6. Attempt sign-in with authenticator (a): Displays "That passkey was not accepted." (yes/no).
+7. Attempt sign-in with authenticator (b): Displays "That passkey was not accepted." (yes/no).
+
+#### O12: Refusals (owner, no session)
+
+1. Enrolment start without Origin header:
+
+       curl -sS -o /dev/null -w '%{http_code}\n' -X POST "https://${OPS_HOST}/v1/ops/enrolment/start" -H 'content-type: application/json' -d '{"email":"x"}'
+
+   Expected: `403`.
+
+2. Enrolment start with untrusted Origin header:
+
+       curl -sS -o /dev/null -w '%{http_code}\n' -X POST "https://${OPS_HOST}/v1/ops/enrolment/start" -H 'content-type: application/json' -H 'origin: https://example.com' -d '{"email":"x"}'
+
+   Expected: `403`.
+
+Record status codes only.
+
+### O13
+
+The owner runs O13 in the proof shell. Set the proof window end timestamp:
+
+    PROOF_END_MS=$(( $(date +%s) * 1000 ))
+
+Pull each log group once into memory over `PRIVACY_START_MS` to `PROOF_END_MS`. Directly after each pull, `print $?` must print `0`, and the line count must not be 0:
+
+    SERVICE_MSGS=$(aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${PRIVACY_START_MS} --end-time ${PROOF_END_MS} --query 'events[].message' --output text | tr '\t' '\n')
+
+    print $?
+
+    print -r -- "${SERVICE_MSGS}" | grep -c .
+
+    OPS_ACCESS_MSGS=$(aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${OPS_ACCESS_LOG_GROUP} --start-time ${PRIVACY_START_MS} --end-time ${PROOF_END_MS} --query 'events[].message' --output text | tr '\t' '\n')
+
+    print $?
+
+    print -r -- "${OPS_ACCESS_MSGS}" | grep -c .
+
+    API_ACCESS_MSGS=$(aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${API_ACCESS_LOG_GROUP} --start-time ${PRIVACY_START_MS} --end-time ${PROOF_END_MS} --query 'events[].message' --output text | tr '\t' '\n')
+
+    print $?
+
+    print -r -- "${API_ACCESS_MSGS}" | grep -c .
+
+Expected: `0` for all pipeline exit statuses, and each count > 0.
+
+#### Value counts
+
+Run one `grep -c -i -F --` per value per group. Each must print 0.
+
+Note: `grep -c` prints `0` and exits 1, so under pipefail a non-zero status next to a printed `0` is expected, not a failure. Label each printed count with its group (`svc`, `ops`, `api`) and, for loops, the item number, for example `enrolment 1 svc 0`. Never print the value.
+
+Operator email:
+
+    print -r -- "email svc $(print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${HELD_EMAIL}")"
+
+    print -r -- "email ops $(print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "${HELD_EMAIL}")"
+
+    print -r -- "email api $(print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "${HELD_EMAIL}")"
+
+Local part of operator email (count only if at least 6 characters long; a shorter local part would match unrelated text, so record "skipped (short)". The full-address and at-sign counts still cover the address):
+
+    LOCAL_PART=${HELD_EMAIL%%$'\x40'*}
+
+    if (( ${#LOCAL_PART} >= 6 )); then
+      print -r -- "local svc $(print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${LOCAL_PART}")"
+      print -r -- "local ops $(print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "${LOCAL_PART}")"
+      print -r -- "local api $(print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "${LOCAL_PART}")"
+    fi
+
+Organisation slug and community slug:
+
+    print -r -- "org_slug svc $(print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${HELD_ORG_SLUG}")"
+
+    print -r -- "org_slug ops $(print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "${HELD_ORG_SLUG}")"
+
+    print -r -- "org_slug api $(print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "${HELD_ORG_SLUG}")"
+
+    print -r -- "community_slug svc $(print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${HELD_COMMUNITY_SLUG}")"
+
+    print -r -- "community_slug ops $(print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "${HELD_COMMUNITY_SLUG}")"
+
+    print -r -- "community_slug api $(print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "${HELD_COMMUNITY_SLUG}")"
+
+Each generated enrolment code (unquoted array):
+
+    i=1; for code in ${HELD_ENROLMENT_CODES}; do
+      print -r -- "enrolment ${i} svc $(print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${code}")"
+      print -r -- "enrolment ${i} ops $(print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "${code}")"
+      print -r -- "enrolment ${i} api $(print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "${code}")"
+      (( i++ ))
+    done
+
+Each received email code (unquoted array):
+
+    i=1; for code in ${HELD_EMAIL_CODES}; do
+      print -r -- "email_code ${i} svc $(print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${code}")"
+      print -r -- "email_code ${i} ops $(print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "${code}")"
+      print -r -- "email_code ${i} api $(print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "${code}")"
+      (( i++ ))
+    done
+
+Literals:
+
+    print -r -- "at svc $(print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- $'\x40')"
+
+    print -r -- "at ops $(print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- $'\x40')"
+
+    print -r -- "at api $(print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- $'\x40')"
+
+    print -r -- "bearer svc $(print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "Bearer")"
+
+    print -r -- "bearer ops $(print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "Bearer")"
+
+    print -r -- "bearer api $(print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "Bearer")"
+
+    print -r -- "host_ops svc $(print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "__Host-ops")"
+
+    print -r -- "host_ops ops $(print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "__Host-ops")"
+
+    print -r -- "host_ops api $(print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "__Host-ops")"
+
+    print -r -- "set_cookie svc $(print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "Set-Cookie")"
+
+    print -r -- "set_cookie ops $(print -r -- "${OPS_ACCESS_MSGS}" | grep -c -i -F -- "Set-Cookie")"
+
+    print -r -- "set_cookie api $(print -r -- "${API_ACCESS_MSGS}" | grep -c -i -F -- "Set-Cookie")"
+
+Expected: `0` for every check.
+
+#### Triage for an email-code count that is not 0
+
+If any email code count is greater than 0, run triage for each code `${C}`. Print only the field names containing the code:
+
+    i=1; for C in ${HELD_EMAIL_CODES}; do
+      print "code ${i}"
+      print -r -- "${SERVICE_MSGS}" | jq -rR --arg c "${C}" 'fromjson? | select(tostring | contains($c)) | [to_entries[] | select(.value | tostring | contains($c)) | .key] | join(",")' | sort | uniq -c
+      (( i++ ))
+    done
+
+A match in `requestId` or `gatewayRequestId` only is cleared. Anything else is a stop.
+
+#### Structural check, service group
+
+Run these four checks in order:
+
+1. Filter out fixed one-off lines:
+
+       SERVICE_APP_MSGS=$(print -r -- "${SERVICE_MSGS}" | grep -v -x -E '[0-9]+|applied [0-9]{4}_[a-z_]+|done applied=13 total=13|created|granted|recovered|revoked')
+
+2. Count lines that do not parse as JSON:
+
+       print -r -- "${SERVICE_APP_MSGS}" | jq -rR 'fromjson? // "BAD"' | grep -c -x BAD
+
+   Expected: `0`.
+
+3. Count parsed lines with any key outside the allow-list:
+
+       print -r -- "${SERVICE_APP_MSGS}" | jq -rR --argjson allowed '["level","message","status","duration","method","path","requestId","gatewayRequestId","hostname","reason","operation","key_kind","outcome","errorClass","errorCode","organisationId","stripeEventId","stripeEventType"]' 'fromjson? | select(. != null) | [keys[] | select(. as $k | $allowed | index($k) | not)] | select(length > 0) | length' | grep -c .
+
+   Expected: `0`.
+
+4. Print distinct key sets:
+
+       print -r -- "${SERVICE_APP_MSGS}" | jq -c 'keys' | sort -u
+
+       unset SERVICE_APP_MSGS
+
+#### Structural check, ops access group
+
+Print count of lines that do not parse as JSON:
+
+    print -r -- "${OPS_ACCESS_MSGS}" | jq -rR 'fromjson? // "BAD"' | grep -c -x BAD
+
+Expected: `0`.
+
+Print count of lines whose `keys` are not exactly the nine `access_log_format` keys:
+
+    print -r -- "${OPS_ACCESS_MSGS}" | jq -rR --argjson expected '["domainName","httpMethod","integrationErrorMessage","integrationStatus","requestId","responseLatency","responseLength","routeKey","status"]' 'fromjson? | select(keys != $expected) | keys' | grep -c .
+
+Expected: `0`.
+
+#### Positive controls
+
+Pull service logs starting from `${PROOF_START_MS}`:
+
+    SERVICE_PROOF_MSGS=$(aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${PROOF_START_MS} --end-time ${PROOF_END_MS} --query 'events[].message' --output text | tr '\t' '\n')
+
+    print -r -- "${SERVICE_PROOF_MSGS}" | jq -rR 'fromjson? | select(.message=="request" and (((.path // "") | startswith("/v1/ops/")) or .reason == "ops_route_on_other_hostname" or .reason == "other_route_on_ops_hostname")) | "\(.path) \(.status) \(.reason // "")"' | sort | uniq -c
+
+Check that each floor is met (deviation 1):
+
+| Route                                                                                 | Status | At least |
+| :------------------------------------------------------------------------------------ | :----- | :------- |
+| `/v1/ops/enrolment/start`                                                             | 204    | 2        |
+| `/v1/ops/enrolment/verify`                                                            | 200    | 2        |
+| `/v1/ops/enrolment/verify`                                                            | 401    | 1        |
+| `/v1/ops/passkey/register/verify`                                                     | 200    | 4        |
+| `/v1/ops/passkey/authenticate/verify`                                                 | 200    | 3        |
+| `/v1/ops/passkey/authenticate/verify`                                                 | 401    | 3        |
+| `/v1/ops/session/refresh`                                                             | 200    | 1        |
+| `/v1/ops/session/end`                                                                 | 204    | 1        |
+| `/v1/ops/enrolment/start`                                                             | 403    | 2        |
+| any path with `reason` `ops_route_on_other_hostname` or `other_route_on_ops_hostname` | 404    | 3 (O1)   |
+
+`GET /v1/ops/me` and `GET /` on the API host log reason `ops_route_on_other_hostname`, because `/` is an ops route, and `POST /v1/access/grants/list` on the ops host logs reason `other_route_on_ops_hostname`. Background requests to other hostnames in the staging zone can also log `ops_route_on_other_hostname`, so the count is usually above the floor.
+
+Extra lines from retries are fine. Any control below its minimum is a stop.
+
+Finish by unsetting all held values and runbook variables:
+
+    unset SERVICE_MSGS OPS_ACCESS_MSGS API_ACCESS_MSGS SERVICE_PROOF_MSGS HELD_EMAIL HELD_ORG_SLUG HELD_COMMUNITY_SLUG HELD_ENROLMENT_CODES HELD_EMAIL_CODES EMAIL_CODE_TIMES PRIVACY_START_MS PROOF_START_MS O7_START_MS O7_END_MS PROOF_END_MS HARD_STOP_UTC code C now n t ASSET_PATH ASSETS LOCAL_PART TASK_ARN PROVISION_SECRET_ARN i gone
+
+### Apply 2
+
+The branch moves to the re-park commit (`enable_database = false`, `desired_count = 0` in `infra/regions/au/env/staging.tfvars`).
+
+From `infra/regions/au`, remove `service_image` from the gitignored local var file:
+
+    sed -i '' '/^service_image/d' env/staging.local.tfvars
+
+    grep -c '^service_image' env/staging.local.tfvars
+
+Expected: `0`.
+
+Run before-each-apply checks against the Task 4 SHA on origin.
+
+Initialize Terraform with the staging backend:
+
+    terraform init -backend-config=backend/staging.hcl -lockfile=readonly
+
+Plan to the saved file outside the repository:
+
+    terraform plan -no-color -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -out=${PLAN_FILE} -input=false | grep --line-buffered '^Plan:'
+
+Expected plan summary: 0 to add, 0 to change, 18 to destroy. List addresses and actions:
+
+    terraform show -json ${PLAN_FILE} | jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | "\(.change.actions | join(" ")) \(.address)"'
+
+Confirm all 18 addresses match the expected list in **Apply 1**, all with action `delete`.
+
+Apply that file:
+
+    terraform apply -input=false ${PLAN_FILE} | grep --line-buffered -E ': (Creating|Still creating|Creation complete|Modifying|Still modifying|Modification complete|Destroying|Still destroying|Destruction complete)|Apply complete' | sed -l -E 's/ \[id=[^]]+\]//'
+
+Record the UTC completion time under **Cost clock and evidence** below.
+
+Delete the plan file:
+
+    rm -f ${PLAN_FILE}
+
+Plan again to verify no changes remain:
+
+    terraform plan -no-color -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -input=false | grep --line-buffered '^Plan:'
+
+Expected: `Plan: 0 to add, 0 to change, 0 to destroy.`
+
+Live read-only counts:
+
+    aws rds describe-db-instances --profile ${AWS_PROFILE} --region ap-southeast-2 --query 'length(DBInstances)' --output text
+
+    aws ecs list-clusters --profile ${AWS_PROFILE} --region ap-southeast-2 --query 'length(clusterArns)' --output text
+
+Expected: `0` for both.
+
+### Close-out
+
+The owner completes these steps and answers yes/no:
+
+1. Ops-site passkey entries are deleted from both authenticators (yes/no).
+2. The Chrome proof profile is removed, or kept with no ops-site data (yes/no).
+3. Universal Clipboard is restored if the owner uses it (yes/no).
+
+### Cost clock and evidence
+
+Placeholders for Tasks 3 and 5 to fill in:
+
+- **Cost clock:**
+  - Apply 1 commit SHA: `9b2cf07`
+  - Apply 1 completion: 2026-10-27T05:09Z UTC
+  - Hard stop (48 hours): 2026-10-29T05:09Z UTC
+  - Apply 2 commit SHA: `71892aa`
+  - Apply 2 completion: 2026-10-28T04:39Z UTC
+  - Total unpark window: 23 h 30 min (inside the 24-hour target)
+  - Calculated cost at USD 0.0468 per hour: about USD 1.10
+- **Before the unpark (H0):**
+  - C5 authenticator (a) kind: Google Password Manager (Chrome)
+  - C5 authenticator (b) kind: Mac passkey store (iCloud Keychain)
+  - C6 clean Chrome profile: yes
+  - No existing ops passkeys: yes
+  - Universal Clipboard disabled: yes (Handoff off)
+- **Pre-checks:**
+  - Deploy commit: `fd59b1e`; publish success
+  - Image digest length: 71
+  - Image scan status and CRITICAL count: COMPLETE, 0 critical, 0 high
+  - Migration journal tags (13 tags): 13, in journal order
+  - SES domain identity, DKIM, MAIL FROM: SUCCESS, SUCCESS, SUCCESS (with corrected queries; see Deviations)
+  - SES production access (False): false (sandbox)
+  - SES operator email verification status: SUCCESS
+  - Staging parked before apply (0 RDS, 0 ECS): 0 RDS instances, 0 clusters
+  - Infrastructure unchanged check: no `infra/` change since `57b2d3d`
+  - Read-only plan (18 to add): saved plan 18 to add; addresses matched
+- **Apply 1:**
+  - Plan and apply summary (18 added, 0 changed, 0 destroyed): 18 added; completed 2026-10-27T05:09Z
+  - RDS instance status: available after Apply 1, before db-bootstrap
+- **One-offs:**
+  - `db-bootstrap`: exit 0 (79)
+  - `db-migrate`: 13 applied, done applied=13 total=13, read from the log stream; exit code not captured (shell lost)
+  - `provision-owner`: exit 0, created
+  - Secret deletion verified: 1
+- **Running-task check:**
+  - ECS service stable: yes
+  - Running task image digest matches pre-check: yes
+  - Environment variable names contain `OPS_HOSTNAME`, `MAIL_FROM_ADDRESS`, `SES_CONFIGURATION_SET`: yes, all three
+- **Operator grant:**
+  - `ops-operator` result (`granted`): exit 0, granted
+  - Secret deletion verified: 1
+- **Proofs O1–O12:**
+  - O1: ops root 200 with CSP, COOP, X-Content-Type-Options, Referrer-Policy, HSTS, no-cache and text/html (1 each); 2 assets (js, css) 200 immutable; `/index.html`, `/favicon.ico` and traversal 404; ops `/v1/ops/me` 401; API root 404; API `/v1/ops/me` 404; tenant route on the ops host 404
+  - O2: no CSP messages in Chrome (Sign in, Enrol, directory) or Safari (Sign in, Enrol, directory)
+  - O3: yes, yes; email under 60 s; codes accepted; step 3 yes; (a) stored in Google Password Manager. The wrong-code test moved to O10 (see Deviations)
+  - O4: duplicate refused with the page message yes; (b) stored in iCloud Keychain; Enrolment complete yes; within 15 minutes yes
+  - O5: all yes (sign-in, columns, one row: implicit, au, one community, no id; header; cookie attributes; `document.cookie` false)
+  - O6: Safari directory yes
+  - O7: two-tab reload at 09:03:33Z; `/v1/ops/me` 401 x2, `/v1/ops/session/refresh` 200 x1, refresh 401 x0; both tabs showed the directory. Pass
+  - O8: focus ring yes; Lighthouse snapshot 15/15, no failures; 200% zoom, no horizontal scroll yes
+  - O9: yes, yes, yes; Sign in page Lighthouse 15/15, no failures; 200% zoom yes
+  - O10: Safari alive before yes; recover exit 0, recovered, deletion verified 1; Safari Sign in after yes; Chrome (a) not accepted yes; wrong-code message "Those codes were not accepted..." yes; correct codes, step 3 yes; duplicate refused yes; (b) Enrolment complete yes; within 15 minutes yes; sign-in with (a) reached the directory yes
+  - O11: revoke exit 0, revoked, deletion verified 1; reload shows Sign in yes; (a) not accepted yes; (b) not accepted yes
+  - O12: no Origin 403; untrusted Origin 403 (run from the assistant side, status codes only)
+- **O13 (log hygiene):**
+  - Log pulls exit statuses and line counts: exit 0; service 2527, ops access 454, api access 26
+  - Value counts (service, ops access, api access all 0): all 0 in all three: email, org slug, community slug, enrolment code (1 counted; see Deviations), email codes 1 and 2, at-sign, Bearer, `__Host-ops`, Set-Cookie. No triage needed
+  - Structural checks (service allow-list key sets, ops access 9 keys): service not_json 0, outside_allow_list 0, 5 key sets, all allowed; ops access not_json 0, not_nine_keys 0
+  - Positive control counts: enrolment/start 204 x2, enrolment/verify 200 x2, enrolment/verify 401 x2, register/verify 200 x4, authenticate/verify 200 x6, authenticate/verify 401 x3, refresh 200 x1, session/end 204 x1, enrolment/start 403 x2, cross-host 404 x10 (`/` with `ops_route_on_other_hostname` x8, `/v1/ops/me` with `ops_route_on_other_hostname` x1, `/v1/access/grants/list` with `other_route_on_ops_hostname` x1). All floors met
+- **Email codes count:**
+  - Total email codes requested: 2 (enrolment/start 204 x2)
+- **Spot interruptions, retries and deviations:**
+  1. Spot interruptions: none. The service started one task after Apply 1 and stayed in steady state (read-only check before Apply 2).
+  2. Pre-check 7's SES command used the wrong identity name and the wrong field for production access. Corrected read-only queries were used.
+  3. The editor's terminal panel lost the proof shell three times. The approved rule (**General rules → Shell loss**) was to stop and re-park; the owner chose to continue, an owner-approved deviation. Enrolment code 1 was lost with the shell, so O13 counts only the O10 enrolment code. A retrospective check covers code 1: across all three log groups over the full privacy window (2026-10-27T05:09Z to after Apply 2), a count-only scan for any 32-character base32-shaped token, in either case, found service 0 (3409 lines), ops access 0 (465) and api access 0 (305). The pattern was first shown to match a freshly generated code in three positions. No enrolment code reached the logs. The privacy window and proof window starts were reconstructed from AWS timestamps (05:09:00Z and 07:35:30Z). The slugs were held again from the directory, and email code 1 from the mailbox.
+  4. The wrong-code test moved from O3 to O10.
+  5. The O7 evidence is from the first and real window, the two-tab reload at 09:03:33Z, read by the assistant. A later timing window the owner set at 20:00Z, 11.6 hours after the 08:23Z sign-in and past the 8-hour absolute session limit, showed refresh 401 x3. That is correct behaviour for an expired session. Chrome and Safari were signed in again before O8 and O10.
+  6. The operator address's local part is 5 characters, below the runbook's 6-character minimum, so it was not counted on its own. The full address and the at-sign counted 0.
+  7. `GET /` on the API host logs path `/` with reason `ops_route_on_other_hostname` (404), not `unmatched` with no reason. There were 8 such lines over the run, mostly background traffic: 4 on the API host and 4 on another hostname in the staging zone, all 404.
+  8. Extra attempts: one enrolment/verify 400 during O3 (08:12Z, during a shell loss), and two enrolment/verify 401s in O10 (the wrong-code test and one failed paste) before the 200.
+  9. The browser's automatic `/favicon.ico` request shows a 404 in the Console.
+  10. O12 was run by the owner's assistant (status codes only), although its heading says the owner runs it.
+- **O14: Verified-on-staging record:**
+  - `ops-identity-primitives`: verified on staging by O5, O6 and O10
+  - `ops-operator-identity`: verified on staging by O3–O6, O10 and O11
+  - `ops-console-api`: verified on staging by O1, O5, O7, O9 and O12
+  - `ops-operator-oneoff`: verified on staging by the Grant, O10 and O11
+  - `ops-console-ui`: verified on staging by O2–O9
+- **Apply 2 (re-park):**
+  - `service_image` removed from local file: count 0; the apply worktree was at `71892aa` and clean
+  - Plan and apply summary (0 added, 0 changed, 18 destroyed): saved plan 0 to add, 0 to change, 18 to destroy, all 18 actions delete at the same 18 addresses as Apply 1; applied 0 added, 0 changed, 18 destroyed (service 1m54s, database 1m52s)
+  - Follow-up plan (no changes): No changes, exit 0
+  - Live read-only check after (0 RDS, 0 ECS): 0 RDS instances, 0 ECS clusters, 0 RDS snapshots; the provision secret name is free
+- **Close-out:**
+  - Ops passkey entries deleted from both authenticators: Google Password Manager yes; iCloud Keychain yes
+  - Chrome proof profile cleaned: deleted yes; Safari site data removed yes
+  - Universal Clipboard restored: yes (Handoff back on)
+- **Findings:**
+  1. Pre-check 7's SES commands named the wrong identity and the wrong production-access field. The runbook now queries the `mail.${ZONE_NAME}` identity and `ProductionAccessEnabled`.
+  2. The editor's terminal panel lost the proof shell three times. The runbook now requires a standalone terminal app for the proof shell.
+  3. A later O7 timing window was set at 20:00Z, 11.6 hours after sign-in and past the 8-hour absolute session limit. The runbook now says O7 runs within 8 hours of the O5 sign-in, and that a proof started more than 8 hours after a browser's last sign-in begins with a fresh sign-in.
+  4. The 8-hour session limit was observed live: refresh succeeded 40 minutes after sign-in (09:03Z), and was refused 11.6 hours after sign-in (20:00Z, refresh 401 x3). That shows the session expires; the exact 8-hour boundary is pinned by the unit test, not by this run.
+  5. The operator address's local part was 5 characters, below the 6-character minimum. The runbook now records a short local part as skipped rather than as a finding, because the full-address and at-sign counts still cover it.
+  6. `GET /` on the API host logs reason `ops_route_on_other_hostname`, because `/` is an ops route; the runbook said it logged path `unmatched` with no reason. The text is corrected. All three O1 cross-host requests log a reason, so the floor is 3, as the plan says; it was met with 10.
+  7. The spec's floor for `/v1/ops/passkey/authenticate/verify` 200 is 4; the runbook's 3 is right (plan deviation 1). The run logged 6.
+
 ## Restore drill
 
 Quarterly, and only against staging. Restore the staging database to a new instance from point-in-time recovery. Record the time taken against the 4-hour target. Then delete the restored instance, because it bills by the hour. This drill does not restore production. Reading `SHOW max_connections` belongs to `first-running-task`, not to this drill.
