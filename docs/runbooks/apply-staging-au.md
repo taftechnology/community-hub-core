@@ -3843,71 +3843,81 @@ The owner completes these steps and answers yes/no:
 Placeholders for Tasks 3 and 5 to fill in:
 
 - **Cost clock:**
-  - Apply 1 commit SHA: `_`
-  - Apply 1 completion: `_` UTC
-  - Hard stop (48 hours): `_` UTC
+  - Apply 1 commit SHA: `9b2cf07`
+  - Apply 1 completion: 2026-10-27T05:09Z UTC
+  - Hard stop (48 hours): 2026-10-29T05:09Z UTC
   - Apply 2 commit SHA: `_`
   - Apply 2 completion: `_` UTC
   - Total unpark window: `_`
   - Calculated cost at USD 0.0468 per hour: `_`
 - **Before the unpark (H0):**
-  - C5 authenticator (a) kind: `_`
-  - C5 authenticator (b) kind: `_`
-  - C6 clean Chrome profile: `_`
-  - No existing ops passkeys: `_`
-  - Universal Clipboard disabled: `_`
+  - C5 authenticator (a) kind: Google Password Manager (Chrome)
+  - C5 authenticator (b) kind: Mac passkey store (iCloud Keychain)
+  - C6 clean Chrome profile: yes
+  - No existing ops passkeys: yes
+  - Universal Clipboard disabled: yes (Handoff off)
 - **Pre-checks:**
-  - Deploy commit: `_`
-  - Image digest length: `_`
-  - Image scan status and CRITICAL count: `_`
-  - Migration journal tags (13 tags): `_`
-  - SES domain identity, DKIM, MAIL FROM: `_`
-  - SES production access (False): `_`
-  - SES operator email verification status: `_`
-  - Staging parked before apply (0 RDS, 0 ECS): `_`
-  - Infrastructure unchanged check: `_`
-  - Read-only plan (18 to add): `_`
+  - Deploy commit: `fd59b1e`; publish success
+  - Image digest length: 71
+  - Image scan status and CRITICAL count: COMPLETE, 0 critical, 0 high
+  - Migration journal tags (13 tags): 13, in journal order
+  - SES domain identity, DKIM, MAIL FROM: SUCCESS, SUCCESS, SUCCESS (with corrected queries; see Deviations)
+  - SES production access (False): false (sandbox)
+  - SES operator email verification status: SUCCESS
+  - Staging parked before apply (0 RDS, 0 ECS): 0 RDS instances, 0 clusters
+  - Infrastructure unchanged check: no `infra/` change since `57b2d3d`
+  - Read-only plan (18 to add): saved plan 18 to add; addresses matched
 - **Apply 1:**
-  - Plan and apply summary (18 added, 0 changed, 0 destroyed): `_`
-  - RDS instance status: `_`
+  - Plan and apply summary (18 added, 0 changed, 0 destroyed): 18 added; completed 2026-10-27T05:09Z
+  - RDS instance status: not reported separately; `db-bootstrap` and `db-migrate` reached the database
 - **One-offs:**
-  - `db-bootstrap`: `_`
-  - `db-migrate`: `_`
-  - `provision-owner`: `_`
-  - Secret deletion verified: `_`
+  - `db-bootstrap`: exit 0 (79)
+  - `db-migrate`: 13 applied, done applied=13 total=13, read from the log stream; exit code not captured (shell lost)
+  - `provision-owner`: exit 0, created
+  - Secret deletion verified: 1
 - **Running-task check:**
-  - ECS service stable: `_`
-  - Running task image digest matches pre-check: `_`
-  - Environment variable names contain `OPS_HOSTNAME`, `MAIL_FROM_ADDRESS`, `SES_CONFIGURATION_SET`: `_`
+  - ECS service stable: yes
+  - Running task image digest matches pre-check: yes
+  - Environment variable names contain `OPS_HOSTNAME`, `MAIL_FROM_ADDRESS`, `SES_CONFIGURATION_SET`: yes, all three
 - **Operator grant:**
-  - `ops-operator` result (`granted`): `_`
-  - Secret deletion verified: `_`
+  - `ops-operator` result (`granted`): exit 0, granted
+  - Secret deletion verified: 1
 - **Proofs O1–O12:**
-  - O1 (static files, headers, host checks): `_`
-  - O2 (CSP in Chrome and Safari): `_`
-  - O3 (enrolment, wrong code rejection, first passkey registration, store): `_`
-  - O4 (duplicate passkey refused, second passkey registered, store, 15-minute budget): `_`
-  - O5 (sign-in with passkey, directory table structure, cookie attributes): `_`
-  - O6 (Safari sign-in with second authenticator): `_`
-  - O7 (two-tab refresh after 16m expiry, bounded log check): `_`
-  - O8 (accessibility: keyboard navigation, Lighthouse snapshot, 200% zoom): `_`
-  - O9 (sign-out, cross-tab session termination, sign-in accessibility): `_`
-  - O10 (ADR 0015 recover, session revocation, re-enrolment, store): `_`
-  - O11 (ADR 0015 revoke, sign-in refused on both authenticators): `_`
-  - O12 (enrolment start CORS/origin refusals: no origin 403, untrusted origin 403): `_`
+  - O1: ops root 200 with CSP, COOP, X-Content-Type-Options, Referrer-Policy, HSTS, no-cache and text/html (1 each); 2 assets (js, css) 200 immutable; `/index.html`, `/favicon.ico` and traversal 404; ops `/v1/ops/me` 401; API root 404; API `/v1/ops/me` 404; tenant route on the ops host 404
+  - O2: no CSP messages in Chrome (Sign in, Enrol, directory) or Safari (Sign in, Enrol, directory)
+  - O3: yes, yes; email under 60 s; codes accepted; step 3 yes; (a) stored in Google Password Manager. The wrong-code test moved to O10 (see Deviations)
+  - O4: duplicate refused with the page message yes; (b) stored in iCloud Keychain; Enrolment complete yes; within 15 minutes yes
+  - O5: all yes (sign-in, columns, one row: implicit, au, one community, no id; header; cookie attributes; `document.cookie` false)
+  - O6: Safari directory yes
+  - O7: two-tab reload at 09:03:33Z; `/v1/ops/me` 401 x2, `/v1/ops/session/refresh` 200 x1, refresh 401 x0; both tabs showed the directory. Pass
+  - O8: focus ring yes; Lighthouse snapshot 15/15, no failures; 200% zoom, no horizontal scroll yes
+  - O9: yes, yes, yes; Sign in page Lighthouse 15/15, no failures; 200% zoom yes
+  - O10: Safari alive before yes; recover exit 0, recovered, deletion verified 1; Safari Sign in after yes; Chrome (a) not accepted yes; wrong-code message "Those codes were not accepted..." yes; correct codes, step 3 yes; duplicate refused yes; (b) Enrolment complete yes; within 15 minutes yes; sign-in with (a) reached the directory yes
+  - O11: revoke exit 0, revoked, deletion verified 1; reload shows Sign in yes; (a) not accepted yes; (b) not accepted yes
+  - O12: no Origin 403; untrusted Origin 403 (run from the assistant side, status codes only)
 - **O13 (log hygiene):**
-  - Log pulls exit statuses and line counts: `_`
-  - Value counts (service, ops access, api access all 0): `_`
-  - Structural checks (service allow-list key sets, ops access 9 keys): `_`
-  - Positive control counts: `_`
+  - Log pulls exit statuses and line counts: exit 0; service 2527, ops access 454, api access 26
+  - Value counts (service, ops access, api access all 0): all 0 in all three: email, org slug, community slug, enrolment code (1 counted; see Deviations), email codes 1 and 2, at-sign, Bearer, `__Host-ops`, Set-Cookie. No triage needed
+  - Structural checks (service allow-list key sets, ops access 9 keys): service not_json 0, outside_allow_list 0, 5 key sets, all allowed; ops access not_json 0, not_nine_keys 0
+  - Positive control counts: enrolment/start 204 x2, enrolment/verify 200 x2, enrolment/verify 401 x2, register/verify 200 x4, authenticate/verify 200 x6, authenticate/verify 401 x3, refresh 200 x1, session/end 204 x1, enrolment/start 403 x2, cross-host 404 x10. All floors met
 - **Email codes count:**
-  - Total email codes requested: `_`
+  - Total email codes requested: 2 (enrolment/start 204 x2)
+- **Spot interruptions, retries and deviations:**
+  1. Spot interruptions: none reported.
+  2. Pre-check 7's SES command used the wrong identity name and the wrong field for production access. Corrected read-only queries were used.
+  3. The editor's terminal panel lost the proof shell three times. Enrolment code 1 was lost with it, so O13 counts only the O10 enrolment code. The privacy window and proof window starts were reconstructed from AWS timestamps (05:09:00Z and 07:35:30Z). The slugs were held again from the directory, and email code 1 from the mailbox.
+  4. The wrong-code test moved from O3 to O10.
+  5. O7's first log window ended at 20:00Z, past the 8-hour absolute session limit, and showed refresh 401 x3. That is correct behaviour for an expired session. The O7 evidence above is from the real two-tab reload at 09:03:33Z, read by the assistant. Chrome and Safari were signed in again before O8 and O10.
+  6. The operator address's local part is 5 characters, below the runbook's 6-character minimum, so it was not counted on its own. The full address and the at-sign counted 0.
+  7. `GET /` on the API host logs path `/` with reason `ops_route_on_other_hostname` (404), not `unmatched` with no reason. There were 8 such lines over the run, mostly background traffic: 4 on the API host and 4 on another hostname in the staging zone, all 404.
+  8. Extra attempts: one enrolment/verify 400 during O3 (08:12Z, during a shell loss), and two enrolment/verify 401s in O10 (the wrong-code test and one failed paste) before the 200.
+  9. The browser's automatic `/favicon.ico` request shows a 404 in the Console.
 - **O14: Verified-on-staging record:**
-  - `ops-identity-primitives`: `_`
-  - `ops-operator-identity`: `_`
-  - `ops-console-api`: `_`
-  - `ops-operator-oneoff`: `_`
-  - `ops-console-ui`: `_`
+  - `ops-identity-primitives`: verified on staging by O5, O6 and O10
+  - `ops-operator-identity`: verified on staging by O3–O6, O10 and O11
+  - `ops-console-api`: verified on staging by O1, O5, O7, O9 and O12
+  - `ops-operator-oneoff`: verified on staging by the Grant, O10 and O11
+  - `ops-console-ui`: verified on staging by O2–O9
 - **Apply 2 (re-park):**
   - `service_image` removed from local file: `_`
   - Plan and apply summary (0 added, 0 changed, 18 destroyed): `_`
