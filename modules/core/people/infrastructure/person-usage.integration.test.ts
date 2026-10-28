@@ -18,7 +18,7 @@ import {
 import { withRequest } from "@community-hub/kernel";
 import { recordSuccess } from "@community-hub/usage";
 
-import { createHousehold, createPerson } from "../public/index.js";
+import { createHousehold, createPerson, PeopleError } from "../public/index.js";
 import { communityFieldKeys } from "./person-keys.js";
 
 type Runtime = {
@@ -96,7 +96,7 @@ describe("person creation usage facts", () => {
     const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
     const kms = createLocalKmsPort();
     const scope = await createScope(platform);
-    const now = new Date("2026-10-28T14:30:00.000Z");
+    const now = new Date("2026-01-15T23:30:00.000Z");
 
     try {
       // 1. Creating an adult adds 1 to people.directory for that community and the UTC day of now
@@ -124,8 +124,17 @@ describe("person creation usage facts", () => {
             and community_id = ${scope.communityId}::uuid
         `;
         expect(rows).toEqual([
-          { feature_key: "people.directory", day: "2026-10-28", success_count: 1 },
+          { feature_key: "people.directory", day: "2026-01-15", success_count: 1 },
         ]);
+
+        const neighbouringRows = await tx<{ day: string }[]>`
+          select day::text as day
+          from app.usage_facts_daily
+          where org_id = ${scope.orgId}::uuid
+            and community_id = ${scope.communityId}::uuid
+            and day = '2026-01-16'::date
+        `;
+        expect(neighbouringRows).toHaveLength(0);
       });
 
       // 2. Creating a minor (with a household) adds 1 more. The row has the same five columns, and nothing in it identifies the person.
@@ -174,6 +183,25 @@ describe("person creation usage facts", () => {
         ]);
         expect(row).not.toHaveProperty("person_id");
         expect(row).not.toHaveProperty("is_minor");
+
+        const dayRows = await tx<{ feature_key: string; day: string; success_count: number }[]>`
+          select feature_key, day::text as day, success_count
+          from app.usage_facts_daily
+          where org_id = ${scope.orgId}::uuid
+            and community_id = ${scope.communityId}::uuid
+        `;
+        expect(dayRows).toEqual([
+          { feature_key: "people.directory", day: "2026-01-15", success_count: 2 },
+        ]);
+
+        const neighbouringRows = await tx<{ day: string }[]>`
+          select day::text as day
+          from app.usage_facts_daily
+          where org_id = ${scope.orgId}::uuid
+            and community_id = ${scope.communityId}::uuid
+            and day = '2026-01-16'::date
+        `;
+        expect(neighbouringRows).toHaveLength(0);
       });
     } finally {
       try {
@@ -193,7 +221,7 @@ describe("person creation usage facts", () => {
     const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
     const kms = createLocalKmsPort();
     const scope = await createScope(platform);
-    const now = new Date("2026-10-28T14:30:00.000Z");
+    const now = new Date("2026-02-03T09:00:00.000Z");
 
     try {
       await withRequest({ requestId: newId() }, () =>
@@ -210,7 +238,7 @@ describe("person creation usage facts", () => {
             actorUserId: null,
           });
 
-          let caught = false;
+          let caught: unknown = null;
           try {
             await createPerson(tx, kms, KEY_ARN, {
               now,
@@ -224,10 +252,10 @@ describe("person creation usage facts", () => {
               actorUserId: null,
             });
           } catch (error) {
-            caught = true;
-            expect((error as { code?: string })?.code).toBe("duplicate_email");
+            caught = error;
           }
-          expect(caught).toBe(true);
+          expect(caught).toBeInstanceOf(PeopleError);
+          expect((caught as PeopleError).code).toBe("duplicate_email");
         }),
       );
 
@@ -239,7 +267,7 @@ describe("person creation usage facts", () => {
             and community_id = ${scope.communityId}::uuid
         `;
         expect(rows).toEqual([
-          { feature_key: "people.directory", day: "2026-10-28", success_count: 1 },
+          { feature_key: "people.directory", day: "2026-02-03", success_count: 1 },
         ]);
       });
     } finally {
@@ -265,7 +293,7 @@ describe("person creation usage facts", () => {
       const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
       const kms = createLocalKmsPort();
       const scope = await createScope(platform);
-      const now = new Date("2026-10-28T14:30:00.000Z");
+      const now = new Date("2026-04-20T12:00:00.000Z");
 
       // Set up the community key before A starts, so B's first lock wait is the audit insert.
       await withRequest({ requestId: newId() }, () =>
@@ -285,6 +313,7 @@ describe("person creation usage facts", () => {
       try {
         txAPromise = withRequest({ requestId: newId() }, () =>
           withAppTransaction(appSqlA, scope, async (tx) => {
+            // PERSON_CREATED constant in person.ts is not exported for tests; using registered action literal "people.person.created"
             await appendAuditEvent(tx, {
               actorKind: "system",
               actorId: null,
@@ -355,8 +384,15 @@ describe("person creation usage facts", () => {
         expect(waiting).toBe(true);
 
         releaseA();
-        await txAPromise;
-        await txBPromise;
+        const [resA, resB] = await Promise.allSettled([txAPromise!, txBPromise!]);
+        if (resA.status === "rejected") {
+          throw resA.reason;
+        }
+        if (resB.status === "rejected") {
+          throw resB.reason;
+        }
+        expect(resA.status).toBe("fulfilled");
+        expect(resB.status).toBe("fulfilled");
 
         await withAppTransaction(appSqlA, scope, async (tx) => {
           const rows = await tx<{ feature_key: string; day: string; success_count: number }[]>`
@@ -366,7 +402,7 @@ describe("person creation usage facts", () => {
               and community_id = ${scope.communityId}::uuid
           `;
           expect(rows).toEqual([
-            { feature_key: "people.directory", day: "2026-10-28", success_count: 2 },
+            { feature_key: "people.directory", day: "2026-04-20", success_count: 2 },
           ]);
         });
       } finally {
