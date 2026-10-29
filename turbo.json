@@ -32,6 +32,9 @@
     "@community-hub/api#test": {
       "dependsOn": ["^build", "@community-hub/billing#test"]
     },
+    "@community-hub/groups#test": {
+      "dependsOn": ["^build", "@community-hub/api#test"]
+    },
     "@community-hub/usage#test": {
       "dependsOn": ["^build", "@community-hub/identity#test"]
     },

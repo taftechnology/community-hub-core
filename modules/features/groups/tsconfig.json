@@ -1,0 +1,16 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": ".",
+    "tsBuildInfoFile": "./tsconfig.tsbuildinfo"
+  },
+  "include": [
+    "module.manifest.ts",
+    "domain/**/*.ts",
+    "public/**/*.ts",
+    "db/**/*.ts",
+    "infrastructure/**/*.ts"
+  ],
+  "exclude": ["**/*.test.ts"]
+}
