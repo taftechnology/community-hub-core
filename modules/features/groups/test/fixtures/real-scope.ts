@@ -12,7 +12,7 @@ export type Runtime = {
 
 export const RUNTIME_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  "../../../../packages/db/test/.runtime.json",
+  "../../../../../packages/db/test/.runtime.json",
 );
 
 export function loadRuntime(): Runtime {
