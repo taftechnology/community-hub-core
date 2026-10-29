@@ -133,6 +133,13 @@ describe("readRosterNames", () => {
     const source = readFileSync(SOURCE, "utf8");
     expect(source).toMatch(/community_id\s*=\s*current_setting\(\s*'app\.community_id'\s*\)::uuid/);
     expect(source).toMatch(/org_id\s*=\s*current_setting\(\s*'app\.org_id'\s*\)::uuid/);
+    const whereMatch = source.match(/from\s+app\.persons\s+(where[\s\S]*?)`;/i);
+    expect(whereMatch).not.toBeNull();
+    const whereClause = whereMatch![1]!;
+    expect(whereClause).not.toMatch(/\bor\b/i);
+    expect(whereClause).toMatch(
+      /where\s+id\s*=\s*any\(\$\{ids\}::uuid\[\]\)\s+and\s+org_id\s*=\s*current_setting\(\s*'app\.org_id'\s*\)::uuid\s+and\s+community_id\s*=\s*current_setting\(\s*'app\.community_id'\s*\)::uuid/i,
+    );
 
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
@@ -416,6 +423,90 @@ describe("readRosterNames", () => {
               actorUserId: "not-a-uuid",
             }),
           ).rejects.toBeInstanceOf(PeopleError);
+        });
+      });
+    } finally {
+      await cleanScope(directSql, scope);
+      await directSql.end({ timeout: 1 });
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
+
+  it("rejects an invalid actor before performing any decryption or auditing (pin 14)", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const baseKms = createLocalKmsPort();
+    const countingKms = createCountingKmsPort(baseKms);
+
+    const scope = await createScope(platform);
+    const setupActorUserId = newId();
+
+    try {
+      let minorId = "";
+      await withRequest({ requestId: REQUEST_ID }, async () => {
+        await withAppTransaction(app, scope, async (tx) => {
+          const hh = await createHousehold(tx, countingKms.kms, KEY_ARN, {
+            now: NOW,
+            label: "MinorHousehold",
+            actorUserId: setupActorUserId,
+          });
+          const minor = await createPerson(tx, countingKms.kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId: hh.householdId,
+            dateOfBirth: null,
+            givenName: "Tommy",
+            familyName: "Tester",
+            email: null,
+            phone: null,
+            actorUserId: setupActorUserId,
+          });
+          minorId = minor.personId;
+        });
+
+        countingKms.reset();
+
+        await withAppTransaction(app, scope, async (tx) => {
+          await expect(
+            readRosterNames(tx, countingKms.kms, KEY_ARN, {
+              personIds: [minorId],
+              includeRestricted: true,
+              actorUserId: null as never,
+            }),
+          ).rejects.toBeInstanceOf(PeopleError);
+
+          expect(countingKms.count()).toBe(0);
+
+          const auditRows = await tx<{ count: string }[]>`
+            select count(*)::text as count
+            from app.audit_events
+            where action = 'people.person.read'
+              and org_id = ${scope.orgId}::uuid
+          `;
+          expect(Number(auditRows[0]?.count ?? "0")).toBe(0);
+        });
+
+        await withAppTransaction(app, scope, async (tx) => {
+          await expect(
+            readRosterNames(tx, countingKms.kms, KEY_ARN, {
+              personIds: [minorId],
+              includeRestricted: true,
+              actorUserId: "not-a-valid-uuid",
+            }),
+          ).rejects.toBeInstanceOf(PeopleError);
+
+          expect(countingKms.count()).toBe(0);
+
+          const auditRows = await tx<{ count: string }[]>`
+            select count(*)::text as count
+            from app.audit_events
+            where action = 'people.person.read'
+              and org_id = ${scope.orgId}::uuid
+          `;
+          expect(Number(auditRows[0]?.count ?? "0")).toBe(0);
         });
       });
     } finally {
