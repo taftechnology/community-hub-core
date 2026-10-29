@@ -45,3 +45,4 @@ export {
   type SetMemberRoleInput,
   type ListMembersInput,
 } from "../infrastructure/members.js";
+export { exportRosterCsv, type ExportRosterCsvInput } from "../infrastructure/export.js";
