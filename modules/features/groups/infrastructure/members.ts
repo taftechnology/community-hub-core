@@ -329,7 +329,7 @@ export async function listMembers(
   return rows.map((row) => ({
     personId: row.person_id,
     role: row.role as GroupMemberRole,
-    isMinor: minorMap.get(row.person_id) ?? false,
+    isMinor: minorMap.get(row.person_id) ?? true,
     addedAt: new Date(row.added_at),
   }));
 }

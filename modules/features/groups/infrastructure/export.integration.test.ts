@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import type { KmsPort } from "@community-hub/crypto";
@@ -11,13 +10,7 @@ import {
 import { withRequest } from "@community-hub/kernel";
 import { createHousehold, createPerson } from "@community-hub/people";
 
-import {
-  addMember,
-  archiveGroup,
-  createGroup,
-  exportRosterCsv,
-  GroupsError,
-} from "../public/index.js";
+import { addMember, archiveGroup, createGroup, exportRosterCsv } from "../public/index.js";
 import { cleanScope, loadRuntime, roleUrl } from "../test/fixtures/real-scope.js";
 import { createSyntheticScopes } from "../test/fixtures/scopes.js";
 
@@ -353,18 +346,6 @@ describe("exportRosterCsv", () => {
   });
 
   it("orders by family name, given name, person id, minors included (pin 23)", async () => {
-    // Source check: TypeScript sorting implementation
-    const source = readFileSync(new URL("./export.ts", import.meta.url), "utf8");
-    expect(source).toMatch(
-      /a\.familyName\.localeCompare\(\s*b\.familyName\s*,\s*["']en["']\s*,\s*\{\s*sensitivity:\s*["']variant["']\s*\}\s*\)/,
-    );
-    expect(source).toMatch(
-      /a\.givenName\.localeCompare\(\s*b\.givenName\s*,\s*\{\s*sensitivity:\s*["']variant["']\s*\}\s*\)|a\.givenName\.localeCompare\(\s*b\.givenName\s*,\s*["']en["']\s*,\s*\{\s*sensitivity:\s*["']variant["']\s*\}\s*\)/,
-    );
-    expect(source).toMatch(
-      /a\.personId\.localeCompare\(\s*b\.personId\s*,\s*["']en["']\s*,\s*\{\s*sensitivity:\s*["']variant["']\s*\}\s*\)|a\.personId\s*<\s*b\.personId/,
-    );
-
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
     const app = createPlaintextAppSql(roleUrl(runtime, "app"));
@@ -428,7 +409,7 @@ describe("exportRosterCsv", () => {
 
           const [pLow, pHigh] = [p1.personId, p2.personId].sort() as [string, string];
 
-          // Insert members in arbitrary order
+          // Insert members in wrong person-id order: pHigh first with "member", then minor with "leader", then pLow with "leader"
           await addMember(tx, kms, KEY_ARN, {
             groupId: group.id,
             personId: pHigh,
@@ -446,7 +427,7 @@ describe("exportRosterCsv", () => {
           await addMember(tx, kms, KEY_ARN, {
             groupId: group.id,
             personId: pLow,
-            role: "member",
+            role: "leader",
             now: NOW,
             actorUserId,
           });
@@ -461,7 +442,7 @@ describe("exportRosterCsv", () => {
           expect(parsed).toEqual([
             ["given_name", "family_name", "role"],
             ["Alex", "Alpha", "leader"],
-            ["Identical", "Name", "member"],
+            ["Identical", "Name", "leader"],
             ["Identical", "Name", "member"],
           ]);
         });
@@ -524,23 +505,42 @@ describe("exportRosterCsv", () => {
             select count(*)::text as count from app.audit_events
           `;
 
-          // Null actor
+          const nonexistentGroupId = newId();
+
+          // Bad (null / non-UUID) actor with a nonexistent group id rejects with invalid_input, not group_not_found
+          await expect(
+            exportRosterCsv(tx, counting.kms, KEY_ARN, {
+              groupId: nonexistentGroupId,
+              includeRestricted: true,
+              actorUserId: null as unknown as string,
+            }),
+          ).rejects.toMatchObject({ code: "invalid_input" });
+
+          await expect(
+            exportRosterCsv(tx, counting.kms, KEY_ARN, {
+              groupId: nonexistentGroupId,
+              includeRestricted: true,
+              actorUserId: "not-a-uuid",
+            }),
+          ).rejects.toMatchObject({ code: "invalid_input" });
+
+          // Null actor on existing group
           await expect(
             exportRosterCsv(tx, counting.kms, KEY_ARN, {
               groupId: group.id,
               includeRestricted: true,
               actorUserId: null as unknown as string,
             }),
-          ).rejects.toBeInstanceOf(GroupsError);
+          ).rejects.toMatchObject({ code: "invalid_input" });
 
-          // Non-UUID actor
+          // Non-UUID actor on existing group
           await expect(
             exportRosterCsv(tx, counting.kms, KEY_ARN, {
               groupId: group.id,
               includeRestricted: true,
               actorUserId: "not-a-uuid",
             }),
-          ).rejects.toBeInstanceOf(GroupsError);
+          ).rejects.toMatchObject({ code: "invalid_input" });
 
           // Zero unwraps and zero audit rows
           expect(counting.unwrapCount()).toBe(unwrapsBefore);
@@ -770,7 +770,7 @@ describe("exportRosterCsv", () => {
     const app = createPlaintextAppSql(roleUrl(runtime, "app"));
     const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
     const scopes = createSyntheticScopes();
-    const { kms } = createCountingKms();
+    const counting = createCountingKms();
     const actorUserId = newId();
 
     try {
@@ -793,7 +793,24 @@ describe("exportRosterCsv", () => {
       await withRequest({ requestId: newId() }, () =>
         withAppTransaction(app, scopes.orgA.community2, async (tx) => {
           await expect(
-            exportRosterCsv(tx, kms, KEY_ARN, {
+            exportRosterCsv(tx, counting.kms, KEY_ARN, {
+              groupId: groupAId,
+              includeRestricted: false,
+              actorUserId,
+            }),
+          ).rejects.toMatchObject({ code: "group_not_found" });
+        }),
+      );
+
+      // Scope B: other community and other organisation
+      const scopeB = {
+        orgId: scopes.orgB.id,
+        communityId: newId(),
+      };
+      await withRequest({ requestId: newId() }, () =>
+        withAppTransaction(app, scopeB, async (tx) => {
+          await expect(
+            exportRosterCsv(tx, counting.kms, KEY_ARN, {
               groupId: groupAId,
               includeRestricted: false,
               actorUserId,
@@ -806,7 +823,7 @@ describe("exportRosterCsv", () => {
       await withRequest({ requestId: newId() }, () =>
         withAppTransaction(app, scopes.orgB.community1, async (tx) => {
           await expect(
-            exportRosterCsv(tx, kms, KEY_ARN, {
+            exportRosterCsv(tx, counting.kms, KEY_ARN, {
               groupId: groupAId,
               includeRestricted: false,
               actorUserId,
@@ -814,6 +831,17 @@ describe("exportRosterCsv", () => {
           ).rejects.toMatchObject({ code: "group_not_found" });
         }),
       );
+
+      // No groups.roster.exported audit row is written
+      const auditRows = await directSql<{ count: string }[]>`
+        select count(*)::text as count
+        from app.audit_events
+        where action = 'groups.roster.exported'
+      `;
+      expect(Number(auditRows[0]?.count ?? "0")).toBe(0);
+
+      // Counting KMS sees 0 unwraps
+      expect(counting.unwrapCount()).toBe(0);
     } finally {
       await directSql`delete from app.groups where org_id in (${scopes.orgA.id}::uuid, ${scopes.orgB.id}::uuid)`.catch(
         () => {},

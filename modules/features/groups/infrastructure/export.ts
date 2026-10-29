@@ -104,7 +104,7 @@ export async function exportRosterCsv(
     if (fam !== 0) return fam;
     const giv = a.givenName.localeCompare(b.givenName, "en", { sensitivity: "variant" });
     if (giv !== 0) return giv;
-    return a.personId.localeCompare(b.personId, "en", { sensitivity: "variant" });
+    return a.personId < b.personId ? -1 : 1;
   });
 
   const rows = candidates.map((c) => [c.givenName, c.familyName, c.role]);
