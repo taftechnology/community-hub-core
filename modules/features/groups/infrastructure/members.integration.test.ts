@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import type { KmsPort } from "@community-hub/crypto";
@@ -21,6 +22,7 @@ import {
   setMemberRole,
 } from "../public/index.js";
 import { cleanScope, loadRuntime, roleUrl } from "../test/fixtures/real-scope.js";
+import { createSyntheticScopes } from "../test/fixtures/scopes.js";
 
 const KEY_ARN = `arn:aws:kms:ap-southeast-2:123456789012:key/mrk-${"ab".repeat(16)}`;
 const REQUEST_ID = "33333333-3333-4333-8333-333333333333";
@@ -1128,6 +1130,477 @@ describe("group members and leader fact", () => {
           // groupLeaderFact bad UUID returns false
           expect(await groupLeaderFact(tx, "bad", newId())).toBe(false);
           expect(await groupLeaderFact(tx, newId(), "bad")).toBe(false);
+        });
+      });
+    } finally {
+      await cleanScope(directSql, scope);
+      await directSql.end({ timeout: 1 });
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
+
+  it("two organisations see only their own group members and raw insert fails WITH CHECK (pin 5 members)", async () => {
+    const runtime = loadRuntime();
+    const appSql = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const scopes = createSyntheticScopes();
+    const now = new Date("2026-05-11T12:00:00.000Z");
+    const kms = createTestKms();
+    const actorUserId = newId();
+
+    try {
+      let groupAId = "";
+      let personAId = "";
+      let groupBId = "";
+      let personBId = "";
+
+      // Set up group and member in Org A
+      await withRequest({ requestId: newId() }, () =>
+        withAppTransaction(appSql, scopes.orgA.community1, async (tx) => {
+          const gA = await createGroup(tx, {
+            name: "OrgA Group",
+            kind: "ministry",
+            now,
+            actorUserId,
+          });
+          groupAId = gA.id;
+          const pA = await createPerson(tx, kms, KEY_ARN, {
+            now,
+            declaredAdult: true,
+            householdId: null,
+            dateOfBirth: null,
+            givenName: "Adult",
+            familyName: "One",
+            email: null,
+            phone: null,
+            actorUserId,
+          });
+          personAId = pA.personId;
+          await addMember(tx, kms, KEY_ARN, {
+            groupId: groupAId,
+            personId: personAId,
+            now,
+            actorUserId,
+          });
+        }),
+      );
+
+      // Set up group and member in Org B (sharing same community UUID string)
+      await withRequest({ requestId: newId() }, () =>
+        withAppTransaction(appSql, scopes.orgB.community1, async (tx) => {
+          const gB = await createGroup(tx, {
+            name: "OrgB Group",
+            kind: "ministry",
+            now,
+            actorUserId,
+          });
+          groupBId = gB.id;
+          const pB = await createPerson(tx, kms, KEY_ARN, {
+            now,
+            declaredAdult: true,
+            householdId: null,
+            dateOfBirth: null,
+            givenName: "Adult",
+            familyName: "Two",
+            email: null,
+            phone: null,
+            actorUserId,
+          });
+          personBId = pB.personId;
+          await addMember(tx, kms, KEY_ARN, {
+            groupId: groupBId,
+            personId: personBId,
+            now,
+            actorUserId,
+          });
+        }),
+      );
+
+      // Under Org A scope:
+      // Raw select sees only Org A's rows
+      await withRequest({ requestId: newId() }, () =>
+        withAppTransaction(appSql, scopes.orgA.community1, async (tx) => {
+          const rowsA = await tx<{ group_id: string; person_id: string }[]>`
+            select group_id::text as group_id, person_id::text as person_id
+            from app.group_members
+          `;
+          expect(rowsA).toEqual([{ group_id: groupAId, person_id: personAId }]);
+        }),
+      );
+
+      // Raw insert with Org B's org_id is rejected by WITH CHECK under Org A's scope
+      await expect(
+        withRequest({ requestId: newId() }, () =>
+          withAppTransaction(appSql, scopes.orgA.community1, async (tx) => {
+            await tx`
+              insert into app.group_members (
+                org_id,
+                community_id,
+                group_id,
+                person_id,
+                role,
+                added_at
+              ) values (
+                ${scopes.orgB.id}::uuid,
+                ${scopes.orgA.community1.communityId}::uuid,
+                ${groupBId}::uuid,
+                ${personBId}::uuid,
+                'member',
+                ${now}
+              )
+            `;
+          }),
+        ),
+      ).rejects.toThrow(/row-level security policy/i);
+
+      // Under Org B scope:
+      // Raw select sees only Org B's rows
+      await withRequest({ requestId: newId() }, () =>
+        withAppTransaction(appSql, scopes.orgB.community1, async (tx) => {
+          const rowsB = await tx<{ group_id: string; person_id: string }[]>`
+            select group_id::text as group_id, person_id::text as person_id
+            from app.group_members
+          `;
+          expect(rowsB).toEqual([{ group_id: groupBId, person_id: personBId }]);
+        }),
+      );
+
+      // Raw insert with Org A's org_id is rejected by WITH CHECK under Org B's scope
+      await expect(
+        withRequest({ requestId: newId() }, () =>
+          withAppTransaction(appSql, scopes.orgB.community1, async (tx) => {
+            await tx`
+              insert into app.group_members (
+                org_id,
+                community_id,
+                group_id,
+                person_id,
+                role,
+                added_at
+              ) values (
+                ${scopes.orgA.id}::uuid,
+                ${scopes.orgB.community1.communityId}::uuid,
+                ${groupAId}::uuid,
+                ${personAId}::uuid,
+                'member',
+                ${now}
+              )
+            `;
+          }),
+        ),
+      ).rejects.toThrow(/row-level security policy/i);
+    } finally {
+      await directSql`delete from app.group_members where org_id in (${scopes.orgA.id}::uuid, ${scopes.orgB.id}::uuid)`.catch(
+        () => {},
+      );
+      await directSql`delete from app.groups where org_id in (${scopes.orgA.id}::uuid, ${scopes.orgB.id}::uuid)`.catch(
+        () => {},
+      );
+      await directSql`delete from app.persons where org_id in (${scopes.orgA.id}::uuid, ${scopes.orgB.id}::uuid)`.catch(
+        () => {},
+      );
+      await appSql.end({ timeout: 1 });
+      await directSql.end({ timeout: 1 });
+    }
+  });
+
+  it("orders listMembers by added_at asc then person_id asc", async () => {
+    const source = readFileSync(new URL("./members.ts", import.meta.url), "utf8");
+    const orderMatch = source.match(/order\s+by\s+([\w\s,]+)/i);
+    expect(orderMatch).not.toBeNull();
+    const orderClause = orderMatch![1]!.trim().replace(/\s+/g, " ");
+    expect(orderClause).toBe("added_at asc, person_id asc");
+
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const scope = await createTestScope(platform);
+    const kms = createTestKms();
+    const actorUserId = newId();
+
+    const t1 = new Date("2026-05-01T10:00:00.000Z");
+    const t2 = new Date("2026-05-01T12:00:00.000Z");
+
+    try {
+      await withRequest({ requestId: REQUEST_ID }, async () => {
+        await withAppTransaction(app, scope, async (tx) => {
+          const group = await createGroup(tx, {
+            name: "Order Test Group",
+            kind: "group",
+            now: t1,
+            actorUserId,
+          });
+
+          // Create three persons
+          const p1 = await createPerson(tx, kms, KEY_ARN, {
+            now: t1,
+            declaredAdult: true,
+            householdId: null,
+            dateOfBirth: null,
+            givenName: "Person",
+            familyName: "One",
+            email: null,
+            phone: null,
+            actorUserId,
+          });
+          const p2 = await createPerson(tx, kms, KEY_ARN, {
+            now: t1,
+            declaredAdult: true,
+            householdId: null,
+            dateOfBirth: null,
+            givenName: "Person",
+            familyName: "Two",
+            email: null,
+            phone: null,
+            actorUserId,
+          });
+          const p3 = await createPerson(tx, kms, KEY_ARN, {
+            now: t1,
+            declaredAdult: true,
+            householdId: null,
+            dateOfBirth: null,
+            givenName: "Person",
+            familyName: "Three",
+            email: null,
+            phone: null,
+            actorUserId,
+          });
+
+          // Sort their IDs so we know pLow < pMid < pHigh
+          const sorted = [p1.personId, p2.personId, p3.personId].sort();
+          const [pLow, pMid, pHigh] = sorted as [string, string, string];
+
+          // 1. Insert pHigh at t1
+          await addMember(tx, kms, KEY_ARN, {
+            groupId: group.id,
+            personId: pHigh,
+            now: t1,
+            actorUserId,
+          });
+
+          // 2. Insert pMid at t1 (inserted second, but has lower personId than pHigh)
+          await addMember(tx, kms, KEY_ARN, {
+            groupId: group.id,
+            personId: pMid,
+            now: t1,
+            actorUserId,
+          });
+
+          // 3. Insert pLow at t2 (inserted last, later added_at, but lowest personId)
+          await addMember(tx, kms, KEY_ARN, {
+            groupId: group.id,
+            personId: pLow,
+            now: t2,
+            actorUserId,
+          });
+
+          const members = await listMembers(tx, kms, KEY_ARN, {
+            groupId: group.id,
+            actorUserId,
+          });
+
+          expect(members.map((m) => m.personId)).toEqual([pMid, pHigh, pLow]);
+        });
+      });
+    } finally {
+      await cleanScope(directSql, scope);
+      await directSql.end({ timeout: 1 });
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
+
+  it("addMember returns correct isMinor and defaults role to member", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const scope = await createTestScope(platform);
+    const kms = createTestKms();
+    const actorUserId = newId();
+
+    try {
+      await withRequest({ requestId: REQUEST_ID }, async () => {
+        await withAppTransaction(app, scope, async (tx) => {
+          const group = await createGroup(tx, {
+            name: "Result Test Group",
+            kind: "group",
+            now: NOW,
+            actorUserId,
+          });
+
+          // Adult person
+          const adult = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: true,
+            householdId: null,
+            dateOfBirth: null,
+            givenName: "Adult",
+            familyName: "Member",
+            email: null,
+            phone: null,
+            actorUserId,
+          });
+
+          // Minor person (in a household)
+          const household = await createHousehold(tx, kms, KEY_ARN, {
+            now: NOW,
+            label: "Test Household",
+            actorUserId,
+          });
+          const minor = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId: household.householdId,
+            dateOfBirth: "2015-06-01",
+            givenName: "Minor",
+            familyName: "Member",
+            email: null,
+            phone: null,
+            actorUserId,
+          });
+
+          // Call addMember with no role for adult
+          const adultRes = await addMember(tx, kms, KEY_ARN, {
+            groupId: group.id,
+            personId: adult.personId,
+            now: NOW,
+            actorUserId,
+          });
+          expect(adultRes.isMinor).toBe(false);
+          expect(adultRes.role).toBe("member");
+
+          // Call addMember with no role for minor
+          const minorRes = await addMember(tx, kms, KEY_ARN, {
+            groupId: group.id,
+            personId: minor.personId,
+            now: NOW,
+            actorUserId,
+          });
+          expect(minorRes.isMinor).toBe(true);
+          expect(minorRes.role).toBe("member");
+        });
+      });
+    } finally {
+      await cleanScope(directSql, scope);
+      await directSql.end({ timeout: 1 });
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
+
+  it("rejects removeMember and setMemberRole with null or non-UUID actor before making any change or audit row", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const scope = await createTestScope(platform);
+    const kms = createTestKms();
+    const actorUserId = newId();
+
+    try {
+      await withRequest({ requestId: REQUEST_ID }, async () => {
+        await withAppTransaction(app, scope, async (tx) => {
+          const group = await createGroup(tx, {
+            name: "Actor Check Group",
+            kind: "group",
+            now: NOW,
+            actorUserId,
+          });
+
+          const person = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: true,
+            householdId: null,
+            dateOfBirth: null,
+            givenName: "Actor",
+            familyName: "Check",
+            email: null,
+            phone: null,
+            actorUserId,
+          });
+
+          await addMember(tx, kms, KEY_ARN, {
+            groupId: group.id,
+            personId: person.personId,
+            role: "member",
+            now: NOW,
+            actorUserId,
+          });
+
+          // Test removeMember with null actor
+          await expect(
+            removeMember(tx, {
+              groupId: group.id,
+              personId: person.personId,
+              now: NOW,
+              actorUserId: null as unknown as string,
+            }),
+          ).rejects.toMatchObject({ code: "invalid_input" });
+
+          // Test removeMember with non-UUID actor
+          await expect(
+            removeMember(tx, {
+              groupId: group.id,
+              personId: person.personId,
+              now: NOW,
+              actorUserId: "not-a-uuid",
+            }),
+          ).rejects.toMatchObject({ code: "invalid_input" });
+
+          // Verify member row is UNCHANGED in database
+          const memberRowsAfterRemove = await tx<{ role: string }[]>`
+            select role from app.group_members
+            where group_id = ${group.id}::uuid and person_id = ${person.personId}::uuid
+          `;
+          expect(memberRowsAfterRemove).toHaveLength(1);
+          expect(memberRowsAfterRemove[0]?.role).toBe("member");
+
+          // Verify no groups.member.removed audit events exist
+          const removedAudit = await tx<{ count: string }[]>`
+            select count(*)::text as count from app.audit_events
+            where action = 'groups.member.removed'
+          `;
+          expect(Number(removedAudit[0]?.count ?? "0")).toBe(0);
+
+          // Test setMemberRole with null actor
+          await expect(
+            setMemberRole(tx, {
+              groupId: group.id,
+              personId: person.personId,
+              role: "leader",
+              now: NOW,
+              actorUserId: null as unknown as string,
+            }),
+          ).rejects.toMatchObject({ code: "invalid_input" });
+
+          // Test setMemberRole with non-UUID actor
+          await expect(
+            setMemberRole(tx, {
+              groupId: group.id,
+              personId: person.personId,
+              role: "leader",
+              now: NOW,
+              actorUserId: "not-a-uuid",
+            }),
+          ).rejects.toMatchObject({ code: "invalid_input" });
+
+          // Verify member row still has role 'member' (UNCHANGED)
+          const memberRowsAfterRole = await tx<{ role: string }[]>`
+            select role from app.group_members
+            where group_id = ${group.id}::uuid and person_id = ${person.personId}::uuid
+          `;
+          expect(memberRowsAfterRole).toHaveLength(1);
+          expect(memberRowsAfterRole[0]?.role).toBe("member");
+
+          // Verify no groups.member.role_changed audit events exist
+          const roleAudit = await tx<{ count: string }[]>`
+            select count(*)::text as count from app.audit_events
+            where action = 'groups.member.role_changed'
+          `;
+          expect(Number(roleAudit[0]?.count ?? "0")).toBe(0);
         });
       });
     } finally {
