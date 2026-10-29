@@ -32,3 +32,16 @@ export {
   type RestoreGroupInput,
   type ListGroupsOptions,
 } from "../infrastructure/groups.js";
+export {
+  addMember,
+  removeMember,
+  setMemberRole,
+  listMembers,
+  groupLeaderFact,
+  type GroupMemberRole,
+  type GroupMemberRecord,
+  type AddMemberInput,
+  type RemoveMemberInput,
+  type SetMemberRoleInput,
+  type ListMembersInput,
+} from "../infrastructure/members.js";

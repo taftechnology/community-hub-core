@@ -19,8 +19,10 @@
     "build": "tsc --build"
   },
   "dependencies": {
+    "@community-hub/crypto": "workspace:*",
     "@community-hub/db": "workspace:*",
     "@community-hub/kernel": "workspace:*",
+    "@community-hub/people": "workspace:*",
     "@community-hub/usage": "workspace:*",
     "drizzle-orm": "0.45.2",
     "postgres": "3.4.9"

@@ -36,6 +36,18 @@ describe("groups boundaries", () => {
     expect(hits).toEqual([]);
   });
 
+  it("imports people only as @community-hub/people with no deep path (pin 26)", () => {
+    const files = typescriptFiles(MODULE);
+    const deepImports: string[] = [];
+    for (const file of files) {
+      const text = readFileSync(file, "utf8");
+      if (text.includes("@community-hub/" + "people/")) {
+        deepImports.push(file);
+      }
+    }
+    expect(deepImports).toEqual([]);
+  });
+
   it("leaves staging parked", () => {
     const staging = readFileSync(path.join(ENV, "staging.tfvars"), "utf8");
     expect(staging).toMatch(/enable_database\s*=\s*false/);

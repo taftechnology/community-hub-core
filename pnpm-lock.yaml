@@ -431,12 +431,18 @@ importers:
 
   modules/features/groups:
     dependencies:
+      '@community-hub/crypto':
+        specifier: workspace:*
+        version: link:../../../packages/crypto
       '@community-hub/db':
         specifier: workspace:*
         version: link:../../../packages/db
       '@community-hub/kernel':
         specifier: workspace:*
         version: link:../../../packages/kernel
+      '@community-hub/people':
+        specifier: workspace:*
+        version: link:../../core/people
       '@community-hub/usage':
         specifier: workspace:*
         version: link:../../core/usage
