@@ -57,6 +57,20 @@ function policyStatements(sql: string, table: string): string[] {
     );
 }
 
+const DB_PACKAGE_NAME = "@community-hub/" + "db";
+
+export function hasDbImportOrExport(
+  source: string,
+  packageName: string = DB_PACKAGE_NAME,
+): boolean {
+  const escaped = packageName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(
+    `\\b(?:import|export)\\s+(?!type\\b)(?:(?!\\bfrom\\b)[^;'"])*?\\bfrom\\s+['"]${escaped}(?:\\/[^'"]*)?['"]|\\bimport\\s+['"]${escaped}(?:\\/[^'"]*)?['"]`,
+    "m",
+  );
+  return pattern.test(source);
+}
+
 describe("groups schema", () => {
   const dummyPersonsTable = pgSchema("app").table("dummy_persons", {
     orgId: uuid("org_id").notNull(),
@@ -193,7 +207,41 @@ describe("groups schema", () => {
   it("has no pgSchema and no db import in the schema source (pin 27)", () => {
     const text = readFileSync(SCHEMA, "utf8");
     expect(text).not.toContain("pgSchema(");
-    const dbImportRegex = /import\s+(?!type\b).*\s+from\s+["']@community-hub\/db["']/;
-    expect(text).not.toMatch(dbImportRegex);
+    expect(hasDbImportOrExport(text)).toBe(false);
+  });
+
+  it("pin 27 matcher catches multiline imports, side-effects, exports, and deep paths", () => {
+    const pkg = "@community-hub/" + "db";
+    const fixturesToCatch = [
+      `import {\n  x\n} from "${pkg}"`,
+      `import "${pkg}"`,
+      `import "${pkg}/deep/path"`,
+      `export { x } from "${pkg}"`,
+      `export * from "${pkg}"`,
+      `export { x } from "${pkg}/deep"`,
+      `export * from "${pkg}/deep"`,
+      `export {\n  x\n} from "${pkg}"`,
+      `import x from "${pkg}"`,
+      `import x from "${pkg}/sub"`,
+    ];
+
+    for (const fixture of fixturesToCatch) {
+      expect(hasDbImportOrExport(fixture), `should catch: ${fixture.replace(/\n/g, "\\n")}`).toBe(
+        true,
+      );
+    }
+
+    const fixturesToAllow = [
+      `import type { X } from "${pkg}"`,
+      `import type { X } from "${pkg}/sub"`,
+      `export type { X } from "${pkg}"`,
+      `import { sql } from "drizzle-orm";`,
+    ];
+
+    for (const fixture of fixturesToAllow) {
+      expect(hasDbImportOrExport(fixture), `should allow: ${fixture.replace(/\n/g, "\\n")}`).toBe(
+        false,
+      );
+    }
   });
 });

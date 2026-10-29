@@ -96,6 +96,5 @@ export function groupsTables(app: PgSchema, refs: GroupsSchemaRefs) {
   return {
     groups,
     groupMembers,
-    group_members: groupMembers,
   };
 }

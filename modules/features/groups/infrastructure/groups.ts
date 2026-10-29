@@ -70,17 +70,29 @@ function actor(actorUserId: string | null): {
   return { actorKind: "user", actorId: actorUserId };
 }
 
-function isUniqueViolation(error: unknown): boolean {
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function classifyUniqueViolation(error: unknown): "duplicate_name" | "invalid_input" | undefined {
   const seen = new Set<unknown>();
   let current: unknown = error;
   while (typeof current === "object" && current !== null && !seen.has(current)) {
     seen.add(current);
     if ("code" in current && current.code === "23505") {
-      return true;
+      const constraint =
+        ("constraint_name" in current && typeof current.constraint_name === "string"
+          ? current.constraint_name
+          : undefined) ??
+        ("constraint" in current && typeof current.constraint === "string"
+          ? current.constraint
+          : undefined);
+      if (constraint === "groups_active_name_key_unique") {
+        return "duplicate_name";
+      }
+      return "invalid_input";
     }
     current = "cause" in current ? current.cause : undefined;
   }
-  return false;
+  return undefined;
 }
 
 function mapGroup(row: StoredGroup): GroupRecord {
@@ -112,6 +124,9 @@ export async function createGroup(
   if (input.kind !== "ministry" && input.kind !== "group") {
     throw new GroupsError("invalid_input");
   }
+  if (input.groupId !== undefined && !UUID_RE.test(input.groupId)) {
+    throw new GroupsError("invalid_input");
+  }
 
   const groupId = input.groupId ?? newId();
   const description = input.description ?? null;
@@ -139,8 +154,9 @@ export async function createGroup(
       inserted = rows[0]!;
     });
   } catch (error) {
-    if (isUniqueViolation(error)) {
-      throw new GroupsError("duplicate_name");
+    const violation = classifyUniqueViolation(error);
+    if (violation) {
+      throw new GroupsError(violation);
     }
     throw error;
   }
@@ -159,6 +175,9 @@ export async function createGroup(
 }
 
 export async function readGroup(tx: AppTransaction, groupId: string): Promise<GroupRecord> {
+  if (!UUID_RE.test(groupId)) {
+    throw new GroupsError("group_not_found");
+  }
   const rows = await tx<StoredGroup[]>`
     select id, name, name_key, description, kind, status, created_at, updated_at
     from app.groups
@@ -214,14 +233,21 @@ export async function updateGroup(
             description = ${description},
             kind = ${kind},
             updated_at = ${input.now}
-        where id = ${groupId}::uuid
+        where id = ${groupId}::uuid and status = 'active'
         returning id, name, name_key, description, kind, status, created_at, updated_at
       `;
+      if (rows.length === 0) {
+        throw new GroupsError("group_archived");
+      }
       updated = rows[0]!;
     });
   } catch (error) {
-    if (isUniqueViolation(error)) {
-      throw new GroupsError("duplicate_name");
+    if (error instanceof GroupsError) {
+      throw error;
+    }
+    const violation = classifyUniqueViolation(error);
+    if (violation) {
+      throw new GroupsError(violation);
     }
     throw error;
   }
@@ -243,6 +269,11 @@ export async function archiveGroup(
   groupId: string,
   input: ArchiveGroupInput,
 ): Promise<GroupRecord> {
+  const existing = await readGroup(tx, groupId);
+  if (existing.status === "archived") {
+    return existing;
+  }
+
   const rows = await tx<StoredGroup[]>`
     update app.groups
     set status = 'archived',
@@ -289,8 +320,12 @@ export async function restoreGroup(
       restored = rows[0]!;
     });
   } catch (error) {
-    if (isUniqueViolation(error)) {
-      throw new GroupsError("duplicate_name");
+    if (error instanceof GroupsError) {
+      throw error;
+    }
+    const violation = classifyUniqueViolation(error);
+    if (violation) {
+      throw new GroupsError(violation);
     }
     throw error;
   }

@@ -518,73 +518,139 @@ describe("group operations", () => {
     },
   );
 
-  it("two concurrent creates of one name end with one active group and one duplicate_name", async () => {
-    const runtime = loadRuntime();
-    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
-    const appSql1 = createPlaintextAppSql(roleUrl(runtime, "app"));
-    const appSql2 = createPlaintextAppSql(roleUrl(runtime, "app"));
-    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
-    const scope = await createScope(platform);
-    const now = new Date("2026-05-06T12:00:00.000Z");
+  it(
+    "two concurrent creates of one name end with one active group and one duplicate_name",
+    { timeout: 30_000 },
+    async () => {
+      const runtime = loadRuntime();
+      const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+      const appSql1 = createPlaintextAppSql(roleUrl(runtime, "app"));
+      const appSql2 = createPlaintextAppSql(roleUrl(runtime, "app"));
+      const observer = createPlaintextDirectSql(runtime.productOnlyUrl);
+      const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+      const scope = await createScope(platform);
+      const now = new Date("2026-05-06T12:00:00.000Z");
 
-    try {
-      const task1 = withRequest({ requestId: newId() }, () =>
-        withAppTransaction(appSql1, scope, (tx) =>
-          createGroup(tx, {
-            name: "Concurrent Group",
-            kind: "ministry",
-            now,
-            actorUserId: null,
-          }),
-        ),
-      );
-
-      const task2 = withRequest({ requestId: newId() }, () =>
-        withAppTransaction(appSql2, scope, (tx) =>
-          createGroup(tx, {
-            name: "Concurrent Group",
-            kind: "ministry",
-            now,
-            actorUserId: null,
-          }),
-        ),
-      );
-
-      const [res1, res2] = await Promise.allSettled([task1, task2]);
-      const fulfilled = [res1, res2].filter((r) => r.status === "fulfilled");
-      const rejected = [res1, res2].filter((r) => r.status === "rejected");
-
-      expect(fulfilled).toHaveLength(1);
-      expect(rejected).toHaveLength(1);
-      expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
-        code: "duplicate_name",
+      let release1!: () => void;
+      const hold1 = new Promise<void>((resolve) => {
+        release1 = resolve;
       });
+      let created1 = false;
+      let tx1Promise: Promise<unknown> | undefined;
+      let tx2Promise: Promise<unknown> | undefined;
 
-      await withAppTransaction(appSql1, scope, async (tx) => {
-        const groups = await listGroups(tx);
-        expect(groups).toHaveLength(1);
-        expect(groups[0]?.name).toBe("Concurrent Group");
-      });
-    } finally {
       try {
-        await cleanScope(directSql, scope);
-      } finally {
-        await platform.end({ timeout: 1 });
-        await appSql1.end({ timeout: 1 });
-        await appSql2.end({ timeout: 1 });
-        await directSql.end({ timeout: 1 });
-      }
-    }
-  });
+        tx1Promise = withRequest({ requestId: newId() }, () =>
+          withAppTransaction(appSql1, scope, async (tx) => {
+            await createGroup(tx, {
+              name: "Concurrent Group",
+              kind: "ministry",
+              now,
+              actorUserId: null,
+            });
+            created1 = true;
+            await hold1;
+          }),
+        );
 
-  it("a restore racing a create ends with one active group", async () => {
+        const start1 = Date.now();
+        while (!created1 && Date.now() - start1 < 5_000) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        expect(created1).toBe(true);
+
+        let pid2: number | null = null;
+        let settled2 = false;
+
+        tx2Promise = withRequest({ requestId: newId() }, () =>
+          withAppTransaction(appSql2, scope, async (tx) => {
+            const [row] = await tx<{ pid: number }[]>`select pg_backend_pid() as pid`;
+            pid2 = row?.pid ?? null;
+            await createGroup(tx, {
+              name: "Concurrent Group",
+              kind: "ministry",
+              now,
+              actorUserId: null,
+            });
+          }),
+        ).finally(() => {
+          settled2 = true;
+        });
+
+        const start2 = Date.now();
+        while (pid2 === null && Date.now() - start2 < 5_000) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        expect(pid2).not.toBeNull();
+
+        const started = Date.now();
+        let waiting = false;
+        while (Date.now() - started < 5_000) {
+          if (settled2) break;
+          const waitingRows = await observer<{ pid: number }[]>`
+            select pid
+            from pg_stat_activity
+            where datname = current_database()
+              and pid = ${pid2}
+              and state = 'active'
+              and wait_event_type = 'Lock'
+          `;
+          if (waitingRows.length > 0) {
+            waiting = true;
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+
+        expect(waiting).toBe(true);
+
+        release1();
+        const [res1, res2] = await Promise.allSettled([tx1Promise, tx2Promise]);
+        expect(res1.status).toBe("fulfilled");
+        expect(res2.status).toBe("rejected");
+        expect((res2 as PromiseRejectedResult).reason).toMatchObject({
+          code: "duplicate_name",
+        });
+
+        await withAppTransaction(appSql1, scope, async (tx) => {
+          const groups = await listGroups(tx);
+          expect(groups).toHaveLength(1);
+          expect(groups[0]?.name).toBe("Concurrent Group");
+        });
+      } finally {
+        release1?.();
+        await tx1Promise?.catch(() => undefined);
+        await tx2Promise?.catch(() => undefined);
+        try {
+          await cleanScope(directSql, scope);
+        } finally {
+          await platform.end({ timeout: 1 });
+          await appSql1.end({ timeout: 1 });
+          await appSql2.end({ timeout: 1 });
+          await observer.end({ timeout: 1 });
+          await directSql.end({ timeout: 1 });
+        }
+      }
+    },
+  );
+
+  it("a restore racing a create ends with one active group", { timeout: 30_000 }, async () => {
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
     const appSql1 = createPlaintextAppSql(roleUrl(runtime, "app"));
     const appSql2 = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const observer = createPlaintextDirectSql(runtime.productOnlyUrl);
     const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
     const scope = await createScope(platform);
     const now = new Date("2026-05-07T12:00:00.000Z");
+
+    let release1!: () => void;
+    const hold1 = new Promise<void>((resolve) => {
+      release1 = resolve;
+    });
+    let restored1 = false;
+    let tx1Promise: Promise<unknown> | undefined;
+    let tx2Promise: Promise<unknown> | undefined;
 
     try {
       let g1Id = "";
@@ -601,47 +667,93 @@ describe("group operations", () => {
         }),
       );
 
-      const taskCreate = withRequest({ requestId: newId() }, () =>
-        withAppTransaction(appSql1, scope, (tx) =>
-          createGroup(tx, {
+      tx1Promise = withRequest({ requestId: newId() }, () =>
+        withAppTransaction(appSql1, scope, async (tx) => {
+          await restoreGroup(tx, g1Id, {
+            now,
+            actorUserId: null,
+          });
+          restored1 = true;
+          await hold1;
+        }),
+      );
+
+      const start1 = Date.now();
+      while (!restored1 && Date.now() - start1 < 5_000) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(restored1).toBe(true);
+
+      let pid2: number | null = null;
+      let settled2 = false;
+
+      tx2Promise = withRequest({ requestId: newId() }, () =>
+        withAppTransaction(appSql2, scope, async (tx) => {
+          const [row] = await tx<{ pid: number }[]>`select pg_backend_pid() as pid`;
+          pid2 = row?.pid ?? null;
+          await createGroup(tx, {
             name: "Racing Group",
             kind: "group",
             now,
             actorUserId: null,
-          }),
-        ),
-      );
+          });
+        }),
+      ).finally(() => {
+        settled2 = true;
+      });
 
-      const taskRestore = withRequest({ requestId: newId() }, () =>
-        withAppTransaction(appSql2, scope, (tx) =>
-          restoreGroup(tx, g1Id, {
-            now,
-            actorUserId: null,
-          }),
-        ),
-      );
+      const start2 = Date.now();
+      while (pid2 === null && Date.now() - start2 < 5_000) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(pid2).not.toBeNull();
 
-      const [res1, res2] = await Promise.allSettled([taskCreate, taskRestore]);
-      const fulfilled = [res1, res2].filter((r) => r.status === "fulfilled");
-      const rejected = [res1, res2].filter((r) => r.status === "rejected");
+      const started = Date.now();
+      let waiting = false;
+      while (Date.now() - started < 5_000) {
+        if (settled2) break;
+        const waitingRows = await observer<{ pid: number }[]>`
+            select pid
+            from pg_stat_activity
+            where datname = current_database()
+              and pid = ${pid2}
+              and state = 'active'
+              and wait_event_type = 'Lock'
+          `;
+        if (waitingRows.length > 0) {
+          waiting = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
 
-      expect(fulfilled).toHaveLength(1);
-      expect(rejected).toHaveLength(1);
-      expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
+      expect(waiting).toBe(true);
+
+      release1();
+      const [res1, res2] = await Promise.allSettled([tx1Promise, tx2Promise]);
+      expect(res1.status).toBe("fulfilled");
+      expect(res2.status).toBe("rejected");
+      expect((res2 as PromiseRejectedResult).reason).toMatchObject({
         code: "duplicate_name",
       });
 
       await withAppTransaction(appSql1, scope, async (tx) => {
         const groups = await listGroups(tx);
         expect(groups).toHaveLength(1);
+        expect(groups[0]?.id).toBe(g1Id);
+        expect(groups[0]?.status).toBe("active");
       });
     } finally {
+      release1?.();
+      await tx1Promise?.catch(() => undefined);
+      await tx2Promise?.catch(() => undefined);
       try {
         await cleanScope(directSql, scope);
       } finally {
         await platform.end({ timeout: 1 });
         await appSql1.end({ timeout: 1 });
         await appSql2.end({ timeout: 1 });
+        await observer.end({ timeout: 1 });
         await directSql.end({ timeout: 1 });
       }
     }
@@ -777,6 +889,623 @@ describe("group operations", () => {
           and community_id = ${scope.communityId}::uuid
       `;
       expect(rows).toEqual([{ feature_key: "groups.basic", day: "2026-05-10", success_count: 1 }]);
+    } finally {
+      try {
+        await cleanScope(directSql, scope);
+      } finally {
+        await platform.end({ timeout: 1 });
+        await app.end({ timeout: 1 });
+        await directSql.end({ timeout: 1 });
+      }
+    }
+  });
+
+  it("writes audit events for create, update, archive and restore with actor and targets and no fixture group name", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const scope = await createScope(platform);
+    const now = new Date("2026-05-11T10:00:00.000Z");
+    const later = new Date("2026-05-11T11:00:00.000Z");
+    const actorUser = newId();
+    const fixtureName = "Secret Audit Fixture Name";
+    const updatedFixtureName = "Renamed Secret Audit Fixture";
+
+    try {
+      await withRequest({ requestId: newId() }, () =>
+        withAppTransaction(app, scope, async (tx) => {
+          // 1. Create
+          const created = await createGroup(tx, {
+            name: fixtureName,
+            kind: "ministry",
+            now,
+            actorUserId: actorUser,
+          });
+
+          const createAudits = await tx<
+            {
+              action: string;
+              actor_kind: string;
+              actor_id: string | null;
+              target_ids: string[];
+            }[]
+          >`
+            select action, actor_kind, actor_id, target_ids
+            from app.audit_events
+            where org_id = ${scope.orgId}::uuid and action = 'groups.group.created'
+          `;
+          expect(createAudits).toHaveLength(1);
+          expect(createAudits[0]?.action).toBe("groups.group.created");
+          expect(createAudits[0]?.actor_kind).toBe("user");
+          expect(createAudits[0]?.actor_id).toBe(actorUser);
+          expect(createAudits[0]?.target_ids).toEqual([created.id]);
+
+          // 2. Update
+          await updateGroup(tx, created.id, {
+            name: updatedFixtureName,
+            now: later,
+            actorUserId: actorUser,
+          });
+
+          const updateAudits = await tx<
+            {
+              action: string;
+              actor_kind: string;
+              actor_id: string | null;
+              target_ids: string[];
+            }[]
+          >`
+            select action, actor_kind, actor_id, target_ids
+            from app.audit_events
+            where org_id = ${scope.orgId}::uuid and action = 'groups.group.updated'
+          `;
+          expect(updateAudits).toHaveLength(1);
+          expect(updateAudits[0]?.action).toBe("groups.group.updated");
+          expect(updateAudits[0]?.actor_kind).toBe("user");
+          expect(updateAudits[0]?.actor_id).toBe(actorUser);
+          expect(updateAudits[0]?.target_ids).toEqual([created.id]);
+
+          // 3. Archive
+          await archiveGroup(tx, created.id, {
+            now: later,
+            actorUserId: actorUser,
+          });
+
+          const archiveAudits = await tx<
+            {
+              action: string;
+              actor_kind: string;
+              actor_id: string | null;
+              target_ids: string[];
+            }[]
+          >`
+            select action, actor_kind, actor_id, target_ids
+            from app.audit_events
+            where org_id = ${scope.orgId}::uuid and action = 'groups.group.archived'
+          `;
+          expect(archiveAudits).toHaveLength(1);
+          expect(archiveAudits[0]?.action).toBe("groups.group.archived");
+          expect(archiveAudits[0]?.actor_kind).toBe("user");
+          expect(archiveAudits[0]?.actor_id).toBe(actorUser);
+          expect(archiveAudits[0]?.target_ids).toEqual([created.id]);
+
+          // 4. Restore
+          await restoreGroup(tx, created.id, {
+            now: later,
+            actorUserId: actorUser,
+          });
+
+          const restoreAudits = await tx<
+            {
+              action: string;
+              actor_kind: string;
+              actor_id: string | null;
+              target_ids: string[];
+            }[]
+          >`
+            select action, actor_kind, actor_id, target_ids
+            from app.audit_events
+            where org_id = ${scope.orgId}::uuid and action = 'groups.group.updated'
+            order by seq desc
+          `;
+          expect(restoreAudits).toHaveLength(2);
+          expect(restoreAudits[0]?.action).toBe("groups.group.updated");
+          expect(restoreAudits[0]?.actor_kind).toBe("user");
+          expect(restoreAudits[0]?.actor_id).toBe(actorUser);
+          expect(restoreAudits[0]?.target_ids).toEqual([created.id]);
+
+          // Check that serialised audit rows contain no fixture group names
+          const allAudits = await tx<Record<string, unknown>[]>`
+            select * from app.audit_events
+            where org_id = ${scope.orgId}::uuid
+          `;
+          const serialised = JSON.stringify(allAudits);
+          expect(serialised).not.toContain(fixtureName);
+          expect(serialised).not.toContain(updatedFixtureName);
+        }),
+      );
+    } finally {
+      try {
+        await cleanScope(directSql, scope);
+      } finally {
+        await platform.end({ timeout: 1 });
+        await app.end({ timeout: 1 });
+        await directSql.end({ timeout: 1 });
+      }
+    }
+  });
+
+  it("updateGroup renaming a group to collide with an active group throws duplicate_name, including padded and recased", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const scope = await createScope(platform);
+    const now = new Date("2026-05-12T10:00:00.000Z");
+
+    try {
+      await withRequest({ requestId: newId() }, () =>
+        withAppTransaction(app, scope, async (tx) => {
+          await createGroup(tx, {
+            name: "Active Group A",
+            kind: "ministry",
+            now,
+            actorUserId: null,
+          });
+
+          const gB = await createGroup(tx, {
+            name: "Active Group B",
+            kind: "ministry",
+            now,
+            actorUserId: null,
+          });
+
+          // Exact name collision
+          await expect(
+            updateGroup(tx, gB.id, {
+              name: "Active Group A",
+              now,
+              actorUserId: null,
+            }),
+          ).rejects.toMatchObject({ code: "duplicate_name" });
+
+          // Padded and recased collision
+          await expect(
+            updateGroup(tx, gB.id, {
+              name: "   ACTIVE   group   a   ",
+              now,
+              actorUserId: null,
+            }),
+          ).rejects.toMatchObject({ code: "duplicate_name" });
+
+          // Verify group B was not modified
+          const currentB = await readGroup(tx, gB.id);
+          expect(currentB.name).toBe("Active Group B");
+          expect(currentB.nameKey).toBe("active group b");
+        }),
+      );
+    } finally {
+      try {
+        await cleanScope(directSql, scope);
+      } finally {
+        await platform.end({ timeout: 1 });
+        await app.end({ timeout: 1 });
+        await directSql.end({ timeout: 1 });
+      }
+    }
+  });
+
+  it("listGroups orders deterministically by name_key asc, id asc across cases and active/archived", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const scope = await createScope(platform);
+    const now = new Date("2026-05-13T10:00:00.000Z");
+
+    try {
+      await withRequest({ requestId: newId() }, () =>
+        withAppTransaction(app, scope, async (tx) => {
+          // Create groups that differ only by case:
+          // In active status, unique constraint prevents two active groups with same name_key.
+          // But with one archived and one active, two groups can share the same name_key!
+          const gArchived = await createGroup(tx, {
+            name: "Shared Choir",
+            kind: "ministry",
+            now,
+            actorUserId: null,
+          });
+          await archiveGroup(tx, gArchived.id, { now, actorUserId: null });
+
+          const gActive = await createGroup(tx, {
+            name: "shared CHOIR",
+            kind: "group",
+            now,
+            actorUserId: null,
+          });
+
+          // Also create groups with different name keys to assert name_key ordering
+          const gBravo = await createGroup(tx, {
+            name: "Bravo Ministry",
+            kind: "ministry",
+            now,
+            actorUserId: null,
+          });
+          const gAlpha = await createGroup(tx, {
+            name: "alpha fellowship",
+            kind: "group",
+            now,
+            actorUserId: null,
+          });
+
+          // Active listing: orders by name_key asc, id asc
+          const activeList = await listGroups(tx);
+          expect(activeList.map((g) => g.nameKey)).toEqual([
+            "alpha fellowship",
+            "bravo ministry",
+            "shared choir",
+          ]);
+          expect(activeList.map((g) => g.id)).toEqual([gAlpha.id, gBravo.id, gActive.id]);
+
+          // Full listing with includeArchived:
+          // gArchived and gActive share identical name_key 'shared choir', so id asc breaks tie
+          const fullList = await listGroups(tx, { includeArchived: true });
+          expect(fullList.map((g) => g.nameKey)).toEqual([
+            "alpha fellowship",
+            "bravo ministry",
+            "shared choir",
+            "shared choir",
+          ]);
+
+          const sharedChoirGroups = fullList.filter((g) => g.nameKey === "shared choir");
+          expect(sharedChoirGroups).toHaveLength(2);
+          const expectedTieBreak = [gArchived.id, gActive.id].sort((a, b) => a.localeCompare(b));
+          expect(sharedChoirGroups.map((g) => g.id)).toEqual(expectedTieBreak);
+        }),
+      );
+    } finally {
+      try {
+        await cleanScope(directSql, scope);
+      } finally {
+        await platform.end({ timeout: 1 });
+        await app.end({ timeout: 1 });
+        await directSql.end({ timeout: 1 });
+      }
+    }
+  });
+
+  it("rejects invalid input (bad kind, description > 2000 chars, empty name) with invalid_input", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const scope = await createScope(platform);
+    const now = new Date("2026-05-14T10:00:00.000Z");
+
+    try {
+      await withRequest({ requestId: newId() }, () =>
+        withAppTransaction(app, scope, async (tx) => {
+          // 1. Bad kind on create and update
+          await expect(
+            createGroup(tx, {
+              name: "Valid Name",
+              kind: "invalid-kind" as unknown as "group",
+              now,
+              actorUserId: null,
+            }),
+          ).rejects.toMatchObject({ code: "invalid_input" });
+
+          const validGroup = await createGroup(tx, {
+            name: "Valid Group",
+            kind: "group",
+            now,
+            actorUserId: null,
+          });
+
+          await expect(
+            updateGroup(tx, validGroup.id, {
+              kind: "invalid-kind" as unknown as "group",
+              now,
+              actorUserId: null,
+            }),
+          ).rejects.toMatchObject({ code: "invalid_input" });
+
+          // 2. Description over 2000 chars on create and update
+          const tooLongDesc = "a".repeat(2001);
+          await expect(
+            createGroup(tx, {
+              name: "Another Group",
+              description: tooLongDesc,
+              kind: "ministry",
+              now,
+              actorUserId: null,
+            }),
+          ).rejects.toMatchObject({ code: "invalid_input" });
+
+          await expect(
+            updateGroup(tx, validGroup.id, {
+              description: tooLongDesc,
+              now,
+              actorUserId: null,
+            }),
+          ).rejects.toMatchObject({ code: "invalid_input" });
+
+          // 3. Empty or whitespace-only name on create and update
+          await expect(
+            createGroup(tx, {
+              name: "",
+              kind: "ministry",
+              now,
+              actorUserId: null,
+            }),
+          ).rejects.toMatchObject({ code: "invalid_input" });
+
+          await expect(
+            createGroup(tx, {
+              name: "   \t\n  ",
+              kind: "ministry",
+              now,
+              actorUserId: null,
+            }),
+          ).rejects.toMatchObject({ code: "invalid_input" });
+
+          await expect(
+            updateGroup(tx, validGroup.id, {
+              name: "",
+              now,
+              actorUserId: null,
+            }),
+          ).rejects.toMatchObject({ code: "invalid_input" });
+
+          await expect(
+            updateGroup(tx, validGroup.id, {
+              name: "   ",
+              now,
+              actorUserId: null,
+            }),
+          ).rejects.toMatchObject({ code: "invalid_input" });
+        }),
+      );
+    } finally {
+      try {
+        await cleanScope(directSql, scope);
+      } finally {
+        await platform.end({ timeout: 1 });
+        await app.end({ timeout: 1 });
+        await directSql.end({ timeout: 1 });
+      }
+    }
+  });
+
+  it("cross-tenant mutations (different community and different org) throw group_not_found and leave rows unchanged", async () => {
+    const runtime = loadRuntime();
+    const appSql = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const scopes = createSyntheticScopes();
+    const now = new Date("2026-05-15T12:00:00.000Z");
+
+    try {
+      let gAId = "";
+      await withRequest({ requestId: newId() }, () =>
+        withAppTransaction(appSql, scopes.orgA.community1, async (tx) => {
+          const g = await createGroup(tx, {
+            name: "Scope A Target Group",
+            kind: "ministry",
+            description: "Original description",
+            now,
+            actorUserId: null,
+          });
+          gAId = g.id;
+        }),
+      );
+
+      // Attempt operations from different community in same org
+      await withRequest({ requestId: newId() }, () =>
+        withAppTransaction(appSql, scopes.orgA.community2, async (tx) => {
+          await expect(readGroup(tx, gAId)).rejects.toMatchObject({ code: "group_not_found" });
+          await expect(
+            updateGroup(tx, gAId, { name: "Attacked Name", now, actorUserId: null }),
+          ).rejects.toMatchObject({ code: "group_not_found" });
+          await expect(archiveGroup(tx, gAId, { now, actorUserId: null })).rejects.toMatchObject({
+            code: "group_not_found",
+          });
+          await expect(restoreGroup(tx, gAId, { now, actorUserId: null })).rejects.toMatchObject({
+            code: "group_not_found",
+          });
+        }),
+      );
+
+      // Attempt operations from different org
+      await withRequest({ requestId: newId() }, () =>
+        withAppTransaction(appSql, scopes.orgB.community1, async (tx) => {
+          await expect(readGroup(tx, gAId)).rejects.toMatchObject({ code: "group_not_found" });
+          await expect(
+            updateGroup(tx, gAId, { name: "Attacked Name 2", now, actorUserId: null }),
+          ).rejects.toMatchObject({ code: "group_not_found" });
+          await expect(archiveGroup(tx, gAId, { now, actorUserId: null })).rejects.toMatchObject({
+            code: "group_not_found",
+          });
+          await expect(restoreGroup(tx, gAId, { now, actorUserId: null })).rejects.toMatchObject({
+            code: "group_not_found",
+          });
+        }),
+      );
+
+      // Verify row in Scope A is completely unchanged
+      await withRequest({ requestId: newId() }, () =>
+        withAppTransaction(appSql, scopes.orgA.community1, async (tx) => {
+          const read = await readGroup(tx, gAId);
+          expect(read.name).toBe("Scope A Target Group");
+          expect(read.description).toBe("Original description");
+          expect(read.status).toBe("active");
+        }),
+      );
+    } finally {
+      await directSql`delete from app.groups where org_id in (${scopes.orgA.id}::uuid, ${scopes.orgB.id}::uuid)`.catch(
+        () => {},
+      );
+      await appSql.end({ timeout: 1 });
+      await directSql.end({ timeout: 1 });
+    }
+  });
+
+  it("caller-supplied groupId colliding with an existing PK throws invalid_input, not duplicate_name", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const scope = await createScope(platform);
+    const now = new Date("2026-05-16T10:00:00.000Z");
+
+    try {
+      await withRequest({ requestId: newId() }, () =>
+        withAppTransaction(app, scope, async (tx) => {
+          const existing = await createGroup(tx, {
+            name: "Initial Group",
+            kind: "group",
+            now,
+            actorUserId: null,
+          });
+
+          // Colliding primary key with a unique name
+          await expect(
+            createGroup(tx, {
+              groupId: existing.id,
+              name: "Totally Unique Name",
+              kind: "ministry",
+              now,
+              actorUserId: null,
+            }),
+          ).rejects.toMatchObject({ code: "invalid_input" });
+        }),
+      );
+    } finally {
+      try {
+        await cleanScope(directSql, scope);
+      } finally {
+        await platform.end({ timeout: 1 });
+        await app.end({ timeout: 1 });
+        await directSql.end({ timeout: 1 });
+      }
+    }
+  });
+
+  it("rejects a group id that is not a UUID with group_not_found and message equals code", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const scope = await createScope(platform);
+    const now = new Date("2026-05-17T10:00:00.000Z");
+
+    try {
+      await withRequest({ requestId: newId() }, () =>
+        withAppTransaction(app, scope, async (tx) => {
+          try {
+            await readGroup(tx, "not-a-uuid");
+            expect.unreachable("should have thrown");
+          } catch (err: unknown) {
+            expect(err).toMatchObject({
+              code: "group_not_found",
+              message: "group_not_found",
+            });
+          }
+
+          try {
+            await updateGroup(tx, "not-a-uuid", { name: "Test", now, actorUserId: null });
+            expect.unreachable("should have thrown");
+          } catch (err: unknown) {
+            expect(err).toMatchObject({
+              code: "group_not_found",
+              message: "group_not_found",
+            });
+          }
+
+          try {
+            await archiveGroup(tx, "not-a-uuid", { now, actorUserId: null });
+            expect.unreachable("should have thrown");
+          } catch (err: unknown) {
+            expect(err).toMatchObject({
+              code: "group_not_found",
+              message: "group_not_found",
+            });
+          }
+
+          try {
+            await restoreGroup(tx, "not-a-uuid", { now, actorUserId: null });
+            expect.unreachable("should have thrown");
+          } catch (err: unknown) {
+            expect(err).toMatchObject({
+              code: "group_not_found",
+              message: "group_not_found",
+            });
+          }
+
+          // Also createGroup with invalid groupId rejects with invalid_input
+          await expect(
+            createGroup(tx, {
+              groupId: "not-a-uuid",
+              name: "New Group",
+              kind: "group",
+              now,
+              actorUserId: null,
+            }),
+          ).rejects.toMatchObject({ code: "invalid_input" });
+        }),
+      );
+    } finally {
+      try {
+        await cleanScope(directSql, scope);
+      } finally {
+        await platform.end({ timeout: 1 });
+        await app.end({ timeout: 1 });
+        await directSql.end({ timeout: 1 });
+      }
+    }
+  });
+
+  it("archiveGroup on an already-archived group is a no-op that writes no second audit event", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const scope = await createScope(platform);
+    const now = new Date("2026-05-18T10:00:00.000Z");
+    const later = new Date("2026-05-18T11:00:00.000Z");
+
+    try {
+      await withRequest({ requestId: newId() }, () =>
+        withAppTransaction(app, scope, async (tx) => {
+          const group = await createGroup(tx, {
+            name: "Idempotent Archive Group",
+            kind: "group",
+            now,
+            actorUserId: null,
+          });
+
+          const firstArchive = await archiveGroup(tx, group.id, { now, actorUserId: null });
+          expect(firstArchive.status).toBe("archived");
+
+          const auditsAfterFirst = await tx<{ n: number }[]>`
+            select count(*)::int as n
+            from app.audit_events
+            where org_id = ${scope.orgId}::uuid and action = 'groups.group.archived'
+          `;
+          expect(auditsAfterFirst).toEqual([{ n: 1 }]);
+
+          // Second archive call
+          const secondArchive = await archiveGroup(tx, group.id, { now: later, actorUserId: null });
+          expect(secondArchive.status).toBe("archived");
+
+          const auditsAfterSecond = await tx<{ n: number }[]>`
+            select count(*)::int as n
+            from app.audit_events
+            where org_id = ${scope.orgId}::uuid and action = 'groups.group.archived'
+          `;
+          expect(auditsAfterSecond).toEqual([{ n: 1 }]);
+        }),
+      );
     } finally {
       try {
         await cleanScope(directSql, scope);
