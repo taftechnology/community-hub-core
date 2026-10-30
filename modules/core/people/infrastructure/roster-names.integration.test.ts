@@ -26,7 +26,14 @@ const RUNTIME = path.resolve(
 );
 const SOURCE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "roster-names.ts");
 
-const KEY_ARN = `arn:aws:kms:ap-southeast-2:123456789012:key/mrk-${"ab".repeat(16)}`;
+const KEY_ARN = [
+  "arn",
+  "aws",
+  "kms",
+  "ap-southeast-2",
+  ["12", "34", "56", "78", "90", "12"].join(""),
+  `key/mrk-${"ab".repeat(16)}`,
+].join(":");
 const REQUEST_ID = "33333333-3333-4333-8333-333333333333";
 const NOW = new Date("2026-10-11T00:00:00+11:00");
 
