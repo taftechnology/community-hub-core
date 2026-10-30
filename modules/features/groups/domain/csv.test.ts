@@ -83,6 +83,16 @@ describe("toCsv", () => {
     expect(toCsv([["\rcarriage"]])).toBe('"\'\rcarriage"\n');
   });
 
+  it("guards formula prefixes after leading whitespace and full-width forms", () => {
+    expect(toCsv([[" =1+1"]])).toBe('"\' =1+1"\n');
+    expect(toCsv([["\u00a0=1"]])).toBe('"\'\u00a0=1"\n');
+    expect(toCsv([["\u3000@x"]])).toBe('"\'\u3000@x"\n');
+    expect(toCsv([["\uff1d1+1"]])).toBe('"\'\uff1d1+1"\n');
+    expect(toCsv([["  -x"]])).toBe('"\'  -x"\n');
+    expect(toCsv([["  plain"]])).toBe('"  plain"\n');
+    expect(toCsv([["Mary-Jane"]])).toBe('"Mary-Jane"\n');
+  });
+
   it("round-trips a cell with commas, quotes, and newlines through a parser", () => {
     const complexCell = 'Line 1, with "quotes"\nand newline';
     const input = [
