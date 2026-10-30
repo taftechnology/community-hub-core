@@ -74,10 +74,21 @@ export async function readRosterNames(
     throw new PeopleError("invalid_input");
   }
 
-  const ids = [...new Set(input.personIds)].filter((id) => UUID_RE.test(id));
+  if (
+    !Array.isArray(input.personIds) ||
+    input.personIds.some((id) => typeof id !== "string" || !UUID_RE.test(id))
+  ) {
+    throw new PeopleError("invalid_input");
+  }
+
+  const ids = [...new Set(input.personIds)];
   if (ids.length === 0) {
     return [];
   }
+
+  const restrictedCols = input.includeRestricted
+    ? tx`given_name_restricted, family_name_restricted`
+    : tx`null::bytea as given_name_restricted, null::bytea as family_name_restricted`;
 
   const rows = await tx<
     {
@@ -96,8 +107,7 @@ export async function readRosterNames(
       household_id::text as household_id,
       given_name,
       family_name,
-      given_name_restricted,
-      family_name_restricted
+      ${restrictedCols}
     from app.persons
     where id = any(${ids}::uuid[])
       and org_id = current_setting('app.org_id')::uuid

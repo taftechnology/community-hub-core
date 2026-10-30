@@ -836,4 +836,63 @@ describe("readRosterNames", () => {
       await app.end({ timeout: 1 });
     }
   });
+
+  it("rejects a malformed person id alone or mixed with a valid id and writes no audit row", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const kms = createLocalKmsPort();
+
+    const scope = await createScope(platform);
+    const actorUserId = newId();
+
+    try {
+      await withRequest({ requestId: REQUEST_ID }, async () => {
+        await withAppTransaction(app, scope, async (tx) => {
+          const adult = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: true,
+            householdId: null,
+            dateOfBirth: null,
+            givenName: "Valid",
+            familyName: "Person",
+            email: null,
+            phone: null,
+            actorUserId,
+          });
+
+          const auditBefore = await tx<{ count: string }[]>`
+            select count(*)::text as count from app.audit_events
+          `;
+
+          await expect(
+            readRosterNames(tx, kms, KEY_ARN, {
+              personIds: ["not-a-uuid"],
+              includeRestricted: true,
+              actorUserId,
+            }),
+          ).rejects.toMatchObject({ code: "invalid_input" });
+
+          await expect(
+            readRosterNames(tx, kms, KEY_ARN, {
+              personIds: [adult.personId, "not-a-uuid"],
+              includeRestricted: true,
+              actorUserId,
+            }),
+          ).rejects.toMatchObject({ code: "invalid_input" });
+
+          const auditAfter = await tx<{ count: string }[]>`
+            select count(*)::text as count from app.audit_events
+          `;
+          expect(auditAfter[0]?.count).toBe(auditBefore[0]?.count);
+        });
+      });
+    } finally {
+      await cleanScope(directSql, scope);
+      await directSql.end({ timeout: 1 });
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
 });
