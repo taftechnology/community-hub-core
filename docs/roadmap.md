@@ -316,6 +316,10 @@ The next chunk that unparks staging verifies migration `0014`: both tables exist
 
 A group route chunk must derive `includeRestricted` from `people.restricted.read` and never from request input, check `groups.manage` and `groups.export`, gate on `groups.basic`, and add the `--filter @community-hub/groups` line to the Dockerfile and `image.test.ts`.
 
+The membership foreign keys carry `org_id` but not `community_id`, so the database alone does not stop a membership pointing at a group or person in another community of the same organisation. `addMember` checks both in code. Before a second writer of `app.group_members` ships (bulk import, a route that inserts directly), add `(org_id, community_id, id)` keys on groups and persons and include `community_id` in both foreign keys, with a raw cross-community insert test.
+
+`groupLeaderFact` returns true for a leader of an archived group. The `packages/policy` chunk that evaluates `group_leader_of` decides whether that grants anything.
+
 A group name must not carry a child's name; the group UI chunk adds that guidance.
 
 `createPerson` has no production caller, so no usage fact is written in production until a people route ships.
