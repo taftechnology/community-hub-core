@@ -9,3 +9,4 @@ packages:
   - "modules/core/access"
   - "modules/core/entitlements"
   - "modules/core/billing"
+  - "modules/features/groups"

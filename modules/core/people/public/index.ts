@@ -18,3 +18,4 @@ export { linkGuardian, unlinkGuardian } from "../infrastructure/guardian.js";
 export { listPersonActivity } from "../infrastructure/activity.js";
 export { attachTag, createTag, detachTag, listPersonTags } from "../infrastructure/tags.js";
 export { openPersonFieldKeys } from "../infrastructure/person-keys.js";
+export { readRosterNames } from "../infrastructure/roster-names.js";

@@ -21,8 +21,8 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 |              |                                                                   |
 | ------------ | ----------------------------------------------------------------- |
 | Phase        | 2 — Engagement and mobile (Phase 1 complete)                      |
-| Last shipped | `usage-facts`                                                     |
-| Next chunk   | `Groups`                                                          |
+| Last shipped | `Groups`                                                          |
+| Next chunk   | `All Contacts admin`                                              |
 | Phase 0      | 26 rows: 25 done, 1 superseded (`api-au-hostname`), 0 not started |
 | Later phases | not started                                                       |
 
@@ -96,7 +96,7 @@ Architecture: monorepo, CI, Terraform for AWS in `ap-southeast-2`, kernel, db wi
 | done       | `db-migrate-command`         | The image gains `/app/db-migrate.js`, which applies the product migrations as the master login, refuses to run before `db-bootstrap`, and prints the tags it applied. It has not been run on staging. Spec `docs/specs/2026-10-12-db-migrate-command.md`.                                                                                                                                                                                                                          |
 | done       | `staging-proof-run`          | The distroless image runs on Fargate. `db-bootstrap` then `db-migrate` applied the ten product migrations to RDS and a second run applied none. The sign-in-code route answers 503 with no mail vendor; role and entitlement routes refuse a request with no session; the service re-read a changed database secret and recovered without a restart. Staging was re-parked the same day. Spec `docs/specs/2026-10-12-staging-proof-run.md`.                                        |
 
-Next is `Groups`.
+Next is `All Contacts admin`.
 
 SQS, EventBridge, file storage, and the admin static-file distribution are not rows here. Each waits for the first chunk that uses it.
 
@@ -144,7 +144,7 @@ Journeys, not a full backlog. Cut specs when this phase starts. Fill nav in this
 
 | Status      | Journey                      | Nav / surface                             | Must include                                                                                                          |
 | ----------- | ---------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| not started | Groups                       | Contacts & Members → Groups               | Ministries, members, export                                                                                           |
+| done        | Groups                       | Contacts & Members → Groups               | Ministries, members, export. Spec `docs/specs/2026-10-29-groups.md`.                                                  |
 | not started | All Contacts admin           | Contacts & Members → All Contacts         | Built on people/households; no children in public directories                                                         |
 | not started | Family Records               | Family Records                            | Household UI; **life events** inside this item                                                                        |
 | not started | Mass Timings                 | Engagement → Mass Timings                 | Service times; labels from faith-church                                                                               |
@@ -312,13 +312,23 @@ The ops access log format (`access_log_format` in `infra/modules/aws-ingress/mai
 
 The next chunk that unparks staging verifies migration `0013`: `app.usage_facts_daily` exists, `relrowsecurity` and `relforcerowsecurity` are true, and `app` lacks `DELETE`.
 
+The next chunk that unparks staging verifies migration `0014`: both tables exist with `relrowsecurity` and `relforcerowsecurity` true, and `app` lacks `DELETE` on `app.groups`.
+
+A group route chunk must derive `includeRestricted` from `people.restricted.read` and never from request input, check `groups.manage` and `groups.export`, gate on `groups.basic`, and add the `--filter @community-hub/groups` line to the Dockerfile and `image.test.ts`.
+
+The membership foreign keys carry `org_id` but not `community_id`, so the database alone does not stop a membership pointing at a group or person in another community of the same organisation. `addMember` checks both in code. Before a second writer of `app.group_members` ships (bulk import, a route that inserts directly), add `(org_id, community_id, id)` keys on groups and persons and include `community_id` in both foreign keys, with a raw cross-community insert test.
+
+`groupLeaderFact` returns true for a leader of an archived group. The `packages/policy` chunk that evaluates `group_leader_of` decides whether that grants anything.
+
+A group name must not carry a child's name; the group UI chunk adds that guidance.
+
 `createPerson` has no production caller, so no usage fact is written in production until a people route ships.
 
 ---
 
 ## Next spec
 
-The next chunk is **Groups**, the first Phase 2 journey. Its spec is cut when the phase starts. Q8b (plan contents and prices) is still open.
+The next chunk is **All Contacts admin**, the next Phase 2 row. Its spec is cut when the phase starts. Q8b (plan contents and prices) is still open.
 
 ---
 

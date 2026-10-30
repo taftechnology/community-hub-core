@@ -8,6 +8,7 @@ import { identityTables } from "../../modules/core/identity/db/schema.js";
 import { peopleTables } from "../../modules/core/people/db/schema.js";
 import { platformTables } from "../../modules/core/tenancy/db/schema.js";
 import { usageTables } from "../../modules/core/usage/db/schema.js";
+import { groupsTables } from "../../modules/features/groups/db/schema.js";
 import { blindIndexColumn, encryptedColumn } from "./src/columns.js";
 import { app as appNamespace, identity, platform } from "./src/namespaces.js";
 
@@ -76,3 +77,8 @@ export const userLinks = accessRows.userLinks;
 const usageRows = usageTables(appNamespace);
 
 export const usageFactsDaily = usageRows.usageFactsDaily;
+
+const groupRows = groupsTables(appNamespace, { persons });
+
+export const groups = groupRows.groups;
+export const groupMembers = groupRows.groupMembers;

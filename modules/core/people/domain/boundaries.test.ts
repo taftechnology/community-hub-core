@@ -32,6 +32,15 @@ describe("people boundaries", () => {
     expect(hits).toEqual([]);
   });
 
+  it("does not import groups (pin 26)", () => {
+    const banned = ["@community-hub/" + "groups"];
+    const hits = typescriptFiles(MODULE).filter((file) => {
+      const text = readFileSync(file, "utf8");
+      return banned.some((name) => text.includes(name));
+    });
+    expect(hits).toEqual([]);
+  });
+
   it("leaves staging parked", () => {
     const staging = readFileSync(path.join(ENV, "staging.tfvars"), "utf8");
     expect(staging).toMatch(/enable_database\s*=\s*false/);
