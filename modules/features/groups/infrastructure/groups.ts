@@ -72,6 +72,12 @@ function actor(actorUserId: string | null): {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+function requireActorUserId(actorUserId: string | null): void {
+  if (!(actorUserId === null || (typeof actorUserId === "string" && UUID_RE.test(actorUserId)))) {
+    throw new GroupsError("invalid_input");
+  }
+}
+
 function classifyUniqueViolation(error: unknown): "duplicate_name" | "invalid_input" | undefined {
   const seen = new Set<unknown>();
   let current: unknown = error;
@@ -112,6 +118,7 @@ export async function createGroup(
   tx: AppTransaction,
   input: CreateGroupInput,
 ): Promise<GroupRecord> {
+  requireActorUserId(input.actorUserId);
   const { name: cleanName, nameKey } = parseGroupName(input.name);
 
   if (
@@ -194,6 +201,7 @@ export async function updateGroup(
   groupId: string,
   input: UpdateGroupInput,
 ): Promise<GroupRecord> {
+  requireActorUserId(input.actorUserId);
   const existing = await readGroup(tx, groupId);
   if (existing.status === "archived") {
     throw new GroupsError("group_archived");
@@ -269,6 +277,7 @@ export async function archiveGroup(
   groupId: string,
   input: ArchiveGroupInput,
 ): Promise<GroupRecord> {
+  requireActorUserId(input.actorUserId);
   const existing = await readGroup(tx, groupId);
   if (existing.status === "archived") {
     return existing;
@@ -302,6 +311,7 @@ export async function restoreGroup(
   groupId: string,
   input: RestoreGroupInput,
 ): Promise<GroupRecord> {
+  requireActorUserId(input.actorUserId);
   const existing = await readGroup(tx, groupId);
   if (existing.status === "active") {
     return existing;

@@ -17,6 +17,7 @@ import { recordSuccess } from "@community-hub/usage";
 import {
   archiveGroup,
   createGroup,
+  GroupsError,
   listGroups,
   readGroup,
   restoreGroup,
@@ -1504,6 +1505,152 @@ describe("group operations", () => {
             where org_id = ${scope.orgId}::uuid and action = 'groups.group.archived'
           `;
           expect(auditsAfterSecond).toEqual([{ n: 1 }]);
+        }),
+      );
+    } finally {
+      try {
+        await cleanScope(directSql, scope);
+      } finally {
+        await platform.end({ timeout: 1 });
+        await app.end({ timeout: 1 });
+        await directSql.end({ timeout: 1 });
+      }
+    }
+  });
+
+  it("rejects a malformed actor before any group write and leaves rows unchanged", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const scope = await createScope(platform);
+    const now = new Date("2026-05-19T10:00:00.000Z");
+    const later = new Date("2026-05-19T11:00:00.000Z");
+    const badActor = "not-a-uuid";
+
+    try {
+      await withRequest({ requestId: newId() }, () =>
+        withAppTransaction(app, scope, async (tx) => {
+          const active = await createGroup(tx, {
+            name: "Actor Guard Active",
+            kind: "ministry",
+            now,
+            actorUserId: null,
+          });
+          const archived = await createGroup(tx, {
+            name: "Actor Guard Archived",
+            kind: "group",
+            now,
+            actorUserId: null,
+          });
+          await archiveGroup(tx, archived.id, { now, actorUserId: null });
+
+          async function snapshot() {
+            const groups = await tx<
+              { id: string; name: string; status: string; updated_at: Date | string }[]
+            >`
+              select id::text as id, name, status, updated_at
+              from app.groups
+              order by name_key asc, id asc
+            `;
+            const audits = await tx<{ n: number }[]>`
+              select count(*)::int as n from app.audit_events
+              where org_id = ${scope.orgId}::uuid
+            `;
+            const usage = await tx<{ n: number }[]>`
+              select coalesce(sum(success_count), 0)::int as n
+              from app.usage_facts_daily
+              where org_id = ${scope.orgId}::uuid
+                and community_id = ${scope.communityId}::uuid
+                and feature_key = 'groups.basic'
+            `;
+            return {
+              groupCount: groups.length,
+              groups,
+              auditCount: audits[0]?.n ?? 0,
+              usageCount: usage[0]?.n ?? 0,
+            };
+          }
+
+          const before = await snapshot();
+
+          try {
+            await createGroup(tx, {
+              name: "Should Not Persist",
+              kind: "group",
+              now: later,
+              actorUserId: badActor,
+            });
+            expect.unreachable("createGroup should have thrown");
+          } catch (err: unknown) {
+            expect(err).toBeInstanceOf(GroupsError);
+            expect(err).toMatchObject({ code: "invalid_input" });
+          }
+          expect(await snapshot()).toEqual(before);
+
+          try {
+            await updateGroup(tx, active.id, {
+              name: "Should Not Rename",
+              now: later,
+              actorUserId: badActor,
+            });
+            expect.unreachable("updateGroup should have thrown");
+          } catch (err: unknown) {
+            expect(err).toBeInstanceOf(GroupsError);
+            expect(err).toMatchObject({ code: "invalid_input" });
+          }
+          {
+            const after = await snapshot();
+            expect(after.groupCount).toBe(before.groupCount);
+            expect(after.auditCount).toBe(before.auditCount);
+            expect(after.usageCount).toBe(before.usageCount);
+            const target = after.groups.find((g) => g.id === active.id);
+            expect(target?.name).toBe("Actor Guard Active");
+            expect(target?.status).toBe("active");
+            expect(target?.updated_at).toEqual(
+              before.groups.find((g) => g.id === active.id)?.updated_at,
+            );
+          }
+
+          try {
+            await archiveGroup(tx, active.id, { now: later, actorUserId: badActor });
+            expect.unreachable("archiveGroup should have thrown");
+          } catch (err: unknown) {
+            expect(err).toBeInstanceOf(GroupsError);
+            expect(err).toMatchObject({ code: "invalid_input" });
+          }
+          {
+            const after = await snapshot();
+            expect(after.groupCount).toBe(before.groupCount);
+            expect(after.auditCount).toBe(before.auditCount);
+            expect(after.usageCount).toBe(before.usageCount);
+            const target = after.groups.find((g) => g.id === active.id);
+            expect(target?.status).toBe("active");
+            expect(target?.name).toBe("Actor Guard Active");
+            expect(target?.updated_at).toEqual(
+              before.groups.find((g) => g.id === active.id)?.updated_at,
+            );
+          }
+
+          try {
+            await restoreGroup(tx, archived.id, { now: later, actorUserId: badActor });
+            expect.unreachable("restoreGroup should have thrown");
+          } catch (err: unknown) {
+            expect(err).toBeInstanceOf(GroupsError);
+            expect(err).toMatchObject({ code: "invalid_input" });
+          }
+          {
+            const after = await snapshot();
+            expect(after.groupCount).toBe(before.groupCount);
+            expect(after.auditCount).toBe(before.auditCount);
+            expect(after.usageCount).toBe(before.usageCount);
+            const target = after.groups.find((g) => g.id === archived.id);
+            expect(target?.status).toBe("archived");
+            expect(target?.name).toBe("Actor Guard Archived");
+            expect(target?.updated_at).toEqual(
+              before.groups.find((g) => g.id === archived.id)?.updated_at,
+            );
+          }
         }),
       );
     } finally {
