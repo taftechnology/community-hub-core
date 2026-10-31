@@ -168,6 +168,7 @@ describe("updatePerson", () => {
             expect(initial?.familyName).toBe("Contact");
             expect(initial?.email).toBe("original@example.com");
             expect(initial?.phone).toBe("61411111111");
+            expect(initial?.version).toBe(1);
 
             // Update person
             const res = await updatePerson(tx, kms, KEY_ARN, {
@@ -190,6 +191,7 @@ describe("updatePerson", () => {
             expect(updated?.familyName).toBe("Person");
             expect(updated?.email).toBe("updated@example.com");
             expect(updated?.phone).toBe("61422222222");
+            expect(updated?.version).toBe(2);
 
             // Verify blind index recomputation: old search returns nothing, new search finds row
             const oldEmailSearch = await listPersons(tx, kms, KEY_ARN, {

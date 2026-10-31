@@ -23,6 +23,7 @@ export type PersonListItem = {
   isMinor: boolean;
   givenName: string;
   familyName: string;
+  version: number;
 };
 
 export type ListPersonsResult = {
@@ -201,12 +202,14 @@ export async function listPersons(
         id: string;
         given_name: string | null;
         family_name: string | null;
+        version: number;
       }[]
     >`
       select
         id::text as id,
         given_name,
-        family_name
+        family_name,
+        version
       from app.persons
       where org_id = current_setting('app.org_id')::uuid
         and community_id = current_setting('app.community_id')::uuid
@@ -235,6 +238,7 @@ export async function listPersons(
       isMinor: false,
       givenName: r.given_name ?? "",
       familyName: r.family_name ?? "",
+      version: r.version,
     }));
 
     return { items, nextCursor };
@@ -250,9 +254,10 @@ export async function listPersons(
   const rows = await tx<
     {
       id: string;
+      version: number;
     }[]
   >`
-    select id::text as id
+    select id::text as id, version
     from app.persons
     where org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
@@ -264,6 +269,7 @@ export async function listPersons(
 
   const hasMore = rows.length > limit;
   const pageRows = rows.slice(0, limit);
+  const versionMap = new Map(pageRows.map((r) => [r.id, r.version]));
   const pageIds = pageRows.map((r) => r.id);
   const lastId = pageIds[pageIds.length - 1];
   const nextCursor = hasMore && lastId ? encodeCursor({ i: lastId }) : null;
@@ -291,6 +297,7 @@ export async function listPersons(
       isMinor: true,
       givenName: r?.givenName ?? "",
       familyName: r?.familyName ?? "",
+      version: versionMap.get(id) ?? 1,
     };
   });
 

@@ -33,6 +33,7 @@ type PersonInput = {
 type StoredPerson = {
   id: string;
   household_id: string | null;
+  version: number;
   is_minor: boolean;
   age_basis: string;
   birthday_md: number | null;
@@ -309,11 +310,13 @@ export async function readPerson(
   email: string | null;
   phone: string | null;
   dateOfBirth: string | null;
+  version: number;
 } | null> {
   const rows = await tx<StoredPerson[]>`
     select
       id::text as id,
       household_id::text as household_id,
+      version,
       is_minor,
       age_basis,
       birthday_md,
@@ -379,5 +382,6 @@ export async function readPerson(
     email,
     phone,
     dateOfBirth,
+    version: row.version,
   };
 }

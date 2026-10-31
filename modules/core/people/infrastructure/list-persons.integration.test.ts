@@ -218,6 +218,8 @@ describe("listPersons", () => {
             expect(returnedIds).toContain(adult2Id);
             expect(returnedIds).not.toContain(minor1Id);
             expect(returnedIds).not.toContain(minor2Id);
+            expect(res.items[0]?.version).toBe(1);
+            expect(res.items[1]?.version).toBe(1);
 
             // Adults list with search matching the shared household name "Smith"
             const resSearch = await listPersons(tx, kms, KEY_ARN, {
@@ -740,6 +742,8 @@ describe("listPersons", () => {
               actorUserId,
             });
             expect(resDecrypted.items).toHaveLength(2);
+            expect(resDecrypted.items[0]?.version).toBe(1);
+            expect(resDecrypted.items[1]?.version).toBe(1);
             const names = resDecrypted.items.map((it) => `${it.givenName} ${it.familyName}`);
             expect(names).toContain("ChildOne MinorFamily");
             expect(names).toContain("ChildTwo MinorFamily");

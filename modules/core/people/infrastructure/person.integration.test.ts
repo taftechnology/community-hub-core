@@ -206,6 +206,7 @@ describe("person create and read", () => {
             email: "ada@example.com",
             phone: "61412345678",
             dateOfBirth: "2008-10-11",
+            version: 1,
           });
           const createdAudit = await tx<{ n: number }[]>`
             select count(*)::int as n

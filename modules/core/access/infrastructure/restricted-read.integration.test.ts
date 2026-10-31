@@ -175,7 +175,12 @@ describe("restricted read for an actor", () => {
         personId: minorId,
         actorUserId: officer,
       });
-      expect(view).toMatchObject({ personId: minorId, isMinor: true, givenName: "Ned" });
+      expect(view).toMatchObject({
+        personId: minorId,
+        isMinor: true,
+        givenName: "Ned",
+        version: 1,
+      });
       const reads = await tx<{ target_ids: string[] }[]>`
         select target_ids::text[] as target_ids
         from app.audit_events
@@ -334,6 +339,7 @@ describe("restricted read for an actor", () => {
         isMinor: false,
         givenName: "Arthur",
         familyName: "Pendelton",
+        version: 1,
       });
 
       // 2. people.view is refused a minor with forbidden (pin 8)
