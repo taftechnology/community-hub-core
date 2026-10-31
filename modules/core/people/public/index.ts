@@ -12,6 +12,8 @@ defineAuditAction("people.person.listed_minors");
 defineAuditPurpose("people.person.listed_minors");
 defineAuditAction("people.person.updated");
 defineAuditPurpose("people.person.updated");
+defineAuditAction("people.permission.denied");
+defineAuditPurpose("people.permission.denied");
 
 export { PeopleError } from "../domain/error.js";
 export { ensureCommunityKey, ensureOrganisationKey } from "../infrastructure/keys.js";

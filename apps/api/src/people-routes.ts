@@ -1,0 +1,295 @@
+import { AccessError, holdsPermission, readPersonForActor } from "@community-hub/access";
+import { listPeopleBody, readPersonBody } from "@community-hub/contracts/people";
+import { appendAuditEvent, withAppTransaction } from "@community-hub/db";
+import { readSession } from "@community-hub/identity";
+import { getRequestContext } from "@community-hub/kernel";
+import { listPersons } from "@community-hub/people";
+import { findCommunityBySlug } from "@community-hub/tenancy";
+
+import { guardWrite } from "./billing-guard.js";
+import type { Checkout } from "./checkout.js";
+import { guardEntitlement } from "./entitlement-guard.js";
+import type { GateRoute, RouteContext } from "./gate.js";
+import type { BillingLogFields } from "./index.js";
+
+type PeopleSql = Parameters<typeof readSession>[0];
+
+const DENIED = "people.permission.denied";
+const VIEW = "people.view";
+const RESTRICTED = "people.restricted.read";
+const ADULT_VIEW_PURPOSE = "people.person.view";
+const DIRECTORY_ENTITLEMENT = "people.directory";
+
+type Scope = { orgId: string; communityId: string };
+
+export type PeopleLog = (message: string, fields?: Record<string, unknown>) => void;
+
+export type PeopleDeps = {
+  checkout: Checkout<PeopleSql>;
+  kms: Parameters<typeof readSession>[1];
+  keyArn: string;
+  now: () => Date;
+  apiHostname: string;
+  log: PeopleLog;
+  guardLog: (message: string, fields: BillingLogFields) => void;
+};
+
+function empty(status: number): Response {
+  return new Response(null, { status });
+}
+
+function presentedHostname(request: Request): string | undefined {
+  const raw = request.headers.get("x-community-hub-hostname");
+  if (raw === null || raw === "") {
+    return undefined;
+  }
+  return raw.toLowerCase();
+}
+
+function jsonMediaType(request: Request): boolean {
+  const raw = request.headers.get("content-type");
+  if (raw === null) {
+    return false;
+  }
+  return raw.split(";")[0]?.trim().toLowerCase() === "application/json";
+}
+
+async function parse<T>(
+  request: Request,
+  schema: { safeParse(data: unknown): { success: true; data: T } | { success: false } },
+): Promise<T | undefined> {
+  if (!jsonMediaType(request)) {
+    return undefined;
+  }
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return undefined;
+  }
+  const parsed = schema.safeParse(body);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function bearer(request: Request): string | undefined {
+  const raw = request.headers.get("authorization");
+  if (raw === null) {
+    return undefined;
+  }
+  const match = /^Bearer (\S+)$/i.exec(raw);
+  return match?.[1];
+}
+
+export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
+  function finish(request: Request, response: Response): Response {
+    deps.log("request", {
+      path: new URL(request.url).pathname,
+      status: response.status,
+      requestId: getRequestContext().requestId,
+    });
+    return response;
+  }
+
+  function foreignHost(request: Request): Response | undefined {
+    if (presentedHostname(request) !== deps.apiHostname.toLowerCase()) {
+      return empty(404);
+    }
+    return undefined;
+  }
+
+  async function sessionUser(request: Request): Promise<{ userId: string } | Response> {
+    const token = bearer(request);
+    if (token === undefined) {
+      return empty(401);
+    }
+    const session = await deps.checkout("identity", (sql) =>
+      readSession(sql, deps.kms, deps.keyArn, {
+        accessToken: token,
+        now: deps.now(),
+      }),
+    );
+    if (session === null) {
+      return empty(401);
+    }
+    return { userId: session.userId };
+  }
+
+  async function communityScope(
+    slug: string,
+    context: RouteContext,
+    userId: string,
+  ): Promise<Scope | Response | null> {
+    const found = await deps.checkout("platform", (sql) => findCommunityBySlug(sql, slug));
+    if (found === null) {
+      return null;
+    }
+    const scope = { orgId: found.organisationId, communityId: found.id };
+
+    const blockedEntitlement = await guardEntitlement(
+      { checkout: deps.checkout, now: deps.now },
+      scope,
+      DIRECTORY_ENTITLEMENT,
+    );
+    if (blockedEntitlement !== null) {
+      return blockedEntitlement;
+    }
+
+    const blockedBilling = await guardWrite(
+      {
+        checkout: deps.checkout,
+        now: deps.now,
+        guardLog: deps.guardLog,
+      },
+      scope,
+      userId,
+      context,
+    );
+    if (blockedBilling !== null) {
+      return blockedBilling;
+    }
+    return scope;
+  }
+
+  async function list(request: Request, context: RouteContext): Promise<Response> {
+    const hidden = foreignHost(request);
+    if (hidden !== undefined) {
+      return finish(request, hidden);
+    }
+    const body = await parse(request, listPeopleBody);
+    if (body === undefined) {
+      return finish(request, empty(400));
+    }
+    const actor = await sessionUser(request);
+    if (actor instanceof Response) {
+      return finish(request, actor);
+    }
+    const scope = await communityScope(body.communitySlug, context, actor.userId);
+    if (scope === null) {
+      return finish(request, empty(404));
+    }
+    if (scope instanceof Response) {
+      return finish(request, scope);
+    }
+
+    return deps.checkout("app", (sql) =>
+      withAppTransaction(sql, scope, async (tx) => {
+        const isMinorsMode = body.kind === "minors";
+        if (isMinorsMode) {
+          const allowed = await holdsPermission(tx, actor.userId, RESTRICTED);
+          if (!allowed) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: DENIED,
+              purpose: RESTRICTED,
+              targetIds: [scope.orgId, scope.communityId],
+            });
+            return finish(request, empty(403));
+          }
+          const result = await listPersons(tx, deps.kms, deps.keyArn, {
+            kind: "minors",
+            cursor: body.cursor ?? null,
+            ...(body.limit !== undefined ? { limit: body.limit } : {}),
+            includeRestricted: true,
+            actorUserId: actor.userId,
+          });
+          return finish(request, Response.json(result));
+        }
+
+        const allowed = await holdsPermission(tx, actor.userId, VIEW);
+        if (!allowed) {
+          await appendAuditEvent(tx, {
+            actorKind: "user",
+            actorId: actor.userId,
+            action: DENIED,
+            purpose: ADULT_VIEW_PURPOSE,
+            targetIds: [scope.orgId, scope.communityId],
+          });
+          return finish(request, empty(403));
+        }
+
+        const result = await listPersons(tx, deps.kms, deps.keyArn, {
+          kind: "adults",
+          search: body.search ?? null,
+          cursor: body.cursor ?? null,
+          ...(body.limit !== undefined ? { limit: body.limit } : {}),
+          includeRestricted: false,
+          actorUserId: actor.userId,
+        });
+        return finish(request, Response.json(result));
+      }),
+    );
+  }
+
+  async function read(request: Request, context: RouteContext): Promise<Response> {
+    const hidden = foreignHost(request);
+    if (hidden !== undefined) {
+      return finish(request, hidden);
+    }
+    const body = await parse(request, readPersonBody);
+    if (body === undefined) {
+      return finish(request, empty(400));
+    }
+    const actor = await sessionUser(request);
+    if (actor instanceof Response) {
+      return finish(request, actor);
+    }
+    const scope = await communityScope(body.communitySlug, context, actor.userId);
+    if (scope === null) {
+      return finish(request, empty(404));
+    }
+    if (scope instanceof Response) {
+      return finish(request, scope);
+    }
+
+    return deps.checkout("app", (sql) =>
+      withAppTransaction(sql, scope, async (tx) => {
+        const canView = await holdsPermission(tx, actor.userId, VIEW);
+        const canRestricted = await holdsPermission(tx, actor.userId, RESTRICTED);
+        if (!canView && !canRestricted) {
+          await appendAuditEvent(tx, {
+            actorKind: "user",
+            actorId: actor.userId,
+            action: DENIED,
+            purpose: ADULT_VIEW_PURPOSE,
+            targetIds: [scope.orgId, scope.communityId],
+          });
+          return finish(request, empty(403));
+        }
+
+        try {
+          const person = await readPersonForActor(tx, deps.kms, deps.keyArn, {
+            personId: body.personId,
+            actorUserId: actor.userId,
+          });
+          return finish(request, Response.json(person));
+        } catch (error) {
+          if (error instanceof AccessError && error.code === "forbidden") {
+            return finish(request, empty(404));
+          }
+          if (error instanceof AccessError && error.code === "not_found") {
+            return finish(request, empty(404));
+          }
+          throw error;
+        }
+      }),
+    );
+  }
+
+  return [
+    {
+      method: "POST",
+      pattern: "/v1/people/list",
+      surface: "tenant",
+      billing: "read",
+      handle: list,
+    },
+    {
+      method: "POST",
+      pattern: "/v1/people/read",
+      surface: "tenant",
+      billing: "read",
+      handle: read,
+    },
+  ];
+}

@@ -1,0 +1,575 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { withRequest } from "@community-hub/kernel";
+import { BillingReadOnly } from "@community-hub/billing";
+import { AccessError } from "@community-hub/access";
+import type { EntitlementSnapshot } from "@community-hub/entitlements-eval";
+
+const identity = vi.hoisted(() => ({
+  readSession: vi.fn(),
+}));
+
+const tenancy = vi.hoisted(() => ({
+  findCommunityBySlug: vi.fn(),
+}));
+
+const access = vi.hoisted(() => ({
+  holdsPermission: vi.fn(),
+  holdsAnyGrant: vi.fn(),
+  readPersonForActor: vi.fn(),
+}));
+
+const billing = vi.hoisted(() => ({
+  assertWritable: vi.fn(),
+}));
+
+const people = vi.hoisted(() => ({
+  listPersons: vi.fn(),
+}));
+
+const entitlements = vi.hoisted(() => ({
+  readSnapshot: vi.fn(),
+}));
+
+const db = vi.hoisted(() => ({
+  withAppTransaction: vi.fn(),
+  appendAuditEvent: vi.fn(async () => undefined),
+}));
+
+vi.mock("@community-hub/identity", async () => {
+  const actual =
+    await vi.importActual<typeof import("@community-hub/identity")>("@community-hub/identity");
+  return { ...actual, readSession: identity.readSession };
+});
+
+vi.mock("@community-hub/tenancy", () => tenancy);
+
+vi.mock("@community-hub/access", async () => {
+  const actual =
+    await vi.importActual<typeof import("@community-hub/access")>("@community-hub/access");
+  return {
+    ...actual,
+    holdsPermission: access.holdsPermission,
+    holdsAnyGrant: access.holdsAnyGrant,
+    readPersonForActor: access.readPersonForActor,
+  };
+});
+
+vi.mock("@community-hub/billing", async () => {
+  const actual =
+    await vi.importActual<typeof import("@community-hub/billing")>("@community-hub/billing");
+  return {
+    ...actual,
+    assertWritable: billing.assertWritable,
+  };
+});
+
+vi.mock("@community-hub/people", async () => {
+  const actual =
+    await vi.importActual<typeof import("@community-hub/people")>("@community-hub/people");
+  return {
+    ...actual,
+    listPersons: people.listPersons,
+  };
+});
+
+vi.mock("@community-hub/entitlements", () => ({
+  readSnapshot: entitlements.readSnapshot,
+}));
+
+vi.mock("@community-hub/db", async () => {
+  const actual = await vi.importActual<typeof import("@community-hub/db")>("@community-hub/db");
+  return {
+    ...actual,
+    withAppTransaction: db.withAppTransaction,
+    appendAuditEvent: db.appendAuditEvent,
+  };
+});
+
+import { peopleRoutes, type PeopleDeps } from "./people-routes.js";
+import type { RouteContext } from "./gate.js";
+
+const API_HOSTNAME = "au.api.example.test";
+const AUTH_HOSTNAME = "auth.au.example.test";
+const REQUEST_ID = "77777777-7777-4777-8777-777777777777";
+const USER = "00000000-0000-4000-8000-000000000002";
+const ORG = "00000000-0000-4000-8000-000000000010";
+const COMMUNITY = "00000000-0000-4000-8000-000000000011";
+const TOKEN = "session-token-abc";
+const PERSON_ID = "00000000-0000-4000-8000-000000000099";
+const FIXED_NOW = new Date("2026-10-31T12:00:00.000Z");
+
+function createSnapshot(overrides: Partial<EntitlementSnapshot> = {}): EntitlementSnapshot {
+  return {
+    organisationId: ORG,
+    communityId: COMMUNITY,
+    region: "au",
+    planKey: "standard",
+    loadedAt: FIXED_NOW,
+    planEntitlements: [{ key: "people.directory", limit: null }],
+    addOnEntitlements: [],
+    allocations: ["people.directory"],
+    toggles: [],
+    overrides: [],
+    flags: [],
+    ...overrides,
+  };
+}
+
+describe("people routes (list and read)", () => {
+  const logCalls: { message: string; fields?: Record<string, unknown> }[] = [];
+
+  function makeDeps(overrides: Partial<PeopleDeps> = {}): PeopleDeps {
+    return {
+      checkout: (_role, run) => run({} as never),
+      kms: {} as PeopleDeps["kms"],
+      keyArn: "arn:aws:kms:ap-southeast-2:123456789012:key/mrk-test",
+      now: () => FIXED_NOW,
+      apiHostname: API_HOSTNAME,
+      log: (message, fields) => {
+        logCalls.push(fields !== undefined ? { message, fields } : { message });
+      },
+      guardLog: () => undefined,
+      ...overrides,
+    };
+  }
+
+  function request(
+    pathName: string,
+    hostname: string,
+    body: unknown,
+    authorization?: string,
+  ): Request {
+    const headers = new Headers({
+      "content-type": "application/json",
+      "x-community-hub-hostname": hostname,
+    });
+    if (authorization !== undefined) {
+      headers.set("authorization", authorization);
+    }
+    return new Request(`http://127.0.0.1${pathName}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+  }
+
+  function route(pathName: string, bound: PeopleDeps = makeDeps()) {
+    const found = peopleRoutes(bound).find((item) => item.pattern === pathName);
+    if (found === undefined) {
+      throw new Error(`Route not found: ${pathName}`);
+    }
+    return found;
+  }
+
+  async function call(
+    pathName: string,
+    body: unknown,
+    authorization = `Bearer ${TOKEN}`,
+    hostname = API_HOSTNAME,
+    bound: PeopleDeps = makeDeps(),
+  ): Promise<Response> {
+    const r = route(pathName, bound);
+    const req = request(pathName, hostname, body, authorization);
+    const context: RouteContext = { billing: r.billing, pattern: r.pattern };
+    return withRequest({ requestId: REQUEST_ID }, async () => r.handle(req, context));
+  }
+
+  beforeEach(() => {
+    logCalls.length = 0;
+    identity.readSession.mockReset();
+    tenancy.findCommunityBySlug.mockReset();
+    access.holdsPermission.mockReset();
+    access.holdsAnyGrant.mockReset();
+    access.readPersonForActor.mockReset();
+    billing.assertWritable.mockReset();
+    people.listPersons.mockReset();
+    entitlements.readSnapshot.mockReset();
+    db.withAppTransaction.mockReset();
+    db.appendAuditEvent.mockReset();
+
+    identity.readSession.mockResolvedValue({ userId: USER });
+    tenancy.findCommunityBySlug.mockResolvedValue({
+      id: COMMUNITY,
+      organisationId: ORG,
+      slug: "parish",
+      region: "au",
+    });
+    entitlements.readSnapshot.mockResolvedValue(createSnapshot());
+    db.withAppTransaction.mockImplementation(
+      async (_sql: unknown, _scope: unknown, fn: (tx: unknown) => Promise<unknown>) => fn({}),
+    );
+    access.holdsPermission.mockResolvedValue(true);
+    access.holdsAnyGrant.mockResolvedValue(true);
+    billing.assertWritable.mockResolvedValue("ok");
+  });
+
+  describe("common route gate checks", () => {
+    it("returns 404 when request is on foreign hostname", async () => {
+      const res = await call(
+        "/v1/people/list",
+        { communitySlug: "parish" },
+        `Bearer ${TOKEN}`,
+        AUTH_HOSTNAME,
+      );
+      expect(res.status).toBe(404);
+      expect(await res.text()).toBe("");
+    });
+
+    it("returns 401 when authorization header is missing or session invalid", async () => {
+      const noAuth = await call("/v1/people/list", { communitySlug: "parish" }, "");
+      expect(noAuth.status).toBe(401);
+
+      identity.readSession.mockResolvedValueOnce(null);
+      const invalidAuth = await call("/v1/people/list", { communitySlug: "parish" });
+      expect(invalidAuth.status).toBe(401);
+    });
+
+    it("returns 400 when request body contains extra forbidden fields (pin 2)", async () => {
+      const resList = await call("/v1/people/list", {
+        communitySlug: "parish",
+        includeRestricted: true,
+      });
+      expect(resList.status).toBe(400);
+
+      const resRead = await call("/v1/people/read", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+        isMinor: false,
+      });
+      expect(resRead.status).toBe(400);
+    });
+
+    it("returns 404 when community slug is not found", async () => {
+      tenancy.findCommunityBySlug.mockResolvedValueOnce(null);
+      const res = await call("/v1/people/list", { communitySlug: "nonexistent" });
+      expect(res.status).toBe(404);
+    });
+
+    it("refuses 403 when entitlement people.directory is disabled (pin 12)", async () => {
+      entitlements.readSnapshot.mockResolvedValueOnce(
+        createSnapshot({ toggles: [{ key: "people.directory", enabled: false }] }),
+      );
+
+      const resList = await call("/v1/people/list", { communitySlug: "parish" });
+      expect(resList.status).toBe(403);
+      expect(await resList.text()).toBe("");
+      expect(people.listPersons).not.toHaveBeenCalled();
+      expect(db.appendAuditEvent).not.toHaveBeenCalled();
+
+      entitlements.readSnapshot.mockResolvedValueOnce(
+        createSnapshot({ toggles: [{ key: "people.directory", enabled: false }] }),
+      );
+      const resRead = await call("/v1/people/read", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+      });
+      expect(resRead.status).toBe(403);
+      expect(await resRead.text()).toBe("");
+      expect(access.readPersonForActor).not.toHaveBeenCalled();
+    });
+
+    it("allows list and read under billing read-only organisation (billing: read) (pin 11)", async () => {
+      billing.assertWritable.mockRejectedValue(new BillingReadOnly("read_only"));
+      people.listPersons.mockResolvedValueOnce({ items: [], nextCursor: null });
+      access.readPersonForActor.mockResolvedValueOnce({
+        personId: PERSON_ID,
+        givenName: "Alice",
+        familyName: "Smith",
+        version: 1,
+      });
+
+      const resList = await call("/v1/people/list", { communitySlug: "parish" });
+      expect(resList.status).toBe(200);
+
+      const resRead = await call("/v1/people/read", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+      });
+      expect(resRead.status).toBe(200);
+    });
+
+    it("enforces tenant boundary by scoping transaction to slug-resolved organisation and community", async () => {
+      const OTHER_ORG = "00000000-0000-4000-8000-000000000020";
+      const OTHER_COMMUNITY = "00000000-0000-4000-8000-000000000021";
+      tenancy.findCommunityBySlug.mockResolvedValueOnce({
+        id: OTHER_COMMUNITY,
+        organisationId: OTHER_ORG,
+        slug: "other-parish",
+        region: "au",
+      });
+      entitlements.readSnapshot.mockResolvedValueOnce(
+        createSnapshot({ organisationId: OTHER_ORG, communityId: OTHER_COMMUNITY }),
+      );
+      people.listPersons.mockResolvedValueOnce({ items: [], nextCursor: null });
+
+      await call("/v1/people/list", { communitySlug: "other-parish" });
+      expect(db.withAppTransaction).toHaveBeenCalledWith(
+        expect.anything(),
+        { orgId: OTHER_ORG, communityId: OTHER_COMMUNITY },
+        expect.any(Function),
+      );
+    });
+  });
+
+  describe("POST /v1/people/list", () => {
+    it("lists adults when kind is adults and actor holds people.view", async () => {
+      const mockResult = {
+        items: [
+          {
+            id: PERSON_ID,
+            personId: PERSON_ID,
+            isMinor: false,
+            givenName: "Jane",
+            familyName: "Doe",
+            version: 1,
+          },
+        ],
+        nextCursor: null,
+      };
+      people.listPersons.mockResolvedValueOnce(mockResult);
+
+      const res = await call("/v1/people/list", {
+        communitySlug: "parish",
+        kind: "adults",
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(mockResult);
+      expect(access.holdsPermission).toHaveBeenCalledWith(expect.anything(), USER, "people.view");
+      expect(people.listPersons).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        {
+          kind: "adults",
+          search: null,
+          cursor: null,
+          includeRestricted: false,
+          actorUserId: USER,
+        },
+      );
+    });
+
+    it("defaults to adults mode when kind is omitted", async () => {
+      people.listPersons.mockResolvedValueOnce({ items: [], nextCursor: null });
+
+      const res = await call("/v1/people/list", {
+        communitySlug: "parish",
+      });
+
+      expect(res.status).toBe(200);
+      expect(access.holdsPermission).toHaveBeenCalledWith(expect.anything(), USER, "people.view");
+    });
+
+    it("refuses adult list with 403 and people.permission.denied audit when actor lacks people.view (pin 5)", async () => {
+      access.holdsPermission.mockImplementation(
+        async (_tx: unknown, _userId: string, perm: string) => perm !== "people.view",
+      );
+
+      const res = await call("/v1/people/list", {
+        communitySlug: "parish",
+        kind: "adults",
+      });
+
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+      expect(people.listPersons).not.toHaveBeenCalled();
+      expect(db.appendAuditEvent).toHaveBeenCalledWith(expect.anything(), {
+        actorKind: "user",
+        actorId: USER,
+        action: "people.permission.denied",
+        purpose: "people.person.view",
+        targetIds: [ORG, COMMUNITY],
+      });
+    });
+
+    it("lists minors with includeRestricted=true when kind is minors and actor holds people.restricted.read (pin 3)", async () => {
+      const mockMinorsResult = {
+        items: [
+          {
+            id: PERSON_ID,
+            personId: PERSON_ID,
+            isMinor: true,
+            givenName: "Tommy",
+            familyName: "Smith",
+            version: 1,
+          },
+        ],
+        nextCursor: null,
+      };
+      people.listPersons.mockResolvedValueOnce(mockMinorsResult);
+
+      const res = await call("/v1/people/list", {
+        communitySlug: "parish",
+        kind: "minors",
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(mockMinorsResult);
+      expect(access.holdsPermission).toHaveBeenCalledWith(
+        expect.anything(),
+        USER,
+        "people.restricted.read",
+      );
+      expect(people.listPersons).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        {
+          kind: "minors",
+          cursor: null,
+          includeRestricted: true,
+          actorUserId: USER,
+        },
+      );
+    });
+
+    it("refuses minors mode with 403 and people.permission.denied audit when actor lacks people.restricted.read (pins 3, 4)", async () => {
+      access.holdsPermission.mockImplementation(
+        async (_tx: unknown, _userId: string, perm: string) => perm === "people.view",
+      );
+
+      const res = await call("/v1/people/list", {
+        communitySlug: "parish",
+        kind: "minors",
+      });
+
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+      expect(people.listPersons).not.toHaveBeenCalled();
+      expect(db.appendAuditEvent).toHaveBeenCalledWith(expect.anything(), {
+        actorKind: "user",
+        actorId: USER,
+        action: "people.permission.denied",
+        purpose: "people.restricted.read",
+        targetIds: [ORG, COMMUNITY],
+      });
+    });
+
+    it("never logs search terms, names, or emails in logger output or audit rows (pins 7, 13)", async () => {
+      const SECRET_TERM = "SensitiveQueryTerm987";
+      people.listPersons.mockResolvedValueOnce({ items: [], nextCursor: null });
+
+      const depsInstance = makeDeps();
+      const res = await call(
+        "/v1/people/list",
+        {
+          communitySlug: "parish",
+          search: SECRET_TERM,
+        },
+        `Bearer ${TOKEN}`,
+        API_HOSTNAME,
+        depsInstance,
+      );
+
+      expect(res.status).toBe(200);
+
+      // Verify logger calls never contain search term
+      for (const callItem of logCalls) {
+        const text = JSON.stringify(callItem);
+        expect(text).not.toContain(SECRET_TERM);
+      }
+
+      // Verify audit calls never contain search term
+      for (const auditCall of db.appendAuditEvent.mock.calls) {
+        const text = JSON.stringify(auditCall);
+        expect(text).not.toContain(SECRET_TERM);
+      }
+    });
+  });
+
+  describe("POST /v1/people/read", () => {
+    it("reads a person when actor holds people.view and returns person with version", async () => {
+      const mockPerson = {
+        personId: PERSON_ID,
+        householdId: null,
+        isMinor: false,
+        ageBasis: "declared_adult",
+        birthdayMd: 505,
+        givenName: "Arthur",
+        familyName: "Pendelton",
+        email: "arthur@example.com",
+        phone: "+61400000000",
+        dateOfBirth: "1985-05-05",
+        version: 2,
+      };
+      access.readPersonForActor.mockResolvedValueOnce(mockPerson);
+
+      const res = await call("/v1/people/read", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(mockPerson);
+      expect(access.readPersonForActor).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        {
+          personId: PERSON_ID,
+          actorUserId: USER,
+        },
+      );
+    });
+
+    it("refuses read with 403 when actor holds neither people.view nor people.restricted.read (pin 5)", async () => {
+      access.holdsPermission.mockImplementation(
+        async (_tx: unknown, _userId: string, perm: string) => perm === "people.manage",
+      );
+
+      const res = await call("/v1/people/read", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+      });
+
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+      expect(access.readPersonForActor).not.toHaveBeenCalled();
+      expect(db.appendAuditEvent).toHaveBeenCalledWith(expect.anything(), {
+        actorKind: "user",
+        actorId: USER,
+        action: "people.permission.denied",
+        purpose: "people.person.view",
+        targetIds: [ORG, COMMUNITY],
+      });
+    });
+
+    it("returns byte-identical 404 for absent id, cross-community id, and unreadable minor (pin 6)", async () => {
+      access.holdsPermission.mockResolvedValue(true);
+
+      // 1. Absent id throws AccessError("forbidden")
+      access.readPersonForActor.mockRejectedValueOnce(new AccessError("forbidden"));
+      const absentRes = await call("/v1/people/read", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+      });
+
+      // 2. Cross-community id throws AccessError("forbidden")
+      access.readPersonForActor.mockRejectedValueOnce(new AccessError("forbidden"));
+      const crossRes = await call("/v1/people/read", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+      });
+
+      // 3. Unreadable minor throws AccessError("forbidden")
+      access.readPersonForActor.mockRejectedValueOnce(new AccessError("forbidden"));
+      const minorRes = await call("/v1/people/read", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+      });
+
+      expect(absentRes.status).toBe(404);
+      expect(crossRes.status).toBe(404);
+      expect(minorRes.status).toBe(404);
+
+      const absentBody = await absentRes.text();
+      const crossBody = await crossRes.text();
+      const minorBody = await minorRes.text();
+
+      expect(absentBody).toBe("");
+      expect(crossBody).toBe(absentBody);
+      expect(minorBody).toBe(absentBody);
+    });
+  });
+});
