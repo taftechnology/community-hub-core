@@ -148,9 +148,15 @@ export async function listPersons(
     let searchClause = tx``;
     if (term.length > 0) {
       if (term.includes("@")) {
-        let emailBidx: Uint8Array | null = null;
+        let normEmail: string | null = null;
         try {
-          const normEmail = normaliseEmail(term);
+          normEmail = normaliseEmail(term);
+        } catch {
+          normEmail = null;
+        }
+        if (normEmail === null) {
+          searchClause = tx`and 1 = 0`;
+        } else {
           const keys = await derivePersonFieldKeys(tx, kms, keyArn, {
             isMinor: false,
             householdId: null,
@@ -160,19 +166,18 @@ export async function listPersons(
             "people.email",
             new TextEncoder().encode(normEmail),
           );
-          emailBidx = mac;
-        } catch {
-          emailBidx = null;
-        }
-        if (emailBidx === null) {
-          searchClause = tx`and 1 = 0`;
-        } else {
-          searchClause = tx`and email_bidx = ${emailBidx}`;
+          searchClause = tx`and email_bidx = ${mac}`;
         }
       } else if (/\d/.test(term)) {
-        let phoneBidx: Uint8Array | null = null;
+        let normPhone: string | null = null;
         try {
-          const normPhone = normalisePhone(term);
+          normPhone = normalisePhone(term);
+        } catch {
+          normPhone = null;
+        }
+        if (normPhone === null) {
+          searchClause = tx`and 1 = 0`;
+        } else {
           const keys = await derivePersonFieldKeys(tx, kms, keyArn, {
             isMinor: false,
             householdId: null,
@@ -182,14 +187,7 @@ export async function listPersons(
             "people.phone",
             new TextEncoder().encode(normPhone),
           );
-          phoneBidx = mac;
-        } catch {
-          phoneBidx = null;
-        }
-        if (phoneBidx === null) {
-          searchClause = tx`and 1 = 0`;
-        } else {
-          searchClause = tx`and phone_bidx = ${phoneBidx}`;
+          searchClause = tx`and phone_bidx = ${mac}`;
         }
       } else {
         const pattern = `${escapeLike(term)}%`;
@@ -245,6 +243,10 @@ export async function listPersons(
   }
 
   // Minors mode
+  if (input.includeRestricted !== true) {
+    throw new PeopleError("invalid_input");
+  }
+
   let cursorClause = tx``;
   if (typeof input.cursor === "string" && input.cursor.length > 0) {
     const c = parseMinorCursor(input.cursor);

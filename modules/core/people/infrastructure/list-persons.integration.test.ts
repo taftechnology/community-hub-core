@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
+import type { KmsPort } from "@community-hub/crypto";
 import { applyProductMigrations, newId, withAppTransaction } from "@community-hub/db";
 import {
   createPlaintextAppSql,
@@ -719,17 +720,28 @@ describe("listPersons", () => {
         { orgId: scope.orgId, communityId: scope.communityId },
         async (tx) => {
           await withRequest({ requestId: REQUEST_ID }, async () => {
-            // 1. Minors mode without includeRestricted: names blank
-            const resBlank = await listPersons(tx, kms, KEY_ARN, {
-              kind: "minors",
-              includeRestricted: false,
-              actorUserId,
-            });
-            expect(resBlank.items).toHaveLength(2);
-            expect(resBlank.items.every((it) => it.isMinor)).toBe(true);
-            expect(resBlank.items.every((it) => it.givenName === "" && it.familyName === "")).toBe(
-              true,
-            );
+            // 1. Minors mode without includeRestricted = true throws invalid_input with no audit row (Deviation 7)
+            await expect(
+              listPersons(tx, kms, KEY_ARN, {
+                kind: "minors",
+                includeRestricted: false,
+                actorUserId,
+              }),
+            ).rejects.toMatchObject({ code: "invalid_input" });
+
+            await expect(
+              listPersons(tx, kms, KEY_ARN, {
+                kind: "minors",
+                actorUserId,
+              }),
+            ).rejects.toMatchObject({ code: "invalid_input" });
+
+            const auditsBefore = await tx<{ n: number }[]>`
+              select count(*)::int as n
+              from app.audit_events
+              where action = 'people.person.listed_minors'
+            `;
+            expect(auditsBefore).toEqual([{ n: 0 }]);
 
             // 2. Minors mode with includeRestricted: names decrypted
             const resDecrypted = await listPersons(tx, kms, KEY_ARN, {
@@ -844,6 +856,57 @@ describe("listPersons", () => {
                 kind: "aliens" as never,
               }),
             ).rejects.toThrow(PeopleError);
+          });
+        },
+      );
+    } finally {
+      await cleanScope(directSql, scope);
+      await directSql.end({ timeout: 1 });
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
+
+  it("propagates KMS errors during email and phone search instead of returning empty results (finding 8)", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const scope = await createScope(platform);
+    const actorUserId = newId();
+
+    const failingKms: KmsPort = {
+      async decrypt() {
+        throw new Error("kms_outage");
+      },
+      async generateDataKey() {
+        throw new Error("kms_outage");
+      },
+    };
+
+    try {
+      await withAppTransaction(
+        app,
+        { orgId: scope.orgId, communityId: scope.communityId },
+        async (tx) => {
+          await withRequest({ requestId: REQUEST_ID }, async () => {
+            // Email search with failing KMS propagates error
+            await expect(
+              listPersons(tx, failingKms, KEY_ARN, {
+                kind: "adults",
+                search: "search@example.com",
+                actorUserId,
+              }),
+            ).rejects.toThrow("kms_outage");
+
+            // Phone search with failing KMS propagates error
+            await expect(
+              listPersons(tx, failingKms, KEY_ARN, {
+                kind: "adults",
+                search: "+61412345678",
+                actorUserId,
+              }),
+            ).rejects.toThrow("kms_outage");
           });
         },
       );
