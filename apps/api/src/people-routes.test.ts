@@ -262,18 +262,67 @@ describe("people routes (list and read)", () => {
       expect(resUpdate.status).toBe(400);
     });
 
-    it("returns 404 when community slug is not found", async () => {
+    it("answers unknown communities like unauthorised ones with 403 (finding 1, Deviation 12)", async () => {
       tenancy.findCommunityBySlug.mockResolvedValueOnce(null);
-      const res = await call("/v1/people/list", { communitySlug: "nonexistent" });
-      expect(res.status).toBe(404);
+      const resListUnknown = await call("/v1/people/list", { communitySlug: "nonexistent" });
+      expect(resListUnknown.status).toBe(403);
+      expect(await resListUnknown.text()).toBe("");
 
       tenancy.findCommunityBySlug.mockResolvedValueOnce(null);
-      const resCreate = await call("/v1/people/create", {
+      const resReadUnknown = await call("/v1/people/read", {
+        communitySlug: "nonexistent",
+        personId: PERSON_ID,
+      });
+      expect(resReadUnknown.status).toBe(403);
+      expect(await resReadUnknown.text()).toBe("");
+
+      tenancy.findCommunityBySlug.mockResolvedValueOnce(null);
+      const resCreateUnknown = await call("/v1/people/create", {
         communitySlug: "nonexistent",
         givenName: "Jane",
         familyName: "Doe",
       });
-      expect(resCreate.status).toBe(404);
+      expect(resCreateUnknown.status).toBe(403);
+      expect(await resCreateUnknown.text()).toBe("");
+
+      tenancy.findCommunityBySlug.mockResolvedValueOnce(null);
+      const resUpdateUnknown = await call("/v1/people/update", {
+        communitySlug: "nonexistent",
+        personId: PERSON_ID,
+        version: 1,
+        givenName: "Jane",
+      });
+      expect(resUpdateUnknown.status).toBe(403);
+      expect(await resUpdateUnknown.text()).toBe("");
+
+      access.holdsPermission.mockResolvedValue(false);
+      const resListStranger = await call("/v1/people/list", { communitySlug: "parish" });
+      expect(resListStranger.status).toBe(403);
+      expect(await resListStranger.text()).toBe("");
+
+      const resReadStranger = await call("/v1/people/read", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+      });
+      expect(resReadStranger.status).toBe(403);
+      expect(await resReadStranger.text()).toBe("");
+
+      const resCreateStranger = await call("/v1/people/create", {
+        communitySlug: "parish",
+        givenName: "Jane",
+        familyName: "Doe",
+      });
+      expect(resCreateStranger.status).toBe(403);
+      expect(await resCreateStranger.text()).toBe("");
+
+      const resUpdateStranger = await call("/v1/people/update", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+        version: 1,
+        givenName: "Jane",
+      });
+      expect(resUpdateStranger.status).toBe(403);
+      expect(await resUpdateStranger.text()).toBe("");
     });
 
     it("refuses 403 when entitlement people.directory is disabled across all 4 routes (pin 12)", async () => {

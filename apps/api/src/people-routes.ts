@@ -202,7 +202,7 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
     }
     const scope = await communityScope(body.communitySlug, context, actor.userId);
     if (scope === null) {
-      return finish(request, empty(404));
+      return finish(request, empty(403));
     }
     if (scope instanceof Response) {
       return finish(request, scope);
@@ -273,7 +273,7 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
     }
     const scope = await communityScope(body.communitySlug, context, actor.userId);
     if (scope === null) {
-      return finish(request, empty(404));
+      return finish(request, empty(403));
     }
     if (scope instanceof Response) {
       return finish(request, scope);
@@ -328,7 +328,7 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
     }
     const scope = await communityScope(body.communitySlug, context, actor.userId);
     if (scope === null) {
-      return finish(request, empty(404));
+      return finish(request, empty(403));
     }
     if (scope instanceof Response) {
       return finish(request, scope);
@@ -389,7 +389,7 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
     }
     const scope = await communityScope(body.communitySlug, context, actor.userId);
     if (scope === null) {
-      return finish(request, empty(404));
+      return finish(request, empty(403));
     }
     if (scope instanceof Response) {
       return finish(request, scope);
