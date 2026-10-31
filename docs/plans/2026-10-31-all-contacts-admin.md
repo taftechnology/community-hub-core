@@ -43,6 +43,7 @@ After Task 5 (the people functions and the access gate, before any route) the re
 8. The `decide` and `role.ts` permission lists are two copies of one list; both change in Task 1, and a test asserts they match the CHECK (Task 2).
 9. **No index on `app.persons` (Task 3 `EXPLAIN`).** On 5,000 adults plus 50 minors in one community, both list queries are sequential scans and run in 5.9 ms (adults) and 0.4 ms (minors). The plan said an index would be added if a sequential scan showed; the cost is a second migration surface for a parish-sized table, so none is added. The roadmap open items record that an index starting with `org_id` is added when a real community passes a few tens of thousands of contacts or the list is measured slow.
 10. **A route-level entitlement guard (`apps/api/src/entitlement-guard.ts`) is added** before Task 7, as its own commit. No route checked an entitlement before; the guard is built on `readSnapshot` and `evaluate`, refuses a disabled, absent or unevaluable key with 403 and an empty body, and writes no audit row. The four people routes use it. It adds no dependency.
+13. **A fifth route, `POST /v1/people/access`, and a new Task 8a (found at Task 9).** The admin had no source for the caller's own permissions (`/v1/access/grants/list` needs `access.users.view`) or the community's entitlements (`/v1/entitlements/list` needs `entitlements.toggles.view`), so the spec's "hide controls the caller cannot use" could not be met. The route returns `{ directoryEnabled, canView, canManage, canReadMinors }` for the caller, with no personal data. It reports and does not enforce; the four data routes still enforce. A generic capabilities route was considered and left for the owner to decide for all modules. Task 8a adds it with its contract and tests before Task 9. Pins 16 (each boolean derived from its own permission; a swap fails a test), 17 (stranger and unknown slug identical 403) and 18 (`directoryEnabled` comes from the entitlement guard's logic) are added.
 11. **Guardian read is not reachable through the read route.** A caller holding neither `people.view` nor `people.restricted.read` is refused (403) before the gate runs, so the gate's guardian-view override for a minor does not fire over HTTP. There is no guardian-facing surface in this chunk; a later chunk (Family Records or the member app) opens that path.
 12. **Unknown and unauthorised community slugs are both 403**, matching `access-routes.ts`, so a signed-in user cannot test whether a community exists.
 
@@ -66,6 +67,9 @@ Each row is run once by the implementer: weaken the source, see the named test f
 | 12  | `people.directory` entitlement checked in the routes              | route test with the entitlement off → refused                                                                              | Skip the entitlement check                                                             |
 | 13  | Search term never reaches logs, audit or errors                   | route test captures logger output and audit rows after a search for a unique synthetic term                                | Log the request body or put the term in an error                                       |
 | 14  | Permission list in sync (`decide`, `role.ts`, CHECK)              | `role.test.ts` and `schema.test.ts` compare the three                                                                      | Add `people.view` to only two of the three                                             |
+| 16  | `canView`, `canManage`, `canReadMinors` each derive from their own permission | `people-routes.test.ts`: custom roles holding one key each | Swap two booleans, or hardcode `canReadMinors: true` |
+| 17  | Access route: stranger and unknown slug are the same empty 403 | route unit and integration tests | Return 404 for the unknown slug |
+| 18  | `directoryEnabled` reflects the entitlement | route test with the entitlement off | Hardcode `directoryEnabled: true` |
 | 15  | Admin hides controls without the permission or entitlement        | `all-contacts.test.tsx`: no Add, Edit or Minors tab without the key; nav hidden without `people.directory`                 | Render the controls unconditionally                                                    |
 
 There are no Terraform asserts in this chunk, so the scratch Terraform probe is not needed.
@@ -149,6 +153,15 @@ Must not break: no built-in role other than the three gains a key (pin 14 partly
 - [ ] GREEN: wire to `createPerson` and `updatePerson`.
 - [ ] Commit `feat(api): people create and update routes`.
 
+### Task 8a: The caller's access route
+
+**Files:** `packages/contracts/src/people.ts` (+ test), `apps/api/src/people-routes.ts` (+ unit and integration tests), `apps/api/src/index.ts` only if routes are listed there by name.
+
+- [ ] RED: unit tests that the route returns the four booleans from `holdsPermission`/`decide` and the entitlement check; a body with any field is 400 (`.strict()`, only `communitySlug`); a stranger, a user with no role in the community and an unknown slug get the identical empty 403; a member with a role but no people permission gets 200 with all `canX` false; `directoryEnabled` false for a community without the entitlement; `billing: "read"` (works for a read-only organisation); no audit row; no personal data in the response or logs. Real-database test (two organisations, a `people.view`-only custom role, a `people.manage`-only role, the owner, a `member`, a stranger): booleans match, org B's owner gets 403 on org A's slug.
+- [ ] GREEN: the contract and the route.
+- [ ] Weaken once each: swap `canView`/`canManage`, hardcode `canReadMinors: true`, return 404 for the unknown slug, drop `.strict()`; see the named tests fail; restore.
+- [ ] Commit `feat(api): people access route for the admin`.
+
 ### Task 9: Admin — nav and list
 
 **Files:** `apps/admin/src/nav.tsx`, `labels.ts`, `visible-labels.ts` (+ tests), `apps/admin/src/all-contacts.tsx`, `all-contacts.test.tsx`, `shell.tsx` (route), `apps/admin/src/api.ts` only if a helper is missing. `packages/ui` gains only what the list needs (a table and an input), each with an axe test.
@@ -186,7 +199,7 @@ If Tasks 9–10 push the chunk past the ~800-line target, the implementer report
 
 ## Definition of done (AGENTS.md §8)
 
-- All twelve tasks done, or dropped with a note. `pnpm gate` green, CI Stages 1–3 green on the pull request.
+- All tasks (1–12, including 8a) done, or dropped with a note. `pnpm gate` green, CI Stages 1–3 green on the pull request.
 - Tenant-isolation tests green for list, read and update. Residency unaffected (no new outbound call).
 - Manifest updated (permissions, audit actions, `version`). `architecture.md` and `docs/roadmap.md` updated in the same pull request, roadmap last.
 - Reviewer sign-off recorded in the PR. This chunk touches children's data, tenancy and the database, so the second fresh-context review is required before merge and starts when the PR opens.
