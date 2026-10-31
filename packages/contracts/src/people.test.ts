@@ -85,9 +85,12 @@ describe("people contract schemas (pin 2)", () => {
       listPeopleBody.safeParse({ communitySlug: "slug", search: "a".repeat(101) }).success,
     ).toBe(false);
 
-    // cursor length cap 512
+    // cursor length cap 1024
     expect(
-      listPeopleBody.safeParse({ communitySlug: "slug", cursor: "c".repeat(513) }).success,
+      listPeopleBody.safeParse({ communitySlug: "slug", cursor: "c".repeat(1024) }).success,
+    ).toBe(true);
+    expect(
+      listPeopleBody.safeParse({ communitySlug: "slug", cursor: "c".repeat(1025) }).success,
     ).toBe(false);
 
     // names min 1 max 100

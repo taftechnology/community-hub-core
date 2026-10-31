@@ -573,6 +573,29 @@ describe("people routes (list and read)", () => {
       });
     });
 
+    it("returns 400 with empty body when listPersons throws PeopleError invalid_input (finding 2)", async () => {
+      people.listPersons.mockRejectedValueOnce(new PeopleError("invalid_input"));
+
+      const resAdult = await call("/v1/people/list", {
+        communitySlug: "parish",
+        cursor: "malformed-cursor",
+      });
+
+      expect(resAdult.status).toBe(400);
+      expect(await resAdult.text()).toBe("");
+
+      people.listPersons.mockRejectedValueOnce(new PeopleError("invalid_input"));
+
+      const resMinor = await call("/v1/people/list", {
+        communitySlug: "parish",
+        kind: "minors",
+        cursor: "malformed-cursor",
+      });
+
+      expect(resMinor.status).toBe(400);
+      expect(await resMinor.text()).toBe("");
+    });
+
     it("never logs search terms, names, or emails in logger output or audit rows (pins 7, 13)", async () => {
       const SECRET_TERM = "SensitiveQueryTerm987";
       people.listPersons.mockResolvedValueOnce({ items: [], nextCursor: null });

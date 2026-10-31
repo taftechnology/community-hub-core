@@ -210,50 +210,60 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
 
     return deps.checkout("app", (sql) =>
       withAppTransaction(sql, scope, async (tx) => {
-        const isMinorsMode = body.kind === "minors";
-        if (isMinorsMode) {
-          const allowed = await holdsPermission(tx, actor.userId, RESTRICTED);
+        try {
+          const isMinorsMode = body.kind === "minors";
+          if (isMinorsMode) {
+            const allowed = await holdsPermission(tx, actor.userId, RESTRICTED);
+            if (!allowed) {
+              await appendAuditEvent(tx, {
+                actorKind: "user",
+                actorId: actor.userId,
+                action: DENIED,
+                purpose: RESTRICTED,
+                targetIds: [scope.orgId, scope.communityId],
+              });
+              return finish(request, empty(403));
+            }
+            const result = await listPersons(tx, deps.kms, deps.keyArn, {
+              kind: "minors",
+              cursor: body.cursor ?? null,
+              ...(body.limit !== undefined ? { limit: body.limit } : {}),
+              includeRestricted: true,
+              actorUserId: actor.userId,
+            });
+            return finish(request, Response.json(result));
+          }
+
+          const allowed = await holdsPermission(tx, actor.userId, VIEW);
           if (!allowed) {
             await appendAuditEvent(tx, {
               actorKind: "user",
               actorId: actor.userId,
               action: DENIED,
-              purpose: RESTRICTED,
+              purpose: ADULT_VIEW_PURPOSE,
               targetIds: [scope.orgId, scope.communityId],
             });
             return finish(request, empty(403));
           }
+
           const result = await listPersons(tx, deps.kms, deps.keyArn, {
-            kind: "minors",
+            kind: "adults",
+            search: body.search ?? null,
             cursor: body.cursor ?? null,
             ...(body.limit !== undefined ? { limit: body.limit } : {}),
-            includeRestricted: true,
+            includeRestricted: false,
             actorUserId: actor.userId,
           });
           return finish(request, Response.json(result));
+        } catch (error) {
+          if (error instanceof PeopleError) {
+            const mapped = statusForPeople(error);
+            if (mapped !== undefined) {
+              return finish(request, mapped);
+            }
+          }
+          throw error;
         }
-
-        const allowed = await holdsPermission(tx, actor.userId, VIEW);
-        if (!allowed) {
-          await appendAuditEvent(tx, {
-            actorKind: "user",
-            actorId: actor.userId,
-            action: DENIED,
-            purpose: ADULT_VIEW_PURPOSE,
-            targetIds: [scope.orgId, scope.communityId],
-          });
-          return finish(request, empty(403));
-        }
-
-        const result = await listPersons(tx, deps.kms, deps.keyArn, {
-          kind: "adults",
-          search: body.search ?? null,
-          cursor: body.cursor ?? null,
-          ...(body.limit !== undefined ? { limit: body.limit } : {}),
-          includeRestricted: false,
-          actorUserId: actor.userId,
-        });
-        return finish(request, Response.json(result));
       }),
     );
   }
