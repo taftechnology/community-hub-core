@@ -322,7 +322,7 @@ The membership foreign keys carry `org_id` but not `community_id`, so the databa
 
 A group name must not carry a child's name; the group UI chunk adds that guidance.
 
-`createPerson` has no production caller, so no usage fact is written in production until a people route ships.
+`createPerson` has its first production caller in `POST /v1/people/create`, so the `people.directory` usage fact is now written in production when a contact is added.
 
 The next chunk that unparks staging verifies migration `0015`: `app.persons.version` exists, the permission CHECK admits `people.view` and `people.manage`, `relrowsecurity` and `relforcerowsecurity` are still true on `persons`, `app` lacks `DELETE`, and `app` has `UPDATE` only on the ten columns `updatePerson` writes.
 

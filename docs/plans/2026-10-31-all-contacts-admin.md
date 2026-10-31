@@ -4,12 +4,13 @@ Spec: docs/specs/2026-10-31-all-contacts-admin.md
 
 Slug: all-contacts-admin
 Status: approved (2026-10-31, Adnan Bin Hossen)
+Amended after approval (2026-10-31): Deviations 3–14 and Task 8a were added during implementation. The approver confirms these amendments before merge.
 
 > **For agentic workers:** use superpowers:subagent-driven-development, test-driven-development inside each task, and verification-before-completion before reporting. One task = one commit. Reports go to `.superpowers/sdd/task-N-report.md`, never `docs/plans/` and never a commit.
 
 **Goal:** A community administrator can list, search, read, add and edit adult contacts in the admin, and a holder of `people.restricted.read` can list and read minors. An unprivileged caller can never learn that a minor exists.
 
-**Architecture:** `modules/core/people` gains `listPersons` and `updatePerson`. `modules/core/access` changes `readPersonForActor` to check `people.view` for adults and `people.restricted.read` for minors. `packages/policy` and `modules/core/access/domain/role.ts` gain `people.view` and `people.manage`. Migration `0015` widens the custom-role permission CHECK and adds `app.persons.version`. `packages/contracts` gets `people.ts`. `apps/api` gets `people-routes.ts` (four POST routes). `apps/admin` gets an All Contacts screen under Contacts & Members. No new table, no event, no port, no infrastructure.
+**Architecture:** `modules/core/people` gains `listPersons` and `updatePerson`. `modules/core/access` changes `readPersonForActor` to check `people.view` for adults and `people.restricted.read` for minors. `packages/policy` and `modules/core/access/domain/role.ts` gain `people.view` and `people.manage`. Migration `0015` widens the custom-role permission CHECK and adds `app.persons.version`. `packages/contracts` gets `people.ts`. `apps/api` gets `people-routes.ts` (five POST routes). `apps/admin` gets an All Contacts screen under Contacts & Members. No new table, no event, no port, no infrastructure.
 
 ## Who does what
 
@@ -46,6 +47,7 @@ After Task 5 (the people functions and the access gate, before any route) the re
 11. **Guardian read is not reachable through the read route.** A caller holding neither `people.view` nor `people.restricted.read` is refused (403) before the gate runs, so the gate's guardian-view override for a minor does not fire over HTTP. There is no guardian-facing surface in this chunk; a later chunk (Family Records or the member app) opens that path.
 12. **Unknown and unauthorised community slugs are both 403**, matching `access-routes.ts`, so a signed-in user cannot test whether a community exists.
 13. **A fifth route, `POST /v1/people/access`, and a new Task 8a (found at Task 9).** The admin had no source for the caller's own permissions (`/v1/access/grants/list` needs `access.users.view`) or the community's entitlements (`/v1/entitlements/list` needs `entitlements.toggles.view`), so the spec's "hide controls the caller cannot use" could not be met. The route returns `{ directoryEnabled, canView, canManage, canReadMinors }` for the caller, with no personal data. It reports and does not enforce; the four data routes still enforce. A generic capabilities route was considered and left for the owner to decide for all modules. Task 8a adds it with its contract and tests before Task 9. Pins 16 (each boolean derived from its own permission; a swap fails a test), 17 (stranger and unknown slug identical 403) and 18 (`directoryEnabled` comes from the entitlement guard's logic) are added.
+14. **Rulings from the final review (2026-10-31).** (a) The All Contacts nav item and list need `canView`; a user holding only `people.manage` (possible only through a custom role) sees nothing, because the list route would 403. Spec and plan said `people.view` or `people.manage`. (b) The detail view shows the person's fields and `version`; tags and the activity log are not shown (the read route does not return them). (c) The Minors tab has no search box (minors cannot be searched by name). (d) The list pages forward only; a Back control is a later improvement. (e) Task 9 and 10 admin fixes: in-flight guard on Save, focus after save, accessible table and row names, tab semantics, a reset of list state when the community changes, removal of the dead 402 branch, and about 150 lines of avoidable code in `all-contacts.tsx` and about 80 in `people-routes.ts`.
 
 ## Security pins
 
@@ -184,7 +186,7 @@ If Tasks 9–10 push the chunk past the ~800-line target, the implementer report
 
 **Files:** `architecture.md`.
 
-- [ ] Module catalogue row and §12 note: the new permissions, the adult/minor gate rule, `persons.version`, the four routes, and that minors are listed only for `people.restricted.read`. Spec Decisions 1–4 are cited. No test.
+- [ ] Module catalogue row and §12 note: the new permissions, the adult/minor gate rule, `persons.version`, the five routes, and that minors are listed only for `people.restricted.read`. Spec Decisions 1–4 are cited. No test.
 - [ ] Commit `docs(architecture): record the All Contacts decisions`.
 
 ### Task 12: Catalogue (last task on this branch)

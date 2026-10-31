@@ -2,6 +2,7 @@
 
 Slug: all-contacts-admin
 Status: approved (2026-10-31, Adnan Bin Hossen)
+Amended after approval (2026-10-31): the access route, the column-level `UPDATE` grant, `version` on reads, the audit row carrying the person id only, and the nav rule are recorded in plan Deviations 3–14. The approver confirms these amendments before merge.
 Architecture refs: §6.3, §10, §12.1, §12.3, AGENTS.md §1 rules 2–5, plan key `people.directory`. Implements the `All Contacts admin` row, the second Phase 2 journey. Depends on `people-households`, `access-roles`, `usage-facts` and `Groups`, all on `main`. Staging stays parked.
 
 ## Problem
@@ -40,7 +41,7 @@ A parish administrator cannot see, search, add or correct the people in their co
 
 An unprivileged caller therefore cannot learn whether a minor exists: the adult list omits minors in SQL (not blank rows, unlike `readRosterNames` today), and the minors mode is refused.
 
-**Read.** `POST /v1/people/read` takes a person id. It calls `readPersonForActor`, the gate, as changed above: it decides, audits a denial, decrypts, and audits the read. Adults: `people.view` returns the clear and confidential fields of an adult. Minors: needs `people.restricted.read` or a guardian view, as `decide` already encodes. A caller without it, or an id from another community or organisation, gets the **same** 404, so the response does not say whether the id exists. Every read that decrypts writes an audit row carrying ids only. Detail also returns email and phone (decrypted), tags and the activity entries the module already holds.
+**Read.** `POST /v1/people/read` takes a person id. It calls `readPersonForActor`, the gate, as changed above: it decides, audits a denial, decrypts, and audits the read. Adults: `people.view` returns the clear and confidential fields of an adult. Minors: needs `people.restricted.read` or a guardian view, as `decide` already encodes. A caller without it, or an id from another community or organisation, gets the **same** 404, so the response does not say whether the id exists. Every read that decrypts writes an audit row carrying ids only. Detail returns the person's fields and `version`, including email and phone (decrypted). Tags and the activity log are not shown in this chunk (Deviation 14).
 
 **Create.** `POST /v1/people/create` needs `people.manage` and creates an **adult** (`isMinor` is not a request field; the route passes `false`). Fields: given name, family name, optional email, phone, date of birth. A duplicate email or phone (the partial unique blind-index) returns 409 with no hint which field matched. `createPerson` already writes its audit row and the `people.directory` usage fact; this is the first production caller.
 
@@ -48,7 +49,7 @@ An unprivileged caller therefore cannot learn whether a minor exists: the adult 
 
 **Billing.** `list` and `read` are `billing: "read"`. `create` and `update` are `billing: "write"`, so a read-only organisation gets the existing 402.
 
-**Entitlement and nav.** The routes check the `people.directory` entitlement on the server. The admin hides `All Contacts` when the community lacks it and when the user holds neither `people.view` nor `people.manage`; no control is rendered that would only return 403. `Add` and `Edit` show only with `people.manage`. The `minors` tab shows only with `people.restricted.read`.
+**Entitlement and nav.** The routes check the `people.directory` entitlement on the server. The admin hides `All Contacts` when the community lacks it and when the user lacks `people.view` (the list needs it; Deviation 14); no control is rendered that would only return 403. `Add` and `Edit` show only with `people.manage`. The `minors` tab shows only with `people.restricted.read`.
 
 **States.** Empty community: "No contacts yet" with an Add button when permitted. Search with no match: "No contacts match". Network or 5xx: an alert with retry, no raw error text. 402: the existing billing banner. Offline: not supported; the screen shows the error state.
 
@@ -120,7 +121,7 @@ Audit actions registered in people: `people.person.listed_minors`, `people.perso
 
 ## Size
 
-Probably larger than the Groups chunk: two package functions, a migration, four routes, contracts, a screen with three views, and `packages/ui` additions. It stays one pull request; the plan orders it people functions → migration and permissions → contracts → routes → ui → admin → docs.
+Probably larger than the Groups chunk: two package functions, a migration, five routes, contracts, a screen with three views, and `packages/ui` additions. It stays one pull request; the plan orders it people functions → migration and permissions → contracts → routes → ui → admin → docs.
 
 ## Cost
 
