@@ -745,6 +745,95 @@ describe("All Contacts Screen", () => {
     expect(minorsBtn.getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("clicking the active tab keeps the list without reloading or making requests", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    let listCallCount = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
+      const url = String(info);
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+
+      if (path === "/v1/people/access") {
+        return new Response(
+          JSON.stringify({
+            directoryEnabled: true,
+            canView: true,
+            canManage: true,
+            canReadMinors: true,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (path === "/v1/people/list") {
+        listCallCount++;
+        if (body.kind === "minors") {
+          return new Response(
+            JSON.stringify({
+              items: [
+                {
+                  id: "minor-1",
+                  personId: "minor-1",
+                  isMinor: true,
+                  givenName: "Child",
+                  familyName: "Person",
+                  version: 1,
+                },
+              ],
+              nextCursor: null,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                id: "adult-1",
+                personId: "adult-1",
+                isMinor: false,
+                givenName: "Adult",
+                familyName: "Contact",
+                version: 1,
+              },
+            ],
+            nextCursor: null,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    await showContacts();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const group = await screen.findByRole("group", { name: "Contact types" });
+    const adultsBtn = within(group).getByRole("button", { name: "Adults" });
+    const minorsBtn = within(group).getByRole("button", { name: "Minors" });
+
+    expect(await screen.findByText("Adult")).toBeTruthy();
+    const callsAfterAdultsLoad = listCallCount;
+    expect(callsAfterAdultsLoad).toBeGreaterThanOrEqual(1);
+
+    // Clicking already-active Adults tab must keep list and not make requests
+    fireEvent.click(adultsBtn);
+    expect(screen.queryByText("Adult")).toBeTruthy();
+    expect(listCallCount).toBe(callsAfterAdultsLoad);
+
+    // Switch to Minors
+    fireEvent.click(minorsBtn);
+    expect(await screen.findByText("Child")).toBeTruthy();
+    const callsAfterMinorsLoad = listCallCount;
+
+    // Clicking already-active Minors tab must keep list and not make requests
+    fireEvent.click(minorsBtn);
+    expect(screen.queryByText("Child")).toBeTruthy();
+    expect(listCallCount).toBe(callsAfterMinorsLoad);
+  });
+
   it("empty state shows 'No contacts yet' and Add button only with people.manage (Pin 15)", async () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);
     mockApi(

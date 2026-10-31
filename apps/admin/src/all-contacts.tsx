@@ -538,6 +538,9 @@ export function AllContactsPage() {
   }
 
   function handleTabChange(tab: "adults" | "minors") {
+    if (tab === activeTab) {
+      return;
+    }
     setActiveTab(tab);
     setCursor(undefined);
     setSearchDraft("");
