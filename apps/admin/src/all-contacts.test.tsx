@@ -227,6 +227,190 @@ describe("All Contacts Screen", () => {
     expect(listCalls).toHaveLength(0);
   });
 
+  it("shows not allowed and makes no list call when directoryEnabled is false (Pin 15)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      if (path === "/v1/people/access") {
+        return new Response(
+          JSON.stringify({
+            directoryEnabled: false,
+            canView: true,
+            canManage: true,
+            canReadMinors: true,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    await showContacts();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    expect(await screen.findByText("Not allowed")).toBeTruthy();
+    const listCalls = fetchSpy.mock.calls.filter((call) =>
+      String(call[0]).endsWith("/v1/people/list"),
+    );
+    expect(listCalls).toHaveLength(0);
+  });
+
+  it("treats missing permission fields in access response as not allowed (Pin 15)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const adultPerson = {
+      id: "00000000-0000-4000-8000-000000000001",
+      personId: "00000000-0000-4000-8000-000000000001",
+      isMinor: false,
+      givenName: "Grace",
+      familyName: "Hopper",
+      version: 1,
+    };
+    const adultDetail = {
+      personId: "00000000-0000-4000-8000-000000000001",
+      householdId: null,
+      isMinor: false,
+      ageBasis: "recorded",
+      birthdayMd: null,
+      givenName: "Grace",
+      familyName: "Hopper",
+      email: null,
+      phone: null,
+      dateOfBirth: null,
+      version: 1,
+    };
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      if (path === "/v1/people/access") {
+        // canManage and canReadMinors omitted entirely
+        return new Response(
+          JSON.stringify({
+            directoryEnabled: true,
+            canView: true,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (path === "/v1/people/list") {
+        return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (path === "/v1/people/read") {
+        return new Response(JSON.stringify(adultDetail), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    await showContacts();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    expect(await screen.findByText("Grace")).toBeTruthy();
+    // Add contact button must NOT appear
+    expect(screen.queryByRole("button", { name: "Add contact" })).toBeNull();
+    // Minors tab must NOT appear
+    expect(screen.queryByRole("tab", { name: "Minors" })).toBeNull();
+
+    // In detail view, Edit contact button must NOT appear
+    fireEvent.click(screen.getByRole("button", { name: "View" }));
+    expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Edit contact" })).toBeNull();
+  });
+
+  it("hides Add and Edit controls when billing status is read_only (Pin 15)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const adultPerson = {
+      id: "00000000-0000-4000-8000-000000000001",
+      personId: "00000000-0000-4000-8000-000000000001",
+      isMinor: false,
+      givenName: "Grace",
+      familyName: "Hopper",
+      version: 1,
+    };
+    const adultDetail = {
+      personId: "00000000-0000-4000-8000-000000000001",
+      householdId: null,
+      isMinor: false,
+      ageBasis: "recorded",
+      birthdayMd: null,
+      givenName: "Grace",
+      familyName: "Hopper",
+      email: null,
+      phone: null,
+      dateOfBirth: null,
+      version: 1,
+    };
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      if (path === "/v1/billing/status") {
+        return new Response(
+          JSON.stringify({
+            state: "read_only",
+            trial_end: null,
+            grace_until: null,
+            canView: true,
+            canManage: true,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (path === "/v1/people/access") {
+        return new Response(
+          JSON.stringify({
+            directoryEnabled: true,
+            canView: true,
+            canManage: true,
+            canReadMinors: false,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (path === "/v1/people/list") {
+        return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (path === "/v1/people/read") {
+        return new Response(JSON.stringify(adultDetail), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    await showContacts();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    expect(await screen.findByText("Grace")).toBeTruthy();
+    // Add button must be hidden when read_only
+    expect(screen.queryByRole("button", { name: "Add contact" })).toBeNull();
+
+    // View detail
+    fireEvent.click(screen.getByRole("button", { name: "View" }));
+    expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
+    // Edit button must be hidden when read_only
+    expect(screen.queryByRole("button", { name: "Edit contact" })).toBeNull();
+  });
+
   it("renders adult list and passes axe", async () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);
     const adultPerson = {
@@ -257,6 +441,31 @@ describe("All Contacts Screen", () => {
 
   it("sends search term only in request body, not in URL or console", async () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const consoleMethods = ["log", "info", "warn", "error", "debug"] as const;
+    const consoleSpies = consoleMethods.map((method) => vi.spyOn(console, method));
+
+    const adultPerson = {
+      id: "00000000-0000-4000-8000-000000000001",
+      personId: "00000000-0000-4000-8000-000000000001",
+      isMinor: false,
+      givenName: "Grace",
+      familyName: "Hopper",
+      version: 1,
+    };
+    const adultDetail = {
+      personId: "00000000-0000-4000-8000-000000000001",
+      householdId: null,
+      isMinor: false,
+      ageBasis: "recorded",
+      birthdayMd: null,
+      givenName: "Grace",
+      familyName: "Hopper",
+      email: null,
+      phone: null,
+      dateOfBirth: null,
+      version: 1,
+    };
+
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
@@ -273,7 +482,13 @@ describe("All Contacts Screen", () => {
         );
       }
       if (path === "/v1/people/list") {
-        return new Response(JSON.stringify({ items: [], nextCursor: null }), {
+        return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (path === "/v1/people/read") {
+        return new Response(JSON.stringify(adultDetail), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -314,6 +529,60 @@ describe("All Contacts Screen", () => {
 
     expect(window.location.href).not.toContain("SecretSearchTerm");
     expect(window.location.search).not.toContain("SecretSearchTerm");
+
+    for (const spy of consoleSpies) {
+      for (const call of spy.mock.calls) {
+        for (const arg of call) {
+          expect(String(arg)).not.toContain("SecretSearchTerm");
+        }
+      }
+    }
+
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i)!;
+      expect(key).not.toContain("SecretSearchTerm");
+      expect(sessionStorage.getItem(key)).not.toContain("SecretSearchTerm");
+    }
+    const local =
+      typeof window !== "undefined" && window.localStorage ? window.localStorage : undefined;
+    if (local) {
+      for (let i = 0; i < local.length; i++) {
+        const key = local.key(i)!;
+        expect(key).not.toContain("SecretSearchTerm");
+        expect(local.getItem(key)).not.toContain("SecretSearchTerm");
+      }
+    }
+
+    // Now test edit form with a personal name
+    fireEvent.click(screen.getByRole("button", { name: "View" }));
+    expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
+    const editBtn = await screen.findByRole("button", { name: "Edit contact" });
+    fireEvent.click(editBtn);
+    expect(await screen.findByRole("heading", { name: "Edit Contact" })).toBeTruthy();
+
+    const givenNameInput = screen.getByRole("textbox", { name: "Given name" });
+    fireEvent.change(givenNameInput, { target: { value: "SecretPersonalName" } });
+
+    for (const spy of consoleSpies) {
+      for (const call of spy.mock.calls) {
+        for (const arg of call) {
+          expect(String(arg)).not.toContain("SecretPersonalName");
+        }
+      }
+    }
+
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i)!;
+      expect(key).not.toContain("SecretPersonalName");
+      expect(sessionStorage.getItem(key)).not.toContain("SecretPersonalName");
+    }
+    if (local) {
+      for (let i = 0; i < local.length; i++) {
+        const key = local.key(i)!;
+        expect(key).not.toContain("SecretPersonalName");
+        expect(local.getItem(key)).not.toContain("SecretPersonalName");
+      }
+    }
   });
 
   it("handles keyset pagination when nextCursor is returned", async () => {
@@ -461,11 +730,17 @@ describe("All Contacts Screen", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Set" }));
 
+    const adultsTab = await screen.findByRole("tab", { name: "Adults" });
     const minorsTab = await screen.findByRole("tab", { name: "Minors" });
+    expect(adultsTab.getAttribute("aria-selected")).toBe("true");
+    expect(minorsTab.getAttribute("aria-selected")).toBe("false");
+
     fireEvent.click(minorsTab);
 
     expect(await screen.findByText("Child")).toBeTruthy();
     expect(capturedKind).toBe("minors");
+    expect(adultsTab.getAttribute("aria-selected")).toBe("false");
+    expect(minorsTab.getAttribute("aria-selected")).toBe("true");
   });
 
   it("empty state shows 'No contacts yet' and Add button only with people.manage (Pin 15)", async () => {
@@ -582,7 +857,8 @@ describe("All Contacts Screen", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Set" }));
 
-    expect(await screen.findByText("Failed to load contacts")).toBeTruthy();
+    const errorAlert = await screen.findByRole("alert");
+    expect(within(errorAlert).getByText("Failed to load contacts")).toBeTruthy();
     expect(document.body.textContent).not.toContain("0xDEADBEEF");
     expect(document.body.textContent).not.toContain("connection failure");
 
