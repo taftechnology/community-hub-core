@@ -42,6 +42,7 @@ After Task 5 (the people functions and the access gate, before any route) the re
 7. **`listPersons` minors mode refuses `includeRestricted` other than `true`** (`invalid_input`, no audit row, no rows), so an unprivileged call can never return blank rows or a count.
 8. The `decide` and `role.ts` permission lists are two copies of one list; both change in Task 1, and a test asserts they match the CHECK (Task 2).
 9. **No index on `app.persons` (Task 3 `EXPLAIN`).** On 5,000 adults plus 50 minors in one community, both list queries are sequential scans and run in 5.9 ms (adults) and 0.4 ms (minors). The plan said an index would be added if a sequential scan showed; the cost is a second migration surface for a parish-sized table, so none is added. The roadmap open items record that an index starting with `org_id` is added when a real community passes a few tens of thousands of contacts or the list is measured slow.
+10. **A route-level entitlement guard (`apps/api/src/entitlement-guard.ts`) is added** before Task 7, as its own commit. No route checked an entitlement before; the guard is built on `readSnapshot` and `evaluate`, refuses a disabled, absent or unevaluable key with 403 and an empty body, and writes no audit row. The four people routes use it. It adds no dependency.
 
 ## Security pins
 
