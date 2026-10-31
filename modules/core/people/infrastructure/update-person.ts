@@ -205,6 +205,16 @@ export async function updatePerson(
     }
   }
 
+  if (
+    givenName === undefined &&
+    familyName === undefined &&
+    email === undefined &&
+    phone === undefined &&
+    dobDate === undefined
+  ) {
+    throw new PeopleError("invalid_input");
+  }
+
   let emailBytes: Uint8Array | null | undefined = undefined;
   let emailBidx: Uint8Array | null | undefined = undefined;
   let phoneBytes: Uint8Array | null | undefined = undefined;

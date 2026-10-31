@@ -144,6 +144,7 @@ describe("people table privileges", () => {
         "version",
       ] as const;
       const forbiddenColumns = [
+        "id",
         "is_minor",
         "household_id",
         "org_id",
@@ -165,6 +166,18 @@ describe("people table privileges", () => {
         `;
         expect(row?.granted, `expected column ${col} NOT to be updatable by app`).toBe(false);
       }
+
+      const updatableRows = await sql<{ attname: string }[]>`
+        select attname
+        from pg_attribute
+        where attrelid = 'app.persons'::regclass
+          and attnum > 0
+          and not attisdropped
+          and has_column_privilege('app', 'app.persons', attname, 'UPDATE')
+        order by attname
+      `;
+      const updatableColumns = updatableRows.map((r) => r.attname);
+      expect(updatableColumns).toEqual([...allowedColumns].sort());
     } finally {
       await sql.end({ timeout: 1 });
     }

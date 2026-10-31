@@ -670,6 +670,37 @@ describe("updatePerson", () => {
         },
       );
 
+      // Call updatePerson with all fields undefined or unknown keys
+      await withAppTransaction(
+        app,
+        { orgId: scope.orgId, communityId: scope.communityId },
+        async (tx) => {
+          await withRequest({ requestId: REQUEST_ID }, async () => {
+            await expect(
+              updatePerson(tx, kms, KEY_ARN, {
+                personId,
+                version: 1,
+                changes: { givenName: undefined } as unknown as Parameters<
+                  typeof updatePerson
+                >[3]["changes"],
+                actorUserId,
+              }),
+            ).rejects.toMatchObject({ code: "invalid_input" });
+
+            await expect(
+              updatePerson(tx, kms, KEY_ARN, {
+                personId,
+                version: 1,
+                changes: { unknownField: "val" } as unknown as Parameters<
+                  typeof updatePerson
+                >[3]["changes"],
+                actorUserId,
+              }),
+            ).rejects.toMatchObject({ code: "invalid_input" });
+          });
+        },
+      );
+
       // Verify row version unchanged
       const dbRow = (
         await directSql<{ version: number }[]>`

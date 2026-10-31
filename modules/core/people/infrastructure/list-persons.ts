@@ -293,13 +293,17 @@ export async function listPersons(
   const rosterMap = new Map(roster.map((r) => [r.personId, r]));
   const items: PersonListItem[] = pageIds.map((id) => {
     const r = rosterMap.get(id);
+    const version = versionMap.get(id);
+    if (version === undefined) {
+      throw new Error(`invariant broken: no version for minor ${id}`);
+    }
     return {
       id,
       personId: id,
       isMinor: true,
       givenName: r?.givenName ?? "",
       familyName: r?.familyName ?? "",
-      version: versionMap.get(id) ?? 1,
+      version,
     };
   });
 
