@@ -149,6 +149,9 @@ export function AllContactsPage() {
   const [editConflict, setEditConflict] = useState(false);
   const [editNotice, setEditNotice] = useState<string | null>(null);
 
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
+
   const generation = useRef(0);
   const detailGeneration = useRef(0);
   const isReadOnly = status?.state === "none" || status?.state === "read_only" || paymentRequired;
@@ -169,7 +172,7 @@ export function AllContactsPage() {
         communitySlug,
         kind,
       };
-      if (searchTerm) {
+      if (kind === "adults" && searchTerm) {
         body.search = searchTerm;
       }
       if (cursorToken) {
@@ -188,6 +191,7 @@ export function AllContactsPage() {
       }
 
       if (response.status === 402) {
+        setItems(null);
         setPaymentRequired(true);
         void refreshBilling();
         return;
@@ -221,17 +225,65 @@ export function AllContactsPage() {
   );
 
   const reload = useCallback(() => {
-    if (!slug) {
+    if (!slug || !access.directoryEnabled || !access.canView) {
       setItems(null);
       return;
     }
     const mine = ++generation.current;
     void fetchContacts(slug, activeTab, submittedSearch, cursor, () => generation.current === mine);
-  }, [slug, activeTab, submittedSearch, cursor, fetchContacts]);
+  }, [
+    slug,
+    access.directoryEnabled,
+    access.canView,
+    activeTab,
+    submittedSearch,
+    cursor,
+    fetchContacts,
+  ]);
 
+  const previousSlugRef = useRef<string | null>(null);
   useEffect(() => {
+    if (previousSlugRef.current === null) {
+      previousSlugRef.current = slug;
+      reload();
+      return;
+    }
+    if (previousSlugRef.current !== slug) {
+      previousSlugRef.current = slug;
+      setActiveTab("adults");
+      setSearchDraft("");
+      setSubmittedSearch("");
+      setCursor(undefined);
+      setNextCursor(null);
+      setItems(null);
+      setView("list");
+      setSelectedPersonId(null);
+      setDetailPerson(null);
+      setDetailNotFound(false);
+      setDetailError(false);
+      setAddGivenName("");
+      setAddFamilyName("");
+      setAddEmail("");
+      setAddPhone("");
+      setAddDob("");
+      setAddNotice(null);
+      setEditGivenName("");
+      setEditFamilyName("");
+      setEditEmail("");
+      setEditPhone("");
+      setEditDob("");
+      setEditConflict(false);
+      setEditNotice(null);
+      setPaymentRequired(false);
+      setError(false);
+      if (slug && access.directoryEnabled && access.canView) {
+        const mine = ++generation.current;
+        void fetchContacts(slug, "adults", "", undefined, () => generation.current === mine);
+      }
+      return;
+    }
     reload();
-  }, [reload, version]);
+  }, [slug, version, reload, access.directoryEnabled, access.canView, fetchContacts]);
 
   const loadPersonDetail = useCallback(
     async (communitySlug: string, personId: string, isCurrent: () => boolean) => {
@@ -329,91 +381,107 @@ export function AllContactsPage() {
 
   async function handleAddSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!slug) {
+    if (submittingRef.current || !slug) {
       return;
     }
+    submittingRef.current = true;
+    setSubmitting(true);
     setAddNotice(null);
 
-    const body: Record<string, unknown> = {
-      communitySlug: slug,
-      givenName: addGivenName.trim(),
-      familyName: addFamilyName.trim(),
-    };
-    if (addEmail.trim()) {
-      body.email = addEmail.trim();
-    }
-    if (addPhone.trim()) {
-      body.phone = addPhone.trim();
-    }
-    if (addDob.trim()) {
-      body.dateOfBirth = addDob.trim();
-    }
-
-    const response = await post("/v1/people/create", body);
-    if (response === "unavailable" || response.status === 402) {
-      if (response !== "unavailable" && response.status === 402) {
-        setPaymentRequired(true);
-        void refreshBilling();
+    try {
+      const body: Record<string, unknown> = {
+        communitySlug: slug,
+        givenName: addGivenName.trim(),
+        familyName: addFamilyName.trim(),
+      };
+      if (addEmail.trim()) {
+        body.email = addEmail.trim();
       }
+      if (addPhone.trim()) {
+        body.phone = addPhone.trim();
+      }
+      if (addDob.trim()) {
+        body.dateOfBirth = addDob.trim();
+      }
+
+      const response = await post("/v1/people/create", body);
+      if (response === "unavailable" || response.status === 402) {
+        if (response !== "unavailable" && response.status === 402) {
+          setPaymentRequired(true);
+          void refreshBilling();
+        }
+        setAddNotice("Unable to save contact");
+        return;
+      }
+
+      if (response.status === 201) {
+        backToList();
+        return;
+      }
+
       setAddNotice("Unable to save contact");
-      return;
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
     }
-
-    if (response.status === 201) {
-      backToList();
-      return;
-    }
-
-    setAddNotice("Unable to save contact");
   }
 
   async function handleEditSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!slug || !detailPerson) {
+    if (submittingRef.current || !slug || !detailPerson) {
       return;
     }
+    submittingRef.current = true;
+    setSubmitting(true);
     setEditConflict(false);
     setEditNotice(null);
 
-    const body: Record<string, unknown> = {
-      communitySlug: slug,
-      personId: detailPerson.personId,
-      version: detailPerson.version,
-      givenName: editGivenName.trim(),
-      familyName: editFamilyName.trim(),
-      email: editEmail.trim() || null,
-      phone: editPhone.trim() || null,
-      dateOfBirth: editDob.trim() || null,
-    };
+    try {
+      const body: Record<string, unknown> = {
+        communitySlug: slug,
+        personId: detailPerson.personId,
+        version: detailPerson.version,
+        givenName: editGivenName.trim(),
+        familyName: editFamilyName.trim(),
+        email: editEmail.trim() || null,
+        phone: editPhone.trim() || null,
+        dateOfBirth: editDob.trim() || null,
+      };
 
-    const response = await post("/v1/people/update", body);
-    if (response === "unavailable") {
+      const response = await post("/v1/people/update", body);
+      if (response === "unavailable") {
+        setEditNotice("Unable to save changes");
+        return;
+      }
+
+      if (response.status === 409) {
+        setEditConflict(true);
+        return;
+      }
+
+      if (response.status === 404) {
+        setDetailNotFound(true);
+        setView("detail");
+        return;
+      }
+
+      if (response.status === 200) {
+        openDetail(detailPerson.personId);
+        return;
+      }
+
       setEditNotice("Unable to save changes");
-      return;
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
     }
-
-    if (response.status === 409) {
-      setEditConflict(true);
-      return;
-    }
-
-    if (response.status === 404) {
-      setDetailNotFound(true);
-      setView("detail");
-      return;
-    }
-
-    if (response.status === 200) {
-      openDetail(detailPerson.personId);
-      return;
-    }
-
-    setEditNotice("Unable to save changes");
   }
 
   function handleTabChange(tab: "adults" | "minors") {
     setActiveTab(tab);
     setCursor(undefined);
+    setSearchDraft("");
+    setSubmittedSearch("");
     setItems(null);
   }
 
@@ -437,7 +505,7 @@ export function AllContactsPage() {
     );
   }
 
-  if (!access.directoryEnabled || (!access.canView && !access.canManage)) {
+  if (!access.directoryEnabled || !access.canView) {
     return (
       <>
         <h1>All Contacts</h1>
@@ -565,7 +633,9 @@ export function AllContactsPage() {
           </div>
 
           <div>
-            <Button type="submit">Save contact</Button>
+            <Button type="submit" disabled={submitting}>
+              Save contact
+            </Button>
             <Button type="button" variant="outline" onClick={backToList}>
               Cancel
             </Button>
@@ -644,7 +714,9 @@ export function AllContactsPage() {
           </div>
 
           <div>
-            <Button type="submit">Save changes</Button>
+            <Button type="submit" disabled={submitting}>
+              Save changes
+            </Button>
             <Button type="button" variant="outline" onClick={() => setView("detail")}>
               Cancel
             </Button>
@@ -688,17 +760,19 @@ export function AllContactsPage() {
         ) : null}
       </div>
 
-      <form onSubmit={handleSearchSubmit}>
-        <label htmlFor="contact-search-input">
-          Search contacts
-          <Input
-            id="contact-search-input"
-            value={searchDraft}
-            onChange={(event) => setSearchDraft(event.target.value)}
-          />
-        </label>
-        <Button type="submit">Search</Button>
-      </form>
+      {activeTab === "adults" ? (
+        <form onSubmit={handleSearchSubmit}>
+          <label htmlFor="contact-search-input">
+            Search contacts
+            <Input
+              id="contact-search-input"
+              value={searchDraft}
+              onChange={(event) => setSearchDraft(event.target.value)}
+            />
+          </label>
+          <Button type="submit">Search</Button>
+        </form>
+      ) : null}
 
       {error ? (
         <Alert variant="destructive" live="assertive">

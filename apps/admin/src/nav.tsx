@@ -11,7 +11,7 @@ const entitlementMap: Readonly<Record<string, string>> = {
 export function AdminNav() {
   const { access } = usePeopleAccess();
   const entitledKeys: string[] = [];
-  if (access.directoryEnabled && (access.canView || access.canManage)) {
+  if (access.directoryEnabled && access.canView) {
     entitledKeys.push("people.directory");
   }
 
