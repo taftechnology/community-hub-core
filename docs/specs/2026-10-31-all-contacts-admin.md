@@ -2,7 +2,7 @@
 
 Slug: all-contacts-admin
 Status: approved (2026-10-31, Adnan Bin Hossen)
-Amended after approval (2026-10-31): the access route, the column-level `UPDATE` grant, `version` on reads, the audit row carrying the person id only, and the nav rule are recorded in plan Deviations 3–14. The approver confirms these amendments before merge.
+Amended after approval (2026-10-31): the access route, the column-level `UPDATE` grant, `version` on reads, the audit row carrying the person id only, and the nav rule are recorded in plan Deviations 3–14. Confirmed by the approver, Adnan Bin Hossen, 2026-10-31.
 Architecture refs: §6.3, §10, §12.1, §12.3, AGENTS.md §1 rules 2–5, plan key `people.directory`. Implements the `All Contacts admin` row, the second Phase 2 journey. Depends on `people-households`, `access-roles`, `usage-facts` and `Groups`, all on `main`. Staging stays parked.
 
 ## Problem

@@ -4,7 +4,7 @@ Spec: docs/specs/2026-10-31-all-contacts-admin.md
 
 Slug: all-contacts-admin
 Status: approved (2026-10-31, Adnan Bin Hossen)
-Amended after approval (2026-10-31): Deviations 3–14 and Task 8a were added during implementation. The approver confirms these amendments before merge.
+Amended after approval (2026-10-31): Deviations 3–14 and Task 8a were added during implementation. Confirmed by the approver, Adnan Bin Hossen, 2026-10-31.
 
 > **For agentic workers:** use superpowers:subagent-driven-development, test-driven-development inside each task, and verification-before-completion before reporting. One task = one commit. Reports go to `.superpowers/sdd/task-N-report.md`, never `docs/plans/` and never a commit.
 
