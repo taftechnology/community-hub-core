@@ -26,6 +26,10 @@
     "./ops": {
       "types": "./dist/ops.d.ts",
       "import": "./dist/ops.js"
+    },
+    "./people": {
+      "types": "./dist/people.d.ts",
+      "import": "./dist/people.js"
     }
   },
   "scripts": {
