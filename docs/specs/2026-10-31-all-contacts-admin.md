@@ -79,13 +79,13 @@ Possibly one index on `app.persons (org_id, community_id, family_name, given_nam
 
 All `POST`, JSON, `.strict()`, body under the 4096-byte cap, no personal data in paths or query strings (search terms travel in the body; they are not logged).
 
-| Route               | Permission                                           | Billing | Body (besides `communitySlug`)                                | Success                 |
-| ------------------- | ---------------------------------------------------- | ------- | ------------------------------------------------------------- | ----------------------- |
-| `/v1/people/list`   | `people.view`; `people.restricted.read` for `minors` | read    | `kind`, `search?`, `cursor?`, `limit?`                        | `{ items, nextCursor }` |
-| `/v1/people/read`   | `readPersonForActor`                                 | read    | `personId`                                                    | person detail           |
-| `/v1/people/create` | `people.manage`                                      | write   | `givenName`, `familyName`, `email?`, `phone?`, `dateOfBirth?` | `{ personId }`, 201     |
-| `/v1/people/update` | `people.manage`                                      | write   | `personId`, `version`, changed fields                         | new `version`           |
-| `/v1/people/access`    | any role in the community                     | read    | none                                                       | `{ directoryEnabled, canView, canManage, canReadMinors }` |
+| Route               | Permission                                           | Billing | Body (besides `communitySlug`)                                | Success                                                   |
+| ------------------- | ---------------------------------------------------- | ------- | ------------------------------------------------------------- | --------------------------------------------------------- |
+| `/v1/people/list`   | `people.view`; `people.restricted.read` for `minors` | read    | `kind`, `search?`, `cursor?`, `limit?`                        | `{ items, nextCursor }`                                   |
+| `/v1/people/read`   | `readPersonForActor`                                 | read    | `personId`                                                    | person detail                                             |
+| `/v1/people/create` | `people.manage`                                      | write   | `givenName`, `familyName`, `email?`, `phone?`, `dateOfBirth?` | `{ personId }`, 201                                       |
+| `/v1/people/update` | `people.manage`                                      | write   | `personId`, `version`, changed fields                         | new `version`                                             |
+| `/v1/people/access` | any role in the community                            | read    | none                                                          | `{ directoryEnabled, canView, canManage, canReadMinors }` |
 
 `/v1/people/access` (added after implementation found the admin had no way to learn the caller's own permissions or the community's entitlements without holding a user-admin permission) returns four booleans for the caller: whether the community has `people.directory`, and whether the caller holds `people.view`, `people.manage`, and `people.restricted.read`. It reports; it does not enforce. A caller with no role in the community, or an unknown slug, gets the same empty 403 as the other routes. It carries no personal data and nothing about other users.
 
