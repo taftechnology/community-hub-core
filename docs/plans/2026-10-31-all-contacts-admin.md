@@ -35,7 +35,12 @@ After Task 5 (the people functions and the access gate, before any route) the re
 
 1. **`app.persons` has no creation-time column.** The spec ordered the minors page by creation time then id. There is no such column and this chunk adds none. The minors page is keyset-paged on `id` alone. Adults keep family name, given name, id.
 2. **Adult read permission (owner decision, 2026-10-31).** Today `readPersonForActor` lets `safeguarding_officer` (which holds `people.restricted.read` and not `people.view`) read any person. In Task 5 an adult is readable with `people.view` **or** `people.restricted.read`, so `safeguarding_officer` keeps full read capability. `people.view` alone never opens a minor. This differs from the spec's literal "`people.view` for adults".
-3. The `decide` and `role.ts` permission lists are two copies of one list; both change in Task 1, and a test asserts they match the CHECK (Task 2).
+3. **Column-level UPDATE grant (checkpoint finding 3).** `updatePerson` needs `UPDATE` on `app.persons`, which `0005` had revoked. Migration `0015` must grant `UPDATE` only on the columns `updatePerson` writes (`given_name`, `family_name`, `email`, `email_bidx`, `phone`, `phone_bidx`, `date_of_birth`, `birthday_md`, `age_basis`, `version`), not table-wide, so `is_minor`, `household_id`, `org_id`, `community_id` and the `*_restricted` columns stay unwritable by `app`. `app` still lacks `DELETE`. The privileges test asserts column privileges. Recovery note: `REVOKE UPDATE (...) ON app.persons FROM app`.
+4. **`version` is returned (checkpoint finding 2).** `readPerson` and `PersonListItem` gain `version: number` (additive). The spec said `readPerson` stays as it is; this is the smallest change that lets the update flow work.
+5. **Update audit lists the person id only (checkpoint finding 4).** `appendAuditEvent` takes only action, purpose and target ids, so the spec's "changed field names" cannot be recorded without a larger audit-API change. The update audit row carries action `people.person.updated`, purpose and the person id, no values and no field names. An update with no changes is `invalid_input`: no version bump, no audit row.
+6. **Adult denial audit records `people.view` as the required permission** (an adult is readable with either key; the first-listed one is recorded).
+7. **`listPersons` minors mode refuses `includeRestricted` other than `true`** (`invalid_input`, no audit row, no rows), so an unprivileged call can never return blank rows or a count.
+8. The `decide` and `role.ts` permission lists are two copies of one list; both change in Task 1, and a test asserts they match the CHECK (Task 2).
 
 ## Security pins
 

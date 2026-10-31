@@ -44,7 +44,7 @@ An unprivileged caller therefore cannot learn whether a minor exists: the adult 
 
 **Create.** `POST /v1/people/create` needs `people.manage` and creates an **adult** (`isMinor` is not a request field; the route passes `false`). Fields: given name, family name, optional email, phone, date of birth. A duplicate email or phone (the partial unique blind-index) returns 409 with no hint which field matched. `createPerson` already writes its audit row and the `people.directory` usage fact; this is the first production caller.
 
-**Update.** `POST /v1/people/update` needs `people.manage`. It changes the same adult fields, recomputes the blind indexes, and writes one audit row listing field **names** changed, never values. Updating a minor returns 404 as above. Optimistic concurrency: the body carries the `version` read earlier; the update runs `where version = $1` and sets `version = version + 1`, so a mismatch returns 409 and nothing is written.
+**Update.** `POST /v1/people/update` needs `people.manage`. It changes the same adult fields, recomputes the blind indexes, and writes one audit row carrying the person id only, never values or field names (the audit API records action, purpose and target ids; see the plan's Deviation 5). Updating a minor returns 404 as above. Optimistic concurrency: the body carries the `version` read earlier; the update runs `where version = $1` and sets `version = version + 1`, so a mismatch returns 409 and nothing is written.
 
 **Billing.** `list` and `read` are `billing: "read"`. `create` and `update` are `billing: "write"`, so a read-only organisation gets the existing 402.
 
@@ -56,12 +56,14 @@ An unprivileged caller therefore cannot learn whether a minor exists: the adult 
 
 ## Data
 
-No new tables. One expand-only migration, `0015`, does two things:
+No new tables. One expand-only migration, `0015`, does three things:
 
 1. Widens the permission CHECK in `modules/core/access/db/schema.ts` (line ~153) to admit `people.view` and `people.manage`.
 2. Adds `version integer not null default 1` to `app.persons`. `app.persons` has neither `version` nor `updated_at` today. The default fills existing rows, so it is backward compatible with the deployed service. The column is classified `internal` in `dataClasses` in `modules/core/people/module.manifest.ts` and in `modules/core/people/manifest.test.ts`, in the migration task.
 
-Recovery note for the plan: the CHECK is restored once no grant uses the new keys; the `version` column is left in place (dropping it is a later contract PR).
+3. Grants `UPDATE` on `app.persons` to `app` for the columns `updatePerson` writes only (`given_name`, `family_name`, `email`, `email_bidx`, `phone`, `phone_bidx`, `date_of_birth`, `birthday_md`, `age_basis`, `version`). `0005` had revoked `UPDATE`; `is_minor`, `household_id`, scope ids and ciphertext name columns stay unwritable. `app` still lacks `DELETE`.
+
+Recovery note for the plan: the CHECK is restored once no grant uses the new keys; the column `UPDATE` grant is revoked (`REVOKE UPDATE (...) ON app.persons FROM app`); the `version` column is left in place (dropping it is a later contract PR).
 
 Possibly one index on `app.persons (org_id, community_id, family_name, given_name, id)` for the keyset page, with a lower-cased prefix variant if the query needs it, and one for the minors page on `(org_id, community_id, created_at, id)` if `persons` has such a column. The plan confirms with `EXPLAIN` on synthetic data; any index starts with `org_id`. Other columns involved are already classified: `given_name`, `family_name` clear (adults only), `is_minor` clear; `email`, `phone`, `date_of_birth` and minors' names are confidential or restricted and are decrypted only by the existing functions.
 
