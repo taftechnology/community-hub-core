@@ -152,6 +152,37 @@ export function AllContactsPage() {
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
 
+  const listHeadingRef = useRef<HTMLHeadingElement>(null);
+  const detailHeadingRef = useRef<HTMLHeadingElement>(null);
+  const addHeadingRef = useRef<HTMLHeadingElement>(null);
+  const editHeadingRef = useRef<HTMLHeadingElement>(null);
+  const addAlertRef = useRef<HTMLDivElement>(null);
+  const editAlertRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (view === "list") {
+      listHeadingRef.current?.focus();
+    } else if (view === "detail") {
+      detailHeadingRef.current?.focus();
+    } else if (view === "add") {
+      addHeadingRef.current?.focus();
+    } else if (view === "edit") {
+      editHeadingRef.current?.focus();
+    }
+  }, [view]);
+
+  useEffect(() => {
+    if (addNotice) {
+      addAlertRef.current?.focus();
+    }
+  }, [addNotice]);
+
+  useEffect(() => {
+    if (editNotice || editConflict) {
+      editAlertRef.current?.focus();
+    }
+  }, [editNotice, editConflict]);
+
   const generation = useRef(0);
   const detailGeneration = useRef(0);
   const isReadOnly = status?.state === "none" || status?.state === "read_only" || paymentRequired;
@@ -518,7 +549,9 @@ export function AllContactsPage() {
     return (
       <>
         <h1>All Contacts</h1>
-        <h2>Contact Details</h2>
+        <h2 ref={detailHeadingRef} tabIndex={-1}>
+          Contact Details
+        </h2>
 
         <Button type="button" onClick={backToList}>
           Back to list
@@ -577,10 +610,12 @@ export function AllContactsPage() {
     return (
       <>
         <h1>All Contacts</h1>
-        <h2>Add Contact</h2>
+        <h2 ref={addHeadingRef} tabIndex={-1}>
+          Add Contact
+        </h2>
 
         {addNotice ? (
-          <Alert variant="destructive" live="polite">
+          <Alert ref={addAlertRef} tabIndex={-1} variant="destructive" role="alert">
             <span>{addNotice}</span>
           </Alert>
         ) : null}
@@ -649,10 +684,12 @@ export function AllContactsPage() {
     return (
       <>
         <h1>All Contacts</h1>
-        <h2>Edit Contact</h2>
+        <h2 ref={editHeadingRef} tabIndex={-1}>
+          Edit Contact
+        </h2>
 
         {editConflict ? (
-          <Alert live="polite">
+          <Alert ref={editAlertRef} tabIndex={-1} role="alert">
             <span>A conflict occurred while saving. Please reload.</span>
             <Button type="button" onClick={reloadDetail}>
               Reload
@@ -661,7 +698,7 @@ export function AllContactsPage() {
         ) : null}
 
         {editNotice ? (
-          <Alert variant="destructive" live="polite">
+          <Alert ref={editAlertRef} tabIndex={-1} variant="destructive" role="alert">
             <span>{editNotice}</span>
           </Alert>
         ) : null}
@@ -728,7 +765,9 @@ export function AllContactsPage() {
 
   return (
     <>
-      <h1>All Contacts</h1>
+      <h1 ref={listHeadingRef} tabIndex={-1}>
+        All Contacts
+      </h1>
 
       {isReadOnly ? (
         <Alert live="polite">
@@ -737,11 +776,10 @@ export function AllContactsPage() {
         </Alert>
       ) : null}
 
-      <div role="tablist" aria-label="Contact types">
+      <div role="group" aria-label="Contact types">
         <Button
           type="button"
-          role="tab"
-          aria-selected={activeTab === "adults"}
+          aria-pressed={activeTab === "adults"}
           variant={activeTab === "adults" ? "default" : "outline"}
           onClick={() => handleTabChange("adults")}
         >
@@ -750,8 +788,7 @@ export function AllContactsPage() {
         {access.canReadMinors ? (
           <Button
             type="button"
-            role="tab"
-            aria-selected={activeTab === "minors"}
+            aria-pressed={activeTab === "minors"}
             variant={activeTab === "minors" ? "default" : "outline"}
             onClick={() => handleTabChange("minors")}
           >
@@ -807,7 +844,7 @@ export function AllContactsPage() {
               </div>
             ) : null}
 
-            <Table>
+            <Table aria-label="Contacts">
               <TableHeader>
                 <TableRow>
                   <TableHead scope="col">Given name</TableHead>
@@ -821,7 +858,12 @@ export function AllContactsPage() {
                     <TableCell>{person.givenName}</TableCell>
                     <TableCell>{person.familyName}</TableCell>
                     <TableCell>
-                      <Button type="button" variant="outline" onClick={() => openDetail(person.id)}>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        aria-label={`View ${person.givenName} ${person.familyName}`}
+                        onClick={() => openDetail(person.id)}
+                      >
                         View
                       </Button>
                     </TableCell>

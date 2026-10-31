@@ -321,10 +321,11 @@ describe("All Contacts Screen", () => {
     // Add contact button must NOT appear
     expect(screen.queryByRole("button", { name: "Add contact" })).toBeNull();
     // Minors tab must NOT appear
+    expect(screen.queryByRole("button", { name: "Minors" })).toBeNull();
     expect(screen.queryByRole("tab", { name: "Minors" })).toBeNull();
 
     // In detail view, Edit contact button must NOT appear
-    fireEvent.click(screen.getByRole("button", { name: "View" }));
+    fireEvent.click(screen.getByRole("button", { name: /^View/ }));
     expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Edit contact" })).toBeNull();
   });
@@ -405,7 +406,7 @@ describe("All Contacts Screen", () => {
     expect(screen.queryByRole("button", { name: "Add contact" })).toBeNull();
 
     // View detail
-    fireEvent.click(screen.getByRole("button", { name: "View" }));
+    fireEvent.click(screen.getByRole("button", { name: /^View/ }));
     expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
     // Edit button must be hidden when read_only
     expect(screen.queryByRole("button", { name: "Edit contact" })).toBeNull();
@@ -554,7 +555,7 @@ describe("All Contacts Screen", () => {
     }
 
     // Now test edit form with a personal name
-    fireEvent.click(screen.getByRole("button", { name: "View" }));
+    fireEvent.click(screen.getByRole("button", { name: /^View/ }));
     expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
     const editBtn = await screen.findByRole("button", { name: "Edit contact" });
     fireEvent.click(editBtn);
@@ -673,11 +674,11 @@ describe("All Contacts Screen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Set" }));
 
     await screen.findByText("No contacts yet");
-    expect(screen.queryByRole("tab", { name: "Minors" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Minors" })).toBeNull();
     expect(screen.queryByText("Minors")).toBeNull();
   });
 
-  it("renders Minors tab and fetches minors when canReadMinors is true", async () => {
+  it("renders Minors switch and fetches minors when canReadMinors is true", async () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);
     let capturedKind: string | undefined;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
@@ -730,17 +731,18 @@ describe("All Contacts Screen", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Set" }));
 
-    const adultsTab = await screen.findByRole("tab", { name: "Adults" });
-    const minorsTab = await screen.findByRole("tab", { name: "Minors" });
-    expect(adultsTab.getAttribute("aria-selected")).toBe("true");
-    expect(minorsTab.getAttribute("aria-selected")).toBe("false");
+    const group = await screen.findByRole("group", { name: "Contact types" });
+    const adultsBtn = within(group).getByRole("button", { name: "Adults" });
+    const minorsBtn = within(group).getByRole("button", { name: "Minors" });
+    expect(adultsBtn.getAttribute("aria-pressed")).toBe("true");
+    expect(minorsBtn.getAttribute("aria-pressed")).toBe("false");
 
-    fireEvent.click(minorsTab);
+    fireEvent.click(minorsBtn);
 
     expect(await screen.findByText("Child")).toBeTruthy();
     expect(capturedKind).toBe("minors");
-    expect(adultsTab.getAttribute("aria-selected")).toBe("false");
-    expect(minorsTab.getAttribute("aria-selected")).toBe("true");
+    expect(adultsBtn.getAttribute("aria-pressed")).toBe("false");
+    expect(minorsBtn.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("empty state shows 'No contacts yet' and Add button only with people.manage (Pin 15)", async () => {
@@ -949,7 +951,7 @@ describe("All Contacts Screen", () => {
     const searchInput = await screen.findByRole("textbox", { name: "Search contacts" });
     fireEvent.change(searchInput, { target: { value: "some-search" } });
 
-    const minorsTab = screen.getByRole("tab", { name: "Minors" });
+    const minorsTab = screen.getByRole("button", { name: "Minors" });
     fireEvent.click(minorsTab);
 
     // Minors tab must NOT render the search box
@@ -1027,7 +1029,7 @@ describe("All Contacts Screen", () => {
     expect(await screen.findByText("AliceFromA")).toBeTruthy();
 
     // Switch to Minors tab
-    const minorsTab = screen.getByRole("tab", { name: "Minors" });
+    const minorsTab = screen.getByRole("button", { name: "Minors" });
     fireEvent.click(minorsTab);
 
     // Switch community to B
@@ -1122,7 +1124,7 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Set" }));
 
     expect(await screen.findByText("Ada")).toBeTruthy();
-    const viewButton = screen.getByRole("button", { name: "View" });
+    const viewButton = screen.getByRole("button", { name: /^View/ });
     fireEvent.click(viewButton);
 
     expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
@@ -1173,7 +1175,7 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Set" }));
 
     expect(await screen.findByText("Ada")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "View" }));
+    fireEvent.click(screen.getByRole("button", { name: /^View/ }));
 
     expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Edit contact" })).toBeNull();
@@ -1294,7 +1296,7 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Set" }));
 
     expect(await screen.findByText("Ada")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "View" }));
+    fireEvent.click(screen.getByRole("button", { name: /^View/ }));
 
     expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
     const editButton = screen.getByRole("button", { name: "Edit contact" });
@@ -1368,7 +1370,7 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Set" }));
 
     expect(await screen.findByText("Ada")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "View" }));
+    fireEvent.click(screen.getByRole("button", { name: /^View/ }));
 
     expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Edit contact" }));
@@ -1424,7 +1426,7 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Set" }));
 
     expect(await screen.findByText("Ada")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "View" }));
+    fireEvent.click(screen.getByRole("button", { name: /^View/ }));
 
     expect(await screen.findByText("Contact not found")).toBeTruthy();
     const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
@@ -1489,13 +1491,13 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Set" }));
 
-    const minorsTab = await screen.findByRole("tab", { name: "Minors" });
+    const minorsTab = await screen.findByRole("button", { name: "Minors" });
     fireEvent.click(minorsTab);
 
     expect(await screen.findByText("Child")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Add contact" })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "View" }));
+    fireEvent.click(screen.getByRole("button", { name: /^View/ }));
 
     expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Edit contact" })).toBeNull();
@@ -1612,7 +1614,7 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Set" }));
 
     expect(await screen.findByText("Ada")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "View" }));
+    fireEvent.click(screen.getByRole("button", { name: /^View/ }));
 
     const editButton = await screen.findByRole("button", { name: "Edit contact" });
     fireEvent.click(editButton);
@@ -1634,5 +1636,204 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
       }),
     );
     await act(async () => {});
+  });
+
+  it("gives every row action an accessible name including the contact's name", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi(
+      { directoryEnabled: true, canView: true, canManage: true, canReadMinors: false },
+      { items: [adultPerson], nextCursor: null },
+    );
+
+    await showContacts();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    expect(await screen.findByText("Ada")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "View Ada Lovelace" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "View" })).toBeNull();
+  });
+
+  it("gives the table an accessible name", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi(
+      { directoryEnabled: true, canView: true, canManage: true, canReadMinors: false },
+      { items: [adultPerson], nextCursor: null },
+    );
+
+    await showContacts();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    expect(await screen.findByRole("table", { name: "Contacts" })).toBeTruthy();
+  });
+
+  it("moves focus to the heading after successful Add save", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      if (path === "/v1/people/access") {
+        return new Response(
+          JSON.stringify({
+            directoryEnabled: true,
+            canView: true,
+            canManage: true,
+            canReadMinors: false,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (path === "/v1/people/list") {
+        return new Response(JSON.stringify({ items: [], nextCursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (path === "/v1/people/create") {
+        return new Response(JSON.stringify({ personId: "created-1" }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    await showContacts();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const addButton = await screen.findByRole("button", { name: "Add contact" });
+    fireEvent.click(addButton);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Given name" }), {
+      target: { value: "Ada" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Family name" }), {
+      target: { value: "Lovelace" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save contact" }));
+
+    await act(async () => {});
+
+    const heading = await screen.findByRole("heading", { name: "All Contacts", level: 1 });
+    expect(document.activeElement).toBe(heading);
+  });
+
+  it("moves focus to the heading after successful Edit save", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      if (path === "/v1/people/access") {
+        return new Response(
+          JSON.stringify({
+            directoryEnabled: true,
+            canView: true,
+            canManage: true,
+            canReadMinors: false,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (path === "/v1/people/list") {
+        return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (path === "/v1/people/read") {
+        return new Response(JSON.stringify(adultDetail), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (path === "/v1/people/update") {
+        return new Response(JSON.stringify({ version: 4 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    await showContacts();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    expect(await screen.findByText("Ada")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^View/ }));
+
+    const editButton = await screen.findByRole("button", { name: "Edit contact" });
+    fireEvent.click(editButton);
+
+    const givenNameInput = screen.getByRole("textbox", { name: "Given name" });
+    fireEvent.change(givenNameInput, { target: { value: "Augusta" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await act(async () => {});
+
+    const heading = await screen.findByRole("heading", { name: "Contact Details", level: 2 });
+    expect(document.activeElement).toBe(heading);
+  });
+
+  it("moves focus to the alert on save error", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      if (path === "/v1/people/access") {
+        return new Response(
+          JSON.stringify({
+            directoryEnabled: true,
+            canView: true,
+            canManage: true,
+            canReadMinors: false,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (path === "/v1/people/list") {
+        return new Response(JSON.stringify({ items: [], nextCursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (path === "/v1/people/create") {
+        return new Response(null, { status: 500 });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    await showContacts();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const addButton = await screen.findByRole("button", { name: "Add contact" });
+    fireEvent.click(addButton);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Given name" }), {
+      target: { value: "Ada" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Family name" }), {
+      target: { value: "Lovelace" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save contact" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(document.activeElement).toBe(alert);
   });
 });
