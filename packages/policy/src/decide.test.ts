@@ -23,16 +23,23 @@ function actor(
 }
 
 describe("catalogue", () => {
-  it("lists the seven permissions in order", () => {
+  it("lists the nine permissions in order", () => {
     expect(catalogue()).toEqual([
       "access.users.view",
       "access.users.manage",
       "access.roles.view",
       "access.roles.manage",
+      "people.view",
+      "people.manage",
       "people.restricted.read",
       "entitlements.view",
       "entitlements.manage",
     ]);
+  });
+
+  it("contains people.view and people.manage", () => {
+    expect(catalogue()).toContain("people.view");
+    expect(catalogue()).toContain("people.manage");
   });
 });
 
@@ -71,6 +78,31 @@ describe("bundle", () => {
     expect(bundle("volunteer_coordinator")).toEqual(["access.users.view"]);
     expect(bundle("content_editor")).toEqual([]);
     expect(bundle("member")).toEqual([]);
+  });
+
+  it("grants people.view and people.manage to org_owner, org_admin, community_admin", () => {
+    for (const role of ["org_owner", "org_admin", "community_admin"]) {
+      const perms = bundle(role) ?? [];
+      expect(perms).toContain("people.view");
+      expect(perms).toContain("people.manage");
+    }
+  });
+
+  it("does not grant people.view or people.manage to other built-in roles", () => {
+    for (const role of [
+      "staff",
+      "member",
+      "safeguarding_officer",
+      "org_billing",
+      "org_auditor",
+      "finance",
+      "volunteer_coordinator",
+      "content_editor",
+    ]) {
+      const perms = bundle(role) ?? [];
+      expect(perms).not.toContain("people.view");
+      expect(perms).not.toContain("people.manage");
+    }
   });
 });
 
@@ -178,6 +210,21 @@ describe("decide", () => {
         personScoped: false,
       }),
     ).toBe(true);
+  });
+
+  it("allows custom roles to select either people.view or people.manage", () => {
+    for (const permission of ["people.view", "people.manage"]) {
+      expect(
+        decide({
+          permission,
+          organisationRoleKeys: [],
+          communityRoleKeys: [],
+          customPermissions: [permission],
+          guardianView: false,
+          personScoped: false,
+        }),
+      ).toBe(true);
+    }
   });
 
   it("allows a person-scoped guardian the restricted read and not role management", () => {

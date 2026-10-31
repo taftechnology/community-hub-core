@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { catalogue } from "@community-hub/policy";
 
 import { AccessError } from "./error.js";
-import { assertCustomRoleCapacity, parseCustomRoleKey, parsePermissionList } from "./role.js";
+import {
+  assertCustomRoleCapacity,
+  CATALOGUE_PERMISSIONS,
+  parseCustomRoleKey,
+  parsePermissionList,
+} from "./role.js";
 
 describe("custom role keys", () => {
   it("accepts a lower-case key", () => {
@@ -22,10 +28,18 @@ describe("custom role keys", () => {
 });
 
 describe("permission lists", () => {
-  it("returns a catalogue subset", () => {
+  it("equals the policy catalogue in order", () => {
+    expect(CATALOGUE_PERMISSIONS).toEqual(catalogue());
+  });
+
+  it("returns a catalogue subset including people.view and people.manage", () => {
     expect(parsePermissionList(["access.users.view", "people.restricted.read"])).toEqual([
       "access.users.view",
       "people.restricted.read",
+    ]);
+    expect(parsePermissionList(["people.view", "people.manage"])).toEqual([
+      "people.view",
+      "people.manage",
     ]);
   });
 
