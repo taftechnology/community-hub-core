@@ -193,26 +193,43 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
     return scope;
   }
 
-  async function list(request: Request, context: RouteContext): Promise<Response> {
+  type Prepared<T> =
+    | { ok: true; body: T; actor: { userId: string }; scope: Scope }
+    | { ok: false; response: Response };
+
+  async function prepare<T extends { communitySlug: string }>(
+    request: Request,
+    context: RouteContext,
+    schema: { safeParse(data: unknown): { success: true; data: T } | { success: false } },
+  ): Promise<Prepared<T>> {
     const hidden = foreignHost(request);
     if (hidden !== undefined) {
-      return finish(request, hidden);
+      return { ok: false, response: finish(request, hidden) };
     }
-    const body = await parse(request, listPeopleBody);
+    const body = await parse(request, schema);
     if (body === undefined) {
-      return finish(request, empty(400));
+      return { ok: false, response: finish(request, empty(400)) };
     }
     const actor = await sessionUser(request);
     if (actor instanceof Response) {
-      return finish(request, actor);
+      return { ok: false, response: finish(request, actor) };
     }
     const scope = await communityScope(body.communitySlug, context, actor.userId);
     if (scope === null) {
-      return finish(request, empty(403));
+      return { ok: false, response: finish(request, empty(403)) };
     }
     if (scope instanceof Response) {
-      return finish(request, scope);
+      return { ok: false, response: finish(request, scope) };
     }
+    return { ok: true, body, actor, scope };
+  }
+
+  async function list(request: Request, context: RouteContext): Promise<Response> {
+    const prep = await prepare(request, context, listPeopleBody);
+    if (!prep.ok) {
+      return prep.response;
+    }
+    const { body, actor, scope } = prep;
 
     return deps.checkout("app", (sql) =>
       withAppTransaction(sql, scope, async (tx) => {
@@ -275,25 +292,11 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
   }
 
   async function read(request: Request, context: RouteContext): Promise<Response> {
-    const hidden = foreignHost(request);
-    if (hidden !== undefined) {
-      return finish(request, hidden);
+    const prep = await prepare(request, context, readPersonBody);
+    if (!prep.ok) {
+      return prep.response;
     }
-    const body = await parse(request, readPersonBody);
-    if (body === undefined) {
-      return finish(request, empty(400));
-    }
-    const actor = await sessionUser(request);
-    if (actor instanceof Response) {
-      return finish(request, actor);
-    }
-    const scope = await communityScope(body.communitySlug, context, actor.userId);
-    if (scope === null) {
-      return finish(request, empty(403));
-    }
-    if (scope instanceof Response) {
-      return finish(request, scope);
-    }
+    const { body, actor, scope } = prep;
 
     return deps.checkout("app", (sql) =>
       withAppTransaction(sql, scope, async (tx) => {
@@ -330,25 +333,11 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
   }
 
   async function create(request: Request, context: RouteContext): Promise<Response> {
-    const hidden = foreignHost(request);
-    if (hidden !== undefined) {
-      return finish(request, hidden);
+    const prep = await prepare(request, context, createPersonBody);
+    if (!prep.ok) {
+      return prep.response;
     }
-    const body = await parse(request, createPersonBody);
-    if (body === undefined) {
-      return finish(request, empty(400));
-    }
-    const actor = await sessionUser(request);
-    if (actor instanceof Response) {
-      return finish(request, actor);
-    }
-    const scope = await communityScope(body.communitySlug, context, actor.userId);
-    if (scope === null) {
-      return finish(request, empty(403));
-    }
-    if (scope instanceof Response) {
-      return finish(request, scope);
-    }
+    const { body, actor, scope } = prep;
 
     return deps.checkout("app", (sql) =>
       withAppTransaction(sql, scope, async (tx) => {
@@ -391,25 +380,11 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
   }
 
   async function update(request: Request, context: RouteContext): Promise<Response> {
-    const hidden = foreignHost(request);
-    if (hidden !== undefined) {
-      return finish(request, hidden);
+    const prep = await prepare(request, context, updatePersonBody);
+    if (!prep.ok) {
+      return prep.response;
     }
-    const body = await parse(request, updatePersonBody);
-    if (body === undefined) {
-      return finish(request, empty(400));
-    }
-    const actor = await sessionUser(request);
-    if (actor instanceof Response) {
-      return finish(request, actor);
-    }
-    const scope = await communityScope(body.communitySlug, context, actor.userId);
-    if (scope === null) {
-      return finish(request, empty(403));
-    }
-    if (scope instanceof Response) {
-      return finish(request, scope);
-    }
+    const { body, actor, scope } = prep;
 
     return deps.checkout("app", (sql) =>
       withAppTransaction(sql, scope, async (tx) => {
