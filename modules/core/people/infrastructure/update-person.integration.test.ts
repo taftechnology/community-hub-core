@@ -30,7 +30,6 @@ const RUNTIME = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../../../packages/db/test/.runtime.json",
 );
-const SOURCE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "update-person.ts");
 
 const KEY_ARN = [
   "arn",
@@ -330,9 +329,6 @@ describe("updatePerson", () => {
   });
 
   it("enforces optimistic concurrency: stale version yields conflict, row and audit unchanged (pin 9)", async () => {
-    const source = readFileSync(SOURCE, "utf8");
-    expect(source).toMatch(/version\s*=\s*\$|version\s*=\s*\$\{input\.version\}/);
-
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
     const app = createPlaintextAppSql(roleUrl(runtime, "app"));
@@ -416,10 +412,6 @@ describe("updatePerson", () => {
   });
 
   it("returns not-found for minor id, cross-community id, and cross-organisation id (pin 10)", async () => {
-    const source = readFileSync(SOURCE, "utf8");
-    expect(source).toMatch(/org_id\s*=\s*current_setting\(\s*'app\.org_id'\s*\)::uuid/);
-    expect(source).toMatch(/community_id\s*=\s*current_setting\(\s*'app\.community_id'\s*\)::uuid/);
-
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
     const app = createPlaintextAppSql(roleUrl(runtime, "app"));
@@ -620,6 +612,203 @@ describe("updatePerson", () => {
       const auditDump = JSON.stringify(allAuditRows);
       expect(auditDump).not.toContain("NewName");
       expect(auditDump).not.toContain("new.secret@example.com");
+    } finally {
+      await cleanScope(directSql, scope);
+      await directSql.end({ timeout: 1 });
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
+
+  it("throws invalid_input when changes object is empty, with no version bump and no audit row (Deviation 5)", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const kms = createLocalKmsPort();
+    const scope = await createScope(platform);
+    const actorUserId = newId();
+
+    try {
+      let personId = "";
+      await withAppTransaction(
+        app,
+        { orgId: scope.orgId, communityId: scope.communityId },
+        async (tx) => {
+          await withRequest({ requestId: REQUEST_ID }, async () => {
+            const created = await createPerson(tx, kms, KEY_ARN, {
+              now: NOW,
+              declaredAdult: true,
+              householdId: null,
+              dateOfBirth: null,
+              givenName: "Initial",
+              familyName: "Contact",
+              email: "initial@example.com",
+              phone: "+61412345678",
+              actorUserId,
+            });
+            personId = created.personId;
+          });
+        },
+      );
+
+      // Call updatePerson with empty changes: {}
+      await withAppTransaction(
+        app,
+        { orgId: scope.orgId, communityId: scope.communityId },
+        async (tx) => {
+          await withRequest({ requestId: REQUEST_ID }, async () => {
+            await expect(
+              updatePerson(tx, kms, KEY_ARN, {
+                personId,
+                version: 1,
+                changes: {},
+                actorUserId,
+              }),
+            ).rejects.toMatchObject({ code: "invalid_input" });
+          });
+        },
+      );
+
+      // Verify row version unchanged
+      const dbRow = (
+        await directSql<{ version: number }[]>`
+          select version from app.persons where id = ${personId}::uuid
+        `
+      )[0];
+      expect(dbRow?.version).toBe(1);
+
+      // Verify no audit row for update
+      const updateAudits = await directSql<{ action: string }[]>`
+        select action from app.audit_events
+        where org_id = ${scope.orgId}::uuid
+          and action = 'people.person.updated'
+      `;
+      expect(updateAudits).toHaveLength(0);
+    } finally {
+      await cleanScope(directSql, scope);
+      await directSql.end({ timeout: 1 });
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
+
+  it("enforces optimistic concurrency under concurrent race: second transaction blocks on row lock and throws conflict (pin 9)", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const kms = createLocalKmsPort();
+
+    const scope = await createScope(platform);
+    const actorUserId = newId();
+
+    try {
+      let personId = "";
+      await withAppTransaction(
+        app,
+        { orgId: scope.orgId, communityId: scope.communityId },
+        async (tx) => {
+          await withRequest({ requestId: REQUEST_ID }, async () => {
+            const created = await createPerson(tx, kms, KEY_ARN, {
+              now: NOW,
+              declaredAdult: true,
+              householdId: null,
+              dateOfBirth: null,
+              givenName: "Race",
+              familyName: "Person",
+              email: "race@example.com",
+              phone: "+61412345678",
+              actorUserId,
+            });
+            personId = created.personId;
+          });
+        },
+      );
+
+      let releaseTxA: () => void;
+      const txAHold = new Promise<void>((resolve) => {
+        releaseTxA = resolve;
+      });
+
+      let txAReachedUpdate: () => void;
+      const txAUpdated = new Promise<void>((resolve) => {
+        txAReachedUpdate = resolve;
+      });
+
+      // Transaction A starts, updates person, and holds transaction open
+      const txAPromise = withAppTransaction(
+        app,
+        { orgId: scope.orgId, communityId: scope.communityId },
+        async (txA) => {
+          await withRequest({ requestId: REQUEST_ID }, async () => {
+            const resA = await updatePerson(txA, kms, KEY_ARN, {
+              personId,
+              version: 1,
+              changes: { givenName: "Alice" },
+              actorUserId,
+            });
+            expect(resA.version).toBe(2);
+            txAReachedUpdate();
+            await txAHold;
+          });
+        },
+      );
+
+      // Wait until Tx A has completed its update and acquired the row lock
+      await txAUpdated;
+
+      // Transaction B starts concurrently with same initial version 1
+      let bError: unknown = null;
+      const txBPromise = withAppTransaction(
+        app,
+        { orgId: scope.orgId, communityId: scope.communityId },
+        async (txB) => {
+          await withRequest({ requestId: REQUEST_ID }, async () => {
+            await updatePerson(txB, kms, KEY_ARN, {
+              personId,
+              version: 1,
+              changes: { givenName: "Bob" },
+              actorUserId,
+            });
+          });
+        },
+      ).catch((err) => {
+        bError = err;
+      });
+
+      // Wait until Tx B is blocked on the row lock held by Tx A
+      while (true) {
+        const waiting = await directSql<{ waiting: boolean }[]>`
+          select true as waiting
+          from pg_locks l
+          join pg_stat_activity a on a.pid = l.pid
+          where not l.granted
+            and a.query like '%update app.persons%'
+        `;
+        if (waiting.length > 0) {
+          break;
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      // Now release Tx A to commit
+      releaseTxA!();
+      await txAPromise;
+
+      // Now Tx B will unblock, evaluate its version predicate on the newly committed row, and fail
+      await txBPromise;
+
+      expect(bError).toMatchObject({ code: "conflict" });
+
+      // Verify row state: Alice's update won, version is 2
+      const finalRow = (
+        await directSql<{ version: number; given_name: string }[]>`
+          select version, given_name from app.persons where id = ${personId}::uuid
+        `
+      )[0];
+      expect(finalRow?.version).toBe(2);
+      expect(finalRow?.given_name).toBe("Alice");
     } finally {
       await cleanScope(directSql, scope);
       await directSql.end({ timeout: 1 });

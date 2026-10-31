@@ -130,7 +130,11 @@ export async function updatePerson(
   ) {
     throw new PeopleError("invalid_input");
   }
-  if (typeof input.changes !== "object" || input.changes === null) {
+  if (
+    typeof input.changes !== "object" ||
+    input.changes === null ||
+    Object.keys(input.changes).length === 0
+  ) {
     throw new PeopleError("invalid_input");
   }
 

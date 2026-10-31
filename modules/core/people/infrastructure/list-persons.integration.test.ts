@@ -251,10 +251,6 @@ describe("listPersons", () => {
   });
 
   it("enforces organisation and community scope on list (pin 10)", async () => {
-    const source = readFileSync(SOURCE, "utf8");
-    expect(source).toMatch(/org_id\s*=\s*current_setting\(\s*'app\.org_id'\s*\)::uuid/);
-    expect(source).toMatch(/community_id\s*=\s*current_setting\(\s*'app\.community_id'\s*\)::uuid/);
-
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
     const app = createPlaintextAppSql(roleUrl(runtime, "app"));
