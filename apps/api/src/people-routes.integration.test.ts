@@ -176,6 +176,7 @@ describe("people routes real-database integration (finding 3)", () => {
     app = createPlaintextAppSql(roleUrl(runtime, "app"));
     kms = createLocalKmsPort();
     mail = new MemoryMail();
+    await identity`delete from identity.identity_keys`;
 
     server = startServer({
       env: envFor(PORT),
@@ -218,7 +219,7 @@ describe("people routes real-database integration (finding 3)", () => {
   });
 
   it("exercises people list and read routes across organisations and roles", async () => {
-    // 1. Two organisations: Org A and Org B
+    // 1. Organisations: Org A and Org B with people.directory entitlement, Org C without
     const orgIdA = newId();
     const communityIdA = newId();
     const slugA = `synth-a-${orgIdA.slice(0, 8)}`;
@@ -227,18 +228,24 @@ describe("people routes real-database integration (finding 3)", () => {
     const communityIdB = newId();
     const slugB = `synth-b-${orgIdB.slice(0, 8)}`;
 
+    const orgIdC = newId();
+    const communityIdC = newId();
+    const slugC = `synth-c-${orgIdC.slice(0, 8)}`;
+
     await platform.begin(async (tx) => {
       await tx`
         insert into platform.organisations (id, slug, region, kind)
         values
           (${orgIdA}::uuid, ${slugA}, 'au', 'implicit'),
-          (${orgIdB}::uuid, ${slugB}, 'au', 'implicit')
+          (${orgIdB}::uuid, ${slugB}, 'au', 'implicit'),
+          (${orgIdC}::uuid, ${slugC}, 'au', 'implicit')
       `;
       await tx`
         insert into platform.communities (id, organisation_id, slug, region)
         values
           (${communityIdA}::uuid, ${orgIdA}::uuid, ${slugA}, 'au'),
-          (${communityIdB}::uuid, ${orgIdB}::uuid, ${slugB}, 'au')
+          (${communityIdB}::uuid, ${orgIdB}::uuid, ${slugB}, 'au'),
+          (${communityIdC}::uuid, ${orgIdC}::uuid, ${slugC}, 'au')
       `;
     });
 
@@ -293,6 +300,46 @@ describe("people routes real-database integration (finding 3)", () => {
       }),
     );
 
+    const manageRoleSession = await signIn(`manage-role-${orgIdA.slice(0, 8)}@example.test`);
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: orgIdA, communityId: communityIdA }, async (tx) => {
+        const role = await createCustomRole(tx, {
+          now,
+          key: "people_manager",
+          permissions: ["people.manage"],
+          actorUserId: ownerASession.userId,
+        });
+        await grantRole(tx, {
+          now,
+          userId: manageRoleSession.userId,
+          roleKey: null,
+          customRoleId: role.customRoleId,
+          actorUserId: ownerASession.userId,
+        });
+      }),
+    );
+
+    const restrictedRoleSession = await signIn(
+      `restricted-role-${orgIdA.slice(0, 8)}@example.test`,
+    );
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: orgIdA, communityId: communityIdA }, async (tx) => {
+        const role = await createCustomRole(tx, {
+          now,
+          key: "people_safeguarder",
+          permissions: ["people.restricted.read"],
+          actorUserId: ownerASession.userId,
+        });
+        await grantRole(tx, {
+          now,
+          userId: restrictedRoleSession.userId,
+          roleKey: null,
+          customRoleId: role.customRoleId,
+          actorUserId: ownerASession.userId,
+        });
+      }),
+    );
+
     const memberSession = await signIn(`member-${orgIdA.slice(0, 8)}@example.test`);
     await withRequest({ requestId: REQUEST_ID }, () =>
       withAppTransaction(app, { orgId: orgIdA, communityId: communityIdA }, async (tx) => {
@@ -315,6 +362,17 @@ describe("people routes real-database integration (finding 3)", () => {
           now,
           userId: ownerBSession.userId,
           actorUserId: ownerBSession.userId,
+        }),
+      ),
+    );
+
+    const ownerCSession = await signIn(`owner-c-${orgIdC.slice(0, 8)}@example.test`);
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: orgIdC, communityId: communityIdC }, (tx) =>
+        bootstrapOwner(tx, {
+          now,
+          userId: ownerCSession.userId,
+          actorUserId: ownerCSession.userId,
         }),
       ),
     );
@@ -680,5 +738,152 @@ describe("people routes real-database integration (finding 3)", () => {
         expect(auditStr).not.toContain(term);
       }
     }
-  });
+
+    // 12. Assert: POST /v1/people/access route (pins 16, 17, 18)
+    const auditCountBefore = await withAppTransaction(
+      app,
+      { orgId: orgIdA, communityId: communityIdA },
+      async (tx) => {
+        const rows = await tx<
+          { count: string }[]
+        >`select count(*)::text as count from app.audit_events`;
+        return Number(rows[0]?.count ?? 0);
+      },
+    );
+
+    // - owner of Org A: 200 with all 4 true
+    const resAccessOwnerA = await post(
+      "/v1/people/access",
+      { communitySlug: slugA },
+      ownerASession.accessToken,
+    );
+    expect(resAccessOwnerA.status).toBe(200);
+    expect(await resAccessOwnerA.json()).toEqual({
+      directoryEnabled: true,
+      canView: true,
+      canManage: true,
+      canReadMinors: true,
+    });
+
+    // - people.view only role: 200 with only canView true (pin 16)
+    const resAccessView = await post(
+      "/v1/people/access",
+      { communitySlug: slugA },
+      customRoleSession.accessToken,
+    );
+    expect(resAccessView.status).toBe(200);
+    expect(await resAccessView.json()).toEqual({
+      directoryEnabled: true,
+      canView: true,
+      canManage: false,
+      canReadMinors: false,
+    });
+
+    // - people.manage only role: 200 with only canManage true (pin 16)
+    const resAccessManage = await post(
+      "/v1/people/access",
+      { communitySlug: slugA },
+      manageRoleSession.accessToken,
+    );
+    expect(resAccessManage.status).toBe(200);
+    expect(await resAccessManage.json()).toEqual({
+      directoryEnabled: true,
+      canView: false,
+      canManage: true,
+      canReadMinors: false,
+    });
+
+    // - people.restricted.read only role: 200 with only canReadMinors true (pin 16)
+    const resAccessRestricted = await post(
+      "/v1/people/access",
+      { communitySlug: slugA },
+      restrictedRoleSession.accessToken,
+    );
+    expect(resAccessRestricted.status).toBe(200);
+    expect(await resAccessRestricted.json()).toEqual({
+      directoryEnabled: true,
+      canView: false,
+      canManage: false,
+      canReadMinors: true,
+    });
+
+    // - member role (no people permissions): 200 with all false
+    const resAccessMember = await post(
+      "/v1/people/access",
+      { communitySlug: slugA },
+      memberSession.accessToken,
+    );
+    expect(resAccessMember.status).toBe(200);
+    expect(await resAccessMember.json()).toEqual({
+      directoryEnabled: true,
+      canView: false,
+      canManage: false,
+      canReadMinors: false,
+    });
+
+    // - community with no entitlement (Org C): directoryEnabled is false (pin 18)
+    const resAccessNoEntitlement = await post(
+      "/v1/people/access",
+      { communitySlug: slugC },
+      ownerCSession.accessToken,
+    );
+    expect(resAccessNoEntitlement.status).toBe(200);
+    expect(await resAccessNoEntitlement.json()).toEqual({
+      directoryEnabled: false,
+      canView: true,
+      canManage: true,
+      canReadMinors: true,
+    });
+
+    // - stranger: 403 empty body
+    const resAccessStranger = await post(
+      "/v1/people/access",
+      { communitySlug: slugA },
+      strangerSession.accessToken,
+    );
+    expect(resAccessStranger.status).toBe(403);
+    expect(await resAccessStranger.text()).toBe("");
+
+    // - org B's owner on org A's slug: 403 empty body
+    const resAccessOwnerBOnA = await post(
+      "/v1/people/access",
+      { communitySlug: slugA },
+      ownerBSession.accessToken,
+    );
+    expect(resAccessOwnerBOnA.status).toBe(403);
+    expect(await resAccessOwnerBOnA.text()).toBe("");
+
+    // - unknown slug: 403 empty body identical to stranger (pin 17)
+    const resAccessUnknown = await post(
+      "/v1/people/access",
+      { communitySlug: "nonexistent-unknown-slug" },
+      strangerSession.accessToken,
+    );
+    expect(resAccessUnknown.status).toBe(403);
+    expect(await resAccessUnknown.text()).toBe("");
+    expect(resAccessUnknown.headers.get("content-length")).toBe(
+      resAccessStranger.headers.get("content-length"),
+    );
+
+    // - strict body (.strict(), pin 2)
+    const resAccessStrict = await post(
+      "/v1/people/access",
+      { communitySlug: slugA, extraField: "denied" },
+      ownerASession.accessToken,
+    );
+    expect(resAccessStrict.status).toBe(400);
+
+    // - verify no audit rows for people access route
+    const auditCountAfter = await withAppTransaction(
+      app,
+      { orgId: orgIdA, communityId: communityIdA },
+      async (tx) => {
+        const rows = await tx<
+          { count: string }[]
+        >`select count(*)::text as count from app.audit_events`;
+        return Number(rows[0]?.count ?? 0);
+      },
+    );
+    expect(auditCountAfter).toBe(auditCountBefore);
+  }, 60_000);
 });

@@ -1,7 +1,13 @@
-import { AccessError, holdsPermission, readPersonForActor } from "@community-hub/access";
+import {
+  AccessError,
+  holdsAnyGrant,
+  holdsPermission,
+  readPersonForActor,
+} from "@community-hub/access";
 import {
   createPersonBody,
   listPeopleBody,
+  peopleAccessBody,
   readPersonBody,
   updatePersonBody,
 } from "@community-hub/contracts/people";
@@ -19,7 +25,7 @@ import { findCommunityBySlug } from "@community-hub/tenancy";
 
 import { guardWrite } from "./billing-guard.js";
 import type { Checkout } from "./checkout.js";
-import { guardEntitlement } from "./entitlement-guard.js";
+import { checkEntitlement, guardEntitlement } from "./entitlement-guard.js";
 import type { GateRoute, RouteContext } from "./gate.js";
 import type { BillingLogFields } from "./index.js";
 
@@ -458,6 +464,63 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
     );
   }
 
+  async function access(request: Request): Promise<Response> {
+    const hidden = foreignHost(request);
+    if (hidden !== undefined) {
+      return finish(request, hidden);
+    }
+    const body = await parse(request, peopleAccessBody);
+    if (body === undefined) {
+      return finish(request, empty(400));
+    }
+    const actor = await sessionUser(request);
+    if (actor instanceof Response) {
+      return finish(request, actor);
+    }
+    const found = await deps.checkout("platform", (sql) =>
+      findCommunityBySlug(sql, body.communitySlug),
+    );
+    if (found === null) {
+      return finish(request, empty(403));
+    }
+    const scope = { orgId: found.organisationId, communityId: found.id };
+
+    const perms = await deps.checkout("app", (sql) =>
+      withAppTransaction(sql, scope, async (tx) => {
+        const hasRole = await holdsAnyGrant(tx, actor.userId);
+        if (!hasRole) {
+          return null;
+        }
+        const [canView, canManage, canReadMinors] = await Promise.all([
+          holdsPermission(tx, actor.userId, VIEW),
+          holdsPermission(tx, actor.userId, MANAGE),
+          holdsPermission(tx, actor.userId, RESTRICTED),
+        ]);
+        return { canView, canManage, canReadMinors };
+      }),
+    );
+
+    if (perms === null) {
+      return finish(request, empty(403));
+    }
+
+    const directoryEnabled = await checkEntitlement(
+      { checkout: deps.checkout, now: deps.now, guardLog: deps.guardLog },
+      scope,
+      DIRECTORY_ENTITLEMENT,
+    );
+
+    return finish(
+      request,
+      Response.json({
+        directoryEnabled,
+        canView: perms.canView,
+        canManage: perms.canManage,
+        canReadMinors: perms.canReadMinors,
+      }),
+    );
+  }
+
   return [
     {
       method: "POST",
@@ -486,6 +549,13 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
       surface: "tenant",
       billing: "write",
       handle: update,
+    },
+    {
+      method: "POST",
+      pattern: "/v1/people/access",
+      surface: "tenant",
+      billing: "read",
+      handle: access,
     },
   ];
 }

@@ -40,21 +40,29 @@ export async function isEntitlementEnabled(
   }
 }
 
+export async function checkEntitlement(
+  deps: EntitlementGuardDeps,
+  scope: CommunityScope,
+  key: string,
+): Promise<boolean> {
+  try {
+    return await deps.checkout("platform", (sql) =>
+      isEntitlementEnabled(sql, scope, key, deps.now(), deps.guardLog),
+    );
+  } catch (error) {
+    deps.guardLog?.("entitlement_guard_failed", { errorClass: errorClassOf(error) });
+    return false;
+  }
+}
+
 export async function guardEntitlement(
   deps: EntitlementGuardDeps,
   scope: CommunityScope,
   key: string,
 ): Promise<Response | null> {
-  try {
-    const enabled = await deps.checkout("platform", (sql) =>
-      isEntitlementEnabled(sql, scope, key, deps.now(), deps.guardLog),
-    );
-    if (!enabled) {
-      return new Response(null, { status: 403 });
-    }
-    return null;
-  } catch (error) {
-    deps.guardLog?.("entitlement_guard_failed", { errorClass: errorClassOf(error) });
+  const enabled = await checkEntitlement(deps, scope, key);
+  if (!enabled) {
     return new Response(null, { status: 403 });
   }
+  return null;
 }

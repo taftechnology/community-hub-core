@@ -1082,4 +1082,167 @@ describe("people routes (list and read)", () => {
       }
     });
   });
+
+  describe("POST /v1/people/access (Task 8a, pins 16-18)", () => {
+    it("returns 200 with all 4 booleans when caller holds all permissions and directory entitlement is enabled", async () => {
+      access.holdsAnyGrant.mockResolvedValueOnce(true);
+      access.holdsPermission.mockResolvedValue(true);
+      entitlements.readSnapshot.mockResolvedValueOnce(createSnapshot());
+
+      const res = await call("/v1/people/access", { communitySlug: "parish" });
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data).toEqual({
+        directoryEnabled: true,
+        canView: true,
+        canManage: true,
+        canReadMinors: true,
+      });
+      expect(db.appendAuditEvent).not.toHaveBeenCalled();
+    });
+
+    it("evaluates canView, canManage, canReadMinors independently based on holdsPermission (pin 16)", async () => {
+      // 1. Only people.view
+      access.holdsAnyGrant.mockResolvedValue(true);
+      access.holdsPermission.mockImplementation(
+        async (_tx: unknown, _userId: string, perm: string) => {
+          return perm === "people.view";
+        },
+      );
+      const resView = await call("/v1/people/access", { communitySlug: "parish" });
+      expect(resView.status).toBe(200);
+      expect(await resView.json()).toEqual({
+        directoryEnabled: true,
+        canView: true,
+        canManage: false,
+        canReadMinors: false,
+      });
+
+      // 2. Only people.manage
+      access.holdsPermission.mockImplementation(
+        async (_tx: unknown, _userId: string, perm: string) => {
+          return perm === "people.manage";
+        },
+      );
+      const resManage = await call("/v1/people/access", { communitySlug: "parish" });
+      expect(resManage.status).toBe(200);
+      expect(await resManage.json()).toEqual({
+        directoryEnabled: true,
+        canView: false,
+        canManage: true,
+        canReadMinors: false,
+      });
+
+      // 3. Only people.restricted.read
+      access.holdsPermission.mockImplementation(
+        async (_tx: unknown, _userId: string, perm: string) => {
+          return perm === "people.restricted.read";
+        },
+      );
+      const resRestricted = await call("/v1/people/access", { communitySlug: "parish" });
+      expect(resRestricted.status).toBe(200);
+      expect(await resRestricted.json()).toEqual({
+        directoryEnabled: true,
+        canView: false,
+        canManage: false,
+        canReadMinors: true,
+      });
+    });
+
+    it("returns 200 with all canX false for a member role with no people permissions", async () => {
+      access.holdsAnyGrant.mockResolvedValueOnce(true);
+      access.holdsPermission.mockResolvedValue(false);
+
+      const res = await call("/v1/people/access", { communitySlug: "parish" });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        directoryEnabled: true,
+        canView: false,
+        canManage: false,
+        canReadMinors: false,
+      });
+    });
+
+    it("returns directoryEnabled: false when community does not have entitlement (pin 18)", async () => {
+      access.holdsAnyGrant.mockResolvedValueOnce(true);
+      access.holdsPermission.mockResolvedValue(true);
+      entitlements.readSnapshot.mockResolvedValueOnce(
+        createSnapshot({
+          planEntitlements: [],
+          allocations: [],
+        }),
+      );
+
+      const res = await call("/v1/people/access", { communitySlug: "parish" });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        directoryEnabled: false,
+        canView: true,
+        canManage: true,
+        canReadMinors: true,
+      });
+    });
+
+    it("answers stranger and unknown slug with identical empty 403 (pin 17)", async () => {
+      // Unknown slug
+      tenancy.findCommunityBySlug.mockResolvedValueOnce(null);
+      const resUnknown = await call("/v1/people/access", { communitySlug: "unknown-slug" });
+      expect(resUnknown.status).toBe(403);
+      const bodyUnknown = await resUnknown.text();
+      expect(bodyUnknown).toBe("");
+
+      // Stranger (holdsAnyGrant returns false)
+      access.holdsAnyGrant.mockResolvedValueOnce(false);
+      const resStranger = await call("/v1/people/access", { communitySlug: "parish" });
+      expect(resStranger.status).toBe(403);
+      const bodyStranger = await resStranger.text();
+      expect(bodyStranger).toBe("");
+
+      expect(bodyUnknown).toBe(bodyStranger);
+      expect(resUnknown.headers.get("content-length")).toBe(
+        resStranger.headers.get("content-length"),
+      );
+      expect(db.appendAuditEvent).not.toHaveBeenCalled();
+    });
+
+    it("returns 400 when body carries extra fields (.strict(), pin 2)", async () => {
+      const resExtra = await call("/v1/people/access", {
+        communitySlug: "parish",
+        extraField: true,
+      });
+      expect(resExtra.status).toBe(400);
+
+      const resRestricted = await call("/v1/people/access", {
+        communitySlug: "parish",
+        includeRestricted: true,
+      });
+      expect(resRestricted.status).toBe(400);
+    });
+
+    it("works for a read-only organisation (billing: read)", async () => {
+      billing.assertWritable.mockRejectedValue(new BillingReadOnly("read_only"));
+      access.holdsAnyGrant.mockResolvedValueOnce(true);
+      access.holdsPermission.mockResolvedValue(true);
+
+      const res = await call("/v1/people/access", { communitySlug: "parish" });
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as { directoryEnabled: boolean };
+      expect(data.directoryEnabled).toBe(true);
+    });
+
+    it("never logs caller permissions, user id or community internal ids", async () => {
+      access.holdsAnyGrant.mockResolvedValueOnce(true);
+      access.holdsPermission.mockResolvedValue(true);
+
+      const res = await call("/v1/people/access", { communitySlug: "parish" });
+      expect(res.status).toBe(200);
+
+      const logged = JSON.stringify(logCalls);
+      expect(logged).not.toContain(USER);
+      expect(logged).not.toContain(ORG);
+      expect(logged).not.toContain(COMMUNITY);
+      expect(logged).not.toContain("canReadMinors");
+      expect(logged).not.toContain("people.view");
+    });
+  });
 });

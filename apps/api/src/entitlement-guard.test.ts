@@ -10,6 +10,7 @@ vi.mock("@community-hub/entitlements", () => ({
 }));
 
 import {
+  checkEntitlement,
   guardEntitlement,
   isEntitlementEnabled,
   type CommunityScope,
@@ -292,6 +293,49 @@ describe("entitlement-guard", () => {
       expect(resB).not.toBeNull();
       expect(resB?.status).toBe(403);
       expect(await resB?.text()).toBe("");
+    });
+  });
+
+  describe("checkEntitlement", () => {
+    it("returns true when key is enabled and checks out platform role", async () => {
+      entitlements.readSnapshot.mockResolvedValueOnce(createSnapshot());
+      const deps = makeDeps();
+      const scope: CommunityScope = { orgId: ORG, communityId: COMMUNITY_A };
+
+      const result = await checkEntitlement(deps, scope, "people.directory");
+
+      expect(result).toBe(true);
+      expect(checkoutRoles).toEqual(["platform"]);
+    });
+
+    it("returns false when disabled or absent", async () => {
+      entitlements.readSnapshot.mockResolvedValueOnce(
+        createSnapshot({
+          toggles: [{ key: "people.directory", enabled: false }],
+        }),
+      );
+      const deps = makeDeps();
+      const scope: CommunityScope = { orgId: ORG, communityId: COMMUNITY_A };
+
+      const result = await checkEntitlement(deps, scope, "people.directory");
+
+      expect(result).toBe(false);
+    });
+
+    it("returns false when checkout rejects and logs failure", async () => {
+      const guardLog = vi.fn();
+      const deps = makeDeps({
+        checkout: vi.fn().mockRejectedValueOnce(new Error("checkout boom")),
+        guardLog,
+      });
+      const scope: CommunityScope = { orgId: ORG, communityId: COMMUNITY_A };
+
+      const result = await checkEntitlement(deps, scope, "people.directory");
+
+      expect(result).toBe(false);
+      expect(guardLog).toHaveBeenCalledWith("entitlement_guard_failed", {
+        errorClass: "Error",
+      });
     });
   });
 });

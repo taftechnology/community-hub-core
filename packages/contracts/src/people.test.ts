@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { createPersonBody, listPeopleBody, readPersonBody, updatePersonBody } from "./people.js";
+import {
+  createPersonBody,
+  listPeopleBody,
+  peopleAccessBody,
+  readPersonBody,
+  updatePersonBody,
+} from "./people.js";
 
 const VALID_UUID = "00000000-0000-4000-8000-000000000001";
 
@@ -50,10 +56,21 @@ describe("people contract schemas (pin 2)", () => {
         email: null,
       }).success,
     ).toBe(true);
+    expect(
+      peopleAccessBody.safeParse({
+        communitySlug: "parish-au",
+      }).success,
+    ).toBe(true);
   });
 
   it("strictly rejects forbidden fields: includeRestricted, isMinor, orgId, communityId (pin 2)", () => {
-    for (const schema of [listPeopleBody, readPersonBody, createPersonBody, updatePersonBody]) {
+    for (const schema of [
+      listPeopleBody,
+      readPersonBody,
+      createPersonBody,
+      updatePersonBody,
+      peopleAccessBody,
+    ]) {
       const base =
         schema === listPeopleBody
           ? { communitySlug: "slug" }
@@ -61,12 +78,15 @@ describe("people contract schemas (pin 2)", () => {
             ? { communitySlug: "slug", personId: VALID_UUID }
             : schema === createPersonBody
               ? { communitySlug: "slug", givenName: "A", familyName: "B" }
-              : { communitySlug: "slug", personId: VALID_UUID, version: 1 };
+              : schema === updatePersonBody
+                ? { communitySlug: "slug", personId: VALID_UUID, version: 1 }
+                : { communitySlug: "slug" };
 
       expect(schema.safeParse({ ...base, includeRestricted: true }).success).toBe(false);
       expect(schema.safeParse({ ...base, isMinor: false }).success).toBe(false);
       expect(schema.safeParse({ ...base, orgId: VALID_UUID }).success).toBe(false);
       expect(schema.safeParse({ ...base, communityId: VALID_UUID }).success).toBe(false);
+      expect(schema.safeParse({ ...base, extra: "forbidden" }).success).toBe(false);
     }
   });
 
