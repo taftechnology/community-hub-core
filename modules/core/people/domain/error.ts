@@ -12,7 +12,8 @@ export type PeopleErrorCode =
   | "duplicate_tag"
   | "duplicate_guardian_link"
   | "not_found"
-  | "invalid_input";
+  | "invalid_input"
+  | "conflict";
 
 export class PeopleError extends Error {
   readonly code: PeopleErrorCode;

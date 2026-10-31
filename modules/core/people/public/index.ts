@@ -10,11 +10,19 @@ defineAuditAction("people.person.read");
 defineAuditPurpose("people.person.read");
 defineAuditAction("people.person.listed_minors");
 defineAuditPurpose("people.person.listed_minors");
+defineAuditAction("people.person.updated");
+defineAuditPurpose("people.person.updated");
 
 export { PeopleError } from "../domain/error.js";
 export { ensureCommunityKey, ensureOrganisationKey } from "../infrastructure/keys.js";
 export { createHousehold, readHousehold } from "../infrastructure/household.js";
 export { createPerson, readPerson } from "../infrastructure/person.js";
+export {
+  updatePerson,
+  type UpdatePersonChanges,
+  type UpdatePersonInput,
+  type UpdatePersonResult,
+} from "../infrastructure/update-person.js";
 export {
   listPersons,
   type ListPersonsInput,

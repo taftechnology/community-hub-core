@@ -42,6 +42,7 @@ const PEOPLE_TABLES = [
 ] as const;
 
 const DELETABLE = new Set(["guardian_links", "person_tag_links"]);
+const UPDATABLE = new Set(["persons"]);
 
 type Privilege = "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "TRUNCATE";
 
@@ -93,7 +94,7 @@ describe("people table privileges", () => {
       expect(granted).toEqual(
         Object.fromEntries(
           PEOPLE_TABLES.flatMap((table) => [
-            [`${table} update`, false],
+            [`${table} update`, UPDATABLE.has(table)],
             [`${table} delete`, DELETABLE.has(table)],
             [`${table} truncate`, false],
           ]),
