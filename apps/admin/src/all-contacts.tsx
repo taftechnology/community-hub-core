@@ -243,7 +243,6 @@ export function AllContactsPage() {
       isCurrent: () => boolean,
     ) => {
       setLoading(true);
-      setError(false);
 
       const body: Record<string, unknown> = {
         communitySlug,
@@ -303,11 +302,20 @@ export function AllContactsPage() {
 
   const reload = useCallback(() => {
     const mine = ++generation.current;
-    if (!slug) {
+    if (!slug || !access.directoryEnabled || !access.canView) {
       return;
     }
+    setError(false);
     void fetchContacts(slug, activeTab, submittedSearch, cursor, () => generation.current === mine);
-  }, [slug, activeTab, submittedSearch, cursor, fetchContacts]);
+  }, [
+    slug,
+    activeTab,
+    submittedSearch,
+    cursor,
+    fetchContacts,
+    access.directoryEnabled,
+    access.canView,
+  ]);
 
   const previousSlugRef = useRef(slug);
   useEffect(() => {
@@ -335,10 +343,15 @@ export function AllContactsPage() {
       setEditNotice(null);
       setPaymentRequired(false);
       setError(false);
+      submittingRef.current = false;
+      setSubmitting(false);
       if (slug && access.directoryEnabled && access.canView) {
         const mine = ++generation.current;
         void fetchContacts(slug, "adults", "", undefined, () => generation.current === mine);
       }
+      return;
+    }
+    if (!access.directoryEnabled || !access.canView) {
       return;
     }
     reload();
@@ -414,25 +427,26 @@ export function AllContactsPage() {
   }
 
   function openAdd() {
-    setAddForm(initialFormData);
     setAddNotice(null);
     setView("add");
   }
 
   function openEdit(person: PersonDetail) {
-    setEditForm({
-      givenName: person.givenName,
-      familyName: person.familyName,
-      email: person.email ?? "",
-      phone: person.phone ?? "",
-      dateOfBirth: person.dateOfBirth ?? "",
-    });
+    setEditForm((prev) => ({
+      givenName: prev.givenName || person.givenName,
+      familyName: prev.familyName || person.familyName,
+      email: prev.email || person.email || "",
+      phone: prev.phone || person.phone || "",
+      dateOfBirth: prev.dateOfBirth || person.dateOfBirth || "",
+    }));
     setEditConflict(false);
     setEditNotice(null);
     setView("edit");
   }
 
   function backToList() {
+    setAddForm(initialFormData);
+    setEditForm(initialFormData);
     setView("list");
     setSelectedPersonId(null);
     setDetailPerson(null);
