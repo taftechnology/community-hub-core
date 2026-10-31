@@ -9,6 +9,7 @@ import { loadActor } from "./grants.js";
 const DENIED = "access.permission.denied";
 const RESTRICTED = "people.restricted.read";
 const VIEW = "people.view";
+const ADULT_VIEW_PURPOSE = "people.person.view";
 
 type ReadPerson = typeof readPerson;
 
@@ -65,7 +66,7 @@ export async function readPersonForActor(
         actorKind: "user",
         actorId: actorUserId,
         action: DENIED,
-        purpose: RESTRICTED,
+        purpose: ADULT_VIEW_PURPOSE,
         targetIds: [personId],
       });
       throw new AccessError("forbidden");

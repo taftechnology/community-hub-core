@@ -363,6 +363,82 @@ describe("restricted read for an actor", () => {
     });
   });
 
+  it("refuses a member and staff reading an adult with forbidden and audits people.person.view (finding 1, 6)", async () => {
+    await withParish("read-adult-denied", async (tx, kms) => {
+      const owner = newId();
+      const member = newId();
+      const staffUser = newId();
+      await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      await grantRole(tx, {
+        now: NOW,
+        userId: member,
+        roleKey: "member",
+        customRoleId: null,
+        actorUserId: owner,
+      });
+      await grantRole(tx, {
+        now: NOW,
+        userId: staffUser,
+        roleKey: "staff",
+        customRoleId: null,
+        actorUserId: owner,
+      });
+
+      const household = await createHousehold(tx, kms, KEY_ARN, {
+        now: NOW,
+        label: null,
+        actorUserId: null,
+      });
+      const adult = await createPerson(tx, kms, KEY_ARN, {
+        now: NOW,
+        declaredAdult: true,
+        householdId: household.householdId,
+        dateOfBirth: "1985-05-05",
+        givenName: "Arthur",
+        familyName: "Pendelton",
+        email: null,
+        phone: null,
+        actorUserId: null,
+      });
+      const adultId = adult.personId;
+
+      // 1. member is refused an adult
+      await expect(
+        readPersonForActor(tx, kms, KEY_ARN, { personId: adultId, actorUserId: member }),
+      ).rejects.toMatchObject({ code: "forbidden" });
+
+      const memberDenials = await tx<{ purpose: string; target_ids: string[] }[]>`
+        select purpose, target_ids::text[] as target_ids
+        from app.audit_events
+        where action = 'access.permission.denied'
+          and actor_id = ${member}::uuid
+      `;
+      expect(memberDenials).toEqual([{ purpose: "people.person.view", target_ids: [adultId] }]);
+
+      // 2. staff is refused an adult
+      await expect(
+        readPersonForActor(tx, kms, KEY_ARN, { personId: adultId, actorUserId: staffUser }),
+      ).rejects.toMatchObject({ code: "forbidden" });
+
+      const staffDenials = await tx<{ purpose: string; target_ids: string[] }[]>`
+        select purpose, target_ids::text[] as target_ids
+        from app.audit_events
+        where action = 'access.permission.denied'
+          and actor_id = ${staffUser}::uuid
+      `;
+      expect(staffDenials).toEqual([{ purpose: "people.person.view", target_ids: [adultId] }]);
+
+      // No read rows
+      const reads = await tx<{ n: number }[]>`
+        select count(*)::int as n
+        from app.audit_events
+        where action = 'people.person.read'
+          and ${adultId}::uuid = any(target_ids)
+      `;
+      expect(reads).toEqual([{ n: 0 }]);
+    });
+  });
+
   it("unknown id and cross-community id throw forbidden with identical denial audit (pin 8)", async () => {
     let crossCommunityPersonId = "";
     await withTwoCommunities(
