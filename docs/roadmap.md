@@ -338,7 +338,7 @@ Guardian read over HTTP waits for a later chunk (Family Records or the member po
 
 The `/v1/people/access` route is people-specific; whether to provide a generic capabilities route across all modules is an owner decision before the next module needs nav gating.
 
-The admin All Contacts screen is larger than the minimal target (`apps/admin/src/all-contacts.tsx` is 769 lines, with `all-contacts.test.tsx` adding 1,009 lines; 1,928 changed lines across `apps/admin` from `git diff --stat origin/main -- apps/admin`).
+The admin All Contacts screen is larger than the minimal target: `apps/admin/src/all-contacts.tsx` is 753 lines and `all-contacts.test.tsx` is 2,715 lines; `git diff --shortstat origin/main..HEAD -- apps/admin packages/ui` shows 4,215 insertions across 10 files. The whole chunk is about 2,580 non-test source lines against the roughly 800-line target, shipped as one pull request by the owner's decision.
 
 ---
 
