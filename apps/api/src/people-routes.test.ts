@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { withRequest } from "@community-hub/kernel";
 import { BillingReadOnly } from "@community-hub/billing";
 import { AccessError } from "@community-hub/access";
+import { PeopleError } from "@community-hub/people";
 import type { EntitlementSnapshot } from "@community-hub/entitlements-eval";
 
 const identity = vi.hoisted(() => ({
@@ -24,6 +25,8 @@ const billing = vi.hoisted(() => ({
 
 const people = vi.hoisted(() => ({
   listPersons: vi.fn(),
+  createPerson: vi.fn(),
+  updatePerson: vi.fn(),
 }));
 
 const entitlements = vi.hoisted(() => ({
@@ -69,6 +72,8 @@ vi.mock("@community-hub/people", async () => {
   return {
     ...actual,
     listPersons: people.listPersons,
+    createPerson: people.createPerson,
+    updatePerson: people.updatePerson,
   };
 });
 
@@ -183,6 +188,8 @@ describe("people routes (list and read)", () => {
     access.readPersonForActor.mockReset();
     billing.assertWritable.mockReset();
     people.listPersons.mockReset();
+    people.createPerson.mockReset();
+    people.updatePerson.mockReset();
     entitlements.readSnapshot.mockReset();
     db.withAppTransaction.mockReset();
     db.appendAuditEvent.mockReset();
@@ -237,25 +244,50 @@ describe("people routes (list and read)", () => {
         isMinor: false,
       });
       expect(resRead.status).toBe(400);
+
+      const resCreate = await call("/v1/people/create", {
+        communitySlug: "parish",
+        givenName: "Jane",
+        familyName: "Doe",
+        isMinor: false,
+      });
+      expect(resCreate.status).toBe(400);
+
+      const resUpdate = await call("/v1/people/update", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+        version: 1,
+        includeRestricted: true,
+      });
+      expect(resUpdate.status).toBe(400);
     });
 
     it("returns 404 when community slug is not found", async () => {
       tenancy.findCommunityBySlug.mockResolvedValueOnce(null);
       const res = await call("/v1/people/list", { communitySlug: "nonexistent" });
       expect(res.status).toBe(404);
+
+      tenancy.findCommunityBySlug.mockResolvedValueOnce(null);
+      const resCreate = await call("/v1/people/create", {
+        communitySlug: "nonexistent",
+        givenName: "Jane",
+        familyName: "Doe",
+      });
+      expect(resCreate.status).toBe(404);
     });
 
-    it("refuses 403 when entitlement people.directory is disabled (pin 12)", async () => {
+    it("refuses 403 when entitlement people.directory is disabled across all 4 routes (pin 12)", async () => {
+      // 1. List
       entitlements.readSnapshot.mockResolvedValueOnce(
         createSnapshot({ toggles: [{ key: "people.directory", enabled: false }] }),
       );
-
       const resList = await call("/v1/people/list", { communitySlug: "parish" });
       expect(resList.status).toBe(403);
       expect(await resList.text()).toBe("");
       expect(people.listPersons).not.toHaveBeenCalled();
       expect(db.appendAuditEvent).not.toHaveBeenCalled();
 
+      // 2. Read
       entitlements.readSnapshot.mockResolvedValueOnce(
         createSnapshot({ toggles: [{ key: "people.directory", enabled: false }] }),
       );
@@ -266,9 +298,36 @@ describe("people routes (list and read)", () => {
       expect(resRead.status).toBe(403);
       expect(await resRead.text()).toBe("");
       expect(access.readPersonForActor).not.toHaveBeenCalled();
+
+      // 3. Create
+      entitlements.readSnapshot.mockResolvedValueOnce(
+        createSnapshot({ toggles: [{ key: "people.directory", enabled: false }] }),
+      );
+      const resCreate = await call("/v1/people/create", {
+        communitySlug: "parish",
+        givenName: "Jane",
+        familyName: "Doe",
+      });
+      expect(resCreate.status).toBe(403);
+      expect(await resCreate.text()).toBe("");
+      expect(people.createPerson).not.toHaveBeenCalled();
+
+      // 4. Update
+      entitlements.readSnapshot.mockResolvedValueOnce(
+        createSnapshot({ toggles: [{ key: "people.directory", enabled: false }] }),
+      );
+      const resUpdate = await call("/v1/people/update", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+        version: 1,
+        givenName: "Janet",
+      });
+      expect(resUpdate.status).toBe(403);
+      expect(await resUpdate.text()).toBe("");
+      expect(people.updatePerson).not.toHaveBeenCalled();
     });
 
-    it("allows list and read under billing read-only organisation (billing: read) (pin 11)", async () => {
+    it("allows list and read (billing: read) but gives 402 on create and update (billing: write) for read-only org (pin 11)", async () => {
       billing.assertWritable.mockRejectedValue(new BillingReadOnly("read_only"));
       people.listPersons.mockResolvedValueOnce({ items: [], nextCursor: null });
       access.readPersonForActor.mockResolvedValueOnce({
@@ -286,6 +345,25 @@ describe("people routes (list and read)", () => {
         personId: PERSON_ID,
       });
       expect(resRead.status).toBe(200);
+
+      const resCreate = await call("/v1/people/create", {
+        communitySlug: "parish",
+        givenName: "Jane",
+        familyName: "Doe",
+      });
+      expect(resCreate.status).toBe(402);
+      expect(await resCreate.text()).toBe("");
+      expect(people.createPerson).not.toHaveBeenCalled();
+
+      const resUpdate = await call("/v1/people/update", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+        version: 1,
+        givenName: "Janet",
+      });
+      expect(resUpdate.status).toBe(402);
+      expect(await resUpdate.text()).toBe("");
+      expect(people.updatePerson).not.toHaveBeenCalled();
     });
 
     it("enforces tenant boundary by scoping transaction to slug-resolved organisation and community", async () => {
@@ -570,6 +648,245 @@ describe("people routes (list and read)", () => {
       expect(absentBody).toBe("");
       expect(crossBody).toBe(absentBody);
       expect(minorBody).toBe(absentBody);
+    });
+  });
+
+  describe("POST /v1/people/create", () => {
+    it("creates an adult and returns 201 with personId, passing declaredAdult=true (pin 5)", async () => {
+      const NEW_PERSON_ID = "00000000-0000-4000-8000-000000000055";
+      people.createPerson.mockResolvedValueOnce({
+        personId: NEW_PERSON_ID,
+        isMinor: false,
+      });
+
+      const res = await call("/v1/people/create", {
+        communitySlug: "parish",
+        givenName: "Arthur",
+        familyName: "Dent",
+        email: "arthur@example.com",
+        phone: "+61400000000",
+        dateOfBirth: "1980-01-01",
+      });
+
+      expect(res.status).toBe(201);
+      expect(await res.json()).toEqual({ personId: NEW_PERSON_ID });
+      expect(access.holdsPermission).toHaveBeenCalledWith(expect.anything(), USER, "people.manage");
+      expect(people.createPerson).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        {
+          now: FIXED_NOW,
+          declaredAdult: true,
+          householdId: null,
+          dateOfBirth: "1980-01-01",
+          givenName: "Arthur",
+          familyName: "Dent",
+          email: "arthur@example.com",
+          phone: "+61400000000",
+          actorUserId: USER,
+        },
+      );
+    });
+
+    it("refuses create with 403 and people.permission.denied audit when actor lacks people.manage (pin 5)", async () => {
+      access.holdsPermission.mockImplementation(
+        async (_tx: unknown, _userId: string, perm: string) => perm !== "people.manage",
+      );
+
+      const res = await call("/v1/people/create", {
+        communitySlug: "parish",
+        givenName: "Arthur",
+        familyName: "Dent",
+      });
+
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+      expect(people.createPerson).not.toHaveBeenCalled();
+      expect(db.appendAuditEvent).toHaveBeenCalledWith(expect.anything(), {
+        actorKind: "user",
+        actorId: USER,
+        action: "people.permission.denied",
+        purpose: "people.permission.denied",
+        targetIds: [ORG, COMMUNITY],
+      });
+    });
+
+    it("returns 409 with empty body on duplicate email or phone (no hint which)", async () => {
+      people.createPerson.mockRejectedValueOnce(new PeopleError("duplicate_email"));
+      const resEmail = await call("/v1/people/create", {
+        communitySlug: "parish",
+        givenName: "Arthur",
+        familyName: "Dent",
+        email: "arthur@example.com",
+      });
+      expect(resEmail.status).toBe(409);
+      expect(await resEmail.text()).toBe("");
+
+      people.createPerson.mockRejectedValueOnce(new PeopleError("duplicate_phone"));
+      const resPhone = await call("/v1/people/create", {
+        communitySlug: "parish",
+        givenName: "Arthur",
+        familyName: "Dent",
+        phone: "+61400000000",
+      });
+      expect(resPhone.status).toBe(409);
+      expect(await resPhone.text()).toBe("");
+    });
+
+    it("returns 400 with empty body on domain validation error", async () => {
+      people.createPerson.mockRejectedValueOnce(new PeopleError("invalid_declaration"));
+      const res = await call("/v1/people/create", {
+        communitySlug: "parish",
+        givenName: "Arthur",
+        familyName: "Dent",
+        dateOfBirth: "2015-01-01",
+      });
+      expect(res.status).toBe(400);
+      expect(await res.text()).toBe("");
+    });
+
+    it("never logs personal data (names, emails, phones) in logger output or error text (pins 7, 13)", async () => {
+      const SECRET_NAME = "SecretArthurPersonName";
+      const SECRET_EMAIL = "secret-arthur-email@example.com";
+      people.createPerson.mockResolvedValueOnce({
+        personId: PERSON_ID,
+        isMinor: false,
+      });
+
+      const res = await call("/v1/people/create", {
+        communitySlug: "parish",
+        givenName: SECRET_NAME,
+        familyName: "Dent",
+        email: SECRET_EMAIL,
+      });
+
+      expect(res.status).toBe(201);
+      for (const callItem of logCalls) {
+        const text = JSON.stringify(callItem);
+        expect(text).not.toContain(SECRET_NAME);
+        expect(text).not.toContain(SECRET_EMAIL);
+      }
+    });
+  });
+
+  describe("POST /v1/people/update", () => {
+    it("updates an adult and returns 200 with new version (pin 5)", async () => {
+      people.updatePerson.mockResolvedValueOnce({ version: 3 });
+
+      const res = await call("/v1/people/update", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+        version: 2,
+        givenName: "Arthur",
+        familyName: "Dent",
+        email: "arthur@example.com",
+        phone: "+61400000000",
+        dateOfBirth: "1980-01-01",
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ version: 3 });
+      expect(access.holdsPermission).toHaveBeenCalledWith(expect.anything(), USER, "people.manage");
+      expect(people.updatePerson).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        {
+          personId: PERSON_ID,
+          version: 2,
+          changes: {
+            givenName: "Arthur",
+            familyName: "Dent",
+            email: "arthur@example.com",
+            phone: "+61400000000",
+            dateOfBirth: "1980-01-01",
+          },
+          actorUserId: USER,
+          now: FIXED_NOW,
+        },
+      );
+    });
+
+    it("refuses update with 403 and people.permission.denied audit when actor lacks people.manage (pin 5)", async () => {
+      access.holdsPermission.mockImplementation(
+        async (_tx: unknown, _userId: string, perm: string) => perm !== "people.manage",
+      );
+
+      const res = await call("/v1/people/update", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+        version: 1,
+        givenName: "Arthur",
+      });
+
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+      expect(people.updatePerson).not.toHaveBeenCalled();
+      expect(db.appendAuditEvent).toHaveBeenCalledWith(expect.anything(), {
+        actorKind: "user",
+        actorId: USER,
+        action: "people.permission.denied",
+        purpose: "people.permission.denied",
+        targetIds: [ORG, COMMUNITY],
+      });
+    });
+
+    it("returns 409 with empty body on stale version or duplicate email/phone (pin 9)", async () => {
+      people.updatePerson.mockRejectedValueOnce(new PeopleError("conflict"));
+      const res = await call("/v1/people/update", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+        version: 1,
+        givenName: "Arthur",
+      });
+      expect(res.status).toBe(409);
+      expect(await res.text()).toBe("");
+    });
+
+    it("returns 404 with empty body when person is a minor or not found", async () => {
+      people.updatePerson.mockRejectedValueOnce(new PeopleError("not_found"));
+      const res = await call("/v1/people/update", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+        version: 1,
+        givenName: "Arthur",
+      });
+      expect(res.status).toBe(404);
+      expect(await res.text()).toBe("");
+    });
+
+    it("returns 400 with empty body on invalid input", async () => {
+      people.updatePerson.mockRejectedValueOnce(new PeopleError("invalid_input"));
+      const res = await call("/v1/people/update", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+        version: 1,
+        givenName: "Arthur",
+      });
+      expect(res.status).toBe(400);
+      expect(await res.text()).toBe("");
+    });
+
+    it("never logs personal data (names, emails, phones) in logger output or error text (pins 7, 13)", async () => {
+      const SECRET_NAME = "SecretUpdatedPersonName";
+      const SECRET_EMAIL = "secret-updated-email@example.com";
+      people.updatePerson.mockResolvedValueOnce({ version: 2 });
+
+      const res = await call("/v1/people/update", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+        version: 1,
+        givenName: SECRET_NAME,
+        email: SECRET_EMAIL,
+      });
+
+      expect(res.status).toBe(200);
+      for (const callItem of logCalls) {
+        const text = JSON.stringify(callItem);
+        expect(text).not.toContain(SECRET_NAME);
+        expect(text).not.toContain(SECRET_EMAIL);
+      }
     });
   });
 });

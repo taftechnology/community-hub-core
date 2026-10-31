@@ -1,9 +1,20 @@
 import { AccessError, holdsPermission, readPersonForActor } from "@community-hub/access";
-import { listPeopleBody, readPersonBody } from "@community-hub/contracts/people";
+import {
+  createPersonBody,
+  listPeopleBody,
+  readPersonBody,
+  updatePersonBody,
+} from "@community-hub/contracts/people";
 import { appendAuditEvent, withAppTransaction } from "@community-hub/db";
 import { readSession } from "@community-hub/identity";
 import { getRequestContext } from "@community-hub/kernel";
-import { listPersons } from "@community-hub/people";
+import {
+  createPerson,
+  listPersons,
+  PeopleError,
+  updatePerson,
+  type UpdatePersonChanges,
+} from "@community-hub/people";
 import { findCommunityBySlug } from "@community-hub/tenancy";
 
 import { guardWrite } from "./billing-guard.js";
@@ -16,6 +27,7 @@ type PeopleSql = Parameters<typeof readSession>[0];
 
 const DENIED = "people.permission.denied";
 const VIEW = "people.view";
+const MANAGE = "people.manage";
 const RESTRICTED = "people.restricted.read";
 const ADULT_VIEW_PURPOSE = "people.person.view";
 const DIRECTORY_ENTITLEMENT = "people.directory";
@@ -36,6 +48,31 @@ export type PeopleDeps = {
 
 function empty(status: number): Response {
   return new Response(null, { status });
+}
+
+function statusForPeople(error: PeopleError): Response | undefined {
+  if (
+    error.code === "duplicate_email" ||
+    error.code === "duplicate_phone" ||
+    error.code === "conflict"
+  ) {
+    return empty(409);
+  }
+  if (error.code === "not_found") {
+    return empty(404);
+  }
+  if (
+    error.code === "invalid_date" ||
+    error.code === "invalid_declaration" ||
+    error.code === "invalid_name" ||
+    error.code === "invalid_email" ||
+    error.code === "invalid_phone" ||
+    error.code === "invalid_input" ||
+    error.code === "household_required"
+  ) {
+    return empty(400);
+  }
+  return undefined;
 }
 
 function presentedHostname(request: Request): string | undefined {
@@ -276,6 +313,141 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
     );
   }
 
+  async function create(request: Request, context: RouteContext): Promise<Response> {
+    const hidden = foreignHost(request);
+    if (hidden !== undefined) {
+      return finish(request, hidden);
+    }
+    const body = await parse(request, createPersonBody);
+    if (body === undefined) {
+      return finish(request, empty(400));
+    }
+    const actor = await sessionUser(request);
+    if (actor instanceof Response) {
+      return finish(request, actor);
+    }
+    const scope = await communityScope(body.communitySlug, context, actor.userId);
+    if (scope === null) {
+      return finish(request, empty(404));
+    }
+    if (scope instanceof Response) {
+      return finish(request, scope);
+    }
+
+    return deps.checkout("app", (sql) =>
+      withAppTransaction(sql, scope, async (tx) => {
+        const allowed = await holdsPermission(tx, actor.userId, MANAGE);
+        if (!allowed) {
+          await appendAuditEvent(tx, {
+            actorKind: "user",
+            actorId: actor.userId,
+            action: DENIED,
+            purpose: DENIED,
+            targetIds: [scope.orgId, scope.communityId],
+          });
+          return finish(request, empty(403));
+        }
+
+        try {
+          const result = await createPerson(tx, deps.kms, deps.keyArn, {
+            now: deps.now(),
+            declaredAdult: true,
+            householdId: null,
+            dateOfBirth: body.dateOfBirth ?? null,
+            givenName: body.givenName,
+            familyName: body.familyName,
+            email: body.email ?? null,
+            phone: body.phone ?? null,
+            actorUserId: actor.userId,
+          });
+          return finish(request, Response.json({ personId: result.personId }, { status: 201 }));
+        } catch (error) {
+          if (error instanceof PeopleError) {
+            const mapped = statusForPeople(error);
+            if (mapped !== undefined) {
+              return finish(request, mapped);
+            }
+          }
+          throw error;
+        }
+      }),
+    );
+  }
+
+  async function update(request: Request, context: RouteContext): Promise<Response> {
+    const hidden = foreignHost(request);
+    if (hidden !== undefined) {
+      return finish(request, hidden);
+    }
+    const body = await parse(request, updatePersonBody);
+    if (body === undefined) {
+      return finish(request, empty(400));
+    }
+    const actor = await sessionUser(request);
+    if (actor instanceof Response) {
+      return finish(request, actor);
+    }
+    const scope = await communityScope(body.communitySlug, context, actor.userId);
+    if (scope === null) {
+      return finish(request, empty(404));
+    }
+    if (scope instanceof Response) {
+      return finish(request, scope);
+    }
+
+    return deps.checkout("app", (sql) =>
+      withAppTransaction(sql, scope, async (tx) => {
+        const allowed = await holdsPermission(tx, actor.userId, MANAGE);
+        if (!allowed) {
+          await appendAuditEvent(tx, {
+            actorKind: "user",
+            actorId: actor.userId,
+            action: DENIED,
+            purpose: DENIED,
+            targetIds: [scope.orgId, scope.communityId],
+          });
+          return finish(request, empty(403));
+        }
+
+        const changes: UpdatePersonChanges = {};
+        if (body.givenName !== undefined) {
+          changes.givenName = body.givenName;
+        }
+        if (body.familyName !== undefined) {
+          changes.familyName = body.familyName;
+        }
+        if (body.email !== undefined) {
+          changes.email = body.email;
+        }
+        if (body.phone !== undefined) {
+          changes.phone = body.phone;
+        }
+        if (body.dateOfBirth !== undefined) {
+          changes.dateOfBirth = body.dateOfBirth;
+        }
+
+        try {
+          const result = await updatePerson(tx, deps.kms, deps.keyArn, {
+            personId: body.personId,
+            version: body.version,
+            changes,
+            actorUserId: actor.userId,
+            now: deps.now(),
+          });
+          return finish(request, Response.json({ version: result.version }));
+        } catch (error) {
+          if (error instanceof PeopleError) {
+            const mapped = statusForPeople(error);
+            if (mapped !== undefined) {
+              return finish(request, mapped);
+            }
+          }
+          throw error;
+        }
+      }),
+    );
+  }
+
   return [
     {
       method: "POST",
@@ -290,6 +462,20 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
       surface: "tenant",
       billing: "read",
       handle: read,
+    },
+    {
+      method: "POST",
+      pattern: "/v1/people/create",
+      surface: "tenant",
+      billing: "write",
+      handle: create,
+    },
+    {
+      method: "POST",
+      pattern: "/v1/people/update",
+      surface: "tenant",
+      billing: "write",
+      handle: update,
     },
   ];
 }
