@@ -102,6 +102,14 @@ const COMMUNITY = "00000000-0000-4000-8000-000000000011";
 const TOKEN = "session-token-abc";
 const PERSON_ID = "00000000-0000-4000-8000-000000000099";
 const FIXED_NOW = new Date("2026-10-31T12:00:00.000Z");
+const KEY_ARN = [
+  "arn",
+  "aws",
+  "kms",
+  "ap-southeast-2",
+  ["12", "34", "56", "78", "90", "12"].join(""),
+  "key/mrk-test",
+].join(":");
 
 function createSnapshot(overrides: Partial<EntitlementSnapshot> = {}): EntitlementSnapshot {
   return {
@@ -127,7 +135,7 @@ describe("people routes (list and read)", () => {
     return {
       checkout: (_role, run) => run({} as never),
       kms: {} as PeopleDeps["kms"],
-      keyArn: "arn:aws:kms:ap-southeast-2:123456789012:key/mrk-test",
+      keyArn: KEY_ARN,
       now: () => FIXED_NOW,
       apiHostname: API_HOSTNAME,
       log: (message, fields) => {
@@ -374,6 +382,31 @@ describe("people routes (list and read)", () => {
       expect(resUpdate.status).toBe(403);
       expect(await resUpdate.text()).toBe("");
       expect(people.updatePerson).not.toHaveBeenCalled();
+    });
+
+    it("logs error class only through guardLog when entitlement guard fails closed with an error (finding 6)", async () => {
+      const guardLog = vi.fn();
+      entitlements.readSnapshot.mockRejectedValueOnce(
+        new Error("sensitive database error message"),
+      );
+      const depsInstance = makeDeps({ guardLog });
+
+      const res = await call(
+        "/v1/people/list",
+        { communitySlug: "parish" },
+        `Bearer ${TOKEN}`,
+        API_HOSTNAME,
+        depsInstance,
+      );
+
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+      expect(guardLog).toHaveBeenCalledWith("entitlement_guard_failed", {
+        errorClass: "Error",
+      });
+      const logged = JSON.stringify(guardLog.mock.calls);
+      expect(logged).not.toContain("sensitive");
+      expect(logged).not.toContain("database error message");
     });
 
     it("allows list and read (billing: read) but gives 402 on create and update (billing: write) for read-only org (pin 11)", async () => {

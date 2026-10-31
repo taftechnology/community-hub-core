@@ -163,7 +163,7 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
     const scope = { orgId: found.organisationId, communityId: found.id };
 
     const blockedEntitlement = await guardEntitlement(
-      { checkout: deps.checkout, now: deps.now },
+      { checkout: deps.checkout, now: deps.now, guardLog: deps.guardLog },
       scope,
       DIRECTORY_ENTITLEMENT,
     );

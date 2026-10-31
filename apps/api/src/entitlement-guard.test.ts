@@ -234,6 +234,44 @@ describe("entitlement-guard", () => {
       expect(await result?.text()).toBe("");
     });
 
+    it("logs error class only when snapshot reading fails closed (finding 6)", async () => {
+      const guardLog = vi.fn();
+      entitlements.readSnapshot.mockRejectedValueOnce(
+        new Error("sensitive internal db password or details"),
+      );
+      const deps = makeDeps({ guardLog });
+      const scope: CommunityScope = { orgId: ORG, communityId: COMMUNITY_A };
+
+      const result = await guardEntitlement(deps, scope, "people.directory");
+
+      expect(result?.status).toBe(403);
+      expect(guardLog).toHaveBeenCalledWith("entitlement_guard_failed", {
+        errorClass: "Error",
+      });
+      const loggedText = JSON.stringify(guardLog.mock.calls);
+      expect(loggedText).not.toContain("sensitive");
+      expect(loggedText).not.toContain("password");
+    });
+
+    it("logs error class only when checkout rejects (finding 6)", async () => {
+      const guardLog = vi.fn();
+      const deps = makeDeps({
+        checkout: vi.fn().mockRejectedValueOnce(new TypeError("sensitive type details")),
+        guardLog,
+      });
+      const scope: CommunityScope = { orgId: ORG, communityId: COMMUNITY_A };
+
+      const result = await guardEntitlement(deps, scope, "people.directory");
+
+      expect(result?.status).toBe(403);
+      expect(guardLog).toHaveBeenCalledWith("entitlement_guard_failed", {
+        errorClass: "TypeError",
+      });
+      const loggedText = JSON.stringify(guardLog.mock.calls);
+      expect(loggedText).not.toContain("sensitive");
+      expect(loggedText).not.toContain("type details");
+    });
+
     it("guards two communities independently (one enabled, one not)", async () => {
       entitlements.readSnapshot.mockImplementation(
         async (_sql: unknown, query: { communityId: string }) => {
