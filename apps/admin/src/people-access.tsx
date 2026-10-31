@@ -27,12 +27,10 @@ const defaultAccess: PeopleAccess = {
 
 export type PeopleAccessContextValue = {
   access: PeopleAccess;
-  refresh: () => Promise<void>;
 };
 
 export const PeopleAccessContext = createContext<PeopleAccessContextValue>({
   access: defaultAccess,
-  refresh: async () => {},
 });
 
 export function usePeopleAccess(): PeopleAccessContextValue {
@@ -59,8 +57,6 @@ export function PeopleAccessProvider({ children }: { children: ReactNode }) {
   const { slug, version } = useCommunity();
   const [access, setAccess] = useState<PeopleAccess>(defaultAccess);
   const generation = useRef(0);
-  const slugRef = useRef(slug);
-  slugRef.current = slug;
 
   const loadAccess = useCallback(
     async (communitySlug: string, isCurrent: () => boolean): Promise<void> => {
@@ -92,16 +88,6 @@ export function PeopleAccessProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const refresh = useCallback(async (): Promise<void> => {
-    const currentSlug = slugRef.current;
-    if (!currentSlug) {
-      setAccess(defaultAccess);
-      return;
-    }
-    const mine = generation.current;
-    await loadAccess(currentSlug, () => generation.current === mine);
-  }, [loadAccess]);
-
   useEffect(() => {
     const mine = ++generation.current;
     if (!slug) {
@@ -111,9 +97,5 @@ export function PeopleAccessProvider({ children }: { children: ReactNode }) {
     void loadAccess(slug, () => generation.current === mine);
   }, [slug, version, loadAccess]);
 
-  return (
-    <PeopleAccessContext.Provider value={{ access, refresh }}>
-      {children}
-    </PeopleAccessContext.Provider>
-  );
+  return <PeopleAccessContext.Provider value={{ access }}>{children}</PeopleAccessContext.Provider>;
 }

@@ -20,11 +20,8 @@ import { usePeopleAccess } from "./people-access";
 
 type ContactItem = {
   id: string;
-  personId: string;
-  isMinor: boolean;
   givenName: string;
   familyName: string;
-  version: number;
 };
 
 type ListResponse = {
@@ -34,10 +31,7 @@ type ListResponse = {
 
 type PersonDetail = {
   personId: string;
-  householdId: string | null;
   isMinor: boolean;
-  ageBasis: string;
-  birthdayMd: number | null;
   givenName: string;
   familyName: string;
   email: string | null;
@@ -46,31 +40,35 @@ type PersonDetail = {
   version: number;
 };
 
+type ContactFormData = {
+  givenName: string;
+  familyName: string;
+  email: string;
+  phone: string;
+  dateOfBirth: string;
+};
+
+const initialFormData: ContactFormData = {
+  givenName: "",
+  familyName: "",
+  email: "",
+  phone: "",
+  dateOfBirth: "",
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
 function parseContactItem(item: unknown): ContactItem | null {
-  if (!isRecord(item)) {
+  if (!isRecord(item) || typeof item.id !== "string") {
     return null;
   }
-  const id =
-    typeof item.id === "string"
-      ? item.id
-      : typeof item.personId === "string"
-        ? item.personId
-        : null;
-  const personId = typeof item.personId === "string" ? item.personId : id;
-  const givenName = typeof item.givenName === "string" ? item.givenName : "";
-  const familyName = typeof item.familyName === "string" ? item.familyName : "";
-  const isMinor = Boolean(item.isMinor);
-  const version = typeof item.version === "number" ? item.version : 1;
-
-  if (!id || !personId) {
-    return null;
-  }
-
-  return { id, personId, isMinor, givenName, familyName, version };
+  return {
+    id: item.id,
+    givenName: typeof item.givenName === "string" ? item.givenName : "",
+    familyName: typeof item.familyName === "string" ? item.familyName : "",
+  };
 }
 
 function parseListResponse(value: unknown): ListResponse | null {
@@ -94,10 +92,7 @@ function parsePersonDetail(value: unknown): PersonDetail | null {
   }
   return {
     personId: value.personId,
-    householdId: typeof value.householdId === "string" ? value.householdId : null,
     isMinor: Boolean(value.isMinor),
-    ageBasis: typeof value.ageBasis === "string" ? value.ageBasis : "",
-    birthdayMd: typeof value.birthdayMd === "number" ? value.birthdayMd : null,
     givenName: typeof value.givenName === "string" ? value.givenName : "",
     familyName: typeof value.familyName === "string" ? value.familyName : "",
     email: typeof value.email === "string" ? value.email : null,
@@ -105,6 +100,66 @@ function parsePersonDetail(value: unknown): PersonDetail | null {
     dateOfBirth: typeof value.dateOfBirth === "string" ? value.dateOfBirth : null,
     version: typeof value.version === "number" ? value.version : 1,
   };
+}
+
+function ContactFields({
+  prefix,
+  data,
+  onChange,
+}: {
+  prefix: "add" | "edit";
+  data: ContactFormData;
+  onChange: (data: ContactFormData) => void;
+}) {
+  return (
+    <>
+      <div>
+        <label htmlFor={`${prefix}-given-name`}>Given name</label>
+        <Input
+          id={`${prefix}-given-name`}
+          value={data.givenName}
+          onChange={(e) => onChange({ ...data, givenName: e.target.value })}
+          required
+        />
+      </div>
+      <div>
+        <label htmlFor={`${prefix}-family-name`}>Family name</label>
+        <Input
+          id={`${prefix}-family-name`}
+          value={data.familyName}
+          onChange={(e) => onChange({ ...data, familyName: e.target.value })}
+          required
+        />
+      </div>
+      <div>
+        <label htmlFor={`${prefix}-email`}>Email</label>
+        <Input
+          id={`${prefix}-email`}
+          type="email"
+          value={data.email}
+          onChange={(e) => onChange({ ...data, email: e.target.value })}
+        />
+      </div>
+      <div>
+        <label htmlFor={`${prefix}-phone`}>Phone</label>
+        <Input
+          id={`${prefix}-phone`}
+          type="tel"
+          value={data.phone}
+          onChange={(e) => onChange({ ...data, phone: e.target.value })}
+        />
+      </div>
+      <div>
+        <label htmlFor={`${prefix}-dob`}>Date of birth</label>
+        <Input
+          id={`${prefix}-dob`}
+          type="date"
+          value={data.dateOfBirth}
+          onChange={(e) => onChange({ ...data, dateOfBirth: e.target.value })}
+        />
+      </div>
+    </>
+  );
 }
 
 export function AllContactsPage() {
@@ -132,20 +187,11 @@ export function AllContactsPage() {
   const [detailNotFound, setDetailNotFound] = useState(false);
   const [detailError, setDetailError] = useState(false);
 
-  // Add form fields
-  const [addGivenName, setAddGivenName] = useState("");
-  const [addFamilyName, setAddFamilyName] = useState("");
-  const [addEmail, setAddEmail] = useState("");
-  const [addPhone, setAddPhone] = useState("");
-  const [addDob, setAddDob] = useState("");
+  // Add & Edit form fields
+  const [addForm, setAddForm] = useState<ContactFormData>(initialFormData);
   const [addNotice, setAddNotice] = useState<string | null>(null);
 
-  // Edit form fields
-  const [editGivenName, setEditGivenName] = useState("");
-  const [editFamilyName, setEditFamilyName] = useState("");
-  const [editEmail, setEditEmail] = useState("");
-  const [editPhone, setEditPhone] = useState("");
-  const [editDob, setEditDob] = useState("");
+  const [editForm, setEditForm] = useState<ContactFormData>(initialFormData);
   const [editConflict, setEditConflict] = useState(false);
   const [editNotice, setEditNotice] = useState<string | null>(null);
 
@@ -252,31 +298,21 @@ export function AllContactsPage() {
         setError(true);
       }
     },
-    [refreshBilling],
+    [],
   );
 
   const reload = useCallback(() => {
-    if (!slug || !access.directoryEnabled || !access.canView) {
-      setItems(null);
+    const mine = ++generation.current;
+    if (!slug) {
       return;
     }
-    const mine = ++generation.current;
     void fetchContacts(slug, activeTab, submittedSearch, cursor, () => generation.current === mine);
-  }, [
-    slug,
-    access.directoryEnabled,
-    access.canView,
-    activeTab,
-    submittedSearch,
-    cursor,
-    fetchContacts,
-  ]);
+  }, [slug, activeTab, submittedSearch, cursor, fetchContacts]);
 
-  const previousSlugRef = useRef<string | null>(null);
+  const previousSlugRef = useRef(slug);
   useEffect(() => {
-    if (previousSlugRef.current === null) {
-      previousSlugRef.current = slug;
-      reload();
+    if (!slug) {
+      setItems(null);
       return;
     }
     if (previousSlugRef.current !== slug) {
@@ -292,17 +328,9 @@ export function AllContactsPage() {
       setDetailPerson(null);
       setDetailNotFound(false);
       setDetailError(false);
-      setAddGivenName("");
-      setAddFamilyName("");
-      setAddEmail("");
-      setAddPhone("");
-      setAddDob("");
+      setAddForm(initialFormData);
       setAddNotice(null);
-      setEditGivenName("");
-      setEditFamilyName("");
-      setEditEmail("");
-      setEditPhone("");
-      setEditDob("");
+      setEditForm(initialFormData);
       setEditConflict(false);
       setEditNotice(null);
       setPaymentRequired(false);
@@ -364,18 +392,21 @@ export function AllContactsPage() {
     [],
   );
 
-  function openDetail(personId: string) {
-    setSelectedPersonId(personId);
-    setDetailPerson(null);
-    setView("detail");
-    if (slug) {
+  const openDetail = useCallback(
+    (personId: string) => {
+      setSelectedPersonId(personId);
+      setView("detail");
+      setDetailPerson(null);
       const mine = ++detailGeneration.current;
-      void loadPersonDetail(slug, personId, () => detailGeneration.current === mine);
-    }
-  }
+      if (slug) {
+        void loadPersonDetail(slug, personId, () => detailGeneration.current === mine);
+      }
+    },
+    [slug, loadPersonDetail],
+  );
 
   function reloadDetail() {
-    if (slug && selectedPersonId) {
+    if (selectedPersonId && slug) {
       const mine = ++detailGeneration.current;
       setEditConflict(false);
       void loadPersonDetail(slug, selectedPersonId, () => detailGeneration.current === mine);
@@ -383,21 +414,19 @@ export function AllContactsPage() {
   }
 
   function openAdd() {
-    setAddGivenName("");
-    setAddFamilyName("");
-    setAddEmail("");
-    setAddPhone("");
-    setAddDob("");
+    setAddForm(initialFormData);
     setAddNotice(null);
     setView("add");
   }
 
   function openEdit(person: PersonDetail) {
-    setEditGivenName(person.givenName);
-    setEditFamilyName(person.familyName);
-    setEditEmail(person.email ?? "");
-    setEditPhone(person.phone ?? "");
-    setEditDob(person.dateOfBirth ?? "");
+    setEditForm({
+      givenName: person.givenName,
+      familyName: person.familyName,
+      email: person.email ?? "",
+      phone: person.phone ?? "",
+      dateOfBirth: person.dateOfBirth ?? "",
+    });
     setEditConflict(false);
     setEditNotice(null);
     setView("edit");
@@ -422,17 +451,17 @@ export function AllContactsPage() {
     try {
       const body: Record<string, unknown> = {
         communitySlug: slug,
-        givenName: addGivenName.trim(),
-        familyName: addFamilyName.trim(),
+        givenName: addForm.givenName.trim(),
+        familyName: addForm.familyName.trim(),
       };
-      if (addEmail.trim()) {
-        body.email = addEmail.trim();
+      if (addForm.email.trim()) {
+        body.email = addForm.email.trim();
       }
-      if (addPhone.trim()) {
-        body.phone = addPhone.trim();
+      if (addForm.phone.trim()) {
+        body.phone = addForm.phone.trim();
       }
-      if (addDob.trim()) {
-        body.dateOfBirth = addDob.trim();
+      if (addForm.dateOfBirth.trim()) {
+        body.dateOfBirth = addForm.dateOfBirth.trim();
       }
 
       const response = await post("/v1/people/create", body);
@@ -472,11 +501,11 @@ export function AllContactsPage() {
         communitySlug: slug,
         personId: detailPerson.personId,
         version: detailPerson.version,
-        givenName: editGivenName.trim(),
-        familyName: editFamilyName.trim(),
-        email: editEmail.trim() || null,
-        phone: editPhone.trim() || null,
-        dateOfBirth: editDob.trim() || null,
+        givenName: editForm.givenName.trim(),
+        familyName: editForm.familyName.trim(),
+        email: editForm.email.trim() || null,
+        phone: editForm.phone.trim() || null,
+        dateOfBirth: editForm.dateOfBirth.trim() || null,
       };
 
       const response = await post("/v1/people/update", body);
@@ -621,51 +650,7 @@ export function AllContactsPage() {
         ) : null}
 
         <form onSubmit={handleAddSubmit}>
-          <div>
-            <label htmlFor="add-given-name">Given name</label>
-            <Input
-              id="add-given-name"
-              value={addGivenName}
-              onChange={(e) => setAddGivenName(e.target.value)}
-              required
-            />
-          </div>
-          <div>
-            <label htmlFor="add-family-name">Family name</label>
-            <Input
-              id="add-family-name"
-              value={addFamilyName}
-              onChange={(e) => setAddFamilyName(e.target.value)}
-              required
-            />
-          </div>
-          <div>
-            <label htmlFor="add-email">Email</label>
-            <Input
-              id="add-email"
-              type="email"
-              value={addEmail}
-              onChange={(e) => setAddEmail(e.target.value)}
-            />
-          </div>
-          <div>
-            <label htmlFor="add-phone">Phone</label>
-            <Input
-              id="add-phone"
-              type="tel"
-              value={addPhone}
-              onChange={(e) => setAddPhone(e.target.value)}
-            />
-          </div>
-          <div>
-            <label htmlFor="add-dob">Date of birth</label>
-            <Input
-              id="add-dob"
-              type="date"
-              value={addDob}
-              onChange={(e) => setAddDob(e.target.value)}
-            />
-          </div>
+          <ContactFields prefix="add" data={addForm} onChange={setAddForm} />
 
           <div>
             <Button type="submit" disabled={submitting}>
@@ -704,51 +689,7 @@ export function AllContactsPage() {
         ) : null}
 
         <form onSubmit={handleEditSubmit}>
-          <div>
-            <label htmlFor="edit-given-name">Given name</label>
-            <Input
-              id="edit-given-name"
-              value={editGivenName}
-              onChange={(e) => setEditGivenName(e.target.value)}
-              required
-            />
-          </div>
-          <div>
-            <label htmlFor="edit-family-name">Family name</label>
-            <Input
-              id="edit-family-name"
-              value={editFamilyName}
-              onChange={(e) => setEditFamilyName(e.target.value)}
-              required
-            />
-          </div>
-          <div>
-            <label htmlFor="edit-email">Email</label>
-            <Input
-              id="edit-email"
-              type="email"
-              value={editEmail}
-              onChange={(e) => setEditEmail(e.target.value)}
-            />
-          </div>
-          <div>
-            <label htmlFor="edit-phone">Phone</label>
-            <Input
-              id="edit-phone"
-              type="tel"
-              value={editPhone}
-              onChange={(e) => setEditPhone(e.target.value)}
-            />
-          </div>
-          <div>
-            <label htmlFor="edit-dob">Date of birth</label>
-            <Input
-              id="edit-dob"
-              type="date"
-              value={editDob}
-              onChange={(e) => setEditDob(e.target.value)}
-            />
-          </div>
+          <ContactFields prefix="edit" data={editForm} onChange={setEditForm} />
 
           <div>
             <Button type="submit" disabled={submitting}>
@@ -821,64 +762,58 @@ export function AllContactsPage() {
       ) : null}
 
       {!loading && !error && items !== null ? (
-        items.length === 0 ? (
-          submittedSearch ? (
-            <p>No contacts match</p>
-          ) : (
+        <>
+          {access.canManage &&
+          !hideWrites &&
+          activeTab === "adults" &&
+          (!submittedSearch || items.length > 0) ? (
             <div>
-              <p>No contacts yet</p>
-              {access.canManage && !hideWrites && activeTab === "adults" ? (
-                <Button type="button" onClick={openAdd}>
-                  Add contact
+              <Button type="button" onClick={openAdd}>
+                Add contact
+              </Button>
+            </div>
+          ) : null}
+
+          {items.length === 0 ? (
+            <p>{submittedSearch ? "No contacts match" : "No contacts yet"}</p>
+          ) : (
+            <>
+              <Table aria-label="Contacts">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead scope="col">Given name</TableHead>
+                    <TableHead scope="col">Family name</TableHead>
+                    <TableHead scope="col">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {items.map((person) => (
+                    <TableRow key={person.id}>
+                      <TableCell>{person.givenName}</TableCell>
+                      <TableCell>{person.familyName}</TableCell>
+                      <TableCell>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          aria-label={`View ${person.givenName} ${person.familyName}`}
+                          onClick={() => openDetail(person.id)}
+                        >
+                          View
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+
+              {nextCursor !== null ? (
+                <Button type="button" onClick={() => handleNextPage(nextCursor)}>
+                  Next page
                 </Button>
               ) : null}
-            </div>
-          )
-        ) : (
-          <>
-            {access.canManage && !hideWrites && activeTab === "adults" ? (
-              <div>
-                <Button type="button" onClick={openAdd}>
-                  Add contact
-                </Button>
-              </div>
-            ) : null}
-
-            <Table aria-label="Contacts">
-              <TableHeader>
-                <TableRow>
-                  <TableHead scope="col">Given name</TableHead>
-                  <TableHead scope="col">Family name</TableHead>
-                  <TableHead scope="col">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {items.map((person) => (
-                  <TableRow key={person.id}>
-                    <TableCell>{person.givenName}</TableCell>
-                    <TableCell>{person.familyName}</TableCell>
-                    <TableCell>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        aria-label={`View ${person.givenName} ${person.familyName}`}
-                        onClick={() => openDetail(person.id)}
-                      >
-                        View
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-
-            {nextCursor !== null ? (
-              <Button type="button" onClick={() => handleNextPage(nextCursor)}>
-                Next page
-              </Button>
-            ) : null}
-          </>
-        )
+            </>
+          )}
+        </>
       ) : null}
     </>
   );
