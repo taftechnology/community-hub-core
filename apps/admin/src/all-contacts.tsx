@@ -32,6 +32,20 @@ type ListResponse = {
   nextCursor: string | null;
 };
 
+type PersonDetail = {
+  personId: string;
+  householdId: string | null;
+  isMinor: boolean;
+  ageBasis: string;
+  birthdayMd: number | null;
+  givenName: string;
+  familyName: string;
+  email: string | null;
+  phone: string | null;
+  dateOfBirth: string | null;
+  version: number;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -74,6 +88,25 @@ function parseListResponse(value: unknown): ListResponse | null {
   return { items, nextCursor };
 }
 
+function parsePersonDetail(value: unknown): PersonDetail | null {
+  if (!isRecord(value) || typeof value.personId !== "string") {
+    return null;
+  }
+  return {
+    personId: value.personId,
+    householdId: typeof value.householdId === "string" ? value.householdId : null,
+    isMinor: Boolean(value.isMinor),
+    ageBasis: typeof value.ageBasis === "string" ? value.ageBasis : "",
+    birthdayMd: typeof value.birthdayMd === "number" ? value.birthdayMd : null,
+    givenName: typeof value.givenName === "string" ? value.givenName : "",
+    familyName: typeof value.familyName === "string" ? value.familyName : "",
+    email: typeof value.email === "string" ? value.email : null,
+    phone: typeof value.phone === "string" ? value.phone : null,
+    dateOfBirth: typeof value.dateOfBirth === "string" ? value.dateOfBirth : null,
+    version: typeof value.version === "number" ? value.version : 1,
+  };
+}
+
 export function AllContactsPage() {
   const token = readAccessToken();
   const { slug, version } = useCommunity();
@@ -91,7 +124,33 @@ export function AllContactsPage() {
   const [error, setError] = useState(false);
   const [paymentRequired, setPaymentRequired] = useState(false);
 
+  // View state: "list" | "detail" | "add" | "edit"
+  const [view, setView] = useState<"list" | "detail" | "add" | "edit">("list");
+  const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null);
+  const [detailPerson, setDetailPerson] = useState<PersonDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailNotFound, setDetailNotFound] = useState(false);
+  const [detailError, setDetailError] = useState(false);
+
+  // Add form fields
+  const [addGivenName, setAddGivenName] = useState("");
+  const [addFamilyName, setAddFamilyName] = useState("");
+  const [addEmail, setAddEmail] = useState("");
+  const [addPhone, setAddPhone] = useState("");
+  const [addDob, setAddDob] = useState("");
+  const [addNotice, setAddNotice] = useState<string | null>(null);
+
+  // Edit form fields
+  const [editGivenName, setEditGivenName] = useState("");
+  const [editFamilyName, setEditFamilyName] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editDob, setEditDob] = useState("");
+  const [editConflict, setEditConflict] = useState(false);
+  const [editNotice, setEditNotice] = useState<string | null>(null);
+
   const generation = useRef(0);
+  const detailGeneration = useRef(0);
   const isReadOnly = status?.state === "none" || status?.state === "read_only" || paymentRequired;
   const hideWrites = readiness === "loading" || isReadOnly;
 
@@ -174,6 +233,184 @@ export function AllContactsPage() {
     reload();
   }, [reload, version]);
 
+  const loadPersonDetail = useCallback(
+    async (communitySlug: string, personId: string, isCurrent: () => boolean) => {
+      setDetailLoading(true);
+      setDetailNotFound(false);
+      setDetailError(false);
+
+      const response = await post("/v1/people/read", { communitySlug, personId });
+      if (!isCurrent()) {
+        return;
+      }
+      setDetailLoading(false);
+
+      if (response === "unavailable") {
+        setDetailError(true);
+        return;
+      }
+
+      if (response.status === 404) {
+        setDetailNotFound(true);
+        return;
+      }
+
+      if (response.status !== 200) {
+        setDetailError(true);
+        return;
+      }
+
+      try {
+        const data: unknown = await response.json();
+        if (!isCurrent()) {
+          return;
+        }
+        const parsed = parsePersonDetail(data);
+        if (parsed === null) {
+          setDetailError(true);
+          return;
+        }
+        setDetailPerson(parsed);
+      } catch {
+        if (!isCurrent()) {
+          return;
+        }
+        setDetailError(true);
+      }
+    },
+    [],
+  );
+
+  function openDetail(personId: string) {
+    setSelectedPersonId(personId);
+    setDetailPerson(null);
+    setView("detail");
+    if (slug) {
+      const mine = ++detailGeneration.current;
+      void loadPersonDetail(slug, personId, () => detailGeneration.current === mine);
+    }
+  }
+
+  function reloadDetail() {
+    if (slug && selectedPersonId) {
+      const mine = ++detailGeneration.current;
+      setEditConflict(false);
+      void loadPersonDetail(slug, selectedPersonId, () => detailGeneration.current === mine);
+    }
+  }
+
+  function openAdd() {
+    setAddGivenName("");
+    setAddFamilyName("");
+    setAddEmail("");
+    setAddPhone("");
+    setAddDob("");
+    setAddNotice(null);
+    setView("add");
+  }
+
+  function openEdit(person: PersonDetail) {
+    setEditGivenName(person.givenName);
+    setEditFamilyName(person.familyName);
+    setEditEmail(person.email ?? "");
+    setEditPhone(person.phone ?? "");
+    setEditDob(person.dateOfBirth ?? "");
+    setEditConflict(false);
+    setEditNotice(null);
+    setView("edit");
+  }
+
+  function backToList() {
+    setView("list");
+    setSelectedPersonId(null);
+    setDetailPerson(null);
+    reload();
+  }
+
+  async function handleAddSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!slug) {
+      return;
+    }
+    setAddNotice(null);
+
+    const body: Record<string, unknown> = {
+      communitySlug: slug,
+      givenName: addGivenName.trim(),
+      familyName: addFamilyName.trim(),
+    };
+    if (addEmail.trim()) {
+      body.email = addEmail.trim();
+    }
+    if (addPhone.trim()) {
+      body.phone = addPhone.trim();
+    }
+    if (addDob.trim()) {
+      body.dateOfBirth = addDob.trim();
+    }
+
+    const response = await post("/v1/people/create", body);
+    if (response === "unavailable" || response.status === 402) {
+      if (response !== "unavailable" && response.status === 402) {
+        setPaymentRequired(true);
+        void refreshBilling();
+      }
+      setAddNotice("Unable to save contact");
+      return;
+    }
+
+    if (response.status === 201) {
+      backToList();
+      return;
+    }
+
+    setAddNotice("Unable to save contact");
+  }
+
+  async function handleEditSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!slug || !detailPerson) {
+      return;
+    }
+    setEditConflict(false);
+    setEditNotice(null);
+
+    const body: Record<string, unknown> = {
+      communitySlug: slug,
+      personId: detailPerson.personId,
+      version: detailPerson.version,
+      givenName: editGivenName.trim(),
+      familyName: editFamilyName.trim(),
+      email: editEmail.trim() || null,
+      phone: editPhone.trim() || null,
+      dateOfBirth: editDob.trim() || null,
+    };
+
+    const response = await post("/v1/people/update", body);
+    if (response === "unavailable") {
+      setEditNotice("Unable to save changes");
+      return;
+    }
+
+    if (response.status === 409) {
+      setEditConflict(true);
+      return;
+    }
+
+    if (response.status === 404) {
+      setDetailNotFound(true);
+      setView("detail");
+      return;
+    }
+
+    if (response.status === 200) {
+      openDetail(detailPerson.personId);
+      return;
+    }
+
+    setEditNotice("Unable to save changes");
+  }
+
   function handleTabChange(tab: "adults" | "minors") {
     setActiveTab(tab);
     setCursor(undefined);
@@ -205,6 +442,214 @@ export function AllContactsPage() {
       <>
         <h1>All Contacts</h1>
         <Alert live="polite">Not allowed</Alert>
+      </>
+    );
+  }
+
+  if (view === "detail") {
+    return (
+      <>
+        <h1>All Contacts</h1>
+        <h2>Contact Details</h2>
+
+        <Button type="button" onClick={backToList}>
+          Back to list
+        </Button>
+
+        {detailLoading ? <p>Loading contact details...</p> : null}
+
+        {detailNotFound ? (
+          <Alert live="polite">
+            <span>Contact not found</span>
+          </Alert>
+        ) : null}
+
+        {detailError ? (
+          <Alert variant="destructive" live="assertive">
+            <span>Failed to load contact</span>
+            <Button type="button" onClick={reloadDetail}>
+              Retry
+            </Button>
+          </Alert>
+        ) : null}
+
+        {!detailLoading && !detailNotFound && !detailError && detailPerson ? (
+          <div>
+            <p>
+              <strong>Given name:</strong> {detailPerson.givenName}
+            </p>
+            <p>
+              <strong>Family name:</strong> {detailPerson.familyName}
+            </p>
+            <p>
+              <strong>Email:</strong> {detailPerson.email ?? "None"}
+            </p>
+            <p>
+              <strong>Phone:</strong> {detailPerson.phone ?? "None"}
+            </p>
+            <p>
+              <strong>Date of birth:</strong> {detailPerson.dateOfBirth ?? "None"}
+            </p>
+            <p>
+              <strong>Version:</strong> {detailPerson.version}
+            </p>
+
+            {!detailPerson.isMinor && access.canManage && !hideWrites ? (
+              <Button type="button" onClick={() => openEdit(detailPerson)}>
+                Edit contact
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+      </>
+    );
+  }
+
+  if (view === "add") {
+    return (
+      <>
+        <h1>All Contacts</h1>
+        <h2>Add Contact</h2>
+
+        {addNotice ? (
+          <Alert variant="destructive" live="polite">
+            <span>{addNotice}</span>
+          </Alert>
+        ) : null}
+
+        <form onSubmit={handleAddSubmit}>
+          <div>
+            <label htmlFor="add-given-name">Given name</label>
+            <Input
+              id="add-given-name"
+              value={addGivenName}
+              onChange={(e) => setAddGivenName(e.target.value)}
+              required
+            />
+          </div>
+          <div>
+            <label htmlFor="add-family-name">Family name</label>
+            <Input
+              id="add-family-name"
+              value={addFamilyName}
+              onChange={(e) => setAddFamilyName(e.target.value)}
+              required
+            />
+          </div>
+          <div>
+            <label htmlFor="add-email">Email</label>
+            <Input
+              id="add-email"
+              type="email"
+              value={addEmail}
+              onChange={(e) => setAddEmail(e.target.value)}
+            />
+          </div>
+          <div>
+            <label htmlFor="add-phone">Phone</label>
+            <Input
+              id="add-phone"
+              type="tel"
+              value={addPhone}
+              onChange={(e) => setAddPhone(e.target.value)}
+            />
+          </div>
+          <div>
+            <label htmlFor="add-dob">Date of birth</label>
+            <Input
+              id="add-dob"
+              type="date"
+              value={addDob}
+              onChange={(e) => setAddDob(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <Button type="submit">Save contact</Button>
+            <Button type="button" variant="outline" onClick={backToList}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      </>
+    );
+  }
+
+  if (view === "edit") {
+    return (
+      <>
+        <h1>All Contacts</h1>
+        <h2>Edit Contact</h2>
+
+        {editConflict ? (
+          <Alert live="polite">
+            <span>A conflict occurred while saving. Please reload.</span>
+            <Button type="button" onClick={reloadDetail}>
+              Reload
+            </Button>
+          </Alert>
+        ) : null}
+
+        {editNotice ? (
+          <Alert variant="destructive" live="polite">
+            <span>{editNotice}</span>
+          </Alert>
+        ) : null}
+
+        <form onSubmit={handleEditSubmit}>
+          <div>
+            <label htmlFor="edit-given-name">Given name</label>
+            <Input
+              id="edit-given-name"
+              value={editGivenName}
+              onChange={(e) => setEditGivenName(e.target.value)}
+              required
+            />
+          </div>
+          <div>
+            <label htmlFor="edit-family-name">Family name</label>
+            <Input
+              id="edit-family-name"
+              value={editFamilyName}
+              onChange={(e) => setEditFamilyName(e.target.value)}
+              required
+            />
+          </div>
+          <div>
+            <label htmlFor="edit-email">Email</label>
+            <Input
+              id="edit-email"
+              type="email"
+              value={editEmail}
+              onChange={(e) => setEditEmail(e.target.value)}
+            />
+          </div>
+          <div>
+            <label htmlFor="edit-phone">Phone</label>
+            <Input
+              id="edit-phone"
+              type="tel"
+              value={editPhone}
+              onChange={(e) => setEditPhone(e.target.value)}
+            />
+          </div>
+          <div>
+            <label htmlFor="edit-dob">Date of birth</label>
+            <Input
+              id="edit-dob"
+              type="date"
+              value={editDob}
+              onChange={(e) => setEditDob(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <Button type="submit">Save changes</Button>
+            <Button type="button" variant="outline" onClick={() => setView("detail")}>
+              Cancel
+            </Button>
+          </div>
+        </form>
       </>
     );
   }
@@ -271,16 +716,29 @@ export function AllContactsPage() {
           ) : (
             <div>
               <p>No contacts yet</p>
-              {access.canManage && !hideWrites ? <Button type="button">Add contact</Button> : null}
+              {access.canManage && !hideWrites && activeTab === "adults" ? (
+                <Button type="button" onClick={openAdd}>
+                  Add contact
+                </Button>
+              ) : null}
             </div>
           )
         ) : (
           <>
+            {access.canManage && !hideWrites && activeTab === "adults" ? (
+              <div>
+                <Button type="button" onClick={openAdd}>
+                  Add contact
+                </Button>
+              </div>
+            ) : null}
+
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead scope="col">Given name</TableHead>
                   <TableHead scope="col">Family name</TableHead>
+                  <TableHead scope="col">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -288,6 +746,11 @@ export function AllContactsPage() {
                   <TableRow key={person.id}>
                     <TableCell>{person.givenName}</TableCell>
                     <TableCell>{person.familyName}</TableCell>
+                    <TableCell>
+                      <Button type="button" variant="outline" onClick={() => openDetail(person.id)}>
+                        View
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

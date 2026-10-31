@@ -562,3 +562,448 @@ describe("All Contacts Screen", () => {
     ).toBeTruthy();
   });
 });
+
+describe("Detail, Add, and Edit Contact (Task 10)", () => {
+  const adultPerson = {
+    id: "00000000-0000-4000-8000-000000000010",
+    personId: "00000000-0000-4000-8000-000000000010",
+    isMinor: false,
+    givenName: "Ada",
+    familyName: "Lovelace",
+    version: 3,
+  };
+
+  const adultDetail = {
+    personId: "00000000-0000-4000-8000-000000000010",
+    householdId: null,
+    isMinor: false,
+    ageBasis: "recorded",
+    birthdayMd: 512,
+    givenName: "Ada",
+    familyName: "Lovelace",
+    email: "ada@example.test",
+    phone: "+61400000001",
+    dateOfBirth: "1980-05-12",
+    version: 3,
+  };
+
+  it("shows contact details from /v1/people/read including version and passes axe", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
+      const url = String(info);
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      if (path === "/v1/people/access") {
+        return new Response(
+          JSON.stringify({
+            directoryEnabled: true,
+            canView: true,
+            canManage: true,
+            canReadMinors: false,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (path === "/v1/people/list") {
+        return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (path === "/v1/people/read") {
+        const body = init?.body ? JSON.parse(String(init.body)) : {};
+        expect(body.communitySlug).toBe(SLUG);
+        expect(body.personId).toBe(adultPerson.id);
+        return new Response(JSON.stringify(adultDetail), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    const container = await showContacts();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    expect(await screen.findByText("Ada")).toBeTruthy();
+    const viewButton = screen.getByRole("button", { name: "View" });
+    fireEvent.click(viewButton);
+
+    expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
+    expect(screen.getByText("ada@example.test")).toBeTruthy();
+    expect(screen.getByText("+61400000001")).toBeTruthy();
+    expect(screen.getByText("1980-05-12")).toBeTruthy();
+    expect(screen.getByText("3")).toBeTruthy();
+
+    const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    expect(resultIds(results, "violations")).toEqual([]);
+  });
+
+  it("hides Edit button in detail view when caller lacks people.manage (Pin 15)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      if (path === "/v1/people/access") {
+        return new Response(
+          JSON.stringify({
+            directoryEnabled: true,
+            canView: true,
+            canManage: false,
+            canReadMinors: false,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (path === "/v1/people/list") {
+        return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (path === "/v1/people/read") {
+        return new Response(JSON.stringify(adultDetail), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    await showContacts();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    expect(await screen.findByText("Ada")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "View" }));
+
+    expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Edit contact" })).toBeNull();
+  });
+
+  it("creates an adult contact via POST /v1/people/create and passes axe", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const createdId = "00000000-0000-4000-8000-000000000099";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      if (path === "/v1/people/access") {
+        return new Response(
+          JSON.stringify({
+            directoryEnabled: true,
+            canView: true,
+            canManage: true,
+            canReadMinors: false,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (path === "/v1/people/list") {
+        return new Response(JSON.stringify({ items: [], nextCursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (path === "/v1/people/create") {
+        return new Response(JSON.stringify({ personId: createdId }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    const container = await showContacts();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const addButton = await screen.findByRole("button", { name: "Add contact" });
+    fireEvent.click(addButton);
+
+    expect(await screen.findByRole("heading", { name: "Add Contact" })).toBeTruthy();
+    const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    expect(resultIds(results, "violations")).toEqual([]);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Given name" }), {
+      target: { value: "Charles" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Family name" }), {
+      target: { value: "Babbage" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Email" }), {
+      target: { value: "charles@example.test" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save contact" }));
+
+    await act(async () => {});
+
+    const createCall = fetchSpy.mock.calls.find((call) =>
+      String(call[0]).endsWith("/v1/people/create"),
+    );
+    expect(createCall).toBeDefined();
+    const createInit = createCall?.[1] as RequestInit | undefined;
+    const createBody = createInit?.body ? JSON.parse(String(createInit.body)) : {};
+    expect(createBody.communitySlug).toBe(SLUG);
+    expect(createBody.givenName).toBe("Charles");
+    expect(createBody.familyName).toBe("Babbage");
+    expect(createBody.email).toBe("charles@example.test");
+  });
+
+  it("edits an adult contact, sends current version to POST /v1/people/update, and passes axe", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      if (path === "/v1/people/access") {
+        return new Response(
+          JSON.stringify({
+            directoryEnabled: true,
+            canView: true,
+            canManage: true,
+            canReadMinors: false,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (path === "/v1/people/list") {
+        return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (path === "/v1/people/read") {
+        return new Response(JSON.stringify(adultDetail), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (path === "/v1/people/update") {
+        return new Response(JSON.stringify({ version: 4 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    const container = await showContacts();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    expect(await screen.findByText("Ada")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "View" }));
+
+    expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
+    const editButton = screen.getByRole("button", { name: "Edit contact" });
+    fireEvent.click(editButton);
+
+    expect(await screen.findByRole("heading", { name: "Edit Contact" })).toBeTruthy();
+    const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    expect(resultIds(results, "violations")).toEqual([]);
+
+    const givenNameInput = screen.getByRole("textbox", { name: "Given name" });
+    expect((givenNameInput as HTMLInputElement).value).toBe("Ada");
+    fireEvent.change(givenNameInput, { target: { value: "Augusta" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await act(async () => {});
+
+    const updateCall = fetchSpy.mock.calls.find((call) =>
+      String(call[0]).endsWith("/v1/people/update"),
+    );
+    expect(updateCall).toBeDefined();
+    const updateInit = updateCall?.[1] as RequestInit | undefined;
+    const updateBody = updateInit?.body ? JSON.parse(String(updateInit.body)) : {};
+    expect(updateBody.communitySlug).toBe(SLUG);
+    expect(updateBody.personId).toBe(adultPerson.id);
+    expect(updateBody.version).toBe(3);
+    expect(updateBody.givenName).toBe("Augusta");
+  });
+
+  it("shows plain conflict message that does not name clashing field and offers reload on 409", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      if (path === "/v1/people/access") {
+        return new Response(
+          JSON.stringify({
+            directoryEnabled: true,
+            canView: true,
+            canManage: true,
+            canReadMinors: false,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (path === "/v1/people/list") {
+        return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (path === "/v1/people/read") {
+        return new Response(JSON.stringify(adultDetail), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (path === "/v1/people/update") {
+        return new Response(JSON.stringify({ field: "email_bidx_conflict" }), {
+          status: 409,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    const container = await showContacts();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    expect(await screen.findByText("Ada")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "View" }));
+
+    expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Edit contact" }));
+
+    expect(await screen.findByRole("heading", { name: "Edit Contact" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(
+      await screen.findByText(/A conflict occurred while saving|That change conflicted/i),
+    ).toBeTruthy();
+    expect(document.body.textContent).not.toContain("email");
+    expect(document.body.textContent).not.toContain("phone");
+    expect(document.body.textContent).not.toContain("email_bidx_conflict");
+
+    expect(screen.getByRole("button", { name: "Reload" })).toBeTruthy();
+
+    const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    expect(resultIds(results, "violations")).toEqual([]);
+  });
+
+  it("shows plain not-found on 404 in detail view", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      if (path === "/v1/people/access") {
+        return new Response(
+          JSON.stringify({
+            directoryEnabled: true,
+            canView: true,
+            canManage: true,
+            canReadMinors: false,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (path === "/v1/people/list") {
+        return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (path === "/v1/people/read") {
+        return new Response(null, { status: 404 });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    const container = await showContacts();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    expect(await screen.findByText("Ada")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "View" }));
+
+    expect(await screen.findByText("Contact not found")).toBeTruthy();
+    const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    expect(resultIds(results, "violations")).toEqual([]);
+  });
+
+  it("never provides create or edit control for a minor", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const minorPerson = {
+      id: "minor-1",
+      personId: "minor-1",
+      isMinor: true,
+      givenName: "Child",
+      familyName: "Person",
+      version: 1,
+    };
+    const minorDetail = {
+      personId: "minor-1",
+      householdId: "hh-1",
+      isMinor: true,
+      ageBasis: "recorded",
+      birthdayMd: null,
+      givenName: "Child",
+      familyName: "Person",
+      email: null,
+      phone: null,
+      dateOfBirth: null,
+      version: 1,
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      if (path === "/v1/people/access") {
+        return new Response(
+          JSON.stringify({
+            directoryEnabled: true,
+            canView: true,
+            canManage: true,
+            canReadMinors: true,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (path === "/v1/people/list") {
+        return new Response(JSON.stringify({ items: [minorPerson], nextCursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (path === "/v1/people/read") {
+        return new Response(JSON.stringify(minorDetail), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    await showContacts();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const minorsTab = await screen.findByRole("tab", { name: "Minors" });
+    fireEvent.click(minorsTab);
+
+    expect(await screen.findByText("Child")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add contact" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "View" }));
+
+    expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Edit contact" })).toBeNull();
+  });
+});
