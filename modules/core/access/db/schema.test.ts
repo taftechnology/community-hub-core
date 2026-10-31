@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { catalogue } from "@community-hub/policy";
 
 const DRIZZLE = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -157,5 +158,29 @@ describe("access grant tables", () => {
     expect(sql).toContain("custom_role_permissions_permission");
     expect(sql).toContain("entitlements.view");
     expect(sql).toContain("entitlements.manage");
+  });
+
+  it("widens the custom_role_permissions CHECK for people permissions in 0015", () => {
+    const files = readdirSync(DRIZZLE).filter(
+      (name) => name.startsWith("0015_") && name.endsWith(".sql"),
+    );
+    expect(files).toHaveLength(1);
+    const sql = readFileSync(path.join(DRIZZLE, files[0] ?? ""), "utf8");
+    expect(sql).toContain("custom_role_permissions_permission");
+    expect(sql).toContain("people.view");
+    expect(sql).toContain("people.manage");
+  });
+
+  it("pins that the schema custom_role_permissions CHECK list matches the policy catalogue (pin 14)", () => {
+    const schemaSource = readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "schema.ts"),
+      "utf8",
+    );
+    const match = schemaSource.match(
+      /custom_role_permissions_permission["'],\s*sql`\$\{t\.permission\}\s+in\s*\(([^)]+)\)`/,
+    );
+    expect(match).not.toBeNull();
+    const permissionsInCheck = [...(match?.[1] ?? "").matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    expect(new Set(permissionsInCheck)).toEqual(new Set(catalogue()));
   });
 });

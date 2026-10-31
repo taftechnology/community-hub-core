@@ -8,7 +8,7 @@ export default defineModule({
   subscribes: [],
   ports: [],
   features: ["people.directory", "people.households", "people.custom_fields"],
-  permissions: ["people.restricted.read"],
+  permissions: ["people.view", "people.manage", "people.restricted.read"],
   dataClasses: {
     "organisation_keys.id": "internal",
     "organisation_keys.org_id": "internal",
@@ -35,6 +35,7 @@ export default defineModule({
     "persons.org_id": "internal",
     "persons.community_id": "internal",
     "persons.household_id": "internal",
+    "persons.version": "internal",
     "persons.is_minor": "confidential-queryable",
     "persons.age_basis": "confidential-queryable",
     "persons.birthday_md": "confidential-queryable",
