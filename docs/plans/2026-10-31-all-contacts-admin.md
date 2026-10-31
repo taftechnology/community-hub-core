@@ -41,6 +41,7 @@ After Task 5 (the people functions and the access gate, before any route) the re
 6. **Adult denial audit uses the purpose `people.person.view`.** An adult is readable with either key, and audit purposes must have three segments (database CHECK and the event-names checker), so the two-segment key `people.view` cannot be a purpose. `people.person.view` is registered with `defineAuditPurpose` in `modules/core/access/public/index.ts`, like `entitlements.toggles.view`. The minor denial keeps `people.restricted.read`.
 7. **`listPersons` minors mode refuses `includeRestricted` other than `true`** (`invalid_input`, no audit row, no rows), so an unprivileged call can never return blank rows or a count.
 8. The `decide` and `role.ts` permission lists are two copies of one list; both change in Task 1, and a test asserts they match the CHECK (Task 2).
+9. **No index on `app.persons` (Task 3 `EXPLAIN`).** On 5,000 adults plus 50 minors in one community, both list queries are sequential scans and run in 5.9 ms (adults) and 0.4 ms (minors). The plan said an index would be added if a sequential scan showed; the cost is a second migration surface for a parish-sized table, so none is added. The roadmap open items record that an index starting with `org_id` is added when a real community passes a few tens of thousands of contacts or the list is measured slow.
 
 ## Security pins
 
