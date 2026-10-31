@@ -221,6 +221,19 @@ describe("entitlement-guard", () => {
       expect(await result?.text()).toBe("");
     });
 
+    it("fails closed with 403 when checkout itself rejects (finding 4)", async () => {
+      const deps = makeDeps({
+        checkout: vi.fn().mockRejectedValueOnce(new Error("platform checkout failed")),
+      });
+      const scope: CommunityScope = { orgId: ORG, communityId: COMMUNITY_A };
+
+      const result = await guardEntitlement(deps, scope, "people.directory");
+
+      expect(result).not.toBeNull();
+      expect(result?.status).toBe(403);
+      expect(await result?.text()).toBe("");
+    });
+
     it("guards two communities independently (one enabled, one not)", async () => {
       entitlements.readSnapshot.mockImplementation(
         async (_sql: unknown, query: { communityId: string }) => {

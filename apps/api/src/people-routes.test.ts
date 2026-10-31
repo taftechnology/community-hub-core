@@ -596,6 +596,58 @@ describe("people routes (list and read)", () => {
       expect(await resMinor.text()).toBe("");
     });
 
+    it("forwards search, cursor and limit to listPersons in adults mode (finding 4)", async () => {
+      people.listPersons.mockResolvedValueOnce({ items: [], nextCursor: null });
+
+      const res = await call("/v1/people/list", {
+        communitySlug: "parish",
+        kind: "adults",
+        search: "Zelda",
+        cursor: "cursor-adults-token",
+        limit: 25,
+      });
+
+      expect(res.status).toBe(200);
+      expect(people.listPersons).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        {
+          kind: "adults",
+          search: "Zelda",
+          cursor: "cursor-adults-token",
+          limit: 25,
+          includeRestricted: false,
+          actorUserId: USER,
+        },
+      );
+    });
+
+    it("forwards cursor and limit to listPersons in minors mode (finding 4)", async () => {
+      people.listPersons.mockResolvedValueOnce({ items: [], nextCursor: null });
+
+      const res = await call("/v1/people/list", {
+        communitySlug: "parish",
+        kind: "minors",
+        cursor: "cursor-minors-token",
+        limit: 15,
+      });
+
+      expect(res.status).toBe(200);
+      expect(people.listPersons).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        {
+          kind: "minors",
+          cursor: "cursor-minors-token",
+          limit: 15,
+          includeRestricted: true,
+          actorUserId: USER,
+        },
+      );
+    });
+
     it("never logs search terms, names, or emails in logger output or audit rows (pins 7, 13)", async () => {
       const SECRET_TERM = "SensitiveQueryTerm987";
       people.listPersons.mockResolvedValueOnce({ items: [], nextCursor: null });
@@ -683,6 +735,42 @@ describe("people routes (list and read)", () => {
         purpose: "people.person.view",
         targetIds: [ORG, COMMUNITY],
       });
+    });
+
+    it("allows caller with only people.view to read an adult (finding 4)", async () => {
+      access.holdsPermission.mockImplementation(
+        async (_tx: unknown, _userId: string, perm: string) => perm === "people.view",
+      );
+      access.readPersonForActor.mockResolvedValueOnce({
+        personId: PERSON_ID,
+        version: 1,
+      });
+
+      const res = await call("/v1/people/read", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+      });
+
+      expect(res.status).toBe(200);
+      expect(access.readPersonForActor).toHaveBeenCalled();
+    });
+
+    it("allows caller with only people.restricted.read to read an adult (finding 4)", async () => {
+      access.holdsPermission.mockImplementation(
+        async (_tx: unknown, _userId: string, perm: string) => perm === "people.restricted.read",
+      );
+      access.readPersonForActor.mockResolvedValueOnce({
+        personId: PERSON_ID,
+        version: 1,
+      });
+
+      const res = await call("/v1/people/read", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+      });
+
+      expect(res.status).toBe(200);
+      expect(access.readPersonForActor).toHaveBeenCalled();
     });
 
     it("returns byte-identical 404 for absent id, cross-community id, and unreadable minor (pin 6)", async () => {
