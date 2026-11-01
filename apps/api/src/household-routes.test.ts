@@ -1570,6 +1570,65 @@ describe("household read routes (Task 9: list and read)", () => {
         expect(resNotFound.status).toBe(404);
         expect(await resNotFound.text()).toBe("");
       });
+
+      it.each([
+        ["conflict", 409],
+        ["duplicate_guardian_link", 409],
+        ["last_guardian", 409],
+        ["adult_cannot_move_with_links", 409],
+        ["not_found", 404],
+        ["invalid_input", 400],
+        ["invalid_guardian", 400],
+        ["minor_not_movable", 400],
+        ["invalid_date", 400],
+        ["invalid_name", 400],
+        ["invalid_declaration", 400],
+        ["household_required", 400],
+      ] as const)(
+        "maps PeopleError code '%s' to HTTP %d with empty body (finding 5)",
+        async (code, expectedStatus) => {
+          people.createHousehold.mockRejectedValueOnce(new PeopleError(code as never));
+          const res = await call("/v1/households/create", { communitySlug: SLUG });
+          expect(res.status).toBe(expectedStatus);
+          expect(await res.text()).toBe("");
+        },
+      );
+
+      it("returns HTTP 500 with empty body on unmapped PeopleError or plain Error (finding 5)", async () => {
+        // Plain Error
+        people.createHousehold.mockRejectedValueOnce(new Error("unexpected db failure"));
+        const resPlain = await call("/v1/households/create", { communitySlug: SLUG });
+        expect(resPlain.status).toBe(500);
+        expect(await resPlain.text()).toBe("");
+
+        // Unmapped PeopleError
+        people.createHousehold.mockRejectedValueOnce(new PeopleError("unknown_code" as never));
+        const resUnmapped = await call("/v1/households/create", { communitySlug: SLUG });
+        expect(resUnmapped.status).toBe(500);
+        expect(await resUnmapped.text()).toBe("");
+      });
+
+      it("rejects non-JSON content-type with 400 and empty body (finding 6)", async () => {
+        const targetRoute = route("/v1/households/create");
+        const context: RouteContext = {
+          pattern: targetRoute.pattern,
+          billing: targetRoute.billing,
+        };
+        const rawReq = new Request("http://127.0.0.1/v1/households/create", {
+          method: "POST",
+          headers: {
+            "content-type": "text/plain",
+            "x-community-hub-hostname": API_HOSTNAME,
+            authorization: `Bearer ${TOKEN}`,
+          },
+          body: JSON.stringify({ communitySlug: SLUG }),
+        });
+        const res = await withRequest({ requestId: REQUEST_ID }, () =>
+          targetRoute.handle(rawReq, context),
+        );
+        expect(res.status).toBe(400);
+        expect(await res.text()).toBe("");
+      });
     });
   });
 });

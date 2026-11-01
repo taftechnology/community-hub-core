@@ -301,4 +301,147 @@ describe("household contract schemas (pin 10)", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("rejects non-uuid strings on household, person, guardian, child, and link id fields (finding 7)", () => {
+    const invalidId = "not-a-valid-uuid";
+
+    expect(
+      readHouseholdBody.safeParse({
+        communitySlug: "parish-au",
+        householdId: invalidId,
+      }).success,
+    ).toBe(false);
+
+    expect(
+      renameHouseholdBody.safeParse({
+        communitySlug: "parish-au",
+        householdId: invalidId,
+        version: 1,
+        label: "Label",
+      }).success,
+    ).toBe(false);
+
+    expect(
+      moveAdultBody.safeParse({
+        communitySlug: "parish-au",
+        householdId: VALID_UUID,
+        personId: invalidId,
+        version: 1,
+      }).success,
+    ).toBe(false);
+
+    expect(
+      moveAdultBody.safeParse({
+        communitySlug: "parish-au",
+        householdId: invalidId,
+        personId: VALID_UUID,
+        version: 1,
+      }).success,
+    ).toBe(false);
+
+    expect(
+      addMinorBody.safeParse({
+        communitySlug: "parish-au",
+        householdId: invalidId,
+        givenName: "Tommy",
+        familyName: "Smith",
+        dateOfBirth: "2015-06-01",
+        guardianId: VALID_UUID,
+      }).success,
+    ).toBe(false);
+
+    expect(
+      addMinorBody.safeParse({
+        communitySlug: "parish-au",
+        householdId: VALID_UUID,
+        givenName: "Tommy",
+        familyName: "Smith",
+        dateOfBirth: "2015-06-01",
+        guardianId: invalidId,
+      }).success,
+    ).toBe(false);
+
+    expect(
+      linkGuardianBody.safeParse({
+        communitySlug: "parish-au",
+        householdId: invalidId,
+        guardianId: VALID_UUID,
+        childId: VALID_UUID,
+      }).success,
+    ).toBe(false);
+
+    expect(
+      linkGuardianBody.safeParse({
+        communitySlug: "parish-au",
+        householdId: VALID_UUID,
+        guardianId: invalidId,
+        childId: VALID_UUID,
+      }).success,
+    ).toBe(false);
+
+    expect(
+      linkGuardianBody.safeParse({
+        communitySlug: "parish-au",
+        householdId: VALID_UUID,
+        guardianId: VALID_UUID,
+        childId: invalidId,
+      }).success,
+    ).toBe(false);
+
+    expect(
+      unlinkGuardianBody.safeParse({
+        communitySlug: "parish-au",
+        householdId: invalidId,
+        linkId: VALID_UUID,
+      }).success,
+    ).toBe(false);
+
+    expect(
+      unlinkGuardianBody.safeParse({
+        communitySlug: "parish-au",
+        householdId: VALID_UUID,
+        linkId: invalidId,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires positive integer for version fields (finding 7)", () => {
+    // 0 is not positive
+    expect(
+      renameHouseholdBody.safeParse({
+        communitySlug: "parish-au",
+        householdId: VALID_UUID,
+        version: 0,
+        label: "Label",
+      }).success,
+    ).toBe(false);
+
+    // negative integer is not positive
+    expect(
+      renameHouseholdBody.safeParse({
+        communitySlug: "parish-au",
+        householdId: VALID_UUID,
+        version: -1,
+        label: "Label",
+      }).success,
+    ).toBe(false);
+
+    expect(
+      moveAdultBody.safeParse({
+        communitySlug: "parish-au",
+        householdId: VALID_UUID,
+        personId: VALID_UUID,
+        version: 0,
+      }).success,
+    ).toBe(false);
+
+    expect(
+      moveAdultBody.safeParse({
+        communitySlug: "parish-au",
+        householdId: VALID_UUID,
+        personId: VALID_UUID,
+        version: -1,
+      }).success,
+    ).toBe(false);
+  });
 });
