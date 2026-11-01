@@ -334,6 +334,7 @@ export function AllContactsPage() {
       setView("list");
       setSelectedPersonId(null);
       setDetailPerson(null);
+      detailGeneration.current += 1;
       setDetailNotFound(false);
       setDetailError(false);
       setAddForm(initialFormData);
@@ -358,7 +359,12 @@ export function AllContactsPage() {
   }, [slug, version, reload, access.directoryEnabled, access.canView, fetchContacts]);
 
   const loadPersonDetail = useCallback(
-    async (communitySlug: string, personId: string, isCurrent: () => boolean) => {
+    async (
+      communitySlug: string,
+      personId: string,
+      isCurrent: () => boolean,
+      options?: { syncEditForm?: boolean },
+    ) => {
       setDetailLoading(true);
       setDetailNotFound(false);
       setDetailError(false);
@@ -395,6 +401,17 @@ export function AllContactsPage() {
           return;
         }
         setDetailPerson(parsed);
+        if (options?.syncEditForm) {
+          setEditForm({
+            givenName: parsed.givenName,
+            familyName: parsed.familyName,
+            email: parsed.email || "",
+            phone: parsed.phone || "",
+            dateOfBirth: parsed.dateOfBirth || "",
+          });
+          setEditConflict(false);
+          setView("edit");
+        }
       } catch {
         if (!isCurrent()) {
           return;
@@ -421,8 +438,10 @@ export function AllContactsPage() {
   function reloadDetail() {
     if (selectedPersonId && slug) {
       const mine = ++detailGeneration.current;
-      setEditConflict(false);
-      void loadPersonDetail(slug, selectedPersonId, () => detailGeneration.current === mine);
+      const syncEditForm = view === "edit";
+      void loadPersonDetail(slug, selectedPersonId, () => detailGeneration.current === mine, {
+        syncEditForm,
+      });
     }
   }
 
@@ -432,13 +451,13 @@ export function AllContactsPage() {
   }
 
   function openEdit(person: PersonDetail) {
-    setEditForm((prev) => ({
-      givenName: prev.givenName || person.givenName,
-      familyName: prev.familyName || person.familyName,
-      email: prev.email || person.email || "",
-      phone: prev.phone || person.phone || "",
-      dateOfBirth: prev.dateOfBirth || person.dateOfBirth || "",
-    }));
+    setEditForm({
+      givenName: person.givenName,
+      familyName: person.familyName,
+      email: person.email || "",
+      phone: person.phone || "",
+      dateOfBirth: person.dateOfBirth || "",
+    });
     setEditConflict(false);
     setEditNotice(null);
     setView("edit");
@@ -637,9 +656,6 @@ export function AllContactsPage() {
             <p>
               <strong>Date of birth:</strong> {detailPerson.dateOfBirth ?? "None"}
             </p>
-            <p>
-              <strong>Version:</strong> {detailPerson.version}
-            </p>
 
             {!detailPerson.isMinor && access.canManage && !hideWrites ? (
               <Button type="button" onClick={() => openEdit(detailPerson)}>
@@ -692,7 +708,10 @@ export function AllContactsPage() {
 
         {editConflict ? (
           <Alert ref={editAlertRef} tabIndex={-1} role="alert">
-            <span>A conflict occurred while saving. Please reload.</span>
+            <span>
+              This contact was changed by someone else, or that email or phone is already in use.
+              Reload to see the latest details; your unsaved changes will be discarded.
+            </span>
             <Button type="button" onClick={reloadDetail}>
               Reload
             </Button>
