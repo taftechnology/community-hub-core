@@ -491,13 +491,13 @@ describe("household members: move adult", () => {
 
       const p1 = withRequest({ requestId: REQUEST_ID }, () =>
         withAppTransaction(app, scope, async (tx1) => {
-          tx1Started = true;
           await moveAdult(tx1, {
             personId: adultId,
             version: 1,
             householdId: homeBId,
             actorUserId: null,
           });
+          tx1Started = true;
           await tx1Hold;
         }),
       );
@@ -560,6 +560,177 @@ describe("household members: move adult", () => {
             select count(*)::int as count from app.guardian_links
           `;
           expect(links[0]!.count).toBe(0);
+        }),
+      );
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+      await directSql.end({ timeout: 1 });
+    }
+  });
+
+  it("pin 23: deterministic race: linkGuardian holds lock, moveAdult blocks and throws adult_cannot_move_with_links", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const kms = createLocalKmsPort();
+    const organisationId = newId();
+    const communityId = newId();
+    const scope = { orgId: organisationId, communityId };
+
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, ${`pin23m-${organisationId.slice(0, 8)}`}, 'au', 'implicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, ${`pin23m-${organisationId.slice(0, 8)}`}, 'au')
+        `;
+      });
+
+      let homeAId!: string;
+      let homeBId!: string;
+      let adultId!: string;
+      let childId!: string;
+
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, scope, async (tx) => {
+          const homeA = await createHousehold(tx, kms, KEY_ARN, {
+            now: NOW,
+            label: null,
+            actorUserId: null,
+          });
+          homeAId = homeA.householdId;
+          const homeB = await createHousehold(tx, kms, KEY_ARN, {
+            now: NOW,
+            label: null,
+            actorUserId: null,
+          });
+          homeBId = homeB.householdId;
+
+          const adult = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: true,
+            householdId: homeAId,
+            dateOfBirth: null,
+            givenName: "Adult",
+            familyName: "Person",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          adultId = adult.personId;
+
+          const child = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId: homeAId,
+            dateOfBirth: null,
+            givenName: "Child",
+            familyName: "Person",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          childId = child.personId;
+        }),
+      );
+
+      // Deterministic mirror race:
+      // Tx1 calls linkGuardian for adult to child in homeA and holds transaction open.
+      // Tx2 calls moveAdult from homeA to homeB.
+      // Tx2 attempts 'for update' on adult row, blocking on Tx1's 'for share'.
+      // We poll pg_stat_activity until Tx2 is waiting on 'Lock'.
+      // Then Tx1 commits.
+      // Tx2 unblocks, checks guardian_links, sees the committed link, and throws 'adult_cannot_move_with_links'.
+      let releaseTx1!: () => void;
+      const tx1Hold = new Promise<void>((resolve) => {
+        releaseTx1 = resolve;
+      });
+      let tx1Started = false;
+
+      const p1 = withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, scope, async (tx1) => {
+          await linkGuardian(tx1, {
+            now: NOW,
+            householdId: homeAId,
+            guardianPersonId: adultId,
+            childPersonId: childId,
+            consent: true,
+            pickup: false,
+            view: false,
+            manage: false,
+            actorUserId: null,
+          });
+          tx1Started = true;
+          await tx1Hold;
+        }),
+      );
+
+      while (!tx1Started) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      let tx2Pid: number | null = null;
+      let tx2Error: unknown = null;
+
+      const p2 = withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, scope, async (tx2) => {
+          const pidRows = await tx2<{ pid: number }[]>`select pg_backend_pid() as pid`;
+          tx2Pid = pidRows[0]!.pid;
+          await moveAdult(tx2, {
+            personId: adultId,
+            version: 1,
+            householdId: homeBId,
+            actorUserId: null,
+          });
+        }),
+      ).catch((err) => {
+        tx2Error = err;
+      });
+
+      const start = Date.now();
+      let locked = false;
+      while (Date.now() - start < 10000) {
+        if (tx2Pid !== null) {
+          const stat = await directSql<{ wait_event_type: string | null }[]>`
+            select wait_event_type from pg_stat_activity where pid = ${tx2Pid}
+          `;
+          if (stat[0]?.wait_event_type === "Lock") {
+            locked = true;
+            break;
+          }
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      expect(locked).toBe(true);
+
+      releaseTx1();
+      await p1;
+      await p2;
+
+      expect(tx2Error).toBeInstanceOf(PeopleError);
+      expect((tx2Error as PeopleError).code).toBe("adult_cannot_move_with_links");
+
+      // Invariant check: no guardian link exists where guardian is outside household
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, scope, async (tx) => {
+          const invalidLinks = await tx<{ count: number }[]>`
+            select count(*)::int as count
+            from app.guardian_links gl
+            join app.persons p on p.id = gl.guardian_person_id
+            where p.household_id is distinct from gl.household_id
+          `;
+          expect(invalidLinks[0]!.count).toBe(0);
+
+          const adultRow = await tx<{ household_id: string }[]>`
+            select household_id::text as household_id from app.persons where id = ${adultId}::uuid
+          `;
+          expect(adultRow[0]!.household_id).toBe(homeAId);
         }),
       );
     } finally {
