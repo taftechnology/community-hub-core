@@ -587,6 +587,46 @@ describe("Family Records list view", () => {
     expect(screen.queryByRole("button", { name: "Next page" })).toBeNull();
   });
 
+  it.each([402, 403, 404, 409, 429, 503])(
+    "shows the retryable load error and no rows on a %i household list (finding H5c)",
+    async (status) => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      // A VALID list body on a non-200 status: only the status check can reject it.
+      const spy = mockApi({
+        access: { householdsEnabled: true, canView: true, canReadMinors: true },
+        listResult: {
+          items: [
+            {
+              householdId: "00000000-0000-4000-8000-000000000001",
+              version: 1,
+              label: "Should Not Render",
+              adultCount: 1,
+            },
+          ],
+          nextCursor: null,
+        },
+      });
+      const real = spy.getMockImplementation()!;
+      spy.mockImplementation(async (info, init) => {
+        const res = await real(info, init);
+        return String(info).endsWith("/v1/households/list")
+          ? new Response(await res.text(), { status })
+          : res;
+      });
+
+      await showFamilyRecords();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      expect(await screen.findByText("Failed to load households")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+      expect(screen.queryByText("No households yet")).toBeNull();
+      expect(screen.queryByText("Should Not Render")).toBeNull();
+    },
+  );
+
   it("shows error alert and retry button on fetch failure, clicking retry refetches", async () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);
     let attempts = 0;
@@ -825,6 +865,48 @@ describe("Family Records detail view", () => {
     expect(await screen.findByText("Arthur")).toBeTruthy();
     expect(readAttempts).toBe(2);
   });
+
+  it.each([402, 403, 409, 429, 503])(
+    "shows the retryable load error, not 'Household not found', on a %i household read (finding H5c)",
+    async (status) => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      // A VALID detail body on a non-200 status: only the status check can reject it.
+      const spy = mockApi({
+        access: { householdsEnabled: true, canView: true, canReadMinors: true },
+        listResult: {
+          items: [
+            {
+              householdId: sampleDetail.householdId,
+              version: 1,
+              label: sampleDetail.label,
+              adultCount: 1,
+            },
+          ],
+          nextCursor: null,
+        },
+        detailResult: sampleDetail,
+      });
+      const real = spy.getMockImplementation()!;
+      spy.mockImplementation(async (info, init) => {
+        const res = await real(info, init);
+        return String(info).endsWith("/v1/households/read")
+          ? new Response(await res.text(), { status })
+          : res;
+      });
+
+      await showFamilyRecords();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+      fireEvent.click(await screen.findByRole("button", { name: "View Clarke Family" }));
+
+      expect(await screen.findByText("Failed to load household")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+      expect(screen.queryByText("Household not found")).toBeNull();
+      expect(screen.queryByText("Arthur")).toBeNull();
+    },
+  );
 
   it("Back to list button navigates back to list view", async () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);
@@ -1490,6 +1572,55 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
       />,
     );
     expect(screen.queryByRole("button", { name: "Unlink" })).toBeNull();
+  });
+
+  it("independently gates Add minor, Link guardian and Unlink on people.manage in MinorsSection (finding H5b)", () => {
+    // Positive control: manage and restricted.read both held shows all three controls.
+    const { unmount } = render(
+      <MinorsSection
+        detailHousehold={sampleDetail}
+        access={{
+          permissions: {
+            "people.view": true,
+            "people.manage": true,
+            "people.restricted.read": true,
+          },
+          entitlements: {
+            "people.directory": true,
+            "people.households": true,
+          },
+        }}
+        isReadOnly={false}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Add minor" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Link guardian" })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: /Unlink/i }).length).toBeGreaterThan(0);
+    unmount();
+
+    // restricted.read held, people.manage NOT held: all three controls are absent.
+    render(
+      <MinorsSection
+        detailHousehold={sampleDetail}
+        access={{
+          permissions: {
+            "people.view": true,
+            "people.manage": false,
+            "people.restricted.read": true,
+          },
+          entitlements: {
+            "people.directory": true,
+            "people.households": true,
+          },
+        }}
+        isReadOnly={false}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "Minors" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Guardians" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add minor" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Link guardian" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Unlink/i })).toBeNull();
   });
 
   it("view-only caller sees none of the action controls (Pin 21)", async () => {
