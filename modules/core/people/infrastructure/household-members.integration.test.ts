@@ -901,6 +901,61 @@ describe("household members: add minor", () => {
     });
   });
 
+  it("addMinor rejects email and phone at runtime with invalid_input and writes nothing", async () => {
+    await withTenant("minor-no-contact", async (tx, kms) => {
+      const home = await createHousehold(tx, kms, KEY_ARN, {
+        now: NOW,
+        label: null,
+        actorUserId: null,
+      });
+      const adult = await createPerson(tx, kms, KEY_ARN, {
+        now: NOW,
+        declaredAdult: true,
+        householdId: home.householdId,
+        dateOfBirth: null,
+        givenName: "Adult",
+        familyName: "Guardian",
+        email: null,
+        phone: null,
+        actorUserId: null,
+      });
+
+      // Call addMinor with email via a cast -> throws invalid_input
+      await expect(
+        addMinor(tx, kms, KEY_ARN, {
+          now: NOW,
+          householdId: home.householdId,
+          givenName: "Minor",
+          familyName: "WithEmail",
+          dateOfBirth: "2016-01-01",
+          guardianId: adult.personId,
+          actorUserId: null,
+          email: "minor@example.test",
+        } as unknown as Parameters<typeof addMinor>[3]),
+      ).rejects.toMatchObject({ code: "invalid_input" });
+
+      // Call addMinor with phone via a cast -> throws invalid_input
+      await expect(
+        addMinor(tx, kms, KEY_ARN, {
+          now: NOW,
+          householdId: home.householdId,
+          givenName: "Minor",
+          familyName: "WithPhone",
+          dateOfBirth: "2016-01-01",
+          guardianId: adult.personId,
+          actorUserId: null,
+          phone: "+61400000000",
+        } as unknown as Parameters<typeof addMinor>[3]),
+      ).rejects.toMatchObject({ code: "invalid_input" });
+
+      // Assert nothing written
+      const minors = await tx<{ count: number }[]>`
+        select count(*)::int as count from app.persons where is_minor = true
+      `;
+      expect(minors[0]!.count).toBe(0);
+    });
+  });
+
   it("pin 7: addMinor is atomic; failure to link guardian rolls back person and audit", async () => {
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));

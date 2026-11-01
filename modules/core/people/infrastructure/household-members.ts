@@ -153,6 +153,14 @@ export async function addMinor(
   keyArn: string,
   input: AddMinorInput,
 ): Promise<{ personId: string; linkId: string }> {
+  const raw = input as { email?: unknown; phone?: unknown };
+  if (
+    (raw.email !== undefined && raw.email !== null) ||
+    (raw.phone !== undefined && raw.phone !== null)
+  ) {
+    throw new PeopleError("invalid_input");
+  }
+
   if (
     typeof input.householdId !== "string" ||
     !UUID_RE.test(input.householdId) ||
