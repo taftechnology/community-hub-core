@@ -368,13 +368,16 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
     try {
       return await deps.checkout("app", (sql) =>
         withAppTransaction(sql, scope, async (tx) => {
-          const allowed = await holdsPermission(tx, actor.userId, MANAGE);
-          if (!allowed) {
+          const [canManage, canRestricted] = await Promise.all([
+            holdsPermission(tx, actor.userId, MANAGE),
+            holdsPermission(tx, actor.userId, RESTRICTED),
+          ]);
+          if (!canManage || !canRestricted) {
             await appendAuditEvent(tx, {
               actorKind: "user",
               actorId: actor.userId,
               action: DENIED,
-              purpose: MANAGE,
+              purpose: !canManage ? MANAGE : RESTRICTED,
               targetIds: [scope.orgId, scope.communityId],
             });
             return finish(request, empty(403));

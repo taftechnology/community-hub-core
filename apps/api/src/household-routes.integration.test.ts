@@ -1061,6 +1061,32 @@ describe("household routes real-database integration (finding 4)", () => {
     });
     expect(denialEvent.action).toBe("people.permission.denied");
     expect(denialEvent.purpose).toBe("people.restricted.read");
+
+    // 9. rename also needs people.restricted.read: manage-only is 403
+    const beforeRenameDenied = await getCounts();
+    const resRenameDenied = await post(
+      "/v1/households/rename",
+      {
+        communitySlug: slugA1,
+        householdId: householdA1Id,
+        version: 1,
+        label: "Denied Rename",
+      },
+      manageOnlyToken,
+    );
+    expect(resRenameDenied.status).toBe(403);
+    expect(await resRenameDenied.text()).toBe("");
+    const afterRenameDenied = await getCounts();
+    expect(afterRenameDenied.audit).toBe(beforeRenameDenied.audit + 1);
+    const renameDenial = await withAppTransaction(secondApp, scopeA1, async (tx) => {
+      const rows = await tx<{ action: string; purpose: string }[]>`
+        select action, purpose from app.audit_events
+        order by occurred_at desc limit 1
+      `;
+      return rows[0]!;
+    });
+    expect(renameDenial.action).toBe("people.permission.denied");
+    expect(renameDenial.purpose).toBe("people.restricted.read");
   });
 
   it("pins the household predicate in readHouseholdDetail across co-located households (finding H2)", async () => {

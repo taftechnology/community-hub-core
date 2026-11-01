@@ -500,7 +500,7 @@ export function FamilyRecordsPage() {
   const canRestricted = Boolean(access.permissions["people.restricted.read"]);
 
   const canCreate = canManage && !hideWrites;
-  const canRename = canManage && !hideWrites;
+  const canRename = canManage && canRestricted && !hideWrites;
   const canMoveAdult = canManage && canRestricted && !hideWrites;
   const canAddMinor = canManage && canRestricted && !hideWrites;
   const canLinkGuardian = canManage && canRestricted && !hideWrites;

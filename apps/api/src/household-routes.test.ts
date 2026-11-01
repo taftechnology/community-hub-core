@@ -816,7 +816,7 @@ describe("household read routes (Task 9: list and read)", () => {
         expect(db.appendAuditEvent).not.toHaveBeenCalled();
       });
 
-      it("households/rename: requires people.manage; refuses view or restricted.read only with 403", async () => {
+      it("households/rename: requires BOTH people.manage AND people.restricted.read", async () => {
         // Caller with view only
         access.holdsPermission.mockImplementation(async (_tx, _u, perm) => perm === "people.view");
         db.appendAuditEvent.mockClear();
@@ -865,18 +865,43 @@ describe("household read routes (Task 9: list and read)", () => {
           }),
         );
 
-        // Caller with manage
+        // Caller with manage only -> 403 (needs restricted.read too)
         access.holdsPermission.mockImplementation(
           async (_tx, _u, perm) => perm === "people.manage",
         );
         db.appendAuditEvent.mockClear();
-        const resManage = await call("/v1/households/rename", {
+        const resManageOnly = await call("/v1/households/rename", {
           communitySlug: SLUG,
           householdId: HOUSEHOLD_ID,
           version: 1,
           label: "New",
         });
-        expect(resManage.status).toBe(200);
+        expect(resManageOnly.status).toBe(403);
+        expect(await resManageOnly.text()).toBe("");
+        expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
+        expect(db.appendAuditEvent).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            actorKind: "user",
+            actorId: USER,
+            action: "people.permission.denied",
+            purpose: "people.restricted.read",
+            targetIds: [ORG, COMMUNITY],
+          }),
+        );
+
+        // Caller with both manage and restricted.read
+        access.holdsPermission.mockImplementation(
+          async (_tx, _u, perm) => perm === "people.manage" || perm === "people.restricted.read",
+        );
+        db.appendAuditEvent.mockClear();
+        const resBoth = await call("/v1/households/rename", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          version: 1,
+          label: "New",
+        });
+        expect(resBoth.status).toBe(200);
         expect(db.appendAuditEvent).not.toHaveBeenCalled();
       });
 

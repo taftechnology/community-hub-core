@@ -1146,10 +1146,36 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
     expect(screen.queryByRole("button", { name: "Rename household" })).toBeNull();
   });
 
-  it("shows 'Rename household' button when caller has people.manage (Pin 21)", async () => {
+  it("hides 'Rename household' button when caller lacks people.restricted.read", async () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);
     mockApi({
       access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: false },
+      listResult: {
+        items: [
+          { householdId: sampleDetail.householdId, version: 1, label: "Clarke", adultCount: 1 },
+        ],
+        nextCursor: null,
+      },
+      detailResult: { ...sampleDetail, label: "Clarke" },
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke" });
+    fireEvent.click(viewBtn);
+
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Rename household" })).toBeNull();
+  });
+
+  it("shows 'Rename household' button when caller has people.manage and people.restricted.read", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
       listResult: {
         items: [
           { householdId: sampleDetail.householdId, version: 1, label: "Clarke", adultCount: 1 },

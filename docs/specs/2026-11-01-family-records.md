@@ -2,7 +2,7 @@
 
 Slug: family-records
 Status: approved (2026-11-01, Adnan Bin Hossen)
-Amended after approval (2026-11-01): move-adult also requires `people.restricted.read`, because its guardian-link refusal reveals that an adult has a dependant. Confirmed by the approver, Adnan Bin Hossen. The four owner decisions are confirmed. When `rights` is present on add-minor or link it must carry all four booleans (`consent`, `pickup`, `view`, `manage`); when absent, both routes default to consent true, pickup false, view true, manage false.
+Amended after approval (2026-11-01): move-adult also requires `people.restricted.read`, because its guardian-link refusal reveals that an adult has a dependant. Confirmed by the approver, Adnan Bin Hossen. The four owner decisions are confirmed. When `rights` is present on add-minor or link it must carry all four booleans (`consent`, `pickup`, `view`, `manage`); when absent, both routes default to consent true, pickup false, view true, manage false. Rename also requires `people.restricted.read`, so a caller who cannot read the restricted label cannot wipe or overwrite it blind; create stays `people.manage` only.
 Architecture refs: §9 (family — Family Records, `core/people`; access routes), §12.1, §12.2.1, §12.3, §13; roadmap Phase 2 row "Family Records"
 
 ## Problem
@@ -61,7 +61,7 @@ Routes record `people.permission.denied` audit with 403, as `people-routes.ts` d
 | `households/list`          | `people.view`                                    | Label and minors shown only with `people.restricted.read` also |
 | `households/read`          | `people.view` or `people.restricted.read`        | Same field rules as above                                      |
 | `households/create`        | `people.manage`                                  |                                                                |
-| `households/rename`        | `people.manage`                                  |                                                                |
+| `households/rename`        | `people.manage` **and** `people.restricted.read` | A manage-only caller sees a blank label and must not wipe it   |
 | `members/move-adult`       | `people.manage` **and** `people.restricted.read` | Its guardian-link refusal would otherwise reveal a dependant   |
 | `members/add-minor`        | `people.manage` **and** `people.restricted.read` | Owner-confirmed                                                |
 | `guardians/link`, `unlink` | `people.manage` **and** `people.restricted.read` | They change a child's access; default, see Owner decisions     |
