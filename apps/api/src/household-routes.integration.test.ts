@@ -158,6 +158,7 @@ describe("household routes real-database integration (finding 4)", () => {
   let identity: ReturnType<typeof createPlaintextIdentitySql>;
   let platform: ReturnType<typeof createPlaintextPlatformSql>;
   let app: ReturnType<typeof createPlaintextAppSql>;
+  let secondApp: ReturnType<typeof createPlaintextAppSql>;
   let kms: ReturnType<typeof createLocalKmsPort>;
   let mail: MemoryMail;
   let server: Server;
@@ -178,6 +179,7 @@ describe("household routes real-database integration (finding 4)", () => {
   let ownerB1Token: string;
   let viewOnlyToken: string;
   let restrictedOnlyToken: string;
+  let manageOnlyToken: string;
 
   let householdA1Id: string;
   let minorCharlieId: string;
@@ -215,6 +217,7 @@ describe("household routes real-database integration (finding 4)", () => {
     identity = createPlaintextIdentitySql(roleUrl(runtime, "identity"));
     platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
     app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    secondApp = createPlaintextAppSql(roleUrl(runtime, "app"));
     kms = createLocalKmsPort();
     mail = new MemoryMail();
 
@@ -335,6 +338,29 @@ describe("household routes real-database integration (finding 4)", () => {
         await grantRole(tx, {
           now,
           userId: restrictedOnlySession.userId,
+          roleKey: null,
+          customRoleId: role.customRoleId,
+          actorUserId: ownerA1Session.userId,
+        });
+      }),
+    );
+
+    // Manage-only user in Community A1 (lacks people.restricted.read)
+    const manageOnlySession = await signIn(
+      `manage-only-${orgIdA.slice(0, 8)}@example.test`,
+    );
+    manageOnlyToken = manageOnlySession.accessToken;
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: orgIdA, communityId: communityIdA1 }, async (tx) => {
+        const role = await createCustomRole(tx, {
+          now,
+          key: "people_manager",
+          permissions: ["people.view", "people.manage"],
+          actorUserId: ownerA1Session.userId,
+        });
+        await grantRole(tx, {
+          now,
+          userId: manageOnlySession.userId,
           roleKey: null,
           customRoleId: role.customRoleId,
           actorUserId: ownerA1Session.userId,
@@ -471,6 +497,7 @@ describe("household routes real-database integration (finding 4)", () => {
     await identity.end({ timeout: 1 });
     await platform.end({ timeout: 1 });
     await app.end({ timeout: 1 });
+    await secondApp.end({ timeout: 1 });
   });
 
   it("redacts all minor identity data in raw response bytes for people.view-only caller (pin 9)", async () => {
@@ -745,5 +772,207 @@ describe("household routes real-database integration (finding 4)", () => {
     );
     expect(resCrossOrgUnlink.status).toBe(404);
     expect(await resCrossOrgUnlink.text()).toBe("");
+  });
+
+  it("rolls back atomic writes on error and commits permission denial audits (finding H1)", async () => {
+    // Second connection counts before test
+    const scopeA1 = { orgId: orgIdA, communityId: communityIdA1 };
+    const getCounts = async () => {
+      return withAppTransaction(secondApp, scopeA1, async (tx) => {
+        const [persons] = await tx<{ count: number }[]>`select count(*)::int as count from app.persons`;
+        const [links] = await tx<{ count: number }[]>`select count(*)::int as count from app.guardian_links`;
+        const [activity] = await tx<{ count: number }[]>`select count(*)::int as count from app.person_activity`;
+        const [audit] = await tx<{ count: number }[]>`select count(*)::int as count from app.audit_events`;
+        const [hh] = await tx<{ version: number }[]>`select version from app.households where id = ${householdA1Id}::uuid`;
+        return {
+          persons: persons!.count,
+          links: links!.count,
+          activity: activity!.count,
+          audit: audit!.count,
+          hhVersion: hh!.version,
+        };
+      });
+    };
+
+    const initial = await getCounts();
+    expect(initial.persons).toBe(4);
+    expect(initial.links).toBe(3);
+    expect(initial.hhVersion).toBe(1);
+
+    // 1. add-minor: guardian is a minor -> 400, no orphan minor row or link or audit
+    const resMinorAsGuardian = await post(
+      "/v1/households/members/add-minor",
+      {
+        communitySlug: slugA1,
+        householdId: householdA1Id,
+        givenName: "OrphanMinor",
+        familyName: "Smith",
+        dateOfBirth: "2020-01-01",
+        guardianId: minorCharlieId,
+      },
+      ownerA1Token,
+    );
+    expect(resMinorAsGuardian.status).toBe(400);
+    expect(await resMinorAsGuardian.text()).toBe("");
+
+    const afterMinorAsGuardian = await getCounts();
+    expect(afterMinorAsGuardian.persons).toBe(initial.persons);
+    expect(afterMinorAsGuardian.links).toBe(initial.links);
+    expect(afterMinorAsGuardian.activity).toBe(initial.activity);
+    expect(afterMinorAsGuardian.audit).toBe(initial.audit);
+
+    // 2. add-minor: guardian not in household -> 404, no rows written
+    const resGuardianNotFound = await post(
+      "/v1/households/members/add-minor",
+      {
+        communitySlug: slugA1,
+        householdId: householdA1Id,
+        givenName: "GhostMinor",
+        familyName: "Smith",
+        dateOfBirth: "2020-01-01",
+        guardianId: newId(),
+      },
+      ownerA1Token,
+    );
+    expect(resGuardianNotFound.status).toBe(404);
+    expect(await resGuardianNotFound.text()).toBe("");
+
+    const afterGuardianNotFound = await getCounts();
+    expect(afterGuardianNotFound.persons).toBe(initial.persons);
+    expect(afterGuardianNotFound.links).toBe(initial.links);
+    expect(afterGuardianNotFound.audit).toBe(initial.audit);
+
+    // 3. add-minor: rights all false -> 400, no rows written
+    const resNoRights = await post(
+      "/v1/households/members/add-minor",
+      {
+        communitySlug: slugA1,
+        householdId: householdA1Id,
+        givenName: "NoRightMinor",
+        familyName: "Smith",
+        dateOfBirth: "2020-01-01",
+        guardianId: adultAliceId,
+        rights: { consent: false, pickup: false, view: false, manage: false },
+      },
+      ownerA1Token,
+    );
+    expect(resNoRights.status).toBe(400);
+    expect(await resNoRights.text()).toBe("");
+
+    const afterNoRights = await getCounts();
+    expect(afterNoRights.persons).toBe(initial.persons);
+    expect(afterNoRights.links).toBe(initial.links);
+    expect(afterNoRights.audit).toBe(initial.audit);
+
+    // 4. link-guardian: duplicate link -> 409, no second link or extra audit
+    const resDupLink = await post(
+      "/v1/households/guardians/link",
+      {
+        communitySlug: slugA1,
+        householdId: householdA1Id,
+        guardianId: adultBobId,
+        childId: minorCharlieId,
+      },
+      ownerA1Token,
+    );
+    expect(resDupLink.status).toBe(409);
+    expect(await resDupLink.text()).toBe("");
+
+    const afterDupLink = await getCounts();
+    expect(afterDupLink.links).toBe(initial.links);
+    expect(afterDupLink.activity).toBe(initial.activity);
+    expect(afterDupLink.audit).toBe(initial.audit);
+
+    // 5. unlink-guardian: last guardian -> 409, no delete or audit
+    // Find Daisy's only guardian link
+    const daisyLink = await withAppTransaction(secondApp, scopeA1, async (tx) => {
+      const rows = await tx<{ id: string }[]>`
+        select id::text as id from app.guardian_links where child_person_id = ${minorDaisyId}::uuid
+      `;
+      return rows[0]!.id;
+    });
+
+    const resLastGuardian = await post(
+      "/v1/households/guardians/unlink",
+      {
+        communitySlug: slugA1,
+        householdId: householdA1Id,
+        linkId: daisyLink,
+      },
+      ownerA1Token,
+    );
+    expect(resLastGuardian.status).toBe(409);
+    expect(await resLastGuardian.text()).toBe("");
+
+    const afterLastGuardian = await getCounts();
+    expect(afterLastGuardian.links).toBe(initial.links);
+    expect(afterLastGuardian.activity).toBe(initial.activity);
+    expect(afterLastGuardian.audit).toBe(initial.audit);
+
+    // 6. rename: stale version -> 409, version unchanged, no audit
+    const resStaleRename = await post(
+      "/v1/households/rename",
+      {
+        communitySlug: slugA1,
+        householdId: householdA1Id,
+        version: 999,
+        label: "Should Not Apply",
+      },
+      ownerA1Token,
+    );
+    expect(resStaleRename.status).toBe(409);
+    expect(await resStaleRename.text()).toBe("");
+
+    const afterStaleRename = await getCounts();
+    expect(afterStaleRename.hhVersion).toBe(initial.hhVersion);
+    expect(afterStaleRename.audit).toBe(initial.audit);
+
+    // 7. move-adult: adult holding guardian links -> 409, version unchanged, no audit
+    const resMoveWithLinks = await post(
+      "/v1/households/members/move-adult",
+      {
+        communitySlug: slugA1,
+        householdId: null,
+        personId: adultAliceId,
+        version: 2,
+      },
+      ownerA1Token,
+    );
+    expect(resMoveWithLinks.status).toBe(409);
+    expect(await resMoveWithLinks.text()).toBe("");
+
+    const afterMoveWithLinks = await getCounts();
+    expect(afterMoveWithLinks.audit).toBe(initial.audit);
+
+    // 8. permission denial: denied caller writes and commits the denial audit row
+    const resDenied = await post(
+      "/v1/households/members/add-minor",
+      {
+        communitySlug: slugA1,
+        householdId: householdA1Id,
+        givenName: "DeniedMinor",
+        familyName: "Smith",
+        dateOfBirth: "2020-01-01",
+        guardianId: adultAliceId,
+      },
+      manageOnlyToken,
+    );
+    expect(resDenied.status).toBe(403);
+    expect(await resDenied.text()).toBe("");
+
+    const afterDenied = await getCounts();
+    expect(afterDenied.persons).toBe(initial.persons);
+    // Audit row count increased by 1 for the denial audit event
+    expect(afterDenied.audit).toBe(initial.audit + 1);
+
+    const denialEvent = await withAppTransaction(secondApp, scopeA1, async (tx) => {
+      const rows = await tx<{ action: string; purpose: string }[]>`
+        select action, purpose from app.audit_events
+        order by occurred_at desc limit 1
+      `;
+      return rows[0]!;
+    });
+    expect(denialEvent.action).toBe("people.permission.denied");
+    expect(denialEvent.purpose).toBe("people.restricted.read");
   });
 });

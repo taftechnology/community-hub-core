@@ -233,9 +233,9 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
     }
     const { body, actor, scope } = prep;
 
-    return deps.checkout("app", (sql) =>
-      withAppTransaction(sql, scope, async (tx) => {
-        try {
+    try {
+      return await deps.checkout("app", (sql) =>
+        withAppTransaction(sql, scope, async (tx) => {
           const allowed = await holdsPermission(tx, actor.userId, VIEW);
           if (!allowed) {
             await appendAuditEvent(tx, {
@@ -256,17 +256,17 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
             actorUserId: actor.userId,
           });
           return finish(request, Response.json(result));
-        } catch (error) {
-          if (error instanceof PeopleError) {
-            const mapped = statusForHouseholds(error);
-            if (mapped !== undefined) {
-              return finish(request, mapped);
-            }
-          }
-          return finish(request, empty(500));
+        }),
+      );
+    } catch (error) {
+      if (error instanceof PeopleError) {
+        const mapped = statusForHouseholds(error);
+        if (mapped !== undefined) {
+          return finish(request, mapped);
         }
-      }),
-    );
+      }
+      return finish(request, empty(500));
+    }
   }
 
   async function read(request: Request, context: RouteContext): Promise<Response> {
@@ -276,9 +276,9 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
     }
     const { body, actor, scope } = prep;
 
-    return deps.checkout("app", (sql) =>
-      withAppTransaction(sql, scope, async (tx) => {
-        try {
+    try {
+      return await deps.checkout("app", (sql) =>
+        withAppTransaction(sql, scope, async (tx) => {
           const [canView, canRestricted] = await Promise.all([
             holdsPermission(tx, actor.userId, VIEW),
             holdsPermission(tx, actor.userId, RESTRICTED),
@@ -304,17 +304,17 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
             return finish(request, empty(404));
           }
           return finish(request, Response.json(result));
-        } catch (error) {
-          if (error instanceof PeopleError) {
-            const mapped = statusForHouseholds(error);
-            if (mapped !== undefined) {
-              return finish(request, mapped);
-            }
-          }
-          return finish(request, empty(500));
+        }),
+      );
+    } catch (error) {
+      if (error instanceof PeopleError) {
+        const mapped = statusForHouseholds(error);
+        if (mapped !== undefined) {
+          return finish(request, mapped);
         }
-      }),
-    );
+      }
+      return finish(request, empty(500));
+    }
   }
 
   async function create(request: Request, context: RouteContext): Promise<Response> {
@@ -324,9 +324,9 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
     }
     const { body, actor, scope } = prep;
 
-    return deps.checkout("app", (sql) =>
-      withAppTransaction(sql, scope, async (tx) => {
-        try {
+    try {
+      return await deps.checkout("app", (sql) =>
+        withAppTransaction(sql, scope, async (tx) => {
           const allowed = await holdsPermission(tx, actor.userId, MANAGE);
           if (!allowed) {
             await appendAuditEvent(tx, {
@@ -345,17 +345,17 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
             actorUserId: actor.userId,
           });
           return finish(request, Response.json(result, { status: 201 }));
-        } catch (error) {
-          if (error instanceof PeopleError) {
-            const mapped = statusForHouseholds(error);
-            if (mapped !== undefined) {
-              return finish(request, mapped);
-            }
-          }
-          return finish(request, empty(500));
+        }),
+      );
+    } catch (error) {
+      if (error instanceof PeopleError) {
+        const mapped = statusForHouseholds(error);
+        if (mapped !== undefined) {
+          return finish(request, mapped);
         }
-      }),
-    );
+      }
+      return finish(request, empty(500));
+    }
   }
 
   async function rename(request: Request, context: RouteContext): Promise<Response> {
@@ -365,9 +365,9 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
     }
     const { body, actor, scope } = prep;
 
-    return deps.checkout("app", (sql) =>
-      withAppTransaction(sql, scope, async (tx) => {
-        try {
+    try {
+      return await deps.checkout("app", (sql) =>
+        withAppTransaction(sql, scope, async (tx) => {
           const allowed = await holdsPermission(tx, actor.userId, MANAGE);
           if (!allowed) {
             await appendAuditEvent(tx, {
@@ -387,17 +387,17 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
             actorUserId: actor.userId,
           });
           return finish(request, Response.json(result));
-        } catch (error) {
-          if (error instanceof PeopleError) {
-            const mapped = statusForHouseholds(error);
-            if (mapped !== undefined) {
-              return finish(request, mapped);
-            }
-          }
-          return finish(request, empty(500));
+        }),
+      );
+    } catch (error) {
+      if (error instanceof PeopleError) {
+        const mapped = statusForHouseholds(error);
+        if (mapped !== undefined) {
+          return finish(request, mapped);
         }
-      }),
-    );
+      }
+      return finish(request, empty(500));
+    }
   }
 
   async function moveAdultMember(request: Request, context: RouteContext): Promise<Response> {
@@ -407,9 +407,9 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
     }
     const { body, actor, scope } = prep;
 
-    return deps.checkout("app", (sql) =>
-      withAppTransaction(sql, scope, async (tx) => {
-        try {
+    try {
+      return await deps.checkout("app", (sql) =>
+        withAppTransaction(sql, scope, async (tx) => {
           const [canManage, canRestricted] = await Promise.all([
             holdsPermission(tx, actor.userId, MANAGE),
             holdsPermission(tx, actor.userId, RESTRICTED),
@@ -432,17 +432,17 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
             actorUserId: actor.userId,
           });
           return finish(request, Response.json(result));
-        } catch (error) {
-          if (error instanceof PeopleError) {
-            const mapped = statusForHouseholds(error);
-            if (mapped !== undefined) {
-              return finish(request, mapped);
-            }
-          }
-          return finish(request, empty(500));
+        }),
+      );
+    } catch (error) {
+      if (error instanceof PeopleError) {
+        const mapped = statusForHouseholds(error);
+        if (mapped !== undefined) {
+          return finish(request, mapped);
         }
-      }),
-    );
+      }
+      return finish(request, empty(500));
+    }
   }
 
   async function addMinorMember(request: Request, context: RouteContext): Promise<Response> {
@@ -452,9 +452,9 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
     }
     const { body, actor, scope } = prep;
 
-    return deps.checkout("app", (sql) =>
-      withAppTransaction(sql, scope, async (tx) => {
-        try {
+    try {
+      return await deps.checkout("app", (sql) =>
+        withAppTransaction(sql, scope, async (tx) => {
           const [canManage, canRestricted] = await Promise.all([
             holdsPermission(tx, actor.userId, MANAGE),
             holdsPermission(tx, actor.userId, RESTRICTED),
@@ -491,17 +491,17 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
             actorUserId: actor.userId,
           });
           return finish(request, Response.json(result, { status: 201 }));
-        } catch (error) {
-          if (error instanceof PeopleError) {
-            const mapped = statusForHouseholds(error);
-            if (mapped !== undefined) {
-              return finish(request, mapped);
-            }
-          }
-          return finish(request, empty(500));
+        }),
+      );
+    } catch (error) {
+      if (error instanceof PeopleError) {
+        const mapped = statusForHouseholds(error);
+        if (mapped !== undefined) {
+          return finish(request, mapped);
         }
-      }),
-    );
+      }
+      return finish(request, empty(500));
+    }
   }
 
   async function linkGuardianHandler(request: Request, context: RouteContext): Promise<Response> {
@@ -511,9 +511,9 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
     }
     const { body, actor, scope } = prep;
 
-    return deps.checkout("app", (sql) =>
-      withAppTransaction(sql, scope, async (tx) => {
-        try {
+    try {
+      return await deps.checkout("app", (sql) =>
+        withAppTransaction(sql, scope, async (tx) => {
           const [canManage, canRestricted] = await Promise.all([
             holdsPermission(tx, actor.userId, MANAGE),
             holdsPermission(tx, actor.userId, RESTRICTED),
@@ -552,17 +552,17 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
             actorUserId: actor.userId,
           });
           return finish(request, Response.json(result, { status: 201 }));
-        } catch (error) {
-          if (error instanceof PeopleError) {
-            const mapped = statusForHouseholds(error);
-            if (mapped !== undefined) {
-              return finish(request, mapped);
-            }
-          }
-          return finish(request, empty(500));
+        }),
+      );
+    } catch (error) {
+      if (error instanceof PeopleError) {
+        const mapped = statusForHouseholds(error);
+        if (mapped !== undefined) {
+          return finish(request, mapped);
         }
-      }),
-    );
+      }
+      return finish(request, empty(500));
+    }
   }
 
   async function unlinkGuardianHandler(request: Request, context: RouteContext): Promise<Response> {
@@ -572,9 +572,9 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
     }
     const { body, actor, scope } = prep;
 
-    return deps.checkout("app", (sql) =>
-      withAppTransaction(sql, scope, async (tx) => {
-        try {
+    try {
+      return await deps.checkout("app", (sql) =>
+        withAppTransaction(sql, scope, async (tx) => {
           const [canManage, canRestricted] = await Promise.all([
             holdsPermission(tx, actor.userId, MANAGE),
             holdsPermission(tx, actor.userId, RESTRICTED),
@@ -597,17 +597,17 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
             actorUserId: actor.userId,
           });
           return finish(request, Response.json({}));
-        } catch (error) {
-          if (error instanceof PeopleError) {
-            const mapped = statusForHouseholds(error);
-            if (mapped !== undefined) {
-              return finish(request, mapped);
-            }
-          }
-          return finish(request, empty(500));
+        }),
+      );
+    } catch (error) {
+      if (error instanceof PeopleError) {
+        const mapped = statusForHouseholds(error);
+        if (mapped !== undefined) {
+          return finish(request, mapped);
         }
-      }),
-    );
+      }
+      return finish(request, empty(500));
+    }
   }
 
   return [
