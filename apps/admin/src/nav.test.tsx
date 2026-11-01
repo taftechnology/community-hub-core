@@ -80,7 +80,7 @@ describe("AdminNav", () => {
     expect(screen.queryByRole("link", { name: "All Contacts" })).toBeNull();
   });
 
-  it("renders Family Records as a span when caller has people.households and people.view (Pin 21)", () => {
+  it("renders Family Records as a link when caller has people.households and people.view (Pin 21)", () => {
     renderNav({
       permissions: {
         "people.view": true,
@@ -93,10 +93,25 @@ describe("AdminNav", () => {
       },
     });
 
-    const el = screen.getByText("Family Records");
+    const el = screen.getByRole("link", { name: "Family Records" });
     expect(el).toBeTruthy();
-    expect(el.tagName).toBe("SPAN");
-    expect(screen.queryByRole("link", { name: "Family Records" })).toBeNull();
+    expect(el.getAttribute("href")).toBe("/family-records");
+  });
+
+  it("hides Family Records when caller has people.restricted.read but lacks people.view (Pin 21)", () => {
+    renderNav({
+      permissions: {
+        "people.view": false,
+        "people.manage": false,
+        "people.restricted.read": true,
+      },
+      entitlements: {
+        "people.directory": false,
+        "people.households": true,
+      },
+    });
+
+    expect(screen.queryByText("Family Records")).toBeNull();
   });
 
   it("hides Family Records when caller lacks people.households (Pin 21)", () => {

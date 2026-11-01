@@ -8,6 +8,7 @@ import { labels } from "./labels";
 import { AdminNav } from "./nav";
 import { PeopleAccessProvider } from "./people-access";
 import { AllContactsPage } from "./all-contacts";
+import { FamilyRecordsPage } from "./family-records";
 import { SignInPage } from "./sign-in";
 import { GeneralSettingsPage } from "./general-settings";
 import { ModuleTogglesPage } from "./module-toggles";
@@ -57,6 +58,7 @@ export const router = createBrowserRouter([
       { path: "settings/users", element: <UsersRolesPage /> },
       { path: "settings/modules", element: <ModuleTogglesPage /> },
       { path: "contacts", element: <AllContactsPage /> },
+      { path: "family-records", element: <FamilyRecordsPage /> },
     ],
   },
 ]);

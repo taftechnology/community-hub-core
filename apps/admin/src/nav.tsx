@@ -26,8 +26,13 @@ export function AdminNav() {
     throw new Error("missing nav label");
   }
   const contacts = shown.find((label) => label === "Contacts & Members");
+  const familyRecords = shown.find((label) => label === "Family Records");
   const mapped = shown.filter(
-    (label) => label !== "Dashboard" && label !== "Settings" && label !== "Contacts & Members",
+    (label) =>
+      label !== "Dashboard" &&
+      label !== "Settings" &&
+      label !== "Contacts & Members" &&
+      label !== "Family Records",
   );
   return (
     <nav aria-label="Admin">
@@ -44,6 +49,7 @@ export function AdminNav() {
           <Link to="/contacts">All Contacts</Link>
         </div>
       ) : null}
+      {familyRecords !== undefined ? <Link to="/family-records">{familyRecords}</Link> : null}
       {mapped.map((label) => (
         <span key={label}>{label}</span>
       ))}
