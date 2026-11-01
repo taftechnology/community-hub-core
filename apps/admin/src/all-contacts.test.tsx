@@ -26,7 +26,23 @@ type CapabilitiesInput =
 
 function mockCapabilitiesResponse(input: CapabilitiesInput = {}): Response {
   if (typeof input === "number") {
-    return new Response(null, { status: input });
+    return new Response(
+      JSON.stringify({
+        permissions: {
+          "people.view": true,
+          "people.manage": true,
+          "people.restricted.read": true,
+        },
+        entitlements: {
+          "people.directory": true,
+          "people.households": true,
+        },
+      }),
+      {
+        status: input,
+        headers: { "content-type": "application/json" },
+      },
+    );
   }
   return new Response(
     JSON.stringify({
@@ -173,7 +189,7 @@ describe("Admin Nav Contacts item (Pin 15)", () => {
     expect(link.getAttribute("href")).toBe("/contacts");
   });
 
-  it("hides Contacts & Members when access route returns 403 or unavailable", async () => {
+  it("hides Contacts & Members and Family Records when access route returns 403 or unavailable with granting body (finding 4)", async () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);
     mockApi(403);
 
@@ -186,9 +202,12 @@ describe("Admin Nav Contacts item (Pin 15)", () => {
     await act(async () => {});
     expect(screen.queryByText("Contacts & Members")).toBeNull();
     expect(screen.queryByRole("link", { name: "All Contacts" })).toBeNull();
+    expect(screen.queryByText("Family Records")).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add contact" })).toBeNull();
   });
 
-  it("hides Contacts & Members when access route returns 500", async () => {
+  it("hides Contacts & Members and Family Records when access route returns 500 with granting body (finding 4)", async () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);
     mockApi(500);
 
@@ -201,6 +220,9 @@ describe("Admin Nav Contacts item (Pin 15)", () => {
     await act(async () => {});
     expect(screen.queryByText("Contacts & Members")).toBeNull();
     expect(screen.queryByRole("link", { name: "All Contacts" })).toBeNull();
+    expect(screen.queryByText("Family Records")).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add contact" })).toBeNull();
   });
 });
 
@@ -1959,7 +1981,7 @@ describe("All Contacts Screen", () => {
     fireEvent.click(screen.getByRole("button", { name: "View FreshGiven FreshFamily" }));
     expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
     expect(screen.queryByText("StaleGiven")).toBeNull();
-    expect(screen.getByText("FreshGiven")).toBeTruthy();
+    expect(await screen.findByText("FreshGiven")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Edit contact" }));
     expect(await screen.findByRole("heading", { name: "Edit Contact" })).toBeTruthy();
