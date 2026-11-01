@@ -129,6 +129,7 @@ export async function moveAdult(
       and org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
       and version = ${input.version}
+      and is_minor = false
     returning version
   `;
   if (updated[0] === undefined) {
