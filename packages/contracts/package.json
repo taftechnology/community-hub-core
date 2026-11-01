@@ -30,6 +30,10 @@
     "./people": {
       "types": "./dist/people.d.ts",
       "import": "./dist/people.js"
+    },
+    "./households": {
+      "types": "./dist/households.d.ts",
+      "import": "./dist/households.js"
     }
   },
   "scripts": {

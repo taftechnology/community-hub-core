@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  createPersonBody,
-  listPeopleBody,
-  peopleAccessBody,
-  readPersonBody,
-  updatePersonBody,
-} from "./people.js";
+import { createPersonBody, listPeopleBody, readPersonBody, updatePersonBody } from "./people.js";
 
 const VALID_UUID = "00000000-0000-4000-8000-000000000001";
 
@@ -56,21 +50,10 @@ describe("people contract schemas (pin 2)", () => {
         email: null,
       }).success,
     ).toBe(true);
-    expect(
-      peopleAccessBody.safeParse({
-        communitySlug: "parish-au",
-      }).success,
-    ).toBe(true);
   });
 
   it("strictly rejects forbidden fields: includeRestricted, isMinor, orgId, communityId (pin 2)", () => {
-    for (const schema of [
-      listPeopleBody,
-      readPersonBody,
-      createPersonBody,
-      updatePersonBody,
-      peopleAccessBody,
-    ]) {
+    for (const schema of [listPeopleBody, readPersonBody, createPersonBody, updatePersonBody]) {
       const base =
         schema === listPeopleBody
           ? { communitySlug: "slug" }

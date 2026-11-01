@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BillingReadOnly } from "@community-hub/billing";
+import {
+  CAPABILITIES_ALLOW_LIST,
+  type CapabilitiesResponse,
+} from "@community-hub/contracts/access";
 
 const identity = vi.hoisted(() => ({
   readSession: vi.fn(),
@@ -27,8 +31,13 @@ const access = vi.hoisted(() => {
     linkUser: vi.fn(),
     unlinkUser: vi.fn(),
     holdsAnyGrant: vi.fn(),
+    holdsPermission: vi.fn(),
   };
 });
+
+const entitlementGuard = vi.hoisted(() => ({
+  checkEntitlement: vi.fn(),
+}));
 
 const billing = vi.hoisted(() => ({
   assertWritable: vi.fn(),
@@ -56,7 +65,17 @@ vi.mock("@community-hub/access", () => ({
   linkUser: access.linkUser,
   unlinkUser: access.unlinkUser,
   holdsAnyGrant: access.holdsAnyGrant,
+  holdsPermission: access.holdsPermission,
 }));
+
+vi.mock("./entitlement-guard.js", async () => {
+  const actual =
+    await vi.importActual<typeof import("./entitlement-guard.js")>("./entitlement-guard.js");
+  return {
+    ...actual,
+    checkEntitlement: entitlementGuard.checkEntitlement,
+  };
+});
 
 vi.mock("@community-hub/billing", async () => {
   const actual =
@@ -162,6 +181,10 @@ describe("access routes", () => {
     access.unlinkUser.mockReset();
     access.holdsAnyGrant.mockReset();
     access.holdsAnyGrant.mockResolvedValue(true);
+    access.holdsPermission.mockReset();
+    access.holdsPermission.mockResolvedValue(true);
+    entitlementGuard.checkEntitlement.mockReset();
+    entitlementGuard.checkEntitlement.mockResolvedValue(true);
     billing.assertWritable.mockReset();
     billing.assertWritable.mockResolvedValue("ok");
     db.withAppTransaction.mockReset();
@@ -179,10 +202,11 @@ describe("access routes", () => {
     });
   });
 
-  it("registers seven tenant posts", () => {
+  it("registers eight tenant posts", () => {
     const routes = accessRoutes(deps());
     expect(routes.map((item) => `${item.method} ${item.pattern}`)).toEqual([
       "POST /v1/access/grants/list",
+      "POST /v1/access/capabilities",
       "POST /v1/access/grants",
       "POST /v1/access/grants/revoke",
       "POST /v1/access/custom-roles",
@@ -482,5 +506,312 @@ describe("access routes", () => {
     );
     expect(listedOutage.status).toBe(200);
     expect(billing.assertWritable).not.toHaveBeenCalled();
+  });
+
+  describe("POST /v1/access/capabilities (pins 17-19)", () => {
+    it("returns 200 with all permissions and entitlements when caller has grants", async () => {
+      access.holdsAnyGrant.mockResolvedValueOnce(true);
+      access.holdsPermission.mockResolvedValue(true);
+      entitlementGuard.checkEntitlement.mockResolvedValue(true);
+
+      const res = await route("/v1/access/capabilities").handle(
+        request(
+          "/v1/access/capabilities",
+          API_HOSTNAME,
+          { communitySlug: "parish" },
+          `Bearer ${TOKEN}`,
+        ),
+      );
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as CapabilitiesResponse;
+      expect(data).toEqual({
+        permissions: {
+          "people.view": true,
+          "people.manage": true,
+          "people.restricted.read": true,
+        },
+        entitlements: {
+          "people.directory": true,
+          "people.households": true,
+        },
+      });
+
+      // Pin 17: response key set equals the constant allow-list
+      expect(Object.keys(data.permissions).sort()).toEqual(
+        [...CAPABILITIES_ALLOW_LIST.permissions].sort(),
+      );
+      expect(Object.keys(data.entitlements).sort()).toEqual(
+        [...CAPABILITIES_ALLOW_LIST.entitlements].sort(),
+      );
+
+      // Finding 1: verify checkEntitlement receives the exact scope
+      expect(entitlementGuard.checkEntitlement).toHaveBeenCalledWith(
+        expect.anything(),
+        { orgId: ORG, communityId: COMMUNITY },
+        "people.directory",
+      );
+      expect(entitlementGuard.checkEntitlement).toHaveBeenCalledWith(
+        expect.anything(),
+        { orgId: ORG, communityId: COMMUNITY },
+        "people.households",
+      );
+    });
+
+    it("returns 200 with all permissions false when caller has role grant with no people permissions (finding 2)", async () => {
+      access.holdsAnyGrant.mockResolvedValueOnce(true);
+      access.holdsPermission.mockResolvedValue(false);
+      entitlementGuard.checkEntitlement.mockResolvedValue(true);
+
+      const res = await route("/v1/access/capabilities").handle(
+        request(
+          "/v1/access/capabilities",
+          API_HOSTNAME,
+          { communitySlug: "parish" },
+          `Bearer ${TOKEN}`,
+        ),
+      );
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as CapabilitiesResponse;
+      expect(data.permissions).toEqual({
+        "people.view": false,
+        "people.manage": false,
+        "people.restricted.read": false,
+      });
+      expect(data.entitlements).toEqual({
+        "people.directory": true,
+        "people.households": true,
+      });
+      expect(entitlementGuard.checkEntitlement).toHaveBeenCalledWith(
+        expect.anything(),
+        { orgId: ORG, communityId: COMMUNITY },
+        "people.directory",
+      );
+      expect(entitlementGuard.checkEntitlement).toHaveBeenCalledWith(
+        expect.anything(),
+        { orgId: ORG, communityId: COMMUNITY },
+        "people.households",
+      );
+    });
+
+    it("hides the capabilities route on a foreign hostname before any lookup (finding H5a)", async () => {
+      for (const hostname of [AUTH_HOSTNAME, "other.example.test"]) {
+        const res = await route("/v1/access/capabilities").handle(
+          request(
+            "/v1/access/capabilities",
+            hostname,
+            { communitySlug: "parish" },
+            `Bearer ${TOKEN}`,
+          ),
+        );
+        expect(res.status).toBe(404);
+        expect(await res.text()).toBe("");
+      }
+      expect(identity.readSession).not.toHaveBeenCalled();
+      expect(tenancy.findCommunityBySlug).not.toHaveBeenCalled();
+      expect(access.holdsAnyGrant).not.toHaveBeenCalled();
+      expect(access.holdsPermission).not.toHaveBeenCalled();
+      expect(db.withAppTransaction).not.toHaveBeenCalled();
+    });
+
+    it("returns 400 when body carries extra keys or non-slug fields (pin 17)", async () => {
+      const extra = await route("/v1/access/capabilities").handle(
+        request(
+          "/v1/access/capabilities",
+          API_HOSTNAME,
+          { communitySlug: "parish", extra: true },
+          `Bearer ${TOKEN}`,
+        ),
+      );
+      expect(extra.status).toBe(400);
+
+      const extraPerm = await route("/v1/access/capabilities").handle(
+        request(
+          "/v1/access/capabilities",
+          API_HOSTNAME,
+          { communitySlug: "parish", permissions: ["people.view"] },
+          `Bearer ${TOKEN}`,
+        ),
+      );
+      expect(extraPerm.status).toBe(400);
+    });
+
+    it("evaluates each boolean independently based on its own permission or entitlement (pin 18)", async () => {
+      // only people.view
+      access.holdsAnyGrant.mockResolvedValue(true);
+      access.holdsPermission.mockImplementation(
+        async (_tx: unknown, _userId: string, perm: string) => perm === "people.view",
+      );
+      entitlementGuard.checkEntitlement.mockResolvedValue(true);
+
+      const resView = await route("/v1/access/capabilities").handle(
+        request(
+          "/v1/access/capabilities",
+          API_HOSTNAME,
+          { communitySlug: "parish" },
+          `Bearer ${TOKEN}`,
+        ),
+      );
+      expect(resView.status).toBe(200);
+      const dataView = (await resView.json()) as CapabilitiesResponse;
+      expect(dataView.permissions).toEqual({
+        "people.view": true,
+        "people.manage": false,
+        "people.restricted.read": false,
+      });
+
+      // only people.manage
+      access.holdsPermission.mockImplementation(
+        async (_tx: unknown, _userId: string, perm: string) => perm === "people.manage",
+      );
+      const resManage = await route("/v1/access/capabilities").handle(
+        request(
+          "/v1/access/capabilities",
+          API_HOSTNAME,
+          { communitySlug: "parish" },
+          `Bearer ${TOKEN}`,
+        ),
+      );
+      expect(resManage.status).toBe(200);
+      const dataManage = (await resManage.json()) as CapabilitiesResponse;
+      expect(dataManage.permissions).toEqual({
+        "people.view": false,
+        "people.manage": true,
+        "people.restricted.read": false,
+      });
+
+      // only people.restricted.read
+      access.holdsPermission.mockImplementation(
+        async (_tx: unknown, _userId: string, perm: string) => perm === "people.restricted.read",
+      );
+      const resRestricted = await route("/v1/access/capabilities").handle(
+        request(
+          "/v1/access/capabilities",
+          API_HOSTNAME,
+          { communitySlug: "parish" },
+          `Bearer ${TOKEN}`,
+        ),
+      );
+      expect(resRestricted.status).toBe(200);
+      const dataRestricted = (await resRestricted.json()) as CapabilitiesResponse;
+      expect(dataRestricted.permissions).toEqual({
+        "people.view": false,
+        "people.manage": false,
+        "people.restricted.read": true,
+      });
+
+      // Entitlements toggles
+      access.holdsPermission.mockResolvedValue(true);
+      entitlementGuard.checkEntitlement.mockImplementation(
+        async (_deps: unknown, _scope: unknown, key: string) => key === "people.directory",
+      );
+      const resEnt1 = await route("/v1/access/capabilities").handle(
+        request(
+          "/v1/access/capabilities",
+          API_HOSTNAME,
+          { communitySlug: "parish" },
+          `Bearer ${TOKEN}`,
+        ),
+      );
+      expect(resEnt1.status).toBe(200);
+      const dataEnt1 = (await resEnt1.json()) as CapabilitiesResponse;
+      expect(dataEnt1.entitlements).toEqual({
+        "people.directory": true,
+        "people.households": false,
+      });
+
+      entitlementGuard.checkEntitlement.mockImplementation(
+        async (_deps: unknown, _scope: unknown, key: string) => key === "people.households",
+      );
+      const resEnt2 = await route("/v1/access/capabilities").handle(
+        request(
+          "/v1/access/capabilities",
+          API_HOSTNAME,
+          { communitySlug: "parish" },
+          `Bearer ${TOKEN}`,
+        ),
+      );
+      expect(resEnt2.status).toBe(200);
+      const dataEnt2 = (await resEnt2.json()) as CapabilitiesResponse;
+      expect(dataEnt2.entitlements).toEqual({
+        "people.directory": false,
+        "people.households": true,
+      });
+    });
+
+    it("answers stranger and unknown slug with identical empty 403 (pin 19)", async () => {
+      // Unknown slug
+      tenancy.findCommunityBySlug.mockResolvedValueOnce(null);
+      const resUnknown = await route("/v1/access/capabilities").handle(
+        request(
+          "/v1/access/capabilities",
+          API_HOSTNAME,
+          { communitySlug: "unknown-slug" },
+          `Bearer ${TOKEN}`,
+        ),
+      );
+      expect(resUnknown.status).toBe(403);
+      const bodyUnknown = await resUnknown.text();
+      expect(bodyUnknown).toBe("");
+
+      // Stranger (holdsAnyGrant returns false)
+      access.holdsAnyGrant.mockResolvedValueOnce(false);
+      const resStranger = await route("/v1/access/capabilities").handle(
+        request(
+          "/v1/access/capabilities",
+          API_HOSTNAME,
+          { communitySlug: "parish" },
+          `Bearer ${TOKEN}`,
+        ),
+      );
+      expect(resStranger.status).toBe(403);
+      const bodyStranger = await resStranger.text();
+      expect(bodyStranger).toBe("");
+
+      expect(bodyUnknown).toBe(bodyStranger);
+    });
+
+    it("works for a read-only organisation (billing: read)", async () => {
+      billing.assertWritable.mockRejectedValue(new BillingReadOnly("read_only"));
+      access.holdsAnyGrant.mockResolvedValueOnce(true);
+      access.holdsPermission.mockResolvedValue(true);
+      entitlementGuard.checkEntitlement.mockResolvedValue(true);
+
+      const res = await route("/v1/access/capabilities").handle(
+        request(
+          "/v1/access/capabilities",
+          API_HOSTNAME,
+          { communitySlug: "parish" },
+          `Bearer ${TOKEN}`,
+        ),
+      );
+      expect(res.status).toBe(200);
+    });
+
+    it("never logs caller permissions, user id or community internal ids", async () => {
+      const logCalls: unknown[] = [];
+      const bound = deps((message, fields) => {
+        logCalls.push({ message, fields });
+      });
+      access.holdsAnyGrant.mockResolvedValueOnce(true);
+      access.holdsPermission.mockResolvedValue(true);
+      entitlementGuard.checkEntitlement.mockResolvedValue(true);
+
+      const res = await route("/v1/access/capabilities", bound).handle(
+        request(
+          "/v1/access/capabilities",
+          API_HOSTNAME,
+          { communitySlug: "parish" },
+          `Bearer ${TOKEN}`,
+        ),
+      );
+      expect(res.status).toBe(200);
+
+      const logged = JSON.stringify(logCalls);
+      expect(logged).not.toContain(USER);
+      expect(logged).not.toContain(ORG);
+      expect(logged).not.toContain(COMMUNITY);
+      expect(logged).not.toContain("canReadMinors");
+      expect(logged).not.toContain("people.view");
+    });
   });
 });

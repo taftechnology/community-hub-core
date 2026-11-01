@@ -13,7 +13,10 @@ export type PeopleErrorCode =
   | "duplicate_guardian_link"
   | "not_found"
   | "invalid_input"
-  | "conflict";
+  | "conflict"
+  | "last_guardian"
+  | "adult_cannot_move_with_links"
+  | "minor_not_movable";
 
 export class PeopleError extends Error {
   readonly code: PeopleErrorCode;

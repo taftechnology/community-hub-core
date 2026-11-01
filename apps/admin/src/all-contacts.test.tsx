@@ -14,15 +14,57 @@ function resultIds(
   return results[bucket].map((entry) => entry.id);
 }
 
+type CapabilitiesInput =
+  | {
+      directoryEnabled?: boolean;
+      householdsEnabled?: boolean;
+      canView?: boolean;
+      canManage?: boolean;
+      canReadMinors?: boolean;
+    }
+  | number;
+
+function mockCapabilitiesResponse(input: CapabilitiesInput = {}): Response {
+  if (typeof input === "number") {
+    return new Response(
+      JSON.stringify({
+        permissions: {
+          "people.view": true,
+          "people.manage": true,
+          "people.restricted.read": true,
+        },
+        entitlements: {
+          "people.directory": true,
+          "people.households": true,
+        },
+      }),
+      {
+        status: input,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  }
+  return new Response(
+    JSON.stringify({
+      permissions: {
+        "people.view": input.canView ?? true,
+        "people.manage": input.canManage ?? true,
+        "people.restricted.read": input.canReadMinors ?? true,
+      },
+      entitlements: {
+        "people.directory": input.directoryEnabled ?? true,
+        "people.households": input.householdsEnabled ?? true,
+      },
+    }),
+    {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    },
+  );
+}
+
 function mockApi(
-  access:
-    | {
-        directoryEnabled: boolean;
-        canView: boolean;
-        canManage: boolean;
-        canReadMinors: boolean;
-      }
-    | number = { directoryEnabled: true, canView: true, canManage: true, canReadMinors: true },
+  access: CapabilitiesInput = {},
   listResult: { items: unknown[]; nextCursor: string | null } | number = {
     items: [],
     nextCursor: null,
@@ -32,14 +74,8 @@ function mockApi(
     const url = String(info);
     const path = url.replace(/^https?:\/\/[^/]+/, "");
 
-    if (path === "/v1/people/access") {
-      if (typeof access === "number") {
-        return new Response(null, { status: access });
-      }
-      return new Response(JSON.stringify(access), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
+    if (path === "/v1/access/capabilities") {
+      return mockCapabilitiesResponse(access);
     }
 
     if (path === "/v1/people/list") {
@@ -153,7 +189,7 @@ describe("Admin Nav Contacts item (Pin 15)", () => {
     expect(link.getAttribute("href")).toBe("/contacts");
   });
 
-  it("hides Contacts & Members when access route returns 403 or unavailable", async () => {
+  it("hides Contacts & Members and Family Records when access route returns 403 or unavailable with granting body (finding 4)", async () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);
     mockApi(403);
 
@@ -166,6 +202,27 @@ describe("Admin Nav Contacts item (Pin 15)", () => {
     await act(async () => {});
     expect(screen.queryByText("Contacts & Members")).toBeNull();
     expect(screen.queryByRole("link", { name: "All Contacts" })).toBeNull();
+    expect(screen.queryByText("Family Records")).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add contact" })).toBeNull();
+  });
+
+  it("hides Contacts & Members and Family Records when access route returns 500 with granting body (finding 4)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi(500);
+
+    await showContacts();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    await act(async () => {});
+    expect(screen.queryByText("Contacts & Members")).toBeNull();
+    expect(screen.queryByRole("link", { name: "All Contacts" })).toBeNull();
+    expect(screen.queryByText("Family Records")).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add contact" })).toBeNull();
   });
 });
 
@@ -202,17 +259,9 @@ describe("All Contacts Screen", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
+      if (path === "/v1/access/capabilities") {
         accessCalls++;
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: false,
-            canManage: true,
-            canReadMinors: false,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+        return mockCapabilitiesResponse({ canView: false, canReadMinors: false });
       }
       return new Response(null, { status: 404 });
     });
@@ -233,7 +282,8 @@ describe("All Contacts Screen", () => {
 
     const peopleCalls = fetchSpy.mock.calls.filter(
       (call) =>
-        String(call[0]).includes("/v1/people/") && !String(call[0]).endsWith("/v1/people/access"),
+        String(call[0]).includes("/v1/people/") &&
+        !String(call[0]).endsWith("/v1/access/capabilities"),
     );
     expect(peopleCalls).toHaveLength(0);
   });
@@ -244,17 +294,9 @@ describe("All Contacts Screen", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
+      if (path === "/v1/access/capabilities") {
         accessCalls++;
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: false,
-            canView: true,
-            canManage: true,
-            canReadMinors: true,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+        return mockCapabilitiesResponse({ directoryEnabled: false });
       }
       return new Response(null, { status: 404 });
     });
@@ -275,7 +317,8 @@ describe("All Contacts Screen", () => {
 
     const peopleCalls = fetchSpy.mock.calls.filter(
       (call) =>
-        String(call[0]).includes("/v1/people/") && !String(call[0]).endsWith("/v1/people/access"),
+        String(call[0]).includes("/v1/people/") &&
+        !String(call[0]).endsWith("/v1/access/capabilities"),
     );
     expect(peopleCalls).toHaveLength(0);
   });
@@ -286,13 +329,18 @@ describe("All Contacts Screen", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
+      if (path === "/v1/access/capabilities") {
         accessCalls++;
         return new Response(
           JSON.stringify({
-            directoryEnabled: true,
-            canManage: true,
-            canReadMinors: true,
+            permissions: {
+              "people.manage": true,
+              "people.restricted.read": true,
+            },
+            entitlements: {
+              "people.directory": true,
+              "people.households": true,
+            },
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         );
@@ -316,7 +364,8 @@ describe("All Contacts Screen", () => {
 
     const peopleCalls = fetchSpy.mock.calls.filter(
       (call) =>
-        String(call[0]).includes("/v1/people/") && !String(call[0]).endsWith("/v1/people/access"),
+        String(call[0]).includes("/v1/people/") &&
+        !String(call[0]).endsWith("/v1/access/capabilities"),
     );
     expect(peopleCalls).toHaveLength(0);
   });
@@ -327,13 +376,18 @@ describe("All Contacts Screen", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
+      if (path === "/v1/access/capabilities") {
         accessCalls++;
         return new Response(
           JSON.stringify({
-            canView: true,
-            canManage: true,
-            canReadMinors: true,
+            permissions: {
+              "people.view": true,
+              "people.manage": true,
+              "people.restricted.read": true,
+            },
+            entitlements: {
+              "people.households": true,
+            },
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         );
@@ -357,7 +411,8 @@ describe("All Contacts Screen", () => {
 
     const peopleCalls = fetchSpy.mock.calls.filter(
       (call) =>
-        String(call[0]).includes("/v1/people/") && !String(call[0]).endsWith("/v1/people/access"),
+        String(call[0]).includes("/v1/people/") &&
+        !String(call[0]).endsWith("/v1/access/capabilities"),
     );
     expect(peopleCalls).toHaveLength(0);
   });
@@ -368,7 +423,7 @@ describe("All Contacts Screen", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
+      if (path === "/v1/access/capabilities") {
         accessCalls++;
         return new Response("not valid json {", {
           status: 200,
@@ -394,7 +449,8 @@ describe("All Contacts Screen", () => {
 
     const peopleCalls = fetchSpy.mock.calls.filter(
       (call) =>
-        String(call[0]).includes("/v1/people/") && !String(call[0]).endsWith("/v1/people/access"),
+        String(call[0]).includes("/v1/people/") &&
+        !String(call[0]).endsWith("/v1/access/capabilities"),
     );
     expect(peopleCalls).toHaveLength(0);
   });
@@ -426,12 +482,17 @@ describe("All Contacts Screen", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
+      if (path === "/v1/access/capabilities") {
         // canManage and canReadMinors omitted entirely
         return new Response(
           JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
+            permissions: {
+              "people.view": true,
+            },
+            entitlements: {
+              "people.directory": true,
+              "people.households": true,
+            },
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         );
@@ -509,16 +570,8 @@ describe("All Contacts Screen", () => {
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: false,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ canReadMinors: false });
       }
       if (path === "/v1/people/list") {
         return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
@@ -633,16 +686,8 @@ describe("All Contacts Screen", () => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
 
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: false,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ canReadMinors: false });
       }
       if (path === "/v1/people/list") {
         return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
@@ -806,16 +851,8 @@ describe("All Contacts Screen", () => {
       const path = url.replace(/^https?:\/\/[^/]+/, "");
       const body = init?.body ? JSON.parse(String(init.body)) : {};
 
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: false,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ canReadMinors: false });
       }
       if (path === "/v1/people/list") {
         requestedCursor = body.cursor;
@@ -898,16 +935,8 @@ describe("All Contacts Screen", () => {
       const path = url.replace(/^https?:\/\/[^/]+/, "");
       const body = init?.body ? JSON.parse(String(init.body)) : {};
 
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: true,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse();
       }
       if (path === "/v1/people/list") {
         capturedKind = body.kind;
@@ -968,16 +997,8 @@ describe("All Contacts Screen", () => {
       const path = url.replace(/^https?:\/\/[^/]+/, "");
       const body = init?.body ? JSON.parse(String(init.body)) : {};
 
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: true,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse();
       }
       if (path === "/v1/people/list") {
         listCallCount++;
@@ -1115,16 +1136,8 @@ describe("All Contacts Screen", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: false,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ canReadMinors: false });
       }
       if (path === "/v1/people/list") {
         attempts++;
@@ -1226,16 +1239,8 @@ describe("All Contacts Screen", () => {
       const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
       recordedBodies.push(body);
 
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: true,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse();
       }
       if (path === "/v1/people/list") {
         return new Response(JSON.stringify({ items: [], nextCursor: null }), {
@@ -1303,16 +1308,8 @@ describe("All Contacts Screen", () => {
       const path = url.replace(/^https?:\/\/[^/]+/, "");
       const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
 
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: true,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse();
       }
       if (path === "/v1/people/list") {
         if (body.communitySlug === "community-a") {
@@ -1386,16 +1383,8 @@ describe("All Contacts Screen", () => {
       const path = url.replace(/^https?:\/\/[^/]+/, "");
       const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
 
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: true,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse();
       }
       if (path === "/v1/people/list") {
         if (body.search === "trigger402") {
@@ -1454,16 +1443,8 @@ describe("All Contacts Screen", () => {
       const path = url.replace(/^https?:\/\/[^/]+/, "");
       const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
 
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: true,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse();
       }
       if (path === "/v1/people/list") {
         if (body.communitySlug === "community-b") {
@@ -1522,16 +1503,8 @@ describe("All Contacts Screen", () => {
       const path = url.replace(/^https?:\/\/[^/]+/, "");
       const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
 
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: true,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse();
       }
       if (path === "/v1/people/list") {
         if (body.communitySlug === "community-b") {
@@ -1579,16 +1552,8 @@ describe("All Contacts Screen", () => {
       const path = url.replace(/^https?:\/\/[^/]+/, "");
       const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
 
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: true,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse();
       }
       if (path === "/v1/people/list") {
         if (body.communitySlug === "community-b") {
@@ -1657,16 +1622,8 @@ describe("All Contacts Screen", () => {
       const path = url.replace(/^https?:\/\/[^/]+/, "");
       const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
 
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: true,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse();
       }
       if (path === "/v1/people/list") {
         if (body.communitySlug === "community-b") {
@@ -1713,16 +1670,8 @@ describe("All Contacts Screen", () => {
       const path = url.replace(/^https?:\/\/[^/]+/, "");
       const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
 
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: true,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse();
       }
       if (path === "/v1/people/list") {
         if (body.communitySlug === "community-b") {
@@ -1842,16 +1791,8 @@ describe("All Contacts Screen", () => {
       const path = url.replace(/^https?:\/\/[^/]+/, "");
       const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
 
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: true,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse();
       }
       if (path === "/v1/people/list") {
         if (body.communitySlug === "community-b") {
@@ -1934,16 +1875,8 @@ describe("All Contacts Screen", () => {
       const path = url.replace(/^https?:\/\/[^/]+/, "");
       const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
 
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: true,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse();
       }
       if (path === "/v1/people/list") {
         if (body.communitySlug === "community-b") {
@@ -2048,7 +1981,7 @@ describe("All Contacts Screen", () => {
     fireEvent.click(screen.getByRole("button", { name: "View FreshGiven FreshFamily" }));
     expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
     expect(screen.queryByText("StaleGiven")).toBeNull();
-    expect(screen.getByText("FreshGiven")).toBeTruthy();
+    expect(await screen.findByText("FreshGiven")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Edit contact" }));
     expect(await screen.findByRole("heading", { name: "Edit Contact" })).toBeTruthy();
@@ -2070,16 +2003,8 @@ describe("All Contacts Screen", () => {
       const path = url.replace(/^https?:\/\/[^/]+/, "");
       const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
 
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: true,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse();
       }
       if (path === "/v1/people/list") {
         if (body.communitySlug === "community-a") {
@@ -2130,16 +2055,8 @@ describe("All Contacts Screen", () => {
       const path = url.replace(/^https?:\/\/[^/]+/, "");
       const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
 
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: true,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse();
       }
       if (path === "/v1/people/list") {
         if (body.communitySlug === "community-a") {
@@ -2176,16 +2093,8 @@ describe("All Contacts Screen", () => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
 
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: true,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse();
       }
       if (path === "/v1/people/list") {
         return new Response(JSON.stringify({ items: [], nextCursor: null }), {
@@ -2262,16 +2171,8 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: false,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ canReadMinors: false });
       }
       if (path === "/v1/people/list") {
         return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
@@ -2316,16 +2217,8 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: false,
-            canReadMinors: false,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ canManage: false, canReadMinors: false });
       }
       if (path === "/v1/people/list") {
         return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
@@ -2361,16 +2254,8 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: false,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ canReadMinors: false });
       }
       if (path === "/v1/people/list") {
         return new Response(JSON.stringify({ items: [], nextCursor: null }), {
@@ -2431,16 +2316,8 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: false,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ canReadMinors: false });
       }
       if (path === "/v1/people/list") {
         return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
@@ -2505,16 +2382,8 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: false,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ canReadMinors: false });
       }
       if (path === "/v1/people/list") {
         return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
@@ -2562,7 +2431,9 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
         /This contact was changed by someone else, or that email or phone is already in use\. Reload to see the latest details; your unsaved changes will be discarded\./,
       ),
     ).toBeTruthy();
-    expect(document.activeElement).toBe(alert);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(alert);
+    });
     expect(document.body.textContent).not.toContain("email_bidx_conflict");
 
     expect(screen.getByRole("button", { name: "Reload" })).toBeTruthy();
@@ -2578,16 +2449,8 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: false,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ canReadMinors: false });
       }
       if (path === "/v1/people/list") {
         return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
@@ -2674,16 +2537,8 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: false,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ canReadMinors: false });
       }
       if (path === "/v1/people/list") {
         return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
@@ -2758,16 +2613,8 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: false,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ canReadMinors: false });
       }
       if (path === "/v1/people/list") {
         return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
@@ -2813,16 +2660,8 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: false,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ canReadMinors: false });
       }
       if (path === "/v1/people/list") {
         return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
@@ -2876,16 +2715,8 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: true,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse();
       }
       if (path === "/v1/people/list") {
         return new Response(JSON.stringify({ items: [minorPerson], nextCursor: null }), {
@@ -2926,16 +2757,8 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: false,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ canReadMinors: false });
       }
       if (path === "/v1/people/list") {
         return new Response(JSON.stringify({ items: [], nextCursor: null }), {
@@ -2993,16 +2816,8 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: false,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ canReadMinors: false });
       }
       if (path === "/v1/people/list") {
         return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
@@ -3094,16 +2909,8 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: false,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ canReadMinors: false });
       }
       if (path === "/v1/people/list") {
         return new Response(JSON.stringify({ items: [], nextCursor: null }), {
@@ -3149,16 +2956,8 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: false,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ canReadMinors: false });
       }
       if (path === "/v1/people/list") {
         return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
@@ -3212,16 +3011,8 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: false,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ canReadMinors: false });
       }
       if (path === "/v1/people/list") {
         return new Response(JSON.stringify({ items: [], nextCursor: null }), {
@@ -3265,16 +3056,8 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: false,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ canReadMinors: false });
       }
       if (path === "/v1/people/list") {
         return new Response(JSON.stringify({ items: [], nextCursor: null }), {
@@ -3305,16 +3088,8 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: false,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ canReadMinors: false });
       }
       if (path === "/v1/people/list") {
         return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
@@ -3352,16 +3127,8 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: false,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ canReadMinors: false });
       }
       if (path === "/v1/people/list") {
         return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
@@ -3401,16 +3168,8 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
-      if (path === "/v1/people/access") {
-        return new Response(
-          JSON.stringify({
-            directoryEnabled: true,
-            canView: true,
-            canManage: true,
-            canReadMinors: false,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ canReadMinors: false });
       }
       if (path === "/v1/people/list") {
         return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {

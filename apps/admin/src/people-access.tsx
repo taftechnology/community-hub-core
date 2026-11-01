@@ -12,17 +12,27 @@ import { post } from "./api";
 import { useCommunity } from "./community";
 
 export type PeopleAccess = {
-  directoryEnabled: boolean;
-  canView: boolean;
-  canManage: boolean;
-  canReadMinors: boolean;
+  permissions: {
+    "people.view": boolean;
+    "people.manage": boolean;
+    "people.restricted.read": boolean;
+  };
+  entitlements: {
+    "people.directory": boolean;
+    "people.households": boolean;
+  };
 };
 
 const defaultAccess: PeopleAccess = {
-  directoryEnabled: false,
-  canView: false,
-  canManage: false,
-  canReadMinors: false,
+  permissions: {
+    "people.view": false,
+    "people.manage": false,
+    "people.restricted.read": false,
+  },
+  entitlements: {
+    "people.directory": false,
+    "people.households": false,
+  },
 };
 
 export type PeopleAccessContextValue = {
@@ -45,11 +55,18 @@ function parseAccess(value: unknown): PeopleAccess {
   if (!isRecord(value)) {
     return defaultAccess;
   }
+  const perms = isRecord(value.permissions) ? value.permissions : {};
+  const ents = isRecord(value.entitlements) ? value.entitlements : {};
   return {
-    directoryEnabled: value.directoryEnabled === true,
-    canView: value.canView === true,
-    canManage: value.canManage === true,
-    canReadMinors: value.canReadMinors === true,
+    permissions: {
+      "people.view": perms["people.view"] === true,
+      "people.manage": perms["people.manage"] === true,
+      "people.restricted.read": perms["people.restricted.read"] === true,
+    },
+    entitlements: {
+      "people.directory": ents["people.directory"] === true,
+      "people.households": ents["people.households"] === true,
+    },
   };
 }
 
@@ -64,7 +81,7 @@ export function PeopleAccessProvider({ children }: { children: ReactNode }) {
         setAccess(defaultAccess);
         return;
       }
-      const response = await post("/v1/people/access", { communitySlug });
+      const response = await post("/v1/access/capabilities", { communitySlug });
       if (!isCurrent()) {
         return;
       }

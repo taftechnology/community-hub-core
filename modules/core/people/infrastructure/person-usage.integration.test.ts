@@ -170,6 +170,7 @@ describe("person creation usage facts", () => {
           from app.usage_facts_daily
           where org_id = ${scope.orgId}::uuid
             and community_id = ${scope.communityId}::uuid
+            and feature_key = 'people.directory'
         `;
         expect(rows).toHaveLength(1);
         const row = rows[0]!;
@@ -189,9 +190,11 @@ describe("person creation usage facts", () => {
           from app.usage_facts_daily
           where org_id = ${scope.orgId}::uuid
             and community_id = ${scope.communityId}::uuid
+          order by feature_key asc
         `;
         expect(dayRows).toEqual([
           { feature_key: "people.directory", day: "2026-01-15", success_count: 2 },
+          { feature_key: "people.households", day: "2026-01-15", success_count: 1 },
         ]);
 
         const neighbouringRows = await tx<{ day: string }[]>`

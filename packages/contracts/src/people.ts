@@ -50,17 +50,10 @@ export const updatePersonBody = z
   })
   .strict();
 
-export const peopleAccessBody = z
-  .object({
-    communitySlug: slug,
-  })
-  .strict();
-
 export type ListPeopleBody = z.infer<typeof listPeopleBody>;
 export type ReadPersonBody = z.infer<typeof readPersonBody>;
 export type CreatePersonBody = z.infer<typeof createPersonBody>;
 export type UpdatePersonBody = z.infer<typeof updatePersonBody>;
-export type PeopleAccessBody = z.infer<typeof peopleAccessBody>;
 
 export type PersonListItem = {
   id: string;
@@ -96,11 +89,4 @@ export type CreatePersonResponse = {
 
 export type UpdatePersonResponse = {
   version: number;
-};
-
-export type PeopleAccessResponse = {
-  directoryEnabled: boolean;
-  canView: boolean;
-  canManage: boolean;
-  canReadMinors: boolean;
 };

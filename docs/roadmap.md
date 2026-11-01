@@ -21,8 +21,8 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 |              |                                                                   |
 | ------------ | ----------------------------------------------------------------- |
 | Phase        | 2 — Engagement and mobile (Phase 1 complete)                      |
-| Last shipped | `All Contacts admin`                                              |
-| Next chunk   | `Family Records`                                                  |
+| Last shipped | `Family Records`                                                  |
+| Next chunk   | `Life events`                                                     |
 | Phase 0      | 26 rows: 25 done, 1 superseded (`api-au-hostname`), 0 not started |
 | Later phases | not started                                                       |
 
@@ -96,7 +96,7 @@ Architecture: monorepo, CI, Terraform for AWS in `ap-southeast-2`, kernel, db wi
 | done       | `db-migrate-command`         | The image gains `/app/db-migrate.js`, which applies the product migrations as the master login, refuses to run before `db-bootstrap`, and prints the tags it applied. It has not been run on staging. Spec `docs/specs/2026-10-12-db-migrate-command.md`.                                                                                                                                                                                                                          |
 | done       | `staging-proof-run`          | The distroless image runs on Fargate. `db-bootstrap` then `db-migrate` applied the ten product migrations to RDS and a second run applied none. The sign-in-code route answers 503 with no mail vendor; role and entitlement routes refuse a request with no session; the service re-read a changed database secret and recovered without a restart. Staging was re-parked the same day. Spec `docs/specs/2026-10-12-staging-proof-run.md`.                                        |
 
-Next is `Family Records`.
+Next is `Life events`.
 
 SQS, EventBridge, file storage, and the admin static-file distribution are not rows here. Each waits for the first chunk that uses it.
 
@@ -142,20 +142,20 @@ Journeys, not a full backlog. Cut specs when this phase starts. Fill nav in this
 
 **Every public-facing journey** (Mass Timings, Notice Board, Bulletins, Events, Content) ships its **external collection** with the Public Content API: a Zod schema in `packages/contracts`, a public-only projection, and a must-fail minor test (architecture §15.5, ADR 0006). The same projection feeds Parish Hub, so this is not extra work. It is what makes Phase 4 small.
 
-| Status      | Journey                      | Nav / surface                             | Must include                                                                                                          |
-| ----------- | ---------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| done        | Groups                       | Contacts & Members → Groups               | Ministries, members, export. Spec `docs/specs/2026-10-29-groups.md`.                                                  |
-| done        | All Contacts admin           | Contacts & Members → All Contacts         | Built on people/households; no children in public directories. Spec `docs/specs/2026-10-31-all-contacts-admin.md`.    |
-| not started | Family Records               | Family Records                            | Household UI; **life events** inside this item                                                                        |
-| not started | Mass Timings                 | Engagement → Mass Timings                 | Service times; labels from faith-church                                                                               |
-| not started | Notice Board                 | Engagement → Notice Board                 | Pin; **approve / reject**                                                                                             |
-| not started | Bulletins                    | Engagement → Bulletins                    | CRUD, PDF as in Laravel if still required                                                                             |
-| not started | Events                       | Engagement → Events                       | Free and **paid** RSVP, ticket types, capacity, booking detail, external ticketing URL. Staging **RSVP** gate         |
-| not started | Forms + Enquires             | Forms; Enquires                           | Builder, classification on fields, public submit, enquiry inbox. Staging **form submit** gate                         |
-| not started | Broadcast Messages           | Communication                             | Email to entitled audiences; IDs in the message, send from the regional service. No personal data in the job          |
-| not started | Content                      | Website & CMS: Blog, Gallery, Team, Media | Public Content API + collections (articles, gallery, team). Our Schools / Our Places as content, not new modules      |
-| not started | Website host contract freeze | — (agreement with Jellycube)              | Freeze `dataSources`, `islands`, notifications, role mapping with Jellycube while collection schemas are written (Q2) |
-| not started | Mobile home CMS + Parish Hub | Mobile App                                | Cards, nav, ministries, sacraments, mass times. App Registry. **`parish-hub-au` only**. Legacy compatibility router   |
+| Status      | Journey                      | Nav / surface                             | Must include                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ----------- | ---------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| done        | Groups                       | Contacts & Members → Groups               | Ministries, members, export. Spec `docs/specs/2026-10-29-groups.md`.                                                                                                                                                                                                                                                                                                                                               |
+| done        | All Contacts admin           | Contacts & Members → All Contacts         | Built on people/households; no children in public directories. Spec `docs/specs/2026-10-31-all-contacts-admin.md`.                                                                                                                                                                                                                                                                                                 |
+| done        | Family Records               | Family Records                            | Household UI (list, read, create, rename, move adult, add minor, link/unlink guardian) and capabilities route; life events inside this item is the next chunk; review follow-ups: full rights object, rename needs restricted.read, Add adult, move UPDATE `is_minor` guard, detailGeneration on community switch, unlink household pin, capabilities log hygiene. Spec `docs/specs/2026-11-01-family-records.md`. |
+| not started | Mass Timings                 | Engagement → Mass Timings                 | Service times; labels from faith-church                                                                                                                                                                                                                                                                                                                                                                            |
+| not started | Notice Board                 | Engagement → Notice Board                 | Pin; **approve / reject**                                                                                                                                                                                                                                                                                                                                                                                          |
+| not started | Bulletins                    | Engagement → Bulletins                    | CRUD, PDF as in Laravel if still required                                                                                                                                                                                                                                                                                                                                                                          |
+| not started | Events                       | Engagement → Events                       | Free and **paid** RSVP, ticket types, capacity, booking detail, external ticketing URL. Staging **RSVP** gate                                                                                                                                                                                                                                                                                                      |
+| not started | Forms + Enquires             | Forms; Enquires                           | Builder, classification on fields, public submit, enquiry inbox. Staging **form submit** gate                                                                                                                                                                                                                                                                                                                      |
+| not started | Broadcast Messages           | Communication                             | Email to entitled audiences; IDs in the message, send from the regional service. No personal data in the job                                                                                                                                                                                                                                                                                                       |
+| not started | Content                      | Website & CMS: Blog, Gallery, Team, Media | Public Content API + collections (articles, gallery, team). Our Schools / Our Places as content, not new modules                                                                                                                                                                                                                                                                                                   |
+| not started | Website host contract freeze | — (agreement with Jellycube)              | Freeze `dataSources`, `islands`, notifications, role mapping with Jellycube while collection schemas are written (Q2)                                                                                                                                                                                                                                                                                              |
+| not started | Mobile home CMS + Parish Hub | Mobile App                                | Cards, nav, ministries, sacraments, mass times. App Registry. **`parish-hub-au` only**. Legacy compatibility router                                                                                                                                                                                                                                                                                                |
 
 Laravel has **no check-in**. Do not port it here.
 
@@ -324,7 +324,7 @@ A group name must not carry a child's name; the group UI chunk adds that guidanc
 
 `createPerson` has its first production caller in `POST /v1/people/create`, so the `people.directory` usage fact is now written in production when a contact is added.
 
-The next chunk that unparks staging verifies migration `0015`: `app.persons.version` exists, the permission CHECK admits `people.view` and `people.manage`, `relrowsecurity` and `relforcerowsecurity` are still true on `persons`, `app` lacks `DELETE`, and `app` has `UPDATE` only on the ten columns `updatePerson` writes.
+The next chunk that unparks staging verifies migration `0015`: `app.persons.version` exists, the permission CHECK admits `people.view` and `people.manage`, `relrowsecurity` and `relforcerowsecurity` are still true on `persons`, `app` lacks `DELETE`, and `app` has `UPDATE` only on the ten columns `updatePerson` writes plus `household_id` (see the `0016` paragraph below).
 
 No index on `app.persons` was added for the contacts list. On synthetic data of 5,000 adults plus 50 minors in one community, the sequential scan took 5.9 ms for adults and 0.4 ms for minors. An `org_id`-led index should be added when a real community passes a few tens of thousands of contacts or the list is measured slow.
 
@@ -336,7 +336,13 @@ The unique blind-index indexes `persons_adult_email_bidx`, `persons_adult_phone_
 
 Guardian read over HTTP waits for a later chunk (Family Records or the member portal/app), as callers lacking both `people.view` and `people.restricted.read` are refused before the gate runs.
 
-The `/v1/people/access` route is people-specific and stays for now. Before the next module needs nav gating, replace it with one capabilities route in the access module with a server-side allow-list of permission keys, rather than adding a second module-specific route.
+The next chunk that unparks staging verifies migration `0016`: `app.households.version` exists, the `BEFORE UPDATE` trigger on `app.persons` is present, `relrowsecurity` and `relforcerowsecurity` are still true on `households` and `persons`, `app` lacks `DELETE` on `households`, `persons`, and `household_keys`, and `app` has `UPDATE` only on `households(label, version)` and `persons(household_id)`.
+
+No index on `app.persons` was added for `(org_id, household_id)`. Member counts and lookups scan `persons`. This chunk accepts the sequential scan, as All Contacts did; an `org_id`-led index should be added when a real community passes a few tens of thousands of contacts or household queries are measured slow.
+
+A list page of 25 households makes 25 KMS Decrypt requests and 25 key unwraps (`keys.ts:116-135`). On synthetic data of 25 households containing adults, minors, and guardian links, the 25-household list page time had 5 runs of `[116.93 ms, 119.81 ms, 120.99 ms, 121.99 ms, 144.42 ms]` with a median of `120.99 ms`. A request-scoped key cache remains an open optimization when scale warrants it.
+
+Life events (baptism, marriage, first communion, funeral) are the next chunk. Owner decisions confirmed for it: they live in `core/people` (not `engagement`; `architecture.md` line 350 will be corrected in that chunk), are `restricted` and field-encrypted, household-keyed for minors, and reading them requires `people.restricted.read`.
 
 The admin All Contacts screen is larger than the minimal target: `apps/admin/src/all-contacts.tsx` is 856 lines and `all-contacts.test.tsx` is 3,455 lines; `git diff --shortstat origin/main...HEAD -- apps/admin packages/ui` shows 4,625 insertions across 10 files. The whole chunk is about 2,580 non-test source lines against the roughly 800-line target, shipped as one pull request by the owner's decision.
 
@@ -344,7 +350,7 @@ The admin All Contacts screen is larger than the minimal target: `apps/admin/src
 
 ## Next spec
 
-The next chunk is **Family Records**, the next Phase 2 row. Its spec is cut when the phase starts. Q8b (plan contents and prices) is still open.
+The next chunk is **Life events** (inside the Family Records nav item), the next Phase 2 chunk. Its spec is cut when work starts. Q8b (plan contents and prices) is still open.
 
 ---
 

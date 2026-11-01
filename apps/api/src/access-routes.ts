@@ -1,4 +1,5 @@
 import {
+  capabilitiesBody,
   createCustomRoleBody,
   deleteCustomRoleBody,
   grantBody,
@@ -6,12 +7,16 @@ import {
   listGrantsBody,
   revokeGrantBody,
   unlinkUserBody,
+  CAPABILITIES_ALLOW_LIST,
+  type CapabilitiesResponse,
 } from "@community-hub/contracts/access";
 import {
   AccessError,
   createCustomRole,
   deleteCustomRole,
   grantRole,
+  holdsAnyGrant,
+  holdsPermission,
   linkUser,
   revokeRole,
   unlinkUser,
@@ -25,6 +30,7 @@ import type { Checkout } from "./checkout.js";
 import type { GateRoute, RouteContext } from "./gate.js";
 import type { BillingLogFields } from "./index.js";
 import { guardWrite } from "./billing-guard.js";
+import { checkEntitlement } from "./entitlement-guard.js";
 
 type AccessSql = Parameters<typeof readSession>[0];
 
@@ -411,6 +417,76 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
           return listBody(directory, callerPermissions(directory, actor.userId));
         });
         return finish(outcome, (value) => Response.json(value));
+      },
+    },
+    {
+      method: "POST",
+      pattern: "/v1/access/capabilities",
+      surface: "tenant",
+      billing: "read",
+      handle: async (request) => {
+        const hidden = foreignHost(request);
+        if (hidden !== undefined) {
+          return hidden;
+        }
+        const body = await parse(request, capabilitiesBody);
+        if (body === undefined) {
+          return empty(400);
+        }
+        const actor = await sessionUser(request);
+        if (actor instanceof Response) {
+          return actor;
+        }
+        const found = await deps.checkout("platform", (sql) =>
+          findCommunityBySlug(sql, body.communitySlug),
+        );
+        if (found === null) {
+          return empty(403);
+        }
+        const scope = { orgId: found.organisationId, communityId: found.id };
+
+        const perms = await deps.checkout("app", (sql) =>
+          withAppTransaction(sql, scope, async (tx) => {
+            const hasRole = await holdsAnyGrant(tx, actor.userId);
+            if (!hasRole) {
+              return null;
+            }
+            const permissionEntries = await Promise.all(
+              CAPABILITIES_ALLOW_LIST.permissions.map(
+                async (perm) => [perm, await holdsPermission(tx, actor.userId, perm)] as const,
+              ),
+            );
+            return Object.fromEntries(permissionEntries) as CapabilitiesResponse["permissions"];
+          }),
+        );
+
+        if (perms === null) {
+          return empty(403);
+        }
+
+        const entitlementEntries = await Promise.all(
+          CAPABILITIES_ALLOW_LIST.entitlements.map(
+            async (key) =>
+              [
+                key,
+                await checkEntitlement(
+                  { checkout: deps.checkout, now: deps.now, guardLog: deps.guardLog },
+                  scope,
+                  key,
+                ),
+              ] as const,
+          ),
+        );
+        const entitlements = Object.fromEntries(
+          entitlementEntries,
+        ) as CapabilitiesResponse["entitlements"];
+
+        const response: CapabilitiesResponse = {
+          permissions: perms,
+          entitlements,
+        };
+
+        return Response.json(response);
       },
     },
     {

@@ -726,7 +726,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
         (route as { billing?: string }).billing,
       ]),
     );
-    expect(routes).toHaveLength(37);
+    expect(routes).toHaveLength(45);
     expect(markings).toEqual(
       new Map([
         ["GET /health", "exempt"],
@@ -743,9 +743,11 @@ describe("api boot wiring of the billing adapter and logger", () => {
         ["POST /v1/billing/plans", "exempt"],
         ["POST /v1/stripe/webhook", "exempt"],
         ["POST /v1/access/grants/list", "read"],
+        ["POST /v1/access/capabilities", "read"],
         ["POST /v1/people/list", "read"],
         ["POST /v1/people/read", "read"],
-        ["POST /v1/people/access", "read"],
+        ["POST /v1/households/list", "read"],
+        ["POST /v1/households/read", "read"],
         ["POST /v1/entitlements/list", "read"],
         ["POST /v1/access/grants", "write"],
         ["POST /v1/access/grants/revoke", "write"],
@@ -755,6 +757,12 @@ describe("api boot wiring of the billing adapter and logger", () => {
         ["POST /v1/access/user-links/delete", "write"],
         ["POST /v1/people/create", "write"],
         ["POST /v1/people/update", "write"],
+        ["POST /v1/households/create", "write"],
+        ["POST /v1/households/rename", "write"],
+        ["POST /v1/households/members/move-adult", "write"],
+        ["POST /v1/households/members/add-minor", "write"],
+        ["POST /v1/households/guardians/link", "write"],
+        ["POST /v1/households/guardians/unlink", "write"],
         ["POST /v1/entitlements/toggle", "write"],
         ["POST /v1/ops/enrolment/start", "exempt"],
         ["POST /v1/ops/enrolment/verify", "exempt"],
