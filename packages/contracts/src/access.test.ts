@@ -155,6 +155,20 @@ describe("access bodies", () => {
           permissions: missingPerm,
         }).success,
       ).toBe(false);
+
+      // Outer .strict() rejects top-level unknown keys (finding 3)
+      expect(
+        capabilitiesResponse.safeParse({
+          ...validResponse,
+          extra: "forbidden",
+        }).success,
+      ).toBe(false);
+      expect(
+        capabilitiesResponse.safeParse({
+          ...validResponse,
+          orgId: ORGANISATION,
+        }).success,
+      ).toBe(false);
     });
   });
 });

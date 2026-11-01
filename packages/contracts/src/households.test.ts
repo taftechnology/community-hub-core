@@ -253,4 +253,52 @@ describe("household contract schemas (pin 10)", () => {
       true,
     );
   });
+
+  it("strictly rejects extra keys inside nested rights (finding 3)", () => {
+    const minorBase = {
+      communitySlug: "slug",
+      householdId: VALID_UUID,
+      givenName: "Tommy",
+      familyName: "Smith",
+      dateOfBirth: "2015-01-01",
+      guardianId: OTHER_UUID,
+    };
+    expect(
+      addMinorBody.safeParse({
+        ...minorBase,
+        rights: { view: true, orgId: VALID_UUID },
+      }).success,
+    ).toBe(false);
+    expect(
+      addMinorBody.safeParse({
+        ...minorBase,
+        rights: { view: true, isMinor: false },
+      }).success,
+    ).toBe(false);
+    expect(
+      addMinorBody.safeParse({
+        ...minorBase,
+        rights: { view: true, extra: "forbidden" },
+      }).success,
+    ).toBe(false);
+
+    const linkBase = {
+      communitySlug: "slug",
+      householdId: VALID_UUID,
+      guardianId: OTHER_UUID,
+      childId: VALID_UUID,
+    };
+    expect(
+      linkGuardianBody.safeParse({
+        ...linkBase,
+        rights: { view: true, orgId: VALID_UUID },
+      }).success,
+    ).toBe(false);
+    expect(
+      linkGuardianBody.safeParse({
+        ...linkBase,
+        rights: { view: true, extra: "forbidden" },
+      }).success,
+    ).toBe(false);
+  });
 });
