@@ -12,7 +12,7 @@ import {
 } from "@community-hub/db/plaintext";
 import { withRequest } from "@community-hub/kernel";
 
-import { createHousehold, createPerson, listHouseholds } from "../public/index.js";
+import { createHousehold, createPerson, listHouseholds, PeopleError } from "../public/index.js";
 
 type Runtime = {
   productOnlyUrl: string;
@@ -367,6 +367,68 @@ describe("household list", () => {
       try {
         await cleanScope(directSql, scopeA);
         await cleanScope(directSql, scopeB);
+      } finally {
+        await platform.end({ timeout: 1 });
+        await app.end({ timeout: 1 });
+        await directSql.end({ timeout: 1 });
+      }
+    }
+  });
+
+  it("page cap of 25: 26 households defaults to 25 with cursor; limit > 25 throws invalid_input", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const kms = createLocalKmsPort();
+    const scope = await createScope(platform);
+
+    try {
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, scope, async (tx) => {
+          for (let i = 0; i < 26; i += 1) {
+            await createHousehold(tx, kms, KEY_ARN, {
+              now: NOW,
+              label: `Cap Household ${i}`,
+              actorUserId: null,
+            });
+          }
+        }),
+      );
+
+      // Default limit returns 25 items and nextCursor
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, scope, async (tx) => {
+          const res = await listHouseholds(tx, kms, KEY_ARN, {
+            includeRestricted: false,
+            actorUserId: null,
+          });
+
+          expect(res.items).toHaveLength(25);
+          expect(res.nextCursor).not.toBeNull();
+        }),
+      );
+
+      // limit: 26 is rejected with invalid_input
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, scope, async (tx) => {
+          let err: unknown = null;
+          try {
+            await listHouseholds(tx, kms, KEY_ARN, {
+              limit: 26,
+              includeRestricted: false,
+              actorUserId: null,
+            });
+          } catch (e) {
+            err = e;
+          }
+          expect(err).toBeInstanceOf(PeopleError);
+          expect((err as PeopleError).code).toBe("invalid_input");
+        }),
+      );
+    } finally {
+      try {
+        await cleanScope(directSql, scope);
       } finally {
         await platform.end({ timeout: 1 });
         await app.end({ timeout: 1 });

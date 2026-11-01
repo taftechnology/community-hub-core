@@ -658,4 +658,84 @@ describe("household create, rename and read", () => {
       }
     }
   });
+
+  it("renameHousehold normalises name by trimming whitespace and rejecting invalid names", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const organisationId = newId();
+    const communityId = newId();
+    const kms = createLocalKmsPort();
+
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, 'rename-norm', 'au', 'implicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, 'rename-norm', 'au')
+        `;
+      });
+
+      let householdId = "";
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const hh = await createHousehold(tx, kms, KEY_ARN, {
+            now: new Date("2026-11-01T00:00:00+11:00"),
+            label: "Initial",
+            actorUserId: null,
+          });
+          householdId = hh.householdId;
+        }),
+      );
+
+      // Trims whitespace: "  Normalised Family  " -> "Normalised Family"
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          await renameHousehold(tx, kms, KEY_ARN, {
+            householdId,
+            version: 1,
+            label: "  Normalised Family  ",
+            actorUserId: null,
+          });
+
+          const read = await readHousehold(tx, kms, KEY_ARN, {
+            householdId,
+            actorUserId: null,
+          });
+          expect(read?.label).toBe("Normalised Family");
+        }),
+      );
+
+      // Rejects empty / whitespace-only name
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          let err: unknown = null;
+          try {
+            await renameHousehold(tx, kms, KEY_ARN, {
+              householdId,
+              version: 2,
+              label: "    ",
+              actorUserId: null,
+            });
+          } catch (e) {
+            err = e;
+          }
+          expect(err).toBeInstanceOf(PeopleError);
+          expect((err as PeopleError).code).toBe("invalid_name");
+        }),
+      );
+    } finally {
+      try {
+        await cleanScope(directSql, { orgId: organisationId });
+      } finally {
+        await platform.end({ timeout: 1 });
+        await app.end({ timeout: 1 });
+        await directSql.end({ timeout: 1 });
+      }
+    }
+  });
 });
