@@ -65,6 +65,10 @@ async function householdExists(tx: AppTransaction, householdId: string): Promise
   return rows[0] !== undefined;
 }
 
+function sortPair(a: string, b: string): [string, string] {
+  return a < b ? [a, b] : [b, a];
+}
+
 export async function linkGuardian(
   tx: AppTransaction,
   input: GuardianInput,
@@ -89,7 +93,7 @@ export async function linkGuardian(
   }
 
   // Pin 23: Lock both guardian and child rows in sorted order with for share
-  const [firstId, secondId] = [input.guardianPersonId, input.childPersonId].sort();
+  const [firstId, secondId] = sortPair(input.guardianPersonId, input.childPersonId);
   const members = await tx<{ id: string; is_minor: boolean; household_id: string | null }[]>`
     select id::text as id, is_minor, household_id::text as household_id
     from app.persons
