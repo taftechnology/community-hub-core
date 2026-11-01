@@ -10,6 +10,7 @@ import {
   createPlaintextIdentitySql,
   createPlaintextPlatformSql,
 } from "@community-hub/db/plaintext";
+import { assignPlan, upsertPlan } from "@community-hub/entitlements";
 import type { OtpMail } from "@community-hub/identity";
 import { withRequest } from "@community-hub/kernel";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -132,9 +133,11 @@ describe("access flow", () => {
     const mail = new MemoryMail();
     const organisationId = newId();
     const communityId = newId();
+    const secondCommunityId = newId();
     const otherOrganisationId = newId();
     const otherCommunityId = newId();
     const slug = `flow${organisationId.slice(0, 8)}`;
+    const secondSlug = `sec${secondCommunityId.slice(0, 8)}`;
     const otherSlug = `other${otherOrganisationId.slice(0, 8)}`;
     const email = `flow-${organisationId.slice(0, 8)}@example.com`;
     const subject = newId();
@@ -171,6 +174,7 @@ describe("access flow", () => {
       ],
     });
     let userId = "";
+    let memberUserId = "";
     try {
       await new Promise<void>((resolve, reject) => {
         if (server.listening) {
@@ -187,7 +191,9 @@ describe("access flow", () => {
         `;
         await tx`
           insert into platform.communities (id, organisation_id, slug, region)
-          values (${communityId}, ${organisationId}, ${slug}, 'au')
+          values
+            (${communityId}, ${organisationId}, ${slug}, 'au'),
+            (${secondCommunityId}, ${organisationId}, ${secondSlug}, 'au')
         `;
         await tx`
           insert into platform.organisations (id, slug, region, kind)
@@ -198,6 +204,19 @@ describe("access flow", () => {
           values (${otherCommunityId}, ${otherOrganisationId}, ${otherSlug}, 'au')
         `;
       });
+      const planKey = `plan_${organisationId.slice(0, 8)}`;
+      await upsertPlan(platform, {
+        key: planKey,
+        entitlements: [
+          { key: "people.directory", limit: null },
+          { key: "people.households", limit: null },
+        ],
+      });
+      await assignPlan(platform, { organisationId, planKey, now });
+      await platform`
+        insert into platform.community_toggles (community_id, entitlement_key, enabled)
+        values (${secondCommunityId}::uuid, 'people.households', false)
+      `;
       await identity`delete from identity.identity_keys`;
       const started = await post(AUTH_HOSTNAME, "/v1/auth/email-otp/start", { email });
       expect(started.status).toBe(204);
@@ -214,6 +233,30 @@ describe("access flow", () => {
         ),
       );
       const bearer = `Bearer ${session.accessToken}`;
+
+      const memberEmail = `member-${organisationId.slice(0, 8)}@example.com`;
+      const memberStarted = await post(AUTH_HOSTNAME, "/v1/auth/email-otp/start", {
+        email: memberEmail,
+      });
+      expect(memberStarted.status).toBe(204);
+      const memberVerified = await post(AUTH_HOSTNAME, "/v1/auth/email-otp/verify", {
+        email: memberEmail,
+        code: mail.last?.code ?? "",
+      });
+      expect(memberVerified.status).toBe(200);
+      const memberSession = (await memberVerified.json()) as {
+        userId: string;
+        accessToken: string;
+      };
+      memberUserId = memberSession.userId;
+      const memberBearer = `Bearer ${memberSession.accessToken}`;
+      const memberGranted = await post(
+        API_HOSTNAME,
+        "/v1/access/grants",
+        { communitySlug: slug, userId: memberUserId, roleKey: "member" },
+        bearer,
+      );
+      expect(memberGranted.status).toBe(200);
       const listed = await post(
         API_HOSTNAME,
         "/v1/access/grants/list",
@@ -255,7 +298,7 @@ describe("access flow", () => {
       expect(await missing.text()).toBe("");
       expect(await absent.text()).toBe("");
 
-      // POST /v1/access/capabilities
+      // POST /v1/access/capabilities (finding 1: real DB entitlement check with enabled entitlements)
       const capRes = await post(
         API_HOSTNAME,
         "/v1/access/capabilities",
@@ -274,8 +317,56 @@ describe("access flow", () => {
           "people.restricted.read": true,
         },
         entitlements: {
-          "people.directory": false,
+          "people.directory": true,
+          "people.households": true,
+        },
+      });
+
+      // Second community in the same organisation has households toggled off
+      const capRes2 = await post(
+        API_HOSTNAME,
+        "/v1/access/capabilities",
+        { communitySlug: secondSlug },
+        bearer,
+      );
+      expect(capRes2.status).toBe(200);
+      const capData2 = (await capRes2.json()) as {
+        permissions: Record<string, boolean>;
+        entitlements: Record<string, boolean>;
+      };
+      expect(capData2).toEqual({
+        permissions: {
+          "people.view": true,
+          "people.manage": true,
+          "people.restricted.read": true,
+        },
+        entitlements: {
+          "people.directory": true,
           "people.households": false,
+        },
+      });
+
+      // Finding 2: caller with member role grant (no people permissions) gets 200 with all permissions false
+      const memberCapRes = await post(
+        API_HOSTNAME,
+        "/v1/access/capabilities",
+        { communitySlug: slug },
+        memberBearer,
+      );
+      expect(memberCapRes.status).toBe(200);
+      const memberCapData = (await memberCapRes.json()) as {
+        permissions: Record<string, boolean>;
+        entitlements: Record<string, boolean>;
+      };
+      expect(memberCapData).toEqual({
+        permissions: {
+          "people.view": false,
+          "people.manage": false,
+          "people.restricted.read": false,
+        },
+        entitlements: {
+          "people.directory": true,
+          "people.households": true,
         },
       });
 
@@ -304,6 +395,10 @@ describe("access flow", () => {
       if (userId !== "") {
         await identity`delete from identity.sessions where user_id = ${userId}::uuid`;
         await identity`delete from identity.users where id = ${userId}::uuid`;
+      }
+      if (memberUserId !== "") {
+        await identity`delete from identity.sessions where user_id = ${memberUserId}::uuid`;
+        await identity`delete from identity.users where id = ${memberUserId}::uuid`;
       }
       await identity`delete from identity.identity_keys`;
       await identity.end({ timeout: 1 });

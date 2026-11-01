@@ -543,6 +543,54 @@ describe("access routes", () => {
       expect(Object.keys(data.entitlements).sort()).toEqual(
         [...CAPABILITIES_ALLOW_LIST.entitlements].sort(),
       );
+
+      // Finding 1: verify checkEntitlement receives the exact scope
+      expect(entitlementGuard.checkEntitlement).toHaveBeenCalledWith(
+        expect.anything(),
+        { orgId: ORG, communityId: COMMUNITY },
+        "people.directory",
+      );
+      expect(entitlementGuard.checkEntitlement).toHaveBeenCalledWith(
+        expect.anything(),
+        { orgId: ORG, communityId: COMMUNITY },
+        "people.households",
+      );
+    });
+
+    it("returns 200 with all permissions false when caller has role grant with no people permissions (finding 2)", async () => {
+      access.holdsAnyGrant.mockResolvedValueOnce(true);
+      access.holdsPermission.mockResolvedValue(false);
+      entitlementGuard.checkEntitlement.mockResolvedValue(true);
+
+      const res = await route("/v1/access/capabilities").handle(
+        request(
+          "/v1/access/capabilities",
+          API_HOSTNAME,
+          { communitySlug: "parish" },
+          `Bearer ${TOKEN}`,
+        ),
+      );
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as CapabilitiesResponse;
+      expect(data.permissions).toEqual({
+        "people.view": false,
+        "people.manage": false,
+        "people.restricted.read": false,
+      });
+      expect(data.entitlements).toEqual({
+        "people.directory": true,
+        "people.households": true,
+      });
+      expect(entitlementGuard.checkEntitlement).toHaveBeenCalledWith(
+        expect.anything(),
+        { orgId: ORG, communityId: COMMUNITY },
+        "people.directory",
+      );
+      expect(entitlementGuard.checkEntitlement).toHaveBeenCalledWith(
+        expect.anything(),
+        { orgId: ORG, communityId: COMMUNITY },
+        "people.households",
+      );
     });
 
     it("returns 400 when body carries extra keys or non-slug fields (pin 17)", async () => {
