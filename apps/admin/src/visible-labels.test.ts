@@ -16,3 +16,15 @@ it("includes a mapped label only when its key is entitled", () => {
     "Settings",
   ]);
 });
+
+it("includes Family Records when mapped to people.households and entitled", () => {
+  const map = {
+    "Contacts & Members": "people.directory",
+    "Family Records": "people.households",
+  };
+  expect(visibleLabels(labels, ["people.households"], map)).toEqual([
+    "Dashboard",
+    "Family Records",
+    "Settings",
+  ]);
+});

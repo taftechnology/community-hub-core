@@ -6,13 +6,17 @@ import { visibleLabels } from "./visible-labels";
 
 const entitlementMap: Readonly<Record<string, string>> = {
   "Contacts & Members": "people.directory",
+  "Family Records": "people.households",
 };
 
 export function AdminNav() {
   const { access } = usePeopleAccess();
   const entitledKeys: string[] = [];
-  if (access.directoryEnabled && access.canView) {
+  if (access.entitlements["people.directory"] && access.permissions["people.view"]) {
     entitledKeys.push("people.directory");
+  }
+  if (access.entitlements["people.households"] && access.permissions["people.view"]) {
+    entitledKeys.push("people.households");
   }
 
   const shown = visibleLabels(labels, entitledKeys, entitlementMap);

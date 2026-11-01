@@ -302,7 +302,7 @@ export function AllContactsPage() {
 
   const reload = useCallback(() => {
     const mine = ++generation.current;
-    if (!slug || !access.directoryEnabled || !access.canView) {
+    if (!slug || !access.entitlements["people.directory"] || !access.permissions["people.view"]) {
       return;
     }
     setError(false);
@@ -313,8 +313,8 @@ export function AllContactsPage() {
     submittedSearch,
     cursor,
     fetchContacts,
-    access.directoryEnabled,
-    access.canView,
+    access.entitlements["people.directory"],
+    access.permissions["people.view"],
   ]);
 
   const previousSlugRef = useRef(slug);
@@ -346,17 +346,24 @@ export function AllContactsPage() {
       setError(false);
       submittingRef.current = false;
       setSubmitting(false);
-      if (slug && access.directoryEnabled && access.canView) {
+      if (slug && access.entitlements["people.directory"] && access.permissions["people.view"]) {
         const mine = ++generation.current;
         void fetchContacts(slug, "adults", "", undefined, () => generation.current === mine);
       }
       return;
     }
-    if (!access.directoryEnabled || !access.canView) {
+    if (!access.entitlements["people.directory"] || !access.permissions["people.view"]) {
       return;
     }
     reload();
-  }, [slug, version, reload, access.directoryEnabled, access.canView, fetchContacts]);
+  }, [
+    slug,
+    version,
+    reload,
+    access.entitlements["people.directory"],
+    access.permissions["people.view"],
+    fetchContacts,
+  ]);
 
   const loadPersonDetail = useCallback(
     async (
@@ -601,7 +608,7 @@ export function AllContactsPage() {
     );
   }
 
-  if (!access.directoryEnabled || !access.canView) {
+  if (!access.entitlements["people.directory"] || !access.permissions["people.view"]) {
     return (
       <>
         <h1>All Contacts</h1>
@@ -657,7 +664,7 @@ export function AllContactsPage() {
               <strong>Date of birth:</strong> {detailPerson.dateOfBirth ?? "None"}
             </p>
 
-            {!detailPerson.isMinor && access.canManage && !hideWrites ? (
+            {!detailPerson.isMinor && access.permissions["people.manage"] && !hideWrites ? (
               <Button type="button" onClick={() => openEdit(detailPerson)}>
                 Edit contact
               </Button>
@@ -762,7 +769,7 @@ export function AllContactsPage() {
         >
           Adults
         </Button>
-        {access.canReadMinors ? (
+        {access.permissions["people.restricted.read"] ? (
           <Button
             type="button"
             aria-pressed={activeTab === "minors"}
@@ -799,7 +806,7 @@ export function AllContactsPage() {
 
       {!loading && !error && items !== null ? (
         <>
-          {access.canManage &&
+          {access.permissions["people.manage"] &&
           !hideWrites &&
           activeTab === "adults" &&
           (!submittedSearch || items.length > 0) ? (
