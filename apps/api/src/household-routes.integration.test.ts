@@ -352,9 +352,7 @@ describe("household routes real-database integration (finding 4)", () => {
     );
 
     // Manage-only user in Community A1 (lacks people.restricted.read)
-    const manageOnlySession = await signIn(
-      `manage-only-${orgIdA.slice(0, 8)}@example.test`,
-    );
+    const manageOnlySession = await signIn(`manage-only-${orgIdA.slice(0, 8)}@example.test`);
     manageOnlyToken = manageOnlySession.accessToken;
     await withRequest({ requestId: REQUEST_ID }, () =>
       withAppTransaction(app, { orgId: orgIdA, communityId: communityIdA1 }, async (tx) => {
@@ -857,11 +855,21 @@ describe("household routes real-database integration (finding 4)", () => {
     const scopeA1 = { orgId: orgIdA, communityId: communityIdA1 };
     const getCounts = async () => {
       return withAppTransaction(secondApp, scopeA1, async (tx) => {
-        const [persons] = await tx<{ count: number }[]>`select count(*)::int as count from app.persons`;
-        const [links] = await tx<{ count: number }[]>`select count(*)::int as count from app.guardian_links`;
-        const [activity] = await tx<{ count: number }[]>`select count(*)::int as count from app.person_activity`;
-        const [audit] = await tx<{ count: number }[]>`select count(*)::int as count from app.audit_events`;
-        const [hh] = await tx<{ version: number }[]>`select version from app.households where id = ${householdA1Id}::uuid`;
+        const [persons] = await tx<
+          { count: number }[]
+        >`select count(*)::int as count from app.persons`;
+        const [links] = await tx<
+          { count: number }[]
+        >`select count(*)::int as count from app.guardian_links`;
+        const [activity] = await tx<
+          { count: number }[]
+        >`select count(*)::int as count from app.person_activity`;
+        const [audit] = await tx<
+          { count: number }[]
+        >`select count(*)::int as count from app.audit_events`;
+        const [hh] = await tx<
+          { version: number }[]
+        >`select version from app.households where id = ${householdA1Id}::uuid`;
         return {
           persons: persons!.count,
           links: links!.count,
