@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   bootstrapOwnerBody,
+  CAPABILITIES_ALLOW_LIST,
+  capabilitiesBody,
+  capabilitiesResponse,
   createCustomRoleBody,
   deleteCustomRoleBody,
   grantBody,
@@ -70,5 +73,88 @@ describe("access bodies", () => {
         organisationId: ORGANISATION,
       }).success,
     ).toBe(false);
+  });
+
+  describe("capabilities schemas (pin 17)", () => {
+    it("parses valid capabilities request body with communitySlug only", () => {
+      expect(capabilitiesBody.safeParse({ communitySlug: "ada" }).success).toBe(true);
+    });
+
+    it("strictly rejects extra keys or non-slug fields in capabilities request", () => {
+      expect(capabilitiesBody.safeParse({ communitySlug: "ada", extra: "forbidden" }).success).toBe(
+        false,
+      );
+      expect(
+        capabilitiesBody.safeParse({ communitySlug: "ada", permissions: ["people.view"] }).success,
+      ).toBe(false);
+      expect(
+        capabilitiesBody.safeParse({ communitySlug: "ada", orgId: ORGANISATION }).success,
+      ).toBe(false);
+    });
+
+    it("matches the allow-list exactly and rejects unknown keys in response", () => {
+      const validResponse = {
+        permissions: {
+          "people.view": true,
+          "people.manage": false,
+          "people.restricted.read": true,
+        },
+        entitlements: {
+          "people.directory": true,
+          "people.households": false,
+        },
+      };
+
+      const parsed = capabilitiesResponse.safeParse(validResponse);
+      expect(parsed.success).toBe(true);
+
+      // Verify constant allow-list contents
+      expect(new Set(CAPABILITIES_ALLOW_LIST.permissions)).toEqual(
+        new Set(["people.view", "people.manage", "people.restricted.read"]),
+      );
+      expect(new Set(CAPABILITIES_ALLOW_LIST.entitlements)).toEqual(
+        new Set(["people.directory", "people.households"]),
+      );
+
+      // Verify schema shape matches allow-list
+      expect(Object.keys(capabilitiesResponse.shape.permissions.shape).sort()).toEqual(
+        [...CAPABILITIES_ALLOW_LIST.permissions].sort(),
+      );
+      expect(Object.keys(capabilitiesResponse.shape.entitlements.shape).sort()).toEqual(
+        [...CAPABILITIES_ALLOW_LIST.entitlements].sort(),
+      );
+
+      // Unknown permission key rejected
+      expect(
+        capabilitiesResponse.safeParse({
+          ...validResponse,
+          permissions: {
+            ...validResponse.permissions,
+            "people.unknown": true,
+          },
+        }).success,
+      ).toBe(false);
+
+      // Unknown entitlement key rejected
+      expect(
+        capabilitiesResponse.safeParse({
+          ...validResponse,
+          entitlements: {
+            ...validResponse.entitlements,
+            "people.billing": true,
+          },
+        }).success,
+      ).toBe(false);
+
+      // Missing permission key rejected
+      const missingPerm = { ...validResponse.permissions };
+      delete (missingPerm as Record<string, boolean>)["people.view"];
+      expect(
+        capabilitiesResponse.safeParse({
+          ...validResponse,
+          permissions: missingPerm,
+        }).success,
+      ).toBe(false);
+    });
   });
 });

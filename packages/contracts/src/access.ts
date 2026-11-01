@@ -67,3 +67,47 @@ export const unlinkUserBody = z
     userId: uuid,
   })
   .strict();
+
+export const capabilitiesBody = z
+  .object({
+    communitySlug: slug,
+  })
+  .strict();
+
+export type CapabilitiesBody = z.infer<typeof capabilitiesBody>;
+
+export const CAPABILITIES_PERMISSIONS = [
+  "people.view",
+  "people.manage",
+  "people.restricted.read",
+] as const;
+
+export const CAPABILITIES_ENTITLEMENTS = ["people.directory", "people.households"] as const;
+
+export type CapabilityPermission = (typeof CAPABILITIES_PERMISSIONS)[number];
+export type CapabilityEntitlement = (typeof CAPABILITIES_ENTITLEMENTS)[number];
+
+export const CAPABILITIES_ALLOW_LIST = {
+  permissions: CAPABILITIES_PERMISSIONS,
+  entitlements: CAPABILITIES_ENTITLEMENTS,
+} as const;
+
+export const capabilitiesResponse = z
+  .object({
+    permissions: z
+      .object({
+        "people.view": z.boolean(),
+        "people.manage": z.boolean(),
+        "people.restricted.read": z.boolean(),
+      })
+      .strict(),
+    entitlements: z
+      .object({
+        "people.directory": z.boolean(),
+        "people.households": z.boolean(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type CapabilitiesResponse = z.infer<typeof capabilitiesResponse>;
