@@ -801,11 +801,45 @@ describe("guardian links", () => {
 
       await withRequest({ requestId: REQUEST_ID }, () =>
         withAppTransaction(app, { orgId: orgA, communityId: commA }, async (tx) => {
-          const hh = await createHousehold(tx, kms, KEY_ARN, { now: NOW, label: null, actorUserId: null });
+          const hh = await createHousehold(tx, kms, KEY_ARN, {
+            now: NOW,
+            label: null,
+            actorUserId: null,
+          });
           homeA = hh.householdId;
-          const a = await createPerson(tx, kms, KEY_ARN, { now: NOW, declaredAdult: true, householdId: homeA, dateOfBirth: null, givenName: "A", familyName: "A", email: null, phone: null, actorUserId: null });
-          const m = await createPerson(tx, kms, KEY_ARN, { now: NOW, declaredAdult: false, householdId: homeA, dateOfBirth: null, givenName: "M", familyName: "M", email: null, phone: null, actorUserId: null });
-          const l = await linkGuardian(tx, { now: NOW, householdId: homeA, guardianPersonId: a.personId, childPersonId: m.personId, consent: true, pickup: false, view: false, manage: false, actorUserId: null });
+          const a = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: true,
+            householdId: homeA,
+            dateOfBirth: null,
+            givenName: "A",
+            familyName: "A",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          const m = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId: homeA,
+            dateOfBirth: null,
+            givenName: "M",
+            familyName: "M",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          const l = await linkGuardian(tx, {
+            now: NOW,
+            householdId: homeA,
+            guardianPersonId: a.personId,
+            childPersonId: m.personId,
+            consent: true,
+            pickup: false,
+            view: false,
+            manage: false,
+            actorUserId: null,
+          });
           linkIdA = l.linkId;
         }),
       );
@@ -813,7 +847,12 @@ describe("guardian links", () => {
       await withRequest({ requestId: REQUEST_ID }, () =>
         withAppTransaction(app, { orgId: orgB, communityId: commB }, async (tx) => {
           await expect(
-            unlinkGuardian(tx, { now: NOW, householdId: homeA, linkId: linkIdA, actorUserId: null }),
+            unlinkGuardian(tx, {
+              now: NOW,
+              householdId: homeA,
+              linkId: linkIdA,
+              actorUserId: null,
+            }),
           ).rejects.toMatchObject({ code: "not_found" });
         }),
       );
