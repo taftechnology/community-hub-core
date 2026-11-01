@@ -24,6 +24,12 @@ const billing = vi.hoisted(() => ({
 const people = vi.hoisted(() => ({
   listHouseholds: vi.fn(),
   readHouseholdDetail: vi.fn(),
+  createHousehold: vi.fn(),
+  renameHousehold: vi.fn(),
+  moveAdult: vi.fn(),
+  addMinor: vi.fn(),
+  linkGuardian: vi.fn(),
+  unlinkGuardian: vi.fn(),
 }));
 
 const entitlements = vi.hoisted(() => ({
@@ -69,6 +75,12 @@ vi.mock("@community-hub/people", async () => {
     ...actual,
     listHouseholds: people.listHouseholds,
     readHouseholdDetail: people.readHouseholdDetail,
+    createHousehold: people.createHousehold,
+    renameHousehold: people.renameHousehold,
+    moveAdult: people.moveAdult,
+    addMinor: people.addMinor,
+    linkGuardian: people.linkGuardian,
+    unlinkGuardian: people.unlinkGuardian,
   };
 });
 
@@ -105,6 +117,9 @@ const KEY_ARN = [
 const FIXED_NOW = new Date("2026-11-01T12:00:00Z");
 const TOKEN = "valid-token-example";
 const HOUSEHOLD_ID = "00000000-0000-4000-8000-000000000099";
+const PERSON_ID = "00000000-0000-4000-8000-000000000005";
+const GUARDIAN_ID = "00000000-0000-4000-8000-000000000006";
+const LINK_ID = "00000000-0000-4000-8000-000000000007";
 
 function createSnapshot(overrides: Partial<EntitlementSnapshot> = {}): EntitlementSnapshot {
   return {
@@ -239,6 +254,16 @@ describe("household read routes (Task 9: list and read)", () => {
       ],
       guardians: [],
     });
+
+    people.createHousehold.mockResolvedValue({
+      householdId: HOUSEHOLD_ID,
+      version: 1,
+    });
+    people.renameHousehold.mockResolvedValue({ version: 2 });
+    people.moveAdult.mockResolvedValue({ version: 2 });
+    people.addMinor.mockResolvedValue({ personId: PERSON_ID, linkId: LINK_ID });
+    people.linkGuardian.mockResolvedValue({ linkId: LINK_ID });
+    people.unlinkGuardian.mockResolvedValue(undefined);
   });
 
   describe("Route registration and properties", () => {
@@ -585,6 +610,447 @@ describe("household read routes (Task 9: list and read)", () => {
         expect(str).not.toContain("Smith");
         expect(str).not.toContain("John");
       }
+    });
+  });
+
+  describe("Household Write Routes (Task 10)", () => {
+    describe("Route registration and properties", () => {
+      it("registers all six write routes as tenant surface with billing: 'write'", () => {
+        const routes = householdRoutes(makeDeps());
+        const patterns = [
+          "/v1/households/create",
+          "/v1/households/rename",
+          "/v1/households/members/move-adult",
+          "/v1/households/members/add-minor",
+          "/v1/households/guardians/link",
+          "/v1/households/guardians/unlink",
+        ];
+
+        for (const pattern of patterns) {
+          const r = routes.find((item) => item.pattern === pattern);
+          expect(r).toBeDefined();
+          expect(r?.method).toBe("POST");
+          expect(r?.surface).toBe("tenant");
+          expect(r?.billing).toBe("write");
+        }
+      });
+    });
+
+    describe("Strict bodies and Validation (Pin 10)", () => {
+      it("rejects extra keys on all write routes with 400", async () => {
+        const resCreate = await call("/v1/households/create", {
+          communitySlug: SLUG,
+          includeRestricted: true,
+        });
+        expect(resCreate.status).toBe(400);
+
+        const resRename = await call("/v1/households/rename", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          version: 1,
+          label: "New Name",
+          isMinor: false,
+        });
+        expect(resRename.status).toBe(400);
+
+        const resMove = await call("/v1/households/members/move-adult", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          personId: PERSON_ID,
+          version: 1,
+          communityId: COMMUNITY,
+        });
+        expect(resMove.status).toBe(400);
+
+        const resAdd = await call("/v1/households/members/add-minor", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          givenName: "Tommy",
+          familyName: "Smith",
+          dateOfBirth: "2015-05-10",
+          guardianId: GUARDIAN_ID,
+          orgId: ORG,
+        });
+        expect(resAdd.status).toBe(400);
+
+        const resLink = await call("/v1/households/guardians/link", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          guardianId: GUARDIAN_ID,
+          childId: PERSON_ID,
+          includeRestricted: false,
+        });
+        expect(resLink.status).toBe(400);
+
+        const resUnlink = await call("/v1/households/guardians/unlink", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          linkId: LINK_ID,
+          orgId: ORG,
+        });
+        expect(resUnlink.status).toBe(400);
+      });
+    });
+
+    describe("Billing Guard: write routes return 402 on read_only (Pin 14)", () => {
+      it("blocks all six write routes with empty 402 when organisation is read-only", async () => {
+        billing.assertWritable.mockRejectedValue(new BillingReadOnly("read_only"));
+
+        const calls = [
+          call("/v1/households/create", { communitySlug: SLUG }),
+          call("/v1/households/rename", {
+            communitySlug: SLUG,
+            householdId: HOUSEHOLD_ID,
+            version: 1,
+            label: "New Name",
+          }),
+          call("/v1/households/members/move-adult", {
+            communitySlug: SLUG,
+            householdId: HOUSEHOLD_ID,
+            personId: PERSON_ID,
+            version: 1,
+          }),
+          call("/v1/households/members/add-minor", {
+            communitySlug: SLUG,
+            householdId: HOUSEHOLD_ID,
+            givenName: "Tommy",
+            familyName: "Smith",
+            dateOfBirth: "2015-05-10",
+            guardianId: GUARDIAN_ID,
+          }),
+          call("/v1/households/guardians/link", {
+            communitySlug: SLUG,
+            householdId: HOUSEHOLD_ID,
+            guardianId: GUARDIAN_ID,
+            childId: PERSON_ID,
+          }),
+          call("/v1/households/guardians/unlink", {
+            communitySlug: SLUG,
+            householdId: HOUSEHOLD_ID,
+            linkId: LINK_ID,
+          }),
+        ];
+
+        for (const p of calls) {
+          const res = await p;
+          expect(res.status).toBe(402);
+          expect(await res.text()).toBe("");
+        }
+      });
+    });
+
+    describe("Entitlement check on write routes (Pin 13)", () => {
+      it("refuses write routes with 403 when people.households is disabled", async () => {
+        entitlements.readSnapshot.mockResolvedValue(
+          createSnapshot({
+            planEntitlements: [],
+            allocations: [],
+          }),
+        );
+
+        const res = await call("/v1/households/create", { communitySlug: SLUG });
+        expect(res.status).toBe(403);
+        expect(await res.text()).toBe("");
+      });
+
+      it("allows write routes when people.directory is disabled and people.households is enabled", async () => {
+        entitlements.readSnapshot.mockResolvedValue(
+          createSnapshot({
+            planEntitlements: [{ key: "people.households", limit: null }],
+            allocations: ["people.households"],
+          }),
+        );
+
+        const res = await call("/v1/households/create", { communitySlug: SLUG });
+        expect(res.status).toBe(201);
+      });
+    });
+
+    describe("Permission Matrix on write routes (Pin 11)", () => {
+      it("households/create: requires people.manage; refuses view or restricted.read only with 403", async () => {
+        // Caller with view only
+        access.holdsPermission.mockImplementation(async (_tx, _u, perm) => perm === "people.view");
+        const resView = await call("/v1/households/create", { communitySlug: SLUG });
+        expect(resView.status).toBe(403);
+        expect(await resView.text()).toBe("");
+
+        // Caller with restricted.read only
+        access.holdsPermission.mockImplementation(
+          async (_tx, _u, perm) => perm === "people.restricted.read",
+        );
+        const resRestricted = await call("/v1/households/create", { communitySlug: SLUG });
+        expect(resRestricted.status).toBe(403);
+        expect(await resRestricted.text()).toBe("");
+
+        // Caller with manage
+        access.holdsPermission.mockImplementation(
+          async (_tx, _u, perm) => perm === "people.manage",
+        );
+        const resManage = await call("/v1/households/create", { communitySlug: SLUG });
+        expect(resManage.status).toBe(201);
+      });
+
+      it("households/rename: requires people.manage; refuses view or restricted.read only with 403", async () => {
+        // Caller with view only
+        access.holdsPermission.mockImplementation(async (_tx, _u, perm) => perm === "people.view");
+        const resView = await call("/v1/households/rename", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          version: 1,
+          label: "New",
+        });
+        expect(resView.status).toBe(403);
+
+        // Caller with manage
+        access.holdsPermission.mockImplementation(
+          async (_tx, _u, perm) => perm === "people.manage",
+        );
+        const resManage = await call("/v1/households/rename", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          version: 1,
+          label: "New",
+        });
+        expect(resManage.status).toBe(200);
+      });
+
+      it("move-adult: requires BOTH people.manage AND people.restricted.read (Pin 11)", async () => {
+        // Caller with manage only -> 403
+        access.holdsPermission.mockImplementation(
+          async (_tx, _u, perm) => perm === "people.manage",
+        );
+        const resManageOnly = await call("/v1/households/members/move-adult", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          personId: PERSON_ID,
+          version: 1,
+        });
+        expect(resManageOnly.status).toBe(403);
+        expect(await resManageOnly.text()).toBe("");
+
+        // Caller with restricted.read only -> 403
+        access.holdsPermission.mockImplementation(
+          async (_tx, _u, perm) => perm === "people.restricted.read",
+        );
+        const resRestrictedOnly = await call("/v1/households/members/move-adult", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          personId: PERSON_ID,
+          version: 1,
+        });
+        expect(resRestrictedOnly.status).toBe(403);
+
+        // Caller with BOTH -> 200
+        access.holdsPermission.mockImplementation(
+          async (_tx, _u, perm) => perm === "people.manage" || perm === "people.restricted.read",
+        );
+        const resBoth = await call("/v1/households/members/move-adult", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          personId: PERSON_ID,
+          version: 1,
+        });
+        expect(resBoth.status).toBe(200);
+      });
+
+      it("add-minor: requires BOTH people.manage AND people.restricted.read (Pin 11)", async () => {
+        // Manage only -> 403
+        access.holdsPermission.mockImplementation(
+          async (_tx, _u, perm) => perm === "people.manage",
+        );
+        const resManageOnly = await call("/v1/households/members/add-minor", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          givenName: "Tommy",
+          familyName: "Smith",
+          dateOfBirth: "2015-05-10",
+          guardianId: GUARDIAN_ID,
+        });
+        expect(resManageOnly.status).toBe(403);
+
+        // Restricted.read only -> 403
+        access.holdsPermission.mockImplementation(
+          async (_tx, _u, perm) => perm === "people.restricted.read",
+        );
+        const resRestrictedOnly = await call("/v1/households/members/add-minor", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          givenName: "Tommy",
+          familyName: "Smith",
+          dateOfBirth: "2015-05-10",
+          guardianId: GUARDIAN_ID,
+        });
+        expect(resRestrictedOnly.status).toBe(403);
+
+        // Both -> 201
+        access.holdsPermission.mockImplementation(
+          async (_tx, _u, perm) => perm === "people.manage" || perm === "people.restricted.read",
+        );
+        const resBoth = await call("/v1/households/members/add-minor", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          givenName: "Tommy",
+          familyName: "Smith",
+          dateOfBirth: "2015-05-10",
+          guardianId: GUARDIAN_ID,
+        });
+        expect(resBoth.status).toBe(201);
+      });
+
+      it("guardians/link and unlink: require BOTH people.manage AND people.restricted.read (Pin 11)", async () => {
+        // Link with manage only -> 403
+        access.holdsPermission.mockImplementation(
+          async (_tx, _u, perm) => perm === "people.manage",
+        );
+        const resLinkManageOnly = await call("/v1/households/guardians/link", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          guardianId: GUARDIAN_ID,
+          childId: PERSON_ID,
+        });
+        expect(resLinkManageOnly.status).toBe(403);
+
+        // Unlink with manage only -> 403
+        const resUnlinkManageOnly = await call("/v1/households/guardians/unlink", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          linkId: LINK_ID,
+        });
+        expect(resUnlinkManageOnly.status).toBe(403);
+
+        // Both -> 201 and 200
+        access.holdsPermission.mockImplementation(
+          async (_tx, _u, perm) => perm === "people.manage" || perm === "people.restricted.read",
+        );
+        const resLinkBoth = await call("/v1/households/guardians/link", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          guardianId: GUARDIAN_ID,
+          childId: PERSON_ID,
+        });
+        expect(resLinkBoth.status).toBe(201);
+
+        const resUnlinkBoth = await call("/v1/households/guardians/unlink", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          linkId: LINK_ID,
+        });
+        expect(resUnlinkBoth.status).toBe(200);
+      });
+    });
+
+    describe("Status mapping for write routes (Pin 15)", () => {
+      it("maps rename stale version to 409 and not found to 404", async () => {
+        people.renameHousehold.mockRejectedValueOnce(new PeopleError("conflict"));
+        const resConflict = await call("/v1/households/rename", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          version: 1,
+          label: "New",
+        });
+        expect(resConflict.status).toBe(409);
+        expect(await resConflict.text()).toBe("");
+
+        people.renameHousehold.mockRejectedValueOnce(new PeopleError("not_found"));
+        const resNotFound = await call("/v1/households/rename", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          version: 1,
+          label: "New",
+        });
+        expect(resNotFound.status).toBe(404);
+        expect(await resNotFound.text()).toBe("");
+      });
+
+      it("maps move-adult guardian links to 409 and minor to 400", async () => {
+        people.moveAdult.mockRejectedValueOnce(new PeopleError("adult_cannot_move_with_links"));
+        const resLinks = await call("/v1/households/members/move-adult", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          personId: PERSON_ID,
+          version: 1,
+        });
+        expect(resLinks.status).toBe(409);
+        expect(await resLinks.text()).toBe("");
+
+        people.moveAdult.mockRejectedValueOnce(new PeopleError("minor_not_movable"));
+        const resMinor = await call("/v1/households/members/move-adult", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          personId: PERSON_ID,
+          version: 1,
+        });
+        expect(resMinor.status).toBe(400);
+        expect(await resMinor.text()).toBe("");
+      });
+
+      it("maps add-minor adult dob to 400 and invalid guardian to 400", async () => {
+        people.addMinor.mockRejectedValueOnce(new PeopleError("invalid_date"));
+        const resDob = await call("/v1/households/members/add-minor", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          givenName: "Tommy",
+          familyName: "Smith",
+          dateOfBirth: "1990-01-01",
+          guardianId: GUARDIAN_ID,
+        });
+        expect(resDob.status).toBe(400);
+        expect(await resDob.text()).toBe("");
+
+        people.addMinor.mockRejectedValueOnce(new PeopleError("invalid_guardian"));
+        const resGuardian = await call("/v1/households/members/add-minor", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          givenName: "Tommy",
+          familyName: "Smith",
+          dateOfBirth: "2015-05-10",
+          guardianId: GUARDIAN_ID,
+        });
+        expect(resGuardian.status).toBe(400);
+        expect(await resGuardian.text()).toBe("");
+      });
+
+      it("maps link duplicate to 409 and invalid guardian to 400", async () => {
+        people.linkGuardian.mockRejectedValueOnce(new PeopleError("duplicate_guardian_link"));
+        const resDup = await call("/v1/households/guardians/link", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          guardianId: GUARDIAN_ID,
+          childId: PERSON_ID,
+        });
+        expect(resDup.status).toBe(409);
+        expect(await resDup.text()).toBe("");
+
+        people.linkGuardian.mockRejectedValueOnce(new PeopleError("invalid_guardian"));
+        const resGuardian = await call("/v1/households/guardians/link", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          guardianId: GUARDIAN_ID,
+          childId: PERSON_ID,
+        });
+        expect(resGuardian.status).toBe(400);
+        expect(await resGuardian.text()).toBe("");
+      });
+
+      it("maps unlink last guardian to 409 and not found to 404", async () => {
+        people.unlinkGuardian.mockRejectedValueOnce(new PeopleError("last_guardian"));
+        const resLast = await call("/v1/households/guardians/unlink", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          linkId: LINK_ID,
+        });
+        expect(resLast.status).toBe(409);
+        expect(await resLast.text()).toBe("");
+
+        people.unlinkGuardian.mockRejectedValueOnce(new PeopleError("not_found"));
+        const resNotFound = await call("/v1/households/guardians/unlink", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          linkId: LINK_ID,
+        });
+        expect(resNotFound.status).toBe(404);
+        expect(await resNotFound.text()).toBe("");
+      });
     });
   });
 });

@@ -1,9 +1,28 @@
 import { holdsPermission } from "@community-hub/access";
-import { listHouseholdsBody, readHouseholdBody } from "@community-hub/contracts/households";
+import {
+  addMinorBody,
+  createHouseholdBody,
+  linkGuardianBody,
+  listHouseholdsBody,
+  moveAdultBody,
+  readHouseholdBody,
+  renameHouseholdBody,
+  unlinkGuardianBody,
+} from "@community-hub/contracts/households";
 import { appendAuditEvent, withAppTransaction } from "@community-hub/db";
 import { readSession } from "@community-hub/identity";
 import { getRequestContext } from "@community-hub/kernel";
-import { listHouseholds, PeopleError, readHouseholdDetail } from "@community-hub/people";
+import {
+  addMinor,
+  createHousehold,
+  linkGuardian,
+  listHouseholds,
+  moveAdult,
+  PeopleError,
+  readHouseholdDetail,
+  renameHousehold,
+  unlinkGuardian,
+} from "@community-hub/people";
 import { findCommunityBySlug } from "@community-hub/tenancy";
 
 import { guardWrite } from "./billing-guard.js";
@@ -16,6 +35,7 @@ type HouseholdSql = Parameters<typeof readSession>[0];
 
 const DENIED = "people.permission.denied";
 const VIEW = "people.view";
+const MANAGE = "people.manage";
 const RESTRICTED = "people.restricted.read";
 const HOUSEHOLDS_ENTITLEMENT = "people.households";
 
@@ -297,6 +317,299 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
     );
   }
 
+  async function create(request: Request, context: RouteContext): Promise<Response> {
+    const prep = await prepare(request, context, createHouseholdBody);
+    if (!prep.ok) {
+      return prep.response;
+    }
+    const { body, actor, scope } = prep;
+
+    return deps.checkout("app", (sql) =>
+      withAppTransaction(sql, scope, async (tx) => {
+        try {
+          const allowed = await holdsPermission(tx, actor.userId, MANAGE);
+          if (!allowed) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: DENIED,
+              purpose: MANAGE,
+              targetIds: [scope.orgId, scope.communityId],
+            });
+            return finish(request, empty(403));
+          }
+
+          const result = await createHousehold(tx, deps.kms, deps.keyArn, {
+            now: deps.now(),
+            label: body.label ?? null,
+            actorUserId: actor.userId,
+          });
+          return finish(request, Response.json(result, { status: 201 }));
+        } catch (error) {
+          if (error instanceof PeopleError) {
+            const mapped = statusForHouseholds(error);
+            if (mapped !== undefined) {
+              return finish(request, mapped);
+            }
+          }
+          return finish(request, empty(500));
+        }
+      }),
+    );
+  }
+
+  async function rename(request: Request, context: RouteContext): Promise<Response> {
+    const prep = await prepare(request, context, renameHouseholdBody);
+    if (!prep.ok) {
+      return prep.response;
+    }
+    const { body, actor, scope } = prep;
+
+    return deps.checkout("app", (sql) =>
+      withAppTransaction(sql, scope, async (tx) => {
+        try {
+          const allowed = await holdsPermission(tx, actor.userId, MANAGE);
+          if (!allowed) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: DENIED,
+              purpose: MANAGE,
+              targetIds: [scope.orgId, scope.communityId],
+            });
+            return finish(request, empty(403));
+          }
+
+          const result = await renameHousehold(tx, deps.kms, deps.keyArn, {
+            householdId: body.householdId,
+            version: body.version,
+            label: body.label,
+            actorUserId: actor.userId,
+          });
+          return finish(request, Response.json(result));
+        } catch (error) {
+          if (error instanceof PeopleError) {
+            const mapped = statusForHouseholds(error);
+            if (mapped !== undefined) {
+              return finish(request, mapped);
+            }
+          }
+          return finish(request, empty(500));
+        }
+      }),
+    );
+  }
+
+  async function moveAdultMember(request: Request, context: RouteContext): Promise<Response> {
+    const prep = await prepare(request, context, moveAdultBody);
+    if (!prep.ok) {
+      return prep.response;
+    }
+    const { body, actor, scope } = prep;
+
+    return deps.checkout("app", (sql) =>
+      withAppTransaction(sql, scope, async (tx) => {
+        try {
+          const [canManage, canRestricted] = await Promise.all([
+            holdsPermission(tx, actor.userId, MANAGE),
+            holdsPermission(tx, actor.userId, RESTRICTED),
+          ]);
+          if (!canManage || !canRestricted) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: DENIED,
+              purpose: !canManage ? MANAGE : RESTRICTED,
+              targetIds: [scope.orgId, scope.communityId],
+            });
+            return finish(request, empty(403));
+          }
+
+          const result = await moveAdult(tx, {
+            personId: body.personId,
+            householdId: body.householdId,
+            version: body.version,
+            actorUserId: actor.userId,
+          });
+          return finish(request, Response.json(result));
+        } catch (error) {
+          if (error instanceof PeopleError) {
+            const mapped = statusForHouseholds(error);
+            if (mapped !== undefined) {
+              return finish(request, mapped);
+            }
+          }
+          return finish(request, empty(500));
+        }
+      }),
+    );
+  }
+
+  async function addMinorMember(request: Request, context: RouteContext): Promise<Response> {
+    const prep = await prepare(request, context, addMinorBody);
+    if (!prep.ok) {
+      return prep.response;
+    }
+    const { body, actor, scope } = prep;
+
+    return deps.checkout("app", (sql) =>
+      withAppTransaction(sql, scope, async (tx) => {
+        try {
+          const [canManage, canRestricted] = await Promise.all([
+            holdsPermission(tx, actor.userId, MANAGE),
+            holdsPermission(tx, actor.userId, RESTRICTED),
+          ]);
+          if (!canManage || !canRestricted) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: DENIED,
+              purpose: !canManage ? MANAGE : RESTRICTED,
+              targetIds: [scope.orgId, scope.communityId],
+            });
+            return finish(request, empty(403));
+          }
+
+          const rights =
+            body.rights !== undefined
+              ? {
+                  ...(body.rights.consent !== undefined ? { consent: body.rights.consent } : {}),
+                  ...(body.rights.pickup !== undefined ? { pickup: body.rights.pickup } : {}),
+                  ...(body.rights.view !== undefined ? { view: body.rights.view } : {}),
+                  ...(body.rights.manage !== undefined ? { manage: body.rights.manage } : {}),
+                }
+              : undefined;
+
+          const result = await addMinor(tx, deps.kms, deps.keyArn, {
+            now: deps.now(),
+            householdId: body.householdId,
+            givenName: body.givenName,
+            familyName: body.familyName,
+            dateOfBirth: body.dateOfBirth,
+            guardianId: body.guardianId,
+            ...(rights !== undefined ? { rights } : {}),
+            actorUserId: actor.userId,
+          });
+          return finish(request, Response.json(result, { status: 201 }));
+        } catch (error) {
+          if (error instanceof PeopleError) {
+            const mapped = statusForHouseholds(error);
+            if (mapped !== undefined) {
+              return finish(request, mapped);
+            }
+          }
+          return finish(request, empty(500));
+        }
+      }),
+    );
+  }
+
+  async function linkGuardianHandler(request: Request, context: RouteContext): Promise<Response> {
+    const prep = await prepare(request, context, linkGuardianBody);
+    if (!prep.ok) {
+      return prep.response;
+    }
+    const { body, actor, scope } = prep;
+
+    return deps.checkout("app", (sql) =>
+      withAppTransaction(sql, scope, async (tx) => {
+        try {
+          const [canManage, canRestricted] = await Promise.all([
+            holdsPermission(tx, actor.userId, MANAGE),
+            holdsPermission(tx, actor.userId, RESTRICTED),
+          ]);
+          if (!canManage || !canRestricted) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: DENIED,
+              purpose: !canManage ? MANAGE : RESTRICTED,
+              targetIds: [scope.orgId, scope.communityId],
+            });
+            return finish(request, empty(403));
+          }
+
+          const rights = body.rights
+            ? {
+                consent: body.rights.consent ?? false,
+                pickup: body.rights.pickup ?? false,
+                view: body.rights.view ?? false,
+                manage: body.rights.manage ?? false,
+              }
+            : {
+                consent: true,
+                pickup: false,
+                view: true,
+                manage: false,
+              };
+
+          const result = await linkGuardian(tx, {
+            now: deps.now(),
+            householdId: body.householdId,
+            guardianPersonId: body.guardianId,
+            childPersonId: body.childId,
+            ...rights,
+            actorUserId: actor.userId,
+          });
+          return finish(request, Response.json(result, { status: 201 }));
+        } catch (error) {
+          if (error instanceof PeopleError) {
+            const mapped = statusForHouseholds(error);
+            if (mapped !== undefined) {
+              return finish(request, mapped);
+            }
+          }
+          return finish(request, empty(500));
+        }
+      }),
+    );
+  }
+
+  async function unlinkGuardianHandler(request: Request, context: RouteContext): Promise<Response> {
+    const prep = await prepare(request, context, unlinkGuardianBody);
+    if (!prep.ok) {
+      return prep.response;
+    }
+    const { body, actor, scope } = prep;
+
+    return deps.checkout("app", (sql) =>
+      withAppTransaction(sql, scope, async (tx) => {
+        try {
+          const [canManage, canRestricted] = await Promise.all([
+            holdsPermission(tx, actor.userId, MANAGE),
+            holdsPermission(tx, actor.userId, RESTRICTED),
+          ]);
+          if (!canManage || !canRestricted) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: DENIED,
+              purpose: !canManage ? MANAGE : RESTRICTED,
+              targetIds: [scope.orgId, scope.communityId],
+            });
+            return finish(request, empty(403));
+          }
+
+          await unlinkGuardian(tx, {
+            now: deps.now(),
+            householdId: body.householdId,
+            linkId: body.linkId,
+            actorUserId: actor.userId,
+          });
+          return finish(request, Response.json({}));
+        } catch (error) {
+          if (error instanceof PeopleError) {
+            const mapped = statusForHouseholds(error);
+            if (mapped !== undefined) {
+              return finish(request, mapped);
+            }
+          }
+          return finish(request, empty(500));
+        }
+      }),
+    );
+  }
+
   return [
     {
       method: "POST",
@@ -311,6 +624,48 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
       surface: "tenant",
       billing: "read",
       handle: (request, context) => read(request, context),
+    },
+    {
+      method: "POST",
+      pattern: "/v1/households/create",
+      surface: "tenant",
+      billing: "write",
+      handle: (request, context) => create(request, context),
+    },
+    {
+      method: "POST",
+      pattern: "/v1/households/rename",
+      surface: "tenant",
+      billing: "write",
+      handle: (request, context) => rename(request, context),
+    },
+    {
+      method: "POST",
+      pattern: "/v1/households/members/move-adult",
+      surface: "tenant",
+      billing: "write",
+      handle: (request, context) => moveAdultMember(request, context),
+    },
+    {
+      method: "POST",
+      pattern: "/v1/households/members/add-minor",
+      surface: "tenant",
+      billing: "write",
+      handle: (request, context) => addMinorMember(request, context),
+    },
+    {
+      method: "POST",
+      pattern: "/v1/households/guardians/link",
+      surface: "tenant",
+      billing: "write",
+      handle: (request, context) => linkGuardianHandler(request, context),
+    },
+    {
+      method: "POST",
+      pattern: "/v1/households/guardians/unlink",
+      surface: "tenant",
+      billing: "write",
+      handle: (request, context) => unlinkGuardianHandler(request, context),
     },
   ];
 }
