@@ -643,13 +643,13 @@ describe("guardian links", () => {
 
       const p1 = withRequest({ requestId: REQUEST_ID }, () =>
         withAppTransaction(app, scope, async (tx1) => {
-          tx1Started = true;
           await unlinkGuardian(tx1, {
             now: NOW,
             householdId,
             linkId: link1Id,
             actorUserId: null,
           });
+          tx1Started = true;
           await tx1Hold;
         }),
       );
