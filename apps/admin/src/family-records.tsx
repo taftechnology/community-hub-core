@@ -925,11 +925,14 @@ export function FamilyRecordsPage() {
     setAdultSearchResults(null);
     setAdultSearchNextCursor(null);
 
-    const response = await post("/v1/people/list", {
+    const body: Record<string, unknown> = {
       communitySlug: slug,
       kind: "adults",
-      search,
-    });
+    };
+    if (search) {
+      body.search = search;
+    }
+    const response = await post("/v1/people/list", body);
     if (adultSearchGeneration.current !== mine) {
       return;
     }

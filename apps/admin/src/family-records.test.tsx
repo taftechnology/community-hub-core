@@ -1759,6 +1759,58 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
     expect(await screen.findByText("No adults found")).toBeTruthy();
   });
 
+  it("omits search from the people list body when the box is empty or whitespace-only", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const recordedCalls: Array<{ path: string; body: unknown }> = [];
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+      peopleListResult: { items: [], nextCursor: null },
+      onPost: (path, body) => recordedCalls.push({ path, body }),
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+    fireEvent.click(await screen.findByRole("button", { name: "View Clarke Family" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add adult" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await screen.findByText("No adults found");
+
+    const emptyCall = recordedCalls.find((c) => c.path === "/v1/people/list");
+    expect(emptyCall).toEqual({
+      path: "/v1/people/list",
+      body: { communitySlug: SLUG, kind: "adults" },
+    });
+
+    recordedCalls.length = 0;
+    fireEvent.change(screen.getByRole("textbox", { name: "Search adults" }), {
+      target: { value: "   " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await screen.findByText("No adults found");
+
+    const whitespaceCall = recordedCalls.find((c) => c.path === "/v1/people/list");
+    expect(whitespaceCall).toEqual({
+      path: "/v1/people/list",
+      body: { communitySlug: SLUG, kind: "adults" },
+    });
+  });
+
   it("hides 'Add minor' button when caller lacks people.manage (Pin 21)", async () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);
     mockApi({
