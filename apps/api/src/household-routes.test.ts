@@ -897,45 +897,166 @@ describe("household read routes (Task 9: list and read)", () => {
         expect(resBoth.status).toBe(201);
       });
 
-      it("guardians/link and unlink: require BOTH people.manage AND people.restricted.read (Pin 11)", async () => {
+      it("guardians/link: requires BOTH people.manage AND people.restricted.read (Pin 11)", async () => {
         // Link with manage only -> 403
         access.holdsPermission.mockImplementation(
           async (_tx, _u, perm) => perm === "people.manage",
         );
-        const resLinkManageOnly = await call("/v1/households/guardians/link", {
+        people.linkGuardian.mockClear();
+        db.appendAuditEvent.mockClear();
+        const resManageOnly = await call("/v1/households/guardians/link", {
           communitySlug: SLUG,
           householdId: HOUSEHOLD_ID,
           guardianId: GUARDIAN_ID,
           childId: PERSON_ID,
         });
-        expect(resLinkManageOnly.status).toBe(403);
+        expect(resManageOnly.status).toBe(403);
+        expect(await resManageOnly.text()).toBe("");
+        expect(people.linkGuardian).not.toHaveBeenCalled();
+        expect(db.appendAuditEvent).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            actorKind: "user",
+            actorId: USER,
+            action: "people.permission.denied",
+            purpose: "people.restricted.read",
+            targetIds: [ORG, COMMUNITY],
+          }),
+        );
 
-        // Unlink with manage only -> 403
-        const resUnlinkManageOnly = await call("/v1/households/guardians/unlink", {
+        // Link with restricted only -> 403
+        access.holdsPermission.mockImplementation(
+          async (_tx, _u, perm) => perm === "people.restricted.read",
+        );
+        people.linkGuardian.mockClear();
+        db.appendAuditEvent.mockClear();
+        const resRestrictedOnly = await call("/v1/households/guardians/link", {
           communitySlug: SLUG,
           householdId: HOUSEHOLD_ID,
-          linkId: LINK_ID,
+          guardianId: GUARDIAN_ID,
+          childId: PERSON_ID,
         });
-        expect(resUnlinkManageOnly.status).toBe(403);
+        expect(resRestrictedOnly.status).toBe(403);
+        expect(await resRestrictedOnly.text()).toBe("");
+        expect(people.linkGuardian).not.toHaveBeenCalled();
+        expect(db.appendAuditEvent).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            actorKind: "user",
+            actorId: USER,
+            action: "people.permission.denied",
+            purpose: "people.manage",
+            targetIds: [ORG, COMMUNITY],
+          }),
+        );
 
-        // Both -> 201 and 200
+        // Link with view only -> 403
+        access.holdsPermission.mockImplementation(async (_tx, _u, perm) => perm === "people.view");
+        people.linkGuardian.mockClear();
+        db.appendAuditEvent.mockClear();
+        const resViewOnly = await call("/v1/households/guardians/link", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          guardianId: GUARDIAN_ID,
+          childId: PERSON_ID,
+        });
+        expect(resViewOnly.status).toBe(403);
+        expect(await resViewOnly.text()).toBe("");
+        expect(people.linkGuardian).not.toHaveBeenCalled();
+
+        // Both -> 201
         access.holdsPermission.mockImplementation(
           async (_tx, _u, perm) => perm === "people.manage" || perm === "people.restricted.read",
         );
-        const resLinkBoth = await call("/v1/households/guardians/link", {
+        people.linkGuardian.mockClear();
+        db.appendAuditEvent.mockClear();
+        const resBoth = await call("/v1/households/guardians/link", {
           communitySlug: SLUG,
           householdId: HOUSEHOLD_ID,
           guardianId: GUARDIAN_ID,
           childId: PERSON_ID,
         });
-        expect(resLinkBoth.status).toBe(201);
+        expect(resBoth.status).toBe(201);
+        expect(people.linkGuardian).toHaveBeenCalled();
+      });
 
-        const resUnlinkBoth = await call("/v1/households/guardians/unlink", {
+      it("guardians/unlink: requires BOTH people.manage AND people.restricted.read (Pin 11)", async () => {
+        // Unlink with manage only -> 403
+        access.holdsPermission.mockImplementation(
+          async (_tx, _u, perm) => perm === "people.manage",
+        );
+        people.unlinkGuardian.mockClear();
+        db.appendAuditEvent.mockClear();
+        const resManageOnly = await call("/v1/households/guardians/unlink", {
           communitySlug: SLUG,
           householdId: HOUSEHOLD_ID,
           linkId: LINK_ID,
         });
-        expect(resUnlinkBoth.status).toBe(200);
+        expect(resManageOnly.status).toBe(403);
+        expect(await resManageOnly.text()).toBe("");
+        expect(people.unlinkGuardian).not.toHaveBeenCalled();
+        expect(db.appendAuditEvent).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            actorKind: "user",
+            actorId: USER,
+            action: "people.permission.denied",
+            purpose: "people.restricted.read",
+            targetIds: [ORG, COMMUNITY],
+          }),
+        );
+
+        // Unlink with restricted only -> 403
+        access.holdsPermission.mockImplementation(
+          async (_tx, _u, perm) => perm === "people.restricted.read",
+        );
+        people.unlinkGuardian.mockClear();
+        db.appendAuditEvent.mockClear();
+        const resRestrictedOnly = await call("/v1/households/guardians/unlink", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          linkId: LINK_ID,
+        });
+        expect(resRestrictedOnly.status).toBe(403);
+        expect(await resRestrictedOnly.text()).toBe("");
+        expect(people.unlinkGuardian).not.toHaveBeenCalled();
+        expect(db.appendAuditEvent).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            actorKind: "user",
+            actorId: USER,
+            action: "people.permission.denied",
+            purpose: "people.manage",
+            targetIds: [ORG, COMMUNITY],
+          }),
+        );
+
+        // Unlink with view only -> 403
+        access.holdsPermission.mockImplementation(async (_tx, _u, perm) => perm === "people.view");
+        people.unlinkGuardian.mockClear();
+        db.appendAuditEvent.mockClear();
+        const resViewOnly = await call("/v1/households/guardians/unlink", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          linkId: LINK_ID,
+        });
+        expect(resViewOnly.status).toBe(403);
+        expect(await resViewOnly.text()).toBe("");
+        expect(people.unlinkGuardian).not.toHaveBeenCalled();
+
+        // Both -> 200
+        access.holdsPermission.mockImplementation(
+          async (_tx, _u, perm) => perm === "people.manage" || perm === "people.restricted.read",
+        );
+        people.unlinkGuardian.mockClear();
+        db.appendAuditEvent.mockClear();
+        const resBoth = await call("/v1/households/guardians/unlink", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          linkId: LINK_ID,
+        });
+        expect(resBoth.status).toBe(200);
+        expect(people.unlinkGuardian).toHaveBeenCalled();
       });
     });
 
