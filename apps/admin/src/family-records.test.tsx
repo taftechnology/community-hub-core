@@ -1619,6 +1619,10 @@ describe("Family Records Actions - Form submissions & success flows", () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);
     const recordedCalls: Array<{ path: string; body: unknown }> = [];
     let detailCount = 0;
+    const householdWithVersion7 = {
+      ...sampleDetail,
+      version: 7,
+    };
 
     vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
       const url = String(info);
@@ -1650,9 +1654,9 @@ describe("Family Records Actions - Form submissions & success flows", () => {
           JSON.stringify({
             items: [
               {
-                householdId: sampleDetail.householdId,
-                version: 1,
-                label: sampleDetail.label,
+                householdId: householdWithVersion7.householdId,
+                version: 7,
+                label: householdWithVersion7.label,
                 adultCount: 1,
               },
             ],
@@ -1665,8 +1669,8 @@ describe("Family Records Actions - Form submissions & success flows", () => {
         detailCount++;
         const currentDetail =
           detailCount === 1
-            ? sampleDetail
-            : { ...sampleDetail, label: "Renamed Household", version: 2 };
+            ? householdWithVersion7
+            : { ...householdWithVersion7, label: "Renamed Household", version: 8 };
         return new Response(JSON.stringify(currentDetail), {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -1674,7 +1678,7 @@ describe("Family Records Actions - Form submissions & success flows", () => {
       }
       if (path === "/v1/households/rename") {
         recordedCalls.push({ path, body });
-        return new Response(JSON.stringify({ version: 2 }), {
+        return new Response(JSON.stringify({ version: 8 }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -1706,8 +1710,8 @@ describe("Family Records Actions - Form submissions & success flows", () => {
       path: "/v1/households/rename",
       body: {
         communitySlug: SLUG,
-        householdId: sampleDetail.householdId,
-        version: 1,
+        householdId: householdWithVersion7.householdId,
+        version: 7,
         label: "Renamed Household",
       },
     });
@@ -1716,22 +1720,31 @@ describe("Family Records Actions - Form submissions & success flows", () => {
   it("moves adult to target household or clears household and reloads detail", async () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);
     const recordedCalls: Array<{ path: string; body: unknown }> = [];
+    const detailWithAdultVersion5 = {
+      ...sampleDetail,
+      adults: [
+        {
+          ...sampleDetail.adults[0]!,
+          version: 5,
+        },
+      ],
+    };
 
     mockApi({
       access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
       listResult: {
         items: [
           {
-            householdId: sampleDetail.householdId,
+            householdId: detailWithAdultVersion5.householdId,
             version: 1,
-            label: sampleDetail.label,
+            label: detailWithAdultVersion5.label,
             adultCount: 1,
           },
         ],
         nextCursor: null,
       },
-      detailResult: sampleDetail,
-      moveAdultResult: { version: 2 },
+      detailResult: detailWithAdultVersion5,
+      moveAdultResult: { version: 6 },
       onPost: (path, body) => recordedCalls.push({ path, body }),
     });
 
@@ -1760,8 +1773,8 @@ describe("Family Records Actions - Form submissions & success flows", () => {
       body: {
         communitySlug: SLUG,
         householdId: null,
-        personId: sampleDetail.adults[0]!.personId,
-        version: 1,
+        personId: detailWithAdultVersion5.adults[0]!.personId,
+        version: 5,
       },
     });
   });
