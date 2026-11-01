@@ -368,6 +368,200 @@ describe("household create, rename and read", () => {
     }
   });
 
+  it("pin 8: precheck prevents encryption when rename version is stale", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const organisationId = newId();
+    const communityId = newId();
+    const kms = createLocalKmsPort();
+
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, 'rename-precheck', 'au', 'implicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, 'rename-precheck', 'au')
+        `;
+      });
+
+      let householdId = "";
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const hh = await createHousehold(tx, kms, KEY_ARN, {
+            now: new Date("2026-11-01T00:00:00+11:00"),
+            label: "Initial",
+            actorUserId: null,
+          });
+          householdId = hh.householdId;
+        }),
+      );
+
+      let decryptCalls = 0;
+      const kmsSpy = {
+        ...kms,
+        decrypt: async (...args: Parameters<typeof kms.decrypt>) => {
+          decryptCalls++;
+          return kms.decrypt(...args);
+        },
+      };
+
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          let conflictErr: unknown = null;
+          try {
+            await renameHousehold(tx, kmsSpy, KEY_ARN, {
+              householdId,
+              version: 999,
+              label: "New Label",
+              actorUserId: null,
+            });
+          } catch (err) {
+            conflictErr = err;
+          }
+          expect(conflictErr).toBeInstanceOf(PeopleError);
+          expect((conflictErr as PeopleError).code).toBe("conflict");
+          expect(decryptCalls).toBe(0);
+        }),
+      );
+    } finally {
+      try {
+        await cleanScope(directSql, { orgId: organisationId });
+      } finally {
+        await platform.end({ timeout: 1 });
+        await app.end({ timeout: 1 });
+        await directSql.end({ timeout: 1 });
+      }
+    }
+  });
+
+  it("pin 8: concurrent rename at same version: second caller conflicts via UPDATE predicate", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const organisationId = newId();
+    const communityId = newId();
+    const kms = createLocalKmsPort();
+
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, 'rename-race', 'au', 'implicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, 'rename-race', 'au')
+        `;
+      });
+
+      let householdId = "";
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const hh = await createHousehold(tx, kms, KEY_ARN, {
+            now: new Date("2026-11-01T00:00:00+11:00"),
+            label: "Initial",
+            actorUserId: null,
+          });
+          householdId = hh.householdId;
+        }),
+      );
+
+      let releaseTx1!: () => void;
+      const tx1Hold = new Promise<void>((resolve) => {
+        releaseTx1 = resolve;
+      });
+      let tx1Updated = false;
+
+      const p1 = withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx1) => {
+          await renameHousehold(tx1, kms, KEY_ARN, {
+            householdId,
+            version: 1,
+            label: "Winner Rename",
+            actorUserId: null,
+          });
+          tx1Updated = true;
+          await tx1Hold;
+        }),
+      );
+
+      while (!tx1Updated) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      let tx2Pid: number | null = null;
+      let tx2Error: unknown = null;
+
+      const p2 = withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx2) => {
+          const pidRows = await tx2<{ pid: number }[]>`select pg_backend_pid() as pid`;
+          tx2Pid = pidRows[0]!.pid;
+          await renameHousehold(tx2, kms, KEY_ARN, {
+            householdId,
+            version: 1,
+            label: "Loser Rename",
+            actorUserId: null,
+          });
+        }),
+      ).catch((err) => {
+        tx2Error = err;
+      });
+
+      const start = Date.now();
+      let locked = false;
+      while (Date.now() - start < 10000) {
+        if (tx2Pid !== null) {
+          const stat = await directSql<{ wait_event_type: string | null }[]>`
+            select wait_event_type from pg_stat_activity where pid = ${tx2Pid}
+          `;
+          if (stat[0]?.wait_event_type === "Lock") {
+            locked = true;
+            break;
+          }
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      expect(locked).toBe(true);
+
+      releaseTx1();
+      await p1;
+      await p2;
+
+      expect(tx2Error).toBeInstanceOf(PeopleError);
+      expect((tx2Error as PeopleError).code).toBe("conflict");
+
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const hh = await readHousehold(tx, kms, KEY_ARN, {
+            householdId,
+            actorUserId: null,
+          });
+          expect(hh?.label).toBe("Winner Rename");
+
+          const stored = await tx<{ version: number }[]>`
+            select version from app.households where id = ${householdId}::uuid
+          `;
+          expect(stored[0]!.version).toBe(2);
+        }),
+      );
+    } finally {
+      try {
+        await cleanScope(directSql, { orgId: organisationId });
+      } finally {
+        await platform.end({ timeout: 1 });
+        await app.end({ timeout: 1 });
+        await directSql.end({ timeout: 1 });
+      }
+    }
+  });
+
   it("pin 12: rename across tenant scope returns not_found", async () => {
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
