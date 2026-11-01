@@ -254,6 +254,48 @@ describe("access flow", () => {
       expect(missing.status).toBe(403);
       expect(await missing.text()).toBe("");
       expect(await absent.text()).toBe("");
+
+      // POST /v1/access/capabilities
+      const capRes = await post(
+        API_HOSTNAME,
+        "/v1/access/capabilities",
+        { communitySlug: slug },
+        bearer,
+      );
+      expect(capRes.status).toBe(200);
+      const capData = (await capRes.json()) as {
+        permissions: Record<string, boolean>;
+        entitlements: Record<string, boolean>;
+      };
+      expect(capData).toEqual({
+        permissions: {
+          "people.view": true,
+          "people.manage": true,
+          "people.restricted.read": true,
+        },
+        entitlements: {
+          "people.directory": false,
+          "people.households": false,
+        },
+      });
+
+      // Pin 19: stranger and unknown slug return identical empty 403 on capabilities
+      const missingCap = await post(
+        API_HOSTNAME,
+        "/v1/access/capabilities",
+        { communitySlug: "no-such-parish" },
+        bearer,
+      );
+      const absentCap = await post(
+        API_HOSTNAME,
+        "/v1/access/capabilities",
+        { communitySlug: otherSlug },
+        bearer,
+      );
+      expect(missingCap.status).toBe(absentCap.status);
+      expect(missingCap.status).toBe(403);
+      expect(await missingCap.text()).toBe("");
+      expect(await absentCap.text()).toBe("");
     } finally {
       await new Promise<void>((resolve) => {
         server.closeAllConnections();
