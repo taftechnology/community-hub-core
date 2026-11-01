@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import axe from "axe-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -336,7 +336,37 @@ describe("Authentication & capabilities gating for Family Records page", () => {
 
   it("shows Not allowed when caller lacks people.households entitlement", async () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);
-    mockApi({ access: { householdsEnabled: false, canView: true, canReadMinors: true } });
+    let accessCalls = 0;
+    let listCalls = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      if (path === "/v1/access/capabilities") {
+        accessCalls++;
+        return mockCapabilitiesResponse({
+          householdsEnabled: false,
+          canView: true,
+          canReadMinors: true,
+        });
+      }
+      if (path === "/v1/households/list") {
+        listCalls++;
+        return new Response(JSON.stringify({ items: [], nextCursor: null }), { status: 200 });
+      }
+      if (path === "/v1/billing/status") {
+        return new Response(
+          JSON.stringify({
+            state: "ok",
+            trial_end: null,
+            grace_until: null,
+            canView: true,
+            canManage: true,
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(null, { status: 404 });
+    });
 
     const container = await showFamilyRecords();
     fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
@@ -344,18 +374,28 @@ describe("Authentication & capabilities gating for Family Records page", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Set" }));
 
-    expect(await screen.findByText("Not allowed")).toBeTruthy();
+    await waitFor(() => expect(accessCalls).toBeGreaterThanOrEqual(1));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(screen.getByText("Not allowed")).toBeTruthy();
+    expect(screen.queryByText("Loading households...")).toBeNull();
+    expect(screen.queryByText("No households yet")).toBeNull();
+    expect(listCalls).toBe(0);
     const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
     expect(resultIds(results, "violations")).toEqual([]);
   });
 
   it("shows Not allowed and makes no list call when caller lacks people.view", async () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);
+    let accessCalls = 0;
     let listCalls = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
       const url = String(info);
       const path = url.replace(/^https?:\/\/[^/]+/, "");
       if (path === "/v1/access/capabilities") {
+        accessCalls++;
         return mockCapabilitiesResponse({
           householdsEnabled: true,
           canView: false,
@@ -387,7 +427,14 @@ describe("Authentication & capabilities gating for Family Records page", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Set" }));
 
-    expect(await screen.findByText("Not allowed")).toBeTruthy();
+    await waitFor(() => expect(accessCalls).toBeGreaterThanOrEqual(1));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(screen.getByText("Not allowed")).toBeTruthy();
+    expect(screen.queryByText("Loading households...")).toBeNull();
+    expect(screen.queryByText("No households yet")).toBeNull();
     expect(listCalls).toBe(0);
   });
 });
