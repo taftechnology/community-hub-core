@@ -2026,11 +2026,7 @@ describe("Family Records Actions - Form submissions & success flows", () => {
       if (path === "/v1/households/read") {
         detailLoads++;
         return new Response(
-          JSON.stringify(
-            detailLoads > 1
-              ? { ...sampleDetail, guardians: [] }
-              : sampleDetail,
-          ),
+          JSON.stringify(detailLoads > 1 ? { ...sampleDetail, guardians: [] } : sampleDetail),
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
