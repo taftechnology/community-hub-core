@@ -295,7 +295,7 @@ export async function listPersons(
     const r = rosterMap.get(id);
     const version = versionMap.get(id);
     if (version === undefined) {
-      throw new Error(`invariant broken: no version for minor ${id}`);
+      throw new Error("minor version is missing");
     }
     return {
       id,
