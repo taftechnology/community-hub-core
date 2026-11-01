@@ -1115,6 +1115,7 @@ export function FamilyRecordsPage() {
       }
 
       if (response.status === 200) {
+        detailHeadingRef.current?.focus();
         reloadDetail();
         return;
       }

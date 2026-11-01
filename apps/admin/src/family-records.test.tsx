@@ -2061,6 +2061,8 @@ describe("Family Records Actions - Form submissions & success flows", () => {
       await screen.findByText("Are you sure you want to remove this guardian link?"),
     ).toBeTruthy();
     const confirmBtn = screen.getByRole("button", { name: "Confirm unlink" });
+    confirmBtn.focus();
+    expect(document.activeElement).toBe(confirmBtn);
     fireEvent.click(confirmBtn);
 
     const unlinkCall = recordedCalls.find((c) => c.path === "/v1/households/guardians/unlink");
@@ -2076,6 +2078,10 @@ describe("Family Records Actions - Form submissions & success flows", () => {
     // Proves detail is reloaded on success
     expect(await screen.findByText("No guardian links")).toBeTruthy();
     expect(detailLoads).toBe(2);
+
+    // Proves focus moves to Household Details heading after unlink
+    const heading = screen.getByRole("heading", { name: "Household Details", level: 2 });
+    expect(document.activeElement).toBe(heading);
   });
 });
 
