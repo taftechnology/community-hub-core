@@ -63,24 +63,51 @@ function mockCapabilitiesResponse(input: CapabilitiesInput = {}): Response {
   );
 }
 
-function mockApi({
-  access = {},
-  listResult = { items: [], nextCursor: null },
-  detailResult,
-}: {
+type MockApiOptions = {
   access?: CapabilitiesInput;
+  billingStatus?: { state: string; canView: boolean; canManage: boolean } | number;
   listResult?: { items: unknown[]; nextCursor: string | null } | number;
   detailResult?: unknown | number;
-} = {}) {
-  return vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+  createResult?: unknown | number;
+  renameResult?: unknown | number;
+  moveAdultResult?: unknown | number;
+  addMinorResult?: unknown | number;
+  linkGuardianResult?: unknown | number;
+  unlinkGuardianResult?: unknown | number;
+  onPost?: (path: string, body: unknown) => void;
+};
+
+function mockApi({
+  access = {},
+  billingStatus,
+  listResult = { items: [], nextCursor: null },
+  detailResult,
+  createResult,
+  renameResult,
+  moveAdultResult,
+  addMinorResult,
+  linkGuardianResult,
+  unlinkGuardianResult,
+  onPost,
+}: MockApiOptions = {}) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
     const url = String(info);
     const path = url.replace(/^https?:\/\/[^/]+/, "");
+    let body: unknown = undefined;
+    if (init?.body && typeof init.body === "string") {
+      try {
+        body = JSON.parse(init.body);
+      } catch {
+        body = undefined;
+      }
+    }
 
     if (path === "/v1/access/capabilities") {
       return mockCapabilitiesResponse(access);
     }
 
     if (path === "/v1/households/list") {
+      if (onPost) onPost(path, body);
       if (typeof listResult === "number") {
         return new Response(null, { status: listResult });
       }
@@ -91,6 +118,7 @@ function mockApi({
     }
 
     if (path === "/v1/households/read") {
+      if (onPost) onPost(path, body);
       if (typeof detailResult === "number") {
         return new Response(null, { status: detailResult });
       }
@@ -103,15 +131,100 @@ function mockApi({
       return new Response(null, { status: 404 });
     }
 
-    if (path === "/v1/billing/status") {
+    if (path === "/v1/households/create") {
+      if (onPost) onPost(path, body);
+      if (typeof createResult === "number") {
+        return new Response(null, { status: createResult });
+      }
       return new Response(
-        JSON.stringify({
-          state: "ok",
-          trial_end: null,
-          grace_until: null,
-          canView: true,
-          canManage: true,
-        }),
+        JSON.stringify(
+          createResult ?? {
+            householdId: "00000000-0000-4000-8000-000000000099",
+            version: 1,
+          },
+        ),
+        { status: 201, headers: { "content-type": "application/json" } },
+      );
+    }
+
+    if (path === "/v1/households/rename") {
+      if (onPost) onPost(path, body);
+      if (typeof renameResult === "number") {
+        return new Response(null, { status: renameResult });
+      }
+      return new Response(JSON.stringify(renameResult ?? { version: 2 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    if (path === "/v1/households/members/move-adult") {
+      if (onPost) onPost(path, body);
+      if (typeof moveAdultResult === "number") {
+        return new Response(null, { status: moveAdultResult });
+      }
+      return new Response(JSON.stringify(moveAdultResult ?? { version: 2 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    if (path === "/v1/households/members/add-minor") {
+      if (onPost) onPost(path, body);
+      if (typeof addMinorResult === "number") {
+        return new Response(null, { status: addMinorResult });
+      }
+      return new Response(
+        JSON.stringify(
+          addMinorResult ?? {
+            personId: "00000000-0000-4000-8000-000000000088",
+            linkId: "00000000-0000-4000-8000-000000000077",
+          },
+        ),
+        { status: 201, headers: { "content-type": "application/json" } },
+      );
+    }
+
+    if (path === "/v1/households/guardians/link") {
+      if (onPost) onPost(path, body);
+      if (typeof linkGuardianResult === "number") {
+        return new Response(null, { status: linkGuardianResult });
+      }
+      return new Response(
+        JSON.stringify(
+          linkGuardianResult ?? {
+            linkId: "00000000-0000-4000-8000-000000000077",
+          },
+        ),
+        { status: 201, headers: { "content-type": "application/json" } },
+      );
+    }
+
+    if (path === "/v1/households/guardians/unlink") {
+      if (onPost) onPost(path, body);
+      if (typeof unlinkGuardianResult === "number") {
+        return new Response(null, { status: unlinkGuardianResult });
+      }
+      return new Response(JSON.stringify(unlinkGuardianResult ?? {}), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    if (path === "/v1/billing/status") {
+      if (typeof billingStatus === "number") {
+        return new Response(null, { status: billingStatus });
+      }
+      return new Response(
+        JSON.stringify(
+          billingStatus ?? {
+            state: "ok",
+            trial_end: null,
+            grace_until: null,
+            canView: true,
+            canManage: true,
+          },
+        ),
         {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -804,5 +917,1611 @@ describe("Family Records detail view", () => {
     expect(screen.queryByRole("heading", { name: "Minors" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "Guardians" })).toBeNull();
     expect(screen.queryByText("Leo")).toBeNull();
+  });
+});
+
+describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () => {
+  const sampleDetail = {
+    householdId: "00000000-0000-4000-8000-000000000001",
+    version: 1,
+    label: "Clarke Family",
+    adults: [
+      {
+        personId: "00000000-0000-4000-8000-000000000010",
+        givenName: "Arthur",
+        familyName: "Clarke",
+        version: 1,
+      },
+    ],
+    minors: [
+      {
+        personId: "00000000-0000-4000-8000-000000000020",
+        givenName: "Leo",
+        familyName: "Clarke",
+        dateOfBirth: "2015-06-12",
+        version: 1,
+      },
+    ],
+    guardians: [
+      {
+        linkId: "00000000-0000-4000-8000-000000000030",
+        guardianId: "00000000-0000-4000-8000-000000000010",
+        childId: "00000000-0000-4000-8000-000000000020",
+        rights: { consent: true, pickup: true, view: true, manage: false },
+      },
+    ],
+  };
+
+  it("hides 'Create household' button when caller lacks people.manage (Pin 21)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: false, canReadMinors: true },
+      listResult: { items: [], nextCursor: null },
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    expect(await screen.findByText("No households yet")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Create household" })).toBeNull();
+  });
+
+  it("shows 'Create household' button when caller has people.manage (Pin 21)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: false },
+      listResult: { items: [], nextCursor: null },
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    expect(await screen.findByRole("button", { name: "Create household" })).toBeTruthy();
+  });
+
+  it("hides 'Rename household' button when caller lacks people.manage (Pin 21)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: false, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Rename household" })).toBeNull();
+  });
+
+  it("shows 'Rename household' button when caller has people.manage (Pin 21)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: false },
+      listResult: {
+        items: [
+          { householdId: sampleDetail.householdId, version: 1, label: "Clarke", adultCount: 1 },
+        ],
+        nextCursor: null,
+      },
+      detailResult: { ...sampleDetail, label: "Clarke" },
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke" });
+    fireEvent.click(viewBtn);
+
+    expect(await screen.findByRole("button", { name: "Rename household" })).toBeTruthy();
+  });
+
+  it("hides 'Move adult' button when caller lacks people.manage (Pin 21)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: false, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Move Arthur Clarke|Move adult/i })).toBeNull();
+  });
+
+  it("hides 'Move adult' button when caller lacks people.restricted.read (Pin 21)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: false },
+      listResult: {
+        items: [{ householdId: sampleDetail.householdId, version: 1, label: null, adultCount: 1 }],
+        nextCursor: null,
+      },
+      detailResult: { ...sampleDetail, label: null, minors: undefined, guardians: [] },
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View household" });
+    fireEvent.click(viewBtn);
+
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Move Arthur Clarke|Move adult/i })).toBeNull();
+  });
+
+  it("shows 'Move adult' button when caller has both people.manage and people.restricted.read (Pin 21)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    expect(await screen.findByRole("button", { name: "Move adult" })).toBeTruthy();
+  });
+
+  it("hides 'Add minor' button when caller lacks people.manage (Pin 21)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: false, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    expect(await screen.findByRole("heading", { name: "Minors" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add minor" })).toBeNull();
+  });
+
+  it("hides 'Add minor' button when caller lacks people.restricted.read (Pin 21)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: false },
+      listResult: {
+        items: [{ householdId: sampleDetail.householdId, version: 1, label: null, adultCount: 1 }],
+        nextCursor: null,
+      },
+      detailResult: { ...sampleDetail, label: null, minors: undefined, guardians: [] },
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View household" });
+    fireEvent.click(viewBtn);
+
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add minor" })).toBeNull();
+  });
+
+  it("shows 'Add minor' button when caller has both people.manage and people.restricted.read (Pin 21)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    expect(await screen.findByRole("button", { name: "Add minor" })).toBeTruthy();
+  });
+
+  it("hides 'Link guardian' button when caller lacks people.manage (Pin 21)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: false, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    expect(await screen.findByRole("heading", { name: "Guardians" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Link guardian" })).toBeNull();
+  });
+
+  it("hides 'Link guardian' button when caller lacks people.restricted.read (Pin 21)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: false },
+      listResult: {
+        items: [{ householdId: sampleDetail.householdId, version: 1, label: null, adultCount: 1 }],
+        nextCursor: null,
+      },
+      detailResult: { ...sampleDetail, label: null, minors: undefined, guardians: [] },
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View household" });
+    fireEvent.click(viewBtn);
+
+    expect(screen.queryByRole("button", { name: "Link guardian" })).toBeNull();
+  });
+
+  it("shows 'Link guardian' button when caller has both people.manage and people.restricted.read (Pin 21)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    expect(await screen.findByRole("button", { name: "Link guardian" })).toBeTruthy();
+  });
+
+  it("hides 'Unlink' button when caller lacks people.manage (Pin 21)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: false, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    expect(await screen.findByRole("heading", { name: "Guardians" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Unlink/i })).toBeNull();
+  });
+
+  it("hides 'Unlink' button when caller lacks people.restricted.read (Pin 21)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: false },
+      listResult: {
+        items: [{ householdId: sampleDetail.householdId, version: 1, label: null, adultCount: 1 }],
+        nextCursor: null,
+      },
+      detailResult: { ...sampleDetail, label: null, minors: undefined, guardians: [] },
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View household" });
+    fireEvent.click(viewBtn);
+
+    expect(screen.queryByRole("button", { name: /Unlink/i })).toBeNull();
+  });
+
+  it("shows 'Unlink' button when caller has both people.manage and people.restricted.read (Pin 21)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    expect(await screen.findByRole("button", { name: "Unlink" })).toBeTruthy();
+  });
+
+  it("view-only caller sees none of the action controls (Pin 21)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: false, canReadMinors: false },
+      listResult: {
+        items: [{ householdId: sampleDetail.householdId, version: 1, label: null, adultCount: 1 }],
+        nextCursor: null,
+      },
+      detailResult: { ...sampleDetail, label: null, minors: undefined, guardians: [] },
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    // List view has no Create household
+    expect(await screen.findByRole("heading", { name: "Family Records", level: 1 })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Create household" })).toBeNull();
+
+    // Navigate to detail
+    const viewBtn = await screen.findByRole("button", { name: "View household" });
+    fireEvent.click(viewBtn);
+
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Rename household" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Move Arthur Clarke|Move adult/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add minor" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Link guardian" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Unlink/i })).toBeNull();
+  });
+
+  it("read-only billing state hides write controls and shows read-only banner", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      billingStatus: { state: "read_only", canView: true, canManage: false },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    expect(await screen.findByText("Read-only until billing is settled")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Create household" })).toBeNull();
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Rename household" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Move adult" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add minor" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Link guardian" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Unlink" })).toBeNull();
+  });
+});
+
+describe("Family Records Actions - Form submissions & success flows", () => {
+  const sampleDetail = {
+    householdId: "00000000-0000-4000-8000-000000000001",
+    version: 1,
+    label: "Clarke Family",
+    adults: [
+      {
+        personId: "00000000-0000-4000-8000-000000000010",
+        givenName: "Arthur",
+        familyName: "Clarke",
+        version: 1,
+      },
+    ],
+    minors: [
+      {
+        personId: "00000000-0000-4000-8000-000000000020",
+        givenName: "Leo",
+        familyName: "Clarke",
+        dateOfBirth: "2015-06-12",
+        version: 1,
+      },
+    ],
+    guardians: [
+      {
+        linkId: "00000000-0000-4000-8000-000000000030",
+        guardianId: "00000000-0000-4000-8000-000000000010",
+        childId: "00000000-0000-4000-8000-000000000020",
+        rights: { consent: true, pickup: true, view: true, manage: false },
+      },
+    ],
+  };
+
+  it("creates household with label, navigates back to list and reloads", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const recordedCalls: Array<{ path: string; body: unknown }> = [];
+    let listCount = 0;
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
+      const url = String(info);
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({
+          householdsEnabled: true,
+          canView: true,
+          canManage: true,
+          canReadMinors: true,
+        });
+      }
+      if (path === "/v1/billing/status") {
+        return new Response(
+          JSON.stringify({
+            state: "ok",
+            trial_end: null,
+            grace_until: null,
+            canView: true,
+            canManage: true,
+          }),
+          { status: 200 },
+        );
+      }
+      if (path === "/v1/households/list") {
+        listCount++;
+        const items =
+          listCount === 1
+            ? []
+            : [
+                {
+                  householdId: "00000000-0000-4000-8000-000000000099",
+                  version: 1,
+                  label: "New Family",
+                  adultCount: 0,
+                },
+              ];
+        return new Response(JSON.stringify({ items, nextCursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (path === "/v1/households/create") {
+        recordedCalls.push({ path, body });
+        return new Response(
+          JSON.stringify({ householdId: "00000000-0000-4000-8000-000000000099", version: 1 }),
+          {
+            status: 201,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const createBtn = await screen.findByRole("button", { name: "Create household" });
+    fireEvent.click(createBtn);
+
+    expect(await screen.findByRole("heading", { name: "Create Household" })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/Household name/i), {
+      target: { value: "New Family" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save household" }));
+
+    expect(await screen.findByRole("heading", { name: "Family Records", level: 1 })).toBeTruthy();
+    expect(await screen.findByText("New Family")).toBeTruthy();
+    expect(recordedCalls[0]).toEqual({
+      path: "/v1/households/create",
+      body: { communitySlug: SLUG, label: "New Family" },
+    });
+  });
+
+  it("renames household sending expected version and reloads detail", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const recordedCalls: Array<{ path: string; body: unknown }> = [];
+    let detailCount = 0;
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
+      const url = String(info);
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({
+          householdsEnabled: true,
+          canView: true,
+          canManage: true,
+          canReadMinors: true,
+        });
+      }
+      if (path === "/v1/billing/status") {
+        return new Response(
+          JSON.stringify({
+            state: "ok",
+            trial_end: null,
+            grace_until: null,
+            canView: true,
+            canManage: true,
+          }),
+          { status: 200 },
+        );
+      }
+      if (path === "/v1/households/list") {
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                householdId: sampleDetail.householdId,
+                version: 1,
+                label: sampleDetail.label,
+                adultCount: 1,
+              },
+            ],
+            nextCursor: null,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (path === "/v1/households/read") {
+        detailCount++;
+        const currentDetail =
+          detailCount === 1
+            ? sampleDetail
+            : { ...sampleDetail, label: "Renamed Household", version: 2 };
+        return new Response(JSON.stringify(currentDetail), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (path === "/v1/households/rename") {
+        recordedCalls.push({ path, body });
+        return new Response(JSON.stringify({ version: 2 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    const renameBtn = await screen.findByRole("button", { name: "Rename household" });
+    fireEvent.click(renameBtn);
+
+    expect(await screen.findByRole("heading", { name: "Rename Household" })).toBeTruthy();
+    const input = screen.getByLabelText(/Household name/i);
+    expect((input as HTMLInputElement).value).toBe("Clarke Family");
+    fireEvent.change(input, { target: { value: "Renamed Household" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
+    expect(await screen.findByText("Renamed Household")).toBeTruthy();
+    expect(recordedCalls[0]).toEqual({
+      path: "/v1/households/rename",
+      body: {
+        communitySlug: SLUG,
+        householdId: sampleDetail.householdId,
+        version: 1,
+        label: "Renamed Household",
+      },
+    });
+  });
+
+  it("moves adult to target household or clears household and reloads detail", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const recordedCalls: Array<{ path: string; body: unknown }> = [];
+
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+      moveAdultResult: { version: 2 },
+      onPost: (path, body) => recordedCalls.push({ path, body }),
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    const moveBtn = await screen.findByRole("button", { name: "Move adult" });
+    fireEvent.click(moveBtn);
+
+    expect(await screen.findByRole("heading", { name: "Move Adult" })).toBeTruthy();
+    expect(screen.getByText("Arthur Clarke")).toBeTruthy();
+
+    // Leave target empty to remove from household
+    fireEvent.click(screen.getByRole("button", { name: "Save move" }));
+
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
+    const moveCall = recordedCalls.find((c) => c.path === "/v1/households/members/move-adult");
+    expect(moveCall).toEqual({
+      path: "/v1/households/members/move-adult",
+      body: {
+        communitySlug: SLUG,
+        householdId: null,
+        personId: sampleDetail.adults[0]!.personId,
+        version: 1,
+      },
+    });
+  });
+
+  it("adds minor with guardian and rights, resets form and reloads detail", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const recordedCalls: Array<{ path: string; body: unknown }> = [];
+
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+      addMinorResult: {
+        personId: "00000000-0000-4000-8000-000000000088",
+        linkId: "00000000-0000-4000-8000-000000000077",
+      },
+      onPost: (path, body) => recordedCalls.push({ path, body }),
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    const addMinorBtn = await screen.findByRole("button", { name: "Add minor" });
+    fireEvent.click(addMinorBtn);
+
+    expect(await screen.findByRole("heading", { name: "Add Minor" })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/Given name/i), { target: { value: "Oliver" } });
+    fireEvent.change(screen.getByLabelText(/Family name/i), { target: { value: "Clarke" } });
+    fireEvent.change(screen.getByLabelText(/Date of birth/i), { target: { value: "2018-05-15" } });
+    fireEvent.change(screen.getByLabelText(/Guardian/i), {
+      target: { value: sampleDetail.adults[0]!.personId },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save minor" }));
+
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
+    const addCall = recordedCalls.find((c) => c.path === "/v1/households/members/add-minor");
+    expect(addCall).toEqual({
+      path: "/v1/households/members/add-minor",
+      body: {
+        communitySlug: SLUG,
+        householdId: sampleDetail.householdId,
+        givenName: "Oliver",
+        familyName: "Clarke",
+        dateOfBirth: "2018-05-15",
+        guardianId: sampleDetail.adults[0]!.personId,
+        rights: {
+          consent: true,
+          pickup: false,
+          view: true,
+          manage: false,
+        },
+      },
+    });
+  });
+
+  it("links guardian to child with rights and reloads detail", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const recordedCalls: Array<{ path: string; body: unknown }> = [];
+
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+      linkGuardianResult: { linkId: "00000000-0000-4000-8000-000000000077" },
+      onPost: (path, body) => recordedCalls.push({ path, body }),
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    const linkBtn = await screen.findByRole("button", { name: "Link guardian" });
+    fireEvent.click(linkBtn);
+
+    expect(await screen.findByRole("heading", { name: "Link Guardian" })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/^Guardian$/i), {
+      target: { value: sampleDetail.adults[0]!.personId },
+    });
+    fireEvent.change(screen.getByLabelText(/^Child$/i), {
+      target: { value: sampleDetail.minors![0]!.personId },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save link" }));
+
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
+    const linkCall = recordedCalls.find((c) => c.path === "/v1/households/guardians/link");
+    expect(linkCall).toEqual({
+      path: "/v1/households/guardians/link",
+      body: {
+        communitySlug: SLUG,
+        householdId: sampleDetail.householdId,
+        guardianId: sampleDetail.adults[0]!.personId,
+        childId: sampleDetail.minors![0]!.personId,
+        rights: {
+          consent: true,
+          pickup: false,
+          view: true,
+          manage: false,
+        },
+      },
+    });
+  });
+
+  it("unlinks guardian after confirm step without naming child in aria-live and reloads detail", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const recordedCalls: Array<{ path: string; body: unknown }> = [];
+
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+      unlinkGuardianResult: {},
+      onPost: (path, body) => recordedCalls.push({ path, body }),
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    const unlinkBtn = await screen.findByRole("button", { name: "Unlink" });
+    fireEvent.click(unlinkBtn);
+
+    // Confirm step appears
+    expect(
+      await screen.findByText("Are you sure you want to remove this guardian link?"),
+    ).toBeTruthy();
+    const confirmBtn = screen.getByRole("button", { name: "Confirm unlink" });
+    fireEvent.click(confirmBtn);
+
+    const unlinkCall = recordedCalls.find((c) => c.path === "/v1/households/guardians/unlink");
+    expect(unlinkCall).toEqual({
+      path: "/v1/households/guardians/unlink",
+      body: {
+        communitySlug: SLUG,
+        householdId: sampleDetail.householdId,
+        linkId: sampleDetail.guardians[0]!.linkId,
+      },
+    });
+  });
+});
+
+describe("Family Records Actions - Error status handling & copy", () => {
+  const sampleDetail = {
+    householdId: "00000000-0000-4000-8000-000000000001",
+    version: 1,
+    label: "Clarke Family",
+    adults: [
+      {
+        personId: "00000000-0000-4000-8000-000000000010",
+        givenName: "Arthur",
+        familyName: "Clarke",
+        version: 1,
+      },
+    ],
+    minors: [
+      {
+        personId: "00000000-0000-4000-8000-000000000020",
+        givenName: "Leo",
+        familyName: "Clarke",
+        dateOfBirth: "2015-06-12",
+        version: 1,
+      },
+    ],
+    guardians: [
+      {
+        linkId: "00000000-0000-4000-8000-000000000030",
+        guardianId: "00000000-0000-4000-8000-000000000010",
+        childId: "00000000-0000-4000-8000-000000000020",
+        rights: { consent: true, pickup: true, view: true, manage: false },
+      },
+    ],
+  };
+
+  it("handles 400 invalid input with generic message (no echo of values)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      createResult: 400,
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const createBtn = await screen.findByRole("button", { name: "Create household" });
+    fireEvent.click(createBtn);
+
+    fireEvent.change(screen.getByLabelText(/Household name/i), { target: { value: "Invalid!!" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save household" }));
+
+    expect(await screen.findByText("Invalid input")).toBeTruthy();
+    expect(screen.queryByText(/Invalid!!/i)).toBeNull();
+  });
+
+  it("handles 402 read-only billing with read-only message", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      createResult: 402,
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const createBtn = await screen.findByRole("button", { name: "Create household" });
+    fireEvent.click(createBtn);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save household" }));
+
+    expect(await screen.findByText("Read-only until billing is settled")).toBeTruthy();
+  });
+
+  it("handles 403 generic not allowed message", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      createResult: 403,
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const createBtn = await screen.findByRole("button", { name: "Create household" });
+    fireEvent.click(createBtn);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save household" }));
+
+    expect(await screen.findByText("Not allowed")).toBeTruthy();
+  });
+
+  it("handles 404 generic not found message", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+      renameResult: 404,
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    const renameBtn = await screen.findByRole("button", { name: "Rename household" });
+    fireEvent.click(renameBtn);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(await screen.findByText(/Household not found|Not found/i)).toBeTruthy();
+  });
+
+  it("handles 409 rename conflict with stale version message and reload button", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    let detailLoads = 0;
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({
+          householdsEnabled: true,
+          canView: true,
+          canManage: true,
+          canReadMinors: true,
+        });
+      }
+      if (path === "/v1/billing/status") {
+        return new Response(
+          JSON.stringify({
+            state: "ok",
+            trial_end: null,
+            grace_until: null,
+            canView: true,
+            canManage: true,
+          }),
+          { status: 200 },
+        );
+      }
+      if (path === "/v1/households/list") {
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                householdId: sampleDetail.householdId,
+                version: 1,
+                label: sampleDetail.label,
+                adultCount: 1,
+              },
+            ],
+            nextCursor: null,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (path === "/v1/households/read") {
+        detailLoads++;
+        return new Response(
+          JSON.stringify(
+            detailLoads > 1
+              ? { ...sampleDetail, label: "Updated by other", version: 2 }
+              : sampleDetail,
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (path === "/v1/households/rename") {
+        return new Response(null, { status: 409 });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    const renameBtn = await screen.findByRole("button", { name: "Rename household" });
+    fireEvent.click(renameBtn);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(
+      await screen.findByText(
+        /This household was changed by someone else\. Reload to see the latest details; your unsaved changes will be discarded\./i,
+      ),
+    ).toBeTruthy();
+
+    const reloadBtn = screen.getByRole("button", { name: "Reload" });
+    fireEvent.click(reloadBtn);
+
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
+    expect(await screen.findByText("Updated by other")).toBeTruthy();
+  });
+
+  it("handles 409 move adult conflict with 'Cannot move adult with guardian links'", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+      moveAdultResult: 409,
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    const moveBtn = await screen.findByRole("button", { name: "Move adult" });
+    fireEvent.click(moveBtn);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save move" }));
+
+    expect(await screen.findByText("Cannot move adult with guardian links")).toBeTruthy();
+  });
+
+  it("handles 409 link guardian conflict with 'This guardian link already exists'", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+      linkGuardianResult: 409,
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    const linkBtn = await screen.findByRole("button", { name: "Link guardian" });
+    fireEvent.click(linkBtn);
+
+    fireEvent.change(screen.getByLabelText(/^Guardian$/i), {
+      target: { value: sampleDetail.adults[0]!.personId },
+    });
+    fireEvent.change(screen.getByLabelText(/^Child$/i), {
+      target: { value: sampleDetail.minors![0]!.personId },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save link" }));
+
+    expect(await screen.findByText("This guardian link already exists")).toBeTruthy();
+  });
+
+  it("handles 409 unlink guardian conflict with 'Cannot remove the last guardian'", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+      unlinkGuardianResult: 409,
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    const unlinkBtn = await screen.findByRole("button", { name: "Unlink" });
+    fireEvent.click(unlinkBtn);
+
+    const confirmBtn = await screen.findByRole("button", { name: "Confirm unlink" });
+    fireEvent.click(confirmBtn);
+
+    expect(await screen.findByText("Cannot remove the last guardian")).toBeTruthy();
+  });
+});
+
+describe("Family Records Actions - Privacy & Accessibility (WCAG 2.2 AA)", () => {
+  const sampleDetail = {
+    householdId: "00000000-0000-4000-8000-000000000001",
+    version: 1,
+    label: "Clarke Family",
+    adults: [
+      {
+        personId: "00000000-0000-4000-8000-000000000010",
+        givenName: "Arthur",
+        familyName: "Clarke",
+        version: 1,
+      },
+    ],
+    minors: [
+      {
+        personId: "00000000-0000-4000-8000-000000000020",
+        givenName: "Leo",
+        familyName: "Clarke",
+        dateOfBirth: "2015-06-12",
+        version: 1,
+      },
+    ],
+    guardians: [
+      {
+        linkId: "00000000-0000-4000-8000-000000000030",
+        guardianId: "00000000-0000-4000-8000-000000000010",
+        childId: "00000000-0000-4000-8000-000000000020",
+        rights: { consent: true, pickup: true, view: true, manage: false },
+      },
+    ],
+  };
+
+  it("passes axe scan on create household form", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+    });
+
+    const container = await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const createBtn = await screen.findByRole("button", { name: "Create household" });
+    fireEvent.click(createBtn);
+
+    expect(await screen.findByRole("heading", { name: "Create Household" })).toBeTruthy();
+    const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    expect(resultIds(results, "violations")).toEqual([]);
+  });
+
+  it("passes axe scan on rename household form and conflict alert", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+      renameResult: 409,
+    });
+
+    const container = await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    const renameBtn = await screen.findByRole("button", { name: "Rename household" });
+    fireEvent.click(renameBtn);
+
+    expect(await screen.findByRole("heading", { name: "Rename Household" })).toBeTruthy();
+    let results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    expect(resultIds(results, "violations")).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+
+    results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    expect(resultIds(results, "violations")).toEqual([]);
+  });
+
+  it("passes axe scan on move adult form", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+    });
+
+    const container = await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    const moveBtn = await screen.findByRole("button", { name: "Move adult" });
+    fireEvent.click(moveBtn);
+
+    expect(await screen.findByRole("heading", { name: "Move Adult" })).toBeTruthy();
+    const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    expect(resultIds(results, "violations")).toEqual([]);
+  });
+
+  it("passes axe scan on add minor form", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+    });
+
+    const container = await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    const addMinorBtn = await screen.findByRole("button", { name: "Add minor" });
+    fireEvent.click(addMinorBtn);
+
+    expect(await screen.findByRole("heading", { name: "Add Minor" })).toBeTruthy();
+    const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    expect(resultIds(results, "violations")).toEqual([]);
+  });
+
+  it("passes axe scan on link guardian form", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+    });
+
+    const container = await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    const linkBtn = await screen.findByRole("button", { name: "Link guardian" });
+    fireEvent.click(linkBtn);
+
+    expect(await screen.findByRole("heading", { name: "Link Guardian" })).toBeTruthy();
+    const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    expect(resultIds(results, "violations")).toEqual([]);
+  });
+
+  it("passes axe scan on unlink confirmation state", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+    });
+
+    const container = await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    const unlinkBtn = await screen.findByRole("button", { name: "Unlink" });
+    fireEvent.click(unlinkBtn);
+
+    expect(
+      await screen.findByText("Are you sure you want to remove this guardian link?"),
+    ).toBeTruthy();
+    const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    expect(resultIds(results, "violations")).toEqual([]);
+  });
+
+  it("no minor names, dates of birth or ids in alerts, URLs, or document title", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+      addMinorResult: 400,
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    const addMinorBtn = await screen.findByRole("button", { name: "Add minor" });
+    fireEvent.click(addMinorBtn);
+
+    fireEvent.change(screen.getByLabelText(/Given name/i), { target: { value: "SecretChild" } });
+    fireEvent.change(screen.getByLabelText(/Family name/i), { target: { value: "Confidential" } });
+    fireEvent.change(screen.getByLabelText(/Date of birth/i), { target: { value: "2016-01-01" } });
+    fireEvent.change(screen.getByLabelText(/Guardian/i), {
+      target: { value: sampleDetail.adults[0]!.personId },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save minor" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).not.toContain("SecretChild");
+    expect(alert.textContent).not.toContain("Confidential");
+    expect(alert.textContent).not.toContain("2016-01-01");
+    expect(window.location.href).not.toContain("SecretChild");
+    expect(window.location.href).not.toContain("2016-01-01");
+    expect(document.title).not.toContain("SecretChild");
+    expect(sessionStorage.getItem("minor-dob")).toBeNull();
   });
 });

@@ -1,6 +1,7 @@
 import {
   Alert,
   Button,
+  Input,
   Table,
   TableBody,
   TableCell,
@@ -8,10 +9,11 @@ import {
   TableHeader,
   TableRow,
 } from "@community-hub/ui";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 
 import { post } from "./api";
+import { useBillingStatus } from "./billing-status";
 import { useCommunity } from "./community";
 import { readAccessToken } from "./directory";
 import { usePeopleAccess } from "./people-access";
@@ -65,6 +67,9 @@ type HouseholdDetail = {
   minors?: MinorMember[] | undefined;
   guardians: GuardianLink[];
 };
+
+type ViewMode =
+  "list" | "detail" | "create" | "rename" | "move-adult" | "add-minor" | "link-guardian";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -194,12 +199,21 @@ function parseHouseholdDetail(value: unknown): HouseholdDetail | null {
   return detail;
 }
 
+const initialRights: GuardianRights = {
+  consent: true,
+  pickup: false,
+  view: true,
+  manage: false,
+};
+
 export function FamilyRecordsPage() {
   const token = readAccessToken();
   const { slug, version } = useCommunity();
   const { access } = usePeopleAccess();
+  const { status, readiness, refresh: refreshBilling } = useBillingStatus();
+  const [paymentRequired, setPaymentRequired] = useState(false);
 
-  const [view, setView] = useState<"list" | "detail">("list");
+  const [view, setView] = useState<ViewMode>("list");
   const [selectedHouseholdId, setSelectedHouseholdId] = useState<string | null>(null);
 
   const [items, setItems] = useState<HouseholdItem[] | null>(null);
@@ -213,19 +227,127 @@ export function FamilyRecordsPage() {
   const [detailNotFound, setDetailNotFound] = useState(false);
   const [detailError, setDetailError] = useState(false);
 
+  // Form & Action states
+  const [submitting, setSubmitting] = useState(false);
+
+  // Create household
+  const [createLabel, setCreateLabel] = useState("");
+  const [createNotice, setCreateNotice] = useState<string | null>(null);
+
+  // Rename household
+  const [renameLabel, setRenameLabel] = useState("");
+  const [renameConflict, setRenameConflict] = useState(false);
+  const [renameNotice, setRenameNotice] = useState<string | null>(null);
+
+  // Move adult
+  const [selectedAdult, setSelectedAdult] = useState<AdultMember | null>(null);
+  const [moveTargetHouseholdId, setMoveTargetHouseholdId] = useState("");
+  const [moveNotice, setMoveNotice] = useState<string | null>(null);
+
+  // Add minor
+  const [minorGivenName, setMinorGivenName] = useState("");
+  const [minorFamilyName, setMinorFamilyName] = useState("");
+  const [minorDob, setMinorDob] = useState("");
+  const [minorGuardianId, setMinorGuardianId] = useState("");
+  const [minorRights, setMinorRights] = useState<GuardianRights>(initialRights);
+  const [addMinorNotice, setAddMinorNotice] = useState<string | null>(null);
+
+  // Link guardian
+  const [linkGuardianId, setLinkGuardianId] = useState("");
+  const [linkChildId, setLinkChildId] = useState("");
+  const [linkRights, setLinkRights] = useState<GuardianRights>(initialRights);
+  const [linkNotice, setLinkNotice] = useState<string | null>(null);
+
+  // Unlink guardian
+  const [unlinkingLinkId, setUnlinkingLinkId] = useState<string | null>(null);
+  const [unlinkNotice, setUnlinkNotice] = useState<string | null>(null);
+
+  // Ref headings for accessibility focus management
   const listHeadingRef = useRef<HTMLHeadingElement>(null);
   const detailHeadingRef = useRef<HTMLHeadingElement>(null);
+  const createHeadingRef = useRef<HTMLHeadingElement>(null);
+  const renameHeadingRef = useRef<HTMLHeadingElement>(null);
+  const moveAdultHeadingRef = useRef<HTMLHeadingElement>(null);
+  const addMinorHeadingRef = useRef<HTMLHeadingElement>(null);
+  const linkGuardianHeadingRef = useRef<HTMLHeadingElement>(null);
+
+  // Ref alerts for screen reader focus
+  const createAlertRef = useRef<HTMLDivElement>(null);
+  const renameAlertRef = useRef<HTMLDivElement>(null);
+  const moveAlertRef = useRef<HTMLDivElement>(null);
+  const addMinorAlertRef = useRef<HTMLDivElement>(null);
+  const linkAlertRef = useRef<HTMLDivElement>(null);
+  const unlinkAlertRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (view === "list") {
       listHeadingRef.current?.focus();
     } else if (view === "detail") {
       detailHeadingRef.current?.focus();
+    } else if (view === "create") {
+      createHeadingRef.current?.focus();
+    } else if (view === "rename") {
+      renameHeadingRef.current?.focus();
+    } else if (view === "move-adult") {
+      moveAdultHeadingRef.current?.focus();
+    } else if (view === "add-minor") {
+      addMinorHeadingRef.current?.focus();
+    } else if (view === "link-guardian") {
+      linkGuardianHeadingRef.current?.focus();
     }
   }, [view]);
 
+  useEffect(() => {
+    if (createNotice) {
+      createAlertRef.current?.focus();
+    }
+  }, [createNotice]);
+
+  useEffect(() => {
+    if (renameConflict || renameNotice) {
+      renameAlertRef.current?.focus();
+    }
+  }, [renameConflict, renameNotice]);
+
+  useEffect(() => {
+    if (moveNotice) {
+      moveAlertRef.current?.focus();
+    }
+  }, [moveNotice]);
+
+  useEffect(() => {
+    if (addMinorNotice) {
+      addMinorAlertRef.current?.focus();
+    }
+  }, [addMinorNotice]);
+
+  useEffect(() => {
+    if (linkNotice) {
+      linkAlertRef.current?.focus();
+    }
+  }, [linkNotice]);
+
+  useEffect(() => {
+    if (unlinkNotice) {
+      unlinkAlertRef.current?.focus();
+    }
+  }, [unlinkNotice]);
+
   const generation = useRef(0);
   const detailGeneration = useRef(0);
+
+  const isReadOnly = status?.state === "none" || status?.state === "read_only" || paymentRequired;
+  const hideWrites = readiness === "loading" || isReadOnly;
+
+  const canManage = Boolean(access.permissions["people.manage"]);
+  const canRestricted = Boolean(access.permissions["people.restricted.read"]);
+
+  const canCreate = canManage && !hideWrites;
+  const canRename = canManage && !hideWrites;
+  const canMoveAdult = canManage && canRestricted && !hideWrites;
+  const canAddMinor = canManage && canRestricted && !hideWrites;
+  const canLinkGuardian = canManage && canRestricted && !hideWrites;
+  const canUnlinkGuardian = canManage && canRestricted && !hideWrites;
 
   const fetchHouseholds = useCallback(
     async (communitySlug: string, cursorToken: string | undefined, isCurrent: () => boolean) => {
@@ -333,6 +455,27 @@ export function FamilyRecordsPage() {
     setSelectedHouseholdId(null);
     setDetailHousehold(null);
     setCursor(undefined);
+    setCreateLabel("");
+    setCreateNotice(null);
+    setRenameLabel("");
+    setRenameConflict(false);
+    setRenameNotice(null);
+    setSelectedAdult(null);
+    setMoveTargetHouseholdId("");
+    setMoveNotice(null);
+    setMinorGivenName("");
+    setMinorFamilyName("");
+    setMinorDob("");
+    setMinorGuardianId("");
+    setMinorRights(initialRights);
+    setAddMinorNotice(null);
+    setLinkGuardianId("");
+    setLinkChildId("");
+    setLinkRights(initialRights);
+    setLinkNotice(null);
+    setUnlinkingLinkId(null);
+    setUnlinkNotice(null);
+    setPaymentRequired(false);
   }, [slug]);
 
   useEffect(() => {
@@ -355,6 +498,8 @@ export function FamilyRecordsPage() {
     setSelectedHouseholdId(householdId);
     setView("detail");
     setDetailHousehold(null);
+    setUnlinkingLinkId(null);
+    setUnlinkNotice(null);
     const mine = ++detailGeneration.current;
     if (slug) {
       void fetchDetail(slug, householdId, () => detailGeneration.current === mine);
@@ -374,6 +519,9 @@ export function FamilyRecordsPage() {
     setDetailHousehold(null);
     setDetailNotFound(false);
     setDetailError(false);
+    setCreateLabel("");
+    setCreateNotice(null);
+    reloadList();
   }
 
   function reloadList() {
@@ -385,6 +533,426 @@ export function FamilyRecordsPage() {
 
   function handleNextPage(token: string) {
     setCursor(token);
+  }
+
+  function openCreate() {
+    setCreateLabel("");
+    setCreateNotice(null);
+    setView("create");
+  }
+
+  function openRename() {
+    setRenameLabel(detailHousehold?.label ?? "");
+    setRenameConflict(false);
+    setRenameNotice(null);
+    setView("rename");
+  }
+
+  function handleReloadFromConflict() {
+    setRenameConflict(false);
+    setRenameNotice(null);
+    reloadDetail();
+    setView("detail");
+  }
+
+  function openMoveAdult(adult: AdultMember) {
+    setSelectedAdult(adult);
+    setMoveTargetHouseholdId("");
+    setMoveNotice(null);
+    setView("move-adult");
+  }
+
+  function openAddMinor() {
+    setMinorGivenName("");
+    setMinorFamilyName("");
+    setMinorDob("");
+    setMinorGuardianId(detailHousehold?.adults[0]?.personId ?? "");
+    setMinorRights(initialRights);
+    setAddMinorNotice(null);
+    setView("add-minor");
+  }
+
+  function openLinkGuardian() {
+    setLinkGuardianId(detailHousehold?.adults[0]?.personId ?? "");
+    setLinkChildId(detailHousehold?.minors?.[0]?.personId ?? "");
+    setLinkRights(initialRights);
+    setLinkNotice(null);
+    setView("link-guardian");
+  }
+
+  async function handleCreateSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submitting || !slug) {
+      return;
+    }
+    setSubmitting(true);
+    setCreateNotice(null);
+
+    try {
+      const response = await post("/v1/households/create", {
+        communitySlug: slug,
+        label: createLabel.trim() || null,
+      });
+
+      if (response === "unavailable") {
+        setCreateNotice("Unable to create household");
+        return;
+      }
+
+      if (response.status === 400) {
+        setCreateNotice("Invalid input");
+        return;
+      }
+
+      if (response.status === 402) {
+        setPaymentRequired(true);
+        void refreshBilling();
+        setCreateNotice("Read-only until billing is settled");
+        return;
+      }
+
+      if (response.status === 403) {
+        setCreateNotice("Not allowed");
+        return;
+      }
+
+      if (response.status === 404) {
+        setCreateNotice("Not found");
+        return;
+      }
+
+      if (response.status === 201) {
+        setCreateLabel("");
+        setView("list");
+        reloadList();
+        return;
+      }
+
+      setCreateNotice("Unable to create household");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleRenameSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submitting || !slug || !detailHousehold) {
+      return;
+    }
+    setSubmitting(true);
+    setRenameConflict(false);
+    setRenameNotice(null);
+
+    try {
+      const response = await post("/v1/households/rename", {
+        communitySlug: slug,
+        householdId: detailHousehold.householdId,
+        version: detailHousehold.version,
+        label: renameLabel.trim() || null,
+      });
+
+      if (response === "unavailable") {
+        setRenameNotice("Unable to rename household");
+        return;
+      }
+
+      if (response.status === 409) {
+        setRenameConflict(true);
+        return;
+      }
+
+      if (response.status === 400) {
+        setRenameNotice("Invalid input");
+        return;
+      }
+
+      if (response.status === 402) {
+        setPaymentRequired(true);
+        void refreshBilling();
+        setRenameNotice("Read-only until billing is settled");
+        return;
+      }
+
+      if (response.status === 403) {
+        setRenameNotice("Not allowed");
+        return;
+      }
+
+      if (response.status === 404) {
+        setRenameNotice("Household not found");
+        return;
+      }
+
+      if (response.status === 200) {
+        setView("detail");
+        reloadDetail();
+        return;
+      }
+
+      setRenameNotice("Unable to rename household");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleMoveAdultSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submitting || !slug || !selectedAdult) {
+      return;
+    }
+    setSubmitting(true);
+    setMoveNotice(null);
+
+    try {
+      const response = await post("/v1/households/members/move-adult", {
+        communitySlug: slug,
+        householdId: moveTargetHouseholdId.trim() || null,
+        personId: selectedAdult.personId,
+        version: selectedAdult.version,
+      });
+
+      if (response === "unavailable") {
+        setMoveNotice("Unable to move adult");
+        return;
+      }
+
+      if (response.status === 409) {
+        setMoveNotice("Cannot move adult with guardian links");
+        return;
+      }
+
+      if (response.status === 400) {
+        setMoveNotice("Invalid input");
+        return;
+      }
+
+      if (response.status === 402) {
+        setPaymentRequired(true);
+        void refreshBilling();
+        setMoveNotice("Read-only until billing is settled");
+        return;
+      }
+
+      if (response.status === 403) {
+        setMoveNotice("Not allowed");
+        return;
+      }
+
+      if (response.status === 404) {
+        setMoveNotice("Not found");
+        return;
+      }
+
+      if (response.status === 200) {
+        setSelectedAdult(null);
+        setView("detail");
+        reloadDetail();
+        return;
+      }
+
+      setMoveNotice("Unable to move adult");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleAddMinorSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submitting || !slug || !detailHousehold) {
+      return;
+    }
+    if (!minorRights.consent && !minorRights.pickup && !minorRights.view && !minorRights.manage) {
+      setAddMinorNotice("Invalid input");
+      return;
+    }
+    setSubmitting(true);
+    setAddMinorNotice(null);
+
+    try {
+      const response = await post("/v1/households/members/add-minor", {
+        communitySlug: slug,
+        householdId: detailHousehold.householdId,
+        givenName: minorGivenName.trim(),
+        familyName: minorFamilyName.trim(),
+        dateOfBirth: minorDob.trim(),
+        guardianId: minorGuardianId,
+        rights: minorRights,
+      });
+
+      if (response === "unavailable") {
+        setAddMinorNotice("Unable to add minor");
+        return;
+      }
+
+      if (response.status === 400) {
+        setAddMinorNotice("Invalid input");
+        return;
+      }
+
+      if (response.status === 402) {
+        setPaymentRequired(true);
+        void refreshBilling();
+        setAddMinorNotice("Read-only until billing is settled");
+        return;
+      }
+
+      if (response.status === 403) {
+        setAddMinorNotice("Not allowed");
+        return;
+      }
+
+      if (response.status === 404) {
+        setAddMinorNotice("Not found");
+        return;
+      }
+
+      if (response.status === 409) {
+        setAddMinorNotice("Conflict");
+        return;
+      }
+
+      if (response.status === 201) {
+        setMinorGivenName("");
+        setMinorFamilyName("");
+        setMinorDob("");
+        setMinorGuardianId("");
+        setMinorRights(initialRights);
+        setView("detail");
+        reloadDetail();
+        return;
+      }
+
+      setAddMinorNotice("Unable to add minor");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleLinkGuardianSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submitting || !slug || !detailHousehold) {
+      return;
+    }
+    if (!linkRights.consent && !linkRights.pickup && !linkRights.view && !linkRights.manage) {
+      setLinkNotice("Invalid input");
+      return;
+    }
+    setSubmitting(true);
+    setLinkNotice(null);
+
+    try {
+      const response = await post("/v1/households/guardians/link", {
+        communitySlug: slug,
+        householdId: detailHousehold.householdId,
+        guardianId: linkGuardianId,
+        childId: linkChildId,
+        rights: linkRights,
+      });
+
+      if (response === "unavailable") {
+        setLinkNotice("Unable to link guardian");
+        return;
+      }
+
+      if (response.status === 409) {
+        setLinkNotice("This guardian link already exists");
+        return;
+      }
+
+      if (response.status === 400) {
+        setLinkNotice("Invalid input");
+        return;
+      }
+
+      if (response.status === 402) {
+        setPaymentRequired(true);
+        void refreshBilling();
+        setLinkNotice("Read-only until billing is settled");
+        return;
+      }
+
+      if (response.status === 403) {
+        setLinkNotice("Not allowed");
+        return;
+      }
+
+      if (response.status === 404) {
+        setLinkNotice("Not found");
+        return;
+      }
+
+      if (response.status === 201) {
+        setLinkGuardianId("");
+        setLinkChildId("");
+        setLinkRights(initialRights);
+        setView("detail");
+        reloadDetail();
+        return;
+      }
+
+      setLinkNotice("Unable to link guardian");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleConfirmUnlink(linkId: string) {
+    if (submitting || !slug || !detailHousehold) {
+      return;
+    }
+    setSubmitting(true);
+    setUnlinkNotice(null);
+
+    try {
+      const response = await post("/v1/households/guardians/unlink", {
+        communitySlug: slug,
+        householdId: detailHousehold.householdId,
+        linkId,
+      });
+
+      setUnlinkingLinkId(null);
+
+      if (response === "unavailable") {
+        setUnlinkNotice("Unable to remove guardian link");
+        return;
+      }
+
+      if (response.status === 409) {
+        setUnlinkNotice("Cannot remove the last guardian");
+        return;
+      }
+
+      if (response.status === 400) {
+        setUnlinkNotice("Invalid input");
+        return;
+      }
+
+      if (response.status === 402) {
+        setPaymentRequired(true);
+        void refreshBilling();
+        setUnlinkNotice("Read-only until billing is settled");
+        return;
+      }
+
+      if (response.status === 403) {
+        setUnlinkNotice("Not allowed");
+        return;
+      }
+
+      if (response.status === 404) {
+        setUnlinkNotice("Not found");
+        return;
+      }
+
+      if (response.status === 200) {
+        reloadDetail();
+        return;
+      }
+
+      setUnlinkNotice("Unable to remove guardian link");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   if (!token) {
@@ -406,17 +974,374 @@ export function FamilyRecordsPage() {
     );
   }
 
+  if (view === "create") {
+    return (
+      <>
+        <h1>Family Records</h1>
+        <h2 ref={createHeadingRef} tabIndex={-1}>
+          Create Household
+        </h2>
+
+        {createNotice ? (
+          <Alert ref={createAlertRef} tabIndex={-1} variant="destructive" role="alert">
+            <span>{createNotice}</span>
+          </Alert>
+        ) : null}
+
+        <form onSubmit={handleCreateSubmit}>
+          <div>
+            <label htmlFor="create-household-label">Household name (optional)</label>
+            <Input
+              id="create-household-label"
+              value={createLabel}
+              onChange={(e) => setCreateLabel(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <Button type="submit" disabled={submitting}>
+              Save household
+            </Button>
+            <Button type="button" variant="outline" onClick={backToList}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      </>
+    );
+  }
+
+  if (view === "rename") {
+    return (
+      <>
+        <h1>Family Records</h1>
+        <h2 ref={renameHeadingRef} tabIndex={-1}>
+          Rename Household
+        </h2>
+
+        {renameConflict ? (
+          <Alert ref={renameAlertRef} tabIndex={-1} role="alert">
+            <span>
+              This household was changed by someone else. Reload to see the latest details; your
+              unsaved changes will be discarded.
+            </span>
+            <Button type="button" onClick={handleReloadFromConflict}>
+              Reload
+            </Button>
+          </Alert>
+        ) : null}
+
+        {renameNotice ? (
+          <Alert ref={renameAlertRef} tabIndex={-1} variant="destructive" role="alert">
+            <span>{renameNotice}</span>
+          </Alert>
+        ) : null}
+
+        <form onSubmit={handleRenameSubmit}>
+          <div>
+            <label htmlFor="rename-household-label">Household name</label>
+            <Input
+              id="rename-household-label"
+              value={renameLabel}
+              onChange={(e) => setRenameLabel(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <Button type="submit" disabled={submitting}>
+              Save changes
+            </Button>
+            <Button type="button" variant="outline" onClick={() => setView("detail")}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      </>
+    );
+  }
+
+  if (view === "move-adult") {
+    return (
+      <>
+        <h1>Family Records</h1>
+        <h2 ref={moveAdultHeadingRef} tabIndex={-1}>
+          Move Adult
+        </h2>
+
+        {moveNotice ? (
+          <Alert ref={moveAlertRef} tabIndex={-1} variant="destructive" role="alert">
+            <span>{moveNotice}</span>
+          </Alert>
+        ) : null}
+
+        {selectedAdult ? (
+          <p>
+            <strong>Adult:</strong> {selectedAdult.givenName} {selectedAdult.familyName}
+          </p>
+        ) : null}
+
+        <form onSubmit={handleMoveAdultSubmit}>
+          <div>
+            <label htmlFor="move-adult-target">Target household ID</label>
+            <Input
+              id="move-adult-target"
+              placeholder="Leave blank to remove from household"
+              value={moveTargetHouseholdId}
+              onChange={(e) => setMoveTargetHouseholdId(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <Button type="submit" disabled={submitting}>
+              Save move
+            </Button>
+            <Button type="button" variant="outline" onClick={() => setView("detail")}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      </>
+    );
+  }
+
+  if (view === "add-minor") {
+    return (
+      <>
+        <h1>Family Records</h1>
+        <h2 ref={addMinorHeadingRef} tabIndex={-1}>
+          Add Minor
+        </h2>
+
+        {addMinorNotice ? (
+          <Alert ref={addMinorAlertRef} tabIndex={-1} variant="destructive" role="alert">
+            <span>{addMinorNotice}</span>
+          </Alert>
+        ) : null}
+
+        <form onSubmit={handleAddMinorSubmit}>
+          <div>
+            <label htmlFor="minor-given-name">Given name</label>
+            <Input
+              id="minor-given-name"
+              value={minorGivenName}
+              onChange={(e) => setMinorGivenName(e.target.value)}
+              required
+            />
+          </div>
+          <div>
+            <label htmlFor="minor-family-name">Family name</label>
+            <Input
+              id="minor-family-name"
+              value={minorFamilyName}
+              onChange={(e) => setMinorFamilyName(e.target.value)}
+              required
+            />
+          </div>
+          <div>
+            <label htmlFor="minor-dob">Date of birth</label>
+            <Input
+              id="minor-dob"
+              type="date"
+              value={minorDob}
+              onChange={(e) => setMinorDob(e.target.value)}
+              required
+            />
+          </div>
+          <div>
+            <label htmlFor="minor-guardian">Guardian</label>
+            <select
+              id="minor-guardian"
+              value={minorGuardianId}
+              onChange={(e) => setMinorGuardianId(e.target.value)}
+              required
+            >
+              <option value="">Select guardian</option>
+              {detailHousehold?.adults.map((adult) => (
+                <option key={adult.personId} value={adult.personId}>
+                  {adult.givenName} {adult.familyName}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <fieldset>
+            <legend>Guardian rights</legend>
+            <label>
+              <input
+                type="checkbox"
+                checked={minorRights.consent}
+                onChange={(e) => setMinorRights((r) => ({ ...r, consent: e.target.checked }))}
+              />{" "}
+              Consent
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={minorRights.pickup}
+                onChange={(e) => setMinorRights((r) => ({ ...r, pickup: e.target.checked }))}
+              />{" "}
+              Pickup
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={minorRights.view}
+                onChange={(e) => setMinorRights((r) => ({ ...r, view: e.target.checked }))}
+              />{" "}
+              View
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={minorRights.manage}
+                onChange={(e) => setMinorRights((r) => ({ ...r, manage: e.target.checked }))}
+              />{" "}
+              Manage
+            </label>
+          </fieldset>
+
+          <div>
+            <Button type="submit" disabled={submitting}>
+              Save minor
+            </Button>
+            <Button type="button" variant="outline" onClick={() => setView("detail")}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      </>
+    );
+  }
+
+  if (view === "link-guardian") {
+    return (
+      <>
+        <h1>Family Records</h1>
+        <h2 ref={linkGuardianHeadingRef} tabIndex={-1}>
+          Link Guardian
+        </h2>
+
+        {linkNotice ? (
+          <Alert ref={linkAlertRef} tabIndex={-1} variant="destructive" role="alert">
+            <span>{linkNotice}</span>
+          </Alert>
+        ) : null}
+
+        <form onSubmit={handleLinkGuardianSubmit}>
+          <div>
+            <label htmlFor="link-guardian-adult">Guardian</label>
+            <select
+              id="link-guardian-adult"
+              value={linkGuardianId}
+              onChange={(e) => setLinkGuardianId(e.target.value)}
+              required
+            >
+              <option value="">Select guardian</option>
+              {detailHousehold?.adults.map((adult) => (
+                <option key={adult.personId} value={adult.personId}>
+                  {adult.givenName} {adult.familyName}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label htmlFor="link-guardian-child">Child</label>
+            <select
+              id="link-guardian-child"
+              value={linkChildId}
+              onChange={(e) => setLinkChildId(e.target.value)}
+              required
+            >
+              <option value="">Select child</option>
+              {detailHousehold?.minors?.map((minor) => (
+                <option key={minor.personId} value={minor.personId}>
+                  {minor.givenName} {minor.familyName}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <fieldset>
+            <legend>Guardian rights</legend>
+            <label>
+              <input
+                type="checkbox"
+                checked={linkRights.consent}
+                onChange={(e) => setLinkRights((r) => ({ ...r, consent: e.target.checked }))}
+              />{" "}
+              Consent
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={linkRights.pickup}
+                onChange={(e) => setLinkRights((r) => ({ ...r, pickup: e.target.checked }))}
+              />{" "}
+              Pickup
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={linkRights.view}
+                onChange={(e) => setLinkRights((r) => ({ ...r, view: e.target.checked }))}
+              />{" "}
+              View
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={linkRights.manage}
+                onChange={(e) => setLinkRights((r) => ({ ...r, manage: e.target.checked }))}
+              />{" "}
+              Manage
+            </label>
+          </fieldset>
+
+          <div>
+            <Button type="submit" disabled={submitting}>
+              Save link
+            </Button>
+            <Button type="button" variant="outline" onClick={() => setView("detail")}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      </>
+    );
+  }
+
   if (view === "detail") {
     return (
       <>
         <h1>Family Records</h1>
+        {isReadOnly ? (
+          <Alert live="polite">
+            <span>Read-only until billing is settled</span>{" "}
+            <Link to="/settings/general">General Settings</Link>
+          </Alert>
+        ) : null}
+
         <h2 ref={detailHeadingRef} tabIndex={-1}>
           Household Details
         </h2>
 
-        <Button type="button" onClick={backToList}>
-          Back to list
-        </Button>
+        <div>
+          <Button type="button" onClick={backToList}>
+            Back to list
+          </Button>
+          {canRename && detailHousehold ? (
+            <Button type="button" onClick={openRename}>
+              Rename household
+            </Button>
+          ) : null}
+        </div>
+
+        {unlinkNotice ? (
+          <Alert ref={unlinkAlertRef} tabIndex={-1} variant="destructive" role="alert">
+            <span>{unlinkNotice}</span>
+          </Alert>
+        ) : null}
 
         {detailLoading ? <p>Loading household details...</p> : null}
 
@@ -452,6 +1377,7 @@ export function FamilyRecordsPage() {
                   <TableRow>
                     <TableHead scope="col">Given name</TableHead>
                     <TableHead scope="col">Family name</TableHead>
+                    {canMoveAdult ? <TableHead scope="col">Actions</TableHead> : null}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -459,6 +1385,17 @@ export function FamilyRecordsPage() {
                     <TableRow key={adult.personId}>
                       <TableCell>{adult.givenName}</TableCell>
                       <TableCell>{adult.familyName}</TableCell>
+                      {canMoveAdult ? (
+                        <TableCell>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => openMoveAdult(adult)}
+                          >
+                            Move adult
+                          </Button>
+                        </TableCell>
+                      ) : null}
                     </TableRow>
                   ))}
                 </TableBody>
@@ -468,6 +1405,14 @@ export function FamilyRecordsPage() {
             {access.permissions["people.restricted.read"] && detailHousehold.minors ? (
               <>
                 <h3>Minors</h3>
+                {canAddMinor ? (
+                  <div>
+                    <Button type="button" onClick={openAddMinor}>
+                      Add minor
+                    </Button>
+                  </div>
+                ) : null}
+
                 {detailHousehold.minors.length === 0 ? (
                   <p>No minor members</p>
                 ) : (
@@ -492,6 +1437,14 @@ export function FamilyRecordsPage() {
                 )}
 
                 <h3>Guardians</h3>
+                {canLinkGuardian ? (
+                  <div>
+                    <Button type="button" onClick={openLinkGuardian}>
+                      Link guardian
+                    </Button>
+                  </div>
+                ) : null}
+
                 {detailHousehold.guardians.length === 0 ? (
                   <p>No guardian links</p>
                 ) : (
@@ -501,6 +1454,7 @@ export function FamilyRecordsPage() {
                         <TableHead scope="col">Guardian</TableHead>
                         <TableHead scope="col">Child</TableHead>
                         <TableHead scope="col">Rights</TableHead>
+                        {canUnlinkGuardian ? <TableHead scope="col">Actions</TableHead> : null}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -530,6 +1484,45 @@ export function FamilyRecordsPage() {
                             <TableCell>{guardianName}</TableCell>
                             <TableCell>{childName}</TableCell>
                             <TableCell>{rightsList || "None"}</TableCell>
+                            {canUnlinkGuardian ? (
+                              <TableCell>
+                                {unlinkingLinkId === link.linkId ? (
+                                  <div>
+                                    <span>Are you sure you want to remove this guardian link?</span>
+                                    <Button
+                                      type="button"
+                                      variant="destructive"
+                                      disabled={submitting}
+                                      onClick={() => handleConfirmUnlink(link.linkId)}
+                                    >
+                                      Confirm unlink
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      disabled={submitting}
+                                      onClick={() => {
+                                        setUnlinkingLinkId(null);
+                                        setUnlinkNotice(null);
+                                      }}
+                                    >
+                                      Cancel
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={() => {
+                                      setUnlinkingLinkId(link.linkId);
+                                      setUnlinkNotice(null);
+                                    }}
+                                  >
+                                    Unlink
+                                  </Button>
+                                )}
+                              </TableCell>
+                            ) : null}
                           </TableRow>
                         );
                       })}
@@ -549,6 +1542,21 @@ export function FamilyRecordsPage() {
       <h1 ref={listHeadingRef} tabIndex={-1}>
         Family Records
       </h1>
+
+      {isReadOnly ? (
+        <Alert live="polite">
+          <span>Read-only until billing is settled</span>{" "}
+          <Link to="/settings/general">General Settings</Link>
+        </Alert>
+      ) : null}
+
+      {canCreate ? (
+        <div>
+          <Button type="button" onClick={openCreate}>
+            Create household
+          </Button>
+        </div>
+      ) : null}
 
       {loading && items === null ? <p>Loading households...</p> : null}
 
