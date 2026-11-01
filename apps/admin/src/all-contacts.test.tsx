@@ -2431,7 +2431,9 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
         /This contact was changed by someone else, or that email or phone is already in use\. Reload to see the latest details; your unsaved changes will be discarded\./,
       ),
     ).toBeTruthy();
-    expect(document.activeElement).toBe(alert);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(alert);
+    });
     expect(document.body.textContent).not.toContain("email_bidx_conflict");
 
     expect(screen.getByRole("button", { name: "Reload" })).toBeTruthy();
