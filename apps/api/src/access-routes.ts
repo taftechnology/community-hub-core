@@ -7,6 +7,7 @@ import {
   listGrantsBody,
   revokeGrantBody,
   unlinkUserBody,
+  CAPABILITIES_ALLOW_LIST,
   type CapabilitiesResponse,
 } from "@community-hub/contracts/access";
 import {
@@ -450,16 +451,12 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
             if (!hasRole) {
               return null;
             }
-            const [canView, canManage, canRestricted] = await Promise.all([
-              holdsPermission(tx, actor.userId, "people.view"),
-              holdsPermission(tx, actor.userId, "people.manage"),
-              holdsPermission(tx, actor.userId, "people.restricted.read"),
-            ]);
-            return {
-              "people.view": canView,
-              "people.manage": canManage,
-              "people.restricted.read": canRestricted,
-            };
+            const permissionEntries = await Promise.all(
+              CAPABILITIES_ALLOW_LIST.permissions.map(
+                async (perm) => [perm, await holdsPermission(tx, actor.userId, perm)] as const,
+              ),
+            );
+            return Object.fromEntries(permissionEntries) as CapabilitiesResponse["permissions"];
           }),
         );
 
@@ -467,25 +464,26 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
           return empty(403);
         }
 
-        const [directory, households] = await Promise.all([
-          checkEntitlement(
-            { checkout: deps.checkout, now: deps.now, guardLog: deps.guardLog },
-            scope,
-            "people.directory",
+        const entitlementEntries = await Promise.all(
+          CAPABILITIES_ALLOW_LIST.entitlements.map(
+            async (key) =>
+              [
+                key,
+                await checkEntitlement(
+                  { checkout: deps.checkout, now: deps.now, guardLog: deps.guardLog },
+                  scope,
+                  key,
+                ),
+              ] as const,
           ),
-          checkEntitlement(
-            { checkout: deps.checkout, now: deps.now, guardLog: deps.guardLog },
-            scope,
-            "people.households",
-          ),
-        ]);
+        );
+        const entitlements = Object.fromEntries(
+          entitlementEntries,
+        ) as CapabilitiesResponse["entitlements"];
 
         const response: CapabilitiesResponse = {
           permissions: perms,
-          entitlements: {
-            "people.directory": directory,
-            "people.households": households,
-          },
+          entitlements,
         };
 
         return Response.json(response);
