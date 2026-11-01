@@ -593,6 +593,26 @@ describe("access routes", () => {
       );
     });
 
+    it("hides the capabilities route on a foreign hostname before any lookup (finding H5a)", async () => {
+      for (const hostname of [AUTH_HOSTNAME, "other.example.test"]) {
+        const res = await route("/v1/access/capabilities").handle(
+          request(
+            "/v1/access/capabilities",
+            hostname,
+            { communitySlug: "parish" },
+            `Bearer ${TOKEN}`,
+          ),
+        );
+        expect(res.status).toBe(404);
+        expect(await res.text()).toBe("");
+      }
+      expect(identity.readSession).not.toHaveBeenCalled();
+      expect(tenancy.findCommunityBySlug).not.toHaveBeenCalled();
+      expect(access.holdsAnyGrant).not.toHaveBeenCalled();
+      expect(access.holdsPermission).not.toHaveBeenCalled();
+      expect(db.withAppTransaction).not.toHaveBeenCalled();
+    });
+
     it("returns 400 when body carries extra keys or non-slug fields (pin 17)", async () => {
       const extra = await route("/v1/access/capabilities").handle(
         request(
