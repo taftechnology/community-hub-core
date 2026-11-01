@@ -1185,6 +1185,279 @@ describe("household read routes (Task 9: list and read)", () => {
       });
     });
 
+    describe("Argument forwarding and response integrity for household routes (finding 3)", () => {
+      it("forwards token to readSession", async () => {
+        identity.readSession.mockClear();
+        await call(
+          "/v1/households/list",
+          { communitySlug: SLUG },
+          "Bearer custom-bearer-token-123",
+        );
+        expect(identity.readSession).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          KEY_ARN,
+          expect.objectContaining({
+            accessToken: "custom-bearer-token-123",
+            now: FIXED_NOW,
+          }),
+        );
+      });
+
+      it("forwards cursor and limit to listHouseholds and passes includeRestricted", async () => {
+        access.holdsPermission.mockImplementation(async (_tx, _u, perm) => perm === "people.view");
+        people.listHouseholds.mockClear();
+        await call("/v1/households/list", {
+          communitySlug: SLUG,
+          cursor: "token-abc-999",
+          limit: 17,
+        });
+        expect(people.listHouseholds).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          KEY_ARN,
+          expect.objectContaining({
+            cursor: "token-abc-999",
+            limit: 17,
+            includeRestricted: false,
+            actorUserId: USER,
+          }),
+        );
+
+        // When cursor and limit omitted
+        people.listHouseholds.mockClear();
+        await call("/v1/households/list", { communitySlug: SLUG });
+        const lastCallArgs = people.listHouseholds.mock.calls[0]?.[3] as Record<string, unknown>;
+        expect(lastCallArgs.cursor).toBeNull();
+        expect(lastCallArgs.limit).toBeUndefined();
+      });
+
+      it("forwards arguments to readHouseholdDetail and returns the detail result in the response body", async () => {
+        const mockDetail = {
+          householdId: HOUSEHOLD_ID,
+          version: 3,
+          label: "Unique Detail Label",
+          adults: [],
+          guardians: [],
+        };
+        people.readHouseholdDetail.mockResolvedValueOnce(mockDetail);
+        access.holdsPermission.mockResolvedValue(true);
+
+        const res = await call("/v1/households/read", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+        });
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual(mockDetail);
+        expect(people.readHouseholdDetail).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          KEY_ARN,
+          expect.objectContaining({
+            householdId: HOUSEHOLD_ID,
+            includeRestricted: true,
+            actorUserId: USER,
+          }),
+        );
+      });
+
+      it("forwards arguments to createHousehold including label", async () => {
+        people.createHousehold.mockClear();
+        const res = await call("/v1/households/create", {
+          communitySlug: SLUG,
+          label: "The Great Family",
+        });
+        expect(res.status).toBe(201);
+        expect(people.createHousehold).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          KEY_ARN,
+          expect.objectContaining({
+            now: FIXED_NOW,
+            label: "The Great Family",
+            actorUserId: USER,
+          }),
+        );
+
+        // Without label
+        people.createHousehold.mockClear();
+        const resNoLabel = await call("/v1/households/create", { communitySlug: SLUG });
+        expect(resNoLabel.status).toBe(201);
+        expect(people.createHousehold).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          KEY_ARN,
+          expect.objectContaining({
+            now: FIXED_NOW,
+            label: null,
+            actorUserId: USER,
+          }),
+        );
+      });
+
+      it("forwards arguments to renameHousehold including householdId, version, and label", async () => {
+        people.renameHousehold.mockClear();
+        const res = await call("/v1/households/rename", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          version: 9,
+          label: "Renamed Title",
+        });
+        expect(res.status).toBe(200);
+        expect(people.renameHousehold).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          KEY_ARN,
+          expect.objectContaining({
+            householdId: HOUSEHOLD_ID,
+            label: "Renamed Title",
+            version: 9,
+            actorUserId: USER,
+          }),
+        );
+      });
+
+      it("forwards arguments to moveAdult including personId, householdId, and version", async () => {
+        people.moveAdult.mockClear();
+        const res = await call("/v1/households/members/move-adult", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          personId: PERSON_ID,
+          version: 4,
+        });
+        expect(res.status).toBe(200);
+        expect(people.moveAdult).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            personId: PERSON_ID,
+            householdId: HOUSEHOLD_ID,
+            version: 4,
+            actorUserId: USER,
+          }),
+        );
+      });
+
+      it("forwards arguments to addMinor with partial rights and without rights", async () => {
+        // With explicit partial rights
+        people.addMinor.mockClear();
+        const resWithRights = await call("/v1/households/members/add-minor", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          givenName: "Tommy",
+          familyName: "Smith",
+          dateOfBirth: "2015-05-10",
+          guardianId: GUARDIAN_ID,
+          rights: { pickup: true, manage: true },
+        });
+        expect(resWithRights.status).toBe(201);
+        expect(people.addMinor).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          KEY_ARN,
+          expect.objectContaining({
+            now: FIXED_NOW,
+            householdId: HOUSEHOLD_ID,
+            givenName: "Tommy",
+            familyName: "Smith",
+            dateOfBirth: "2015-05-10",
+            guardianId: GUARDIAN_ID,
+            rights: { pickup: true, manage: true },
+            actorUserId: USER,
+          }),
+        );
+
+        // Without rights
+        people.addMinor.mockClear();
+        const resNoRights = await call("/v1/households/members/add-minor", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          givenName: "Alice",
+          familyName: "Brown",
+          dateOfBirth: "2016-07-20",
+          guardianId: GUARDIAN_ID,
+        });
+        expect(resNoRights.status).toBe(201);
+        const noRightsCall = people.addMinor.mock.calls[0]?.[3] as Record<string, unknown>;
+        expect(noRightsCall.rights).toBeUndefined();
+        expect(noRightsCall.givenName).toBe("Alice");
+        expect(noRightsCall.familyName).toBe("Brown");
+        expect(noRightsCall.dateOfBirth).toBe("2016-07-20");
+        expect(noRightsCall.householdId).toBe(HOUSEHOLD_ID);
+        expect(noRightsCall.guardianId).toBe(GUARDIAN_ID);
+        expect(noRightsCall.actorUserId).toBe(USER);
+      });
+
+      it("forwards arguments to linkGuardian with default rights when omitted", async () => {
+        people.linkGuardian.mockClear();
+        const res = await call("/v1/households/guardians/link", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          guardianId: GUARDIAN_ID,
+          childId: PERSON_ID,
+        });
+        expect(res.status).toBe(201);
+        expect(people.linkGuardian).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            now: FIXED_NOW,
+            householdId: HOUSEHOLD_ID,
+            guardianPersonId: GUARDIAN_ID,
+            childPersonId: PERSON_ID,
+            consent: true,
+            pickup: false,
+            view: true,
+            manage: false,
+            actorUserId: USER,
+          }),
+        );
+      });
+
+      it("forwards arguments to linkGuardian with custom rights and defaults unspecified to false", async () => {
+        people.linkGuardian.mockClear();
+        const res = await call("/v1/households/guardians/link", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          guardianId: GUARDIAN_ID,
+          childId: PERSON_ID,
+          rights: { view: true },
+        });
+        expect(res.status).toBe(201);
+        expect(people.linkGuardian).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            now: FIXED_NOW,
+            householdId: HOUSEHOLD_ID,
+            guardianPersonId: GUARDIAN_ID,
+            childPersonId: PERSON_ID,
+            consent: false,
+            pickup: false,
+            view: true,
+            manage: false,
+            actorUserId: USER,
+          }),
+        );
+      });
+
+      it("forwards arguments to unlinkGuardian including householdId, linkId, and actorUserId", async () => {
+        people.unlinkGuardian.mockClear();
+        const res = await call("/v1/households/guardians/unlink", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          linkId: LINK_ID,
+        });
+        expect(res.status).toBe(200);
+        expect(people.unlinkGuardian).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            now: FIXED_NOW,
+            householdId: HOUSEHOLD_ID,
+            linkId: LINK_ID,
+            actorUserId: USER,
+          }),
+        );
+      });
+    });
+
     describe("Status mapping for write routes (Pin 15)", () => {
       it("maps rename stale version to 409 and not found to 404", async () => {
         people.renameHousehold.mockRejectedValueOnce(new PeopleError("conflict"));
