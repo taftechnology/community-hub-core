@@ -30,6 +30,7 @@ export default defineModule({
     "households.id": "internal",
     "households.org_id": "internal",
     "households.community_id": "internal",
+    "households.version": "internal",
     "households.label": "restricted",
     "persons.id": "internal",
     "persons.org_id": "internal",

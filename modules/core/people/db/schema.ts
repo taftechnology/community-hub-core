@@ -101,6 +101,7 @@ export function peopleTables(
         id: uuid("id").notNull(),
         orgId: uuid("org_id").notNull(),
         communityId: uuid("community_id").notNull(),
+        version: integer("version").notNull().default(1),
         label: encryptedColumn("label", { label: "people.household_label" }),
       },
       (t) => [

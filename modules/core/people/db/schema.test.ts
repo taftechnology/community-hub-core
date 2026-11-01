@@ -159,4 +159,23 @@ describe("people app tables", () => {
       /ALTER TABLE "app"\."persons" ADD COLUMN "version" integer DEFAULT 1 NOT NULL;/,
     );
   });
+
+  it("defines households.version as integer not null default 1 in schema and 0016 migration", () => {
+    const schemaSource = readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "schema.ts"),
+      "utf8",
+    );
+    expect(schemaSource).toMatch(
+      /const households = app[\s\S]*?version:\s*integer\(["']version["']\)\.notNull\(\)\.default\(1\)/,
+    );
+
+    const files = readdirSync(DRIZZLE).filter(
+      (name) => name.startsWith("0016_") && name.endsWith(".sql"),
+    );
+    expect(files).toHaveLength(1);
+    const sql = readFileSync(path.join(DRIZZLE, files[0] ?? ""), "utf8");
+    expect(sql).toMatch(
+      /ALTER TABLE "app"\."households" ADD COLUMN "version" integer DEFAULT 1 NOT NULL;/,
+    );
+  });
 });
