@@ -2,7 +2,7 @@
 
 Slug: family-records
 Status: approved (2026-11-01, Adnan Bin Hossen)
-Amended after approval (2026-11-01): move-adult also requires `people.restricted.read`, because its guardian-link refusal reveals that an adult has a dependant. Confirmed by the approver, Adnan Bin Hossen.
+Amended after approval (2026-11-01): move-adult also requires `people.restricted.read`, because its guardian-link refusal reveals that an adult has a dependant. Confirmed by the approver, Adnan Bin Hossen. The four owner decisions are confirmed, and partial rights stays open.
 Architecture refs: §9 (family — Family Records, `core/people`; access routes), §12.1, §12.2.1, §12.3, §13; roadmap Phase 2 row "Family Records"
 
 ## Problem
@@ -135,8 +135,9 @@ No events published or consumed, no port changes, no website collection, island 
 - Legal sign-off: none expected. New subprocessor: none.
 - Second independent review: required (children's data, tenancy, database).
 - **Owner decisions already confirmed (2026-11-01):** life events split to the next chunk; add-minor needs `people.manage` and `people.restricted.read`, and unlinking the last guardian is refused with 409; `/v1/access/capabilities` replaces `/v1/people/access` in this chunk; the household list is keyset-paged by `id` alone.
-- **Owner decisions still open, with the default this draft uses:**
-  1. Whether a `people.view`-only caller may see that a household has children or how many. Default: no (rule 4); minors and any trace of them are shown only with `people.restricted.read`.
-  2. Whether link and unlink need `people.restricted.read` as well as `people.manage`. Default: yes, same as add-minor.
-  3. Whether household routes require `people.households` only, or both `people.households` and `people.directory`. Default: `people.households` only, which exists in Growth and not in Starter.
-  4. Whether `safeguarding_officer`, who holds `people.restricted.read` but not `people.view`, may open Family Records. Default: no; the nav needs `people.view`, as All Contacts does.
+  - A `people.view`-only caller sees no minors, no minor count, no minor flag, and no guardian link that references a minor. Labels need `people.restricted.read`.
+  - Link and unlink need `people.manage` and `people.restricted.read`.
+  - Household routes require `people.households` only.
+  - A safeguarding officer, who holds `people.restricted.read` but not `people.view`, cannot open Family Records. The nav needs `people.view`.
+- **Owner decision still open:**
+  - Partial guardian rights. The spec says rights default to view and consent true, others false, and is silent on a partial rights object. Add-minor merges omitted keys onto view and consent true. Link leaves omitted keys false. Both are pinned. The admin screen sends all four booleans. Changing either API default needs an owner decision from Abdus.
