@@ -8,6 +8,8 @@ defineAuditAction("people.household.listed");
 defineAuditPurpose("people.household.listed");
 defineAuditAction("people.household.updated");
 defineAuditPurpose("people.household.updated");
+defineAuditAction("people.person.household_moved");
+defineAuditPurpose("people.person.household_moved");
 defineAuditAction("people.guardian.linked");
 defineAuditPurpose("people.guardian.linked");
 defineAuditAction("people.guardian.unlinked");
@@ -57,6 +59,12 @@ export {
   type PersonListItem,
 } from "../infrastructure/list-persons.js";
 export { hasGuardianView, personIsMinor } from "../infrastructure/access-facts.js";
+export {
+  moveAdult,
+  addMinor,
+  type MoveAdultInput,
+  type AddMinorInput,
+} from "../infrastructure/household-members.js";
 export {
   linkGuardian,
   unlinkGuardian,
