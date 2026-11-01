@@ -770,29 +770,56 @@ describe("household read routes (Task 9: list and read)", () => {
       it("households/create: requires people.manage; refuses view or restricted.read only with 403", async () => {
         // Caller with view only
         access.holdsPermission.mockImplementation(async (_tx, _u, perm) => perm === "people.view");
+        db.appendAuditEvent.mockClear();
         const resView = await call("/v1/households/create", { communitySlug: SLUG });
         expect(resView.status).toBe(403);
         expect(await resView.text()).toBe("");
+        expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
+        expect(db.appendAuditEvent).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            actorKind: "user",
+            actorId: USER,
+            action: "people.permission.denied",
+            purpose: "people.manage",
+            targetIds: [ORG, COMMUNITY],
+          }),
+        );
 
         // Caller with restricted.read only
         access.holdsPermission.mockImplementation(
           async (_tx, _u, perm) => perm === "people.restricted.read",
         );
+        db.appendAuditEvent.mockClear();
         const resRestricted = await call("/v1/households/create", { communitySlug: SLUG });
         expect(resRestricted.status).toBe(403);
         expect(await resRestricted.text()).toBe("");
+        expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
+        expect(db.appendAuditEvent).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            actorKind: "user",
+            actorId: USER,
+            action: "people.permission.denied",
+            purpose: "people.manage",
+            targetIds: [ORG, COMMUNITY],
+          }),
+        );
 
         // Caller with manage
         access.holdsPermission.mockImplementation(
           async (_tx, _u, perm) => perm === "people.manage",
         );
+        db.appendAuditEvent.mockClear();
         const resManage = await call("/v1/households/create", { communitySlug: SLUG });
         expect(resManage.status).toBe(201);
+        expect(db.appendAuditEvent).not.toHaveBeenCalled();
       });
 
       it("households/rename: requires people.manage; refuses view or restricted.read only with 403", async () => {
         // Caller with view only
         access.holdsPermission.mockImplementation(async (_tx, _u, perm) => perm === "people.view");
+        db.appendAuditEvent.mockClear();
         const resView = await call("/v1/households/rename", {
           communitySlug: SLUG,
           householdId: HOUSEHOLD_ID,
@@ -800,11 +827,49 @@ describe("household read routes (Task 9: list and read)", () => {
           label: "New",
         });
         expect(resView.status).toBe(403);
+        expect(await resView.text()).toBe("");
+        expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
+        expect(db.appendAuditEvent).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            actorKind: "user",
+            actorId: USER,
+            action: "people.permission.denied",
+            purpose: "people.manage",
+            targetIds: [ORG, COMMUNITY],
+          }),
+        );
+
+        // Caller with restricted only
+        access.holdsPermission.mockImplementation(
+          async (_tx, _u, perm) => perm === "people.restricted.read",
+        );
+        db.appendAuditEvent.mockClear();
+        const resRestricted = await call("/v1/households/rename", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          version: 1,
+          label: "New",
+        });
+        expect(resRestricted.status).toBe(403);
+        expect(await resRestricted.text()).toBe("");
+        expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
+        expect(db.appendAuditEvent).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            actorKind: "user",
+            actorId: USER,
+            action: "people.permission.denied",
+            purpose: "people.manage",
+            targetIds: [ORG, COMMUNITY],
+          }),
+        );
 
         // Caller with manage
         access.holdsPermission.mockImplementation(
           async (_tx, _u, perm) => perm === "people.manage",
         );
+        db.appendAuditEvent.mockClear();
         const resManage = await call("/v1/households/rename", {
           communitySlug: SLUG,
           householdId: HOUSEHOLD_ID,
@@ -812,6 +877,7 @@ describe("household read routes (Task 9: list and read)", () => {
           label: "New",
         });
         expect(resManage.status).toBe(200);
+        expect(db.appendAuditEvent).not.toHaveBeenCalled();
       });
 
       it("move-adult: requires BOTH people.manage AND people.restricted.read (Pin 11)", async () => {
@@ -819,6 +885,7 @@ describe("household read routes (Task 9: list and read)", () => {
         access.holdsPermission.mockImplementation(
           async (_tx, _u, perm) => perm === "people.manage",
         );
+        db.appendAuditEvent.mockClear();
         const resManageOnly = await call("/v1/households/members/move-adult", {
           communitySlug: SLUG,
           householdId: HOUSEHOLD_ID,
@@ -827,11 +894,23 @@ describe("household read routes (Task 9: list and read)", () => {
         });
         expect(resManageOnly.status).toBe(403);
         expect(await resManageOnly.text()).toBe("");
+        expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
+        expect(db.appendAuditEvent).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            actorKind: "user",
+            actorId: USER,
+            action: "people.permission.denied",
+            purpose: "people.restricted.read",
+            targetIds: [ORG, COMMUNITY],
+          }),
+        );
 
         // Caller with restricted.read only -> 403
         access.holdsPermission.mockImplementation(
           async (_tx, _u, perm) => perm === "people.restricted.read",
         );
+        db.appendAuditEvent.mockClear();
         const resRestrictedOnly = await call("/v1/households/members/move-adult", {
           communitySlug: SLUG,
           householdId: HOUSEHOLD_ID,
@@ -839,11 +918,23 @@ describe("household read routes (Task 9: list and read)", () => {
           version: 1,
         });
         expect(resRestrictedOnly.status).toBe(403);
+        expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
+        expect(db.appendAuditEvent).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            actorKind: "user",
+            actorId: USER,
+            action: "people.permission.denied",
+            purpose: "people.manage",
+            targetIds: [ORG, COMMUNITY],
+          }),
+        );
 
         // Caller with BOTH -> 200
         access.holdsPermission.mockImplementation(
           async (_tx, _u, perm) => perm === "people.manage" || perm === "people.restricted.read",
         );
+        db.appendAuditEvent.mockClear();
         const resBoth = await call("/v1/households/members/move-adult", {
           communitySlug: SLUG,
           householdId: HOUSEHOLD_ID,
@@ -851,6 +942,7 @@ describe("household read routes (Task 9: list and read)", () => {
           version: 1,
         });
         expect(resBoth.status).toBe(200);
+        expect(db.appendAuditEvent).not.toHaveBeenCalled();
       });
 
       it("add-minor: requires BOTH people.manage AND people.restricted.read (Pin 11)", async () => {
@@ -858,6 +950,7 @@ describe("household read routes (Task 9: list and read)", () => {
         access.holdsPermission.mockImplementation(
           async (_tx, _u, perm) => perm === "people.manage",
         );
+        db.appendAuditEvent.mockClear();
         const resManageOnly = await call("/v1/households/members/add-minor", {
           communitySlug: SLUG,
           householdId: HOUSEHOLD_ID,
@@ -867,11 +960,24 @@ describe("household read routes (Task 9: list and read)", () => {
           guardianId: GUARDIAN_ID,
         });
         expect(resManageOnly.status).toBe(403);
+        expect(await resManageOnly.text()).toBe("");
+        expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
+        expect(db.appendAuditEvent).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            actorKind: "user",
+            actorId: USER,
+            action: "people.permission.denied",
+            purpose: "people.restricted.read",
+            targetIds: [ORG, COMMUNITY],
+          }),
+        );
 
         // Restricted.read only -> 403
         access.holdsPermission.mockImplementation(
           async (_tx, _u, perm) => perm === "people.restricted.read",
         );
+        db.appendAuditEvent.mockClear();
         const resRestrictedOnly = await call("/v1/households/members/add-minor", {
           communitySlug: SLUG,
           householdId: HOUSEHOLD_ID,
@@ -881,11 +987,23 @@ describe("household read routes (Task 9: list and read)", () => {
           guardianId: GUARDIAN_ID,
         });
         expect(resRestrictedOnly.status).toBe(403);
+        expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
+        expect(db.appendAuditEvent).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            actorKind: "user",
+            actorId: USER,
+            action: "people.permission.denied",
+            purpose: "people.manage",
+            targetIds: [ORG, COMMUNITY],
+          }),
+        );
 
         // Both -> 201
         access.holdsPermission.mockImplementation(
           async (_tx, _u, perm) => perm === "people.manage" || perm === "people.restricted.read",
         );
+        db.appendAuditEvent.mockClear();
         const resBoth = await call("/v1/households/members/add-minor", {
           communitySlug: SLUG,
           householdId: HOUSEHOLD_ID,
@@ -895,6 +1013,7 @@ describe("household read routes (Task 9: list and read)", () => {
           guardianId: GUARDIAN_ID,
         });
         expect(resBoth.status).toBe(201);
+        expect(db.appendAuditEvent).not.toHaveBeenCalled();
       });
 
       it("guardians/link: requires BOTH people.manage AND people.restricted.read (Pin 11)", async () => {
@@ -913,6 +1032,7 @@ describe("household read routes (Task 9: list and read)", () => {
         expect(resManageOnly.status).toBe(403);
         expect(await resManageOnly.text()).toBe("");
         expect(people.linkGuardian).not.toHaveBeenCalled();
+        expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
         expect(db.appendAuditEvent).toHaveBeenCalledWith(
           expect.anything(),
           expect.objectContaining({
@@ -939,6 +1059,7 @@ describe("household read routes (Task 9: list and read)", () => {
         expect(resRestrictedOnly.status).toBe(403);
         expect(await resRestrictedOnly.text()).toBe("");
         expect(people.linkGuardian).not.toHaveBeenCalled();
+        expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
         expect(db.appendAuditEvent).toHaveBeenCalledWith(
           expect.anything(),
           expect.objectContaining({
@@ -978,6 +1099,7 @@ describe("household read routes (Task 9: list and read)", () => {
         });
         expect(resBoth.status).toBe(201);
         expect(people.linkGuardian).toHaveBeenCalled();
+        expect(db.appendAuditEvent).not.toHaveBeenCalled();
       });
 
       it("guardians/unlink: requires BOTH people.manage AND people.restricted.read (Pin 11)", async () => {
@@ -995,6 +1117,7 @@ describe("household read routes (Task 9: list and read)", () => {
         expect(resManageOnly.status).toBe(403);
         expect(await resManageOnly.text()).toBe("");
         expect(people.unlinkGuardian).not.toHaveBeenCalled();
+        expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
         expect(db.appendAuditEvent).toHaveBeenCalledWith(
           expect.anything(),
           expect.objectContaining({
@@ -1020,6 +1143,7 @@ describe("household read routes (Task 9: list and read)", () => {
         expect(resRestrictedOnly.status).toBe(403);
         expect(await resRestrictedOnly.text()).toBe("");
         expect(people.unlinkGuardian).not.toHaveBeenCalled();
+        expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
         expect(db.appendAuditEvent).toHaveBeenCalledWith(
           expect.anything(),
           expect.objectContaining({
@@ -1057,6 +1181,7 @@ describe("household read routes (Task 9: list and read)", () => {
         });
         expect(resBoth.status).toBe(200);
         expect(people.unlinkGuardian).toHaveBeenCalled();
+        expect(db.appendAuditEvent).not.toHaveBeenCalled();
       });
     });
 
