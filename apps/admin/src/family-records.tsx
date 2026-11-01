@@ -680,6 +680,7 @@ export function FamilyRecordsPage() {
   );
 
   useEffect(() => {
+    detailGeneration.current += 1;
     setItems(null);
     setView("list");
     setSelectedHouseholdId(null);
@@ -1560,9 +1561,7 @@ export function FamilyRecordsPage() {
                 ))}
               </TableBody>
             </Table>
-            {adultSearchNextCursor !== null ? (
-              <p>More results exist. Refine your search.</p>
-            ) : null}
+            {adultSearchNextCursor !== null ? <p>More results exist. Refine your search.</p> : null}
           </>
         ) : null}
       </>

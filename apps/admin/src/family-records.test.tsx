@@ -1061,6 +1061,141 @@ describe("Family Records detail view", () => {
     expect(screen.queryByRole("heading", { name: "Guardians" })).toBeNull();
     expect(screen.queryByText("Leo")).toBeNull();
   });
+
+  it("discards an in-flight detail read after community switch so the prior household never appears", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const householdA = {
+      householdId: "00000000-0000-4000-8000-0000000000aa",
+      version: 1,
+      label: "Stale Household",
+      adults: [
+        {
+          personId: "00000000-0000-4000-8000-0000000000a1",
+          givenName: "Stale",
+          familyName: "Adult",
+          version: 1,
+        },
+      ],
+      guardians: [],
+    };
+    const householdB = {
+      householdId: "00000000-0000-4000-8000-0000000000bb",
+      version: 1,
+      label: "Fresh Household",
+      adults: [
+        {
+          personId: "00000000-0000-4000-8000-0000000000b1",
+          givenName: "Fresh",
+          familyName: "Adult",
+          version: 1,
+        },
+      ],
+      guardians: [],
+    };
+    let resolveStaleRead: ((value: Response) => void) | undefined;
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
+      const url = String(info);
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({
+          householdsEnabled: true,
+          canView: true,
+          canManage: true,
+          canReadMinors: true,
+        });
+      }
+      if (path === "/v1/billing/status") {
+        return new Response(
+          JSON.stringify({
+            state: "ok",
+            trial_end: null,
+            grace_until: null,
+            canView: true,
+            canManage: true,
+          }),
+          { status: 200 },
+        );
+      }
+      if (path === "/v1/households/list") {
+        if (body.communitySlug === "community-b") {
+          return new Response(
+            JSON.stringify({
+              items: [
+                {
+                  householdId: householdB.householdId,
+                  version: 1,
+                  label: householdB.label,
+                  adultCount: 1,
+                },
+              ],
+              nextCursor: null,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                householdId: householdA.householdId,
+                version: 1,
+                label: householdA.label,
+                adultCount: 1,
+              },
+            ],
+            nextCursor: null,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (path === "/v1/households/read") {
+        if (body.householdId === householdA.householdId) {
+          return new Promise<Response>((resolve) => {
+            resolveStaleRead = resolve;
+          });
+        }
+        return new Response(JSON.stringify(householdB), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    await showFamilyRecords();
+    const communityInput = screen.getByRole("textbox", { name: "Community" });
+    const setButton = screen.getByRole("button", { name: "Set" });
+    fireEvent.change(communityInput, { target: { value: "community-a" } });
+    fireEvent.click(setButton);
+
+    fireEvent.click(await screen.findByRole("button", { name: "View Stale Household" }));
+    expect(await screen.findByText("Loading household details...")).toBeTruthy();
+
+    fireEvent.change(communityInput, { target: { value: "community-b" } });
+    fireEvent.click(setButton);
+    expect(await screen.findByRole("button", { name: "View Fresh Household" })).toBeTruthy();
+
+    resolveStaleRead?.(
+      new Response(JSON.stringify(householdA), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    await act(async () => {});
+
+    expect(screen.queryByText("Stale Household")).toBeNull();
+    expect(screen.queryByText("Stale")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Household Details" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "View Fresh Household" }));
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
+    expect(await screen.findByText("Fresh Household")).toBeTruthy();
+    expect(screen.queryByText("Stale Household")).toBeNull();
+    expect(screen.getByText("Fresh")).toBeTruthy();
+  });
 });
 
 describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () => {
@@ -1874,7 +2009,9 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
     const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
     fireEvent.click(viewBtn);
 
-    expect(await screen.findByRole("button", { name: "Unlink Arthur Clarke from Leo Clarke" })).toBeTruthy();
+    expect(
+      await screen.findByRole("button", { name: "Unlink Arthur Clarke from Leo Clarke" }),
+    ).toBeTruthy();
   });
 
   it("independently hides 'Add minor' button in MinorsSection when caller lacks people.restricted.read", () => {
@@ -1939,7 +2076,9 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
         isReadOnly={false}
       />,
     );
-    expect(screen.queryByRole("button", { name: "Unlink Arthur Clarke from Leo Clarke" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Unlink Arthur Clarke from Leo Clarke" }),
+    ).toBeNull();
   });
 
   it("independently gates Add minor, Link guardian and Unlink on people.manage in MinorsSection (finding H5b)", () => {
@@ -2061,7 +2200,9 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
     expect(screen.queryByRole("button", { name: "Move Arthur Clarke" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Add minor" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Link guardian" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Unlink Arthur Clarke from Leo Clarke" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Unlink Arthur Clarke from Leo Clarke" }),
+    ).toBeNull();
   });
 });
 
@@ -2561,7 +2702,9 @@ describe("Family Records Actions - Form submissions & success flows", () => {
     const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
     fireEvent.click(viewBtn);
 
-    const unlinkBtn = await screen.findByRole("button", { name: "Unlink Arthur Clarke from Leo Clarke" });
+    const unlinkBtn = await screen.findByRole("button", {
+      name: "Unlink Arthur Clarke from Leo Clarke",
+    });
     fireEvent.click(unlinkBtn);
 
     // Confirm step appears
@@ -3023,7 +3166,9 @@ describe("Family Records Actions - Error status handling & copy", () => {
     const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
     fireEvent.click(viewBtn);
 
-    const unlinkBtn = await screen.findByRole("button", { name: "Unlink Arthur Clarke from Leo Clarke" });
+    const unlinkBtn = await screen.findByRole("button", {
+      name: "Unlink Arthur Clarke from Leo Clarke",
+    });
     fireEvent.click(unlinkBtn);
 
     const confirmBtn = await screen.findByRole("button", { name: "Confirm unlink" });
@@ -3307,7 +3452,9 @@ describe("Family Records Actions - Error status handling & copy", () => {
     const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
     fireEvent.click(viewBtn);
 
-    const unlinkBtn = await screen.findByRole("button", { name: "Unlink Arthur Clarke from Leo Clarke" });
+    const unlinkBtn = await screen.findByRole("button", {
+      name: "Unlink Arthur Clarke from Leo Clarke",
+    });
     fireEvent.click(unlinkBtn);
 
     const confirmBtn = await screen.findByRole("button", { name: "Confirm unlink" });
@@ -3708,7 +3855,9 @@ describe("Family Records Actions - Privacy & Accessibility (WCAG 2.2 AA)", () =>
     const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
     fireEvent.click(viewBtn);
 
-    const unlinkBtn = await screen.findByRole("button", { name: "Unlink Arthur Clarke from Leo Clarke" });
+    const unlinkBtn = await screen.findByRole("button", {
+      name: "Unlink Arthur Clarke from Leo Clarke",
+    });
     fireEvent.click(unlinkBtn);
 
     expect(
