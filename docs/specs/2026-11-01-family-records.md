@@ -55,27 +55,27 @@ Out (explicitly):
 
 Routes record `people.permission.denied` audit with 403, as `people-routes.ts` does. Today only owner, admin and community_admin hold `people.view` and `people.manage`; `safeguarding_officer` holds only `people.restricted.read`; `staff` holds none (`packages/policy/src/decide.ts:19-31`).
 
-| Route                       | Needs                                                                 | Notes                                                           |
-| --------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `households/list`           | `people.view`                                                         | Label and minors shown only with `people.restricted.read` also  |
-| `households/read`           | `people.view` or `people.restricted.read`                             | Same field rules as above                                       |
-| `households/create`         | `people.manage`                                                       |                                                                 |
-| `households/rename`         | `people.manage`                                                       |                                                                 |
-| `members/move-adult`        | `people.manage`                                                       |                                                                 |
-| `members/add-minor`         | `people.manage` **and** `people.restricted.read`                      | Owner-confirmed                                                 |
-| `guardians/link`, `unlink`  | `people.manage` **and** `people.restricted.read`                      | They change a child's access; default, see Owner decisions      |
-| `access/capabilities`       | a session with any role grant in the community                        |                                                                 |
+| Route                      | Needs                                            | Notes                                                          |
+| -------------------------- | ------------------------------------------------ | -------------------------------------------------------------- |
+| `households/list`          | `people.view`                                    | Label and minors shown only with `people.restricted.read` also |
+| `households/read`          | `people.view` or `people.restricted.read`        | Same field rules as above                                      |
+| `households/create`        | `people.manage`                                  |                                                                |
+| `households/rename`        | `people.manage`                                  |                                                                |
+| `members/move-adult`       | `people.manage`                                  |                                                                |
+| `members/add-minor`        | `people.manage` **and** `people.restricted.read` | Owner-confirmed                                                |
+| `guardians/link`, `unlink` | `people.manage` **and** `people.restricted.read` | They change a child's access; default, see Owner decisions     |
+| `access/capabilities`      | a session with any role grant in the community   |                                                                |
 
 Every household route also requires the `people.households` entitlement (see Owner decisions).
 
 ## Data
 
-| Table.column                                            | Change                                 | Class (§12.1)                                                        |
-| ------------------------------------------------------- | -------------------------------------- | -------------------------------------------------------------------- |
-| `app.households.version` (integer, not null, default 1) | new, optimistic concurrency            | `internal`; not personal data                                        |
-| `app.households.label`                                  | existing, now updatable                | `restricted`, household-key encrypted; no blind index, no SQL filter |
-| `app.persons.household_id`                              | existing, now updatable (adults only)  | `internal` identifier, clear; join key                               |
-| `app.guardian_links`                                    | rows inserted and deleted; no column change | existing classes                                                |
+| Table.column                                            | Change                                      | Class (§12.1)                                                        |
+| ------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------------------------- |
+| `app.households.version` (integer, not null, default 1) | new, optimistic concurrency                 | `internal`; not personal data                                        |
+| `app.households.label`                                  | existing, now updatable                     | `restricted`, household-key encrypted; no blind index, no SQL filter |
+| `app.persons.household_id`                              | existing, now updatable (adults only)       | `internal` identifier, clear; join key                               |
+| `app.guardian_links`                                    | rows inserted and deleted; no column change | existing classes                                                     |
 
 Migration `0016`, expand-only, verified by the owner and the review against 0005, 0015 and 0000:
 
