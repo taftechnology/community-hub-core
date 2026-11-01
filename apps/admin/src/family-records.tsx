@@ -16,7 +16,7 @@ import { post } from "./api";
 import { useBillingStatus } from "./billing-status";
 import { useCommunity } from "./community";
 import { readAccessToken } from "./directory";
-import { usePeopleAccess } from "./people-access";
+import { type PeopleAccess, usePeopleAccess } from "./people-access";
 
 type HouseholdItem = {
   householdId: string;
@@ -59,7 +59,7 @@ type GuardianLink = {
   rights: GuardianRights;
 };
 
-type HouseholdDetail = {
+export type HouseholdDetail = {
   householdId: string;
   version: number;
   label: string | null;
@@ -205,6 +205,162 @@ const initialRights: GuardianRights = {
   view: true,
   manage: false,
 };
+
+export type MinorsSectionProps = {
+  detailHousehold: HouseholdDetail;
+  access: PeopleAccess;
+  isReadOnly: boolean;
+  unlinkingLinkId?: string | null;
+  submitting?: boolean;
+  openAddMinor?: () => void;
+  openLinkGuardian?: () => void;
+  handleConfirmUnlink?: (linkId: string) => void;
+  setUnlinkingLinkId?: (id: string | null) => void;
+  setUnlinkNotice?: (notice: string | null) => void;
+};
+
+export function MinorsSection({
+  detailHousehold,
+  access,
+  isReadOnly,
+  unlinkingLinkId = null,
+  submitting = false,
+  openAddMinor,
+  openLinkGuardian,
+  handleConfirmUnlink,
+  setUnlinkingLinkId,
+  setUnlinkNotice,
+}: MinorsSectionProps) {
+  const canManage = Boolean(access.permissions["people.manage"]);
+  const canRestricted = Boolean(access.permissions["people.restricted.read"]);
+  const canAddMinor = canManage && canRestricted && !isReadOnly;
+  const canLinkGuardian = canManage && canRestricted && !isReadOnly;
+  const canUnlinkGuardian = canManage && canRestricted && !isReadOnly;
+
+  return (
+    <>
+      <h3>Minors</h3>
+      {canAddMinor ? (
+        <div>
+          <Button type="button" onClick={openAddMinor}>
+            Add minor
+          </Button>
+        </div>
+      ) : null}
+
+      {detailHousehold.minors && detailHousehold.minors.length === 0 ? (
+        <p>No minor members</p>
+      ) : (
+        <Table aria-label="Minor members">
+          <TableHeader>
+            <TableRow>
+              <TableHead scope="col">Given name</TableHead>
+              <TableHead scope="col">Family name</TableHead>
+              <TableHead scope="col">Date of birth</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {detailHousehold.minors?.map((minor) => (
+              <TableRow key={minor.personId}>
+                <TableCell>{minor.givenName}</TableCell>
+                <TableCell>{minor.familyName}</TableCell>
+                <TableCell>{minor.dateOfBirth ?? "None"}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+
+      <h3>Guardians</h3>
+      {canLinkGuardian ? (
+        <div>
+          <Button type="button" onClick={openLinkGuardian}>
+            Link guardian
+          </Button>
+        </div>
+      ) : null}
+
+      {detailHousehold.guardians.length === 0 ? (
+        <p>No guardian links</p>
+      ) : (
+        <Table aria-label="Guardian links">
+          <TableHeader>
+            <TableRow>
+              <TableHead scope="col">Guardian</TableHead>
+              <TableHead scope="col">Child</TableHead>
+              <TableHead scope="col">Rights</TableHead>
+              {canUnlinkGuardian ? <TableHead scope="col">Actions</TableHead> : null}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {detailHousehold.guardians.map((link) => {
+              const guardian = detailHousehold.adults.find((a) => a.personId === link.guardianId);
+              const minor = detailHousehold.minors?.find((m) => m.personId === link.childId);
+              const guardianName = guardian
+                ? `${guardian.givenName} ${guardian.familyName}`
+                : link.guardianId;
+              const childName = minor ? `${minor.givenName} ${minor.familyName}` : link.childId;
+              const rightsList = [
+                link.rights.consent && "Consent",
+                link.rights.pickup && "Pickup",
+                link.rights.view && "View",
+                link.rights.manage && "Manage",
+              ]
+                .filter(Boolean)
+                .join(", ");
+              return (
+                <TableRow key={link.linkId}>
+                  <TableCell>{guardianName}</TableCell>
+                  <TableCell>{childName}</TableCell>
+                  <TableCell>{rightsList || "None"}</TableCell>
+                  {canUnlinkGuardian ? (
+                    <TableCell>
+                      {unlinkingLinkId === link.linkId ? (
+                        <div>
+                          <span>Are you sure you want to remove this guardian link?</span>
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            disabled={submitting}
+                            onClick={() => handleConfirmUnlink?.(link.linkId)}
+                          >
+                            Confirm unlink
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={submitting}
+                            onClick={() => {
+                              setUnlinkingLinkId?.(null);
+                              setUnlinkNotice?.(null);
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => {
+                            setUnlinkingLinkId?.(link.linkId);
+                            setUnlinkNotice?.(null);
+                          }}
+                        >
+                          Unlink
+                        </Button>
+                      )}
+                    </TableCell>
+                  ) : null}
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      )}
+    </>
+  );
+}
 
 export function FamilyRecordsPage() {
   const token = readAccessToken();
@@ -553,6 +709,7 @@ export function FamilyRecordsPage() {
   function handleReloadFromConflict() {
     setRenameConflict(false);
     setRenameNotice(null);
+    setRenameLabel("");
     reloadDetail();
     setView("detail");
   }
@@ -771,7 +928,7 @@ export function FamilyRecordsPage() {
 
   async function handleAddMinorSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (submitting || !slug || !detailHousehold) {
+    if (submitting || !slug || !detailHousehold || !canAddMinor) {
       return;
     }
     if (!minorRights.consent && !minorRights.pickup && !minorRights.view && !minorRights.manage) {
@@ -843,7 +1000,7 @@ export function FamilyRecordsPage() {
 
   async function handleLinkGuardianSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (submitting || !slug || !detailHousehold) {
+    if (submitting || !slug || !detailHousehold || !canLinkGuardian) {
       return;
     }
     if (!linkRights.consent && !linkRights.pickup && !linkRights.view && !linkRights.manage) {
@@ -910,7 +1067,7 @@ export function FamilyRecordsPage() {
   }
 
   async function handleConfirmUnlink(linkId: string) {
-    if (submitting || !slug || !detailHousehold) {
+    if (submitting || !slug || !detailHousehold || !canUnlinkGuardian) {
       return;
     }
     setSubmitting(true);
@@ -1458,133 +1615,18 @@ export function FamilyRecordsPage() {
             )}
 
             {access.permissions["people.restricted.read"] && detailHousehold.minors ? (
-              <>
-                <h3>Minors</h3>
-                {canAddMinor ? (
-                  <div>
-                    <Button type="button" onClick={openAddMinor}>
-                      Add minor
-                    </Button>
-                  </div>
-                ) : null}
-
-                {detailHousehold.minors.length === 0 ? (
-                  <p>No minor members</p>
-                ) : (
-                  <Table aria-label="Minor members">
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead scope="col">Given name</TableHead>
-                        <TableHead scope="col">Family name</TableHead>
-                        <TableHead scope="col">Date of birth</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {detailHousehold.minors.map((minor) => (
-                        <TableRow key={minor.personId}>
-                          <TableCell>{minor.givenName}</TableCell>
-                          <TableCell>{minor.familyName}</TableCell>
-                          <TableCell>{minor.dateOfBirth ?? "None"}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                )}
-
-                <h3>Guardians</h3>
-                {canLinkGuardian ? (
-                  <div>
-                    <Button type="button" onClick={openLinkGuardian}>
-                      Link guardian
-                    </Button>
-                  </div>
-                ) : null}
-
-                {detailHousehold.guardians.length === 0 ? (
-                  <p>No guardian links</p>
-                ) : (
-                  <Table aria-label="Guardian links">
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead scope="col">Guardian</TableHead>
-                        <TableHead scope="col">Child</TableHead>
-                        <TableHead scope="col">Rights</TableHead>
-                        {canUnlinkGuardian ? <TableHead scope="col">Actions</TableHead> : null}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {detailHousehold.guardians.map((link) => {
-                        const guardian = detailHousehold.adults.find(
-                          (a) => a.personId === link.guardianId,
-                        );
-                        const minor = detailHousehold.minors?.find(
-                          (m) => m.personId === link.childId,
-                        );
-                        const guardianName = guardian
-                          ? `${guardian.givenName} ${guardian.familyName}`
-                          : link.guardianId;
-                        const childName = minor
-                          ? `${minor.givenName} ${minor.familyName}`
-                          : link.childId;
-                        const rightsList = [
-                          link.rights.consent && "Consent",
-                          link.rights.pickup && "Pickup",
-                          link.rights.view && "View",
-                          link.rights.manage && "Manage",
-                        ]
-                          .filter(Boolean)
-                          .join(", ");
-                        return (
-                          <TableRow key={link.linkId}>
-                            <TableCell>{guardianName}</TableCell>
-                            <TableCell>{childName}</TableCell>
-                            <TableCell>{rightsList || "None"}</TableCell>
-                            {canUnlinkGuardian ? (
-                              <TableCell>
-                                {unlinkingLinkId === link.linkId ? (
-                                  <div>
-                                    <span>Are you sure you want to remove this guardian link?</span>
-                                    <Button
-                                      type="button"
-                                      variant="destructive"
-                                      disabled={submitting}
-                                      onClick={() => handleConfirmUnlink(link.linkId)}
-                                    >
-                                      Confirm unlink
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      variant="outline"
-                                      disabled={submitting}
-                                      onClick={() => {
-                                        setUnlinkingLinkId(null);
-                                        setUnlinkNotice(null);
-                                      }}
-                                    >
-                                      Cancel
-                                    </Button>
-                                  </div>
-                                ) : (
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    onClick={() => {
-                                      setUnlinkingLinkId(link.linkId);
-                                      setUnlinkNotice(null);
-                                    }}
-                                  >
-                                    Unlink
-                                  </Button>
-                                )}
-                              </TableCell>
-                            ) : null}
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                )}
-              </>
+              <MinorsSection
+                detailHousehold={detailHousehold}
+                access={access}
+                isReadOnly={isReadOnly}
+                unlinkingLinkId={unlinkingLinkId}
+                submitting={submitting}
+                openAddMinor={openAddMinor}
+                openLinkGuardian={openLinkGuardian}
+                handleConfirmUnlink={handleConfirmUnlink}
+                setUnlinkingLinkId={setUnlinkingLinkId}
+                setUnlinkNotice={setUnlinkNotice}
+              />
             ) : null}
           </div>
         ) : null}
