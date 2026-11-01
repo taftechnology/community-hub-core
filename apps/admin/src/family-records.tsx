@@ -69,7 +69,21 @@ export type HouseholdDetail = {
 };
 
 type ViewMode =
-  "list" | "detail" | "create" | "rename" | "move-adult" | "add-minor" | "link-guardian";
+  | "list"
+  | "detail"
+  | "create"
+  | "rename"
+  | "move-adult"
+  | "add-adult"
+  | "add-minor"
+  | "link-guardian";
+
+type AdultSearchItem = {
+  personId: string;
+  givenName: string;
+  familyName: string;
+  version: number;
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -85,6 +99,44 @@ function parseHouseholdItem(item: unknown): HouseholdItem | null {
     label: typeof item.label === "string" ? item.label : null,
     adultCount: typeof item.adultCount === "number" ? item.adultCount : 0,
   };
+}
+
+function parseAdultSearchItem(item: unknown): AdultSearchItem | null {
+  if (!isRecord(item) || typeof item.version !== "number") {
+    return null;
+  }
+  const personId =
+    typeof item.personId === "string"
+      ? item.personId
+      : typeof item.id === "string"
+        ? item.id
+        : null;
+  if (personId === null) {
+    return null;
+  }
+  return {
+    personId,
+    givenName: typeof item.givenName === "string" ? item.givenName : "",
+    familyName: typeof item.familyName === "string" ? item.familyName : "",
+    version: item.version,
+  };
+}
+
+function parseAdultSearchResponse(
+  value: unknown,
+): { items: AdultSearchItem[]; nextCursor: string | null } | null {
+  if (!isRecord(value) || !Array.isArray(value.items)) {
+    return null;
+  }
+  const items: AdultSearchItem[] = [];
+  for (const item of value.items) {
+    const parsed = parseAdultSearchItem(item);
+    if (parsed !== null) {
+      items.push(parsed);
+    }
+  }
+  const nextCursor = typeof value.nextCursor === "string" ? value.nextCursor : null;
+  return { items, nextCursor };
 }
 
 function parseListResponse(value: unknown): ListResponse | null {
@@ -342,6 +394,7 @@ export function MinorsSection({
                         <Button
                           type="button"
                           variant="outline"
+                          aria-label={`Unlink ${guardianName} from ${childName}`}
                           onClick={() => {
                             setUnlinkingLinkId?.(link.linkId);
                             setUnlinkNotice?.(null);
@@ -401,6 +454,15 @@ export function FamilyRecordsPage() {
   const [moveConflict, setMoveConflict] = useState(false);
   const [moveNotice, setMoveNotice] = useState<string | null>(null);
 
+  // Add adult
+  const [adultSearchDraft, setAdultSearchDraft] = useState("");
+  const [adultSearchResults, setAdultSearchResults] = useState<AdultSearchItem[] | null>(null);
+  const [adultSearchNextCursor, setAdultSearchNextCursor] = useState<string | null>(null);
+  const [adultSearchLoading, setAdultSearchLoading] = useState(false);
+  const [adultSearchError, setAdultSearchError] = useState(false);
+  const [adultSearchNotice, setAdultSearchNotice] = useState<string | null>(null);
+  const adultSearchGeneration = useRef(0);
+
   // Add minor
   const [minorGivenName, setMinorGivenName] = useState("");
   const [minorFamilyName, setMinorFamilyName] = useState("");
@@ -425,6 +487,7 @@ export function FamilyRecordsPage() {
   const createHeadingRef = useRef<HTMLHeadingElement>(null);
   const renameHeadingRef = useRef<HTMLHeadingElement>(null);
   const moveAdultHeadingRef = useRef<HTMLHeadingElement>(null);
+  const addAdultHeadingRef = useRef<HTMLHeadingElement>(null);
   const addMinorHeadingRef = useRef<HTMLHeadingElement>(null);
   const linkGuardianHeadingRef = useRef<HTMLHeadingElement>(null);
 
@@ -432,6 +495,7 @@ export function FamilyRecordsPage() {
   const createAlertRef = useRef<HTMLDivElement>(null);
   const renameAlertRef = useRef<HTMLDivElement>(null);
   const moveAlertRef = useRef<HTMLDivElement>(null);
+  const addAdultAlertRef = useRef<HTMLDivElement>(null);
   const addMinorAlertRef = useRef<HTMLDivElement>(null);
   const linkAlertRef = useRef<HTMLDivElement>(null);
   const unlinkAlertRef = useRef<HTMLDivElement>(null);
@@ -447,6 +511,8 @@ export function FamilyRecordsPage() {
       renameHeadingRef.current?.focus();
     } else if (view === "move-adult") {
       moveAdultHeadingRef.current?.focus();
+    } else if (view === "add-adult") {
+      addAdultHeadingRef.current?.focus();
     } else if (view === "add-minor") {
       addMinorHeadingRef.current?.focus();
     } else if (view === "link-guardian") {
@@ -471,6 +537,12 @@ export function FamilyRecordsPage() {
       moveAlertRef.current?.focus();
     }
   }, [moveConflict, moveNotice]);
+
+  useEffect(() => {
+    if (adultSearchNotice) {
+      addAdultAlertRef.current?.focus();
+    }
+  }, [adultSearchNotice]);
 
   useEffect(() => {
     if (addMinorNotice) {
@@ -502,6 +574,7 @@ export function FamilyRecordsPage() {
   const canCreate = canManage && !hideWrites;
   const canRename = canManage && canRestricted && !hideWrites;
   const canMoveAdult = canManage && canRestricted && !hideWrites;
+  const canAddAdult = canMoveAdult && Boolean(access.entitlements["people.directory"]);
   const canAddMinor = canManage && canRestricted && !hideWrites;
   const canLinkGuardian = canManage && canRestricted && !hideWrites;
   const canUnlinkGuardian = canManage && canRestricted && !hideWrites;
@@ -621,6 +694,13 @@ export function FamilyRecordsPage() {
     setMoveTargetHouseholdId("");
     setMoveConflict(false);
     setMoveNotice(null);
+    setAdultSearchDraft("");
+    setAdultSearchResults(null);
+    setAdultSearchNextCursor(null);
+    setAdultSearchLoading(false);
+    setAdultSearchError(false);
+    setAdultSearchNotice(null);
+    adultSearchGeneration.current += 1;
     setMinorGivenName("");
     setMinorFamilyName("");
     setMinorDob("");
@@ -714,12 +794,27 @@ export function FamilyRecordsPage() {
     setView("detail");
   }
 
+  function clearAdultSearch() {
+    setAdultSearchDraft("");
+    setAdultSearchResults(null);
+    setAdultSearchNextCursor(null);
+    setAdultSearchLoading(false);
+    setAdultSearchError(false);
+    setAdultSearchNotice(null);
+    adultSearchGeneration.current += 1;
+  }
+
   function openMoveAdult(adult: AdultMember) {
     setSelectedAdult(adult);
     setMoveTargetHouseholdId("");
     setMoveConflict(false);
     setMoveNotice(null);
     setView("move-adult");
+  }
+
+  function openAddAdult() {
+    clearAdultSearch();
+    setView("add-adult");
   }
 
   function handleReloadFromMoveConflict() {
@@ -791,13 +886,166 @@ export function FamilyRecordsPage() {
       }
 
       if (response.status === 201) {
+        let createdId: string | null = null;
+        try {
+          const data: unknown = await response.json();
+          if (isRecord(data) && typeof data.householdId === "string") {
+            createdId = data.householdId;
+          }
+        } catch {
+          createdId = null;
+        }
         setCreateLabel("");
-        setView("list");
         reloadList();
+        if (createdId !== null) {
+          openDetail(createdId);
+        } else {
+          setView("list");
+        }
         return;
       }
 
       setCreateNotice("Unable to create household");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleAdultSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!slug || adultSearchLoading) {
+      return;
+    }
+    const search = adultSearchDraft.trim();
+    const mine = ++adultSearchGeneration.current;
+    setAdultSearchLoading(true);
+    setAdultSearchError(false);
+    setAdultSearchNotice(null);
+    setAdultSearchResults(null);
+    setAdultSearchNextCursor(null);
+
+    const response = await post("/v1/people/list", {
+      communitySlug: slug,
+      kind: "adults",
+      search,
+    });
+    if (adultSearchGeneration.current !== mine) {
+      return;
+    }
+    setAdultSearchLoading(false);
+
+    if (response === "unavailable") {
+      setAdultSearchError(true);
+      return;
+    }
+
+    if (response.status === 402) {
+      setPaymentRequired(true);
+      void refreshBilling();
+      setAdultSearchNotice("Read-only until billing is settled");
+      return;
+    }
+
+    if (response.status === 400) {
+      setAdultSearchNotice("Invalid input");
+      return;
+    }
+
+    if (response.status === 403) {
+      setAdultSearchNotice("Not allowed");
+      return;
+    }
+
+    if (response.status === 404) {
+      setAdultSearchNotice("Not found");
+      return;
+    }
+
+    if (response.status !== 200) {
+      setAdultSearchError(true);
+      return;
+    }
+
+    try {
+      const data: unknown = await response.json();
+      if (adultSearchGeneration.current !== mine) {
+        return;
+      }
+      const parsed = parseAdultSearchResponse(data);
+      if (parsed === null) {
+        setAdultSearchError(true);
+        return;
+      }
+      const existingIds = new Set((detailHousehold?.adults ?? []).map((a) => a.personId));
+      setAdultSearchResults(parsed.items.filter((item) => !existingIds.has(item.personId)));
+      setAdultSearchNextCursor(parsed.nextCursor);
+    } catch {
+      if (adultSearchGeneration.current !== mine) {
+        return;
+      }
+      setAdultSearchError(true);
+    }
+  }
+
+  async function handleAddAdultToHousehold(adult: AdultSearchItem) {
+    if (submitting || !slug || !detailHousehold || !canAddAdult) {
+      return;
+    }
+    setSubmitting(true);
+    setAdultSearchNotice(null);
+
+    try {
+      const response = await post("/v1/households/members/move-adult", {
+        communitySlug: slug,
+        householdId: detailHousehold.householdId,
+        personId: adult.personId,
+        version: adult.version,
+      });
+
+      if (response === "unavailable") {
+        setAdultSearchNotice("Unable to move adult");
+        return;
+      }
+
+      if (response.status === 409) {
+        setAdultSearchNotice(
+          "This change could not be applied. The adult may have guardian links, or they changed. Search again to see the latest.",
+        );
+        setAdultSearchResults(null);
+        setAdultSearchNextCursor(null);
+        return;
+      }
+
+      if (response.status === 400) {
+        setAdultSearchNotice("Invalid input");
+        return;
+      }
+
+      if (response.status === 402) {
+        setPaymentRequired(true);
+        void refreshBilling();
+        setAdultSearchNotice("Read-only until billing is settled");
+        return;
+      }
+
+      if (response.status === 403) {
+        setAdultSearchNotice("Not allowed");
+        return;
+      }
+
+      if (response.status === 404) {
+        setAdultSearchNotice("Not found");
+        return;
+      }
+
+      if (response.status === 200) {
+        clearAdultSearch();
+        setView("detail");
+        reloadDetail();
+        return;
+      }
+
+      setAdultSearchNotice("Unable to move adult");
     } finally {
       setSubmitting(false);
     }
@@ -1231,6 +1479,96 @@ export function FamilyRecordsPage() {
     );
   }
 
+  if (view === "add-adult") {
+    return (
+      <>
+        <h1>Family Records</h1>
+        <h2 ref={addAdultHeadingRef} tabIndex={-1}>
+          Add Adult
+        </h2>
+
+        {adultSearchNotice ? (
+          <Alert ref={addAdultAlertRef} tabIndex={-1} variant="destructive" role="alert">
+            <span>{adultSearchNotice}</span>
+          </Alert>
+        ) : null}
+
+        {adultSearchError ? (
+          <Alert variant="destructive" live="assertive">
+            <span>Failed to search adults</span>
+          </Alert>
+        ) : null}
+
+        <form onSubmit={handleAdultSearch}>
+          <div>
+            <label htmlFor="add-adult-search">Search adults</label>
+            <Input
+              id="add-adult-search"
+              value={adultSearchDraft}
+              onChange={(e) => setAdultSearchDraft(e.target.value)}
+            />
+          </div>
+          <div>
+            <Button type="submit" disabled={adultSearchLoading}>
+              Search
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                clearAdultSearch();
+                setView("detail");
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </form>
+
+        {adultSearchLoading ? <p>Searching...</p> : null}
+
+        {adultSearchResults !== null && adultSearchResults.length === 0 ? (
+          <p>No adults found</p>
+        ) : null}
+
+        {adultSearchResults !== null && adultSearchResults.length > 0 ? (
+          <>
+            <Table aria-label="Adult search results">
+              <TableHeader>
+                <TableRow>
+                  <TableHead scope="col">Given name</TableHead>
+                  <TableHead scope="col">Family name</TableHead>
+                  <TableHead scope="col">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {adultSearchResults.map((adult) => (
+                  <TableRow key={adult.personId}>
+                    <TableCell>{adult.givenName}</TableCell>
+                    <TableCell>{adult.familyName}</TableCell>
+                    <TableCell>
+                      <Button
+                        type="button"
+                        disabled={submitting}
+                        aria-label={`Add ${adult.givenName} ${adult.familyName} to household`}
+                        onClick={() => void handleAddAdultToHousehold(adult)}
+                      >
+                        Add to household
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            {adultSearchNextCursor !== null ? (
+              <p>More results exist. Refine your search.</p>
+            ) : null}
+          </>
+        ) : null}
+      </>
+    );
+  }
+
   if (view === "move-adult") {
     return (
       <>
@@ -1582,6 +1920,11 @@ export function FamilyRecordsPage() {
             ) : null}
 
             <h3>Adults</h3>
+            {canAddAdult ? (
+              <Button type="button" onClick={openAddAdult}>
+                Add adult
+              </Button>
+            ) : null}
             {detailHousehold.adults.length === 0 ? (
               <p>No adult members</p>
             ) : (
@@ -1603,6 +1946,7 @@ export function FamilyRecordsPage() {
                           <Button
                             type="button"
                             variant="outline"
+                            aria-label={`Move ${adult.givenName} ${adult.familyName}`}
                             onClick={() => openMoveAdult(adult)}
                           >
                             Move adult

@@ -75,6 +75,7 @@ type MockApiOptions = {
   addMinorResult?: unknown | number;
   linkGuardianResult?: unknown | number;
   unlinkGuardianResult?: unknown | number;
+  peopleListResult?: { items: unknown[]; nextCursor: string | null } | number;
   onPost?: (path: string, body: unknown) => void;
 };
 
@@ -89,6 +90,7 @@ function mockApi({
   addMinorResult,
   linkGuardianResult,
   unlinkGuardianResult,
+  peopleListResult = { items: [], nextCursor: null },
   onPost,
 }: MockApiOptions = {}) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
@@ -207,6 +209,17 @@ function mockApi({
         return new Response(null, { status: unlinkGuardianResult });
       }
       return new Response(JSON.stringify(unlinkGuardianResult ?? {}), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    if (path === "/v1/people/list") {
+      if (onPost) onPost(path, body);
+      if (typeof peopleListResult === "number") {
+        return new Response(null, { status: peopleListResult });
+      }
+      return new Response(JSON.stringify(peopleListResult), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -1279,7 +1292,336 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
     const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
     fireEvent.click(viewBtn);
 
-    expect(await screen.findByRole("button", { name: "Move adult" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Move Arthur Clarke" })).toBeTruthy();
+  });
+
+  it("hides 'Add adult' when caller lacks people.manage", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: false, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+    fireEvent.click(await screen.findByRole("button", { name: "View Clarke Family" }));
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add adult" })).toBeNull();
+  });
+
+  it("hides 'Add adult' when caller lacks people.restricted.read", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: false },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: { ...sampleDetail, minors: undefined, guardians: [] },
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+    fireEvent.click(await screen.findByRole("button", { name: "View Clarke Family" }));
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add adult" })).toBeNull();
+  });
+
+  it("hides 'Add adult' when people.directory entitlement is off", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: {
+        householdsEnabled: true,
+        directoryEnabled: false,
+        canView: true,
+        canManage: true,
+        canReadMinors: true,
+      },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+    fireEvent.click(await screen.findByRole("button", { name: "View Clarke Family" }));
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add adult" })).toBeNull();
+  });
+
+  it("shows 'Add adult' when manage, restricted.read and directory are held, including empty households", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const emptyHousehold = {
+      ...sampleDetail,
+      adults: [] as typeof sampleDetail.adults,
+      minors: undefined,
+      guardians: [],
+    };
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: emptyHousehold.householdId,
+            version: 1,
+            label: emptyHousehold.label,
+            adultCount: 0,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: emptyHousehold,
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+    fireEvent.click(await screen.findByRole("button", { name: "View Clarke Family" }));
+    expect(await screen.findByText("No adult members")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Add adult" })).toBeTruthy();
+  });
+
+  it("searches adults, omits household members, adds with version, and reloads detail", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const recordedCalls: Array<{ path: string; body: unknown }> = [];
+    let detailLoads = 0;
+    const otherAdult = {
+      id: "00000000-0000-4000-8000-000000000011",
+      personId: "00000000-0000-4000-8000-000000000011",
+      isMinor: false,
+      givenName: "Isaac",
+      familyName: "Asimov",
+      version: 4,
+    };
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+      peopleListResult: {
+        items: [
+          {
+            id: sampleDetail.adults[0]!.personId,
+            personId: sampleDetail.adults[0]!.personId,
+            isMinor: false,
+            givenName: "Arthur",
+            familyName: "Clarke",
+            version: 1,
+          },
+          otherAdult,
+        ],
+        nextCursor: "more-results-token",
+      },
+      moveAdultResult: { version: 5 },
+      onPost: (path, body) => recordedCalls.push({ path, body }),
+    });
+
+    // Override detail to count reloads after add
+    const fetchSpy = vi.mocked(globalThis.fetch);
+    const originalImpl = fetchSpy.getMockImplementation()!;
+    fetchSpy.mockImplementation(async (info, init) => {
+      const url = String(info);
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      if (path === "/v1/households/read") {
+        detailLoads++;
+        return new Response(
+          JSON.stringify(
+            detailLoads > 1
+              ? {
+                  ...sampleDetail,
+                  adults: [
+                    ...sampleDetail.adults,
+                    {
+                      personId: otherAdult.personId,
+                      givenName: otherAdult.givenName,
+                      familyName: otherAdult.familyName,
+                      version: 5,
+                    },
+                  ],
+                }
+              : sampleDetail,
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return originalImpl(info, init);
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+    fireEvent.click(await screen.findByRole("button", { name: "View Clarke Family" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add adult" }));
+
+    expect(await screen.findByRole("heading", { name: "Add Adult" })).toBeTruthy();
+    fireEvent.change(screen.getByRole("textbox", { name: "Search adults" }), {
+      target: { value: "Asimov" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+
+    expect(await screen.findByText("Isaac")).toBeTruthy();
+    expect(screen.queryByText("Arthur")).toBeNull();
+    expect(screen.getByText("More results exist. Refine your search.")).toBeTruthy();
+
+    const listCall = recordedCalls.find((c) => c.path === "/v1/people/list");
+    expect(listCall).toEqual({
+      path: "/v1/people/list",
+      body: { communitySlug: SLUG, kind: "adults", search: "Asimov" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Isaac Asimov to household" }));
+
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
+    expect(await screen.findByText("Isaac")).toBeTruthy();
+    const moveCall = recordedCalls.find((c) => c.path === "/v1/households/members/move-adult");
+    expect(moveCall).toEqual({
+      path: "/v1/households/members/move-adult",
+      body: {
+        communitySlug: SLUG,
+        householdId: sampleDetail.householdId,
+        personId: otherAdult.personId,
+        version: 4,
+      },
+    });
+  });
+
+  it("shows a 409 alert on add adult, clears results, and clears search on community switch", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const otherAdult = {
+      id: "00000000-0000-4000-8000-000000000011",
+      personId: "00000000-0000-4000-8000-000000000011",
+      isMinor: false,
+      givenName: "Isaac",
+      familyName: "Asimov",
+      version: 4,
+    };
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+      peopleListResult: { items: [otherAdult], nextCursor: null },
+      moveAdultResult: 409,
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+    fireEvent.click(await screen.findByRole("button", { name: "View Clarke Family" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add adult" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Search adults" }), {
+      target: { value: "Isaac" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText("Isaac")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Isaac Asimov to household" }));
+    expect(
+      await screen.findByText(
+        "This change could not be applied. The adult may have guardian links, or they changed. Search again to see the latest.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText("Isaac")).toBeNull();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: "other-community" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+    expect(screen.queryByRole("heading", { name: "Add Adult" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Search adults" })).toBeNull();
+  });
+
+  it("shows No adults found when search returns none", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+      peopleListResult: { items: [], nextCursor: null },
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+    fireEvent.click(await screen.findByRole("button", { name: "View Clarke Family" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add adult" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Search adults" }), {
+      target: { value: "Nobody" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText("No adults found")).toBeTruthy();
   });
 
   it("hides 'Add minor' button when caller lacks people.manage (Pin 21)", async () => {
@@ -1532,7 +1874,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
     const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
     fireEvent.click(viewBtn);
 
-    expect(await screen.findByRole("button", { name: "Unlink" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Unlink Arthur Clarke from Leo Clarke" })).toBeTruthy();
   });
 
   it("independently hides 'Add minor' button in MinorsSection when caller lacks people.restricted.read", () => {
@@ -1597,7 +1939,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
         isReadOnly={false}
       />,
     );
-    expect(screen.queryByRole("button", { name: "Unlink" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Unlink Arthur Clarke from Leo Clarke" })).toBeNull();
   });
 
   it("independently gates Add minor, Link guardian and Unlink on people.manage in MinorsSection (finding H5b)", () => {
@@ -1716,10 +2058,10 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
 
     expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Rename household" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Move adult" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Move Arthur Clarke" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Add minor" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Link guardian" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Unlink" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Unlink Arthur Clarke from Leo Clarke" })).toBeNull();
   });
 });
 
@@ -1755,10 +2097,11 @@ describe("Family Records Actions - Form submissions & success flows", () => {
     ],
   };
 
-  it("creates household with label, navigates back to list and reloads", async () => {
+  it("creates household with label, opens the new household detail and reloads the list", async () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);
     const recordedCalls: Array<{ path: string; body: unknown }> = [];
     let listCount = 0;
+    const newHouseholdId = "00000000-0000-4000-8000-000000000099";
 
     vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
       const url = String(info);
@@ -1792,7 +2135,7 @@ describe("Family Records Actions - Form submissions & success flows", () => {
             ? []
             : [
                 {
-                  householdId: "00000000-0000-4000-8000-000000000099",
+                  householdId: newHouseholdId,
                   version: 1,
                   label: "New Family",
                   adultCount: 0,
@@ -1805,12 +2148,22 @@ describe("Family Records Actions - Form submissions & success flows", () => {
       }
       if (path === "/v1/households/create") {
         recordedCalls.push({ path, body });
+        return new Response(JSON.stringify({ householdId: newHouseholdId, version: 1 }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (path === "/v1/households/read") {
+        recordedCalls.push({ path, body });
         return new Response(
-          JSON.stringify({ householdId: "00000000-0000-4000-8000-000000000099", version: 1 }),
-          {
-            status: 201,
-            headers: { "content-type": "application/json" },
-          },
+          JSON.stringify({
+            householdId: newHouseholdId,
+            version: 1,
+            label: "New Family",
+            adults: [],
+            guardians: [],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
         );
       }
       return new Response(null, { status: 404 });
@@ -1831,12 +2184,14 @@ describe("Family Records Actions - Form submissions & success flows", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Save household" }));
 
-    expect(await screen.findByRole("heading", { name: "Family Records", level: 1 })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
     expect(await screen.findByText("New Family")).toBeTruthy();
+    expect(listCount).toBeGreaterThan(1);
     expect(recordedCalls[0]).toEqual({
       path: "/v1/households/create",
       body: { communitySlug: SLUG, label: "New Family" },
     });
+    expect(recordedCalls.some((c) => c.path === "/v1/households/read")).toBe(true);
   });
 
   it("renames household sending expected version and reloads detail", async () => {
@@ -1981,7 +2336,7 @@ describe("Family Records Actions - Form submissions & success flows", () => {
     const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
     fireEvent.click(viewBtn);
 
-    const moveBtn = await screen.findByRole("button", { name: "Move adult" });
+    const moveBtn = await screen.findByRole("button", { name: "Move Arthur Clarke" });
     fireEvent.click(moveBtn);
 
     expect(await screen.findByRole("heading", { name: "Move Adult" })).toBeTruthy();
@@ -2206,7 +2561,7 @@ describe("Family Records Actions - Form submissions & success flows", () => {
     const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
     fireEvent.click(viewBtn);
 
-    const unlinkBtn = await screen.findByRole("button", { name: "Unlink" });
+    const unlinkBtn = await screen.findByRole("button", { name: "Unlink Arthur Clarke from Leo Clarke" });
     fireEvent.click(unlinkBtn);
 
     // Confirm step appears
@@ -2539,7 +2894,7 @@ describe("Family Records Actions - Error status handling & copy", () => {
     const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
     fireEvent.click(viewBtn);
 
-    const moveBtn = await screen.findByRole("button", { name: "Move adult" });
+    const moveBtn = await screen.findByRole("button", { name: "Move Arthur Clarke" });
     fireEvent.click(moveBtn);
 
     fireEvent.click(screen.getByRole("button", { name: "Save move" }));
@@ -2585,7 +2940,7 @@ describe("Family Records Actions - Error status handling & copy", () => {
     const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
     fireEvent.click(viewBtn);
 
-    const moveBtn = await screen.findByRole("button", { name: "Move adult" });
+    const moveBtn = await screen.findByRole("button", { name: "Move Arthur Clarke" });
     fireEvent.click(moveBtn);
 
     fireEvent.click(screen.getByRole("button", { name: "Save move" }));
@@ -2668,7 +3023,7 @@ describe("Family Records Actions - Error status handling & copy", () => {
     const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
     fireEvent.click(viewBtn);
 
-    const unlinkBtn = await screen.findByRole("button", { name: "Unlink" });
+    const unlinkBtn = await screen.findByRole("button", { name: "Unlink Arthur Clarke from Leo Clarke" });
     fireEvent.click(unlinkBtn);
 
     const confirmBtn = await screen.findByRole("button", { name: "Confirm unlink" });
@@ -2838,7 +3193,7 @@ describe("Family Records Actions - Error status handling & copy", () => {
     const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
     fireEvent.click(viewBtn);
 
-    const moveBtn = await screen.findByRole("button", { name: "Move adult" });
+    const moveBtn = await screen.findByRole("button", { name: "Move Arthur Clarke" });
     fireEvent.click(moveBtn);
 
     fireEvent.click(screen.getByRole("button", { name: "Save move" }));
@@ -2952,7 +3307,7 @@ describe("Family Records Actions - Error status handling & copy", () => {
     const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
     fireEvent.click(viewBtn);
 
-    const unlinkBtn = await screen.findByRole("button", { name: "Unlink" });
+    const unlinkBtn = await screen.findByRole("button", { name: "Unlink Arthur Clarke from Leo Clarke" });
     fireEvent.click(unlinkBtn);
 
     const confirmBtn = await screen.findByRole("button", { name: "Confirm unlink" });
@@ -3092,7 +3447,7 @@ describe("Family Records Actions - Privacy & Accessibility (WCAG 2.2 AA)", () =>
     const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
     fireEvent.click(viewBtn);
 
-    const moveBtn = await screen.findByRole("button", { name: "Move adult" });
+    const moveBtn = await screen.findByRole("button", { name: "Move Arthur Clarke" });
     fireEvent.click(moveBtn);
 
     expect(await screen.findByRole("heading", { name: "Move Adult" })).toBeTruthy();
@@ -3155,7 +3510,7 @@ describe("Family Records Actions - Privacy & Accessibility (WCAG 2.2 AA)", () =>
     const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
     fireEvent.click(viewBtn);
 
-    const moveBtn = await screen.findByRole("button", { name: "Move adult" });
+    const moveBtn = await screen.findByRole("button", { name: "Move Arthur Clarke" });
     fireEvent.click(moveBtn);
 
     const select = await screen.findByRole("combobox", { name: "Target household" });
@@ -3203,7 +3558,7 @@ describe("Family Records Actions - Privacy & Accessibility (WCAG 2.2 AA)", () =>
     const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
     fireEvent.click(viewBtn);
 
-    const moveBtn = await screen.findByRole("button", { name: "Move adult" });
+    const moveBtn = await screen.findByRole("button", { name: "Move Arthur Clarke" });
     fireEvent.click(moveBtn);
 
     expect(await screen.findByRole("heading", { name: "Move Adult" })).toBeTruthy();
@@ -3242,7 +3597,7 @@ describe("Family Records Actions - Privacy & Accessibility (WCAG 2.2 AA)", () =>
     const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
     fireEvent.click(viewBtn);
 
-    const moveBtn = await screen.findByRole("button", { name: "Move adult" });
+    const moveBtn = await screen.findByRole("button", { name: "Move Arthur Clarke" });
     fireEvent.click(moveBtn);
 
     expect(await screen.findByRole("heading", { name: "Move Adult" })).toBeTruthy();
@@ -3353,7 +3708,7 @@ describe("Family Records Actions - Privacy & Accessibility (WCAG 2.2 AA)", () =>
     const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
     fireEvent.click(viewBtn);
 
-    const unlinkBtn = await screen.findByRole("button", { name: "Unlink" });
+    const unlinkBtn = await screen.findByRole("button", { name: "Unlink Arthur Clarke from Leo Clarke" });
     fireEvent.click(unlinkBtn);
 
     expect(
