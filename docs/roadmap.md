@@ -336,6 +336,8 @@ The unique blind-index indexes `persons_adult_email_bidx`, `persons_adult_phone_
 
 Guardian read over HTTP waits for a later chunk (Family Records or the member portal/app), as callers lacking both `people.view` and `people.restricted.read` are refused before the gate runs.
 
+Open owner question from Family Records: the spec says guardian rights default to view and consent but is silent on a partial rights object. Today add minor merges unspecified keys onto view and consent true, while link leaves unspecified keys false. Both are pinned in `apps/api/src/household-routes.integration.test.ts`; changing either needs an owner decision.
+
 The next chunk that unparks staging verifies migration `0016`: `app.households.version` exists, the `BEFORE UPDATE` trigger on `app.persons` is present, `relrowsecurity` and `relforcerowsecurity` are still true on `households` and `persons`, `app` lacks `DELETE` on `households`, `persons`, and `household_keys`, and `app` has `UPDATE` only on `households(label, version)` and `persons(household_id)`.
 
 No index on `app.persons` was added for `(org_id, household_id)`. Member counts and lookups scan `persons`. This chunk accepts the sequential scan, as All Contacts did; an `org_id`-led index should be added when a real community passes a few tens of thousands of contacts or household queries are measured slow.
