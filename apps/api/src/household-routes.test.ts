@@ -1623,7 +1623,7 @@ describe("household read routes (Task 9: list and read)", () => {
           },
           body: JSON.stringify({ communitySlug: SLUG }),
         });
-        const res = await withRequest({ requestId: REQUEST_ID }, () =>
+        const res = await withRequest({ requestId: REQUEST_ID }, async () =>
           targetRoute.handle(rawReq, context),
         );
         expect(res.status).toBe(400);
