@@ -23,6 +23,7 @@
     "@community-hub/identity": "workspace:*",
     "@community-hub/kernel": "workspace:*",
     "@community-hub/observability": "workspace:*",
+    "@community-hub/people": "workspace:*",
     "@community-hub/policy": "workspace:*",
     "@community-hub/tenancy": "workspace:*",
     "stripe": "23.0.0"

@@ -143,6 +143,9 @@ importers:
       '@community-hub/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@community-hub/people':
+        specifier: workspace:*
+        version: link:../../modules/core/people
       '@community-hub/policy':
         specifier: workspace:*
         version: link:../../packages/policy

@@ -33,6 +33,7 @@ import { accessRoutes } from "./access-routes.js";
 import { authRoutes } from "./auth-routes.js";
 import type { Role } from "./checkout.js";
 import { entitlementRoutes } from "./entitlement-routes.js";
+import { peopleRoutes } from "./people-routes.js";
 import { readServiceEnv, type ServiceEnv } from "./env.js";
 import { productionRoutes } from "./index.js";
 import { startServer } from "./server.js";
@@ -286,6 +287,35 @@ describe("billing guard against a real database", () => {
     return rows[0]!.n;
   }
 
+  async function countPersons(setup: OrgSetup): Promise<number> {
+    return withAppTransaction(
+      app,
+      { orgId: setup.orgId, communityId: setup.communityId },
+      async (tx) => {
+        const rows = await tx<{ n: number }[]>`
+          select count(*)::int as n
+          from app.persons
+        `;
+        return rows[0]!.n;
+      },
+    );
+  }
+
+  async function personVersion(setup: OrgSetup, personId: string): Promise<number> {
+    return withAppTransaction(
+      app,
+      { orgId: setup.orgId, communityId: setup.communityId },
+      async (tx) => {
+        const rows = await tx<{ version: number }[]>`
+          select version
+          from app.persons
+          where id = ${personId}::uuid
+        `;
+        return rows[0]?.version ?? 0;
+      },
+    );
+  }
+
   const fixtureMap = new Map<string, Fixture>([
     [
       "POST /v1/access/grants",
@@ -472,6 +502,60 @@ describe("billing guard against a real database", () => {
         },
       },
     ],
+    [
+      "POST /v1/people/create",
+      {
+        path: "/v1/people/create",
+        prepare: async (setup) => {
+          return {
+            body: {
+              communitySlug: setup.slug,
+              givenName: "Billing",
+              familyName: "Adult",
+              email: `billing-${newId().slice(0, 8)}@example.com`,
+            },
+            count: () => countPersons(setup),
+          };
+        },
+      },
+    ],
+    [
+      "POST /v1/people/update",
+      {
+        path: "/v1/people/update",
+        prepare: async (setup) => {
+          const personId = newId();
+          await withAppTransaction(
+            app,
+            { orgId: setup.orgId, communityId: setup.communityId },
+            async (tx) => {
+              await tx`
+                insert into app.persons (id, org_id, community_id, is_minor, age_basis, given_name, family_name, version)
+                values (
+                  ${personId}::uuid,
+                  current_setting('app.org_id')::uuid,
+                  current_setting('app.community_id')::uuid,
+                  false,
+                  'declared_adult',
+                  'Test',
+                  'User',
+                  1
+                )
+              `;
+            },
+          );
+          return {
+            body: {
+              communitySlug: setup.slug,
+              personId,
+              version: 1,
+              givenName: "UpdatedName",
+            },
+            count: () => personVersion(setup, personId),
+          };
+        },
+      },
+    ],
   ]);
 
   beforeAll(async () => {
@@ -511,6 +595,15 @@ describe("billing guard against a real database", () => {
         guardLog: () => undefined,
       }),
       ...entitlementRoutes({
+        checkout,
+        kms,
+        keyArn: KEY_ARN,
+        now: () => now,
+        apiHostname: API_HOSTNAME,
+        log: () => undefined,
+        guardLog: () => undefined,
+      }),
+      ...peopleRoutes({
         checkout,
         kms,
         keyArn: KEY_ARN,

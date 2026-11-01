@@ -250,4 +250,73 @@ describe("custom roles", () => {
       expect(rows).toEqual([{ role_key: null, custom_role_id: choir.customRoleId }]);
     });
   });
+
+  it("stores people.view and people.manage in custom_role_permissions and rejects an unknown permission via CHECK", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const organisationId = newId();
+    const communityId = newId();
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, 'st-check', 'au', 'implicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, 'st-check', 'au')
+        `;
+      });
+
+      let roleId = "";
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const owner = newId();
+          await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+
+          const role = await createCustomRole(tx, {
+            now: NOW,
+            key: "contacts_lead",
+            permissions: ["people.view", "people.manage"],
+            actorUserId: owner,
+          });
+          roleId = role.customRoleId;
+
+          const perms = await tx<{ permission: string }[]>`
+            select permission
+            from app.custom_role_permissions
+            where custom_role_id = ${role.customRoleId}::uuid
+            order by permission
+          `;
+          expect(perms).toEqual([{ permission: "people.manage" }, { permission: "people.view" }]);
+        }),
+      );
+
+      await expect(
+        withRequest({ requestId: REQUEST_ID }, () =>
+          withAppTransaction(
+            app,
+            { orgId: organisationId, communityId },
+            (tx) =>
+              tx`
+              insert into app.custom_role_permissions (
+                org_id, community_id, custom_role_id, permission
+              ) values (
+                current_setting('app.org_id')::uuid,
+                current_setting('app.community_id')::uuid,
+                ${roleId}::uuid,
+                'unknown.permission'
+              )
+            `,
+          ),
+        ),
+      ).rejects.toMatchObject({
+        constraint_name: "custom_role_permissions_permission",
+      });
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
 });

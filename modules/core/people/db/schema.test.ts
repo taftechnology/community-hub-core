@@ -140,4 +140,23 @@ describe("people app tables", () => {
       expect(match?.[2], `${table} WITH CHECK`).toBe(expectedPredicate(table));
     }
   });
+
+  it("defines persons.version as integer not null default 1 in schema and 0015 migration", () => {
+    const schemaSource = readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "schema.ts"),
+      "utf8",
+    );
+    expect(schemaSource).toMatch(
+      /version:\s*integer\(["']version["']\)\.notNull\(\)\.default\(1\)/,
+    );
+
+    const files = readdirSync(DRIZZLE).filter(
+      (name) => name.startsWith("0015_") && name.endsWith(".sql"),
+    );
+    expect(files).toHaveLength(1);
+    const sql = readFileSync(path.join(DRIZZLE, files[0] ?? ""), "utf8");
+    expect(sql).toMatch(
+      /ALTER TABLE "app"\."persons" ADD COLUMN "version" integer DEFAULT 1 NOT NULL;/,
+    );
+  });
 });

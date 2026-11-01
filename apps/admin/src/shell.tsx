@@ -6,6 +6,8 @@ import { BillingStatusProvider } from "./billing-status";
 import { CommunityPicker, CommunityProvider } from "./community";
 import { labels } from "./labels";
 import { AdminNav } from "./nav";
+import { PeopleAccessProvider } from "./people-access";
+import { AllContactsPage } from "./all-contacts";
 import { SignInPage } from "./sign-in";
 import { GeneralSettingsPage } from "./general-settings";
 import { ModuleTogglesPage } from "./module-toggles";
@@ -54,6 +56,7 @@ export const router = createBrowserRouter([
       { path: "settings/general", element: <GeneralSettingsPage /> },
       { path: "settings/users", element: <UsersRolesPage /> },
       { path: "settings/modules", element: <ModuleTogglesPage /> },
+      { path: "contacts", element: <AllContactsPage /> },
     ],
   },
 ]);
@@ -62,7 +65,9 @@ export function Shell() {
   return (
     <CommunityProvider>
       <BillingStatusProvider>
-        <RouterProvider router={router} />
+        <PeopleAccessProvider>
+          <RouterProvider router={router} />
+        </PeopleAccessProvider>
       </BillingStatusProvider>
     </CommunityProvider>
   );

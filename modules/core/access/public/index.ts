@@ -19,6 +19,7 @@ defineAuditPurpose("access.permission.denied");
 defineAuditPurpose("access.roles.manage");
 defineAuditPurpose("access.roles.view");
 defineAuditPurpose("access.users.manage");
+defineAuditPurpose("people.person.view");
 defineAuditPurpose("people.restricted.read");
 
 export { AccessError } from "../domain/error.js";

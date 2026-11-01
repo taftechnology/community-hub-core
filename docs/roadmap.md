@@ -21,8 +21,8 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 |              |                                                                   |
 | ------------ | ----------------------------------------------------------------- |
 | Phase        | 2 — Engagement and mobile (Phase 1 complete)                      |
-| Last shipped | `Groups`                                                          |
-| Next chunk   | `All Contacts admin`                                              |
+| Last shipped | `All Contacts admin`                                              |
+| Next chunk   | `Family Records`                                                  |
 | Phase 0      | 26 rows: 25 done, 1 superseded (`api-au-hostname`), 0 not started |
 | Later phases | not started                                                       |
 
@@ -96,7 +96,7 @@ Architecture: monorepo, CI, Terraform for AWS in `ap-southeast-2`, kernel, db wi
 | done       | `db-migrate-command`         | The image gains `/app/db-migrate.js`, which applies the product migrations as the master login, refuses to run before `db-bootstrap`, and prints the tags it applied. It has not been run on staging. Spec `docs/specs/2026-10-12-db-migrate-command.md`.                                                                                                                                                                                                                          |
 | done       | `staging-proof-run`          | The distroless image runs on Fargate. `db-bootstrap` then `db-migrate` applied the ten product migrations to RDS and a second run applied none. The sign-in-code route answers 503 with no mail vendor; role and entitlement routes refuse a request with no session; the service re-read a changed database secret and recovered without a restart. Staging was re-parked the same day. Spec `docs/specs/2026-10-12-staging-proof-run.md`.                                        |
 
-Next is `All Contacts admin`.
+Next is `Family Records`.
 
 SQS, EventBridge, file storage, and the admin static-file distribution are not rows here. Each waits for the first chunk that uses it.
 
@@ -145,7 +145,7 @@ Journeys, not a full backlog. Cut specs when this phase starts. Fill nav in this
 | Status      | Journey                      | Nav / surface                             | Must include                                                                                                          |
 | ----------- | ---------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | done        | Groups                       | Contacts & Members → Groups               | Ministries, members, export. Spec `docs/specs/2026-10-29-groups.md`.                                                  |
-| not started | All Contacts admin           | Contacts & Members → All Contacts         | Built on people/households; no children in public directories                                                         |
+| done        | All Contacts admin           | Contacts & Members → All Contacts         | Built on people/households; no children in public directories. Spec `docs/specs/2026-10-31-all-contacts-admin.md`.    |
 | not started | Family Records               | Family Records                            | Household UI; **life events** inside this item                                                                        |
 | not started | Mass Timings                 | Engagement → Mass Timings                 | Service times; labels from faith-church                                                                               |
 | not started | Notice Board                 | Engagement → Notice Board                 | Pin; **approve / reject**                                                                                             |
@@ -322,13 +322,29 @@ The membership foreign keys carry `org_id` but not `community_id`, so the databa
 
 A group name must not carry a child's name; the group UI chunk adds that guidance.
 
-`createPerson` has no production caller, so no usage fact is written in production until a people route ships.
+`createPerson` has its first production caller in `POST /v1/people/create`, so the `people.directory` usage fact is now written in production when a contact is added.
+
+The next chunk that unparks staging verifies migration `0015`: `app.persons.version` exists, the permission CHECK admits `people.view` and `people.manage`, `relrowsecurity` and `relforcerowsecurity` are still true on `persons`, `app` lacks `DELETE`, and `app` has `UPDATE` only on the ten columns `updatePerson` writes.
+
+No index on `app.persons` was added for the contacts list. On synthetic data of 5,000 adults plus 50 minors in one community, the sequential scan took 5.9 ms for adults and 0.4 ms for minors. An `org_id`-led index should be added when a real community passes a few tens of thousands of contacts or the list is measured slow.
+
+The adult list search reveals low counts by design for callers who hold `people.view`. A digit in a search term takes the phone blind-index path, and a two-word name matches nothing because search is a single prefix match on `given_name` or `family_name`.
+
+The unique blind-index indexes `persons_adult_email_bidx`, `persons_adult_phone_bidx`, `persons_minor_email_bidx`, and `persons_minor_phone_bidx` start with `community_id` or `household_id`, not `org_id` (pre-existing from migration `0005`).
+
+`safeguarding_officer` can read an adult by id through `readPersonForActor` but has no `people.view`, so Contacts & Members → All Contacts is hidden for that role in the admin.
+
+Guardian read over HTTP waits for a later chunk (Family Records or the member portal/app), as callers lacking both `people.view` and `people.restricted.read` are refused before the gate runs.
+
+The `/v1/people/access` route is people-specific and stays for now. Before the next module needs nav gating, replace it with one capabilities route in the access module with a server-side allow-list of permission keys, rather than adding a second module-specific route.
+
+The admin All Contacts screen is larger than the minimal target: `apps/admin/src/all-contacts.tsx` is 856 lines and `all-contacts.test.tsx` is 3,455 lines; `git diff --shortstat origin/main...HEAD -- apps/admin packages/ui` shows 4,625 insertions across 10 files. The whole chunk is about 2,580 non-test source lines against the roughly 800-line target, shipped as one pull request by the owner's decision.
 
 ---
 
 ## Next spec
 
-The next chunk is **All Contacts admin**, the next Phase 2 row. Its spec is cut when the phase starts. Q8b (plan contents and prices) is still open.
+The next chunk is **Family Records**, the next Phase 2 row. Its spec is cut when the phase starts. Q8b (plan contents and prices) is still open.
 
 ---
 

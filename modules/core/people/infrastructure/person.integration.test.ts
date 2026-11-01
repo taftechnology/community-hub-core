@@ -129,6 +129,7 @@ describe("person create and read", () => {
           });
           const row = await tx<
             {
+              version: number;
               is_minor: boolean;
               age_basis: string;
               birthday_md: number | null;
@@ -141,6 +142,7 @@ describe("person create and read", () => {
             }[]
           >`
             select
+              version,
               is_minor, age_basis, birthday_md, given_name, family_name,
               given_name_restricted, family_name_restricted, email, phone
             from app.persons
@@ -148,6 +150,7 @@ describe("person create and read", () => {
           `;
           expect(row).toEqual([
             {
+              version: 1,
               is_minor: false,
               age_basis: "date_of_birth",
               birthday_md: 1011,
@@ -203,6 +206,7 @@ describe("person create and read", () => {
             email: "ada@example.com",
             phone: "61412345678",
             dateOfBirth: "2008-10-11",
+            version: 1,
           });
           const createdAudit = await tx<{ n: number }[]>`
             select count(*)::int as n

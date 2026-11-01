@@ -271,6 +271,8 @@ describe("access routes", () => {
       "access.users.manage",
       "access.roles.view",
       "access.roles.manage",
+      "people.view",
+      "people.manage",
       "people.restricted.read",
       "entitlements.view",
       "entitlements.manage",
