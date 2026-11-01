@@ -786,5 +786,32 @@ describe("access routes", () => {
       );
       expect(res.status).toBe(200);
     });
+
+    it("never logs caller permissions, user id or community internal ids", async () => {
+      const logCalls: unknown[] = [];
+      const bound = deps((message, fields) => {
+        logCalls.push({ message, fields });
+      });
+      access.holdsAnyGrant.mockResolvedValueOnce(true);
+      access.holdsPermission.mockResolvedValue(true);
+      entitlementGuard.checkEntitlement.mockResolvedValue(true);
+
+      const res = await route("/v1/access/capabilities", bound).handle(
+        request(
+          "/v1/access/capabilities",
+          API_HOSTNAME,
+          { communitySlug: "parish" },
+          `Bearer ${TOKEN}`,
+        ),
+      );
+      expect(res.status).toBe(200);
+
+      const logged = JSON.stringify(logCalls);
+      expect(logged).not.toContain(USER);
+      expect(logged).not.toContain(ORG);
+      expect(logged).not.toContain(COMMUNITY);
+      expect(logged).not.toContain("canReadMinors");
+      expect(logged).not.toContain("people.view");
+    });
   });
 });

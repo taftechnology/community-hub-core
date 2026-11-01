@@ -1171,4 +1171,92 @@ describe("guardian links", () => {
       expect(stringified).not.toContain("SuperSecretFamily");
     });
   });
+
+  it("refuses unlink when the named household does not match a non-last link", async () => {
+    await withTenant("unlink-wrong-household", async (tx, kms) => {
+      const home = await createHousehold(tx, kms, KEY_ARN, {
+        now: NOW,
+        label: null,
+        actorUserId: null,
+      });
+      const other = await createHousehold(tx, kms, KEY_ARN, {
+        now: NOW,
+        label: null,
+        actorUserId: null,
+      });
+
+      const adult1 = await createPerson(tx, kms, KEY_ARN, {
+        now: NOW,
+        declaredAdult: true,
+        householdId: home.householdId,
+        dateOfBirth: null,
+        givenName: "Ada",
+        familyName: "Guardian",
+        email: null,
+        phone: null,
+        actorUserId: null,
+      });
+      const adult2 = await createPerson(tx, kms, KEY_ARN, {
+        now: NOW,
+        declaredAdult: true,
+        householdId: home.householdId,
+        dateOfBirth: null,
+        givenName: "Bea",
+        familyName: "Guardian",
+        email: null,
+        phone: null,
+        actorUserId: null,
+      });
+      const child = await createPerson(tx, kms, KEY_ARN, {
+        now: NOW,
+        declaredAdult: false,
+        householdId: home.householdId,
+        dateOfBirth: "2016-04-01",
+        givenName: "Cid",
+        familyName: "Child",
+        email: null,
+        phone: null,
+        actorUserId: null,
+      });
+
+      const first = await linkGuardian(tx, {
+        now: NOW,
+        householdId: home.householdId,
+        guardianPersonId: adult1.personId,
+        childPersonId: child.personId,
+        consent: true,
+        pickup: false,
+        view: true,
+        manage: false,
+        actorUserId: null,
+      });
+      await linkGuardian(tx, {
+        now: NOW,
+        householdId: home.householdId,
+        guardianPersonId: adult2.personId,
+        childPersonId: child.personId,
+        consent: true,
+        pickup: false,
+        view: true,
+        manage: false,
+        actorUserId: null,
+      });
+
+      await expect(
+        unlinkGuardian(tx, {
+          now: NOW,
+          householdId: other.householdId,
+          linkId: first.linkId,
+          actorUserId: null,
+        }),
+      ).rejects.toMatchObject({ code: "not_found" });
+
+      const remaining = await tx<{ id: string }[]>`
+        select id::text as id from app.guardian_links
+        where id = ${first.linkId}::uuid
+      `;
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0]!.id).toBe(first.linkId);
+    });
+  });
 });
