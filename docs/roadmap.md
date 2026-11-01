@@ -336,9 +336,9 @@ The unique blind-index indexes `persons_adult_email_bidx`, `persons_adult_phone_
 
 Guardian read over HTTP waits for a later chunk (Family Records or the member portal/app), as callers lacking both `people.view` and `people.restricted.read` are refused before the gate runs.
 
-The `/v1/people/access` route is people-specific; whether to provide a generic capabilities route across all modules is an owner decision before the next module needs nav gating.
+The `/v1/people/access` route is people-specific and stays for now. Before the next module needs nav gating, replace it with one capabilities route in the access module with a server-side allow-list of permission keys, rather than adding a second module-specific route.
 
-The admin All Contacts screen is larger than the minimal target: `apps/admin/src/all-contacts.tsx` is 753 lines and `all-contacts.test.tsx` is 2,715 lines; `git diff --shortstat origin/main..HEAD -- apps/admin packages/ui` shows 4,215 insertions across 10 files. The whole chunk is about 2,580 non-test source lines against the roughly 800-line target, shipped as one pull request by the owner's decision.
+The admin All Contacts screen is larger than the minimal target: `apps/admin/src/all-contacts.tsx` is 856 lines and `all-contacts.test.tsx` is 3,455 lines; `git diff --shortstat origin/main...HEAD -- apps/admin packages/ui` shows 4,625 insertions across 10 files. The whole chunk is about 2,580 non-test source lines against the roughly 800-line target, shipped as one pull request by the owner's decision.
 
 ---
 
