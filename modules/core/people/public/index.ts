@@ -8,6 +8,10 @@ defineAuditAction("people.household.listed");
 defineAuditPurpose("people.household.listed");
 defineAuditAction("people.household.updated");
 defineAuditPurpose("people.household.updated");
+defineAuditAction("people.guardian.linked");
+defineAuditPurpose("people.guardian.linked");
+defineAuditAction("people.guardian.unlinked");
+defineAuditPurpose("people.guardian.unlinked");
 defineAuditAction("people.person.created");
 defineAuditPurpose("people.person.created");
 defineAuditAction("people.person.read");
@@ -53,7 +57,12 @@ export {
   type PersonListItem,
 } from "../infrastructure/list-persons.js";
 export { hasGuardianView, personIsMinor } from "../infrastructure/access-facts.js";
-export { linkGuardian, unlinkGuardian } from "../infrastructure/guardian.js";
+export {
+  linkGuardian,
+  unlinkGuardian,
+  type GuardianInput,
+  type UnlinkGuardianInput,
+} from "../infrastructure/guardian.js";
 export { listPersonActivity } from "../infrastructure/activity.js";
 export { attachTag, createTag, detachTag, listPersonTags } from "../infrastructure/tags.js";
 export { openPersonFieldKeys } from "../infrastructure/person-keys.js";

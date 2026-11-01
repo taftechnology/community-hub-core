@@ -1,8 +1,12 @@
-import { newId, type AppTransaction } from "@community-hub/db";
+import { appendAuditEvent, newId, type AppTransaction } from "@community-hub/db";
 
 import { PeopleError } from "../domain/error.js";
 
-type GuardianInput = {
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const GUARDIAN_LINKED = "people.guardian.linked";
+const GUARDIAN_UNLINKED = "people.guardian.unlinked";
+
+export type GuardianInput = {
   now: Date;
   householdId: string;
   guardianPersonId: string;
@@ -14,10 +18,22 @@ type GuardianInput = {
   actorUserId: string | null;
 };
 
-type Member = {
-  is_minor: boolean;
-  household_id: string | null;
+export type UnlinkGuardianInput = {
+  now: Date;
+  householdId: string;
+  linkId: string;
+  actorUserId: string | null;
 };
+
+function actor(actorUserId: string | null): {
+  actorKind: "system" | "user";
+  actorId: string | null;
+} {
+  if (actorUserId === null) {
+    return { actorKind: "system", actorId: null };
+  }
+  return { actorKind: "user", actorId: actorUserId };
+}
 
 function duplicateLink(error: unknown): boolean {
   const seen = new Set<unknown>();
@@ -40,18 +56,13 @@ function duplicateLink(error: unknown): boolean {
 
 async function householdExists(tx: AppTransaction, householdId: string): Promise<boolean> {
   const rows = await tx<{ id: string }[]>`
-    select id::text as id from app.households where id = ${householdId}::uuid
+    select id::text as id
+    from app.households
+    where id = ${householdId}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
   `;
   return rows[0] !== undefined;
-}
-
-async function loadMember(tx: AppTransaction, personId: string): Promise<Member | undefined> {
-  const rows = await tx<Member[]>`
-    select is_minor, household_id::text as household_id
-    from app.persons
-    where id = ${personId}::uuid
-  `;
-  return rows[0];
 }
 
 export async function linkGuardian(
@@ -61,10 +72,38 @@ export async function linkGuardian(
   if (!input.consent && !input.pickup && !input.view && !input.manage) {
     throw new PeopleError("invalid_guardian");
   }
+  if (
+    typeof input.householdId !== "string" ||
+    !UUID_RE.test(input.householdId) ||
+    typeof input.guardianPersonId !== "string" ||
+    !UUID_RE.test(input.guardianPersonId) ||
+    typeof input.childPersonId !== "string" ||
+    !UUID_RE.test(input.childPersonId)
+  ) {
+    throw new PeopleError("invalid_input");
+  }
+
   const household = await householdExists(tx, input.householdId);
-  const guardian = await loadMember(tx, input.guardianPersonId);
-  const child = await loadMember(tx, input.childPersonId);
-  if (!household || guardian === undefined || child === undefined) {
+  if (!household) {
+    throw new PeopleError("not_found");
+  }
+
+  // Pin 23: Lock both guardian and child rows in sorted order with for share
+  const [firstId, secondId] = [input.guardianPersonId, input.childPersonId].sort();
+  const members = await tx<{ id: string; is_minor: boolean; household_id: string | null }[]>`
+    select id::text as id, is_minor, household_id::text as household_id
+    from app.persons
+    where id in (${firstId}::uuid, ${secondId}::uuid)
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
+    order by id asc
+    for share
+  `;
+
+  const guardian = members.find((m) => m.id === input.guardianPersonId);
+  const child = members.find((m) => m.id === input.childPersonId);
+
+  if (guardian === undefined || child === undefined) {
     throw new PeopleError("not_found");
   }
   if (
@@ -75,6 +114,7 @@ export async function linkGuardian(
   ) {
     throw new PeopleError("invalid_guardian");
   }
+
   const linkId = newId();
   try {
     await tx.savepoint("guardian_link", async (sp) => {
@@ -116,22 +156,80 @@ export async function linkGuardian(
     }
     throw error;
   }
+
+  const recorded = actor(input.actorUserId);
+  await appendAuditEvent(tx, {
+    actorKind: recorded.actorKind,
+    actorId: recorded.actorId,
+    action: GUARDIAN_LINKED,
+    purpose: GUARDIAN_LINKED,
+    targetIds: [linkId, input.childPersonId, input.guardianPersonId],
+  });
+
   return { linkId };
 }
 
 export async function unlinkGuardian(
   tx: AppTransaction,
-  input: { now: Date; linkId: string; actorUserId: string | null },
+  input: UnlinkGuardianInput,
 ): Promise<void> {
-  const removed = await tx<{ child_person_id: string }[]>`
-    delete from app.guardian_links
+  if (
+    typeof input.householdId !== "string" ||
+    !UUID_RE.test(input.householdId) ||
+    typeof input.linkId !== "string" ||
+    !UUID_RE.test(input.linkId)
+  ) {
+    throw new PeopleError("invalid_input");
+  }
+
+  // Pin 4 & 12: Verify link belongs to the named household and tenant scope
+  const links = await tx<{ id: string; child_person_id: string }[]>`
+    select id::text as id, child_person_id::text as child_person_id
+    from app.guardian_links
     where id = ${input.linkId}::uuid
-    returning child_person_id::text as child_person_id
+      and household_id = ${input.householdId}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
   `;
-  const childPersonId = removed[0]?.child_person_id;
-  if (childPersonId === undefined) {
+  const link = links[0];
+  if (link === undefined) {
     throw new PeopleError("not_found");
   }
+
+  // Pin 3: Lock the child person row for update
+  const lockedChild = await tx<{ id: string }[]>`
+    select id::text as id
+    from app.persons
+    where id = ${link.child_person_id}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
+    for update
+  `;
+  if (lockedChild[0] === undefined) {
+    throw new PeopleError("not_found");
+  }
+
+  // Pin 3: Count remaining links in the same transaction; refuse if <= 1
+  const linkCounts = await tx<{ count: number }[]>`
+    select count(*)::int as count
+    from app.guardian_links
+    where child_person_id = ${link.child_person_id}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
+  `;
+  const count = linkCounts[0]?.count ?? 0;
+  if (count <= 1) {
+    throw new PeopleError("last_guardian");
+  }
+
+  await tx`
+    delete from app.guardian_links
+    where id = ${input.linkId}::uuid
+      and household_id = ${input.householdId}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
+  `;
+
   const activityId = newId();
   await tx`
     insert into app.person_activity (
@@ -140,10 +238,19 @@ export async function unlinkGuardian(
       ${activityId}::uuid,
       current_setting('app.org_id')::uuid,
       current_setting('app.community_id')::uuid,
-      ${childPersonId}::uuid,
+      ${link.child_person_id}::uuid,
       ${input.actorUserId}::uuid,
       'guardian_unlinked',
       ${input.now}
     )
   `;
+
+  const recorded = actor(input.actorUserId);
+  await appendAuditEvent(tx, {
+    actorKind: recorded.actorKind,
+    actorId: recorded.actorId,
+    action: GUARDIAN_UNLINKED,
+    purpose: GUARDIAN_UNLINKED,
+    targetIds: [input.linkId, link.child_person_id],
+  });
 }
