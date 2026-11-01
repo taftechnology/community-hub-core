@@ -226,13 +226,18 @@ export async function unlinkGuardian(
     throw new PeopleError("last_guardian");
   }
 
-  await tx`
+  const deleted = await tx<{ id: string }[]>`
     delete from app.guardian_links
     where id = ${input.linkId}::uuid
       and household_id = ${input.householdId}::uuid
       and org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
+    returning id::text as id
   `;
+  if (deleted.length === 0) {
+    // A concurrent unlink of the same link removed it first: no audit row.
+    throw new PeopleError("not_found");
+  }
 
   const activityId = newId();
   await tx`

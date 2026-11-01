@@ -716,6 +716,217 @@ describe("guardian links", () => {
     }
   });
 
+  it("refuses concurrent unlink of the same link with not_found and writes only one audit row (finding H3)", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const kms = createLocalKmsPort();
+    const organisationId = newId();
+    const communityId = newId();
+    const scope = { orgId: organisationId, communityId };
+
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, ${`h3-${organisationId}`}, 'au', 'implicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, ${`h3-${organisationId}`}, 'au')
+        `;
+      });
+
+      let householdId!: string;
+      let childId!: string;
+      let link1Id!: string;
+
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, scope, async (tx) => {
+          const hh = await createHousehold(tx, kms, KEY_ARN, {
+            now: NOW,
+            label: null,
+            actorUserId: null,
+          });
+          householdId = hh.householdId;
+
+          const g1 = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId,
+            dateOfBirth: "2005-01-01",
+            givenName: "AdultOne",
+            familyName: "Family",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          const g2 = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId,
+            dateOfBirth: "2006-02-02",
+            givenName: "AdultTwo",
+            familyName: "Family",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          const g3 = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId,
+            dateOfBirth: "2006-03-03",
+            givenName: "AdultThree",
+            familyName: "Family",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          const child = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId,
+            dateOfBirth: null,
+            givenName: "Child",
+            familyName: "Family",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          childId = child.personId;
+
+          const l1 = await linkGuardian(tx, {
+            now: NOW,
+            householdId,
+            guardianPersonId: g1.personId,
+            childPersonId: child.personId,
+            consent: true,
+            pickup: false,
+            view: false,
+            manage: false,
+            actorUserId: null,
+          });
+          link1Id = l1.linkId;
+
+          await linkGuardian(tx, {
+            now: NOW,
+            householdId,
+            guardianPersonId: g2.personId,
+            childPersonId: child.personId,
+            consent: true,
+            pickup: false,
+            view: false,
+            manage: false,
+            actorUserId: null,
+          });
+
+          await linkGuardian(tx, {
+            now: NOW,
+            householdId,
+            guardianPersonId: g3.personId,
+            childPersonId: child.personId,
+            consent: true,
+            pickup: false,
+            view: false,
+            manage: false,
+            actorUserId: null,
+          });
+        }),
+      );
+
+      // Deterministic race test unlinking the SAME link (link1Id) in both transactions
+      let releaseTx1!: () => void;
+      const tx1Hold = new Promise<void>((resolve) => {
+        releaseTx1 = resolve;
+      });
+      let tx1Started = false;
+
+      const p1 = withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, scope, async (tx1) => {
+          await unlinkGuardian(tx1, {
+            now: NOW,
+            householdId,
+            linkId: link1Id,
+            actorUserId: null,
+          });
+          tx1Started = true;
+          await tx1Hold;
+        }),
+      );
+
+      while (!tx1Started) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      let tx2Pid: number | null = null;
+      let tx2Error: unknown = null;
+
+      const p2 = withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, scope, async (tx2) => {
+          const pidRows = await tx2<{ pid: number }[]>`select pg_backend_pid() as pid`;
+          tx2Pid = pidRows[0]!.pid;
+          await unlinkGuardian(tx2, {
+            now: NOW,
+            householdId,
+            linkId: link1Id,
+            actorUserId: null,
+          });
+        }),
+      ).catch((err) => {
+        tx2Error = err;
+      });
+
+      const start = Date.now();
+      let locked = false;
+      while (Date.now() - start < 10000) {
+        if (tx2Pid !== null) {
+          const stat = await directSql<{ wait_event_type: string | null }[]>`
+            select wait_event_type from pg_stat_activity where pid = ${tx2Pid}
+          `;
+          if (stat[0]?.wait_event_type === "Lock") {
+            locked = true;
+            break;
+          }
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      expect(locked).toBe(true);
+
+      releaseTx1();
+      await p1;
+      await p2;
+
+      // Tx2 should fail with not_found because the link was deleted by Tx1
+      expect(tx2Error).toBeInstanceOf(PeopleError);
+      expect((tx2Error as PeopleError).code).toBe("not_found");
+
+      // Verify that only ONE audit event was written for unlinking link1Id
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, scope, async (tx) => {
+          const auditEvents = await tx<{ count: number }[]>`
+            select count(*)::int as count from app.audit_events
+            where action = 'people.guardian.unlinked'
+              and ${link1Id} = any(target_ids)
+          `;
+          expect(auditEvents[0]!.count).toBe(1);
+
+          const activityEvents = await tx<{ count: number }[]>`
+            select count(*)::int as count from app.person_activity
+            where person_id = ${childId}::uuid and kind = 'guardian_unlinked'
+          `;
+          expect(activityEvents[0]!.count).toBe(1);
+        }),
+      );
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+      await directSql.end({ timeout: 1 });
+    }
+  });
+
   it("pin 4: refuses to unlink when householdId does not match the link's household", async () => {
     await withTenant("pin4-household-mismatch", async (tx, kms) => {
       const homeA = await createHousehold(tx, kms, KEY_ARN, {
