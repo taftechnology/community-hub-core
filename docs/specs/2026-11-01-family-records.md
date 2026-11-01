@@ -2,7 +2,7 @@
 
 Slug: family-records
 Status: approved (2026-11-01, Adnan Bin Hossen)
-Amended after approval (2026-11-01): move-adult also requires `people.restricted.read`, because its guardian-link refusal reveals that an adult has a dependant. Confirmed by the approver, Adnan Bin Hossen. The four owner decisions are confirmed, and partial rights stays open.
+Amended after approval (2026-11-01): move-adult also requires `people.restricted.read`, because its guardian-link refusal reveals that an adult has a dependant. Confirmed by the approver, Adnan Bin Hossen. The four owner decisions are confirmed. When `rights` is present on add-minor or link it must carry all four booleans (`consent`, `pickup`, `view`, `manage`); when absent, both routes default to consent true, pickup false, view true, manage false.
 Architecture refs: §9 (family — Family Records, `core/people`; access routes), §12.1, §12.2.1, §12.3, §13; roadmap Phase 2 row "Family Records"
 
 ## Problem
@@ -46,7 +46,7 @@ Out (explicitly):
 - Given and family name required.
 - The minor has no email or phone in this chunk (the fields are not accepted).
 - The request names one guardian: an adult already in that household. `linkGuardian` enforces this.
-- Guardian rights default to view and consent true, others false; the request may set rights, and at least one right must be true (existing CHECK).
+- Guardian rights: when `rights` is omitted, both add-minor and link default to consent true, pickup false, view true, manage false. When `rights` is present it must carry all four booleans, and at least one must be true (existing CHECK).
 
 **Link guardian.** Adult and minor in the same household. Duplicate triple → 409. **Unlink guardian.** Body is `householdId` and `linkId`; the route verifies the link belongs to that household. The transaction first locks the child's person row (`select … for update`), counts the child's remaining links, and refuses with 409 if the unlink would leave none. Any link counts as a guardian, whatever rights it carries.
 
@@ -139,5 +139,4 @@ No events published or consumed, no port changes, no website collection, island 
   - Link and unlink need `people.manage` and `people.restricted.read`.
   - Household routes require `people.households` only.
   - A safeguarding officer, who holds `people.restricted.read` but not `people.view`, cannot open Family Records. The nav needs `people.view`.
-- **Owner decision still open:**
-  - Partial guardian rights. The spec says rights default to view and consent true, others false, and is silent on a partial rights object. Add-minor merges omitted keys onto view and consent true. Link leaves omitted keys false. Both are pinned. The admin screen sends all four booleans. Changing either API default needs an owner decision from Abdus.
+- **Guardian rights rule:** when `rights` is present on add-minor or link it must carry all four booleans; when absent, both routes use consent true, pickup false, view true, manage false. A partial object is rejected (400) and writes nothing.

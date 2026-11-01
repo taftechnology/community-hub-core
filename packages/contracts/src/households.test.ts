@@ -99,7 +99,7 @@ describe("household contract schemas (pin 10)", () => {
         familyName: "Smith",
         dateOfBirth: "2015-06-01",
         guardianId: OTHER_UUID,
-        rights: { view: true },
+        rights: { consent: true, pickup: false, view: true, manage: false },
       }).success,
     ).toBe(true);
 
@@ -109,7 +109,7 @@ describe("household contract schemas (pin 10)", () => {
         householdId: VALID_UUID,
         guardianId: OTHER_UUID,
         childId: "00000000-0000-4000-8000-000000000003",
-        rights: { consent: true, pickup: true },
+        rights: { consent: true, pickup: true, view: false, manage: false },
       }).success,
     ).toBe(true);
 
@@ -210,7 +210,7 @@ describe("household contract schemas (pin 10)", () => {
     ).toBe(false);
   });
 
-  it("requires at least one right to be true when rights are provided", () => {
+  it("requires all four rights booleans when rights are provided, and at least one true", () => {
     const validBase = {
       communitySlug: "slug",
       householdId: VALID_UUID,
@@ -219,9 +219,16 @@ describe("household contract schemas (pin 10)", () => {
       dateOfBirth: "2015-01-01",
       guardianId: OTHER_UUID,
     };
+    const linkBase = {
+      communitySlug: "slug",
+      householdId: VALID_UUID,
+      guardianId: OTHER_UUID,
+      childId: VALID_UUID,
+    };
 
     // empty rights object
     expect(addMinorBody.safeParse({ ...validBase, rights: {} }).success).toBe(false);
+    expect(linkGuardianBody.safeParse({ ...linkBase, rights: {} }).success).toBe(false);
     // all false rights
     expect(
       addMinorBody.safeParse({
@@ -229,29 +236,35 @@ describe("household contract schemas (pin 10)", () => {
         rights: { consent: false, pickup: false, view: false, manage: false },
       }).success,
     ).toBe(false);
-    // single true right
-    expect(addMinorBody.safeParse({ ...validBase, rights: { view: true } }).success).toBe(true);
-    expect(addMinorBody.safeParse({ ...validBase, rights: { consent: true } }).success).toBe(true);
-    expect(addMinorBody.safeParse({ ...validBase, rights: { pickup: true } }).success).toBe(true);
-    expect(addMinorBody.safeParse({ ...validBase, rights: { manage: true } }).success).toBe(true);
-
-    // linkGuardian also enforces at least one right
-    const linkBase = {
-      communitySlug: "slug",
-      householdId: VALID_UUID,
-      guardianId: OTHER_UUID,
-      childId: VALID_UUID,
-    };
-    expect(linkGuardianBody.safeParse({ ...linkBase, rights: {} }).success).toBe(false);
     expect(
       linkGuardianBody.safeParse({
         ...linkBase,
         rights: { consent: false, pickup: false, view: false, manage: false },
       }).success,
     ).toBe(false);
-    expect(linkGuardianBody.safeParse({ ...linkBase, rights: { consent: true } }).success).toBe(
-      true,
-    );
+    // partial objects rejected on both bodies
+    for (const partial of [
+      { view: true },
+      { pickup: true },
+      { consent: true },
+      { manage: true },
+    ] as const) {
+      expect(addMinorBody.safeParse({ ...validBase, rights: partial }).success).toBe(false);
+      expect(linkGuardianBody.safeParse({ ...linkBase, rights: partial }).success).toBe(false);
+    }
+    // full object with at least one true
+    expect(
+      addMinorBody.safeParse({
+        ...validBase,
+        rights: { consent: false, pickup: false, view: true, manage: false },
+      }).success,
+    ).toBe(true);
+    expect(
+      linkGuardianBody.safeParse({
+        ...linkBase,
+        rights: { consent: true, pickup: false, view: false, manage: false },
+      }).success,
+    ).toBe(true);
   });
 
   it("strictly rejects extra keys inside nested rights (finding 3)", () => {
@@ -263,22 +276,23 @@ describe("household contract schemas (pin 10)", () => {
       dateOfBirth: "2015-01-01",
       guardianId: OTHER_UUID,
     };
+    const fullRights = { consent: true, pickup: false, view: true, manage: false };
     expect(
       addMinorBody.safeParse({
         ...minorBase,
-        rights: { view: true, orgId: VALID_UUID },
+        rights: { ...fullRights, orgId: VALID_UUID },
       }).success,
     ).toBe(false);
     expect(
       addMinorBody.safeParse({
         ...minorBase,
-        rights: { view: true, isMinor: false },
+        rights: { ...fullRights, isMinor: false },
       }).success,
     ).toBe(false);
     expect(
       addMinorBody.safeParse({
         ...minorBase,
-        rights: { view: true, extra: "forbidden" },
+        rights: { ...fullRights, extra: "forbidden" },
       }).success,
     ).toBe(false);
 
@@ -291,13 +305,13 @@ describe("household contract schemas (pin 10)", () => {
     expect(
       linkGuardianBody.safeParse({
         ...linkBase,
-        rights: { view: true, orgId: VALID_UUID },
+        rights: { ...fullRights, orgId: VALID_UUID },
       }).success,
     ).toBe(false);
     expect(
       linkGuardianBody.safeParse({
         ...linkBase,
-        rights: { view: true, extra: "forbidden" },
+        rights: { ...fullRights, extra: "forbidden" },
       }).success,
     ).toBe(false);
   });

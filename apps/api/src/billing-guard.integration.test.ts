@@ -736,7 +736,7 @@ describe("billing guard against a real database", () => {
               familyName: "Child",
               dateOfBirth: "2015-05-10",
               guardianId: guardianPersonId,
-              rights: { consent: true, view: true },
+              rights: { consent: true, pickup: false, view: true, manage: false },
             },
             count: () => countPersons(setup),
           };
@@ -804,7 +804,7 @@ describe("billing guard against a real database", () => {
               householdId,
               guardianId: secondGuardianId,
               childId: childPersonId,
-              rights: { consent: true, view: true },
+              rights: { consent: true, pickup: false, view: true, manage: false },
             },
             count: () => countGuardianLinks(setup),
           };

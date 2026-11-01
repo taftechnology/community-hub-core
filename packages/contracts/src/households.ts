@@ -8,10 +8,10 @@ const dateOfBirth = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 export const guardianRightsInput = z
   .object({
-    consent: z.boolean().optional(),
-    pickup: z.boolean().optional(),
-    view: z.boolean().optional(),
-    manage: z.boolean().optional(),
+    consent: z.boolean(),
+    pickup: z.boolean(),
+    view: z.boolean(),
+    manage: z.boolean(),
   })
   .strict()
   .refine(

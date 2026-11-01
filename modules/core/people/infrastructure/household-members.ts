@@ -34,10 +34,10 @@ export type AddMinorInput = {
   dateOfBirth: string;
   guardianId: string;
   rights?: {
-    consent?: boolean;
-    pickup?: boolean;
-    view?: boolean;
-    manage?: boolean;
+    consent: boolean;
+    pickup: boolean;
+    view: boolean;
+    manage: boolean;
   };
   actorUserId: string | null;
 };
@@ -205,15 +205,21 @@ export async function addMinor(
   });
 
   // Pin 7: Link guardian inside the same transaction; rights default view and consent
+  const rights = input.rights ?? {
+    consent: true,
+    pickup: false,
+    view: true,
+    manage: false,
+  };
   const linkInput: GuardianInput = {
     now: input.now,
     householdId: input.householdId,
     guardianPersonId: input.guardianId,
     childPersonId: created.personId,
-    consent: input.rights?.consent ?? true,
-    pickup: input.rights?.pickup ?? false,
-    view: input.rights?.view ?? true,
-    manage: input.rights?.manage ?? false,
+    consent: rights.consent,
+    pickup: rights.pickup,
+    view: rights.view,
+    manage: rights.manage,
     actorUserId: input.actorUserId,
   };
   const linked = await linkGuardian(tx, linkInput);

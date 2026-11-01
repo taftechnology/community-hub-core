@@ -470,16 +470,6 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
             return finish(request, empty(403));
           }
 
-          const rights =
-            body.rights !== undefined
-              ? {
-                  ...(body.rights.consent !== undefined ? { consent: body.rights.consent } : {}),
-                  ...(body.rights.pickup !== undefined ? { pickup: body.rights.pickup } : {}),
-                  ...(body.rights.view !== undefined ? { view: body.rights.view } : {}),
-                  ...(body.rights.manage !== undefined ? { manage: body.rights.manage } : {}),
-                }
-              : undefined;
-
           const result = await addMinor(tx, deps.kms, deps.keyArn, {
             now: deps.now(),
             householdId: body.householdId,
@@ -487,7 +477,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
             familyName: body.familyName,
             dateOfBirth: body.dateOfBirth,
             guardianId: body.guardianId,
-            ...(rights !== undefined ? { rights } : {}),
+            ...(body.rights !== undefined ? { rights: body.rights } : {}),
             actorUserId: actor.userId,
           });
           return finish(request, Response.json(result, { status: 201 }));
@@ -529,19 +519,20 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
             return finish(request, empty(403));
           }
 
-          const rights = body.rights
-            ? {
-                consent: body.rights.consent ?? false,
-                pickup: body.rights.pickup ?? false,
-                view: body.rights.view ?? false,
-                manage: body.rights.manage ?? false,
-              }
-            : {
-                consent: true,
-                pickup: false,
-                view: true,
-                manage: false,
-              };
+          const rights =
+            body.rights !== undefined
+              ? {
+                  consent: body.rights.consent,
+                  pickup: body.rights.pickup,
+                  view: body.rights.view,
+                  manage: body.rights.manage,
+                }
+              : {
+                  consent: true,
+                  pickup: false,
+                  view: true,
+                  manage: false,
+                };
 
           const result = await linkGuardian(tx, {
             now: deps.now(),

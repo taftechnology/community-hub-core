@@ -1337,9 +1337,22 @@ describe("household read routes (Task 9: list and read)", () => {
         );
       });
 
-      it("forwards arguments to addMinor with partial rights and without rights", async () => {
-        // With explicit partial rights
+      it("forwards arguments to addMinor with full rights and without rights", async () => {
         people.addMinor.mockClear();
+        const resPartial = await call("/v1/households/members/add-minor", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          givenName: "Tommy",
+          familyName: "Smith",
+          dateOfBirth: "2015-05-10",
+          guardianId: GUARDIAN_ID,
+          rights: { pickup: true },
+        });
+        expect(resPartial.status).toBe(400);
+        expect(people.addMinor).not.toHaveBeenCalled();
+
+        people.addMinor.mockClear();
+        const fullRights = { consent: false, pickup: true, view: false, manage: true };
         const resWithRights = await call("/v1/households/members/add-minor", {
           communitySlug: SLUG,
           householdId: HOUSEHOLD_ID,
@@ -1347,7 +1360,7 @@ describe("household read routes (Task 9: list and read)", () => {
           familyName: "Smith",
           dateOfBirth: "2015-05-10",
           guardianId: GUARDIAN_ID,
-          rights: { pickup: true, manage: true },
+          rights: fullRights,
         });
         expect(resWithRights.status).toBe(201);
         expect(people.addMinor).toHaveBeenCalledWith(
@@ -1361,7 +1374,7 @@ describe("household read routes (Task 9: list and read)", () => {
             familyName: "Smith",
             dateOfBirth: "2015-05-10",
             guardianId: GUARDIAN_ID,
-            rights: { pickup: true, manage: true },
+            rights: fullRights,
             actorUserId: USER,
           }),
         );
@@ -1412,14 +1425,25 @@ describe("household read routes (Task 9: list and read)", () => {
         );
       });
 
-      it("forwards arguments to linkGuardian with custom rights and defaults unspecified to false", async () => {
+      it("rejects partial rights on link and forwards a full rights object", async () => {
+        people.linkGuardian.mockClear();
+        const resPartial = await call("/v1/households/guardians/link", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          guardianId: GUARDIAN_ID,
+          childId: PERSON_ID,
+          rights: { view: true },
+        });
+        expect(resPartial.status).toBe(400);
+        expect(people.linkGuardian).not.toHaveBeenCalled();
+
         people.linkGuardian.mockClear();
         const res = await call("/v1/households/guardians/link", {
           communitySlug: SLUG,
           householdId: HOUSEHOLD_ID,
           guardianId: GUARDIAN_ID,
           childId: PERSON_ID,
-          rights: { view: true },
+          rights: { consent: false, pickup: false, view: true, manage: false },
         });
         expect(res.status).toBe(201);
         expect(people.linkGuardian).toHaveBeenCalledWith(

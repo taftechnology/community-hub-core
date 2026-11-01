@@ -1198,11 +1198,7 @@ describe("household routes real-database integration (finding 4)", () => {
     expect(bodyA2View.minors).toBeUndefined();
     expect(bodyA2View.guardians).toEqual([]);
   });
-  it("pins the CURRENT partial-rights defaults of add-minor and link (finding H4, open owner question)", async () => {
-    // The spec says only "Guardian rights default to view and consent true, others false;
-    // the request may set rights". It is silent on a PARTIAL rights object. These tests pin
-    // today's behaviour: add-minor merges the unspecified keys onto the view+consent default,
-    // while link leaves every unspecified key false. Changing either needs an owner decision.
+  it("rejects a partial rights object on add-minor and link; omitted rights default to view and consent", async () => {
     const scopeA1 = { orgId: orgIdA, communityId: communityIdA1 };
     const rightsOf = async (childId: string, guardianId: string) =>
       withAppTransaction(secondApp, scopeA1, async (tx) => {
@@ -1215,26 +1211,44 @@ describe("household routes real-database integration (finding 4)", () => {
         expect(rows).toHaveLength(1);
         return rows[0]!;
       });
-    const addMinorVia = async (givenName: string, rights?: Record<string, boolean>) => {
-      const res = await post(
-        "/v1/households/members/add-minor",
-        {
-          communitySlug: slugA1,
-          householdId: householdA1Id,
-          givenName,
-          familyName: "Smith",
-          dateOfBirth: "2019-05-05",
-          guardianId: adultAliceId,
-          ...(rights !== undefined ? { rights } : {}),
-        },
-        ownerA1Token,
-      );
-      expect(res.status).toBe(201);
-      return ((await res.json()) as { personId: string }).personId;
-    };
+    const countPersonsAndLinks = async () =>
+      withAppTransaction(secondApp, scopeA1, async (tx) => {
+        const persons = await tx<{ n: string }[]>`select count(*)::text as n from app.persons`;
+        const links = await tx<{ n: string }[]>`select count(*)::text as n from app.guardian_links`;
+        return { persons: Number(persons[0]!.n), links: Number(links[0]!.n) };
+      });
 
-    // add-minor, no rights: view and consent true, others false
-    const childNone = await addMinorVia("RightsNone");
+    const beforePartialAdd = await countPersonsAndLinks();
+    const resPartialAdd = await post(
+      "/v1/households/members/add-minor",
+      {
+        communitySlug: slugA1,
+        householdId: householdA1Id,
+        givenName: "RightsPartial",
+        familyName: "Smith",
+        dateOfBirth: "2019-05-05",
+        guardianId: adultAliceId,
+        rights: { pickup: true },
+      },
+      ownerA1Token,
+    );
+    expect(resPartialAdd.status).toBe(400);
+    expect(await countPersonsAndLinks()).toEqual(beforePartialAdd);
+
+    const resAddNone = await post(
+      "/v1/households/members/add-minor",
+      {
+        communitySlug: slugA1,
+        householdId: householdA1Id,
+        givenName: "RightsNone",
+        familyName: "Smith",
+        dateOfBirth: "2019-05-05",
+        guardianId: adultAliceId,
+      },
+      ownerA1Token,
+    );
+    expect(resAddNone.status).toBe(201);
+    const childNone = ((await resAddNone.json()) as { personId: string }).personId;
     expect(await rightsOf(childNone, adultAliceId)).toEqual({
       consent: true,
       pickup: false,
@@ -1242,16 +1256,21 @@ describe("household routes real-database integration (finding 4)", () => {
       manage: false,
     });
 
-    // add-minor, partial rights {pickup: true}: unspecified keys keep the view+consent default
-    const childPartial = await addMinorVia("RightsPartial", { pickup: true });
-    expect(await rightsOf(childPartial, adultAliceId)).toEqual({
-      consent: true,
-      pickup: true,
-      view: true,
-      manage: false,
-    });
+    const beforePartialLink = await countPersonsAndLinks();
+    const resLinkPartial = await post(
+      "/v1/households/guardians/link",
+      {
+        communitySlug: slugA1,
+        householdId: householdA1Id,
+        guardianId: adultBobId,
+        childId: childNone,
+        rights: { pickup: true },
+      },
+      ownerA1Token,
+    );
+    expect(resLinkPartial.status).toBe(400);
+    expect(await countPersonsAndLinks()).toEqual(beforePartialLink);
 
-    // link, no rights: view and consent true, others false
     const resLinkNone = await post(
       "/v1/households/guardians/link",
       {
@@ -1267,26 +1286,6 @@ describe("household routes real-database integration (finding 4)", () => {
       consent: true,
       pickup: false,
       view: true,
-      manage: false,
-    });
-
-    // link, partial rights {pickup: true}: unspecified keys are FALSE (differs from add-minor)
-    const resLinkPartial = await post(
-      "/v1/households/guardians/link",
-      {
-        communitySlug: slugA1,
-        householdId: householdA1Id,
-        guardianId: adultBobId,
-        childId: childPartial,
-        rights: { pickup: true },
-      },
-      ownerA1Token,
-    );
-    expect(resLinkPartial.status).toBe(201);
-    expect(await rightsOf(childPartial, adultBobId)).toEqual({
-      consent: false,
-      pickup: true,
-      view: false,
       manage: false,
     });
   });
