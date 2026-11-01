@@ -15,6 +15,7 @@ import { assignPlan, upsertPlan } from "@community-hub/entitlements";
 import type { OtpMail } from "@community-hub/identity";
 import { startEmailOtp, verifyEmailOtp } from "@community-hub/identity";
 import { withRequest } from "@community-hub/kernel";
+import { addMinor, createHousehold, createPerson, linkGuardian } from "@community-hub/people";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 const billingSpy = vi.fn();
@@ -33,6 +34,7 @@ import { accessRoutes } from "./access-routes.js";
 import { authRoutes } from "./auth-routes.js";
 import type { Role } from "./checkout.js";
 import { entitlementRoutes } from "./entitlement-routes.js";
+import { householdRoutes } from "./household-routes.js";
 import { peopleRoutes } from "./people-routes.js";
 import { readServiceEnv, type ServiceEnv } from "./env.js";
 import { productionRoutes } from "./index.js";
@@ -204,7 +206,10 @@ describe("billing guard against a real database", () => {
 
     await upsertPlan(platform, {
       key: planKey,
-      entitlements: [{ key: "people.directory", limit: null }],
+      entitlements: [
+        { key: "people.directory", limit: null },
+        { key: "people.households", limit: null },
+      ],
     });
     await assignPlan(platform, { organisationId: orgId, planKey, now });
 
@@ -312,6 +317,49 @@ describe("billing guard against a real database", () => {
           where id = ${personId}::uuid
         `;
         return rows[0]?.version ?? 0;
+      },
+    );
+  }
+
+  async function countHouseholds(setup: OrgSetup): Promise<number> {
+    return withAppTransaction(
+      app,
+      { orgId: setup.orgId, communityId: setup.communityId },
+      async (tx) => {
+        const rows = await tx<{ n: number }[]>`
+          select count(*)::int as n
+          from app.households
+        `;
+        return rows[0]!.n;
+      },
+    );
+  }
+
+  async function householdVersion(setup: OrgSetup, householdId: string): Promise<number> {
+    return withAppTransaction(
+      app,
+      { orgId: setup.orgId, communityId: setup.communityId },
+      async (tx) => {
+        const rows = await tx<{ version: number }[]>`
+          select version
+          from app.households
+          where id = ${householdId}::uuid
+        `;
+        return rows[0]?.version ?? 0;
+      },
+    );
+  }
+
+  async function countGuardianLinks(setup: OrgSetup): Promise<number> {
+    return withAppTransaction(
+      app,
+      { orgId: setup.orgId, communityId: setup.communityId },
+      async (tx) => {
+        const rows = await tx<{ n: number }[]>`
+          select count(*)::int as n
+          from app.guardian_links
+        `;
+        return rows[0]!.n;
       },
     );
   }
@@ -556,6 +604,288 @@ describe("billing guard against a real database", () => {
         },
       },
     ],
+    [
+      "POST /v1/households/create",
+      {
+        path: "/v1/households/create",
+        prepare: async (setup) => {
+          return {
+            body: {
+              communitySlug: setup.slug,
+              label: "New Household",
+            },
+            count: () => countHouseholds(setup),
+          };
+        },
+      },
+    ],
+    [
+      "POST /v1/households/rename",
+      {
+        path: "/v1/households/rename",
+        prepare: async (setup) => {
+          const household = await withRequest({ requestId: REQUEST_ID }, () =>
+            withAppTransaction(app, { orgId: setup.orgId, communityId: setup.communityId }, (tx) =>
+              createHousehold(tx, kms, KEY_ARN, {
+                now: setup.now,
+                label: "Initial Household",
+                actorUserId: setup.ownerUserId,
+              }),
+            ),
+          );
+          return {
+            body: {
+              communitySlug: setup.slug,
+              householdId: household.householdId,
+              version: household.version,
+              label: "Renamed Household",
+            },
+            count: () => householdVersion(setup, household.householdId),
+          };
+        },
+      },
+    ],
+    [
+      "POST /v1/households/members/move-adult",
+      {
+        path: "/v1/households/members/move-adult",
+        prepare: async (setup) => {
+          let adultPersonId!: string;
+          let targetHouseholdId!: string;
+          await withRequest({ requestId: REQUEST_ID }, () =>
+            withAppTransaction(
+              app,
+              { orgId: setup.orgId, communityId: setup.communityId },
+              async (tx) => {
+                const h1 = await createHousehold(tx, kms, KEY_ARN, {
+                  now: setup.now,
+                  label: "Household 1",
+                  actorUserId: setup.ownerUserId,
+                });
+                const h2 = await createHousehold(tx, kms, KEY_ARN, {
+                  now: setup.now,
+                  label: "Household 2",
+                  actorUserId: setup.ownerUserId,
+                });
+                targetHouseholdId = h2.householdId;
+                const adult = await createPerson(tx, kms, KEY_ARN, {
+                  now: setup.now,
+                  declaredAdult: true,
+                  householdId: h1.householdId,
+                  dateOfBirth: null,
+                  givenName: "Moving",
+                  familyName: "Adult",
+                  email: null,
+                  phone: null,
+                  actorUserId: setup.ownerUserId,
+                });
+                adultPersonId = adult.personId;
+              },
+            ),
+          );
+          return {
+            body: {
+              communitySlug: setup.slug,
+              householdId: targetHouseholdId,
+              personId: adultPersonId,
+              version: 1,
+            },
+            count: () => personVersion(setup, adultPersonId),
+          };
+        },
+      },
+    ],
+    [
+      "POST /v1/households/members/add-minor",
+      {
+        path: "/v1/households/members/add-minor",
+        prepare: async (setup) => {
+          let householdId!: string;
+          let guardianPersonId!: string;
+          await withRequest({ requestId: REQUEST_ID }, () =>
+            withAppTransaction(
+              app,
+              { orgId: setup.orgId, communityId: setup.communityId },
+              async (tx) => {
+                const h = await createHousehold(tx, kms, KEY_ARN, {
+                  now: setup.now,
+                  label: "Household Minor",
+                  actorUserId: setup.ownerUserId,
+                });
+                householdId = h.householdId;
+                const guardian = await createPerson(tx, kms, KEY_ARN, {
+                  now: setup.now,
+                  declaredAdult: true,
+                  householdId,
+                  dateOfBirth: null,
+                  givenName: "Guardian",
+                  familyName: "Adult",
+                  email: null,
+                  phone: null,
+                  actorUserId: setup.ownerUserId,
+                });
+                guardianPersonId = guardian.personId;
+              },
+            ),
+          );
+          return {
+            body: {
+              communitySlug: setup.slug,
+              householdId,
+              givenName: "Minor",
+              familyName: "Child",
+              dateOfBirth: "2015-05-10",
+              guardianId: guardianPersonId,
+              rights: { consent: true, view: true },
+            },
+            count: () => countPersons(setup),
+          };
+        },
+      },
+    ],
+    [
+      "POST /v1/households/guardians/link",
+      {
+        path: "/v1/households/guardians/link",
+        prepare: async (setup) => {
+          let householdId!: string;
+          let secondGuardianId!: string;
+          let childPersonId!: string;
+          await withRequest({ requestId: REQUEST_ID }, () =>
+            withAppTransaction(
+              app,
+              { orgId: setup.orgId, communityId: setup.communityId },
+              async (tx) => {
+                const h = await createHousehold(tx, kms, KEY_ARN, {
+                  now: setup.now,
+                  label: "Household Two Guardians",
+                  actorUserId: setup.ownerUserId,
+                });
+                householdId = h.householdId;
+                const g1 = await createPerson(tx, kms, KEY_ARN, {
+                  now: setup.now,
+                  declaredAdult: true,
+                  householdId,
+                  dateOfBirth: null,
+                  givenName: "First",
+                  familyName: "Guardian",
+                  email: null,
+                  phone: null,
+                  actorUserId: setup.ownerUserId,
+                });
+                const minor = await addMinor(tx, kms, KEY_ARN, {
+                  now: setup.now,
+                  householdId,
+                  givenName: "Link",
+                  familyName: "Child",
+                  dateOfBirth: "2015-05-10",
+                  guardianId: g1.personId,
+                  actorUserId: setup.ownerUserId,
+                });
+                childPersonId = minor.personId;
+                const g2 = await createPerson(tx, kms, KEY_ARN, {
+                  now: setup.now,
+                  declaredAdult: true,
+                  householdId,
+                  dateOfBirth: null,
+                  givenName: "Second",
+                  familyName: "Guardian",
+                  email: null,
+                  phone: null,
+                  actorUserId: setup.ownerUserId,
+                });
+                secondGuardianId = g2.personId;
+              },
+            ),
+          );
+          return {
+            body: {
+              communitySlug: setup.slug,
+              householdId,
+              guardianId: secondGuardianId,
+              childId: childPersonId,
+              rights: { consent: true, view: true },
+            },
+            count: () => countGuardianLinks(setup),
+          };
+        },
+      },
+    ],
+    [
+      "POST /v1/households/guardians/unlink",
+      {
+        path: "/v1/households/guardians/unlink",
+        prepare: async (setup) => {
+          let householdId!: string;
+          let linkToUnlinkId!: string;
+          await withRequest({ requestId: REQUEST_ID }, () =>
+            withAppTransaction(
+              app,
+              { orgId: setup.orgId, communityId: setup.communityId },
+              async (tx) => {
+                const h = await createHousehold(tx, kms, KEY_ARN, {
+                  now: setup.now,
+                  label: "Household Unlink Guardian",
+                  actorUserId: setup.ownerUserId,
+                });
+                householdId = h.householdId;
+                const g1 = await createPerson(tx, kms, KEY_ARN, {
+                  now: setup.now,
+                  declaredAdult: true,
+                  householdId,
+                  dateOfBirth: null,
+                  givenName: "First",
+                  familyName: "Guardian",
+                  email: null,
+                  phone: null,
+                  actorUserId: setup.ownerUserId,
+                });
+                const minor = await addMinor(tx, kms, KEY_ARN, {
+                  now: setup.now,
+                  householdId,
+                  givenName: "Unlink",
+                  familyName: "Child",
+                  dateOfBirth: "2015-05-10",
+                  guardianId: g1.personId,
+                  actorUserId: setup.ownerUserId,
+                });
+                linkToUnlinkId = minor.linkId;
+                const g2 = await createPerson(tx, kms, KEY_ARN, {
+                  now: setup.now,
+                  declaredAdult: true,
+                  householdId,
+                  dateOfBirth: null,
+                  givenName: "Second",
+                  familyName: "Guardian",
+                  email: null,
+                  phone: null,
+                  actorUserId: setup.ownerUserId,
+                });
+                await linkGuardian(tx, {
+                  now: setup.now,
+                  householdId,
+                  guardianPersonId: g2.personId,
+                  childPersonId: minor.personId,
+                  consent: true,
+                  pickup: false,
+                  view: true,
+                  manage: false,
+                  actorUserId: setup.ownerUserId,
+                });
+              },
+            ),
+          );
+          return {
+            body: {
+              communitySlug: setup.slug,
+              householdId,
+              linkId: linkToUnlinkId,
+            },
+            count: () => countGuardianLinks(setup),
+          };
+        },
+      },
+    ],
   ]);
 
   beforeAll(async () => {
@@ -604,6 +934,15 @@ describe("billing guard against a real database", () => {
         guardLog: () => undefined,
       }),
       ...peopleRoutes({
+        checkout,
+        kms,
+        keyArn: KEY_ARN,
+        now: () => now,
+        apiHostname: API_HOSTNAME,
+        log: () => undefined,
+        guardLog: () => undefined,
+      }),
+      ...householdRoutes({
         checkout,
         kms,
         keyArn: KEY_ARN,
@@ -685,7 +1024,7 @@ describe("billing guard against a real database", () => {
         countBeforeRo,
       );
     }
-  }, 30_000);
+  }, 60_000);
 
   it("enforces tenant and billing boundaries across two organisations in both orders (pin 15)", async () => {
     // Order (i): A read_only, B ok
