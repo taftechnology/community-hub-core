@@ -242,6 +242,7 @@ export function FamilyRecordsPage() {
   // Move adult
   const [selectedAdult, setSelectedAdult] = useState<AdultMember | null>(null);
   const [moveTargetHouseholdId, setMoveTargetHouseholdId] = useState("");
+  const [moveConflict, setMoveConflict] = useState(false);
   const [moveNotice, setMoveNotice] = useState<string | null>(null);
 
   // Add minor
@@ -310,10 +311,10 @@ export function FamilyRecordsPage() {
   }, [renameConflict, renameNotice]);
 
   useEffect(() => {
-    if (moveNotice) {
+    if (moveConflict || moveNotice) {
       moveAlertRef.current?.focus();
     }
-  }, [moveNotice]);
+  }, [moveConflict, moveNotice]);
 
   useEffect(() => {
     if (addMinorNotice) {
@@ -462,6 +463,7 @@ export function FamilyRecordsPage() {
     setRenameNotice(null);
     setSelectedAdult(null);
     setMoveTargetHouseholdId("");
+    setMoveConflict(false);
     setMoveNotice(null);
     setMinorGivenName("");
     setMinorFamilyName("");
@@ -558,8 +560,18 @@ export function FamilyRecordsPage() {
   function openMoveAdult(adult: AdultMember) {
     setSelectedAdult(adult);
     setMoveTargetHouseholdId("");
+    setMoveConflict(false);
     setMoveNotice(null);
     setView("move-adult");
+  }
+
+  function handleReloadFromMoveConflict() {
+    setMoveConflict(false);
+    setMoveNotice(null);
+    setSelectedAdult(null);
+    setMoveTargetHouseholdId("");
+    reloadDetail();
+    setView("detail");
   }
 
   function openAddMinor() {
@@ -701,6 +713,7 @@ export function FamilyRecordsPage() {
       return;
     }
     setSubmitting(true);
+    setMoveConflict(false);
     setMoveNotice(null);
 
     try {
@@ -717,7 +730,7 @@ export function FamilyRecordsPage() {
       }
 
       if (response.status === 409) {
-        setMoveNotice("Cannot move adult with guardian links");
+        setMoveConflict(true);
         return;
       }
 
@@ -1068,6 +1081,18 @@ export function FamilyRecordsPage() {
           Move Adult
         </h2>
 
+        {moveConflict ? (
+          <Alert ref={moveAlertRef} tabIndex={-1} role="alert">
+            <span>
+              This change could not be applied. The adult may have guardian links, or the household
+              changed. Reload to see the latest.
+            </span>
+            <Button type="button" onClick={handleReloadFromMoveConflict}>
+              Reload
+            </Button>
+          </Alert>
+        ) : null}
+
         {moveNotice ? (
           <Alert ref={moveAlertRef} tabIndex={-1} variant="destructive" role="alert">
             <span>{moveNotice}</span>
@@ -1082,20 +1107,50 @@ export function FamilyRecordsPage() {
 
         <form onSubmit={handleMoveAdultSubmit}>
           <div>
-            <label htmlFor="move-adult-target">Target household ID</label>
-            <Input
+            <label htmlFor="move-adult-target">Target household</label>
+            <p id="move-adult-target-hint">
+              Select a target household, or choose &quot;No household&quot; to remove from
+              household.
+            </p>
+            {nextCursor !== null ? (
+              <p id="move-adult-paged-notice">
+                The household list is paged. Only currently loaded households are offered.
+              </p>
+            ) : null}
+            <select
               id="move-adult-target"
-              placeholder="Leave blank to remove from household"
+              aria-describedby={
+                nextCursor !== null
+                  ? "move-adult-target-hint move-adult-paged-notice"
+                  : "move-adult-target-hint"
+              }
               value={moveTargetHouseholdId}
               onChange={(e) => setMoveTargetHouseholdId(e.target.value)}
-            />
+            >
+              <option value="">No household</option>
+              {(items ?? []).map((h) => (
+                <option key={h.householdId} value={h.householdId}>
+                  {h.label ? h.label : h.householdId}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div>
             <Button type="submit" disabled={submitting}>
               Save move
             </Button>
-            <Button type="button" variant="outline" onClick={() => setView("detail")}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setSelectedAdult(null);
+                setMoveTargetHouseholdId("");
+                setMoveConflict(false);
+                setMoveNotice(null);
+                setView("detail");
+              }}
+            >
               Cancel
             </Button>
           </div>
