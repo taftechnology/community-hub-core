@@ -226,6 +226,7 @@ describe("household routes real-database integration (finding 4)", () => {
     secondApp = createPlaintextAppSql(roleUrl(runtime, "app"));
     kms = createLocalKmsPort();
     mail = new MemoryMail();
+    await identity`delete from identity.identity_keys`;
 
     const env = envFor(PORT);
     const routes = householdRoutes({
