@@ -436,4 +436,121 @@ describe("household detail read", () => {
       }
     }
   });
+
+  it("unrestricted detail read fails closed when child in guardian link is absent or unknown", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const kms = createLocalKmsPort();
+
+    const orgId = newId();
+    const commA = newId();
+    const commB = newId();
+
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${orgId}, ${`failclose-${orgId.slice(0, 8)}`}, 'au', 'implicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${commA}, ${orgId}, ${`comma-${commA.slice(0, 8)}`}, 'au')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${commB}, ${orgId}, ${`commb-${commB.slice(0, 8)}`}, 'au')
+        `;
+      });
+
+      let householdId = "";
+      let adultId = "";
+      let crossCommPersonId = "";
+      const orphanLinkId = newId();
+
+      // Setup in commA: household and adult
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId, communityId: commA }, async (tx) => {
+          const hh = await createHousehold(tx, kms, KEY_ARN, {
+            now: NOW,
+            label: "FailClosed Family",
+            actorUserId: null,
+          });
+          householdId = hh.householdId;
+
+          const adult = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: true,
+            householdId,
+            dateOfBirth: null,
+            givenName: "Adult",
+            familyName: "Guardian",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          adultId = adult.personId;
+        }),
+      );
+
+      // Setup in commB: person
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId, communityId: commB }, async (tx) => {
+          const person = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: true,
+            householdId: null,
+            dateOfBirth: null,
+            givenName: "Other",
+            familyName: "Person",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          crossCommPersonId = person.personId;
+        }),
+      );
+
+      // Insert link in commA referencing person from commB (FK satisfies org_id)
+      await directSql`
+        insert into app.guardian_links (
+          id, org_id, community_id, household_id, guardian_person_id, child_person_id,
+          consent, pickup, view, manage
+        ) values (
+          ${orphanLinkId}::uuid,
+          ${orgId}::uuid,
+          ${commA}::uuid,
+          ${householdId}::uuid,
+          ${adultId}::uuid,
+          ${crossCommPersonId}::uuid,
+          true, false, true, false
+        )
+      `;
+
+      // Read unrestricted detail in commA (includeRestricted: false)
+      // Since child is in commB, minorCheck inside commA returns no row (absent/unknown)
+      // Fail-closed rule: link MUST be omitted unless child is positively known to be an adult (=== false)
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId, communityId: commA }, async (tx) => {
+          const detail = await readHouseholdDetail(tx, kms, KEY_ARN, {
+            householdId,
+            includeRestricted: false,
+            actorUserId: null,
+          });
+
+          expect(detail).not.toBeNull();
+          expect(detail!.guardians).toEqual([]);
+        }),
+      );
+    } finally {
+      try {
+        await cleanScope(directSql, { orgId });
+      } finally {
+        await platform.end({ timeout: 1 });
+        await app.end({ timeout: 1 });
+        await directSql.end({ timeout: 1 });
+      }
+    }
+  });
 });

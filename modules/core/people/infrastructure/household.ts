@@ -568,7 +568,7 @@ export async function readHouseholdDetail(
       `;
       const minorMap = new Map(minorCheck.map((m) => [m.id, m.is_minor]));
       guardians = linkRows
-        .filter((r) => minorMap.get(r.child_person_id) !== true)
+        .filter((r) => minorMap.get(r.child_person_id) === false)
         .map((r) => ({
           linkId: r.id,
           id: r.id,
