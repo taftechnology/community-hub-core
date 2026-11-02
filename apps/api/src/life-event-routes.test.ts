@@ -569,5 +569,34 @@ describe("life event routes unit tests", () => {
       expect(res.status).toBe(409);
       expect(await res.text()).toBe("");
     });
+
+    it("Pin 14: non-PeopleError returns 500 with empty body and does not leak message into logCalls", async () => {
+      const fixturePlace = "St Jude Cathedral of Error";
+      people.listLifeEvents.mockRejectedValueOnce(new Error(`database failed at ${fixturePlace}`));
+      const res = await call("/v1/people/life-events/list", {
+        communitySlug: SLUG,
+        personId: PERSON_ID,
+      });
+      expect(res.status).toBe(500);
+      expect(await res.text()).toBe("");
+      expect(JSON.stringify(logCalls)).not.toContain(fixturePlace);
+    });
+
+    it("Pin 14: happy-path create with fixture place and notes does not leak fields into logCalls", async () => {
+      const fixturePlace = "St Mary's Secret Basilica";
+      const fixtureNotes = "Confidential baptismal annotations";
+      people.createLifeEvent.mockResolvedValueOnce({ eventId: EVENT_ID, version: 1 });
+      const res = await call("/v1/people/life-events/create", {
+        communitySlug: SLUG,
+        personId: PERSON_ID,
+        type: "baptism",
+        date: "2020-01-01",
+        place: fixturePlace,
+        notes: fixtureNotes,
+      });
+      expect(res.status).toBe(201);
+      expect(JSON.stringify(logCalls)).not.toContain(fixturePlace);
+      expect(JSON.stringify(logCalls)).not.toContain(fixtureNotes);
+    });
   });
 });
