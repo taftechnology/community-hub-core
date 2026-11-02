@@ -582,6 +582,35 @@ describe("life event routes unit tests", () => {
       expect(JSON.stringify(logCalls)).not.toContain(fixturePlace);
     });
 
+    it("Pin 14: create route non-PeopleError returns 500 with empty body and does not leak message into logCalls", async () => {
+      const fixturePlace = "St Jude Cathedral of Create Error";
+      people.createLifeEvent.mockRejectedValueOnce(new Error(`database failed at ${fixturePlace}`));
+      const res = await call("/v1/people/life-events/create", {
+        communitySlug: SLUG,
+        personId: PERSON_ID,
+        type: "baptism",
+        date: "2020-01-01",
+      });
+      expect(res.status).toBe(500);
+      expect(await res.text()).toBe("");
+      expect(JSON.stringify(logCalls)).not.toContain(fixturePlace);
+    });
+
+    it("Pin 14: update route non-PeopleError returns 500 with empty body and does not leak message into logCalls", async () => {
+      const fixturePlace = "St Jude Cathedral of Update Error";
+      people.updateLifeEvent.mockRejectedValueOnce(new Error(`database failed at ${fixturePlace}`));
+      const res = await call("/v1/people/life-events/update", {
+        communitySlug: SLUG,
+        eventId: EVENT_ID,
+        version: 1,
+        type: "baptism",
+        date: "2020-01-01",
+      });
+      expect(res.status).toBe(500);
+      expect(await res.text()).toBe("");
+      expect(JSON.stringify(logCalls)).not.toContain(fixturePlace);
+    });
+
     it("Pin 14: happy-path create with fixture place and notes does not leak fields into logCalls", async () => {
       const fixturePlace = "St Mary's Secret Basilica";
       const fixtureNotes = "Confidential baptismal annotations";
