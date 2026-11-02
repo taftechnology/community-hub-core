@@ -49,11 +49,11 @@ Out (explicitly):
 
 Routes record `people.permission.denied` audit with 403, as `household-routes.ts` does.
 
-| Route                      | Needs                                            | Notes                                                                  |
-| -------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------- |
-| `people/life-events/list`  | `people.restricted.read`                         | Owner-confirmed. No guardian path and no `people.view` path.           |
-| `people/life-events/create`| `people.manage` **and** `people.restricted.read` | Same pairing as the Family Records writes                              |
-| `people/life-events/update`| `people.manage` **and** `people.restricted.read` | A caller who cannot read the event must not overwrite it blind         |
+| Route                       | Needs                                            | Notes                                                          |
+| --------------------------- | ------------------------------------------------ | -------------------------------------------------------------- |
+| `people/life-events/list`   | `people.restricted.read`                         | Owner-confirmed. No guardian path and no `people.view` path.   |
+| `people/life-events/create` | `people.manage` **and** `people.restricted.read` | Same pairing as the Family Records writes                      |
+| `people/life-events/update` | `people.manage` **and** `people.restricted.read` | A caller who cannot read the event must not overwrite it blind |
 
 Every route also requires the `people.households` entitlement (Owner decision 2).
 
@@ -61,17 +61,17 @@ Every route also requires the `people.households` entitlement (Owner decision 2)
 
 New table `app.life_events`:
 
-| Column                     | Type                                  | Class (§12.1)                                                                |
-| -------------------------- | ------------------------------------- | ---------------------------------------------------------------------------- |
-| `id`                       | uuid                                  | `internal` identifier                                                        |
-| `org_id`                   | uuid, not null                        | `internal`; RLS key                                                          |
-| `community_id`             | uuid, not null                        | `internal`; RLS key                                                          |
-| `person_id`                | uuid, not null                        | `internal` identifier; FK `(org_id, person_id)` to `app.persons`, restrict   |
-| `version`                  | integer, not null, default 1          | `internal`                                                                   |
-| `event_type`               | encrypted (label `people.life_event_type`)  | `restricted`; no blind index, no SQL filter                            |
-| `event_date`               | encrypted (label `people.life_event_date`)  | `restricted`; no blind index, no SQL filter, no derived clear column   |
-| `place`                    | encrypted, nullable (label `people.life_event_place`) | `restricted`                                                  |
-| `notes`                    | encrypted, nullable (label `people.life_event_notes`) | `restricted`                                                  |
+| Column         | Type                                                  | Class (§12.1)                                                              |
+| -------------- | ----------------------------------------------------- | -------------------------------------------------------------------------- |
+| `id`           | uuid                                                  | `internal` identifier                                                      |
+| `org_id`       | uuid, not null                                        | `internal`; RLS key                                                        |
+| `community_id` | uuid, not null                                        | `internal`; RLS key                                                        |
+| `person_id`    | uuid, not null                                        | `internal` identifier; FK `(org_id, person_id)` to `app.persons`, restrict |
+| `version`      | integer, not null, default 1                          | `internal`                                                                 |
+| `event_type`   | encrypted (label `people.life_event_type`)            | `restricted`; no blind index, no SQL filter                                |
+| `event_date`   | encrypted (label `people.life_event_date`)            | `restricted`; no blind index, no SQL filter, no derived clear column       |
+| `place`        | encrypted, nullable (label `people.life_event_place`) | `restricted`                                                               |
+| `notes`        | encrypted, nullable (label `people.life_event_notes`) | `restricted`                                                               |
 
 - Primary key `(org_id, id)`. No other unique key, so no unique key that fails to start with `org_id`. One non-unique index `(org_id, person_id)` for the list.
 - RLS enabled and `FORCE ROW LEVEL SECURITY`, policy `community_isolation` by `communityPredicate`, as the other people tables.
