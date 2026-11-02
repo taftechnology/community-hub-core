@@ -20,6 +20,7 @@ import { authRoutes, type AuthDeps } from "./auth-routes.js";
 import { accessRoutes, type AccessDeps } from "./access-routes.js";
 import { peopleRoutes, type PeopleDeps } from "./people-routes.js";
 import { householdRoutes, type HouseholdDeps } from "./household-routes.js";
+import { lifeEventRoutes, type LifeEventDeps } from "./life-event-routes.js";
 import { entitlementRoutes, type EntitlementDeps } from "./entitlement-routes.js";
 import { billingWebhookRoutes } from "./billing-webhook.js";
 import { billingRoutes } from "./billing-routes.js";
@@ -80,6 +81,8 @@ export function run(source: NodeJS.ProcessEnv, pem: string, routes: readonly Gat
         ...authRoutes(bound.auth),
         ...accessRoutes(bound.access),
         ...peopleRoutes(bound.people),
+        ...householdRoutes(bound.households),
+        ...lifeEventRoutes(bound.lifeEvents),
         ...entitlementRoutes(bound.entitlements),
         ...billingWebhookRoutes(bound.billing),
         ...billingRoutes(bound.billing),
@@ -160,6 +163,7 @@ export function bindServices(
   access: AccessDeps;
   people: PeopleDeps;
   households: HouseholdDeps;
+  lifeEvents: LifeEventDeps;
   entitlements: EntitlementDeps;
   billing: BillingDeps;
   ops: OpsDeps;
@@ -314,6 +318,19 @@ export function bindServices(
         logger.info(message, fields);
       },
     },
+    lifeEvents: {
+      checkout: shared.checkout,
+      get kms() {
+        return shared.kms;
+      },
+      keyArn: shared.keyArn,
+      now: shared.now,
+      apiHostname: env.API_HOSTNAME,
+      log: shared.log,
+      guardLog: (message: string, fields: BillingLogFields) => {
+        logger.info(message, fields);
+      },
+    },
     entitlements: {
       checkout: shared.checkout,
       get kms() {
@@ -354,6 +371,7 @@ export function productionRoutes(env: ServiceEnv, pem: string): readonly GateRou
     ...accessRoutes(bound.access),
     ...peopleRoutes(bound.people),
     ...householdRoutes(bound.households),
+    ...lifeEventRoutes(bound.lifeEvents),
     ...entitlementRoutes(bound.entitlements),
     ...billingWebhookRoutes(bound.billing),
     ...billingRoutes(bound.billing),

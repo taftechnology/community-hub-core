@@ -46,19 +46,20 @@ export type PeopleDeps = {
   guardLog: (message: string, fields: BillingLogFields) => void;
 };
 
-function empty(status: number): Response {
+export function empty(status: number): Response {
   return new Response(null, { status });
 }
 
-function statusForPeople(error: PeopleError): Response | undefined {
+export function statusForPeople(error: PeopleError): Response | undefined {
   if (
     error.code === "duplicate_email" ||
     error.code === "duplicate_phone" ||
-    error.code === "conflict"
+    error.code === "conflict" ||
+    error.code === "too_many"
   ) {
     return empty(409);
   }
-  if (error.code === "not_found") {
+  if (error.code === "not_found" || error.code === "life_event_not_found") {
     return empty(404);
   }
   if (
@@ -68,7 +69,8 @@ function statusForPeople(error: PeopleError): Response | undefined {
     error.code === "invalid_email" ||
     error.code === "invalid_phone" ||
     error.code === "invalid_input" ||
-    error.code === "household_required"
+    error.code === "household_required" ||
+    error.code === "invalid_life_event"
   ) {
     return empty(400);
   }

@@ -726,7 +726,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
         (route as { billing?: string }).billing,
       ]),
     );
-    expect(routes).toHaveLength(45);
+    expect(routes).toHaveLength(48);
     expect(markings).toEqual(
       new Map([
         ["GET /health", "exempt"],
@@ -746,6 +746,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
         ["POST /v1/access/capabilities", "read"],
         ["POST /v1/people/list", "read"],
         ["POST /v1/people/read", "read"],
+        ["POST /v1/people/life-events/list", "read"],
         ["POST /v1/households/list", "read"],
         ["POST /v1/households/read", "read"],
         ["POST /v1/entitlements/list", "read"],
@@ -757,6 +758,8 @@ describe("api boot wiring of the billing adapter and logger", () => {
         ["POST /v1/access/user-links/delete", "write"],
         ["POST /v1/people/create", "write"],
         ["POST /v1/people/update", "write"],
+        ["POST /v1/people/life-events/create", "write"],
+        ["POST /v1/people/life-events/update", "write"],
         ["POST /v1/households/create", "write"],
         ["POST /v1/households/rename", "write"],
         ["POST /v1/households/members/move-adult", "write"],
