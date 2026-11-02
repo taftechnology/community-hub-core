@@ -1621,4 +1621,182 @@ describe("life events", () => {
       await app.end({ timeout: 1 });
     }
   });
+
+  it("F1: serialises concurrent creates on the person row so cap of 50 is strictly enforced", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const organisationId = newId();
+    const communityId = newId();
+    const kms = createLocalKmsPort();
+
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, 'f1-concurrency-parish', 'au', 'implicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, 'f1-concurrency-parish', 'au')
+        `;
+      });
+
+      const scope = { orgId: organisationId, communityId };
+      let personId = "";
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, scope, async (tx) => {
+          const person = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: true,
+            householdId: null,
+            dateOfBirth: null,
+            givenName: "Concurrency",
+            familyName: "Subject",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          personId = person.personId;
+        }),
+      );
+
+      // Seed 49 events
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, scope, async (tx) => {
+          for (let i = 0; i < 49; i += 1) {
+            await createLifeEvent(tx, kms, KEY_ARN, {
+              personId,
+              type: "baptism",
+              date: "2020-01-01",
+              place: null,
+              notes: null,
+              actorUserId: null,
+              now: NOW,
+            });
+          }
+        }),
+      );
+
+      // Tx1 acquires lock and creates 50th event, then holds open until releaseTx1
+      let releaseTx1!: () => void;
+      const tx1Hold = new Promise<void>((resolve) => {
+        releaseTx1 = resolve;
+      });
+      let tx1Started = false;
+
+      const p1 = withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, scope, async (tx1) => {
+          const created = await createLifeEvent(tx1, kms, KEY_ARN, {
+            personId,
+            type: "marriage",
+            date: "2020-01-02",
+            place: "Church 1",
+            notes: null,
+            actorUserId: null,
+            now: NOW,
+          });
+          tx1Started = true;
+          await tx1Hold;
+          return created;
+        }),
+      );
+
+      while (!tx1Started) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      // Tx2 and Tx3 attempt concurrent createLifeEvent for the same person
+      let tx2Pid: number | null = null;
+      let tx3Pid: number | null = null;
+
+      const p2 = withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, scope, async (tx2) => {
+          const pidRows = await tx2<{ pid: number }[]>`select pg_backend_pid() as pid`;
+          tx2Pid = pidRows[0]!.pid;
+          return createLifeEvent(tx2, kms, KEY_ARN, {
+            personId,
+            type: "funeral",
+            date: "2020-01-03",
+            place: "Church 2",
+            notes: null,
+            actorUserId: null,
+            now: NOW,
+          });
+        }),
+      );
+
+      const p3 = withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, scope, async (tx3) => {
+          const pidRows = await tx3<{ pid: number }[]>`select pg_backend_pid() as pid`;
+          tx3Pid = pidRows[0]!.pid;
+          return createLifeEvent(tx3, kms, KEY_ARN, {
+            personId,
+            type: "first_communion",
+            date: "2020-01-04",
+            place: "Church 3",
+            notes: null,
+            actorUserId: null,
+            now: NOW,
+          });
+        }),
+      );
+
+      // Wait until Tx2 is waiting on 'Lock' in pg_stat_activity
+      const start = Date.now();
+      let tx2Locked = false;
+      while (Date.now() - start < 10000) {
+        if (tx2Pid !== null) {
+          const stat = await directSql<{ wait_event_type: string | null }[]>`
+            select wait_event_type from pg_stat_activity where pid = ${tx2Pid}
+          `;
+          if (stat[0]?.wait_event_type === "Lock") {
+            tx2Locked = true;
+            break;
+          }
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      expect(tx2Locked).toBe(true);
+
+      // Release Tx1 and let all complete
+      releaseTx1();
+
+      const [r1, r2, r3] = await Promise.allSettled([p1, p2, p3]);
+
+      // Exactly one succeeds, the other two reject with too_many
+      expect(r1.status).toBe("fulfilled");
+      expect(r2.status).toBe("rejected");
+      expect(r3.status).toBe("rejected");
+      expect((r2 as PromiseRejectedResult).reason).toEqual(new PeopleError("too_many"));
+      expect((r3 as PromiseRejectedResult).reason).toEqual(new PeopleError("too_many"));
+
+      // Total row count is exactly 50
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, scope, async (tx) => {
+          const countRows = await tx<{ count: string }[]>`
+            select count(*)::text as count
+            from app.life_events
+            where person_id = ${personId}::uuid
+              and org_id = current_setting('app.org_id')::uuid
+              and community_id = current_setting('app.community_id')::uuid
+          `;
+          expect(Number(countRows[0]?.count)).toBe(50);
+
+          // listLifeEvents still succeeds
+          const list = await listLifeEvents(tx, kms, KEY_ARN, {
+            personId,
+            actorUserId: null,
+          });
+          expect(list.items).toHaveLength(50);
+        }),
+      );
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+      await directSql.end({ timeout: 1 });
+    }
+  });
 });

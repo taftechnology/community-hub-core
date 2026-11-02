@@ -275,6 +275,7 @@ export async function createLifeEvent(
     where id = ${input.personId}::uuid
       and org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
+    for update
   `;
   const person = persons[0];
   if (person === undefined) {
