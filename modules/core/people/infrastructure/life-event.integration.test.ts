@@ -1209,9 +1209,57 @@ describe("life events", () => {
         }),
       );
 
-      // Force failure during transaction (e.g. invalid action in subsequent statement)
+      // Case A: createLifeEvent resolves before a subsequent forced tx failure
+      let createdResult: { eventId: string; version: number } | undefined;
       await expect(
         withRequest({ requestId: REQUEST_ID }, () =>
+          withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+            createdResult = await createLifeEvent(tx, kms, KEY_ARN, {
+              personId,
+              type: "baptism",
+              date: "2020-01-01",
+              place: null,
+              notes: null,
+              actorUserId: null,
+              now: NOW,
+            });
+            // Assert createLifeEvent resolved inside transaction before forced failure
+            expect(createdResult.eventId).toBeDefined();
+            expect(createdResult.version).toBe(1);
+
+            // Force tx failure
+            await tx`select 'force failure'::int`;
+          }),
+        ),
+      ).rejects.toThrow();
+
+      expect(createdResult).toBeDefined();
+      const failedEventId = createdResult!.eventId;
+
+      // Check from direct connection: no life_events row, no audit row, and no usage fact exist
+      const rowsA = await directSql<{ id: string }[]>`
+        select id::text from app.life_events where id = ${failedEventId}::uuid
+      `;
+      expect(rowsA).toHaveLength(0);
+
+      const auditRowsA = await directSql<{ id: string }[]>`
+        select id::text from app.audit_events
+        where org_id = ${organisationId}::uuid
+          and action = 'people.life_event.created'
+      `;
+      expect(auditRowsA).toHaveLength(0);
+
+      const usageRowsA = await directSql<{ org_id: string }[]>`
+        select org_id::text from app.usage_facts_daily
+        where org_id = ${organisationId}::uuid
+          and feature_key = 'people.households'
+      `;
+      expect(usageRowsA).toHaveLength(0);
+
+      // Case B: Case where audit append fails during createLifeEvent
+      // Invalid requestId causes appendAuditEvent to reject after event and usage fact inserts
+      await expect(
+        withRequest({ requestId: "not-a-valid-uuid" }, () =>
           withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
             await createLifeEvent(tx, kms, KEY_ARN, {
               personId,
@@ -1222,17 +1270,30 @@ describe("life events", () => {
               actorUserId: null,
               now: NOW,
             });
-            // Force tx failure
-            await tx`select 'force failure'::int`;
           }),
         ),
-      ).rejects.toThrow();
+      ).rejects.toThrow(/requestId must be a UUID/);
 
-      // Check from direct connection: no life_events row exists
-      const rows = await directSql<{ id: string }[]>`
+      // Assert from direct connection (second connection) that everything rolled back:
+      // no event row, no audit row, and no usage fact exist
+      const rowsB = await directSql<{ id: string }[]>`
         select id::text from app.life_events where person_id = ${personId}::uuid
       `;
-      expect(rows).toHaveLength(0);
+      expect(rowsB).toHaveLength(0);
+
+      const auditRowsB = await directSql<{ id: string }[]>`
+        select id::text from app.audit_events
+        where org_id = ${organisationId}::uuid
+          and action = 'people.life_event.created'
+      `;
+      expect(auditRowsB).toHaveLength(0);
+
+      const usageRowsB = await directSql<{ org_id: string }[]>`
+        select org_id::text from app.usage_facts_daily
+        where org_id = ${organisationId}::uuid
+          and feature_key = 'people.households'
+      `;
+      expect(usageRowsB).toHaveLength(0);
     } finally {
       await directSql.end({ timeout: 1 });
       await platform.end({ timeout: 1 });
