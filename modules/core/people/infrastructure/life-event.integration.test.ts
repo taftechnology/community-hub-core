@@ -299,6 +299,88 @@ describe("life events", () => {
             aad,
           );
           expect(new TextDecoder().decode(decrypted)).toBe("first_communion");
+
+          // Update minor's event: must also seal under household key
+          const updated = await updateLifeEvent(tx, kms, KEY_ARN, {
+            eventId: created.eventId,
+            version: 1,
+            type: "first_communion",
+            date: "2025-05-19",
+            place: "St Jude's Chapel",
+            notes: "Updated communion note",
+            actorUserId: null,
+            now: NOW,
+          });
+          expect(updated.version).toBe(2);
+
+          const [updatedRow] = await tx<
+            {
+              event_type: Uint8Array;
+              place: Uint8Array;
+              notes: Uint8Array;
+            }[]
+          >`
+            select event_type, place, notes from app.life_events where id = ${created.eventId}::uuid
+          `;
+          expect(updatedRow?.event_type).toBeDefined();
+          expect(updatedRow?.place).toBeDefined();
+          expect(updatedRow?.notes).toBeDefined();
+
+          // After update: event_type ciphertext fails with community key, opens with household key
+          await expect(
+            decrypt(asCiphertext(updatedRow!.event_type), async () => commKeys.enc, aad),
+          ).rejects.toThrow();
+          const decryptedTypeAfter = await decrypt(
+            asCiphertext(updatedRow!.event_type),
+            async () => hhKeys.enc,
+            aad,
+          );
+          expect(new TextDecoder().decode(decryptedTypeAfter)).toBe("first_communion");
+
+          // place ciphertext fails with community key, opens with household key
+          const placeAad = {
+            tag: "chub/field/v1" as const,
+            label: "people.life_event_place",
+            rowId: uuidToBytes(created.eventId),
+            communityId: uuidToBytes(communityId),
+          };
+          await expect(
+            decrypt(asCiphertext(updatedRow!.place), async () => commKeys.enc, placeAad),
+          ).rejects.toThrow();
+          const decryptedPlaceAfter = await decrypt(
+            asCiphertext(updatedRow!.place),
+            async () => hhKeys.enc,
+            placeAad,
+          );
+          expect(new TextDecoder().decode(decryptedPlaceAfter)).toBe("St Jude's Chapel");
+
+          // notes ciphertext fails with community key, opens with household key
+          const notesAad = {
+            tag: "chub/field/v1" as const,
+            label: "people.life_event_notes",
+            rowId: uuidToBytes(created.eventId),
+            communityId: uuidToBytes(communityId),
+          };
+          await expect(
+            decrypt(asCiphertext(updatedRow!.notes), async () => commKeys.enc, notesAad),
+          ).rejects.toThrow();
+          const decryptedNotesAfter = await decrypt(
+            asCiphertext(updatedRow!.notes),
+            async () => hhKeys.enc,
+            notesAad,
+          );
+          expect(new TextDecoder().decode(decryptedNotesAfter)).toBe("Updated communion note");
+
+          // Assert the envelope still decrypts after the update (a list returns the new values)
+          const listed = await listLifeEvents(tx, kms, KEY_ARN, {
+            personId: minor.personId,
+            actorUserId: null,
+          });
+          expect(listed.items).toHaveLength(1);
+          expect(listed.items[0]?.place).toBe("St Jude's Chapel");
+          expect(listed.items[0]?.notes).toBe("Updated communion note");
+          expect(listed.items[0]?.date).toBe("2025-05-19");
+          expect(listed.items[0]?.version).toBe(2);
         }),
       );
     } finally {
