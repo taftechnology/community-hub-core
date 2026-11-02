@@ -142,10 +142,10 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
   const communityIdB1 = newId();
   const communityIdC = newId();
 
-  const slugA1 = `comm-a1-${newId().slice(0, 8)}`;
-  const slugA2 = `comm-a2-${newId().slice(0, 8)}`;
-  const slugB1 = `comm-b1-${newId().slice(0, 8)}`;
-  const slugC = `comm-c-${newId().slice(0, 8)}`;
+  const slugA1 = `le-comm-a1-${newId().slice(-8)}`;
+  const slugA2 = `le-comm-a2-${newId().slice(-8)}`;
+  const slugB1 = `le-comm-b1-${newId().slice(-8)}`;
+  const slugC = `le-comm-c-${newId().slice(-8)}`;
 
   let allPermissionsToken: string;
   let viewOnlyToken: string;
@@ -248,9 +248,9 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
       await tx`
         insert into platform.organisations (id, slug, region, kind)
         values
-          (${orgIdA}::uuid, ${`org-a-${newId().slice(0, 8)}`}, 'au', 'implicit'),
-          (${orgIdB}::uuid, ${`org-b-${newId().slice(0, 8)}`}, 'au', 'implicit'),
-          (${orgIdC}::uuid, ${`org-c-${newId().slice(0, 8)}`}, 'au', 'implicit')
+          (${orgIdA}::uuid, ${`le-org-a-${newId().slice(-8)}`}, 'au', 'implicit'),
+          (${orgIdB}::uuid, ${`le-org-b-${newId().slice(-8)}`}, 'au', 'implicit'),
+          (${orgIdC}::uuid, ${`le-org-c-${newId().slice(-8)}`}, 'au', 'implicit')
       `;
       await tx`
         insert into platform.communities (id, organisation_id, slug, region)
@@ -263,7 +263,7 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
     });
 
     // 2. Setup plans, entitlements, and billing accounts
-    const planKeyWithHh = `synth_plan_hh_${orgIdA.slice(0, 8)}`;
+    const planKeyWithHh = `le_plan_hh_${orgIdA.slice(-8)}`;
     await upsertPlan(platform, {
       key: planKeyWithHh,
       entitlements: [
@@ -274,7 +274,7 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
     await assignPlan(platform, { organisationId: orgIdA, planKey: planKeyWithHh, now });
     await assignPlan(platform, { organisationId: orgIdB, planKey: planKeyWithHh, now });
 
-    const planKeyNoHh = `synth_plan_no_hh_${orgIdC.slice(0, 8)}`;
+    const planKeyNoHh = `le_plan_no_hh_${orgIdC.slice(-8)}`;
     await upsertPlan(platform, {
       key: planKeyNoHh,
       entitlements: [{ key: "people.directory", limit: null }],
@@ -297,19 +297,19 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
     `;
 
     // 3. Setup users & role grants
-    const uAll = await signIn(`admin-${newId().slice(0, 6)}@example.test`);
+    const uAll = await signIn(`admin-${newId().slice(-8)}@example.test`);
     allPermissionsToken = uAll.accessToken;
 
-    const uManage = await signIn(`manage-${newId().slice(0, 6)}@example.test`);
+    const uManage = await signIn(`manage-${newId().slice(-8)}@example.test`);
     manageOnlyToken = uManage.accessToken;
 
-    const uRestricted = await signIn(`restricted-${newId().slice(0, 6)}@example.test`);
+    const uRestricted = await signIn(`restricted-${newId().slice(-8)}@example.test`);
     restrictedOnlyToken = uRestricted.accessToken;
 
-    const uView = await signIn(`view-${newId().slice(0, 6)}@example.test`);
+    const uView = await signIn(`view-${newId().slice(-8)}@example.test`);
     viewOnlyToken = uView.accessToken;
 
-    const uNone = await signIn(`norole-${newId().slice(0, 6)}@example.test`);
+    const uNone = await signIn(`norole-${newId().slice(-8)}@example.test`);
     noRoleToken = uNone.accessToken;
 
     // Grants on community A1
@@ -325,7 +325,7 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
         // Create roles and grant
         const roleManage = await createCustomRole(tx, {
           now,
-          key: `manage_only_${newId().slice(0, 8)}`,
+          key: `manage_only_${newId().slice(-8)}`,
           permissions: ["people.manage"],
           actorUserId: uAll.userId,
         });
@@ -339,7 +339,7 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
 
         const roleRestricted = await createCustomRole(tx, {
           now,
-          key: `restricted_only_${newId().slice(0, 8)}`,
+          key: `restricted_only_${newId().slice(-8)}`,
           permissions: ["people.restricted.read"],
           actorUserId: uAll.userId,
         });
@@ -353,7 +353,7 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
 
         const roleView = await createCustomRole(tx, {
           now,
-          key: `view_only_${newId().slice(0, 8)}`,
+          key: `view_only_${newId().slice(-8)}`,
           permissions: ["people.view"],
           actorUserId: uAll.userId,
         });
@@ -380,7 +380,7 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
       ),
     );
     // Bootstrap uOwnerB in Org B
-    const uOwnerB = await signIn(`owner-b-${newId().slice(0, 6)}@example.test`);
+    const uOwnerB = await signIn(`owner-b-${newId().slice(-8)}@example.test`);
     ownerB1Token = uOwnerB.accessToken;
     await withRequest({ requestId: REQUEST_ID }, () =>
       withAppTransaction(app, { orgId: orgIdB, communityId: communityIdB1 }, (tx) =>
@@ -393,7 +393,7 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
     );
 
     // Bootstrap uOwnerC in Org C (without people.households entitlement)
-    const uOwnerC = await signIn(`owner-c-${newId().slice(0, 6)}@example.test`);
+    const uOwnerC = await signIn(`owner-c-${newId().slice(-8)}@example.test`);
     tokenC = uOwnerC.accessToken;
     await withRequest({ requestId: REQUEST_ID }, () =>
       withAppTransaction(app, { orgId: orgIdC, communityId: communityIdC }, (tx) =>
