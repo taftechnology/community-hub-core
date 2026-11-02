@@ -57,6 +57,7 @@ const PEOPLE_TABLES = [
   "person_tags",
   "person_tag_links",
   "person_activity",
+  "life_events",
 ] as const;
 
 const DELETABLE = new Set(["guardian_links", "person_tag_links"]);
@@ -276,6 +277,96 @@ describe("people table privileges", () => {
         const canDelete = await privilege(sql, "app", table, "DELETE");
         expect(canDelete, `app should not have DELETE on ${table}`).toBe(false);
       }
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("defines life_events table with RLS, FORCE RLS, and no DELETE (Pin 1, Pin 2)", async () => {
+    const runtime = loadRuntime();
+    const sql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    try {
+      const [rel] = await sql<{ relrowsecurity: boolean; relforcerowsecurity: boolean }[]>`
+        select c.relrowsecurity, c.relforcerowsecurity
+        from pg_class c
+        join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'app' and c.relname = 'life_events'
+      `;
+      expect(rel, "life_events RLS").toEqual({ relrowsecurity: true, relforcerowsecurity: true });
+
+      const canDelete = await privilege(sql, "app", "life_events", "DELETE");
+      expect(canDelete, "app should not have DELETE on life_events").toBe(false);
+
+      const [pk] = await sql<{ constraint_name: string }[]>`
+        select tc.constraint_name
+        from information_schema.table_constraints tc
+        where tc.table_schema = 'app'
+          and tc.table_name = 'life_events'
+          and tc.constraint_type = 'PRIMARY KEY'
+      `;
+      expect(pk).toBeDefined();
+
+      const pkName = pk?.constraint_name ?? "";
+      const pkCols = await sql<{ column_name: string; ordinal_position: number }[]>`
+        select kcu.column_name, kcu.ordinal_position
+        from information_schema.key_column_usage kcu
+        where kcu.table_schema = 'app'
+          and kcu.table_name = 'life_events'
+          and kcu.constraint_name = ${pkName}
+        order by kcu.ordinal_position
+      `;
+      expect(pkCols.map((c: { column_name: string }) => c.column_name)).toEqual(["org_id", "id"]);
+
+      const [idx] = await sql<{ indexname: string; indexdef: string }[]>`
+        select indexname, indexdef
+        from pg_indexes
+        where schemaname = 'app'
+          and tablename = 'life_events'
+          and indexname = 'life_events_person_idx'
+      `;
+      expect(idx).toBeDefined();
+      expect(idx?.indexdef).toContain("(org_id, person_id)");
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("grants app update on app.life_events only by column for event_type, event_date, place, notes, version (Pin 2)", async () => {
+    const runtime = loadRuntime();
+    const sql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    try {
+      const allowedColumns = ["event_date", "event_type", "notes", "place", "version"] as const;
+      const forbiddenColumns = ["id", "org_id", "community_id", "person_id"] as const;
+
+      for (const col of allowedColumns) {
+        const [row] = await sql<{ granted: boolean }[]>`
+          select has_column_privilege('app', 'app.life_events', ${col}, 'UPDATE') as granted
+        `;
+        expect(row?.granted, `expected column life_events.${col} to be updatable by app`).toBe(
+          true,
+        );
+      }
+
+      for (const col of forbiddenColumns) {
+        const [row] = await sql<{ granted: boolean }[]>`
+          select has_column_privilege('app', 'app.life_events', ${col}, 'UPDATE') as granted
+        `;
+        expect(row?.granted, `expected column life_events.${col} NOT to be updatable by app`).toBe(
+          false,
+        );
+      }
+
+      const updatableRows = await sql<{ attname: string }[]>`
+        select attname
+        from pg_attribute
+        where attrelid = 'app.life_events'::regclass
+          and attnum > 0
+          and not attisdropped
+          and has_column_privilege('app', 'app.life_events', attname, 'UPDATE')
+        order by attname
+      `;
+      const updatableColumns = updatableRows.map((r) => r.attname);
+      expect(updatableColumns).toEqual([...allowedColumns].sort());
     } finally {
       await sql.end({ timeout: 1 });
     }
