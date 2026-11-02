@@ -623,10 +623,13 @@ describe("life events", () => {
     }
   });
 
-  it("Pin 10: Update takes version and bumps it; stale version throws conflict", async () => {
+  it(
+    "Pin 10: Update takes version and bumps it; stale version throws conflict",
+    async () => {
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
     const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const appB = createPlaintextAppSql(roleUrl(runtime, "app"));
     const organisationId = newId();
     const communityId = newId();
     const kms = createLocalKmsPort();
@@ -701,11 +704,140 @@ describe("life events", () => {
           expect(auditsAfter[0]?.n).toBe(auditsBefore[0]?.n);
         }),
       );
+
+      // Deterministic concurrent two-connection test:
+      // Writer A reads version 1 and passes in-code check, then waits.
+      // Writer B updates to version 2 and commits.
+      // Writer A resumes and executes SQL update where version = 1.
+      // Only the SQL guard stops Writer A from overwriting Writer B.
+      function createDeferred<T = void>() {
+        let resolve!: (value: T | PromiseLike<T>) => void;
+        let reject!: (reason?: unknown) => void;
+        const promise = new Promise<T>((res, rej) => {
+          resolve = res;
+          reject = rej;
+        });
+        return { promise, resolve, reject };
+      }
+
+      const aHasRead = createDeferred<void>();
+      const bHasCommitted = createDeferred<void>();
+
+      const kmsA: KmsPort = {
+        ...kms,
+        async decrypt(keyId, blob, context) {
+          aHasRead.resolve();
+          await bHasCommitted.promise;
+          return kms.decrypt(keyId, blob, context);
+        },
+      };
+
+      let concurrentPersonId = "";
+      let concurrentEventId = "";
+
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const person = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: true,
+            householdId: null,
+            dateOfBirth: null,
+            givenName: "Concurrent",
+            familyName: "Subject",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          concurrentPersonId = person.personId;
+
+          const created = await createLifeEvent(tx, kms, KEY_ARN, {
+            personId: concurrentPersonId,
+            type: "baptism",
+            date: "2020-01-01",
+            place: "Original Place",
+            notes: null,
+            actorUserId: null,
+            now: NOW,
+          });
+          concurrentEventId = created.eventId;
+        }),
+      );
+
+      const auditsBeforeA = await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const rows = await tx<{ n: number }[]>`
+            select count(*)::int as n from app.audit_events where action = 'people.life_event.updated'
+          `;
+          return rows[0]?.n ?? 0;
+        }),
+      );
+
+      // Writer A starts in background transaction
+      const writerAPromise = withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (txA) => {
+          return updateLifeEvent(txA, kmsA, KEY_ARN, {
+            eventId: concurrentEventId,
+            version: 1,
+            type: "baptism",
+            date: "2020-01-01",
+            place: "Writer A Place",
+            notes: null,
+            actorUserId: null,
+            now: NOW,
+          });
+        }),
+      );
+
+      // Wait until Writer A has read row with version 1 and passed in-code check
+      await aHasRead.promise;
+
+      // Writer B updates row to version 2 on a second connection and commits
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(appB, { orgId: organisationId, communityId }, async (txB) => {
+          const updatedB = await updateLifeEvent(txB, kms, KEY_ARN, {
+            eventId: concurrentEventId,
+            version: 1,
+            type: "baptism",
+            date: "2020-01-01",
+            place: "Writer B Place",
+            notes: null,
+            actorUserId: null,
+            now: NOW,
+          });
+          expect(updatedB.version).toBe(2);
+        }),
+      );
+
+      // Let Writer A resume and attempt its SQL update
+      bHasCommitted.resolve();
+
+      // Writer A must be stopped by the SQL and version = 1 guard and throw conflict
+      await expect(writerAPromise).rejects.toThrowError(new PeopleError("conflict"));
+
+      // Verify row retains Writer B's update (place is "Writer B Place", version is 2)
+      // and no audit event was written for Writer A
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const list = await listLifeEvents(tx, kms, KEY_ARN, {
+            personId: concurrentPersonId,
+            actorUserId: null,
+          });
+          expect(list.items[0]?.place).toBe("Writer B Place");
+          expect(list.items[0]?.version).toBe(2);
+
+          const auditsAfter = await tx<{ n: number }[]>`
+            select count(*)::int as n from app.audit_events where action = 'people.life_event.updated'
+          `;
+          // Exactly 1 new audit event from Writer B, 0 from Writer A
+          expect(auditsAfter[0]?.n).toBe(auditsBeforeA + 1);
+        }),
+      );
     } finally {
       await platform.end({ timeout: 1 });
       await app.end({ timeout: 1 });
+      await appB.end({ timeout: 1 });
     }
-  });
+  }, 20_000);
 
   it("Pin 11: Audit row written for list, create and update, holding ids only", async () => {
     const runtime = loadRuntime();
