@@ -572,31 +572,35 @@ describe("life events", () => {
       let comm2PersonId = "";
       let comm2EventId = "";
       await withRequest({ requestId: REQUEST_ID }, () =>
-        withAppTransaction(app, { orgId: organisationId, communityId: community2Id }, async (tx) => {
-          const adult2 = await createPerson(tx, kms, KEY_ARN, {
-            now: NOW,
-            declaredAdult: true,
-            householdId: null,
-            dateOfBirth: null,
-            givenName: "Adult",
-            familyName: "FiveComm2",
-            email: null,
-            phone: null,
-            actorUserId: null,
-          });
-          comm2PersonId = adult2.personId;
+        withAppTransaction(
+          app,
+          { orgId: organisationId, communityId: community2Id },
+          async (tx) => {
+            const adult2 = await createPerson(tx, kms, KEY_ARN, {
+              now: NOW,
+              declaredAdult: true,
+              householdId: null,
+              dateOfBirth: null,
+              givenName: "Adult",
+              familyName: "FiveComm2",
+              email: null,
+              phone: null,
+              actorUserId: null,
+            });
+            comm2PersonId = adult2.personId;
 
-          const e = await createLifeEvent(tx, kms, KEY_ARN, {
-            personId: comm2PersonId,
-            type: "first_communion",
-            date: "2020-01-01",
-            place: null,
-            notes: null,
-            actorUserId: null,
-            now: NOW,
-          });
-          comm2EventId = e.eventId;
-        }),
+            const e = await createLifeEvent(tx, kms, KEY_ARN, {
+              personId: comm2PersonId,
+              type: "first_communion",
+              date: "2020-01-01",
+              place: null,
+              notes: null,
+              actorUserId: null,
+              now: NOW,
+            });
+            comm2EventId = e.eventId;
+          },
+        ),
       );
 
       // Copy event_type from community1 event to community2 event via direct SQL
@@ -609,21 +613,25 @@ describe("life events", () => {
       // Reading in community2 must fail because AAD communityId does not match
       let listResult2: ListLifeEventsResult | undefined;
       await withRequest({ requestId: REQUEST_ID }, () =>
-        withAppTransaction(app, { orgId: organisationId, communityId: community2Id }, async (tx) => {
-          let error: unknown;
-          try {
-            listResult2 = await listLifeEvents(tx, kms, KEY_ARN, {
-              personId: comm2PersonId,
-              actorUserId: null,
-            });
-          } catch (e) {
-            error = e;
-          }
-          expect(error).toBeInstanceOf(DOMException);
-          expect((error as DOMException).name).toBe("OperationError");
-          expect((error as DOMException).message).toBe("decryption failed");
-          expect(listResult2).toBeUndefined();
-        }),
+        withAppTransaction(
+          app,
+          { orgId: organisationId, communityId: community2Id },
+          async (tx) => {
+            let error: unknown;
+            try {
+              listResult2 = await listLifeEvents(tx, kms, KEY_ARN, {
+                personId: comm2PersonId,
+                actorUserId: null,
+              });
+            } catch (e) {
+              error = e;
+            }
+            expect(error).toBeInstanceOf(DOMException);
+            expect((error as DOMException).name).toBe("OperationError");
+            expect((error as DOMException).message).toBe("decryption failed");
+            expect(listResult2).toBeUndefined();
+          },
+        ),
       );
     } finally {
       await directSql.end({ timeout: 1 });
@@ -776,9 +784,7 @@ describe("life events", () => {
     }
   });
 
-  it(
-    "Pin 10: Update takes version and bumps it; stale version throws conflict",
-    async () => {
+  it("Pin 10: Update takes version and bumps it; stale version throws conflict", async () => {
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
     const app = createPlaintextAppSql(roleUrl(runtime, "app"));
