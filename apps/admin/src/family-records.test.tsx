@@ -1295,7 +1295,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
         <MinorsSection
           detailHousehold={sampleDetail}
           access={{
-            entitlements: { "people.households": false },
+            entitlements: { "people.directory": true, "people.households": false },
             permissions: {
               "people.view": true,
               "people.manage": true,
