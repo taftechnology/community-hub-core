@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { decrypt, type Ciphertext } from "@community-hub/crypto";
+import { decrypt, type Ciphertext, type KmsPort } from "@community-hub/crypto";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import { applyProductMigrations, newId, withAppTransaction } from "@community-hub/db";
 import {
@@ -548,7 +548,7 @@ describe("life events", () => {
 
       // 1. Reading as service must fail because AAD rowId does not match:
       // Assert specific DOMException OperationError and that no LifeEventItem is returned
-      let listResult1: ListLifeEventsResult | undefined;
+      let listResult1: unknown;
       await withRequest({ requestId: REQUEST_ID }, () =>
         withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
           let error: unknown;
@@ -611,7 +611,7 @@ describe("life events", () => {
       `;
 
       // Reading in community2 must fail because AAD communityId does not match
-      let listResult2: ListLifeEventsResult | undefined;
+      let listResult2: unknown;
       await withRequest({ requestId: REQUEST_ID }, () =>
         withAppTransaction(
           app,
