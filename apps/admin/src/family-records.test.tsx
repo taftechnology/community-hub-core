@@ -76,6 +76,7 @@ type MockApiOptions = {
   linkGuardianResult?: unknown | number;
   unlinkGuardianResult?: unknown | number;
   peopleListResult?: { items: unknown[]; nextCursor: string | null } | number;
+  lifeEventsListResult?: { items: unknown[] } | number;
   onPost?: (path: string, body: unknown) => void;
 };
 
@@ -91,6 +92,7 @@ function mockApi({
   linkGuardianResult,
   unlinkGuardianResult,
   peopleListResult = { items: [], nextCursor: null },
+  lifeEventsListResult,
   onPost,
 }: MockApiOptions = {}) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
@@ -220,6 +222,17 @@ function mockApi({
         return new Response(null, { status: peopleListResult });
       }
       return new Response(JSON.stringify(peopleListResult), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    if (path === "/v1/people/life-events/list") {
+      if (onPost) onPost(path, body);
+      if (typeof lifeEventsListResult === "number") {
+        return new Response(null, { status: lifeEventsListResult });
+      }
+      return new Response(JSON.stringify(lifeEventsListResult ?? { items: [] }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -1229,6 +1242,133 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
       },
     ],
   };
+
+  it("Pin 16: hides life events panel and sends no request without people.restricted.read", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const postCalls: string[] = [];
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: false },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+      onPost: (path) => postCalls.push(path),
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
+    expect(screen.getByText("Arthur")).toBeTruthy();
+
+    expect(screen.queryByText(/Life events: Arthur Clarke/i)).toBeNull();
+    expect(screen.queryByText("No life events recorded")).toBeNull();
+    expect(postCalls.filter((p) => p.includes("/v1/people/life-events"))).toHaveLength(0);
+  });
+
+  it("Pin 16: hides life events panel and sends no request without people.households", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const postCalls: string[] = [];
+    mockApi({
+      access: { householdsEnabled: false, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+      onPost: (path) => postCalls.push(path),
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    expect(screen.queryByText(/Life events: Arthur Clarke/i)).toBeNull();
+    expect(postCalls.filter((p) => p.includes("/v1/people/life-events"))).toHaveLength(0);
+  });
+
+  it("Pin 16: renders life events panel for adult and minor members when holding both capabilities", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const postCalls: { path: string; body: unknown }[] = [];
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+      onPost: (path, body) => postCalls.push({ path, body }),
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
+    expect(screen.getByText("Arthur")).toBeTruthy();
+    expect(screen.getByText("Leo")).toBeTruthy();
+
+    expect(await screen.findByText(/Life events: Arthur Clarke/i)).toBeTruthy();
+    expect(await screen.findByText(/Life events: Leo Clarke/i)).toBeTruthy();
+
+    const adultPersonId = sampleDetail.adults[0]?.personId;
+    const minorPersonId = sampleDetail.minors[0]?.personId;
+    const lifeEventCalls = postCalls.filter((p) => p.path === "/v1/people/life-events/list");
+    expect(lifeEventCalls).toHaveLength(2);
+    expect(
+      lifeEventCalls.some(
+        (c) =>
+          typeof c.body === "object" &&
+          c.body !== null &&
+          "personId" in c.body &&
+          (c.body as { personId: string }).personId === adultPersonId,
+      ),
+    ).toBe(true);
+    expect(
+      lifeEventCalls.some(
+        (c) =>
+          typeof c.body === "object" &&
+          c.body !== null &&
+          "personId" in c.body &&
+          (c.body as { personId: string }).personId === minorPersonId,
+      ),
+    ).toBe(true);
+  });
 
   it("hides 'Create household' button when caller lacks people.manage (Pin 21)", async () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);

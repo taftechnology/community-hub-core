@@ -16,6 +16,7 @@ import { post } from "./api";
 import { useBillingStatus } from "./billing-status";
 import { useCommunity } from "./community";
 import { readAccessToken } from "./directory";
+import { LifeEventsPanel } from "./life-events";
 import { type PeopleAccess, usePeopleAccess } from "./people-access";
 
 type HouseholdItem = {
@@ -285,6 +286,7 @@ export function MinorsSection({
 }: MinorsSectionProps) {
   const canManage = Boolean(access.permissions["people.manage"]);
   const canRestricted = Boolean(access.permissions["people.restricted.read"]);
+  const canReadLifeEvents = canRestricted && Boolean(access.entitlements["people.households"]);
   const canAddMinor = canManage && canRestricted && !isReadOnly;
   const canLinkGuardian = canManage && canRestricted && !isReadOnly;
   const canUnlinkGuardian = canManage && canRestricted && !isReadOnly;
@@ -322,6 +324,18 @@ export function MinorsSection({
           </TableBody>
         </Table>
       )}
+
+      {canReadLifeEvents && detailHousehold.minors
+        ? detailHousehold.minors.map((minor) => (
+            <LifeEventsPanel
+              key={minor.personId}
+              personId={minor.personId}
+              personName={`${minor.givenName} ${minor.familyName}`}
+              isReadOnly={isReadOnly}
+              canManage={canManage}
+            />
+          ))
+        : null}
 
       <h3>Guardians</h3>
       {canLinkGuardian ? (
@@ -570,6 +584,7 @@ export function FamilyRecordsPage() {
 
   const canManage = Boolean(access.permissions["people.manage"]);
   const canRestricted = Boolean(access.permissions["people.restricted.read"]);
+  const canReadLifeEvents = canRestricted && Boolean(access.entitlements["people.households"]);
 
   const canCreate = canManage && !hideWrites;
   const canRename = canManage && canRestricted && !hideWrites;
@@ -1960,6 +1975,18 @@ export function FamilyRecordsPage() {
                 </TableBody>
               </Table>
             )}
+
+            {canReadLifeEvents
+              ? detailHousehold.adults.map((adult) => (
+                  <LifeEventsPanel
+                    key={adult.personId}
+                    personId={adult.personId}
+                    personName={`${adult.givenName} ${adult.familyName}`}
+                    isReadOnly={isReadOnly}
+                    canManage={canManage}
+                  />
+                ))
+              : null}
 
             {access.permissions["people.restricted.read"] && detailHousehold.minors ? (
               <MinorsSection
