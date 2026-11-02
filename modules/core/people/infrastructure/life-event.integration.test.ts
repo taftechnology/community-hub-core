@@ -1709,7 +1709,6 @@ describe("life events", () => {
 
       // Tx2 and Tx3 attempt concurrent createLifeEvent for the same person
       let tx2Pid: number | null = null;
-      let tx3Pid: number | null = null;
 
       const p2 = withRequest({ requestId: REQUEST_ID }, () =>
         withAppTransaction(app, scope, async (tx2) => {
@@ -1729,8 +1728,6 @@ describe("life events", () => {
 
       const p3 = withRequest({ requestId: REQUEST_ID }, () =>
         withAppTransaction(app, scope, async (tx3) => {
-          const pidRows = await tx3<{ pid: number }[]>`select pg_backend_pid() as pid`;
-          tx3Pid = pidRows[0]!.pid;
           return createLifeEvent(tx3, kms, KEY_ARN, {
             personId,
             type: "first_communion",
