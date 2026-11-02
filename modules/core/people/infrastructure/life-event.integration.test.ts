@@ -480,6 +480,7 @@ describe("life events", () => {
     const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
     const organisationId = newId();
     const communityId = newId();
+    const community2Id = newId();
     const kms = createLocalKmsPort();
 
     try {
@@ -490,7 +491,9 @@ describe("life events", () => {
         `;
         await tx`
           insert into platform.communities (id, organisation_id, slug, region)
-          values (${communityId}, ${organisationId}, 'pin5-parish', 'au')
+          values
+            (${communityId}, ${organisationId}, 'pin5-comm1', 'au'),
+            (${community2Id}, ${organisationId}, 'pin5-comm2', 'au')
         `;
       });
 
@@ -543,15 +546,83 @@ describe("life events", () => {
         where id = ${event2Id}::uuid
       `;
 
-      // Reading as service must fail because AAD rowId does not match
+      // 1. Reading as service must fail because AAD rowId does not match:
+      // Assert specific DOMException OperationError and that no LifeEventItem is returned
+      let listResult1: ListLifeEventsResult | undefined;
       await withRequest({ requestId: REQUEST_ID }, () =>
         withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
-          await expect(
-            listLifeEvents(tx, kms, KEY_ARN, {
+          let error: unknown;
+          try {
+            listResult1 = await listLifeEvents(tx, kms, KEY_ARN, {
               personId,
               actorUserId: null,
-            }),
-          ).rejects.toThrow();
+            });
+          } catch (e) {
+            error = e;
+          }
+          expect(error).toBeInstanceOf(DOMException);
+          expect((error as DOMException).name).toBe("OperationError");
+          expect((error as DOMException).message).toBe("decryption failed");
+          expect(listResult1).toBeUndefined();
+        }),
+      );
+
+      // 2. Cross-community AAD binding:
+      // Create person and event in community2
+      let comm2PersonId = "";
+      let comm2EventId = "";
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId: community2Id }, async (tx) => {
+          const adult2 = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: true,
+            householdId: null,
+            dateOfBirth: null,
+            givenName: "Adult",
+            familyName: "FiveComm2",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          comm2PersonId = adult2.personId;
+
+          const e = await createLifeEvent(tx, kms, KEY_ARN, {
+            personId: comm2PersonId,
+            type: "first_communion",
+            date: "2020-01-01",
+            place: null,
+            notes: null,
+            actorUserId: null,
+            now: NOW,
+          });
+          comm2EventId = e.eventId;
+        }),
+      );
+
+      // Copy event_type from community1 event to community2 event via direct SQL
+      await directSql`
+        update app.life_events
+        set event_type = (select event_type from app.life_events where id = ${event1Id}::uuid)
+        where id = ${comm2EventId}::uuid
+      `;
+
+      // Reading in community2 must fail because AAD communityId does not match
+      let listResult2: ListLifeEventsResult | undefined;
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId: community2Id }, async (tx) => {
+          let error: unknown;
+          try {
+            listResult2 = await listLifeEvents(tx, kms, KEY_ARN, {
+              personId: comm2PersonId,
+              actorUserId: null,
+            });
+          } catch (e) {
+            error = e;
+          }
+          expect(error).toBeInstanceOf(DOMException);
+          expect((error as DOMException).name).toBe("OperationError");
+          expect((error as DOMException).message).toBe("decryption failed");
+          expect(listResult2).toBeUndefined();
         }),
       );
     } finally {
@@ -1035,6 +1106,179 @@ describe("life events", () => {
             order by seq desc limit 1
           `;
           expect(updateAudits[0]?.target_ids).toEqual([created.eventId]);
+          const updateRowStr = JSON.stringify(updateAudits[0]?.payload);
+          expect(updateRowStr).not.toContain("AnotherPlace");
+          expect(updateRowStr).not.toContain("AnotherNote");
+          expect(updateRowStr).not.toContain("marriage");
+          expect(updateRowStr).not.toContain("2022-04-12");
+
+          // Update audit with non-null actorUserId: proves actor_id is the user and payload still holds no field value
+          const actorUserId = newId();
+          await updateLifeEvent(tx, kms, KEY_ARN, {
+            eventId: created.eventId,
+            version: 2,
+            type: "marriage",
+            date: "2022-04-12",
+            place: "ActorPlace",
+            notes: "ActorNote",
+            actorUserId,
+            now: NOW,
+          });
+
+          const actorAudits = await tx<
+            { action: string; actor_id: string; target_ids: string[]; payload: unknown }[]
+          >`
+            select action, actor_id, target_ids, to_jsonb(a.*) as payload
+            from app.audit_events a
+            where action = 'people.life_event.updated'
+            order by seq desc limit 1
+          `;
+          expect(actorAudits[0]?.target_ids).toEqual([created.eventId]);
+          expect(actorAudits[0]?.actor_id).toBe(actorUserId);
+          const actorRowStr = JSON.stringify(actorAudits[0]?.payload);
+          expect(actorRowStr).not.toContain("ActorPlace");
+          expect(actorRowStr).not.toContain("ActorNote");
+          expect(actorRowStr).not.toContain("2022-04-12");
+        }),
+      );
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
+
+  it("Pin 12: Rejected create and update write no row, no audit row, and make no KMS call", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const organisationId = newId();
+    const communityId = newId();
+    const kms = createLocalKmsPort();
+
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, 'pin12-parish', 'au', 'implicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, 'pin12-parish', 'au')
+        `;
+      });
+
+      let personId = "";
+      let eventId = "";
+
+      // Setup initial person and 1 valid life event
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const person = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: true,
+            householdId: null,
+            dateOfBirth: null,
+            givenName: "Pin12",
+            familyName: "Subject",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          personId = person.personId;
+
+          const created = await createLifeEvent(tx, kms, KEY_ARN, {
+            personId,
+            type: "baptism",
+            date: "2020-01-01",
+            place: "Valid Church",
+            notes: null,
+            actorUserId: null,
+            now: NOW,
+          });
+          eventId = created.eventId;
+        }),
+      );
+
+      // Spy on KMS to ensure no unwrap/decrypt is called when validation rejects
+      let kmsDecryptCalls = 0;
+      let kmsGenerateCalls = 0;
+      const spiedKms: KmsPort = {
+        async decrypt(keyId, blob, context) {
+          kmsDecryptCalls += 1;
+          return kms.decrypt(keyId, blob, context);
+        },
+        async generateDataKey(keyId, context) {
+          kmsGenerateCalls += 1;
+          return kms.generateDataKey(keyId, context);
+        },
+      };
+
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const eventsBefore = await tx<{ n: number }[]>`
+            select count(*)::int as n from app.life_events where person_id = ${personId}::uuid
+          `;
+          const createdAuditsBefore = await tx<{ n: number }[]>`
+            select count(*)::int as n from app.audit_events where action = 'people.life_event.created'
+          `;
+          const updatedAuditsBefore = await tx<{ n: number }[]>`
+            select count(*)::int as n from app.audit_events where action = 'people.life_event.updated'
+          `;
+
+          // 1. Rejected create with future date: throws invalid_life_event
+          await expect(
+            createLifeEvent(tx, spiedKms, KEY_ARN, {
+              personId,
+              type: "marriage",
+              date: "2099-01-01",
+              place: null,
+              notes: null,
+              actorUserId: null,
+              now: NOW,
+            }),
+          ).rejects.toThrowError(new PeopleError("invalid_life_event"));
+
+          // No row written, no audit row written, no KMS call made
+          const eventsAfterCreate = await tx<{ n: number }[]>`
+            select count(*)::int as n from app.life_events where person_id = ${personId}::uuid
+          `;
+          expect(eventsAfterCreate[0]?.n).toBe(eventsBefore[0]?.n);
+
+          const createdAuditsAfter = await tx<{ n: number }[]>`
+            select count(*)::int as n from app.audit_events where action = 'people.life_event.created'
+          `;
+          expect(createdAuditsAfter[0]?.n).toBe(createdAuditsBefore[0]?.n);
+          expect(kmsDecryptCalls).toBe(0);
+          expect(kmsGenerateCalls).toBe(0);
+
+          // 2. Rejected update with future date: throws invalid_life_event
+          await expect(
+            updateLifeEvent(tx, spiedKms, KEY_ARN, {
+              eventId,
+              version: 1,
+              type: "marriage",
+              date: "2099-01-01",
+              place: "Future Church",
+              notes: null,
+              actorUserId: null,
+              now: NOW,
+            }),
+          ).rejects.toThrowError(new PeopleError("invalid_life_event"));
+
+          // Row unchanged, no update audit row written, no KMS call made
+          const updatedAuditsAfter = await tx<{ n: number }[]>`
+            select count(*)::int as n from app.audit_events where action = 'people.life_event.updated'
+          `;
+          expect(updatedAuditsAfter[0]?.n).toBe(updatedAuditsBefore[0]?.n);
+          expect(kmsDecryptCalls).toBe(0);
+          expect(kmsGenerateCalls).toBe(0);
+
+          const list = await listLifeEvents(tx, kms, KEY_ARN, {
+            personId,
+            actorUserId: null,
+          });
+          expect(list.items[0]?.place).toBe("Valid Church");
+          expect(list.items[0]?.version).toBe(1);
         }),
       );
     } finally {
