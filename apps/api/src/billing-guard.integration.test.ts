@@ -15,7 +15,13 @@ import { assignPlan, upsertPlan } from "@community-hub/entitlements";
 import type { OtpMail } from "@community-hub/identity";
 import { startEmailOtp, verifyEmailOtp } from "@community-hub/identity";
 import { withRequest } from "@community-hub/kernel";
-import { addMinor, createHousehold, createPerson, linkGuardian } from "@community-hub/people";
+import {
+  addMinor,
+  createHousehold,
+  createLifeEvent,
+  createPerson,
+  linkGuardian,
+} from "@community-hub/people";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 const billingSpy = vi.fn();
@@ -35,6 +41,7 @@ import { authRoutes } from "./auth-routes.js";
 import type { Role } from "./checkout.js";
 import { entitlementRoutes } from "./entitlement-routes.js";
 import { householdRoutes } from "./household-routes.js";
+import { lifeEventRoutes } from "./life-event-routes.js";
 import { peopleRoutes } from "./people-routes.js";
 import { readServiceEnv, type ServiceEnv } from "./env.js";
 import { productionRoutes } from "./index.js";
@@ -364,6 +371,35 @@ describe("billing guard against a real database", () => {
     );
   }
 
+  async function countLifeEvents(setup: OrgSetup): Promise<number> {
+    return withAppTransaction(
+      app,
+      { orgId: setup.orgId, communityId: setup.communityId },
+      async (tx) => {
+        const rows = await tx<{ n: number }[]>`
+          select count(*)::int as n
+          from app.life_events
+        `;
+        return rows[0]!.n;
+      },
+    );
+  }
+
+  async function lifeEventVersion(setup: OrgSetup, eventId: string): Promise<number> {
+    return withAppTransaction(
+      app,
+      { orgId: setup.orgId, communityId: setup.communityId },
+      async (tx) => {
+        const rows = await tx<{ version: number }[]>`
+          select version
+          from app.life_events
+          where id = ${eventId}::uuid
+        `;
+        return rows[0]?.version ?? 0;
+      },
+    );
+  }
+
   const fixtureMap = new Map<string, Fixture>([
     [
       "POST /v1/access/grants",
@@ -600,6 +636,100 @@ describe("billing guard against a real database", () => {
               givenName: "UpdatedName",
             },
             count: () => personVersion(setup, personId),
+          };
+        },
+      },
+    ],
+    [
+      "POST /v1/people/life-events/create",
+      {
+        path: "/v1/people/life-events/create",
+        prepare: async (setup) => {
+          const personId = newId();
+          await withAppTransaction(
+            app,
+            { orgId: setup.orgId, communityId: setup.communityId },
+            async (tx) => {
+              await tx`
+                insert into app.persons (id, org_id, community_id, is_minor, age_basis, given_name, family_name, version)
+                values (
+                  ${personId}::uuid,
+                  current_setting('app.org_id')::uuid,
+                  current_setting('app.community_id')::uuid,
+                  false,
+                  'declared_adult',
+                  'Test',
+                  'User',
+                  1
+                )
+              `;
+            },
+          );
+          return {
+            body: {
+              communitySlug: setup.slug,
+              personId,
+              type: "baptism",
+              date: "2020-05-01",
+              place: "St Jude",
+              notes: "Initial note",
+            },
+            count: () => countLifeEvents(setup),
+          };
+        },
+      },
+    ],
+    [
+      "POST /v1/people/life-events/update",
+      {
+        path: "/v1/people/life-events/update",
+        prepare: async (setup) => {
+          const personId = newId();
+          let eventId!: string;
+          let version!: number;
+          await withRequest({ requestId: REQUEST_ID }, () =>
+            withAppTransaction(
+              app,
+              { orgId: setup.orgId, communityId: setup.communityId },
+              async (tx) => {
+                await tx`
+                  insert into app.persons (id, org_id, community_id, is_minor, age_basis, given_name, family_name, version)
+                  values (
+                    ${personId}::uuid,
+                    current_setting('app.org_id')::uuid,
+                    current_setting('app.community_id')::uuid,
+                    false,
+                    'declared_adult',
+                    'Test',
+                    'User',
+                    1
+                  )
+                `;
+                const created = await createLifeEvent(tx, kms, KEY_ARN, {
+                  now: setup.now,
+                  personId,
+                  type: "baptism",
+                  date: "2020-05-01",
+                  place: "St Jude",
+                  notes: "Initial note",
+                  actorUserId: setup.ownerUserId,
+                });
+                eventId = created.eventId;
+                version = created.version;
+              },
+            ),
+          );
+          return {
+            body: {
+              communitySlug: setup.slug,
+              eventId,
+              version,
+              type: "baptism",
+              date: "2020-05-02",
+              place: "St Jude Updated",
+              notes: "Updated note",
+            },
+            count: () => lifeEventVersion(setup, eventId),
           };
         },
       },
@@ -943,6 +1073,15 @@ describe("billing guard against a real database", () => {
         guardLog: () => undefined,
       }),
       ...householdRoutes({
+        checkout,
+        kms,
+        keyArn: KEY_ARN,
+        now: () => now,
+        apiHostname: API_HOSTNAME,
+        log: () => undefined,
+        guardLog: () => undefined,
+      }),
+      ...lifeEventRoutes({
         checkout,
         kms,
         keyArn: KEY_ARN,
