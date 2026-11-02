@@ -380,6 +380,13 @@ export function peopleTables(
     )
     .enableRLS();
 
+  const requiredEncrypted = {
+    encryptedColumn: <TName extends string, TLabel extends string>(
+      name: TName,
+      config: { label: TLabel },
+    ) => encryptedColumn(name, config).notNull(),
+  };
+
   const lifeEvents = app
     .table(
       "life_events",
@@ -389,8 +396,12 @@ export function peopleTables(
         communityId: uuid("community_id").notNull(),
         personId: uuid("person_id").notNull(),
         version: integer("version").notNull().default(1),
-        eventType: encryptedColumn("event_type", { label: "people.life_event_type" }),
-        eventDate: encryptedColumn("event_date", { label: "people.life_event_date" }),
+        eventType: requiredEncrypted.encryptedColumn("event_type", {
+          label: "people.life_event_type",
+        }),
+        eventDate: requiredEncrypted.encryptedColumn("event_date", {
+          label: "people.life_event_date",
+        }),
         place: encryptedColumn("place", { label: "people.life_event_place" }),
         notes: encryptedColumn("notes", { label: "people.life_event_notes" }),
       },
