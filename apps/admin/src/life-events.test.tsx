@@ -460,7 +460,7 @@ describe("LifeEventsPanel unit and accessibility tests", () => {
 
     expect(await screen.findByText("Funeral")).toBeTruthy();
 
-    act(() => {
+    await act(async () => {
       resolveFirstList(
         new Response(
           JSON.stringify({
@@ -478,6 +478,7 @@ describe("LifeEventsPanel unit and accessibility tests", () => {
           { status: 200, headers: { "content-type": "application/json" } },
         ),
       );
+      await new Promise((resolve) => setTimeout(resolve, 20));
     });
 
     expect(screen.queryByText("Baptism")).toBeNull();
