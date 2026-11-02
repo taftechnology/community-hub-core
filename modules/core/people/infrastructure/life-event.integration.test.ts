@@ -865,21 +865,59 @@ describe("life events", () => {
             actorUserId: null,
           });
           personId = person.personId;
-
-          // Create 1 real event
-          await createLifeEvent(tx, kms, KEY_ARN, {
-            personId,
-            type: "baptism",
-            date: "2020-01-01",
-            place: null,
-            notes: null,
-            actorUserId: null,
-            now: NOW,
-          });
         }),
       );
 
-      // Direct insert to reach 51 total rows for person
+      // Create 50 events using createLifeEvent (1 to 50 succeed)
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          for (let i = 0; i < 50; i += 1) {
+            await createLifeEvent(tx, kms, KEY_ARN, {
+              personId,
+              type: "baptism",
+              date: "2020-01-01",
+              place: null,
+              notes: null,
+              actorUserId: null,
+              now: NOW,
+            });
+          }
+        }),
+      );
+
+      // Exactly 50 events:
+      // 1) listLifeEvents MUST succeed and return 50 items
+      // 2) createLifeEvent MUST throw too_many and write no row
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const listed = await listLifeEvents(tx, kms, KEY_ARN, {
+            personId,
+            actorUserId: null,
+          });
+          expect(listed.items).toHaveLength(50);
+
+          await expect(
+            createLifeEvent(tx, kms, KEY_ARN, {
+              personId,
+              type: "marriage",
+              date: "2021-01-01",
+              place: null,
+              notes: null,
+              actorUserId: null,
+              now: NOW,
+            }),
+          ).rejects.toThrowError(new PeopleError("too_many"));
+
+          const countRows = await tx<{ count: string }[]>`
+            select count(*)::text as count
+            from app.life_events
+            where person_id = ${personId}::uuid
+          `;
+          expect(Number(countRows[0]?.count)).toBe(50);
+        }),
+      );
+
+      // Direct insert 1 more to reach 51 total rows for person to test list cap
       const [sample] = await directSql<
         {
           event_type: Uint8Array;
@@ -890,17 +928,15 @@ describe("life events", () => {
       `;
       expect(sample).toBeDefined();
 
-      for (let i = 0; i < 50; i += 1) {
-        const id = newId();
-        await directSql`
-          insert into app.life_events (
-            id, org_id, community_id, person_id, version, event_type, event_date
-          ) values (
-            ${id}::uuid, ${organisationId}::uuid, ${communityId}::uuid, ${personId}::uuid, 1,
-            ${sample!.event_type}, ${sample!.event_date}
-          )
-        `;
-      }
+      const extraId = newId();
+      await directSql`
+        insert into app.life_events (
+          id, org_id, community_id, person_id, version, event_type, event_date
+        ) values (
+          ${extraId}::uuid, ${organisationId}::uuid, ${communityId}::uuid, ${personId}::uuid, 1,
+          ${sample!.event_type}, ${sample!.event_date}
+        )
+      `;
 
       // 51 events total: listLifeEvents MUST throw too_many
       await withRequest({ requestId: REQUEST_ID }, () =>
