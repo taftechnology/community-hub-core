@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import axe from "axe-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { CommunityProvider } from "./community";
 import { MinorsSection } from "./family-records";
 import { router, Shell } from "./shell";
 
@@ -1282,31 +1283,32 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
 
   it("Pin 16: hides life events panel and sends no request without people.households", async () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);
+    sessionStorage.setItem("community-hub.community", SLUG);
     const postCalls: string[] = [];
     mockApi({
       access: { householdsEnabled: false, canView: true, canManage: true, canReadMinors: true },
-      listResult: {
-        items: [
-          {
-            householdId: sampleDetail.householdId,
-            version: 1,
-            label: sampleDetail.label,
-            adultCount: 1,
-          },
-        ],
-        nextCursor: null,
-      },
-      detailResult: sampleDetail,
       onPost: (path) => postCalls.push(path),
     });
 
-    await showFamilyRecords();
-    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
-      target: { value: SLUG },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+    render(
+      <CommunityProvider>
+        <MinorsSection
+          detailHousehold={sampleDetail}
+          access={{
+            entitlements: { "people.households": false },
+            permissions: {
+              "people.view": true,
+              "people.manage": true,
+              "people.restricted.read": true,
+            },
+          }}
+          isReadOnly={false}
+        />
+      </CommunityProvider>,
+    );
 
-    expect(screen.queryByText(/Life events: Arthur Clarke/i)).toBeNull();
+    expect(screen.queryByText(/Life events: Leo Clarke/i)).toBeNull();
+    expect(screen.queryByText("No life events recorded")).toBeNull();
     expect(postCalls.filter((p) => p.includes("/v1/people/life-events"))).toHaveLength(0);
   });
 
