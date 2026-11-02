@@ -567,7 +567,7 @@ describe("life events", () => {
         }),
       );
 
-      // 2. Cross-community AAD binding:
+      // 2. Fails across communities (ciphertext copied to a row in another community does not open; row id differs):
       // Create person and event in community2
       let comm2PersonId = "";
       let comm2EventId = "";
@@ -610,7 +610,7 @@ describe("life events", () => {
         where id = ${comm2EventId}::uuid
       `;
 
-      // Reading in community2 must fail because AAD communityId does not match
+      // Reading in community2 fails because row id differs (AAD rowId mismatch; community id also differs)
       let listResult2: unknown;
       await withRequest({ requestId: REQUEST_ID }, () =>
         withAppTransaction(
