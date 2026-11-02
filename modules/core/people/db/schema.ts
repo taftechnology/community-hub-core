@@ -380,6 +380,7 @@ export function peopleTables(
     )
     .enableRLS();
 
+  // Wrapper avoids @community-hub/no-encrypted-column-query false positive on .notNull() in table definitions.
   const requiredEncrypted = {
     encryptedColumn: <TName extends string, TLabel extends string>(
       name: TName,
