@@ -569,6 +569,12 @@ describe("life events", () => {
               now: NOW,
             }),
           ).rejects.toThrowError(new PeopleError("life_event_not_found"));
+
+          // As app, querying life_events for another community's event id returns no rows
+          const rowsFromOtherCommunity = await tx<{ id: string }[]>`
+            select id::text from app.life_events where id = ${eventInComm1A}::uuid
+          `;
+          expect(rowsFromOtherCommunity).toHaveLength(0);
         }),
       );
 
@@ -603,6 +609,12 @@ describe("life events", () => {
               now: NOW,
             }),
           ).rejects.toThrowError(new PeopleError("life_event_not_found"));
+
+          // As app, querying life_events for another community's event id returns no rows
+          const rowsFromOtherCommunity = await tx<{ id: string }[]>`
+            select id::text from app.life_events where id = ${eventInComm1A}::uuid
+          `;
+          expect(rowsFromOtherCommunity).toHaveLength(0);
         }),
       );
     } finally {

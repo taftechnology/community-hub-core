@@ -159,6 +159,8 @@ export async function listLifeEvents(
     select id::text as id, is_minor, household_id::text as household_id
     from app.persons
     where id = ${input.personId}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
   `;
   const person = persons[0];
   if (person === undefined) {
@@ -175,6 +177,8 @@ export async function listLifeEvents(
       notes
     from app.life_events
     where person_id = ${person.id}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
   `;
   if (rows.length > 50) {
     throw new PeopleError("too_many");
@@ -269,6 +273,8 @@ export async function createLifeEvent(
     select id::text as id, is_minor, household_id::text as household_id
     from app.persons
     where id = ${input.personId}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
   `;
   const person = persons[0];
   if (person === undefined) {
@@ -279,6 +285,8 @@ export async function createLifeEvent(
     select count(*)::text as count
     from app.life_events
     where person_id = ${person.id}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
   `;
   if (Number(countRows[0]?.count ?? 0) >= 50) {
     throw new PeopleError("too_many");
@@ -396,6 +404,10 @@ export async function updateLifeEvent(
     from app.life_events e
     inner join app.persons p on p.id = e.person_id
     where e.id = ${input.eventId}::uuid
+      and e.org_id = current_setting('app.org_id')::uuid
+      and e.community_id = current_setting('app.community_id')::uuid
+      and p.org_id = current_setting('app.org_id')::uuid
+      and p.community_id = current_setting('app.community_id')::uuid
   `;
   const existing = rows[0];
   if (existing === undefined) {
@@ -453,7 +465,10 @@ export async function updateLifeEvent(
       event_date = ${eventDate},
       place = ${place},
       notes = ${notes}
-    where id = ${input.eventId}::uuid and version = ${input.version}
+    where id = ${input.eventId}::uuid
+      and version = ${input.version}
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
     returning version
   `;
   if (updated[0] === undefined) {
