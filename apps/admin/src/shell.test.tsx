@@ -104,6 +104,8 @@ describe("Shell and ShellLayout", () => {
     expect(within(nav).getByRole("link", { name: "Module Toggles" }).getAttribute("href")).toBe(
       "/settings/modules",
     );
+    expect(within(nav).getByText("Settings").tagName).not.toBe("A");
+    expect(within(nav).queryByRole("link", { name: "Settings" })).toBeNull();
 
     // The slug textbox and Set button are inside the Admin navigation
     expect(within(nav).getByRole("textbox", { name: "Community" })).toBeTruthy();
@@ -119,6 +121,14 @@ describe("Shell and ShellLayout", () => {
 
     // document.title is "Dashboard · Community Hub"
     expect(document.title).toBe("Dashboard · Community Hub");
+
+    for (const label of frozenLabels) {
+      if (label === "Dashboard" || label === "Settings") {
+        continue;
+      }
+      expect(screen.queryByText(label)).toBeNull();
+    }
+    expect(screen.queryByText("Email Settings")).toBeNull();
 
     // No section-heading text appears for real users
     expect(screen.queryByText("People")).toBeNull();
@@ -158,6 +168,9 @@ describe("Shell and ShellLayout", () => {
       "Module Toggles",
     ]);
 
+    expect(within(nav).getByText("Settings").tagName).not.toBe("A");
+    expect(within(nav).queryByRole("link", { name: "Settings" })).toBeNull();
+
     const groupText = within(nav).getByText("Contacts & Members");
     const allContactsLink = within(nav).getByRole("link", {
       name: "All Contacts",
@@ -165,6 +178,19 @@ describe("Shell and ShellLayout", () => {
     expect(
       groupText.compareDocumentPosition(allContactsLink) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+
+    for (const label of frozenLabels) {
+      if (
+        label === "Dashboard" ||
+        label === "Settings" ||
+        label === "Contacts & Members" ||
+        label === "Family Records"
+      ) {
+        continue;
+      }
+      expect(screen.queryByText(label)).toBeNull();
+    }
+    expect(screen.queryByText("Email Settings")).toBeNull();
 
     // No section-heading text appears for real users (4 middle rows < 8)
     expect(screen.queryByText("People")).toBeNull();
@@ -255,6 +281,7 @@ describe("Shell and ShellLayout", () => {
     });
 
     render(<Shell />);
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
 
     expect(fetchSpy).not.toHaveBeenCalled();
