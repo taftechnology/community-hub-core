@@ -363,6 +363,72 @@ describe("LifeEventsPanel unit and accessibility tests", () => {
     expect(listCount).toBe(2);
   });
 
+  const DATE_HINT = "Check the date: it cannot be in the future or before 1900.";
+  const GENERIC = "Failed to save life event";
+  const existingEvent: LifeEvent = {
+    eventId: "00000000-0000-4000-8000-000000000001",
+    version: 1,
+    type: "baptism",
+    date: "2010-04-15",
+    place: "Old Church",
+    notes: null,
+  };
+
+  function mockSave(route: "create" | "update", saveStatus: number | "network") {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      if (url.includes("/v1/people/life-events/list")) {
+        return new Response(JSON.stringify({ items: route === "update" ? [existingEvent] : [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes(`/v1/people/life-events/${route}`)) {
+        if (saveStatus === "network") throw new TypeError("network down");
+        return new Response(null, { status: saveStatus });
+      }
+      return new Response(null, { status: 404 });
+    });
+  }
+
+  async function submit(route: "create" | "update") {
+    renderPanel();
+    if (route === "create") {
+      expect(await screen.findByText("No life events recorded")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: /Add life event/i }));
+      fireEvent.change(screen.getByLabelText(/Event type/i), { target: { value: "baptism" } });
+      fireEvent.change(screen.getByLabelText(/Date/i), { target: { value: "2020-01-01" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save life event" }));
+    } else {
+      expect(await screen.findByText("Baptism")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: /Edit/i }));
+      fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    }
+  }
+
+  for (const route of ["create", "update"] as const) {
+    it(`400 on ${route} keeps the form open and explains the date`, async () => {
+      mockSave(route, 400);
+      await submit(route);
+      expect(await screen.findByText(DATE_HINT)).toBeTruthy();
+      expect(screen.queryByText(GENERIC)).toBeNull();
+      expect(
+        screen.getByRole("button", {
+          name: route === "create" ? "Save life event" : "Save changes",
+        }),
+      ).toBeTruthy();
+    });
+
+    for (const failure of [500, "network"] as const) {
+      it(`${failure} on ${route} still shows the generic message`, async () => {
+        mockSave(route, failure);
+        await submit(route);
+        expect(await screen.findByText(GENERIC)).toBeTruthy();
+        expect(screen.queryByText(DATE_HINT)).toBeNull();
+      });
+    }
+  }
+
   it("a failing request displays no event content in the DOM text of an error", async () => {
     const sensitivePlace = "SecretChapelLocation123";
     const sensitiveNotes = "ConfidentialNotesText456";

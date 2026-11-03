@@ -166,6 +166,11 @@ export function LifeEventsPanel({
 
       setSubmitting(false);
 
+      if (response !== "unavailable" && response.status === 400) {
+        setActionError("Check the date: it cannot be in the future or before 1900.");
+        return;
+      }
+
       if (response === "unavailable" || !response.ok) {
         setActionError("Failed to save life event");
         return;
@@ -188,6 +193,11 @@ export function LifeEventsPanel({
 
       if (response !== "unavailable" && response.status === 409) {
         setIsConflict(true);
+        return;
+      }
+
+      if (response !== "unavailable" && response.status === 400) {
+        setActionError("Check the date: it cannot be in the future or before 1900.");
         return;
       }
 
