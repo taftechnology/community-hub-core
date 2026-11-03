@@ -4091,5 +4091,36 @@ describe("startOperatorEnrolment and verifyOperatorEnrolment", () => {
       `;
       expect(events).toHaveLength(1);
     });
+
+    it("pin 5b: a tenant session's access token passed to endOperatorSession leaves the tenant family untouched", async () => {
+      const now = new Date("2026-10-24T15:40:00.000Z");
+      const user = await insertIdentityUser(identitySql, kms, KEY_ARN, {
+        email: `pin5b-tenant-${newId()}@example.test`,
+      });
+      const tenantSession = await createSession(identitySql, kms, KEY_ARN, {
+        userId: user.userId,
+        now,
+        kind: "tenant",
+      });
+
+      await endOperatorSession(identitySql, kms, KEY_ARN, {
+        accessToken: tenantSession.accessToken,
+        now: new Date(now.getTime() + 60_000),
+      });
+
+      const [row] = await identitySql<{ revoked_at: Date | null }[]>`
+        select revoked_at from identity.sessions where user_id = ${user.userId} and kind = 'tenant'
+      `;
+      expect(row).toBeDefined();
+      expect(row!.revoked_at).toBeNull();
+
+      const refreshed = await refreshSession(identitySql, kms, KEY_ARN, {
+        refreshToken: tenantSession.refreshToken,
+        now: new Date(now.getTime() + 120_000),
+        kinds: ["tenant"],
+      });
+      expect(refreshed).not.toBeNull();
+      expect(refreshed!.userId).toBe(user.userId);
+    });
   });
 });
