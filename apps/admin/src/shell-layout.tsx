@@ -19,6 +19,7 @@ import { readSignOutHandle } from "./directory";
 import { findActiveId, useSidebarItems } from "./nav";
 import { ScreenTitleProvider, useScreenTitleContext } from "./screen-title";
 import { signOut } from "./sign-out";
+import { useNarrowViewport } from "./use-narrow-viewport";
 
 function ShellLayoutInner() {
   const context = useScreenTitleContext();
@@ -32,6 +33,7 @@ function ShellLayoutInner() {
   const { items, footer } = useSidebarItems();
   const activeId = findActiveId(items, footer, location.pathname);
   const signedIn = readSignOutHandle() !== null;
+  const isNarrow = useNarrowViewport();
   const signingOutRef = useRef(false);
 
   useEffect(() => {
@@ -92,13 +94,11 @@ function ShellLayoutInner() {
               </Link>
             )}
             extraItems={
-              <UserMenuCheckboxItem
-                checked={theme === "dark"}
-                onCheckedChange={toggle}
-                className="sm:hidden"
-              >
-                Dark mode
-              </UserMenuCheckboxItem>
+              isNarrow ? (
+                <UserMenuCheckboxItem checked={theme === "dark"} onCheckedChange={toggle}>
+                  Dark mode
+                </UserMenuCheckboxItem>
+              ) : undefined
             }
           />
         </>

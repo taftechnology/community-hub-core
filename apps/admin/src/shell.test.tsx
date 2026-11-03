@@ -59,7 +59,53 @@ function createStorage(): Storage {
   };
 }
 
+function mockMatchMedia(initialMatches: boolean) {
+  const listeners = new Set<(e: Event) => void>();
+  const mql = {
+    matches: initialMatches,
+    media: "(max-width: 639.98px)",
+    onchange: null,
+    addListener: vi.fn((cb: (e: Event) => void) => listeners.add(cb)),
+    removeListener: vi.fn((cb: (e: Event) => void) => listeners.delete(cb)),
+    addEventListener: vi.fn((type: string, cb: (e: Event) => void) => {
+      if (type === "change") listeners.add(cb);
+    }),
+    removeEventListener: vi.fn((type: string, cb: (e: Event) => void) => {
+      if (type === "change") listeners.delete(cb);
+    }),
+    dispatchEvent: vi.fn((evt: Event) => {
+      listeners.forEach((cb) => cb(evt));
+      return true;
+    }),
+    dispatchChange(matches: boolean) {
+      mql.matches = matches;
+      const event = new Event("change");
+      Object.assign(event, { matches });
+      listeners.forEach((cb) => cb(event));
+    },
+  };
+
+  const matchMediaMock = vi.fn().mockImplementation((query: string) => {
+    if (query === "(max-width: 639.98px)") {
+      return mql;
+    }
+    return {
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    };
+  });
+  window.matchMedia = matchMediaMock;
+  return { mql, matchMediaMock };
+}
+
 describe("Shell and ShellLayout", () => {
+  const originalMatchMedia = window.matchMedia;
   let storage: Storage;
 
   beforeEach(async () => {
@@ -74,6 +120,7 @@ describe("Shell and ShellLayout", () => {
     cleanup();
     sessionStorage.clear();
     delete document.documentElement.dataset.theme;
+    window.matchMedia = originalMatchMedia;
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -449,7 +496,29 @@ describe("Shell and ShellLayout", () => {
     expect(resultIds(darkResults, "violations")).toEqual([]);
   });
 
+  it("with matchMedia mocked to not match, opening Account and pressing ArrowDown highlights Sign out first, and there is no Dark mode item in the DOM", async () => {
+    mockMatchMedia(false);
+    sessionStorage.setItem("community-hub.signout-handle", "fake-" + "handle-desktop");
+    render(<Shell />);
+
+    const accountBtn = screen.getByRole("button", { name: "Account" });
+    await act(async () => {
+      fireEvent.click(accountBtn);
+    });
+
+    const popup = await screen.findByRole("menu");
+    expect(popup).toBeTruthy();
+    expect(screen.queryByRole("menuitemcheckbox", { name: "Dark mode" })).toBeNull();
+
+    const signOutBtn = screen.getByRole("menuitem", { name: "Sign out" });
+    fireEvent.keyDown(popup, { key: "ArrowDown" });
+    expect(
+      signOutBtn.hasAttribute("data-highlighted") || document.activeElement === signOutBtn,
+    ).toBe(true);
+  });
+
   it("user menu contains Dark mode toggle for phones in extraItems that toggles theme", async () => {
+    mockMatchMedia(true);
     sessionStorage.setItem("community-hub.signout-handle", "fake-" + "handle-4");
     render(<Shell />);
 
@@ -461,7 +530,7 @@ describe("Shell and ShellLayout", () => {
     const darkToggle = await screen.findByRole("menuitemcheckbox", { name: "Dark mode" });
     expect(darkToggle).toBeTruthy();
     expect(darkToggle.getAttribute("aria-checked")).toBe("false");
-    expect(darkToggle.className).toContain("sm:hidden");
+    expect(darkToggle.className).not.toContain("sm:hidden");
 
     const popup = screen.getByRole("menu");
     while (!darkToggle.hasAttribute("data-highlighted") && document.activeElement !== darkToggle) {
@@ -486,5 +555,32 @@ describe("Shell and ShellLayout", () => {
     expect(
       signOutBtn.hasAttribute("data-highlighted") || document.activeElement === signOutBtn,
     ).toBe(true);
+  });
+
+  it("firing a change event on the media query list updates the menu", async () => {
+    const { mql } = mockMatchMedia(false);
+    sessionStorage.setItem("community-hub.signout-handle", "fake-" + "handle-responsive");
+    render(<Shell />);
+
+    const accountBtn = screen.getByRole("button", { name: "Account" });
+    await act(async () => {
+      fireEvent.click(accountBtn);
+    });
+
+    await screen.findByRole("menu");
+    expect(screen.queryByRole("menuitemcheckbox", { name: "Dark mode" })).toBeNull();
+
+    act(() => {
+      mql.dispatchChange(true);
+    });
+
+    const darkToggle = await screen.findByRole("menuitemcheckbox", { name: "Dark mode" });
+    expect(darkToggle).toBeTruthy();
+
+    act(() => {
+      mql.dispatchChange(false);
+    });
+
+    expect(screen.queryByRole("menuitemcheckbox", { name: "Dark mode" })).toBeNull();
   });
 });
