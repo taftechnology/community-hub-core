@@ -63,6 +63,11 @@ function uuidToBytes(uuid: string): Uint8Array {
   return out;
 }
 
+function extractEnvelopeKeyId(blob: Uint8Array): Uint8Array {
+  // Envelope format (packages/crypto): 1 byte version prefix (0x01) followed by 16 bytes keyId
+  return new Uint8Array(blob.subarray(1, 17));
+}
+
 function asCiphertext(bytes: Uint8Array): Ciphertext {
   return bytes as never;
 }
@@ -1794,6 +1799,169 @@ describe("life events", () => {
       await platform.end({ timeout: 1 });
       await app.end({ timeout: 1 });
       await directSql.end({ timeout: 1 });
+    }
+  });
+
+  it("asserts key id in stored ciphertext envelope: household key for minor on create and update, community key for adult on create and update", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const organisationId = newId();
+    const communityId = newId();
+    const kms = createLocalKmsPort();
+
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, 'envelope-keyid-parish', 'au', 'implicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, 'envelope-keyid-comm', 'au')
+        `;
+      });
+
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const household = await createHousehold(tx, kms, KEY_ARN, {
+            label: "Smith Family",
+            actorUserId: null,
+            now: NOW,
+          });
+
+          const guardian = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: true,
+            householdId: household.householdId,
+            dateOfBirth: null,
+            givenName: "John",
+            familyName: "Smith",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+
+          const minor = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId: household.householdId,
+            dateOfBirth: "2015-06-01",
+            givenName: "Tommy",
+            familyName: "Smith",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+
+          const commKeys = await communityFieldKeys(tx, kms, KEY_ARN);
+          const hhKeys = await householdFieldKeys(tx, kms, KEY_ARN, household.householdId);
+
+          const expectedCommKeyBytes = uuidToBytes(commKeys.keyId);
+          const expectedHhKeyBytes = uuidToBytes(hhKeys.keyId);
+
+          // 1. Minor event create: stored envelope has household key id
+          const minorCreated = await createLifeEvent(tx, kms, KEY_ARN, {
+            personId: minor.personId,
+            type: "first_communion",
+            date: "2025-05-18",
+            place: "St Jude's",
+            notes: "Communion notes",
+            actorUserId: null,
+            now: NOW,
+          });
+
+          const [minorCreateRow] = await tx<
+            {
+              event_type: Uint8Array;
+              place: Uint8Array;
+              notes: Uint8Array;
+            }[]
+          >`
+            select event_type, place, notes from app.life_events where id = ${minorCreated.eventId}::uuid
+          `;
+          expect(extractEnvelopeKeyId(minorCreateRow!.event_type)).toEqual(expectedHhKeyBytes);
+          expect(extractEnvelopeKeyId(minorCreateRow!.place)).toEqual(expectedHhKeyBytes);
+          expect(extractEnvelopeKeyId(minorCreateRow!.notes)).toEqual(expectedHhKeyBytes);
+
+          // 2. Minor event update: stored envelope has household key id
+          await updateLifeEvent(tx, kms, KEY_ARN, {
+            eventId: minorCreated.eventId,
+            version: 1,
+            type: "first_communion",
+            date: "2025-05-19",
+            place: "St Jude's Cathedral",
+            notes: "Updated notes",
+            actorUserId: null,
+            now: NOW,
+          });
+
+          const [minorUpdateRow] = await tx<
+            {
+              event_type: Uint8Array;
+              place: Uint8Array;
+              notes: Uint8Array;
+            }[]
+          >`
+            select event_type, place, notes from app.life_events where id = ${minorCreated.eventId}::uuid
+          `;
+          expect(extractEnvelopeKeyId(minorUpdateRow!.event_type)).toEqual(expectedHhKeyBytes);
+          expect(extractEnvelopeKeyId(minorUpdateRow!.place)).toEqual(expectedHhKeyBytes);
+          expect(extractEnvelopeKeyId(minorUpdateRow!.notes)).toEqual(expectedHhKeyBytes);
+
+          // 3. Adult event create: stored envelope has community key id
+          const adultCreated = await createLifeEvent(tx, kms, KEY_ARN, {
+            personId: guardian.personId,
+            type: "marriage",
+            date: "2010-09-12",
+            place: "St Joseph's",
+            notes: "Marriage record",
+            actorUserId: null,
+            now: NOW,
+          });
+
+          const [adultCreateRow] = await tx<
+            {
+              event_type: Uint8Array;
+              place: Uint8Array;
+              notes: Uint8Array;
+            }[]
+          >`
+            select event_type, place, notes from app.life_events where id = ${adultCreated.eventId}::uuid
+          `;
+          expect(extractEnvelopeKeyId(adultCreateRow!.event_type)).toEqual(expectedCommKeyBytes);
+          expect(extractEnvelopeKeyId(adultCreateRow!.place)).toEqual(expectedCommKeyBytes);
+          expect(extractEnvelopeKeyId(adultCreateRow!.notes)).toEqual(expectedCommKeyBytes);
+
+          // 4. Adult event update: stored envelope has community key id
+          await updateLifeEvent(tx, kms, KEY_ARN, {
+            eventId: adultCreated.eventId,
+            version: 1,
+            type: "marriage",
+            date: "2010-09-12",
+            place: "St Joseph's Cathedral",
+            notes: "Updated marriage record",
+            actorUserId: null,
+            now: NOW,
+          });
+
+          const [adultUpdateRow] = await tx<
+            {
+              event_type: Uint8Array;
+              place: Uint8Array;
+              notes: Uint8Array;
+            }[]
+          >`
+            select event_type, place, notes from app.life_events where id = ${adultCreated.eventId}::uuid
+          `;
+          expect(extractEnvelopeKeyId(adultUpdateRow!.event_type)).toEqual(expectedCommKeyBytes);
+          expect(extractEnvelopeKeyId(adultUpdateRow!.place)).toEqual(expectedCommKeyBytes);
+          expect(extractEnvelopeKeyId(adultUpdateRow!.notes)).toEqual(expectedCommKeyBytes);
+        }),
+      );
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
     }
   });
 });
