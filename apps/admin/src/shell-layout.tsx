@@ -4,17 +4,20 @@ import {
   Drawer,
   ThemeToggle,
   TopBar,
+  UserMenu,
   applyTheme,
   initialTheme,
   type Theme,
 } from "@community-hub/ui";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router";
 
 import { BillingBanner } from "./billing-banner";
 import { CommunityPicker } from "./community";
+import { readSignOutHandle } from "./directory";
 import { findActiveId, useSidebarItems } from "./nav";
 import { ScreenTitleProvider, useScreenTitleContext } from "./screen-title";
+import { signOut } from "./sign-out";
 
 function ShellLayoutInner() {
   const context = useScreenTitleContext();
@@ -27,6 +30,8 @@ function ShellLayoutInner() {
   const location = useLocation();
   const { items, footer } = useSidebarItems();
   const activeId = findActiveId(items, footer, location.pathname);
+  const signedIn = readSignOutHandle() !== null;
+  const signingOutRef = useRef(false);
 
   useEffect(() => {
     if (title) {
@@ -38,6 +43,18 @@ function ShellLayoutInner() {
     const next: Theme = theme === "dark" ? "light" : "dark";
     applyTheme(next);
     setTheme(next);
+  }
+
+  async function handleSignOut() {
+    if (signingOutRef.current) {
+      return;
+    }
+    signingOutRef.current = true;
+    try {
+      await signOut();
+    } finally {
+      signingOutRef.current = false;
+    }
   }
 
   const sidebar = (
@@ -61,7 +78,34 @@ function ShellLayoutInner() {
       titleRef={titleRef}
       onMenu={() => setDrawerOpen(true)}
       menuOpen={drawerOpen}
-      actions={<ThemeToggle theme={theme} onToggle={toggle} className="max-sm:hidden" />}
+      actions={
+        <>
+          <ThemeToggle theme={theme} onToggle={toggle} className="max-sm:hidden" />
+          <UserMenu
+            signedIn={signedIn}
+            signInHref="/sign-in"
+            onSignOut={handleSignOut}
+            renderLink={(item, props) => (
+              <Link to={item.href} {...props} aria-label="Sign in to your account">
+                {item.label}
+              </Link>
+            )}
+            extraItems={
+              <div className="sm:hidden" role="none">
+                <button
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-checked={theme === "dark"}
+                  onClick={toggle}
+                  className="w-full h-(--ch-size-control) px-3 flex items-center justify-between text-sm font-medium rounded-md hover:bg-secondary-hover focus:outline-none transition-colors select-none text-foreground"
+                >
+                  Dark mode
+                </button>
+              </div>
+            }
+          />
+        </>
+      }
     />
   );
 

@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import axe from "axe-core";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { labels } from "./labels";
@@ -299,5 +300,177 @@ describe("Shell and ShellLayout", () => {
     });
 
     expect(resultIds(results, "violations")).toContain("button-name");
+  });
+
+  it("without a handle, renders a 'Sign in' link to /sign-in and no Account button", () => {
+    sessionStorage.removeItem("community-hub.signout-handle");
+    render(<Shell />);
+
+    const header = screen.getByRole("banner");
+    const signInLink = within(header).getByRole("link", { name: /sign in/i });
+    expect(signInLink).toBeTruthy();
+    expect(signInLink.getAttribute("href")).toBe("/sign-in");
+    expect(within(header).queryByRole("button", { name: "Account" })).toBeNull();
+  });
+
+  it("with a handle, renders an 'Account' button that opens menu with 'Sign out', and clicking Sign out twice quickly sends one POST", async () => {
+    sessionStorage.setItem("community-hub.signout-handle", "fake-" + "handle-1");
+    vi.stubEnv("VITE_AUTH_ORIGIN", "https://au.auth.example.test");
+    vi.stubEnv("VITE_API_ORIGIN", "https://au.api.example.test");
+
+    const location = window.location;
+    const assignMock = vi.fn();
+    vi.stubGlobal("location", {
+      ancestorOrigins: location.ancestorOrigins,
+      href: location.href,
+      origin: location.origin,
+      protocol: location.protocol,
+      host: location.host,
+      hostname: location.hostname,
+      port: location.port,
+      pathname: location.pathname,
+      search: location.search,
+      hash: location.hash,
+      assign: assignMock,
+      replace: location.replace.bind(location),
+      reload: location.reload.bind(location),
+    });
+
+    let resolveFetch!: (res: Response) => void;
+    const pendingFetch = new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    });
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(() => pendingFetch);
+
+    render(<Shell />);
+
+    const header = screen.getByRole("banner");
+    expect(within(header).queryByRole("link", { name: "Sign in" })).toBeNull();
+
+    const accountBtn = within(header).getByRole("button", { name: "Account" });
+    expect(accountBtn).toBeTruthy();
+
+    fireEvent.click(accountBtn);
+
+    const signOutBtn = await screen.findByRole("menuitem", { name: "Sign out" });
+    expect(signOutBtn).toBeTruthy();
+
+    // Fast double click
+    fireEvent.click(signOutBtn);
+    fireEvent.click(signOutBtn);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // Resolve the in-flight fetch
+    await act(async () => {
+      resolveFetch(new Response(null, { status: 204 }));
+    });
+
+    await waitFor(() => {
+      expect(assignMock).toHaveBeenCalledWith("/sign-in");
+    });
+  });
+
+  it("render once inside <StrictMode> and assert a single POST per click", async () => {
+    sessionStorage.setItem("community-hub.signout-handle", "fake-" + "handle-2");
+    vi.stubEnv("VITE_AUTH_ORIGIN", "https://au.auth.example.test");
+    vi.stubEnv("VITE_API_ORIGIN", "https://au.api.example.test");
+
+    const location = window.location;
+    const assignMock = vi.fn();
+    vi.stubGlobal("location", {
+      ancestorOrigins: location.ancestorOrigins,
+      href: location.href,
+      origin: location.origin,
+      protocol: location.protocol,
+      host: location.host,
+      hostname: location.hostname,
+      port: location.port,
+      pathname: location.pathname,
+      search: location.search,
+      hash: location.hash,
+      assign: assignMock,
+      replace: location.replace.bind(location),
+      reload: location.reload.bind(location),
+    });
+
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 204 }));
+
+    render(
+      <StrictMode>
+        <Shell />
+      </StrictMode>,
+    );
+
+    const accountBtn = screen.getByRole("button", { name: "Account" });
+    fireEvent.click(accountBtn);
+
+    const signOutBtn = await screen.findByRole("menuitem", { name: "Sign out" });
+    fireEvent.click(signOutBtn);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(assignMock).toHaveBeenCalledWith("/sign-in");
+    });
+  });
+
+  it("axe reports no violations on shell with the user menu open in light and dark", async () => {
+    sessionStorage.setItem("community-hub.signout-handle", "fake-" + "handle-3");
+    const { container } = render(<Shell />);
+
+    const accountBtn = screen.getByRole("button", { name: "Account" });
+    await act(async () => {
+      fireEvent.click(accountBtn);
+    });
+    const popup = await screen.findByRole("menu");
+    expect(popup).toBeTruthy();
+
+    // Test in light mode
+    const lightResults = await axe.run([container, popup], {
+      rules: {
+        "color-contrast": { enabled: false },
+      },
+    });
+    expect(resultIds(lightResults, "violations")).toEqual([]);
+
+    // Test in dark mode
+    act(() => {
+      document.documentElement.dataset.theme = "dark";
+    });
+
+    const darkResults = await axe.run([container, popup], {
+      rules: {
+        "color-contrast": { enabled: false },
+      },
+    });
+    expect(resultIds(darkResults, "violations")).toEqual([]);
+  });
+
+  it("user menu contains Dark mode toggle for phones in extraItems that toggles theme", async () => {
+    sessionStorage.setItem("community-hub.signout-handle", "fake-" + "handle-4");
+    render(<Shell />);
+
+    const accountBtn = screen.getByRole("button", { name: "Account" });
+    await act(async () => {
+      fireEvent.click(accountBtn);
+    });
+
+    const darkToggle = await screen.findByRole("menuitemcheckbox", { name: "Dark mode" });
+    expect(darkToggle).toBeTruthy();
+    expect(darkToggle.getAttribute("aria-checked")).toBe("false");
+    expect(darkToggle.parentElement?.className).toContain("sm:hidden");
+
+    fireEvent.click(darkToggle);
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(localStorage.getItem("community-hub.theme")).toBe("dark");
+    expect(darkToggle.getAttribute("aria-checked")).toBe("true");
+
+    fireEvent.click(darkToggle);
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(localStorage.getItem("community-hub.theme")).toBe("light");
+    expect(darkToggle.getAttribute("aria-checked")).toBe("false");
   });
 });

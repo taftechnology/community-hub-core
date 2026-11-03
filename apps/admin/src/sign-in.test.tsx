@@ -16,12 +16,36 @@ function resultIds(
   return results[bucket].map((entry) => entry.id);
 }
 
+function createStorage(): Storage {
+  const store = new Map<string, string>();
+  return {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, val: string) => {
+      store.set(key, String(val));
+    },
+    removeItem: (key: string) => {
+      store.delete(key);
+    },
+    clear: () => {
+      store.clear();
+    },
+    key: (index: number) => Array.from(store.keys())[index] ?? null,
+    get length() {
+      return store.size;
+    },
+  };
+}
+
+let storage: Storage;
+
 async function showSignIn(): Promise<void> {
   await router.navigate("/sign-in");
   render(<Shell />);
 }
 
 beforeEach(async () => {
+  storage = createStorage();
+  vi.stubGlobal("localStorage", storage);
   sessionStorage.clear();
   await router.navigate("/");
 });
@@ -29,6 +53,7 @@ beforeEach(async () => {
 afterEach(() => {
   cleanup();
   sessionStorage.clear();
+  vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
@@ -68,8 +93,9 @@ it("stores the access token only and opens Users and Roles", async () => {
   expect(await screen.findByRole("heading", { name: "Users & Roles" })).toBeTruthy();
   expect(router.state.location.pathname).toBe("/settings/users");
   expect(sessionStorage.getItem("community-hub.access-token")).toBe(TOKEN);
+  expect(sessionStorage.getItem("community-hub.signout-handle")).toBe(TOKEN);
   expect(sessionStorage.getItem("community-hub.email")).toBeNull();
-  expect(sessionStorage.length).toBe(1);
+  expect(sessionStorage.length).toBe(2);
   const verify = fetchSpy.mock.calls.find((call) => String(call[0]).includes("/email-otp/verify"));
   expect(String(verify?.[0])).toBe("https://auth.au.example.test/v1/auth/email-otp/verify");
   const dumped = writes.map((value) => String(value)).join("\n");
@@ -223,4 +249,84 @@ it("fetches billing status again after sign-in with remembered community", async
   expect(billingStatusCalls.length).toBe(2);
   expect(billingStatusCalls[1]?.headers.get("authorization")).toBe(`Bearer ${TOKEN}`);
   expect(await screen.findByText("Choose a plan to start using Community Hub")).toBeTruthy();
+});
+
+it("Pin 11a: after sign-in verify, sessionStorage has the handle and localStorage holds no key other than community-hub.theme", async () => {
+  localStorage.setItem("community-hub.theme", "dark");
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.endsWith("/v1/auth/email-otp/start")) {
+      return new Response(null, { status: 200 });
+    }
+    if (url.endsWith("/v1/auth/email-otp/verify")) {
+      return new Response(
+        JSON.stringify({
+          accessToken: TOKEN,
+          userId: "00000000-0000-4000-8000-000000000002",
+          refreshToken: REFRESH,
+          expiresIn: 900,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    throw new Error(`unexpected ${url}`);
+  });
+
+  await showSignIn();
+  fireEvent.change(screen.getByRole("textbox", { name: "Email" }), { target: { value: EMAIL } });
+  fireEvent.click(screen.getByRole("button", { name: "Send code" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Code" }), { target: { value: CODE } });
+  fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+
+  expect(await screen.findByRole("heading", { name: "Users & Roles" })).toBeTruthy();
+  expect(sessionStorage.getItem("community-hub.signout-handle")).toBe(TOKEN);
+
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    expect(key).toBe("community-hub.theme");
+  }
+  expect(localStorage.getItem("community-hub.signout-handle")).toBeNull();
+});
+
+it("shows unconfirmed signout Alert when ?signout=unconfirmed is present", async () => {
+  await router.navigate("/sign-in?signout=unconfirmed");
+  render(<Shell />);
+
+  const alert = screen.getByRole("alert");
+  expect(alert).toBeTruthy();
+  expect(alert.textContent).toBe(
+    "We couldn't confirm you signed out. Close your browser to end the session.",
+  );
+});
+
+it("shows no unconfirmed signout message when signout flag is omitted or has other values", async () => {
+  await router.navigate("/sign-in");
+  const { unmount } = render(<Shell />);
+  expect(
+    screen.queryByText(
+      "We couldn't confirm you signed out. Close your browser to end the session.",
+    ),
+  ).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  unmount();
+
+  await router.navigate("/sign-in?signout=other");
+  const { unmount: unmountOther } = render(<Shell />);
+  expect(
+    screen.queryByText(
+      "We couldn't confirm you signed out. Close your browser to end the session.",
+    ),
+  ).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  unmountOther();
+
+  await router.navigate("/sign-in?signout=<script>alert(1)</script>");
+  render(<Shell />);
+  expect(
+    screen.queryByText(
+      "We couldn't confirm you signed out. Close your browser to end the session.",
+    ),
+  ).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(document.body.textContent).not.toContain("<script>");
 });

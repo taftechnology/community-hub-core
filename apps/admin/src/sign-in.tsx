@@ -1,9 +1,9 @@
-import { Button } from "@community-hub/ui";
+import { Alert, Button } from "@community-hub/ui";
 import { type FormEvent, useState } from "react";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 
 import { useCommunity } from "./community";
-import { directoryOrigins, storeAccessToken } from "./directory";
+import { directoryOrigins, storeAccessToken, storeSignOutHandle } from "./directory";
 
 async function accessToken(response: Response): Promise<string | undefined> {
   try {
@@ -20,11 +20,15 @@ async function accessToken(response: Response): Promise<string | undefined> {
 
 export function SignInPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const origins = directoryOrigins();
   const { refresh } = useCommunity();
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [failed, setFailed] = useState(false);
+
+  const searchParams = new URLSearchParams(location.search);
+  const unconfirmed = searchParams.get("signout") === "unconfirmed";
 
   if (origins === undefined) {
     return <p>Directory unavailable</p>;
@@ -66,12 +70,18 @@ export function SignInPage() {
       return;
     }
     storeAccessToken(token);
+    storeSignOutHandle(token);
     refresh();
     await navigate("/settings/users");
   }
 
   return (
     <>
+      {unconfirmed ? (
+        <Alert variant="destructive">
+          We couldn&#39;t confirm you signed out. Close your browser to end the session.
+        </Alert>
+      ) : null}
       <form
         onSubmit={(event) => {
           void sendCode(event);
