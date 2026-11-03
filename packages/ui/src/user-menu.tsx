@@ -21,7 +21,7 @@ export interface UserMenuCheckboxItemProps {
 }
 
 const SECONDARY_BUTTON_CLASSES =
-  "inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent text-sm font-medium transition-colors outline-none select-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring bg-secondary text-secondary-foreground hover:bg-secondary-hover h-(--ch-size-control) touch:h-(--ch-size-touch) px-3";
+  "inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent text-sm font-medium transition-colors outline-hidden select-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring bg-secondary text-secondary-foreground hover:bg-secondary-hover h-(--ch-size-control) touch:h-(--ch-size-touch) px-3";
 
 export function UserMenuCheckboxItem({
   checked,
@@ -73,7 +73,7 @@ export function UserMenu({
       <Menu.Trigger
         aria-label="Account"
         className={cn(
-          "size-(--ch-size-control) touch:size-(--ch-size-touch) inline-flex items-center justify-center rounded-md text-foreground hover:bg-secondary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring outline-none transition-colors",
+          "size-(--ch-size-control) touch:size-(--ch-size-touch) inline-flex items-center justify-center rounded-md text-foreground hover:bg-secondary-hover focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring outline-hidden transition-colors",
           className,
         )}
       >

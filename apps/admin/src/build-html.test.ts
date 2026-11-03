@@ -66,4 +66,8 @@ it("builds index.html with external scripts and no inline style", () => {
   expect(builtCss).toMatch(widthTouchHeight);
   expect(builtCss).toMatch(pointerCoarseTouchSize);
   expect(builtCss).toMatch(widthTouchSize);
+
+  const focusVisibleOutlineSolid =
+    /\.focus-visible\\:outline-solid:focus-visible\s*\{[^}]*outline-style:\s*solid/;
+  expect(builtCss).toMatch(focusVisibleOutlineSolid);
 }, 60000);

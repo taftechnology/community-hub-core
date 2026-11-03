@@ -37,7 +37,7 @@ export function Drawer({
           <div className="flex items-center justify-end p-2 shrink-0">
             <Dialog.Close
               aria-label="Close menu"
-              className="size-(--ch-size-touch) flex items-center justify-center rounded-md text-sidebar-foreground hover:bg-sidebar-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring outline-none"
+              className="size-(--ch-size-touch) flex items-center justify-center rounded-md text-sidebar-foreground hover:bg-sidebar-hover focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring outline-hidden"
             >
               <X className="size-5" aria-hidden="true" />
             </Dialog.Close>

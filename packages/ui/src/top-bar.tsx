@@ -35,7 +35,7 @@ export function TopBar({
   if (backHref) {
     const linkProps = {
       className:
-        "size-(--ch-size-touch) flex items-center justify-center rounded-md text-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring outline-none",
+        "size-(--ch-size-touch) flex items-center justify-center rounded-md text-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring outline-hidden",
       "aria-label": backLabel,
     };
     if (renderLink) {
@@ -65,7 +65,7 @@ export function TopBar({
             aria-label="Open menu"
             aria-expanded={menuOpen}
             onClick={onMenu}
-            className="size-(--ch-size-touch) lg:hidden flex items-center justify-center rounded-md text-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring outline-none"
+            className="size-(--ch-size-touch) lg:hidden flex items-center justify-center rounded-md text-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring outline-hidden"
           >
             <Menu className="size-5" aria-hidden="true" />
           </button>

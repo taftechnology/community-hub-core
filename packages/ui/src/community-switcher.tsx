@@ -31,7 +31,7 @@ export function CommunitySwitcher({
     <Menu.Root>
       <Menu.Trigger
         className={cn(
-          "w-full h-(--ch-size-control) touch:h-(--ch-size-touch) px-3 flex items-center justify-between gap-2 rounded-md bg-sidebar text-sidebar-foreground border border-sidebar-input hover:bg-sidebar-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring outline-none transition-colors text-sm font-medium",
+          "w-full h-(--ch-size-control) touch:h-(--ch-size-touch) px-3 flex items-center justify-between gap-2 rounded-md bg-sidebar text-sidebar-foreground border border-sidebar-input hover:bg-sidebar-hover focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring outline-hidden transition-colors text-sm font-medium",
           className,
         )}
       >

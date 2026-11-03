@@ -19,7 +19,7 @@ export function ThemeToggle({ theme, onToggle, className }: ThemeToggleProps) {
       aria-pressed={isDark}
       onClick={onToggle}
       className={cn(
-        "inline-flex items-center justify-center rounded-md size-(--ch-size-control) touch:size-(--ch-size-touch) text-foreground hover:bg-secondary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring outline-none transition-colors",
+        "inline-flex items-center justify-center rounded-md size-(--ch-size-control) touch:size-(--ch-size-touch) text-foreground hover:bg-secondary-hover focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring outline-hidden transition-colors",
         className,
       )}
     >

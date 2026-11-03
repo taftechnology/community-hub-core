@@ -51,7 +51,7 @@ export function AppSidebar({
   function renderRow(item: SidebarItem, isChild = false) {
     const isActive = activeId === item.id;
     const rowClass = cn(
-      "min-h-(--ch-size-nav-item) rounded-md flex items-center gap-2.5 px-2.5 text-sm font-medium w-full text-left transition-colors outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring select-none",
+      "min-h-(--ch-size-nav-item) rounded-md flex items-center gap-2.5 px-2.5 text-sm font-medium w-full text-left transition-colors outline-hidden focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring select-none",
       isChild && "pl-9 font-normal text-sidebar-muted",
       isActive
         ? "bg-sidebar-selected text-sidebar-selected-foreground font-semibold"
