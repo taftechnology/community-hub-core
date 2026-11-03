@@ -16,3 +16,15 @@ it("exports the shell frame components", async () => {
   expect(typeof ui.Drawer).toBe("function");
   expect(typeof ui.Logo).toBe("function");
 });
+
+it("exports the theme, user menu, and community switcher components and utilities", async () => {
+  const ui = await import("./index.js");
+  expect(typeof ui.ThemeToggle).toBe("function");
+  expect(typeof ui.UserMenu).toBe("function");
+  expect(typeof ui.CommunitySwitcher).toBe("function");
+  expect(typeof ui.THEME_STORAGE_KEY).toBe("string");
+  expect(typeof ui.readStoredTheme).toBe("function");
+  expect(typeof ui.systemTheme).toBe("function");
+  expect(typeof ui.applyTheme).toBe("function");
+  expect(typeof ui.initialTheme).toBe("function");
+});
