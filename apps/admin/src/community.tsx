@@ -91,7 +91,7 @@ export function CommunityPicker() {
           onChange={(event) => {
             setDraft(event.target.value);
           }}
-          className="flex-1 min-w-0 px-2 py-1 text-sm bg-sidebar text-sidebar-foreground border border-sidebar-input rounded-md outline-hidden focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring outline-sidebar-ring"
+          className="flex-1 min-w-0 px-2 py-1 text-sm bg-sidebar text-sidebar-foreground border border-sidebar-input rounded-md outline-hidden focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring outline-sidebar-ring touch:min-h-(--ch-size-touch)"
         />
         <Button
           type="submit"

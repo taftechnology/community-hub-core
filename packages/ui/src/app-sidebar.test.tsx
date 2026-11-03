@@ -101,6 +101,27 @@ describe("AppSidebar", () => {
     expect(currentLinks[0]?.textContent).toContain("Family Records");
   });
 
+  it("includes touch:min-h-(--ch-size-touch) on parent and child rows for touch screens", () => {
+    const { container } = render(
+      <AppSidebar
+        siteTitle="Community Hub"
+        items={FROZEN_ITEMS}
+        footer={FOOTER_ITEMS}
+        renderLink={(item, props) => (
+          <a href={item.href} {...props}>
+            {item.label}
+          </a>
+        )}
+      />,
+    );
+
+    const rows = container.querySelectorAll("nav a, nav span[data-slot='nav-label']");
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.className).toContain("touch:min-h-(--ch-size-touch)");
+    }
+  });
+
   it("shows no headings on a 7-row fixture", () => {
     const sevenRows: SidebarItem[] = [
       { id: "1", label: "Row 1", href: "/1", heading: "People" },

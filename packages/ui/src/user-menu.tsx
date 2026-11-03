@@ -34,7 +34,7 @@ export function UserMenuCheckboxItem({
       checked={checked}
       onCheckedChange={(nextChecked) => onCheckedChange(nextChecked)}
       className={cn(
-        "h-(--ch-size-control) px-3 flex items-center justify-between text-foreground text-sm font-medium rounded-md cursor-pointer hover:bg-secondary-hover data-[highlighted]:bg-secondary-hover focus:outline-none transition-colors select-none",
+        "h-(--ch-size-control) touch:min-h-(--ch-size-touch) px-3 flex items-center justify-between text-foreground text-sm font-medium rounded-md cursor-pointer hover:bg-secondary-hover data-[highlighted]:bg-secondary-hover focus:outline-none transition-colors select-none",
         className,
       )}
     >
@@ -90,7 +90,7 @@ export function UserMenu({
             )}
             <Menu.Item
               onClick={onSignOut}
-              className="h-(--ch-size-control) px-3 flex items-center text-destructive-ink text-sm font-medium rounded-md cursor-pointer hover:bg-secondary-hover data-[highlighted]:bg-secondary-hover focus:outline-none transition-colors select-none"
+              className="h-(--ch-size-control) touch:min-h-(--ch-size-touch) px-3 flex items-center text-destructive-ink text-sm font-medium rounded-md cursor-pointer hover:bg-secondary-hover data-[highlighted]:bg-secondary-hover focus:outline-none transition-colors select-none"
             >
               Sign out
             </Menu.Item>

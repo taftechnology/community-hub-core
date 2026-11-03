@@ -73,4 +73,8 @@ it("builds index.html with external scripts and no inline style", () => {
 
   const bodyRule = /body\s*\{[^}]*color:\s*var\(--ch-foreground\)/;
   expect(builtCss).toMatch(bodyRule);
+
+  const pointerCoarseTouchMinHeight =
+    /@media\s*\(\s*pointer\s*:\s*coarse\s*\)\s*\{[^}]*\.touch\\:min-h[^}]*\{[^}]*min-height:\s*var\(--ch-size-touch\)/;
+  expect(builtCss).toMatch(pointerCoarseTouchMinHeight);
 }, 60000);

@@ -60,6 +60,30 @@ describe("UserMenu", () => {
     expect(onSignOut).toHaveBeenCalledTimes(1);
   });
 
+  it("carries touch:min-h-(--ch-size-touch) on UserMenuCheckboxItem and Sign out", async () => {
+    render(
+      <UserMenu
+        signedIn={true}
+        signInHref="/sign-in"
+        onSignOut={() => {}}
+        extraItems={
+          <UserMenuCheckboxItem checked={false} onCheckedChange={() => {}}>
+            Dark mode
+          </UserMenuCheckboxItem>
+        }
+      />,
+    );
+
+    const trigger = screen.getByRole("button", { name: "Account" });
+    fireEvent.click(trigger);
+
+    const darkModeItem = await screen.findByRole("menuitemcheckbox", { name: "Dark mode" });
+    expect(darkModeItem.className).toContain("touch:min-h-(--ch-size-touch)");
+
+    const signOutItem = screen.getByRole("menuitem", { name: "Sign out" });
+    expect(signOutItem.className).toContain("touch:min-h-(--ch-size-touch)");
+  });
+
   it("closes on Escape and returns focus to the Account trigger", async () => {
     render(<UserMenu signedIn={true} signInHref="/sign-in" onSignOut={() => {}} />);
 
