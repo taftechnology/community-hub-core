@@ -72,16 +72,14 @@ export async function derivePersonFieldKeys(
   kms: KmsPort,
   keyArn: string,
   person: { isMinor: boolean; householdId: string | null },
-): Promise<{ enc: webcrypto.CryptoKey; bidx: webcrypto.CryptoKey }> {
+): Promise<PersonFieldKeys> {
   if (person.isMinor) {
     if (person.householdId === null) {
       throw new PeopleError("household_required");
     }
-    const keys = await householdFieldKeys(tx, kms, keyArn, person.householdId);
-    return { enc: keys.enc, bidx: keys.bidx };
+    return householdFieldKeys(tx, kms, keyArn, person.householdId);
   }
-  const keys = await communityFieldKeys(tx, kms, keyArn);
-  return { enc: keys.enc, bidx: keys.bidx };
+  return communityFieldKeys(tx, kms, keyArn);
 }
 
 const PERSON_READ = "people.person.read";

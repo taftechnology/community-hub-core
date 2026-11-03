@@ -88,6 +88,17 @@ function policyStatements(sql: string, table: string): string[] {
     );
 }
 
+const DB_PACKAGE_NAME = "@community-hub/" + "db";
+
+function hasDbImportOrExport(source: string, packageName: string = DB_PACKAGE_NAME): boolean {
+  const escaped = packageName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(
+    `\\b(?:import|export)\\s+(?!type\\b)(?:(?!\\bfrom\\b)[^;'"])*?\\bfrom\\s+['"]${escaped}(?:\\/[^'"]*)?['"]|\\bimport\\s+['"]${escaped}(?:\\/[^'"]*)?['"]`,
+    "m",
+  );
+  return pattern.test(source);
+}
+
 describe("people app tables", () => {
   it("forces row level security and keeps organisation keys free of community_id", () => {
     const sql = peopleSql();
@@ -177,5 +188,39 @@ describe("people app tables", () => {
     expect(sql).toMatch(
       /ALTER TABLE "app"\."households" ADD COLUMN "version" integer DEFAULT 1 NOT NULL;/,
     );
+  });
+
+  it("has no pgSchema and no db value import in schema.ts (Pin 18)", () => {
+    const schemaSource = readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "schema.ts"),
+      "utf8",
+    );
+    expect(schemaSource).not.toContain("pgSchema(");
+    expect(hasDbImportOrExport(schemaSource)).toBe(false);
+  });
+
+  it("defines life_events in schema and 0017 migration (Pin 1, 2)", () => {
+    const schemaSource = readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "schema.ts"),
+      "utf8",
+    );
+    expect(schemaSource).toMatch(/const lifeEvents = app[\s\S]*?table\(\s*["']life_events["']/);
+
+    const files = readdirSync(DRIZZLE).filter(
+      (name) => name.startsWith("0017_") && name.endsWith(".sql"),
+    );
+    expect(files).toHaveLength(1);
+    const sql = readFileSync(path.join(DRIZZLE, files[0] ?? ""), "utf8");
+    expect(sql).toContain('CREATE TABLE "app"."life_events"');
+    expect(sql).toMatch(/ALTER TABLE "app"\."life_events" FORCE ROW LEVEL SECURITY;/);
+    expect(sql).toContain('CONSTRAINT "life_events_org_id_id_pk" PRIMARY KEY("org_id","id")');
+    expect(sql).toMatch(
+      /CREATE INDEX "life_events_person_idx" ON "app"\."life_events" USING btree \("org_id","person_id"\);/,
+    );
+    expect(sql).toContain("GRANT SELECT, INSERT ON app.life_events TO app;");
+    expect(sql).toContain(
+      "GRANT UPDATE (event_type, event_date, place, notes, version) ON app.life_events TO app;",
+    );
+    expect(sql).not.toContain("GRANT DELETE ON app.life_events TO app");
   });
 });

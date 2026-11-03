@@ -78,6 +78,15 @@ describe("core.people manifest", () => {
         "person_activity.actor_user_id": "internal",
         "person_activity.kind": "internal",
         "person_activity.occurred_at": "internal",
+        "life_events.id": "internal",
+        "life_events.org_id": "internal",
+        "life_events.community_id": "internal",
+        "life_events.person_id": "internal",
+        "life_events.version": "internal",
+        "life_events.event_type": "restricted",
+        "life_events.event_date": "restricted",
+        "life_events.place": "restricted",
+        "life_events.notes": "restricted",
       },
     });
     expect(peopleModule).not.toHaveProperty("website");

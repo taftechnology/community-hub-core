@@ -26,6 +26,69 @@ export type BillingUrlResponse = {
   url: string;
 };
 
+export type LifeEventType =
+  | "baptism"
+  | "first_communion"
+  | "marriage"
+  | "funeral"
+  | "birth"
+  | "death"
+  | "graduation"
+  | "anniversary"
+  | "other";
+
+export type LifeEvent = {
+  eventId: string;
+  version: number;
+  type: LifeEventType;
+  date: string;
+  place: string | null;
+  notes: string | null;
+};
+
+export type ListLifeEventsResponse = {
+  items: LifeEvent[];
+};
+
+export type CreateLifeEventResponse = {
+  eventId: string;
+  version: number;
+};
+
+export type UpdateLifeEventResponse = {
+  version: number;
+};
+
+export async function listLifeEvents(
+  communitySlug: string,
+  personId: string,
+): Promise<Response | "unavailable"> {
+  return post("/v1/people/life-events/list", { communitySlug, personId });
+}
+
+export async function createLifeEvent(body: {
+  communitySlug: string;
+  personId: string;
+  type: LifeEventType;
+  date: string;
+  place?: string | null;
+  notes?: string | null;
+}): Promise<Response | "unavailable"> {
+  return post("/v1/people/life-events/create", body);
+}
+
+export async function updateLifeEvent(body: {
+  communitySlug: string;
+  eventId: string;
+  version: number;
+  type: LifeEventType;
+  date: string;
+  place?: string | null;
+  notes?: string | null;
+}): Promise<Response | "unavailable"> {
+  return post("/v1/people/life-events/update", body);
+}
+
 export async function post(path: string, body: unknown): Promise<Response | "unavailable"> {
   const origins = directoryOrigins();
   const token = readAccessToken();

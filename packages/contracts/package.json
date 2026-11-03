@@ -34,6 +34,10 @@
     "./households": {
       "types": "./dist/households.d.ts",
       "import": "./dist/households.js"
+    },
+    "./life-events": {
+      "types": "./dist/life-events.d.ts",
+      "import": "./dist/life-events.js"
     }
   },
   "scripts": {

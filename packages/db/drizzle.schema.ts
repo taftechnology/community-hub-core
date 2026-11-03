@@ -64,6 +64,7 @@ export const guardianLinks = peopleRows.guardianLinks;
 export const personTags = peopleRows.personTags;
 export const personTagLinks = peopleRows.personTagLinks;
 export const personActivity = peopleRows.personActivity;
+export const lifeEvents = peopleRows.lifeEvents;
 
 rememberPersonKey(persons);
 const accessRows = accessTables(appNamespace);

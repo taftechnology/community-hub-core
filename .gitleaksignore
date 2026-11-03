@@ -54,3 +54,7 @@
 5978b6ccc7f273a328532cf064afa6b9b89d15c6:apps/api/src/billing-admin.test.ts:generic-api-key:638
 5978b6ccc7f273a328532cf064afa6b9b89d15c6:apps/api/src/billing-admin.test.ts:generic-api-key:94
 5978b6ccc7f273a328532cf064afa6b9b89d15c6:apps/api/src/billing-admin.test.ts:stripe-access-token:43
+
+# Synthetic life events fixture (a made-up place name) in an already-pushed commit (PR #71).
+# Exact fingerprint only.
+5c6b005b496e7016cdcccad1fd5608c14ce0283f:modules/core/people/infrastructure/life-event.integration.test.ts:generic-api-key:747

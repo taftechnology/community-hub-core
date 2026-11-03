@@ -13,7 +13,8 @@ import {
 } from "@community-hub/db/plaintext";
 import { withRequest } from "@community-hub/kernel";
 
-import { createHousehold, createPerson, openPersonFieldKeys } from "../public/index.js";
+import { createHousehold, createPerson, openPersonFieldKeys, readPerson } from "../public/index.js";
+import { derivePersonFieldKeys } from "./person-keys.js";
 
 type Runtime = {
   productOnlyUrl: string;
@@ -197,6 +198,110 @@ describe("person field keys", () => {
             select count(*)::int as n from app.audit_events where action = 'people.person.read'
           `;
           expect(readsAfter).toEqual(readsBefore);
+        }),
+      );
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
+
+  it("derivePersonFieldKeys returns keyId matching community key for adult and household key for minor (Pins 3, 4 groundwork)", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const organisationId = newId();
+    const communityId = newId();
+    const kms = createLocalKmsPort();
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, 'derive-keys-parish', 'au', 'implicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, 'derive-keys-parish', 'au')
+        `;
+      });
+
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const adult = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId: null,
+            dateOfBirth: "2000-01-01",
+            givenName: "Grace",
+            familyName: "Hopper",
+            email: "grace@example.com",
+            phone: null,
+            actorUserId: null,
+          });
+          const household = await createHousehold(tx, kms, KEY_ARN, {
+            now: NOW,
+            label: null,
+            actorUserId: null,
+          });
+          const minor = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId: household.householdId,
+            dateOfBirth: null,
+            givenName: "Young",
+            familyName: "Hopper",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+
+          // Derive keys for adult
+          const adultDerived = await derivePersonFieldKeys(tx, kms, KEY_ARN, {
+            isMinor: false,
+            householdId: null,
+          });
+
+          const communityKeyRow = await tx<{ id: string }[]>`
+            select id::text as id from app.community_keys where community_id = ${communityId}::uuid
+          `;
+          expect(adultDerived.keyId).toBeDefined();
+          expect(adultDerived.keyId).toBe(communityKeyRow[0]?.id);
+
+          // Derive keys for minor
+          const minorDerived = await derivePersonFieldKeys(tx, kms, KEY_ARN, {
+            isMinor: true,
+            householdId: household.householdId,
+          });
+
+          const householdKeyRow = await tx<{ id: string }[]>`
+            select id::text as id from app.household_keys where household_id = ${household.householdId}::uuid
+          `;
+          expect(minorDerived.keyId).toBeDefined();
+          expect(minorDerived.keyId).toBe(householdKeyRow[0]?.id);
+
+          // Existing-caller regression: read paths for persons still return the same results
+          const adultRead = await readPerson(tx, kms, KEY_ARN, {
+            personId: adult.personId,
+            actorUserId: null,
+          });
+          expect(adultRead).not.toBeNull();
+          expect(adultRead?.email).toBe("grace@example.com");
+          expect(adultRead?.givenName).toBe("Grace");
+
+          const minorRead = await readPerson(tx, kms, KEY_ARN, {
+            personId: minor.personId,
+            actorUserId: null,
+          });
+          expect(minorRead).not.toBeNull();
+          expect(minorRead?.givenName).toBe("Young");
+
+          // openPersonFieldKeys still keeps { enc, bidx } shape
+          const openedAdult = await openPersonFieldKeys(tx, kms, KEY_ARN, {
+            personId: adult.personId,
+            actorUserId: null,
+          });
+          expect(openedAdult).not.toBeNull();
+          expect(Object.keys(openedAdult ?? {}).sort()).toEqual(["bidx", "enc"]);
         }),
       );
     } finally {

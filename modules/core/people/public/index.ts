@@ -24,6 +24,12 @@ defineAuditAction("people.person.updated");
 defineAuditPurpose("people.person.updated");
 defineAuditAction("people.permission.denied");
 defineAuditPurpose("people.permission.denied");
+defineAuditAction("people.life_event.listed");
+defineAuditPurpose("people.life_event.listed");
+defineAuditAction("people.life_event.created");
+defineAuditPurpose("people.life_event.created");
+defineAuditAction("people.life_event.updated");
+defineAuditPurpose("people.life_event.updated");
 
 export { PeopleError } from "../domain/error.js";
 export { ensureCommunityKey, ensureOrganisationKey } from "../infrastructure/keys.js";
@@ -75,3 +81,15 @@ export { listPersonActivity } from "../infrastructure/activity.js";
 export { attachTag, createTag, detachTag, listPersonTags } from "../infrastructure/tags.js";
 export { openPersonFieldKeys } from "../infrastructure/person-keys.js";
 export { readRosterNames } from "../infrastructure/roster-names.js";
+export {
+  createLifeEvent,
+  listLifeEvents,
+  updateLifeEvent,
+  type CreateLifeEventInput,
+  type CreateLifeEventResult,
+  type LifeEventItem,
+  type ListLifeEventsInput,
+  type ListLifeEventsResult,
+  type UpdateLifeEventInput,
+  type UpdateLifeEventResult,
+} from "../infrastructure/life-event.js";

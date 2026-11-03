@@ -713,6 +713,32 @@ describe("api boot wiring of the billing adapter and logger", () => {
           expect(found?.largeBody).toBe(expected.largeBody);
         }
       }
+
+      const expectedLifeEventRoutes = [
+        { method: "POST", pattern: "/v1/people/life-events/list", billing: "read" },
+        { method: "POST", pattern: "/v1/people/life-events/create", billing: "write" },
+        { method: "POST", pattern: "/v1/people/life-events/update", billing: "write" },
+      ];
+
+      const expectedHouseholdRoutes = [
+        { method: "POST", pattern: "/v1/households/list", billing: "read" },
+        { method: "POST", pattern: "/v1/households/read", billing: "read" },
+        { method: "POST", pattern: "/v1/households/create", billing: "write" },
+        { method: "POST", pattern: "/v1/households/rename", billing: "write" },
+        { method: "POST", pattern: "/v1/households/members/move-adult", billing: "write" },
+        { method: "POST", pattern: "/v1/households/members/add-minor", billing: "write" },
+        { method: "POST", pattern: "/v1/households/guardians/link", billing: "write" },
+        { method: "POST", pattern: "/v1/households/guardians/unlink", billing: "write" },
+      ];
+
+      for (const expected of [...expectedLifeEventRoutes, ...expectedHouseholdRoutes]) {
+        const found = passedRoutes.find(
+          (r: { method: string; pattern: string }) =>
+            r.method === expected.method && r.pattern === expected.pattern,
+        );
+        expect(found).toBeDefined();
+        expect((found as { billing?: string })?.billing).toBe(expected.billing);
+      }
     } finally {
       startServerSpy.mockRestore();
     }
@@ -726,7 +752,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
         (route as { billing?: string }).billing,
       ]),
     );
-    expect(routes).toHaveLength(45);
+    expect(routes).toHaveLength(48);
     expect(markings).toEqual(
       new Map([
         ["GET /health", "exempt"],
@@ -746,6 +772,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
         ["POST /v1/access/capabilities", "read"],
         ["POST /v1/people/list", "read"],
         ["POST /v1/people/read", "read"],
+        ["POST /v1/people/life-events/list", "read"],
         ["POST /v1/households/list", "read"],
         ["POST /v1/households/read", "read"],
         ["POST /v1/entitlements/list", "read"],
@@ -757,6 +784,8 @@ describe("api boot wiring of the billing adapter and logger", () => {
         ["POST /v1/access/user-links/delete", "write"],
         ["POST /v1/people/create", "write"],
         ["POST /v1/people/update", "write"],
+        ["POST /v1/people/life-events/create", "write"],
+        ["POST /v1/people/life-events/update", "write"],
         ["POST /v1/households/create", "write"],
         ["POST /v1/households/rename", "write"],
         ["POST /v1/households/members/move-adult", "write"],

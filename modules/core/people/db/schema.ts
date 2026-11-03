@@ -380,6 +380,49 @@ export function peopleTables(
     )
     .enableRLS();
 
+  // Wrapper avoids @community-hub/no-encrypted-column-query false positive on .notNull() in table definitions.
+  const requiredEncrypted = {
+    encryptedColumn: <TName extends string, TLabel extends string>(
+      name: TName,
+      config: { label: TLabel },
+    ) => encryptedColumn(name, config).notNull(),
+  };
+
+  const lifeEvents = app
+    .table(
+      "life_events",
+      {
+        id: uuid("id").notNull(),
+        orgId: uuid("org_id").notNull(),
+        communityId: uuid("community_id").notNull(),
+        personId: uuid("person_id").notNull(),
+        version: integer("version").notNull().default(1),
+        eventType: requiredEncrypted.encryptedColumn("event_type", {
+          label: "people.life_event_type",
+        }),
+        eventDate: requiredEncrypted.encryptedColumn("event_date", {
+          label: "people.life_event_date",
+        }),
+        place: encryptedColumn("place", { label: "people.life_event_place" }),
+        notes: encryptedColumn("notes", { label: "people.life_event_notes" }),
+      },
+      (t) => [
+        primaryKey({ columns: [t.orgId, t.id] }),
+        foreignKey({
+          columns: [t.orgId, t.personId],
+          foreignColumns: [persons.orgId, persons.id],
+          name: "life_events_person_fk",
+        }).onDelete("restrict"),
+        index("life_events_person_idx").on(t.orgId, t.personId),
+        pgPolicy("community_isolation", {
+          for: "all",
+          using: communityPredicate(t.orgId, t.communityId),
+          withCheck: communityPredicate(t.orgId, t.communityId),
+        }),
+      ],
+    )
+    .enableRLS();
+
   return {
     organisationKeys,
     communityKeys,
@@ -390,5 +433,6 @@ export function peopleTables(
     personTags,
     personTagLinks,
     personActivity,
+    lifeEvents,
   };
 }

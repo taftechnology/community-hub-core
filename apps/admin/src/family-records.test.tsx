@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import axe from "axe-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { CommunityProvider } from "./community";
 import { MinorsSection } from "./family-records";
 import { router, Shell } from "./shell";
 
@@ -66,7 +67,8 @@ function mockCapabilitiesResponse(input: CapabilitiesInput = {}): Response {
 
 type MockApiOptions = {
   access?: CapabilitiesInput;
-  billingStatus?: { state: string; canView: boolean; canManage: boolean } | number;
+  billingStatus?:
+    { state: string; canView: boolean; canManage: boolean } | number | Promise<Response>;
   listResult?: { items: unknown[]; nextCursor: string | null } | number;
   detailResult?: unknown | number;
   createResult?: unknown | number;
@@ -76,6 +78,7 @@ type MockApiOptions = {
   linkGuardianResult?: unknown | number;
   unlinkGuardianResult?: unknown | number;
   peopleListResult?: { items: unknown[]; nextCursor: string | null } | number;
+  lifeEventsListResult?: { items: unknown[] } | number;
   onPost?: (path: string, body: unknown) => void;
 };
 
@@ -91,6 +94,7 @@ function mockApi({
   linkGuardianResult,
   unlinkGuardianResult,
   peopleListResult = { items: [], nextCursor: null },
+  lifeEventsListResult,
   onPost,
 }: MockApiOptions = {}) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
@@ -225,7 +229,21 @@ function mockApi({
       });
     }
 
+    if (path === "/v1/people/life-events/list") {
+      if (onPost) onPost(path, body);
+      if (typeof lifeEventsListResult === "number") {
+        return new Response(null, { status: lifeEventsListResult });
+      }
+      return new Response(JSON.stringify(lifeEventsListResult ?? { items: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
     if (path === "/v1/billing/status") {
+      if (billingStatus instanceof Promise) {
+        return billingStatus;
+      }
       if (typeof billingStatus === "number") {
         return new Response(null, { status: billingStatus });
       }
@@ -1229,6 +1247,246 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
       },
     ],
   };
+
+  it("Pin 16: hides life events panel and sends no request without people.restricted.read", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const postCalls: string[] = [];
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: false },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+      onPost: (path) => postCalls.push(path),
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
+    expect(screen.getByText("Arthur")).toBeTruthy();
+
+    expect(screen.queryByText(/Life events: Arthur Clarke/i)).toBeNull();
+    expect(screen.queryByText("No life events recorded")).toBeNull();
+    expect(postCalls.filter((p) => p.includes("/v1/people/life-events"))).toHaveLength(0);
+  });
+
+  it("Pin 16: hides life events panel and sends no request without people.households", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    sessionStorage.setItem("community-hub.community", SLUG);
+    const postCalls: string[] = [];
+    mockApi({
+      access: { householdsEnabled: false, canView: true, canManage: true, canReadMinors: true },
+      onPost: (path) => postCalls.push(path),
+    });
+
+    render(
+      <CommunityProvider>
+        <MinorsSection
+          detailHousehold={sampleDetail}
+          access={{
+            entitlements: { "people.directory": true, "people.households": false },
+            permissions: {
+              "people.view": true,
+              "people.manage": true,
+              "people.restricted.read": true,
+            },
+          }}
+          isReadOnly={false}
+        />
+      </CommunityProvider>,
+    );
+
+    expect(screen.queryByText(/Life events: Leo Clarke/i)).toBeNull();
+    expect(screen.queryByText("No life events recorded")).toBeNull();
+    expect(postCalls.filter((p) => p.includes("/v1/people/life-events"))).toHaveLength(0);
+  });
+
+  it("Pin 16: renders life events panel for adult and minor members when holding both capabilities", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const postCalls: { path: string; body: unknown }[] = [];
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+      onPost: (path, body) => postCalls.push({ path, body }),
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
+    expect(screen.getByText("Arthur")).toBeTruthy();
+    expect(screen.getByText("Leo")).toBeTruthy();
+
+    expect(await screen.findByText(/Life events: Arthur Clarke/i)).toBeTruthy();
+    expect(await screen.findByText(/Life events: Leo Clarke/i)).toBeTruthy();
+
+    const adultPersonId = sampleDetail.adults[0]?.personId;
+    const minorPersonId = sampleDetail.minors[0]?.personId;
+    const lifeEventCalls = postCalls.filter((p) => p.path === "/v1/people/life-events/list");
+    expect(lifeEventCalls).toHaveLength(2);
+    expect(
+      lifeEventCalls.some(
+        (c) =>
+          typeof c.body === "object" &&
+          c.body !== null &&
+          "personId" in c.body &&
+          (c.body as { personId: string }).personId === adultPersonId,
+      ),
+    ).toBe(true);
+    expect(
+      lifeEventCalls.some(
+        (c) =>
+          typeof c.body === "object" &&
+          c.body !== null &&
+          "personId" in c.body &&
+          (c.body as { personId: string }).personId === minorPersonId,
+      ),
+    ).toBe(true);
+  });
+
+  it("hides life event Add and Edit buttons while billing is loading or read-only, and displays them when ready and writable", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+
+    let resolveBilling!: (res: Response) => void;
+    const billingPromise = new Promise<Response>((resolve) => {
+      resolveBilling = resolve;
+    });
+
+    const sampleEvent = {
+      eventId: "00000000-0000-4000-8000-000000000001",
+      version: 1,
+      type: "baptism",
+      date: "2010-04-15",
+      place: "St Stephen Parish",
+      notes: "Godparents present",
+    };
+
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      billingStatus: billingPromise,
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+      lifeEventsListResult: { items: [sampleEvent] },
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtn = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtn);
+
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
+    expect(await screen.findByText(/Life events: Arthur Clarke/i)).toBeTruthy();
+    expect(await screen.findByText(/Life events: Leo Clarke/i)).toBeTruthy();
+
+    // While billing status is loading: no Add or Edit button in adult or minor panel
+    expect(screen.queryAllByRole("button", { name: "Add life event" })).toHaveLength(0);
+    expect(screen.queryAllByRole("button", { name: /Edit/i })).toHaveLength(0);
+
+    // Settle billing status as ready and writable
+    await act(async () => {
+      resolveBilling(
+        new Response(
+          JSON.stringify({
+            state: "ok",
+            trial_end: null,
+            grace_until: null,
+            canView: true,
+            canManage: true,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    });
+
+    // Once billing is ready and writable: Add and Edit buttons render for both adult and minor
+    const addButtons = await screen.findAllByRole("button", { name: "Add life event" });
+    expect(addButtons).toHaveLength(2);
+    const editButtons = await screen.findAllByRole("button", { name: /Edit/i });
+    expect(editButtons).toHaveLength(2);
+
+    cleanup();
+
+    // Now verify while read-only: no Add or Edit button renders
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      billingStatus: { state: "read_only", canView: true, canManage: false },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+      lifeEventsListResult: { items: [sampleEvent] },
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const viewBtnReadOnly = await screen.findByRole("button", { name: "View Clarke Family" });
+    fireEvent.click(viewBtnReadOnly);
+
+    expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
+    expect(await screen.findByText(/Life events: Arthur Clarke/i)).toBeTruthy();
+    expect(await screen.findByText(/Life events: Leo Clarke/i)).toBeTruthy();
+
+    expect(screen.queryAllByRole("button", { name: "Add life event" })).toHaveLength(0);
+    expect(screen.queryAllByRole("button", { name: /Edit/i })).toHaveLength(0);
+  });
 
   it("hides 'Create household' button when caller lacks people.manage (Pin 21)", async () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);
