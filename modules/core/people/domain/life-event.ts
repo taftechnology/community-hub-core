@@ -1,12 +1,26 @@
 import { PeopleError } from "./error.js";
 
-export type LifeEventType = "baptism" | "marriage" | "first_communion" | "funeral";
+export type LifeEventType =
+  | "baptism"
+  | "first_communion"
+  | "marriage"
+  | "funeral"
+  | "birth"
+  | "death"
+  | "graduation"
+  | "anniversary"
+  | "other";
 
 export const LIFE_EVENT_TYPES: readonly LifeEventType[] = [
   "baptism",
-  "marriage",
   "first_communion",
+  "marriage",
   "funeral",
+  "birth",
+  "death",
+  "graduation",
+  "anniversary",
+  "other",
 ] as const;
 
 export type RawLifeEventInput = {

@@ -108,7 +108,7 @@ describe("LifeEventsPanel unit and accessibility tests", () => {
     expect(screen.getByText("2010-04-15")).toBeTruthy();
     expect(screen.getByText("St Stephen Parish")).toBeTruthy();
     expect(screen.getByText("Godparents present")).toBeTruthy();
-    expect(screen.getByText("First communion")).toBeTruthy();
+    expect(screen.getByText("First Communion")).toBeTruthy();
     expect(screen.getByText("2018-05-20")).toBeTruthy();
 
     const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
@@ -483,5 +483,47 @@ describe("LifeEventsPanel unit and accessibility tests", () => {
 
     expect(screen.queryByText("Baptism")).toBeNull();
     expect(screen.getByText("Funeral")).toBeTruthy();
+  });
+
+  it("select lists nine event types with Title Case labels in exact order", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      if (url.includes("/v1/people/life-events/list")) {
+        return new Response(JSON.stringify({ items: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    renderPanel({ canManage: true, isReadOnly: false });
+
+    expect(await screen.findByText("No life events recorded")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Add life event" }));
+
+    const select = screen.getByLabelText(/Event type/i) as HTMLSelectElement;
+    expect(select).toBeTruthy();
+
+    const expected = [
+      { value: "baptism", label: "Baptism" },
+      { value: "first_communion", label: "First Communion" },
+      { value: "marriage", label: "Marriage" },
+      { value: "funeral", label: "Funeral" },
+      { value: "birth", label: "Birth" },
+      { value: "death", label: "Death" },
+      { value: "graduation", label: "Graduation" },
+      { value: "anniversary", label: "Anniversary" },
+      { value: "other", label: "Other" },
+    ];
+
+    const options = Array.from(select.options);
+    expect(options).toHaveLength(9);
+    expect(
+      options.map((opt) => ({
+        value: opt.value,
+        label: opt.textContent?.trim(),
+      })),
+    ).toEqual(expected);
   });
 });

@@ -851,4 +851,67 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
     expect(staleRes.status).toBe(409);
     expect(await staleRes.text()).toBe("");
   });
+
+  it("allows birth and other event types in create, list, and update round trip", async () => {
+    // 1. Create a "birth" event
+    const createRes = await postRoute(
+      "/v1/people/life-events/create",
+      {
+        communitySlug: slugA1,
+        personId: adultPersonA1.personId,
+        type: "birth",
+        date: "2000-05-12",
+        place: "Sydney Maternity",
+        notes: "Healthy birth",
+      },
+      allPermissionsToken,
+    );
+    expect(createRes.status).toBe(201);
+    const created = (await createRes.json()) as { eventId: string; version: number };
+    expect(created.eventId).toBeDefined();
+
+    // 2. List events and verify decrypted type is "birth"
+    const listRes = await postRoute(
+      "/v1/people/life-events/list",
+      {
+        communitySlug: slugA1,
+        personId: adultPersonA1.personId,
+      },
+      allPermissionsToken,
+    );
+    expect(listRes.status).toBe(200);
+    const listed = (await listRes.json()) as { items: { eventId: string; type: string }[] };
+    const foundBirth = listed.items.find((item) => item.eventId === created.eventId);
+    expect(foundBirth?.type).toBe("birth");
+
+    // 3. Update the event to "other"
+    const updateRes = await postRoute(
+      "/v1/people/life-events/update",
+      {
+        communitySlug: slugA1,
+        eventId: created.eventId,
+        version: created.version,
+        type: "other",
+        date: "2000-05-12",
+        place: "Sydney",
+        notes: "Custom life milestone",
+      },
+      allPermissionsToken,
+    );
+    expect(updateRes.status).toBe(200);
+
+    // 4. List events again and verify decrypted type is "other"
+    const listRes2 = await postRoute(
+      "/v1/people/life-events/list",
+      {
+        communitySlug: slugA1,
+        personId: adultPersonA1.personId,
+      },
+      allPermissionsToken,
+    );
+    expect(listRes2.status).toBe(200);
+    const listed2 = (await listRes2.json()) as { items: { eventId: string; type: string }[] };
+    const foundOther = listed2.items.find((item) => item.eventId === created.eventId);
+    expect(foundOther?.type).toBe("other");
+  });
 });

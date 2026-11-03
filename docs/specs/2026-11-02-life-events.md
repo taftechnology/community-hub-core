@@ -2,6 +2,7 @@
 
 Slug: life-events
 Status: approved (2026-11-02, Adnan Bin Hossen)
+Amended after approval (2026-11-03): the allowed types are baptism, first_communion, marriage, funeral, birth, death, graduation, anniversary and other, keeping every type from the previous system. Decided by the owner, Abdus.
 Amended at approval (2026-11-02): the six defaults are confirmed. Audit actions use the past-participle convention and are registered with `defineAuditAction` and `defineAuditPurpose` in `modules/core/people/public/index.ts`. Migration `0017` carries an explicit `ALTER TABLE "app"."life_events" FORCE ROW LEVEL SECURITY;`. `derivePersonFieldKeys` returns `keyId` with `enc` and `bidx`, because the ciphertext envelope needs it. `is_minor` has no UPDATE grant (pinned by `privileges.integration.test.ts`), so no code path can flip it.
 Architecture refs: §9 (family, `core/people`), §12.1, §12.2.1, §12.3, §13; roadmap Phase 2 row "Family Records" (life events inside this item)
 
@@ -33,7 +34,7 @@ Out (explicitly):
 
 ## Behaviour
 
-**Event fields.** `type` (one of `baptism`, `marriage`, `first_communion`, `funeral`), `date` (a calendar date, not in the future, not before 1900), `place` (optional, up to 200 characters), `notes` (optional, up to 2,000 characters). All four are `restricted` and encrypted.
+**Event fields.** `type` (one of `baptism`, `first_communion`, `marriage`, `funeral`, `birth`, `death`, `graduation`, `anniversary`, `other`), `date` (a calendar date, not in the future, not before 1900), `place` (optional, up to 200 characters), `notes` (optional, up to 2,000 characters). All four are `restricted` and encrypted.
 
 **List.** Takes `personId`. Returns that person's events, ordered newest date first, sorted in the service after decryption (the date is encrypted, so SQL cannot order by it). Capped at 50 per person; the route refuses to return a truncated list silently (returns 409 `too_many` if a person has more, which is an operator problem and not expected). One audit event per call with the event ids in `targetIds`, or the person id when the list is empty.
 

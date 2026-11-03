@@ -7,7 +7,17 @@ const NOW = new Date("2026-11-01T00:00:00+11:00");
 
 describe("life event domain validation", () => {
   it("accepts valid life event types, dates, places, and notes", () => {
-    const validTypes = ["baptism", "marriage", "first_communion", "funeral"] as const;
+    const validTypes = [
+      "baptism",
+      "first_communion",
+      "marriage",
+      "funeral",
+      "birth",
+      "death",
+      "graduation",
+      "anniversary",
+      "other",
+    ] as const;
     for (const type of validTypes) {
       const result = validateLifeEventInput(
         {

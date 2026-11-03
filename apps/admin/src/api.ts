@@ -26,7 +26,16 @@ export type BillingUrlResponse = {
   url: string;
 };
 
-export type LifeEventType = "baptism" | "marriage" | "first_communion" | "funeral";
+export type LifeEventType =
+  | "baptism"
+  | "first_communion"
+  | "marriage"
+  | "funeral"
+  | "birth"
+  | "death"
+  | "graduation"
+  | "anniversary"
+  | "other";
 
 export type LifeEvent = {
   eventId: string;

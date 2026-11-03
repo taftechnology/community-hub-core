@@ -29,9 +29,14 @@ export type LifeEventsPanelProps = {
 
 const LIFE_EVENT_TYPES: { key: LifeEventType; label: string }[] = [
   { key: "baptism", label: "Baptism" },
-  { key: "first_communion", label: "First communion" },
+  { key: "first_communion", label: "First Communion" },
   { key: "marriage", label: "Marriage" },
   { key: "funeral", label: "Funeral" },
+  { key: "birth", label: "Birth" },
+  { key: "death", label: "Death" },
+  { key: "graduation", label: "Graduation" },
+  { key: "anniversary", label: "Anniversary" },
+  { key: "other", label: "Other" },
 ];
 
 function formatType(type: string): string {

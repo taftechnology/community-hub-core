@@ -72,7 +72,17 @@ describe("life-events contract schemas (pins 12, 15)", () => {
   });
 
   it("Pin 12: validates event types across all allowed values and rejects unknown types", () => {
-    expect(LIFE_EVENT_TYPES).toEqual(["baptism", "marriage", "first_communion", "funeral"]);
+    expect(LIFE_EVENT_TYPES).toEqual([
+      "baptism",
+      "first_communion",
+      "marriage",
+      "funeral",
+      "birth",
+      "death",
+      "graduation",
+      "anniversary",
+      "other",
+    ]);
 
     for (const type of LIFE_EVENT_TYPES) {
       expect(
