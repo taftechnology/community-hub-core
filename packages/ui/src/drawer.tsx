@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import { X } from "lucide-react";
 
@@ -9,16 +9,25 @@ export interface DrawerProps {
   onOpenChange: (open: boolean) => void;
   label: string;
   children: ReactNode;
+  finalFocus?: ComponentProps<typeof Dialog.Popup>["finalFocus"];
   className?: string;
 }
 
-export function Drawer({ open, onOpenChange, label, children, className }: DrawerProps) {
+export function Drawer({
+  open,
+  onOpenChange,
+  label,
+  children,
+  finalFocus,
+  className,
+}: DrawerProps) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-50 bg-scrim" />
         <Dialog.Popup
           aria-label={label}
+          finalFocus={finalFocus}
           className={cn(
             "fixed inset-y-0 left-0 z-50 w-(--ch-size-sidebar) max-w-[85vw] bg-sidebar text-sidebar-foreground flex flex-col shadow-overlay focus:outline-none",
             className,

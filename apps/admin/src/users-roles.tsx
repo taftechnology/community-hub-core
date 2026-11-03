@@ -6,6 +6,7 @@ import { post } from "./api";
 import { useBillingStatus } from "./billing-status";
 import { useCommunity } from "./community";
 import { directoryOrigins, readAccessToken } from "./directory";
+import { ScreenTitle } from "./screen-title";
 
 type GrantView = {
   grantId: string;
@@ -264,7 +265,7 @@ export function UsersRolesPage() {
   if (origins === undefined) {
     return (
       <>
-        <h1>Users & Roles</h1>
+        <ScreenTitle>Users & Roles</ScreenTitle>
         <p>Directory unavailable</p>
       </>
     );
@@ -273,7 +274,7 @@ export function UsersRolesPage() {
   if (token === null) {
     return (
       <>
-        <h1>Users & Roles</h1>
+        <ScreenTitle>Users & Roles</ScreenTitle>
         <p>Sign in required</p>
         <Link to="/sign-in">Sign in</Link>
       </>
@@ -288,7 +289,7 @@ export function UsersRolesPage() {
 
   return (
     <>
-      <h1>Users & Roles</h1>
+      <ScreenTitle>Users & Roles</ScreenTitle>
       {isReadOnly ? (
         <Alert live="polite">
           <span>Read-only until billing is settled</span>{" "}

@@ -108,7 +108,11 @@ it("shows Directory unavailable when an origin is missing and does not fetch", a
 it("names the sign-in controls and reports no axe violations", async () => {
   await router.navigate("/sign-in");
   const { container } = render(<Shell />);
-  expect(screen.getByRole("navigation", { name: "Admin" })).toBeTruthy();
+  expect(screen.queryByRole("navigation", { name: "Admin" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Dark mode" })).toBeNull();
+  const headings = screen.getAllByRole("heading", { level: 1 });
+  expect(headings).toHaveLength(1);
+  expect(headings[0]?.textContent).toBe("Sign in");
   expect(screen.getByRole("textbox", { name: "Email" })).toBeTruthy();
   const results = await axe.run(container, {
     rules: { "color-contrast": { enabled: false } },

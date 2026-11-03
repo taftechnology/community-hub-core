@@ -80,4 +80,38 @@ describe("Drawer", () => {
       expect(document.activeElement).toBe(openButton);
     });
   });
+
+  it("focuses finalFocus element when provided on closing", async () => {
+    function FinalFocusHarness() {
+      const [open, setOpen] = React.useState(false);
+      const targetRef = React.useRef<HTMLHeadingElement>(null);
+      return (
+        <div>
+          <button type="button" onClick={() => setOpen(true)}>
+            Open
+          </button>
+          <h1 ref={targetRef} tabIndex={-1}>
+            Title
+          </h1>
+          <Drawer open={open} onOpenChange={setOpen} label="Menu" finalFocus={targetRef}>
+            <button type="button" onClick={() => setOpen(false)}>
+              Close inside
+            </button>
+          </Drawer>
+        </div>
+      );
+    }
+
+    render(<FinalFocusHarness />);
+    const openBtn = screen.getByRole("button", { name: "Open" });
+    fireEvent.click(openBtn);
+
+    const closeInsideBtn = screen.getByRole("button", { name: "Close inside" });
+    fireEvent.click(closeInsideBtn);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(document.activeElement).toBe(screen.getByRole("heading", { level: 1 }));
+    });
+  });
 });

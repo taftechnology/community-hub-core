@@ -76,18 +76,32 @@ export function CommunityPicker() {
         event.preventDefault();
         setSlug(draft.trim());
       }}
+      className="flex flex-col gap-1.5"
     >
-      <label htmlFor="community-picker-input">
+      <label
+        htmlFor="community-picker-input"
+        className="text-xs font-semibold uppercase tracking-wider text-sidebar-foreground select-none"
+      >
         Community
+      </label>
+      <div className="flex items-center gap-1.5">
         <input
           id="community-picker-input"
           value={draft}
           onChange={(event) => {
             setDraft(event.target.value);
           }}
+          className="flex-1 min-w-0 px-2 py-1 text-sm bg-sidebar text-sidebar-foreground border border-sidebar-input rounded-md outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring outline-sidebar-ring"
         />
-      </label>
-      <Button type="submit">Set</Button>
+        <Button
+          type="submit"
+          variant="ghost"
+          size="sm"
+          className="text-sidebar-foreground hover:bg-sidebar-hover hover:text-sidebar-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring outline-sidebar-ring"
+        >
+          Set
+        </Button>
+      </div>
     </form>
   );
 }

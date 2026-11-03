@@ -18,6 +18,7 @@ import { useCommunity } from "./community";
 import { readAccessToken } from "./directory";
 import { LifeEventsPanel } from "./life-events";
 import { type PeopleAccess, usePeopleAccess } from "./people-access";
+import { ScreenTitle } from "./screen-title";
 
 type HouseholdItem = {
   householdId: string;
@@ -1398,7 +1399,7 @@ export function FamilyRecordsPage() {
   if (!token) {
     return (
       <>
-        <h1>Family Records</h1>
+        <ScreenTitle>Family Records</ScreenTitle>
         <p>Sign in required</p>
         <Link to="/sign-in">Sign in</Link>
       </>
@@ -1408,7 +1409,7 @@ export function FamilyRecordsPage() {
   if (!access.entitlements["people.households"] || !access.permissions["people.view"]) {
     return (
       <>
-        <h1>Family Records</h1>
+        <ScreenTitle>Family Records</ScreenTitle>
         <Alert live="polite">Not allowed</Alert>
       </>
     );
@@ -1417,7 +1418,7 @@ export function FamilyRecordsPage() {
   if (view === "create") {
     return (
       <>
-        <h1>Family Records</h1>
+        <ScreenTitle>Family Records</ScreenTitle>
         <h2 ref={createHeadingRef} tabIndex={-1}>
           Create Household
         </h2>
@@ -1454,7 +1455,7 @@ export function FamilyRecordsPage() {
   if (view === "rename") {
     return (
       <>
-        <h1>Family Records</h1>
+        <ScreenTitle>Family Records</ScreenTitle>
         <h2 ref={renameHeadingRef} tabIndex={-1}>
           Rename Household
         </h2>
@@ -1503,7 +1504,7 @@ export function FamilyRecordsPage() {
   if (view === "add-adult") {
     return (
       <>
-        <h1>Family Records</h1>
+        <ScreenTitle>Family Records</ScreenTitle>
         <h2 ref={addAdultHeadingRef} tabIndex={-1}>
           Add Adult
         </h2>
@@ -1591,7 +1592,7 @@ export function FamilyRecordsPage() {
   if (view === "move-adult") {
     return (
       <>
-        <h1>Family Records</h1>
+        <ScreenTitle>Family Records</ScreenTitle>
         <h2 ref={moveAdultHeadingRef} tabIndex={-1}>
           Move Adult
         </h2>
@@ -1677,7 +1678,7 @@ export function FamilyRecordsPage() {
   if (view === "add-minor") {
     return (
       <>
-        <h1>Family Records</h1>
+        <ScreenTitle>Family Records</ScreenTitle>
         <h2 ref={addMinorHeadingRef} tabIndex={-1}>
           Add Minor
         </h2>
@@ -1786,7 +1787,7 @@ export function FamilyRecordsPage() {
   if (view === "link-guardian") {
     return (
       <>
-        <h1>Family Records</h1>
+        <ScreenTitle>Family Records</ScreenTitle>
         <h2 ref={linkGuardianHeadingRef} tabIndex={-1}>
           Link Guardian
         </h2>
@@ -1884,7 +1885,7 @@ export function FamilyRecordsPage() {
   if (view === "detail") {
     return (
       <>
-        <h1>Family Records</h1>
+        <ScreenTitle>Family Records</ScreenTitle>
         {isReadOnly ? (
           <Alert live="polite">
             <span>Read-only until billing is settled</span>{" "}
@@ -2013,9 +2014,7 @@ export function FamilyRecordsPage() {
 
   return (
     <>
-      <h1 ref={listHeadingRef} tabIndex={-1}>
-        Family Records
-      </h1>
+      <ScreenTitle ref={listHeadingRef}>Family Records</ScreenTitle>
 
       {isReadOnly ? (
         <Alert live="polite">
