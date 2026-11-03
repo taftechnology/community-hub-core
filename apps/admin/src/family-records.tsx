@@ -263,6 +263,7 @@ export type MinorsSectionProps = {
   detailHousehold: HouseholdDetail;
   access: PeopleAccess;
   isReadOnly: boolean;
+  canManage?: boolean;
   unlinkingLinkId?: string | null;
   submitting?: boolean;
   openAddMinor?: () => void;
@@ -276,6 +277,7 @@ export function MinorsSection({
   detailHousehold,
   access,
   isReadOnly,
+  canManage: canManageProp,
   unlinkingLinkId = null,
   submitting = false,
   openAddMinor,
@@ -284,7 +286,7 @@ export function MinorsSection({
   setUnlinkingLinkId,
   setUnlinkNotice,
 }: MinorsSectionProps) {
-  const canManage = Boolean(access.permissions["people.manage"]);
+  const canManage = canManageProp ?? Boolean(access.permissions["people.manage"]);
   const canRestricted = Boolean(access.permissions["people.restricted.read"]);
   const canReadLifeEvents = canRestricted && Boolean(access.entitlements["people.households"]);
   const canAddMinor = canManage && canRestricted && !isReadOnly;
@@ -1983,7 +1985,7 @@ export function FamilyRecordsPage() {
                     personId={adult.personId}
                     personName={`${adult.givenName} ${adult.familyName}`}
                     isReadOnly={isReadOnly}
-                    canManage={canManage}
+                    canManage={canManage && !hideWrites}
                   />
                 ))
               : null}
@@ -1993,6 +1995,7 @@ export function FamilyRecordsPage() {
                 detailHousehold={detailHousehold}
                 access={access}
                 isReadOnly={isReadOnly}
+                canManage={canManage && !hideWrites}
                 unlinkingLinkId={unlinkingLinkId}
                 submitting={submitting}
                 openAddMinor={openAddMinor}
