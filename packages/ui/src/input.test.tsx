@@ -7,7 +7,7 @@ describe("Input classes and styling", () => {
     const { container } = render(<Input />);
     const input = container.querySelector("input")!;
     expect(input.className).toContain("h-(--ch-size-control)");
-    expect(input.className).toContain("--ch-size-touch");
+    expect(input.className).toContain("touch:h-(--ch-size-touch)");
   });
 
   it("renders with field borders, card background, foreground text, and subtle placeholder", () => {

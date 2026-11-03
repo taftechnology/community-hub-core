@@ -51,4 +51,19 @@ it("builds index.html with external scripts and no inline style", () => {
     expect(content).not.toContain("fonts.gstatic.com");
     expect(content).not.toContain("data:font");
   }
+
+  const builtCss = cssFiles.map((f) => fs.readFileSync(path.join(assetsDir, f), "utf8")).join("\n");
+  const pointerCoarseTouchHeight =
+    /@media\s*\(\s*pointer\s*:\s*coarse\s*\)\s*\{[^}]*\{[^}]*height:\s*var\(--ch-size-touch\)/;
+  const widthTouchHeight =
+    /@media\s*(?:not\s+all\s+and\s*\(\s*width\s*>=\s*40rem\s*\)|\(\s*(?:width\s*<\s*40rem|max-width:\s*40rem)\s*\))\s*\{[^}]*\{[^}]*height:\s*var\(--ch-size-touch\)/;
+  const pointerCoarseTouchSize =
+    /@media\s*\(\s*pointer\s*:\s*coarse\s*\)\s*\{[^}]*\.touch\\:size[^}]*\{[^}]*height:\s*var\(--ch-size-touch\)/;
+  const widthTouchSize =
+    /@media\s*(?:not\s+all\s+and\s*\(\s*width\s*>=\s*40rem\s*\)|\(\s*(?:width\s*<\s*40rem|max-width:\s*40rem)\s*\))\s*\{[^}]*\.touch\\:size[^}]*\{[^}]*height:\s*var\(--ch-size-touch\)/;
+
+  expect(builtCss).toMatch(pointerCoarseTouchHeight);
+  expect(builtCss).toMatch(widthTouchHeight);
+  expect(builtCss).toMatch(pointerCoarseTouchSize);
+  expect(builtCss).toMatch(widthTouchSize);
 }, 60000);

@@ -108,6 +108,13 @@ describe("generateTokens", () => {
     expect(tokensCss).not.toContain("--font-sans");
   });
 
+  it("emits @custom-variant touch with pointer:coarse and width < 40rem in themeCss", () => {
+    const { themeCss } = generateTokens(tokens);
+    expect(themeCss).toContain("@custom-variant touch");
+    expect(themeCss).toContain("@media (pointer: coarse)");
+    expect(themeCss).toContain("@media (width < 40rem)");
+  });
+
   it("accepts and emits each new group (type, spacing, size, shadow, decorative)", () => {
     const { tokensCss, themeCss } = generateTokens(tokens);
     // type

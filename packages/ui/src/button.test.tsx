@@ -5,11 +5,19 @@ describe("Button classes and variants", () => {
   it("includes default control height, sm height, and touch media variant", () => {
     const defaultClasses = buttonVariants({ variant: "default", size: "default" });
     expect(defaultClasses).toContain("h-(--ch-size-control)");
-    expect(defaultClasses).toContain("--ch-size-touch");
+    expect(defaultClasses).toContain("touch:h-(--ch-size-touch)");
 
     const smClasses = buttonVariants({ size: "sm" });
     expect(smClasses).toContain("h-(--ch-size-control-sm)");
-    expect(smClasses).toContain("--ch-size-touch");
+    expect(smClasses).toContain("touch:h-(--ch-size-touch)");
+
+    const iconClasses = buttonVariants({ size: "icon" });
+    expect(iconClasses).toContain("size-(--ch-size-control)");
+    expect(iconClasses).toContain("touch:size-(--ch-size-touch)");
+
+    const iconSmClasses = buttonVariants({ size: "icon-sm" });
+    expect(iconSmClasses).toContain("size-(--ch-size-control-sm)");
+    expect(iconSmClasses).toContain("touch:size-(--ch-size-touch)");
   });
 
   it("includes 2px outline focus with 2px offset", () => {

@@ -713,6 +713,17 @@ export function generateTokens(value: unknown): { tokensCss: string; themeCss: s
     "}",
   ].join("\n");
 
+  const customVariantTouch = [
+    "@custom-variant touch {",
+    "  @media (pointer: coarse) {",
+    "    @slot;",
+    "  }",
+    "  @media (width < 40rem) {",
+    "    @slot;",
+    "  }",
+    "}",
+  ].join("\n");
+
   const themeCss = [
     '@source "./src";',
     '@source not "./src/**/*.test.*";',
@@ -721,6 +732,7 @@ export function generateTokens(value: unknown): { tokensCss: string; themeCss: s
     '@source not "./src/opacity.ts";',
     '@source not "./src/write-theme-css.ts";',
     customVariantDark,
+    customVariantTouch,
     "@theme inline {",
     ...sortedDeclarations(themeEntries).map((line) => `  ${line}`),
     "}",

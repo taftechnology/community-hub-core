@@ -14,6 +14,14 @@
     }
   }
 }
+@custom-variant touch {
+  @media (pointer: coarse) {
+    @slot;
+  }
+  @media (width < 40rem) {
+    @slot;
+  }
+}
 @theme inline {
   --color-background: var(--ch-background);
   --color-border: var(--ch-border);

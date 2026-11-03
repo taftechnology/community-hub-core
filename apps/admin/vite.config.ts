@@ -5,6 +5,7 @@ import { defineConfig } from "vite";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: {
-    assetsInlineLimit: (filePath) => (/\.(woff2?|eot|ttf|otf)$/i.test(filePath) ? false : undefined),
+    assetsInlineLimit: (filePath) =>
+      /\.(woff2?|eot|ttf|otf)$/i.test(filePath) ? false : undefined,
   },
 });
