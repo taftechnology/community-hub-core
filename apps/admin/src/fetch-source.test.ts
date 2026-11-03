@@ -48,9 +48,9 @@ it("passes the fixture that does not call fetch", () => {
   expect(fileCallsFetch(path.join(fixturesDir, "no-fetch.ts"))).toBe(false);
 });
 
-it("imports tailwind, tokens, then the ui theme", () => {
+it("imports tailwind, tokens, ui theme, and ui fonts", () => {
   const css = fs.readFileSync(path.join(srcDir, "index.css"), "utf8");
   expect(css).toBe(
-    '@import "tailwindcss";\n@import "@community-hub/tokens/tokens.css";\n@import "@community-hub/ui/theme.css";\n',
+    '@import "tailwindcss";\n@import "@community-hub/tokens/tokens.css";\n@import "@community-hub/ui/theme.css";\n@import "@community-hub/ui/fonts.css";\n\nbody {\n  font-family: var(--font-sans);\n}\n',
   );
 });
