@@ -1,9 +1,14 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import axe from "axe-core";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { UserMenu } from "./user-menu";
+import { UserMenu, UserMenuCheckboxItem } from "./user-menu";
 
 describe("UserMenu", () => {
+  afterEach(() => {
+    delete document.documentElement.dataset.theme;
+  });
+
   it("signed out: renders one link 'Sign in' to signInHref, no Account button, no Sign out", () => {
     const onSignOut = vi.fn();
     render(<UserMenu signedIn={false} signInHref="/sign-in" onSignOut={onSignOut} />);
@@ -109,4 +114,81 @@ describe("UserMenu", () => {
     expect(document.body.textContent).not.toMatch(/profile/i);
     expect(document.body.textContent).not.toMatch(/help/i);
   });
+
+  it("navigates to UserMenuCheckboxItem with ArrowDown, toggles on Enter, and navigates to Sign out", async () => {
+    const onCheckedChange = vi.fn();
+    render(
+      <UserMenu
+        signedIn={true}
+        signInHref="/sign-in"
+        onSignOut={() => {}}
+        extraItems={
+          <UserMenuCheckboxItem checked={false} onCheckedChange={onCheckedChange}>
+            Dark mode
+          </UserMenuCheckboxItem>
+        }
+      />,
+    );
+
+    const trigger = screen.getByRole("button", { name: "Account" });
+    fireEvent.click(trigger);
+
+    const darkModeItem = await screen.findByRole("menuitemcheckbox", { name: "Dark mode" });
+    expect(darkModeItem).not.toBeNull();
+    expect(darkModeItem.getAttribute("aria-checked")).toBe("false");
+
+    const popup = screen.getByRole("menu");
+
+    // Press ArrowDown until "Dark mode" has focus or is highlighted (base-ui sets data-highlighted)
+    while (
+      !darkModeItem.hasAttribute("data-highlighted") &&
+      document.activeElement !== darkModeItem
+    ) {
+      fireEvent.keyDown(document.activeElement ?? popup, { key: "ArrowDown" });
+    }
+
+    expect(
+      darkModeItem.hasAttribute("data-highlighted") || document.activeElement === darkModeItem,
+    ).toBe(true);
+
+    fireEvent.keyDown(darkModeItem, { key: "Enter" });
+    expect(onCheckedChange).toHaveBeenCalledTimes(1);
+    expect(onCheckedChange).toHaveBeenCalledWith(true);
+
+    // ArrowDown again reaches "Sign out"
+    const signOutItem = screen.getByRole("menuitem", { name: "Sign out" });
+    fireEvent.keyDown(darkModeItem, { key: "ArrowDown" });
+    expect(
+      signOutItem.hasAttribute("data-highlighted") || document.activeElement === signOutItem,
+    ).toBe(true);
+  });
+
+  for (const theme of ["light", "dark"] as const) {
+    it(`passes axe with no violations in ${theme} mode when UserMenuCheckboxItem is present`, async () => {
+      document.documentElement.dataset.theme = theme;
+      const { container } = render(
+        <UserMenu
+          signedIn={true}
+          signInHref="/sign-in"
+          onSignOut={() => {}}
+          extraItems={
+            <UserMenuCheckboxItem checked={theme === "dark"} onCheckedChange={() => {}}>
+              Dark mode
+            </UserMenuCheckboxItem>
+          }
+        />,
+      );
+
+      const trigger = screen.getByRole("button", { name: "Account" });
+      fireEvent.click(trigger);
+
+      const popup = await screen.findByRole("menu");
+      const results = await axe.run([container, popup], {
+        rules: {
+          "color-contrast": { enabled: false },
+        },
+      });
+      expect(results.violations).toEqual([]);
+    });
+  }
 });

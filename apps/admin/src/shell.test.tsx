@@ -461,16 +461,30 @@ describe("Shell and ShellLayout", () => {
     const darkToggle = await screen.findByRole("menuitemcheckbox", { name: "Dark mode" });
     expect(darkToggle).toBeTruthy();
     expect(darkToggle.getAttribute("aria-checked")).toBe("false");
-    expect(darkToggle.parentElement?.className).toContain("sm:hidden");
+    expect(darkToggle.className).toContain("sm:hidden");
 
-    fireEvent.click(darkToggle);
+    const popup = screen.getByRole("menu");
+    while (!darkToggle.hasAttribute("data-highlighted") && document.activeElement !== darkToggle) {
+      fireEvent.keyDown(document.activeElement ?? popup, { key: "ArrowDown" });
+    }
+    expect(
+      darkToggle.hasAttribute("data-highlighted") || document.activeElement === darkToggle,
+    ).toBe(true);
+
+    fireEvent.keyDown(darkToggle, { key: "Enter" });
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(localStorage.getItem("community-hub.theme")).toBe("dark");
     expect(darkToggle.getAttribute("aria-checked")).toBe("true");
 
-    fireEvent.click(darkToggle);
+    fireEvent.keyDown(darkToggle, { key: "Enter" });
     expect(document.documentElement.dataset.theme).toBe("light");
     expect(localStorage.getItem("community-hub.theme")).toBe("light");
     expect(darkToggle.getAttribute("aria-checked")).toBe("false");
+
+    const signOutBtn = screen.getByRole("menuitem", { name: "Sign out" });
+    fireEvent.keyDown(darkToggle, { key: "ArrowDown" });
+    expect(
+      signOutBtn.hasAttribute("data-highlighted") || document.activeElement === signOutBtn,
+    ).toBe(true);
   });
 });

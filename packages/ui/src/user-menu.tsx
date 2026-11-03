@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Menu } from "@base-ui/react/menu";
-import { User } from "lucide-react";
+import { Check, User } from "lucide-react";
 
 import { cn } from "./lib/utils";
 
@@ -13,8 +13,38 @@ export interface UserMenuProps {
   className?: string;
 }
 
+export interface UserMenuCheckboxItemProps {
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  children: ReactNode;
+  className?: string;
+}
+
 const SECONDARY_BUTTON_CLASSES =
   "inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent text-sm font-medium transition-colors outline-none select-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring bg-secondary text-secondary-foreground hover:bg-secondary-hover h-(--ch-size-control) touch:h-(--ch-size-touch) px-3";
+
+export function UserMenuCheckboxItem({
+  checked,
+  onCheckedChange,
+  children,
+  className,
+}: UserMenuCheckboxItemProps) {
+  return (
+    <Menu.CheckboxItem
+      checked={checked}
+      onCheckedChange={(nextChecked) => onCheckedChange(nextChecked)}
+      className={cn(
+        "h-(--ch-size-control) px-3 flex items-center justify-between text-foreground text-sm font-medium rounded-md cursor-pointer hover:bg-secondary-hover data-[highlighted]:bg-secondary-hover focus:outline-none transition-colors select-none",
+        className,
+      )}
+    >
+      <span>{children}</span>
+      <Menu.CheckboxItemIndicator className="inline-flex items-center justify-center">
+        <Check className="size-4 shrink-0" aria-hidden="true" />
+      </Menu.CheckboxItemIndicator>
+    </Menu.CheckboxItem>
+  );
+}
 
 export function UserMenu({
   signedIn,
@@ -54,7 +84,7 @@ export function UserMenu({
           <Menu.Popup className="min-w-48 bg-card border border-border shadow-overlay rounded-lg p-1 text-foreground focus:outline-none">
             {extraItems && (
               <>
-                <div className="p-1">{extraItems}</div>
+                {extraItems}
                 <Menu.Separator className="h-px bg-border my-1" />
               </>
             )}

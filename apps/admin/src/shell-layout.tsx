@@ -5,6 +5,7 @@ import {
   ThemeToggle,
   TopBar,
   UserMenu,
+  UserMenuCheckboxItem,
   applyTheme,
   initialTheme,
   type Theme,
@@ -91,17 +92,13 @@ function ShellLayoutInner() {
               </Link>
             )}
             extraItems={
-              <div className="sm:hidden" role="none">
-                <button
-                  type="button"
-                  role="menuitemcheckbox"
-                  aria-checked={theme === "dark"}
-                  onClick={toggle}
-                  className="w-full h-(--ch-size-control) px-3 flex items-center justify-between text-sm font-medium rounded-md hover:bg-secondary-hover focus:outline-none transition-colors select-none text-foreground"
-                >
-                  Dark mode
-                </button>
-              </div>
+              <UserMenuCheckboxItem
+                checked={theme === "dark"}
+                onCheckedChange={toggle}
+                className="sm:hidden"
+              >
+                Dark mode
+              </UserMenuCheckboxItem>
             }
           />
         </>

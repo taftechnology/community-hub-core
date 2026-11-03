@@ -30,4 +30,9 @@ export {
 } from "./theme.js";
 export { ThemeToggle, type ThemeToggleProps } from "./theme-toggle.js";
 export { TopBar, type TopBarProps } from "./top-bar.js";
-export { UserMenu, type UserMenuProps } from "./user-menu.js";
+export {
+  UserMenu,
+  UserMenuCheckboxItem,
+  type UserMenuCheckboxItemProps,
+  type UserMenuProps,
+} from "./user-menu.js";
