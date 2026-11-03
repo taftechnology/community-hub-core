@@ -10,6 +10,7 @@ const identity = vi.hoisted(() => ({
   finishPasskeyAuthentication: vi.fn(),
   readSession: vi.fn(),
   refreshSession: vi.fn(),
+  endSession: vi.fn(),
 }));
 
 vi.mock("@community-hub/identity", async () => {
@@ -75,7 +76,7 @@ function route(path: string, bound: AuthDeps = deps()) {
 }
 
 describe("auth routes", () => {
-  it("registers the seven tenant routes", () => {
+  it("registers the eight tenant routes", () => {
     const routes = authRoutes(deps());
     expect(routes.map((item) => `${item.method} ${item.pattern}`)).toEqual([
       "POST /v1/auth/email-otp/start",
@@ -85,6 +86,7 @@ describe("auth routes", () => {
       "POST /v1/auth/passkey/authenticate/options",
       "POST /v1/auth/passkey/authenticate/verify",
       "POST /v1/auth/session/refresh",
+      "POST /v1/auth/session/end",
     ]);
     expect(routes.every((item) => item.surface === "tenant")).toBe(true);
     const source = readFileSync(new URL("./auth-routes.ts", import.meta.url), "utf8");
@@ -259,5 +261,83 @@ describe("auth routes", () => {
     );
     expect(refreshed.status).toBe(200);
     expect(billing.assertWritable).not.toHaveBeenCalled();
+  });
+
+  it("ends session on /v1/auth/session/end and logs no token", async () => {
+    identity.endSession.mockClear();
+    const token = "garbled-" + "session-token";
+    const entries: unknown[] = [];
+    const bound = deps((message, fields) => {
+      entries.push({ message, fields });
+    });
+
+    const ok = await route("/v1/auth/session/end", bound).handle(
+      request("/v1/auth/session/end", AUTH_HOSTNAME, {}, `Bearer ${token}`),
+    );
+    expect(ok.status).toBe(204);
+    expect(ok.headers.get("cache-control")).toBe("no-store");
+    expect(await ok.text()).toBe("");
+    expect(identity.endSession).toHaveBeenCalledOnce();
+    expect(identity.endSession).toHaveBeenCalledWith(expect.anything(), bound.kms, bound.keyArn, {
+      accessToken: token,
+      now: bound.now(),
+    });
+
+    const logged = JSON.stringify(entries);
+    expect(logged).not.toContain(token);
+  });
+
+  it("enforces auth, bearer, body, media type, and hostname on /v1/auth/session/end", async () => {
+    identity.endSession.mockClear();
+    const token = "valid-" + "session-token";
+
+    // No authorization header -> 401, empty body, endSession not called
+    const noAuth = await route("/v1/auth/session/end").handle(
+      request("/v1/auth/session/end", AUTH_HOSTNAME, {}),
+    );
+    expect(noAuth.status).toBe(401);
+    expect(await noAuth.text()).toBe("");
+    expect(identity.endSession).not.toHaveBeenCalled();
+
+    // authorization: Basic abc -> 401
+    const basicAuth = await route("/v1/auth/session/end").handle(
+      request("/v1/auth/session/end", AUTH_HOSTNAME, {}, "Basic abc"),
+    );
+    expect(basicAuth.status).toBe(401);
+    expect(await basicAuth.text()).toBe("");
+    expect(identity.endSession).not.toHaveBeenCalled();
+
+    // Valid bearer and body {"extra":1} -> 400, endSession not called
+    const extraBody = await route("/v1/auth/session/end").handle(
+      request("/v1/auth/session/end", AUTH_HOSTNAME, { extra: 1 }, `Bearer ${token}`),
+    );
+    expect(extraBody.status).toBe(400);
+    expect(await extraBody.text()).toBe("");
+    expect(identity.endSession).not.toHaveBeenCalled();
+
+    // Valid bearer with content-type: text/plain -> 400
+    const plainHeaders = new Headers({
+      "content-type": "text/plain",
+      "x-community-hub-hostname": AUTH_HOSTNAME,
+      authorization: `Bearer ${token}`,
+    });
+    const textPlain = await route("/v1/auth/session/end").handle(
+      new Request("http://127.0.0.1/v1/auth/session/end", {
+        method: "POST",
+        headers: plainHeaders,
+        body: JSON.stringify({}),
+      }),
+    );
+    expect(textPlain.status).toBe(400);
+    expect(await textPlain.text()).toBe("");
+    expect(identity.endSession).not.toHaveBeenCalled();
+
+    // Api hostname instead of the auth hostname -> 404, empty body
+    const wrongHost = await route("/v1/auth/session/end").handle(
+      request("/v1/auth/session/end", API_HOSTNAME, {}, `Bearer ${token}`),
+    );
+    expect(wrongHost.status).toBe(404);
+    expect(await wrongHost.text()).toBe("");
+    expect(identity.endSession).not.toHaveBeenCalled();
   });
 });

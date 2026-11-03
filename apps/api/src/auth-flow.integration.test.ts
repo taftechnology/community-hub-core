@@ -168,10 +168,11 @@ async function post(
   pathName: string,
   body: unknown,
   authorization?: string,
+  hostname = AUTH_HOSTNAME,
 ): Promise<Response> {
   const headers = new Headers({
     "content-type": "application/json",
-    "x-community-hub-hostname": AUTH_HOSTNAME,
+    "x-community-hub-hostname": hostname,
   });
   if (authorization !== undefined) {
     headers.set("authorization", authorization);
@@ -309,6 +310,106 @@ describe("auth flow", () => {
       const third = (await refreshed.json()) as { userId: string; refreshToken: string };
       expect(third.userId).toBe(first.userId);
       expect(third.refreshToken).not.toBe(second.refreshToken);
+    } finally {
+      await new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      });
+      await sql`delete from identity.sessions`;
+      await sql`delete from identity.passkey_credentials`;
+      await sql`delete from identity.passkey_challenges`;
+      await sql`delete from identity.otp_challenges`;
+      await sql`delete from identity.users`;
+      await sql`delete from identity.identity_keys`;
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("signs out through the server, invalidating the session family", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const runtime = loadRuntime();
+    const sql = createPlaintextIdentitySql(identityUrl(runtime));
+    const mail = new MemoryMail();
+    const server = startServer({
+      env: envFor(18471),
+      routes: authRoutes({
+        checkout: (_role, run) => run(sql),
+        kms: createLocalKmsPort(),
+        keyArn: KEY_ARN,
+        mail,
+        now: () => now,
+        authHostname: AUTH_HOSTNAME,
+        log: () => undefined,
+      }),
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        if (server.listening) {
+          resolve();
+          return;
+        }
+        server.once("listening", () => resolve());
+        server.once("error", reject);
+      });
+      await sql`delete from identity.sessions`;
+      await sql`delete from identity.passkey_credentials`;
+      await sql`delete from identity.passkey_challenges`;
+      await sql`delete from identity.otp_challenges`;
+      await sql`delete from identity.users`;
+      await sql`delete from identity.identity_keys`;
+
+      const started = await post(18471, "/v1/auth/email-otp/start", { email: "ada@example.com" });
+      expect(started.status).toBe(204);
+      const code = mail.last?.code ?? "";
+      expect(code).toMatch(/^\d{8}$/);
+
+      const verified = await post(18471, "/v1/auth/email-otp/verify", {
+        email: "ada@example.com",
+        code,
+      });
+      expect(verified.status).toBe(200);
+      const session = (await verified.json()) as {
+        userId: string;
+        accessToken: string;
+        refreshToken: string;
+      };
+
+      const beforeSignOut = await post(
+        18471,
+        "/v1/auth/passkey/register/options",
+        {},
+        `Bearer ${session.accessToken}`,
+      );
+      expect(beforeSignOut.status).toBe(200);
+
+      const noBearer = await post(18471, "/v1/auth/session/end", {});
+      expect(noBearer.status).toBe(401);
+
+      const wrongHost = await post(
+        18471,
+        "/v1/auth/session/end",
+        {},
+        `Bearer ${session.accessToken}`,
+        "wrong.example.test",
+      );
+      expect(wrongHost.status).toBe(404);
+
+      const ended = await post(18471, "/v1/auth/session/end", {}, `Bearer ${session.accessToken}`);
+      expect(ended.status).toBe(204);
+      expect(ended.headers.get("cache-control")).toBe("no-store");
+
+      const afterSignOutPasskey = await post(
+        18471,
+        "/v1/auth/passkey/register/options",
+        {},
+        `Bearer ${session.accessToken}`,
+      );
+      expect(afterSignOutPasskey.status).toBe(401);
+
+      const afterSignOutRefresh = await post(18471, "/v1/auth/session/refresh", {
+        refreshToken: session.refreshToken,
+      });
+      expect(afterSignOutRefresh.status).toBe(401);
     } finally {
       await new Promise<void>((resolve) => {
         server.closeAllConnections();
