@@ -70,4 +70,7 @@ it("builds index.html with external scripts and no inline style", () => {
   const focusVisibleOutlineSolid =
     /\.focus-visible\\:outline-solid:focus-visible\s*\{[^}]*outline-style:\s*solid/;
   expect(builtCss).toMatch(focusVisibleOutlineSolid);
+
+  const bodyRule = /body\s*\{[^}]*color:\s*var\(--ch-foreground\)/;
+  expect(builtCss).toMatch(bodyRule);
 }, 60000);

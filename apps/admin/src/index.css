@@ -3,6 +3,22 @@
 @import "@community-hub/ui/theme.css";
 @import "@community-hub/ui/fonts.css";
 
+:root {
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+  }
+}
+
 body {
   font-family: var(--font-sans);
+  background-color: var(--ch-background);
+  color: var(--ch-foreground);
 }
