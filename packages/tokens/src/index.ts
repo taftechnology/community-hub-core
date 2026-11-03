@@ -7,6 +7,7 @@ export {
   BANNED_PREFIXES,
   contrastRatio,
   contrastViolations,
+  decorativeViolations,
   generateTokens,
   missingPairViolations,
   namespaceViolations,
