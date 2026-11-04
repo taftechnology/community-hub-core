@@ -8,7 +8,7 @@ Spec: docs/specs/2026-11-04-owner-decisions.md
 
 Status: draft
 
-**Branch:** `docs/2026-11-04-owner-decisions` · one PR · twelve tasks, one commit each
+**Branch:** `docs/2026-11-04-owner-decisions` · one PR · thirteen tasks, one commit each
 
 ## Global constraints
 
@@ -228,3 +228,41 @@ git log --oneline origin/main..HEAD
 ```
 
 Expect twelve commits and a clean working tree.
+
+---
+
+## Brief 5 — Laravel backup, receipt edit, SMS, two-factor and restore record (2026-11-04)
+
+One additional commit on the same branch. Do not amend earlier commits.
+
+### Task 13: Owner answers A–E
+
+**Files:** `docs/adr/0018-client-migration-preview.md`, `architecture.md`, `docs/roadmap.md`, `docs/specs/2026-11-04-owner-decisions.md`, `docs/plans/2026-11-04-owner-decisions.md`
+
+**Check:**
+
+- `grep -n -i "interpretation\|to confirm" architecture.md docs/roadmap.md docs/adr/0017-childrens-data-access.md docs/adr/0018-client-migration-preview.md docs/specs/2026-11-04-owner-decisions.md` — no hit about this chunk's decisions (Q18 receipt wording, two-factor assumption, Laravel backup open point, receipt out-of-band).
+- `grep -n -E "^\| Q23 " architecture.md docs/roadmap.md` — both closed (owner 2026-11-04).
+- Laravel backup: ADR 0018 decision 4; architecture §24.2 step 6; roadmap Laravel row; spec decisions 10 and 17; Q23 closed in both open-question tables.
+- Receipt wording: Giving settings in admin; no interpretation-to-confirm; spec decisions 4, 15, 18.
+- Broadcast Messages: email only on roadmap row; spec decision 19; no SMS provider added.
+- Two-factor: existing/imported users at next sign-in stated as decided, not assumption (spec decisions 7, 14, 20).
+- Restore: parish request, ticket reference, ops audit and parish audit log in architecture §11.4, §22, §19; roadmap Restore row; spec decisions 9, 16, 21.
+- Spec open points none for this chunk; coverage rows 17–21; this task recorded.
+- Prettier on every Markdown file touched; `pnpm exec prettier --check .`.
+
+**Commit:** `docs: Laravel backup, receipt edit, SMS, two-factor and restore record answers`
+
+---
+
+## Final verification (brief 5 — report in impl-report-5.md)
+
+```bash
+grep -n -i "interpretation\|to confirm" architecture.md docs/roadmap.md docs/adr/0017-childrens-data-access.md docs/adr/0018-client-migration-preview.md docs/specs/2026-11-04-owner-decisions.md
+grep -n -E "^\| Q23 " architecture.md docs/roadmap.md
+pnpm exec prettier --check .
+git status --short
+git log --oneline origin/main..HEAD
+```
+
+Expect thirteen commits and a clean working tree.

@@ -14,9 +14,9 @@ Architecture §24.2 had staff verify imports on staging, run core in parallel on
 1. **Import all client data** into core in the production account (`prod-au`), in Australia only.
 2. **Preview hostname.** After import, the client runs on a dedicated preview hostname in the production account so the client and the team can validate admin, mobile, and public behaviour against real data. The preview is production under AGENTS.md rule 7: real client data, production account, `ap-southeast-2` only, never staging.
 3. **Cutover.** When the client signs off, switch public hostname, mobile, portal, and staff admin to core in one window. Take Laravel offline.
-4. **Laravel backup.** Keep Laravel's backup after cutover. Where it is stored and how long it is kept are open (architecture §26 Q23). It must stay in Australia.
+4. **Laravel backup.** Keep Laravel's backup after cutover, **encrypted in our AWS account in Sydney (`ap-southeast-2`)**, for **1 year after the client's switch-over**, then delete it. It does not leave Australia.
 5. **No parallel staging production.** Real client data is not imported to or exercised on `staging-au`.
-6. **No mandated delete of self-hosted data.** Decommission no longer requires securely deleting the self-hosted database as a platform step; retention of Laravel's backup is a separate open question.
+6. **No mandated delete of self-hosted data.** Decommission no longer requires securely deleting the self-hosted database as a platform step; Laravel's backup retention is decided in decision 4 (architecture §26 Q23 closed).
 
 ## Consequences
 
@@ -28,4 +28,4 @@ Architecture §24.2 had staff verify imports on staging, run core in parallel on
 ## Alternatives considered
 
 - **Parallel run on staging with a MySQL dump of the client.** Rejected: real client data must not run on staging (rule 7).
-- **Delete self-hosted database immediately after cutover.** Rejected: owner keeps Laravel's backup; location and retention are decided separately (Q23).
+- **Delete self-hosted database immediately after cutover.** Rejected: owner keeps Laravel's backup in our Sydney AWS account for one year after switch-over, then deletes it.

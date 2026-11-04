@@ -41,7 +41,7 @@ GivingJar is **our own platform**, built on Stripe Connect. Whatever core needs 
 
 ### Decision 4 — Tax receipt wording (refined later on 2026-11-04)
 
-Tax receipt wording is not hardcoded. There is a **default** wording set in the ops console. Each parish uses that default or sets its own wording. **Interpretation to confirm with the owner:** where a parish edits its own wording (Giving settings in admin).
+Tax receipt wording is not hardcoded. There is a **default** wording set in the ops console. Each parish uses that default or sets its own wording in **Giving settings** in admin.
 
 ### Decision 5 — Shop (refined later on 2026-11-04)
 
@@ -66,11 +66,11 @@ The cookie notice is owned by Jellycube, not core.
 
 ### Decision 9 — Backups (refined later on 2026-11-04)
 
-No backup download. Community staff cannot see backups, cannot restore them, and nothing about backups appears in their dashboard. To restore, a parish contacts us; we restore from the ops console. A restore must bring back one community's data without affecting any other community (shared database). Restore is a support action with a ticket reference and audit; the restore tool never shows a minor's details to the operator; restored data stays in `ap-southeast-2`. Backups stay in `ap-southeast-2` only.
+No backup download. Community staff cannot see backups, cannot restore them, and nothing about backups appears in their dashboard. To restore, a parish contacts us with a request and ticket reference; we restore from the ops console. A restore must bring back one community's data without affecting any other community (shared database). Each restore is logged in the ops audit and in that parish's audit log; the restore tool never shows a minor's details to the operator; restored data stays in `ap-southeast-2`. Backups stay in `ap-southeast-2` only.
 
 ### Decision 10 — Client migration
 
-Move all data, then run the client on a preview hostname in the production account so the client and the team can check it. Then switch over, take Laravel offline, and keep Laravel's backup. The preview holds real client data, so it is production under AGENTS.md rule 7: production account, Australia only, never staging. This replaces parallel run on staging and securely deleting the self-hosted database in architecture §24.2. Open: where Laravel's backup is kept and for how long (must stay in Australia; do not invent a retention period).
+Move all data, then run the client on a preview hostname in the production account so the client and the team can check it. Then switch over, take Laravel offline, and keep Laravel's backup encrypted in our AWS account in Sydney for 1 year after switch-over, then delete it. The preview holds real client data, so it is production under AGENTS.md rule 7: production account, Australia only, never staging. This replaces parallel run on staging and securely deleting the self-hosted database in architecture §24.2.
 
 ### Decision 11 — Profile Settings
 
@@ -96,6 +96,26 @@ See decision 4.
 
 See decision 9.
 
+### Decision 17 — Laravel backup retention (owner answer A; refines decision 10)
+
+After switch-over, keep Laravel's backup encrypted in our AWS account in Sydney (`ap-southeast-2`) for 1 year, then delete it ([ADR 0018](docs/adr/0018-client-migration-preview.md); Q23 closed).
+
+### Decision 18 — Receipt edit surface (owner answer B; refines decisions 4 and 15)
+
+A parish that does not use the default wording sets its own in Giving settings in admin.
+
+### Decision 19 — Broadcast Messages SMS (owner answer C)
+
+Not built for now. Broadcast Messages sends email only; SMS can be a later chunk of its own. Do not add an SMS provider in this chunk.
+
+### Decision 20 — Existing and imported users two-factor (owner answer D; refines decisions 7 and 14)
+
+Users who already exist or arrive through the Laravel import set up a second factor at their next sign-in before they can continue.
+
+### Decision 21 — Restore audit record (owner answer E; refines decisions 9 and 16)
+
+A restore we run for a parish requires the parish's request with a ticket reference and is logged in the ops audit and in that parish's audit log.
+
 ## Data
 
 No tables or columns change in this chunk.
@@ -112,16 +132,9 @@ None in this chunk. Future chunks will change Public Content API bulletins proje
 
 Documenting stricter children's access while `main` still allows `people.restricted.read` for minors could be read as already enforced. The spec and ADR 0017 state the known gap plainly. Migration on a production preview increases operational care (real data, rule 7).
 
-## Out-of-band
-
-Receipt wording edit surface (decision 4) needs owner confirmation on where a parish edits its own wording.
-
 ## Open points
 
-| Topic                        | Status                                                   |
-| ---------------------------- | -------------------------------------------------------- |
-| Receipt wording edit surface | Interpretation: Giving settings vs ops only (decision 4) |
-| Laravel backup after cutover | Location and retention, Australia only (Q23)             |
+None remain from the 2026-11-04 owner decisions. Platform questions that were open before this chunk (for example Q2, Q13) stay in `architecture.md` §26.
 
 ## Coverage table
 
@@ -143,3 +156,8 @@ Receipt wording edit surface (decision 4) needs owner confirmation on where a pa
 | 14  | Second factor          | `docs/adr/0017-childrens-data-access.md`; `architecture.md` §11.1; `docs/roadmap.md` Two-factor for staff; §26 Q20                                                                                                                                                                                        |
 | 15  | Receipt default        | Same as decision 4                                                                                                                                                                                                                                                                                        |
 | 16  | Restore                | Same as decision 9                                                                                                                                                                                                                                                                                        |
+| 17  | Laravel backup         | `docs/adr/0018-client-migration-preview.md`; `architecture.md` §24.2 step 6; `docs/roadmap.md` Laravel importer row; `architecture.md` §26 Q23 closed                                                                                                                                                     |
+| 18  | Receipt edit surface   | `architecture.md` §14.3, §19, §26 Q18; `docs/roadmap.md` open questions Q18; spec decisions 4 and 15                                                                                                                                                                                                      |
+| 19  | Broadcast SMS scope    | `docs/roadmap.md` Broadcast Messages row; spec decision 19                                                                                                                                                                                                                                                |
+| 20  | Two-factor at sign-in  | Spec decisions 7 and 14; `docs/adr/0017-childrens-data-access.md`; `architecture.md` §11.1; `docs/roadmap.md` Two-factor for staff                                                                                                                                                                        |
+| 21  | Restore audit          | `architecture.md` §11.4, §22, §19; `docs/roadmap.md` Restore one community row; spec decisions 9 and 16                                                                                                                                                                                                   |
