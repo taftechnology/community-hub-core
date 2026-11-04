@@ -1,10 +1,10 @@
+Spec: docs/specs/2026-11-04-owner-decisions.md
+
 # Owner decisions 2026-11-04 implementation plan
 
 **Goal:** Record the owner's 2026-11-04 decisions in ADRs and living documents without changing code or infrastructure.
 
 **Tech stack:** Markdown, Prettier. No application code, Terraform, or migrations.
-
-Spec: docs/specs/2026-11-04-owner-decisions.md
 
 Status: draft
 
