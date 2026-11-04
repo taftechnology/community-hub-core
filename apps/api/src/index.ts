@@ -71,24 +71,9 @@ export function run(source: NodeJS.ProcessEnv, pem: string, routes: readonly Gat
     return 1;
   }
   try {
-    const bound = bindServices(read.env, pem);
-    const staticRoutes =
-      read.env.OPS_STATIC_DIR !== undefined ? loadOpsStatic(read.env.OPS_STATIC_DIR) : [];
     current = startServer({
       env: read.env,
-      routes: [
-        ...routes,
-        ...authRoutes(bound.auth),
-        ...accessRoutes(bound.access),
-        ...peopleRoutes(bound.people),
-        ...householdRoutes(bound.households),
-        ...lifeEventRoutes(bound.lifeEvents),
-        ...entitlementRoutes(bound.entitlements),
-        ...billingWebhookRoutes(bound.billing),
-        ...billingRoutes(bound.billing),
-        ...opsRoutes(bound.ops),
-        ...staticRoutes,
-      ],
+      routes: [...routes, ...productionRoutes(read.env, pem)],
     });
   } catch (error) {
     if (error instanceof RoutesRejected) {
@@ -385,7 +370,7 @@ if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
   boot({
     readPem: () => readFileSync(IMAGE_CERT_PATH, "utf8"),
     source: process.env,
-    routes: [healthRoute],
+    routes: [],
     exit: (code) => {
       process.exit(code);
     },
