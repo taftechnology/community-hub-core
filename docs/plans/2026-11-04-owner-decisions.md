@@ -8,7 +8,7 @@ Spec: docs/specs/2026-11-04-owner-decisions.md
 
 Status: draft
 
-**Branch:** `docs/2026-11-04-owner-decisions` · one PR · thirteen tasks, one commit each
+**Branch:** `docs/2026-11-04-owner-decisions` · one PR · sixteen tasks, one commit each
 
 ## Global constraints
 
@@ -298,6 +298,16 @@ Two additional commits on the same branch. Do not amend earlier commits.
 
 ---
 
+### Task 16: Round 2 review fixes
+
+**Files:** `architecture.md`, `docs/roadmap.md`, `docs/plans/2026-11-04-owner-decisions.md`
+
+**Check:** Brief 7 items 1–4; prettier on every Markdown file touched; `git log --oneline origin/main..HEAD` shows sixteen commits.
+
+**Commit:** `docs: round 2 review fixes for the owner decisions`
+
+---
+
 ## Final verification (brief 6 — report in impl-report-6.md)
 
 ```bash
@@ -311,4 +321,4 @@ git status --short
 git log --oneline origin/main..HEAD
 ```
 
-Expect fifteen commits and a clean working tree.
+Expect sixteen commits and a clean working tree.
