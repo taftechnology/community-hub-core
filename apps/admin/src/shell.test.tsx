@@ -669,4 +669,53 @@ describe("Shell and ShellLayout", () => {
 
     expect(screen.queryByRole("menuitemcheckbox", { name: "Dark mode" })).toBeNull();
   });
+
+  it("renders no search, notifications or Website button in the shell or Account menu, and the only textbox is Community", async () => {
+    sessionStorage.setItem("community-hub.signout-handle", "fake-handle-no-extras");
+    const fullAccess: PeopleAccess = {
+      permissions: {
+        "people.view": true,
+        "people.manage": true,
+        "people.restricted.read": true,
+      },
+      entitlements: {
+        "people.directory": true,
+        "people.households": true,
+      },
+    };
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <PeopleAccessContext.Provider value={{ access: fullAccess }}>
+          <ShellLayout />
+        </PeopleAccessContext.Provider>
+      </MemoryRouter>,
+    );
+
+    const assertNoExcluded = () => {
+      expect(screen.queryByRole("searchbox")).toBeNull();
+      expect(screen.queryByRole("button", { name: /search/i })).toBeNull();
+      expect(screen.queryByRole("link", { name: /search/i })).toBeNull();
+      expect(screen.queryByRole("button", { name: /notification/i })).toBeNull();
+      expect(screen.queryByRole("link", { name: /notification/i })).toBeNull();
+      expect(screen.queryByRole("button", { name: /website/i })).toBeNull();
+      expect(screen.queryByRole("link", { name: /website/i })).toBeNull();
+    };
+
+    assertNoExcluded();
+    const textboxesBefore = screen.getAllByRole("textbox");
+    expect(textboxesBefore).toHaveLength(1);
+    expect(textboxesBefore[0]).toBe(screen.getByRole("textbox", { name: "Community" }));
+
+    const accountBtn = screen.getByRole("button", { name: "Account" });
+    await act(async () => {
+      fireEvent.click(accountBtn);
+    });
+    await screen.findByRole("menu");
+
+    assertNoExcluded();
+    const textboxesAfter = screen.getAllByRole("textbox");
+    expect(textboxesAfter).toHaveLength(1);
+    expect(textboxesAfter[0]).toBe(screen.getByRole("textbox", { name: "Community" }));
+  });
 });

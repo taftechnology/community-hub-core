@@ -73,4 +73,37 @@ describe("TopBar", () => {
 
     expect(screen.getByRole("button", { name: "Theme" })).toBeTruthy();
   });
+
+  it("renders no searchbox, search, notification, or website button or link", () => {
+    const titleRef = React.createRef<HTMLHeadingElement>();
+    const menuButtonRef = React.createRef<HTMLButtonElement>();
+    const onMenu = vi.fn();
+
+    render(
+      <TopBar
+        title="Dashboard"
+        titleRef={titleRef}
+        backHref="/back"
+        backLabel="Back"
+        renderLink={(item, props) => (
+          <a href={item.href} {...props}>
+            {item.label}
+          </a>
+        )}
+        onMenu={onMenu}
+        menuOpen={false}
+        menuButtonRef={menuButtonRef}
+        className="custom-top-bar"
+        actions={<button type="button">Theme</button>}
+      />,
+    );
+
+    expect(screen.queryByRole("searchbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: /search/i })).toBeNull();
+    expect(screen.queryByRole("link", { name: /search/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /notification/i })).toBeNull();
+    expect(screen.queryByRole("link", { name: /notification/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /website/i })).toBeNull();
+    expect(screen.queryByRole("link", { name: /website/i })).toBeNull();
+  });
 });
