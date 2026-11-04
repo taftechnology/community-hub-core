@@ -184,6 +184,94 @@ async function post(
   });
 }
 
+type CapturedLog = { message: string; fields: Record<string, unknown> };
+
+type TestArtifact = {
+  logs: CapturedLog[];
+  responses: string[];
+  secrets: string[];
+};
+
+const capturedArtifacts: TestArtifact[] = [];
+
+async function cleanIdentity(sql: ReturnType<typeof createPlaintextIdentitySql>): Promise<void> {
+  await sql`delete from identity.sessions`;
+  await sql`delete from identity.passkey_credentials`;
+  await sql`delete from identity.passkey_challenges`;
+  await sql`delete from identity.otp_challenges`;
+  await sql`delete from identity.users`;
+  await sql`delete from identity.identity_keys`;
+}
+
+async function signInUser(
+  port: number,
+  mail: MemoryMail,
+  email = "ada@example.com",
+): Promise<{
+  userId: string;
+  accessToken: string;
+  refreshToken: string;
+}> {
+  const started = await post(port, "/v1/auth/email-otp/start", { email });
+  expect(started.status).toBe(204);
+  const code = mail.last?.code ?? "";
+  expect(code).toMatch(/^\d{8}$/);
+
+  const verified = await post(port, "/v1/auth/email-otp/verify", {
+    email,
+    code,
+  });
+  expect(verified.status).toBe(200);
+  return (await verified.json()) as {
+    userId: string;
+    accessToken: string;
+    refreshToken: string;
+  };
+}
+
+async function startAuthServer(options: {
+  port: number;
+  now: () => Date;
+  sql: ReturnType<typeof createPlaintextIdentitySql>;
+  mail: MemoryMail;
+  log?: (message: string, fields: Record<string, unknown>) => void;
+}) {
+  const server = startServer({
+    env: envFor(options.port),
+    routes: authRoutes({
+      checkout: (_role, run) => run(options.sql),
+      kms: createLocalKmsPort(),
+      keyArn: KEY_ARN,
+      mail: options.mail,
+      now: options.now,
+      authHostname: AUTH_HOSTNAME,
+      log: options.log ?? (() => undefined),
+    }),
+  });
+  await new Promise<void>((resolve, reject) => {
+    if (server.listening) {
+      resolve();
+      return;
+    }
+    server.once("listening", () => resolve());
+    server.once("error", reject);
+  });
+  await cleanIdentity(options.sql);
+  return server;
+}
+
+async function stopAuthServer(
+  server: ReturnType<typeof startServer>,
+  sql: ReturnType<typeof createPlaintextIdentitySql>,
+) {
+  await new Promise<void>((resolve) => {
+    server.closeAllConnections();
+    server.close(() => resolve());
+  });
+  await cleanIdentity(sql);
+  await sql.end({ timeout: 1 });
+}
+
 beforeAll(async () => {
   const migration = createPlaintextDirectSql(loadRuntime().productOnlyUrl);
   try {
@@ -351,28 +439,9 @@ describe("auth flow", () => {
         server.once("listening", () => resolve());
         server.once("error", reject);
       });
-      await sql`delete from identity.sessions`;
-      await sql`delete from identity.passkey_credentials`;
-      await sql`delete from identity.passkey_challenges`;
-      await sql`delete from identity.otp_challenges`;
-      await sql`delete from identity.users`;
-      await sql`delete from identity.identity_keys`;
+      await cleanIdentity(sql);
 
-      const started = await post(18471, "/v1/auth/email-otp/start", { email: "ada@example.com" });
-      expect(started.status).toBe(204);
-      const code = mail.last?.code ?? "";
-      expect(code).toMatch(/^\d{8}$/);
-
-      const verified = await post(18471, "/v1/auth/email-otp/verify", {
-        email: "ada@example.com",
-        code,
-      });
-      expect(verified.status).toBe(200);
-      const session = (await verified.json()) as {
-        userId: string;
-        accessToken: string;
-        refreshToken: string;
-      };
+      const session = await signInUser(18471, mail, "ada@example.com");
 
       const beforeSignOut = await post(
         18471,
@@ -422,6 +491,260 @@ describe("auth flow", () => {
       await sql`delete from identity.users`;
       await sql`delete from identity.identity_keys`;
       await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("cross-site POST is refused", async () => {
+    let now = new Date("2026-10-11T00:00:00.000Z");
+    const logs: CapturedLog[] = [];
+    const mail = new MemoryMail();
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    const server = await startAuthServer({
+      port: 18472,
+      now: () => now,
+      sql,
+      mail,
+      log: (message, fields) => logs.push({ message, fields }),
+    });
+    try {
+      const session = await signInUser(18472, mail);
+
+      const crossSite = await fetch("http://127.0.0.1:18472/v1/auth/session/end", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-community-hub-hostname": AUTH_HOSTNAME,
+          origin: "https://evil.example",
+          cookie: "session=stolen",
+        },
+        body: JSON.stringify({}),
+      });
+      expect(crossSite.status).toBe(401);
+      const crossSiteBody = await crossSite.text();
+      expect(crossSiteBody).toBe("");
+      expect(crossSite.headers.get("access-control-allow-origin")).toBeNull();
+
+      const live = await post(
+        18472,
+        "/v1/auth/passkey/register/options",
+        {},
+        `Bearer ${session.accessToken}`,
+      );
+      expect(live.status).toBe(200);
+      const liveBody = await live.text();
+
+      capturedArtifacts.push({
+        logs,
+        responses: [crossSiteBody, liveBody],
+        secrets: [session.accessToken, session.refreshToken, "ada@example.com"],
+      });
+    } finally {
+      await stopAuthServer(server, sql);
+    }
+  });
+
+  it("cross-site preflight gets no permission", async () => {
+    let now = new Date("2026-10-11T00:00:00.000Z");
+    const logs: CapturedLog[] = [];
+    const mail = new MemoryMail();
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    const server = await startAuthServer({
+      port: 18473,
+      now: () => now,
+      sql,
+      mail,
+      log: (message, fields) => logs.push({ message, fields }),
+    });
+    try {
+      const preflight = await fetch("http://127.0.0.1:18473/v1/auth/session/end", {
+        method: "OPTIONS",
+        headers: {
+          "x-community-hub-hostname": AUTH_HOSTNAME,
+          origin: "https://evil.example",
+          "access-control-request-method": "POST",
+        },
+      });
+      expect(preflight.headers.get("access-control-allow-origin")).toBeNull();
+      expect(preflight.headers.get("access-control-allow-headers")).toBeNull();
+      const preflightBody = await preflight.text();
+
+      capturedArtifacts.push({
+        logs,
+        responses: [preflightBody],
+        secrets: [],
+      });
+    } finally {
+      await stopAuthServer(server, sql);
+    }
+  });
+
+  it("calling it twice is harmless", async () => {
+    let now = new Date("2026-10-11T00:00:00.000Z");
+    const logs: CapturedLog[] = [];
+    const mail = new MemoryMail();
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    const server = await startAuthServer({
+      port: 18474,
+      now: () => now,
+      sql,
+      mail,
+      log: (message, fields) => logs.push({ message, fields }),
+    });
+    try {
+      const session = await signInUser(18474, mail);
+
+      const first = await post(18474, "/v1/auth/session/end", {}, `Bearer ${session.accessToken}`);
+      expect(first.status).toBe(204);
+      const firstBody = await first.text();
+      expect(firstBody).toBe("");
+      expect(first.headers.get("cache-control")).toBe("no-store");
+      expect(first.headers.get("set-cookie")).toBeNull();
+
+      const second = await post(18474, "/v1/auth/session/end", {}, `Bearer ${session.accessToken}`);
+      expect(second.status).toBe(204);
+      const secondBody = await second.text();
+      expect(secondBody).toBe("");
+      expect(second.headers.get("cache-control")).toBe("no-store");
+      expect(second.headers.get("set-cookie")).toBeNull();
+
+      capturedArtifacts.push({
+        logs,
+        responses: [firstBody, secondBody],
+        secrets: [session.accessToken, session.refreshToken, "ada@example.com"],
+      });
+    } finally {
+      await stopAuthServer(server, sql);
+    }
+  });
+
+  it("expired session", async () => {
+    let now = new Date("2026-10-11T00:00:00.000Z");
+    const logs: CapturedLog[] = [];
+    const mail = new MemoryMail();
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    const server = await startAuthServer({
+      port: 18475,
+      now: () => now,
+      sql,
+      mail,
+      log: (message, fields) => logs.push({ message, fields }),
+    });
+    try {
+      const session = await signInUser(18475, mail);
+      now = new Date(now.getTime() + 16 * 60 * 1000);
+
+      const ended = await post(18475, "/v1/auth/session/end", {}, `Bearer ${session.accessToken}`);
+      expect(ended.status).toBe(204);
+      const endedBody = await ended.text();
+      expect(endedBody).toBe("");
+
+      const refreshed = await post(18475, "/v1/auth/session/refresh", {
+        refreshToken: session.refreshToken,
+      });
+      expect(refreshed.status).toBe(401);
+      const refreshedBody = await refreshed.text();
+
+      capturedArtifacts.push({
+        logs,
+        responses: [endedBody, refreshedBody],
+        secrets: [session.accessToken, session.refreshToken, "ada@example.com"],
+      });
+    } finally {
+      await stopAuthServer(server, sql);
+    }
+  });
+
+  it("no oracle", async () => {
+    let now = new Date("2026-10-11T00:00:00.000Z");
+    const logs: CapturedLog[] = [];
+    const mail = new MemoryMail();
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    const server = await startAuthServer({
+      port: 18476,
+      now: () => now,
+      sql,
+      mail,
+      log: (message, fields) => logs.push({ message, fields }),
+    });
+    try {
+      const session = await signInUser(18476, mail);
+
+      const matched = await post(
+        18476,
+        "/v1/auth/session/end",
+        {},
+        `Bearer ${session.accessToken}`,
+      );
+      const repeated = await post(
+        18476,
+        "/v1/auth/session/end",
+        {},
+        `Bearer ${session.accessToken}`,
+      );
+      const garbled = await post(18476, "/v1/auth/session/end", {}, "Bearer not-a-real-token");
+
+      expect(matched.status).toBe(204);
+      expect(repeated.status).toBe(matched.status);
+      expect(garbled.status).toBe(matched.status);
+
+      const matchedBody = await matched.text();
+      const repeatedBody = await repeated.text();
+      const garbledBody = await garbled.text();
+      expect(matchedBody).toBe("");
+      expect(repeatedBody).toBe("");
+      expect(garbledBody).toBe("");
+
+      const headerNames = (r: Response) => Array.from(r.headers.keys()).sort();
+      expect(headerNames(repeated)).toEqual(headerNames(matched));
+      expect(headerNames(garbled)).toEqual(headerNames(matched));
+
+      capturedArtifacts.push({
+        logs,
+        responses: [matchedBody, repeatedBody, garbledBody],
+        secrets: [session.accessToken, session.refreshToken, "ada@example.com"],
+      });
+    } finally {
+      await stopAuthServer(server, sql);
+    }
+  });
+
+  it("nothing leaks", async () => {
+    let now = new Date("2026-10-11T00:00:00.000Z");
+    const logs: CapturedLog[] = [];
+    const mail = new MemoryMail();
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    const server = await startAuthServer({
+      port: 18477,
+      now: () => now,
+      sql,
+      mail,
+      log: (message, fields) => logs.push({ message, fields }),
+    });
+    try {
+      const session = await signInUser(18477, mail);
+      const ended = await post(18477, "/v1/auth/session/end", {}, `Bearer ${session.accessToken}`);
+      expect(ended.status).toBe(204);
+      const endedBody = await ended.text();
+      expect(endedBody).toBe("");
+
+      capturedArtifacts.push({
+        logs,
+        responses: [endedBody],
+        secrets: [session.accessToken, session.refreshToken, "ada@example.com"],
+      });
+
+      expect(capturedArtifacts.length).toBeGreaterThanOrEqual(1);
+      for (const artifact of capturedArtifacts) {
+        const joinedLogs = artifact.logs.map((entry) => JSON.stringify(entry)).join("\n");
+        for (const secret of artifact.secrets) {
+          expect(joinedLogs).not.toContain(secret);
+          for (const body of artifact.responses) {
+            expect(body).not.toContain(secret);
+          }
+        }
+      }
+    } finally {
+      await stopAuthServer(server, sql);
     }
   });
 });
