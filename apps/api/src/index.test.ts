@@ -59,6 +59,7 @@ import { accessRoutes } from "./access-routes.js";
 import { entitlementRoutes } from "./entitlement-routes.js";
 import * as serverModule from "./server.js";
 import { rejectingStripeBilling } from "./billing/stripe-adapter.js";
+import type { GateRoute } from "./gate.js";
 
 const pem = readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), "../certs/rds-ap-southeast-2-bundle.pem"),
@@ -739,6 +740,54 @@ describe("api boot wiring of the billing adapter and logger", () => {
         expect(found).toBeDefined();
         expect((found as { billing?: string })?.billing).toBe(expected.billing);
       }
+    } finally {
+      startServerSpy.mockRestore();
+    }
+  });
+
+  it("pins that run boots exactly the production routes", () => {
+    const startServerSpy = vi.spyOn(serverModule, "startServer").mockReturnValue({} as never);
+    try {
+      const env = envWithBilling();
+      const envSource = {
+        ...source(),
+        ENVELOPE_KEY_ARN: keyArn,
+        BILLING_SECRET_ARN: billingSecretArn,
+        ADMIN_ORIGIN: adminOrigin,
+      };
+
+      const routeDescriptor = (r: GateRoute): string =>
+        `${r.method} ${r.pattern} ${r.surface} ${r.billing} ${r.largeBody ?? ""}`;
+
+      const runResult = run(envSource, pem, []);
+      expect(runResult).toBe(0);
+      expect(startServerSpy).toHaveBeenCalledTimes(1);
+
+      const passedRoutes = startServerSpy.mock.calls[0]?.[0]?.routes ?? [];
+      const prodRoutes = productionRoutes(env, pem);
+
+      expect(passedRoutes.map(routeDescriptor)).toEqual(prodRoutes.map(routeDescriptor));
+      const healthRoutes = passedRoutes.filter(
+        (r) => r.method === "GET" && r.pattern === "/health",
+      );
+      expect(healthRoutes).toHaveLength(1);
+
+      const extraRoute: GateRoute = {
+        method: "POST",
+        pattern: "/v1/extra-test-route",
+        surface: "tenant",
+        billing: "exempt",
+        handle: () => new Response("extra"),
+      };
+      startServerSpy.mockClear();
+      const extraRunResult = run(envSource, pem, [extraRoute]);
+      expect(extraRunResult).toBe(0);
+      expect(startServerSpy).toHaveBeenCalledTimes(1);
+      const passedExtraRoutes = startServerSpy.mock.calls[0]?.[0]?.routes ?? [];
+      expect(passedExtraRoutes.map(routeDescriptor)).toEqual([
+        routeDescriptor(extraRoute),
+        ...prodRoutes.map(routeDescriptor),
+      ]);
     } finally {
       startServerSpy.mockRestore();
     }
