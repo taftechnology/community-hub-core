@@ -79,7 +79,7 @@ Community Hub is an enterprise-grade, multi-tenant SaaS for communities — chur
 
 - A reviewer login bypass is hard-coded in the mobile client (`dev@ch.com` / `800000`). Review accounts must be server-side, per app, and auditable.
 - The RSVP lookup sends the user's email in the query string (`/api/mobile-app/rsvps?email=`). Personal data never goes in URLs; member data is resolved from the session.
-- The donation webhook finds a `Donation` by ID without checking which tenant it belongs to. Every lookup is tenant-scoped.
+- The donation webhook finds a `Donation` by ID without verifying which tenant it belongs to. Every lookup is tenant-scoped.
 - Session tokens are stored in AsyncStorage. Use `expo-secure-store`.
 - Mobile routes exist twice (versioned and unversioned). Core ships one versioned API plus a time-boxed compatibility layer.
 - Any admin can switch paid modules on. Entitlements come from the plan, not from tenant settings.
