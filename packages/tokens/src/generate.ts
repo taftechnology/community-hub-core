@@ -1,11 +1,39 @@
 export type Violation = { id: string; message: string };
 
-const ALLOWED_TOP_LEVEL = new Set(["space", "radius", "fontSize", "fontWeight", "modes", "pairs"]);
+const ALLOWED_TOP_LEVEL = new Set([
+  "space",
+  "radius",
+  "fontSize",
+  "fontWeight",
+  "modes",
+  "pairs",
+  "type",
+  "spacing",
+  "size",
+  "shadow",
+  "decorative",
+]);
 
 const KEY_PATTERN = /^[a-z0-9-]+$/;
 const COLOR_PATTERN = /^#[0-9a-f]{6}$/;
+const RGBA_PATTERN = /^rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*[\d.]+\s*\)$/;
 const PURPOSES = new Set(["text", "large-text", "non-text"]);
 const MODES = new Set(["light", "dark"]);
+
+export const ALLOWED_DECORATIVE_ROLES = [
+  "border",
+  "control-border",
+  "control-border-hover",
+  "tint-border",
+  "destructive-border",
+  "warning-border",
+  "info-border",
+  "restricted-border",
+  "sidebar-border",
+  "scrim",
+] as const;
+
+const ALLOWED_DECORATIVE_SET = new Set<string>(ALLOWED_DECORATIVE_ROLES);
 
 export const BANNED_PREFIXES = [
   "--color-",
@@ -153,6 +181,9 @@ function badValueViolations(value: unknown): Violation[] {
       continue;
     }
     for (const [key, entry] of Object.entries(groupValue)) {
+      if (group === "radius" && key === "pill" && (entry === 999 || entry === "999px")) {
+        continue;
+      }
       if (!isNonNegativeFiniteNumber(entry)) {
         hits.push(violation("bad-value", `Invalid ${group} value for ${key}`));
       }
@@ -180,11 +211,98 @@ function badColorViolations(value: unknown): Violation[] {
       continue;
     }
     for (const [key, color] of Object.entries(colors)) {
-      if (typeof color !== "string" || !COLOR_PATTERN.test(color)) {
+      if (typeof color !== "string" || (!COLOR_PATTERN.test(color) && !RGBA_PATTERN.test(color))) {
         hits.push(violation("bad-color", `Invalid color for ${mode}.${key}`));
       }
     }
   }
+  return hits;
+}
+
+export function decorativeViolations(value: unknown): Violation[] {
+  if (!isRecord(value)) {
+    return [];
+  }
+  const hits: Violation[] = [];
+  const decorativeSet = new Set<string>();
+  if (Array.isArray(value.decorative)) {
+    for (const item of value.decorative) {
+      if (typeof item === "string") {
+        decorativeSet.add(item);
+      }
+    }
+  }
+
+  const modes = value.modes;
+  const knownColorRoles = new Set<string>();
+  if (isRecord(modes)) {
+    if (isRecord(modes.light) && isRecord(modes.light.color)) {
+      for (const k of Object.keys(modes.light.color)) {
+        knownColorRoles.add(k);
+      }
+    }
+    if (isRecord(modes.dark) && isRecord(modes.dark.color)) {
+      for (const k of Object.keys(modes.dark.color)) {
+        knownColorRoles.add(k);
+      }
+    }
+  }
+
+  for (const name of decorativeSet) {
+    if (!knownColorRoles.has(name)) {
+      hits.push(
+        violation("decorative-unknown", `Decorative role ${name} is not a declared colour role`),
+      );
+    } else if (!ALLOWED_DECORATIVE_SET.has(name)) {
+      hits.push(
+        violation(
+          "decorative-not-allowed",
+          `Decorative role ${name} is not on the allowed decorative list`,
+        ),
+      );
+    }
+  }
+
+  const reportedInPair = new Set<string>();
+  const pairs = value.pairs;
+  if (Array.isArray(pairs)) {
+    for (const pair of pairs) {
+      if (!isRecord(pair)) continue;
+      for (const role of ["foreground", "background"] as const) {
+        const name = pair[role];
+        if (typeof name === "string" && decorativeSet.has(name) && !reportedInPair.has(name)) {
+          reportedInPair.add(name);
+          hits.push(
+            violation("decorative-in-pair", `Decorative role ${name} must not appear in pairs`),
+          );
+        }
+      }
+    }
+  }
+
+  const reportedRgba = new Set<string>();
+  if (isRecord(modes)) {
+    for (const mode of MODES) {
+      const modeValue = modes[mode];
+      if (!isRecord(modeValue)) continue;
+      const colors = modeValue.color;
+      if (!isRecord(colors)) continue;
+      for (const [key, color] of Object.entries(colors)) {
+        if (typeof color === "string" && RGBA_PATTERN.test(color)) {
+          if (!decorativeSet.has(key) && !reportedRgba.has(key)) {
+            reportedRgba.add(key);
+            hits.push(
+              violation(
+                "rgba-non-decorative",
+                `Color ${mode}.${key} uses rgba but is not declared decorative`,
+              ),
+            );
+          }
+        }
+      }
+    }
+  }
+
   return hits;
 }
 
@@ -292,6 +410,7 @@ export function validateTokens(value: unknown): Violation[] {
     ...modeKeysViolations(value),
     ...unknownKeyViolations(value),
     ...unknownPurposeViolations(value),
+    ...decorativeViolations(value),
   ];
 }
 
@@ -313,7 +432,17 @@ export function missingPairViolations(value: unknown): Violation[] {
   if (!isRecord(lightColors) || !isRecord(darkColors)) {
     return [];
   }
-  const sharedKeys = Object.keys(lightColors).filter((key) => Object.hasOwn(darkColors, key));
+  const decorativeSet = new Set<string>();
+  if (Array.isArray(value.decorative)) {
+    for (const d of value.decorative) {
+      if (typeof d === "string") {
+        decorativeSet.add(d);
+      }
+    }
+  }
+  const sharedKeys = Object.keys(lightColors)
+    .filter((key) => Object.hasOwn(darkColors, key))
+    .filter((key) => !decorativeSet.has(key));
   const pairs = value.pairs;
   if (!Array.isArray(pairs)) {
     return [];
@@ -412,6 +541,13 @@ function formatBlock(selector: string, declarations: string[]): string {
   return `${selector} {\n${declarations.map((line) => `  ${line}`).join("\n")}\n}\n`;
 }
 
+function formatMediaBlock(mediaQuery: string, selector: string, declarations: string[]): string {
+  if (declarations.length === 0) {
+    return "";
+  }
+  return `${mediaQuery} {\n  ${selector} {\n${declarations.map((line) => `    ${line}`).join("\n")}\n  }\n}\n`;
+}
+
 function sortedDeclarations(entries: Array<[string, string]>): string[] {
   return entries
     .sort(([a], [b]) => a.localeCompare(b))
@@ -427,6 +563,10 @@ export function generateTokens(value: unknown): { tokensCss: string; themeCss: s
   const radius = isRecord(value.radius) ? value.radius : {};
   const fontSize = isRecord(value.fontSize) ? value.fontSize : {};
   const fontWeight = isRecord(value.fontWeight) ? value.fontWeight : {};
+  const type = isRecord(value.type) ? value.type : {};
+  const spacing = isRecord(value.spacing) ? value.spacing : {};
+  const size = isRecord(value.size) ? value.size : {};
+  const shadow = isRecord(value.shadow) ? value.shadow : {};
   const modes = isRecord(value.modes) ? value.modes : {};
   const light = isRecord(modes.light) ? modes.light : {};
   const dark = isRecord(modes.dark) ? modes.dark : {};
@@ -438,7 +578,9 @@ export function generateTokens(value: unknown): { tokensCss: string; themeCss: s
     sharedTokenEntries.push(["--ch-space-unit", pxToRem(space)]);
   }
   for (const [key, px] of Object.entries(radius)) {
-    if (isNonNegativeFiniteNumber(px)) {
+    if (key === "pill") {
+      sharedTokenEntries.push(["--ch-rounded-pill", "999px"]);
+    } else if (isNonNegativeFiniteNumber(px)) {
       sharedTokenEntries.push([`--ch-rounded-${key}`, pxToRem(px)]);
     }
   }
@@ -453,20 +595,115 @@ export function generateTokens(value: unknown): { tokensCss: string; themeCss: s
     }
   }
 
+  if (isRecord(type.families) && typeof type.families.sans === "string") {
+    sharedTokenEntries.push(["--ch-font-sans", type.families.sans]);
+  }
+  if (Array.isArray(type.groups)) {
+    for (const group of type.groups) {
+      if (isRecord(group) && Array.isArray(group.styles)) {
+        for (const style of group.styles) {
+          if (isRecord(style) && typeof style.name === "string") {
+            if (typeof style.fontSize === "string") {
+              sharedTokenEntries.push([`--ch-type-${style.name}-font-size`, style.fontSize]);
+            }
+            if (typeof style.lineHeight === "string") {
+              sharedTokenEntries.push([`--ch-type-${style.name}-line-height`, style.lineHeight]);
+            }
+            if (typeof style.fontWeight === "number" || typeof style.fontWeight === "string") {
+              sharedTokenEntries.push([
+                `--ch-type-${style.name}-font-weight`,
+                String(style.fontWeight),
+              ]);
+            }
+            if (typeof style.letterSpacing === "string") {
+              sharedTokenEntries.push([
+                `--ch-type-${style.name}-letter-spacing`,
+                style.letterSpacing,
+              ]);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  const spacingTokens: Array<{ name: string; value: string }> = [];
+  if (Array.isArray(spacing.tokens)) {
+    for (const token of spacing.tokens) {
+      if (isRecord(token) && typeof token.name === "string" && typeof token.value === "string") {
+        sharedTokenEntries.push([`--ch-${token.name}`, token.value]);
+        spacingTokens.push({ name: token.name, value: token.value });
+      }
+    }
+  }
+
+  const sizeTokens: Array<{ name: string; value: string }> = [];
+  if (Array.isArray(size.tokens)) {
+    for (const token of size.tokens) {
+      if (isRecord(token) && typeof token.name === "string" && typeof token.value === "string") {
+        sharedTokenEntries.push([`--ch-${token.name}`, token.value]);
+        sizeTokens.push({ name: token.name, value: token.value });
+      }
+    }
+  }
+
+  const shadowTokens: Array<{ name: string; light: string; dark: string }> = [];
+  if (Array.isArray(shadow.tokens)) {
+    for (const token of shadow.tokens) {
+      if (
+        isRecord(token) &&
+        typeof token.name === "string" &&
+        isRecord(token.value) &&
+        typeof token.value.light === "string" &&
+        typeof token.value.dark === "string"
+      ) {
+        shadowTokens.push({
+          name: token.name,
+          light: token.value.light,
+          dark: token.value.dark,
+        });
+      }
+    }
+  }
+
   const lightEntries = Object.entries(lightColors)
     .filter((entry): entry is [string, string] => typeof entry[1] === "string")
     .map(([key, color]) => [`--ch-${key}`, color] as [string, string]);
+  for (const s of shadowTokens) {
+    lightEntries.push([`--ch-${s.name}`, s.light]);
+  }
+
   const darkEntries = Object.entries(darkColors)
     .filter((entry): entry is [string, string] => typeof entry[1] === "string")
     .map(([key, color]) => [`--ch-${key}`, color] as [string, string]);
+  for (const s of shadowTokens) {
+    darkEntries.push([`--ch-${s.name}`, s.dark]);
+  }
+
+  const lightDeclarations = sortedDeclarations([...sharedTokenEntries, ...lightEntries]);
+  const darkDeclarations = sortedDeclarations(darkEntries);
 
   const tokensCss = [
-    formatBlock(":root", sortedDeclarations([...sharedTokenEntries, ...lightEntries])),
-    formatBlock(".dark", sortedDeclarations(darkEntries)),
+    formatBlock(":root", lightDeclarations),
+    formatBlock('[data-theme="dark"]', darkDeclarations),
+    formatMediaBlock(
+      "@media (prefers-color-scheme: dark)",
+      ':root:not([data-theme="light"])',
+      darkDeclarations,
+    ),
   ].join("\n");
 
   const themeEntries: Array<[string, string]> = [
     ["--spacing", "var(--ch-space-unit)"],
+    ...spacingTokens.flatMap((t) => {
+      const entries: Array<[string, string]> = [[`--spacing-${t.name}`, `var(--ch-${t.name})`]];
+      if (t.name.startsWith("space-")) {
+        entries.push([`--spacing-${t.name.slice(6)}`, `var(--ch-${t.name})`]);
+      }
+      return entries;
+    }),
+    ...sizeTokens.map((t) => [`--${t.name}`, `var(--ch-${t.name})`] as [string, string]),
+    ...shadowTokens.map((t) => [`--${t.name}`, `var(--ch-${t.name})`] as [string, string]),
     ...Object.keys(radius)
       .sort((a, b) => a.localeCompare(b))
       .map((key) => [`--radius-${key}`, `var(--ch-rounded-${key})`] as [string, string]),
@@ -481,6 +718,34 @@ export function generateTokens(value: unknown): { tokensCss: string; themeCss: s
       .map((key) => [`--color-${key}`, `var(--ch-${key})`] as [string, string]),
   ];
 
+  if (isRecord(type.families) && typeof type.families.sans === "string") {
+    themeEntries.push(["--font-sans", "var(--ch-font-sans)"]);
+  }
+
+  const customVariantDark = [
+    "@custom-variant dark {",
+    '  &:is([data-theme="dark"] *) {',
+    "    @slot;",
+    "  }",
+    "  @media (prefers-color-scheme: dark) {",
+    '    &:is(html:not([data-theme="light"]) *) {',
+    "      @slot;",
+    "    }",
+    "  }",
+    "}",
+  ].join("\n");
+
+  const customVariantTouch = [
+    "@custom-variant touch {",
+    "  @media (pointer: coarse) {",
+    "    @slot;",
+    "  }",
+    "  @media (width < 40rem) {",
+    "    @slot;",
+    "  }",
+    "}",
+  ].join("\n");
+
   const themeCss = [
     '@source "./src";',
     '@source not "./src/**/*.test.*";',
@@ -488,7 +753,8 @@ export function generateTokens(value: unknown): { tokensCss: string; themeCss: s
     '@source not "./src/cli-pin.ts";',
     '@source not "./src/opacity.ts";',
     '@source not "./src/write-theme-css.ts";',
-    "@custom-variant dark (&:is(.dark *));",
+    customVariantDark,
+    customVariantTouch,
     "@theme inline {",
     ...sortedDeclarations(themeEntries).map((line) => `  ${line}`),
     "}",

@@ -1,6 +1,6 @@
 export const labels = [
   "Dashboard",
-  "Enquires",
+  "Enquiries",
   "Engagement",
   "Contacts & Members",
   "Family Records",

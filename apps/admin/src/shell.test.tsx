@@ -1,12 +1,17 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import axe from "axe-core";
+import { StrictMode } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { labels } from "./labels";
-import { Shell } from "./shell";
+import { PeopleAccessContext, type PeopleAccess } from "./people-access";
+import { router, Shell } from "./shell";
+import { ShellLayout } from "./shell-layout";
+import { MemoryRouter } from "react-router";
 
 const frozenLabels = [
   "Dashboard",
-  "Enquires",
+  "Enquiries",
   "Engagement",
   "Contacts & Members",
   "Family Records",
@@ -34,110 +39,683 @@ function UnnamedButton() {
   return <button type="button" />;
 }
 
-it("renders Dashboard and Users & Roles from the frozen labels", () => {
-  expect(labels).toEqual(frozenLabels);
+function createStorage(): Storage {
+  const store = new Map<string, string>();
+  return {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, val: string) => {
+      store.set(key, String(val));
+    },
+    removeItem: (key: string) => {
+      store.delete(key);
+    },
+    clear: () => {
+      store.clear();
+    },
+    key: (index: number) => Array.from(store.keys())[index] ?? null,
+    get length() {
+      return store.size;
+    },
+  };
+}
 
-  render(<Shell />);
+function mockMatchMedia(initialMatches: boolean) {
+  const listeners = new Set<(e: Event) => void>();
+  const mql = {
+    matches: initialMatches,
+    media: "(max-width: 639.98px)",
+    onchange: null,
+    addListener: vi.fn((cb: (e: Event) => void) => listeners.add(cb)),
+    removeListener: vi.fn((cb: (e: Event) => void) => listeners.delete(cb)),
+    addEventListener: vi.fn((type: string, cb: (e: Event) => void) => {
+      if (type === "change") listeners.add(cb);
+    }),
+    removeEventListener: vi.fn((type: string, cb: (e: Event) => void) => {
+      if (type === "change") listeners.delete(cb);
+    }),
+    dispatchEvent: vi.fn((evt: Event) => {
+      listeners.forEach((cb) => cb(evt));
+      return true;
+    }),
+    dispatchChange(matches: boolean) {
+      mql.matches = matches;
+      const event = new Event("change");
+      Object.assign(event, { matches });
+      listeners.forEach((cb) => cb(event));
+    },
+  };
 
-  const nav = screen.getByRole("navigation", { name: "Admin" });
-  const links = within(nav).getAllByRole("link");
-  expect(links.map((link) => link.textContent)).toEqual([
-    "Dashboard",
-    "General Settings",
-    "Users & Roles",
-    "Module Toggles",
-  ]);
-  expect(within(nav).getByRole("link", { name: "Dashboard" }).getAttribute("href")).toBe("/");
-  expect(within(nav).getByRole("link", { name: "General Settings" }).getAttribute("href")).toBe(
-    "/settings/general",
-  );
-  expect(within(nav).getByRole("link", { name: "Users & Roles" }).getAttribute("href")).toBe(
-    "/settings/users",
-  );
-  expect(within(nav).getByRole("link", { name: "Module Toggles" }).getAttribute("href")).toBe(
-    "/settings/modules",
-  );
-  expect(within(nav).getByText("Settings").tagName).not.toBe("A");
-  expect(within(nav).queryByRole("link", { name: "Settings" })).toBeNull();
-
-  const headings = screen.getAllByRole("heading", { level: 1 });
-  expect(headings).toHaveLength(1);
-  expect(headings[0]?.textContent).toBe("Dashboard");
-
-  for (const label of frozenLabels) {
-    if (label === "Dashboard" || label === "Settings") {
-      continue;
+  const matchMediaMock = vi.fn().mockImplementation((query: string) => {
+    if (query === "(max-width: 639.98px)") {
+      return mql;
     }
-    expect(screen.queryByText(label)).toBeNull();
-  }
-  expect(screen.queryByText("Email Settings")).toBeNull();
-});
+    return {
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    };
+  });
+  window.matchMedia = matchMediaMock;
+  return { mql, matchMediaMock };
+}
 
-it("names Refresh and reports no axe violations", async () => {
-  const { container } = render(<Shell />);
-  expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy();
+describe("Shell and ShellLayout", () => {
+  const originalMatchMedia = window.matchMedia;
+  let storage: Storage;
 
-  const results = await axe.run(container, {
-    rules: {
-      "color-contrast": { enabled: false },
-    },
+  beforeEach(async () => {
+    storage = createStorage();
+    vi.stubGlobal("localStorage", storage);
+    sessionStorage.clear();
+    delete document.documentElement.dataset.theme;
+    await router.navigate("/");
   });
 
-  expect(resultIds(results, "violations")).toEqual([]);
-});
-
-it("renders the community picker in the shell with no axe violations", async () => {
-  const { container } = render(<Shell />);
-  expect(screen.getByRole("textbox", { name: "Community" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Set" })).toBeTruthy();
-
-  const results = await axe.run(container, {
-    rules: {
-      "color-contrast": { enabled: false },
-    },
+  afterEach(() => {
+    cleanup();
+    sessionStorage.clear();
+    delete document.documentElement.dataset.theme;
+    window.matchMedia = originalMatchMedia;
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
-  expect(resultIds(results, "violations")).toEqual([]);
-});
-
-it("flags a control with no accessible name", async () => {
-  const { container } = render(<UnnamedButton />);
-  const results = await axe.run(container, {
-    rules: {
-      "color-contrast": { enabled: false },
-    },
+  it("labels equals frozenLabels, with Enquiries", () => {
+    expect(labels).toEqual(frozenLabels);
+    expect(labels[1]).toBe("Enquiries");
   });
 
-  expect(resultIds(results, "violations")).toContain("button-name");
-});
+  it("with no entitlements, the navigation named Admin lists links in order and contains slug controls", () => {
+    const { container } = render(<Shell />);
 
-it("reloads the document and does not call fetch", () => {
-  const reload = vi.fn();
-  const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(() => {
-    throw new Error("fetch called");
+    const nav = screen.getByRole("navigation", { name: "Admin" });
+    const links = within(nav).getAllByRole("link");
+    expect(links.map((link) => link.textContent)).toEqual([
+      "Dashboard",
+      "General Settings",
+      "Users & Roles",
+      "Module Toggles",
+    ]);
+
+    expect(within(nav).getByRole("link", { name: "Dashboard" }).getAttribute("href")).toBe("/");
+    expect(within(nav).getByRole("link", { name: "General Settings" }).getAttribute("href")).toBe(
+      "/settings/general",
+    );
+    expect(within(nav).getByRole("link", { name: "Users & Roles" }).getAttribute("href")).toBe(
+      "/settings/users",
+    );
+    expect(within(nav).getByRole("link", { name: "Module Toggles" }).getAttribute("href")).toBe(
+      "/settings/modules",
+    );
+    expect(within(nav).getByText("Settings").tagName).not.toBe("A");
+    expect(within(nav).queryByRole("link", { name: "Settings" })).toBeNull();
+
+    // The slug textbox and Set button are inside the Admin navigation
+    expect(within(nav).getByRole("textbox", { name: "Community" })).toBeTruthy();
+    expect(within(nav).getByRole("button", { name: "Set" })).toBeTruthy();
+
+    // Exactly one h1 on /, and it is inside the top bar
+    const headings = screen.getAllByRole("heading", { level: 1 });
+    expect(headings).toHaveLength(1);
+    expect(headings[0]?.textContent).toBe("Dashboard");
+    const header = container.querySelector("header");
+    expect(header).toBeTruthy();
+    expect(within(header!).getByRole("heading", { level: 1 })).toBe(headings[0]);
+
+    // document.title is "Dashboard · Community Hub"
+    expect(document.title).toBe("Dashboard · Community Hub");
+
+    for (const label of frozenLabels) {
+      if (label === "Dashboard" || label === "Settings") {
+        continue;
+      }
+      expect(screen.queryByText(label)).toBeNull();
+    }
+    expect(screen.queryByText("Email Settings")).toBeNull();
+
+    // No section-heading text appears for real users
+    expect(screen.queryByText("People")).toBeNull();
+    expect(screen.queryByText("Outreach")).toBeNull();
+    expect(screen.queryByText("Money")).toBeNull();
   });
-  const location = window.location;
-  vi.stubGlobal("location", {
-    ancestorOrigins: location.ancestorOrigins,
-    href: location.href,
-    origin: location.origin,
-    protocol: location.protocol,
-    host: location.host,
-    hostname: location.hostname,
-    port: location.port,
-    pathname: location.pathname,
-    search: location.search,
-    hash: location.hash,
-    assign: location.assign.bind(location),
-    replace: location.replace.bind(location),
-    reload,
+
+  it("with full people entitlements and people.view, link order follows pin 15", () => {
+    const fullAccess: PeopleAccess = {
+      permissions: {
+        "people.view": true,
+        "people.manage": true,
+        "people.restricted.read": true,
+      },
+      entitlements: {
+        "people.directory": true,
+        "people.households": true,
+      },
+    };
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <PeopleAccessContext.Provider value={{ access: fullAccess }}>
+          <ShellLayout />
+        </PeopleAccessContext.Provider>
+      </MemoryRouter>,
+    );
+
+    const nav = screen.getByRole("navigation", { name: "Admin" });
+    const links = within(nav).getAllByRole("link");
+    expect(links.map((link) => link.textContent)).toEqual([
+      "Dashboard",
+      "All Contacts",
+      "Family Records",
+      "General Settings",
+      "Users & Roles",
+      "Module Toggles",
+    ]);
+
+    expect(within(nav).getByText("Settings").tagName).not.toBe("A");
+    expect(within(nav).queryByRole("link", { name: "Settings" })).toBeNull();
+
+    const groupText = within(nav).getByText("Contacts & Members");
+    const allContactsLink = within(nav).getByRole("link", {
+      name: "All Contacts",
+    });
+    expect(
+      groupText.compareDocumentPosition(allContactsLink) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    for (const label of frozenLabels) {
+      if (
+        label === "Dashboard" ||
+        label === "Settings" ||
+        label === "Contacts & Members" ||
+        label === "Family Records"
+      ) {
+        continue;
+      }
+      expect(screen.queryByText(label)).toBeNull();
+    }
+    expect(screen.queryByText("Email Settings")).toBeNull();
+
+    // No section-heading text appears for real users (4 middle rows < 8)
+    expect(screen.queryByText("People")).toBeNull();
+    expect(screen.queryByText("Outreach")).toBeNull();
+    expect(screen.queryByText("Money")).toBeNull();
   });
 
-  render(<Shell />);
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  it("theme toggle: clicking Dark mode sets data-theme to dark and stores it", () => {
+    render(<Shell />);
 
-  expect(fetchSpy).not.toHaveBeenCalled();
-  expect(reload).toHaveBeenCalledOnce();
-  fetchSpy.mockRestore();
-  vi.unstubAllGlobals();
+    // With nothing stored, data-theme is not set on load
+    expect(document.documentElement.dataset.theme).toBeUndefined();
+
+    const toggleBtn = screen.getByRole("button", { name: "Dark mode" });
+    fireEvent.click(toggleBtn);
+
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(localStorage.getItem("community-hub.theme")).toBe("dark");
+
+    fireEvent.click(toggleBtn);
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(localStorage.getItem("community-hub.theme")).toBe("light");
+  });
+
+  it("drawer: below lg the menu button opens Menu dialog, choosing a link closes it and focuses top-bar h1", async () => {
+    const { container } = render(<Shell />);
+
+    const menuBtn = screen.getByRole("button", { name: "Open menu" });
+    fireEvent.click(menuBtn);
+
+    const dialog = screen.getByRole("dialog", { name: "Menu" });
+    expect(dialog).toBeTruthy();
+
+    const link = within(dialog).getByRole("link", { name: "Dashboard" });
+    fireEvent.click(link);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    const topBarH1 = container.querySelector("header h1");
+    expect(topBarH1).toBeTruthy();
+    expect(document.activeElement).toBe(topBarH1);
+  });
+
+  it("axe reports no violations on the full shell in light and dark", async () => {
+    const { container } = render(<Shell />);
+
+    const lightResults = await axe.run(container, {
+      rules: {
+        "color-contrast": { enabled: false },
+      },
+    });
+    expect(resultIds(lightResults, "violations")).toEqual([]);
+
+    act(() => {
+      document.documentElement.dataset.theme = "dark";
+    });
+
+    const darkResults = await axe.run(container, {
+      rules: {
+        "color-contrast": { enabled: false },
+      },
+    });
+    expect(resultIds(darkResults, "violations")).toEqual([]);
+  });
+
+  it("reloads the document on Refresh click and does not call fetch", () => {
+    const reload = vi.fn();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(() => {
+      throw new Error("fetch called");
+    });
+    const location = window.location;
+    vi.stubGlobal("location", {
+      ancestorOrigins: location.ancestorOrigins,
+      href: location.href,
+      origin: location.origin,
+      protocol: location.protocol,
+      host: location.host,
+      hostname: location.hostname,
+      port: location.port,
+      pathname: location.pathname,
+      search: location.search,
+      hash: location.hash,
+      assign: location.assign.bind(location),
+      replace: location.replace.bind(location),
+      reload,
+    });
+
+    render(<Shell />);
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(reload).toHaveBeenCalledOnce();
+    fetchSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("flags a control with no accessible name", async () => {
+    const { container } = render(<UnnamedButton />);
+    const results = await axe.run(container, {
+      rules: {
+        "color-contrast": { enabled: false },
+      },
+    });
+
+    expect(resultIds(results, "violations")).toContain("button-name");
+  });
+
+  it("without a handle, renders a 'Sign in' link to /sign-in and no Account button", () => {
+    sessionStorage.removeItem("community-hub.signout-handle");
+    render(<Shell />);
+
+    const header = screen.getByRole("banner");
+    const signInLink = within(header).getByRole("link", { name: /sign in/i });
+    expect(signInLink).toBeTruthy();
+    expect(signInLink.getAttribute("href")).toBe("/sign-in");
+    expect(within(header).queryByRole("button", { name: "Account" })).toBeNull();
+  });
+
+  it("with a handle, renders an 'Account' button that opens menu with 'Sign out', and clicking Sign out twice quickly sends one POST", async () => {
+    sessionStorage.setItem("community-hub.signout-handle", "fake-" + "handle-1");
+    vi.stubEnv("VITE_AUTH_ORIGIN", "https://au.auth.example.test");
+    vi.stubEnv("VITE_API_ORIGIN", "https://au.api.example.test");
+
+    const location = window.location;
+    const assignMock = vi.fn();
+    vi.stubGlobal("location", {
+      ancestorOrigins: location.ancestorOrigins,
+      href: location.href,
+      origin: location.origin,
+      protocol: location.protocol,
+      host: location.host,
+      hostname: location.hostname,
+      port: location.port,
+      pathname: location.pathname,
+      search: location.search,
+      hash: location.hash,
+      assign: assignMock,
+      replace: location.replace.bind(location),
+      reload: location.reload.bind(location),
+    });
+
+    let resolveFetch!: (res: Response) => void;
+    const pendingFetch = new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    });
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(() => pendingFetch);
+
+    render(<Shell />);
+
+    const header = screen.getByRole("banner");
+    expect(within(header).queryByRole("link", { name: "Sign in" })).toBeNull();
+
+    const accountBtn = within(header).getByRole("button", { name: "Account" });
+    expect(accountBtn).toBeTruthy();
+
+    fireEvent.click(accountBtn);
+
+    const signOutBtn = await screen.findByRole("menuitem", { name: "Sign out" });
+    expect(signOutBtn).toBeTruthy();
+
+    // Fast double click
+    fireEvent.click(signOutBtn);
+    fireEvent.click(signOutBtn);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // Resolve the in-flight fetch
+    await act(async () => {
+      resolveFetch(new Response(null, { status: 204 }));
+    });
+
+    await waitFor(() => {
+      expect(assignMock).toHaveBeenCalledWith("/sign-in");
+    });
+  });
+
+  it("render once inside <StrictMode> and assert a single POST per click", async () => {
+    sessionStorage.setItem("community-hub.signout-handle", "fake-" + "handle-2");
+    vi.stubEnv("VITE_AUTH_ORIGIN", "https://au.auth.example.test");
+    vi.stubEnv("VITE_API_ORIGIN", "https://au.api.example.test");
+
+    const location = window.location;
+    const assignMock = vi.fn();
+    vi.stubGlobal("location", {
+      ancestorOrigins: location.ancestorOrigins,
+      href: location.href,
+      origin: location.origin,
+      protocol: location.protocol,
+      host: location.host,
+      hostname: location.hostname,
+      port: location.port,
+      pathname: location.pathname,
+      search: location.search,
+      hash: location.hash,
+      assign: assignMock,
+      replace: location.replace.bind(location),
+      reload: location.reload.bind(location),
+    });
+
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 204 }));
+
+    render(
+      <StrictMode>
+        <Shell />
+      </StrictMode>,
+    );
+
+    const accountBtn = screen.getByRole("button", { name: "Account" });
+    fireEvent.click(accountBtn);
+
+    const signOutBtn = await screen.findByRole("menuitem", { name: "Sign out" });
+    fireEvent.click(signOutBtn);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(assignMock).toHaveBeenCalledWith("/sign-in");
+    });
+  });
+
+  it("clicking Sign out when server answers 500 navigates to /sign-in?signout=unconfirmed and clears sessionStorage", async () => {
+    sessionStorage.setItem("community-hub.access-token", "fake-token-500");
+    sessionStorage.setItem("community-hub.signout-handle", "fake-handle-500");
+    sessionStorage.setItem("community-hub.community", "parish-slug-500");
+    vi.stubEnv("VITE_AUTH_ORIGIN", "https://au.auth.example.test");
+    vi.stubEnv("VITE_API_ORIGIN", "https://au.api.example.test");
+
+    const location = window.location;
+    const assignMock = vi.fn();
+    vi.stubGlobal("location", {
+      ancestorOrigins: location.ancestorOrigins,
+      href: location.href,
+      origin: location.origin,
+      protocol: location.protocol,
+      host: location.host,
+      hostname: location.hostname,
+      port: location.port,
+      pathname: location.pathname,
+      search: location.search,
+      hash: location.hash,
+      assign: assignMock,
+      replace: location.replace.bind(location),
+      reload: location.reload.bind(location),
+    });
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 500 }));
+
+    render(<Shell />);
+
+    const accountBtn = screen.getByRole("button", { name: "Account" });
+    fireEvent.click(accountBtn);
+
+    const signOutBtn = await screen.findByRole("menuitem", { name: "Sign out" });
+    fireEvent.click(signOutBtn);
+
+    await waitFor(() => {
+      expect(assignMock).toHaveBeenCalledWith("/sign-in?signout=unconfirmed");
+    });
+    expect(sessionStorage.getItem("community-hub.access-token")).toBeNull();
+    expect(sessionStorage.getItem("community-hub.signout-handle")).toBeNull();
+    expect(sessionStorage.getItem("community-hub.community")).toBeNull();
+  });
+
+  it("clicking Sign out when fetch rejects navigates to /sign-in?signout=unconfirmed and clears sessionStorage", async () => {
+    sessionStorage.setItem("community-hub.access-token", "fake-token-reject");
+    sessionStorage.setItem("community-hub.signout-handle", "fake-handle-reject");
+    sessionStorage.setItem("community-hub.community", "parish-slug-reject");
+    vi.stubEnv("VITE_AUTH_ORIGIN", "https://au.auth.example.test");
+    vi.stubEnv("VITE_API_ORIGIN", "https://au.api.example.test");
+
+    const location = window.location;
+    const assignMock = vi.fn();
+    vi.stubGlobal("location", {
+      ancestorOrigins: location.ancestorOrigins,
+      href: location.href,
+      origin: location.origin,
+      protocol: location.protocol,
+      host: location.host,
+      hostname: location.hostname,
+      port: location.port,
+      pathname: location.pathname,
+      search: location.search,
+      hash: location.hash,
+      assign: assignMock,
+      replace: location.replace.bind(location),
+      reload: location.reload.bind(location),
+    });
+
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network failure"));
+
+    render(<Shell />);
+
+    const accountBtn = screen.getByRole("button", { name: "Account" });
+    fireEvent.click(accountBtn);
+
+    const signOutBtn = await screen.findByRole("menuitem", { name: "Sign out" });
+    fireEvent.click(signOutBtn);
+
+    await waitFor(() => {
+      expect(assignMock).toHaveBeenCalledWith("/sign-in?signout=unconfirmed");
+    });
+    expect(sessionStorage.getItem("community-hub.access-token")).toBeNull();
+    expect(sessionStorage.getItem("community-hub.signout-handle")).toBeNull();
+    expect(sessionStorage.getItem("community-hub.community")).toBeNull();
+  });
+
+  it("axe reports no violations on shell with the user menu open in light and dark", async () => {
+    sessionStorage.setItem("community-hub.signout-handle", "fake-" + "handle-3");
+    const { container } = render(<Shell />);
+
+    const accountBtn = screen.getByRole("button", { name: "Account" });
+    await act(async () => {
+      fireEvent.click(accountBtn);
+    });
+    const popup = await screen.findByRole("menu");
+    expect(popup).toBeTruthy();
+
+    // Test in light mode
+    const lightResults = await axe.run([container, popup], {
+      rules: {
+        "color-contrast": { enabled: false },
+      },
+    });
+    expect(resultIds(lightResults, "violations")).toEqual([]);
+
+    // Test in dark mode
+    act(() => {
+      document.documentElement.dataset.theme = "dark";
+    });
+
+    const darkResults = await axe.run([container, popup], {
+      rules: {
+        "color-contrast": { enabled: false },
+      },
+    });
+    expect(resultIds(darkResults, "violations")).toEqual([]);
+  });
+
+  it("with matchMedia mocked to not match, opening Account and pressing ArrowDown highlights Sign out first, and there is no Dark mode item in the DOM", async () => {
+    mockMatchMedia(false);
+    sessionStorage.setItem("community-hub.signout-handle", "fake-" + "handle-desktop");
+    render(<Shell />);
+
+    const accountBtn = screen.getByRole("button", { name: "Account" });
+    await act(async () => {
+      fireEvent.click(accountBtn);
+    });
+
+    const popup = await screen.findByRole("menu");
+    expect(popup).toBeTruthy();
+    expect(screen.queryByRole("menuitemcheckbox", { name: "Dark mode" })).toBeNull();
+
+    const signOutBtn = screen.getByRole("menuitem", { name: "Sign out" });
+    fireEvent.keyDown(popup, { key: "ArrowDown" });
+    expect(
+      signOutBtn.hasAttribute("data-highlighted") || document.activeElement === signOutBtn,
+    ).toBe(true);
+  });
+
+  it("user menu contains Dark mode toggle for phones in extraItems that toggles theme", async () => {
+    mockMatchMedia(true);
+    sessionStorage.setItem("community-hub.signout-handle", "fake-" + "handle-4");
+    render(<Shell />);
+
+    const accountBtn = screen.getByRole("button", { name: "Account" });
+    await act(async () => {
+      fireEvent.click(accountBtn);
+    });
+
+    const darkToggle = await screen.findByRole("menuitemcheckbox", { name: "Dark mode" });
+    expect(darkToggle).toBeTruthy();
+    expect(darkToggle.getAttribute("aria-checked")).toBe("false");
+    expect(darkToggle.className).not.toContain("sm:hidden");
+
+    const popup = screen.getByRole("menu");
+    while (!darkToggle.hasAttribute("data-highlighted") && document.activeElement !== darkToggle) {
+      fireEvent.keyDown(document.activeElement ?? popup, { key: "ArrowDown" });
+    }
+    expect(
+      darkToggle.hasAttribute("data-highlighted") || document.activeElement === darkToggle,
+    ).toBe(true);
+
+    fireEvent.keyDown(darkToggle, { key: "Enter" });
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(localStorage.getItem("community-hub.theme")).toBe("dark");
+    expect(darkToggle.getAttribute("aria-checked")).toBe("true");
+
+    fireEvent.keyDown(darkToggle, { key: "Enter" });
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(localStorage.getItem("community-hub.theme")).toBe("light");
+    expect(darkToggle.getAttribute("aria-checked")).toBe("false");
+
+    const signOutBtn = screen.getByRole("menuitem", { name: "Sign out" });
+    fireEvent.keyDown(darkToggle, { key: "ArrowDown" });
+    expect(
+      signOutBtn.hasAttribute("data-highlighted") || document.activeElement === signOutBtn,
+    ).toBe(true);
+  });
+
+  it("firing a change event on the media query list updates the menu", async () => {
+    const { mql } = mockMatchMedia(false);
+    sessionStorage.setItem("community-hub.signout-handle", "fake-" + "handle-responsive");
+    render(<Shell />);
+
+    const accountBtn = screen.getByRole("button", { name: "Account" });
+    await act(async () => {
+      fireEvent.click(accountBtn);
+    });
+
+    await screen.findByRole("menu");
+    expect(screen.queryByRole("menuitemcheckbox", { name: "Dark mode" })).toBeNull();
+
+    act(() => {
+      mql.dispatchChange(true);
+    });
+
+    const darkToggle = await screen.findByRole("menuitemcheckbox", { name: "Dark mode" });
+    expect(darkToggle).toBeTruthy();
+
+    act(() => {
+      mql.dispatchChange(false);
+    });
+
+    expect(screen.queryByRole("menuitemcheckbox", { name: "Dark mode" })).toBeNull();
+  });
+
+  it("renders no search, notifications or Website button in the shell or Account menu, and the only textbox is Community", async () => {
+    sessionStorage.setItem("community-hub.signout-handle", "fake-handle-no-extras");
+    const fullAccess: PeopleAccess = {
+      permissions: {
+        "people.view": true,
+        "people.manage": true,
+        "people.restricted.read": true,
+      },
+      entitlements: {
+        "people.directory": true,
+        "people.households": true,
+      },
+    };
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <PeopleAccessContext.Provider value={{ access: fullAccess }}>
+          <ShellLayout />
+        </PeopleAccessContext.Provider>
+      </MemoryRouter>,
+    );
+
+    const assertNoExcluded = () => {
+      expect(screen.queryByRole("searchbox")).toBeNull();
+      expect(screen.queryByRole("button", { name: /search/i })).toBeNull();
+      expect(screen.queryByRole("link", { name: /search/i })).toBeNull();
+      expect(screen.queryByRole("button", { name: /notification/i })).toBeNull();
+      expect(screen.queryByRole("link", { name: /notification/i })).toBeNull();
+      expect(screen.queryByRole("button", { name: /website/i })).toBeNull();
+      expect(screen.queryByRole("link", { name: /website/i })).toBeNull();
+    };
+
+    assertNoExcluded();
+    const textboxesBefore = screen.getAllByRole("textbox");
+    expect(textboxesBefore).toHaveLength(1);
+    expect(textboxesBefore[0]).toBe(screen.getByRole("textbox", { name: "Community" }));
+
+    const accountBtn = screen.getByRole("button", { name: "Account" });
+    await act(async () => {
+      fireEvent.click(accountBtn);
+    });
+    await screen.findByRole("menu");
+
+    assertNoExcluded();
+    const textboxesAfter = screen.getAllByRole("textbox");
+    expect(textboxesAfter).toHaveLength(1);
+    expect(textboxesAfter[0]).toBe(screen.getByRole("textbox", { name: "Community" }));
+  });
 });

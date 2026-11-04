@@ -4,23 +4,123 @@
 @source not "./src/cli-pin.ts";
 @source not "./src/opacity.ts";
 @source not "./src/write-theme-css.ts";
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark {
+  &:is([data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:is(html:not([data-theme="light"]) *) {
+      @slot;
+    }
+  }
+}
+@custom-variant touch {
+  @media (pointer: coarse) {
+    @slot;
+  }
+  @media (width < 40rem) {
+    @slot;
+  }
+}
 @theme inline {
   --color-background: var(--ch-background);
   --color-border: var(--ch-border);
+  --color-card: var(--ch-card);
+  --color-control-border: var(--ch-control-border);
+  --color-control-border-hover: var(--ch-control-border-hover);
   --color-destructive: var(--ch-destructive);
+  --color-destructive-border: var(--ch-destructive-border);
+  --color-destructive-foreground: var(--ch-destructive-foreground);
+  --color-destructive-hover: var(--ch-destructive-hover);
+  --color-destructive-ink: var(--ch-destructive-ink);
+  --color-destructive-tint: var(--ch-destructive-tint);
+  --color-field-border: var(--ch-field-border);
+  --color-field-border-hover: var(--ch-field-border-hover);
   --color-foreground: var(--ch-foreground);
+  --color-info-border: var(--ch-info-border);
+  --color-info-ink: var(--ch-info-ink);
+  --color-info-tint: var(--ch-info-tint);
   --color-input: var(--ch-input);
   --color-muted: var(--ch-muted);
+  --color-muted-foreground: var(--ch-muted-foreground);
   --color-primary: var(--ch-primary);
   --color-primary-foreground: var(--ch-primary-foreground);
+  --color-primary-hover: var(--ch-primary-hover);
+  --color-primary-ink: var(--ch-primary-ink);
+  --color-restricted-border: var(--ch-restricted-border);
+  --color-restricted-ink: var(--ch-restricted-ink);
+  --color-restricted-tint: var(--ch-restricted-tint);
   --color-ring: var(--ch-ring);
+  --color-scrim: var(--ch-scrim);
   --color-secondary: var(--ch-secondary);
   --color-secondary-foreground: var(--ch-secondary-foreground);
+  --color-secondary-hover: var(--ch-secondary-hover);
+  --color-sidebar: var(--ch-sidebar);
+  --color-sidebar-border: var(--ch-sidebar-border);
+  --color-sidebar-foreground: var(--ch-sidebar-foreground);
+  --color-sidebar-heading: var(--ch-sidebar-heading);
+  --color-sidebar-hover: var(--ch-sidebar-hover);
+  --color-sidebar-input: var(--ch-sidebar-input);
+  --color-sidebar-muted: var(--ch-sidebar-muted);
+  --color-sidebar-ring: var(--ch-sidebar-ring);
+  --color-sidebar-selected: var(--ch-sidebar-selected);
+  --color-sidebar-selected-foreground: var(--ch-sidebar-selected-foreground);
+  --color-subtle-foreground: var(--ch-subtle-foreground);
+  --color-tint: var(--ch-tint);
+  --color-tint-border: var(--ch-tint-border);
+  --color-tone-amber-ink: var(--ch-tone-amber-ink);
+  --color-tone-amber-tint: var(--ch-tone-amber-tint);
+  --color-tone-blue-ink: var(--ch-tone-blue-ink);
+  --color-tone-blue-tint: var(--ch-tone-blue-tint);
+  --color-tone-cyan-ink: var(--ch-tone-cyan-ink);
+  --color-tone-cyan-tint: var(--ch-tone-cyan-tint);
+  --color-tone-fuchsia-ink: var(--ch-tone-fuchsia-ink);
+  --color-tone-fuchsia-tint: var(--ch-tone-fuchsia-tint);
+  --color-tone-green-ink: var(--ch-tone-green-ink);
+  --color-tone-green-tint: var(--ch-tone-green-tint);
+  --color-tone-orange-ink: var(--ch-tone-orange-ink);
+  --color-tone-orange-tint: var(--ch-tone-orange-tint);
+  --color-tone-pink-ink: var(--ch-tone-pink-ink);
+  --color-tone-pink-tint: var(--ch-tone-pink-tint);
+  --color-tone-rose-ink: var(--ch-tone-rose-ink);
+  --color-tone-rose-tint: var(--ch-tone-rose-tint);
+  --color-tone-teal-ink: var(--ch-tone-teal-ink);
+  --color-tone-teal-tint: var(--ch-tone-teal-tint);
+  --color-tone-violet-ink: var(--ch-tone-violet-ink);
+  --color-tone-violet-tint: var(--ch-tone-violet-tint);
+  --color-warning-border: var(--ch-warning-border);
+  --color-warning-ink: var(--ch-warning-ink);
+  --color-warning-tint: var(--ch-warning-tint);
+  --font-sans: var(--ch-font-sans);
   --font-weight-medium: var(--ch-weight-medium);
   --radius-lg: var(--ch-rounded-lg);
   --radius-md: var(--ch-rounded-md);
+  --radius-pill: var(--ch-rounded-pill);
+  --shadow-overlay: var(--ch-shadow-overlay);
+  --size-control: var(--ch-size-control);
+  --size-control-sm: var(--ch-size-control-sm);
+  --size-nav-item: var(--ch-size-nav-item);
+  --size-row: var(--ch-size-row);
+  --size-row-condensed: var(--ch-size-row-condensed);
+  --size-row-tall: var(--ch-size-row-tall);
+  --size-sidebar: var(--ch-size-sidebar);
+  --size-top-bar: var(--ch-size-top-bar);
+  --size-touch: var(--ch-size-touch);
   --spacing: var(--ch-space-unit);
+  --spacing-1: var(--ch-space-1);
+  --spacing-2: var(--ch-space-2);
+  --spacing-3: var(--ch-space-3);
+  --spacing-4: var(--ch-space-4);
+  --spacing-5: var(--ch-space-5);
+  --spacing-6: var(--ch-space-6);
+  --spacing-8: var(--ch-space-8);
+  --spacing-space-1: var(--ch-space-1);
+  --spacing-space-2: var(--ch-space-2);
+  --spacing-space-3: var(--ch-space-3);
+  --spacing-space-4: var(--ch-space-4);
+  --spacing-space-5: var(--ch-space-5);
+  --spacing-space-6: var(--ch-space-6);
+  --spacing-space-8: var(--ch-space-8);
   --text-sm: var(--ch-type-sm);
   --text-xs: var(--ch-type-xs);
 }

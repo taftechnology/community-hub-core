@@ -17,6 +17,7 @@ import { useBillingStatus } from "./billing-status";
 import { useCommunity } from "./community";
 import { readAccessToken } from "./directory";
 import { usePeopleAccess } from "./people-access";
+import { ScreenTitle } from "./screen-title";
 
 type ContactItem = {
   id: string;
@@ -601,7 +602,7 @@ export function AllContactsPage() {
   if (token === null) {
     return (
       <>
-        <h1>All Contacts</h1>
+        <ScreenTitle>All Contacts</ScreenTitle>
         <p>Sign in required</p>
         <Link to="/sign-in">Sign in</Link>
       </>
@@ -611,7 +612,7 @@ export function AllContactsPage() {
   if (!access.entitlements["people.directory"] || !access.permissions["people.view"]) {
     return (
       <>
-        <h1>All Contacts</h1>
+        <ScreenTitle>All Contacts</ScreenTitle>
         <Alert live="polite">Not allowed</Alert>
       </>
     );
@@ -620,7 +621,7 @@ export function AllContactsPage() {
   if (view === "detail") {
     return (
       <>
-        <h1>All Contacts</h1>
+        <ScreenTitle>All Contacts</ScreenTitle>
         <h2 ref={detailHeadingRef} tabIndex={-1}>
           Contact Details
         </h2>
@@ -678,7 +679,7 @@ export function AllContactsPage() {
   if (view === "add") {
     return (
       <>
-        <h1>All Contacts</h1>
+        <ScreenTitle>All Contacts</ScreenTitle>
         <h2 ref={addHeadingRef} tabIndex={-1}>
           Add Contact
         </h2>
@@ -708,7 +709,7 @@ export function AllContactsPage() {
   if (view === "edit") {
     return (
       <>
-        <h1>All Contacts</h1>
+        <ScreenTitle>All Contacts</ScreenTitle>
         <h2 ref={editHeadingRef} tabIndex={-1}>
           Edit Contact
         </h2>
@@ -749,9 +750,7 @@ export function AllContactsPage() {
 
   return (
     <>
-      <h1 ref={listHeadingRef} tabIndex={-1}>
-        All Contacts
-      </h1>
+      <ScreenTitle ref={listHeadingRef}>All Contacts</ScreenTitle>
 
       {isReadOnly ? (
         <Alert live="polite">

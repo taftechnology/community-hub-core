@@ -27,4 +27,54 @@ it("builds index.html with external scripts and no inline style", () => {
   }
   expect(html).not.toMatch(/<style[\s>]/i);
   expect(html).not.toMatch(/\sstyle="/i);
+
+  expect(html).toContain('lang="en-AU"');
+
+  const assetsDir = path.join(appRoot, "dist/assets");
+  const assets = fs.existsSync(assetsDir) ? fs.readdirSync(assetsDir) : [];
+  const woff2Files = assets.filter((file) => file.endsWith(".woff2"));
+  expect(woff2Files.length).toBeGreaterThan(0);
+
+  const cssFiles = assets.filter((file) => file.endsWith(".css"));
+  const uiFontsCss = path.resolve(appRoot, "../../packages/ui/src/fonts.css");
+  const adminIndexCss = path.join(appRoot, "src/index.css");
+
+  const allHtmlAndCss = [
+    html,
+    ...cssFiles.map((f) => fs.readFileSync(path.join(assetsDir, f), "utf8")),
+    fs.readFileSync(adminIndexCss, "utf8"),
+    ...(fs.existsSync(uiFontsCss) ? [fs.readFileSync(uiFontsCss, "utf8")] : []),
+  ];
+
+  for (const content of allHtmlAndCss) {
+    expect(content).not.toContain("fonts.googleapis.com");
+    expect(content).not.toContain("fonts.gstatic.com");
+    expect(content).not.toContain("data:font");
+  }
+
+  const builtCss = cssFiles.map((f) => fs.readFileSync(path.join(assetsDir, f), "utf8")).join("\n");
+  const pointerCoarseTouchHeight =
+    /@media\s*\(\s*pointer\s*:\s*coarse\s*\)\s*\{[^}]*\{[^}]*height:\s*var\(--ch-size-touch\)/;
+  const widthTouchHeight =
+    /@media\s*(?:not\s+all\s+and\s*\(\s*width\s*>=\s*40rem\s*\)|\(\s*(?:width\s*<\s*40rem|max-width:\s*40rem)\s*\))\s*\{[^}]*\{[^}]*height:\s*var\(--ch-size-touch\)/;
+  const pointerCoarseTouchSize =
+    /@media\s*\(\s*pointer\s*:\s*coarse\s*\)\s*\{[^}]*\.touch\\:size[^}]*\{[^}]*height:\s*var\(--ch-size-touch\)/;
+  const widthTouchSize =
+    /@media\s*(?:not\s+all\s+and\s*\(\s*width\s*>=\s*40rem\s*\)|\(\s*(?:width\s*<\s*40rem|max-width:\s*40rem)\s*\))\s*\{[^}]*\.touch\\:size[^}]*\{[^}]*height:\s*var\(--ch-size-touch\)/;
+
+  expect(builtCss).toMatch(pointerCoarseTouchHeight);
+  expect(builtCss).toMatch(widthTouchHeight);
+  expect(builtCss).toMatch(pointerCoarseTouchSize);
+  expect(builtCss).toMatch(widthTouchSize);
+
+  const focusVisibleOutlineSolid =
+    /\.focus-visible\\:outline-solid:focus-visible\s*\{[^}]*outline-style:\s*solid/;
+  expect(builtCss).toMatch(focusVisibleOutlineSolid);
+
+  const bodyRule = /body\s*\{[^}]*color:\s*var\(--ch-foreground\)/;
+  expect(builtCss).toMatch(bodyRule);
+
+  const pointerCoarseTouchMinHeight =
+    /@media\s*\(\s*pointer\s*:\s*coarse\s*\)\s*\{[^}]*\.touch\\:min-h[^}]*\{[^}]*min-height:\s*var\(--ch-size-touch\)/;
+  expect(builtCss).toMatch(pointerCoarseTouchMinHeight);
 }, 60000);

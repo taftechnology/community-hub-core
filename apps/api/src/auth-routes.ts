@@ -1,4 +1,5 @@
 import {
+  endSessionBody,
   passkeyAuthenticateOptionsBody,
   passkeyAuthenticateVerifyBody,
   passkeyRegisterOptionsBody,
@@ -10,6 +11,7 @@ import {
 import {
   beginPasskeyAuthentication,
   beginPasskeyRegistration,
+  endSession,
   finishPasskeyAuthentication,
   finishPasskeyRegistration,
   IdentityError,
@@ -364,6 +366,36 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
           }),
         );
         return session === null ? empty(401) : tokens(session);
+      },
+    },
+    {
+      method: "POST",
+      pattern: "/v1/auth/session/end",
+      surface: "tenant",
+      billing: "exempt",
+      handle: async (request) => {
+        const denied = await onAuth(request);
+        if (denied !== undefined) {
+          return denied;
+        }
+        const token = bearer(request);
+        if (token === undefined) {
+          return empty(401);
+        }
+        const body = await parse(request, endSessionBody);
+        if (body === undefined) {
+          return empty(400);
+        }
+        await identity((sql) =>
+          endSession(sql, deps.kms, deps.keyArn, {
+            accessToken: token,
+            now: deps.now(),
+          }),
+        );
+        return new Response(null, {
+          status: 204,
+          headers: { "cache-control": "no-store" },
+        });
       },
     },
   ];

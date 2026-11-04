@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CommunityProvider, useCommunity } from "./community";
+import { CommunityPicker, CommunityProvider, useCommunity } from "./community";
 
 const COMMUNITY_KEY = "community-hub.community";
 
@@ -138,5 +138,15 @@ describe("Community context and sessionStorage persistence", () => {
     expect((screen.getByRole("textbox", { name: "Community" }) as HTMLInputElement).value).toBe(
       "parish",
     );
+  });
+
+  it("carries touch:min-h-(--ch-size-touch) on Community input for touch screens", () => {
+    render(
+      <CommunityProvider>
+        <CommunityPicker />
+      </CommunityProvider>,
+    );
+    const input = screen.getByRole("textbox", { name: "Community" });
+    expect(input.className).toContain("touch:min-h-(--ch-size-touch)");
   });
 });

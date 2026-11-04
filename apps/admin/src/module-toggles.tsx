@@ -6,6 +6,7 @@ import { post } from "./api";
 import { useBillingStatus } from "./billing-status";
 import { useCommunity } from "./community";
 import { directoryOrigins, readAccessToken } from "./directory";
+import { ScreenTitle } from "./screen-title";
 
 type ModuleKey = {
   key: string;
@@ -153,7 +154,7 @@ export function ModuleTogglesPage() {
   if (origins === undefined) {
     return (
       <>
-        <h1>Module Toggles</h1>
+        <ScreenTitle>Module Toggles</ScreenTitle>
         <p>Directory unavailable</p>
       </>
     );
@@ -162,7 +163,7 @@ export function ModuleTogglesPage() {
   if (token === null) {
     return (
       <>
-        <h1>Module Toggles</h1>
+        <ScreenTitle>Module Toggles</ScreenTitle>
         <p>Sign in required</p>
         <Link to="/sign-in">Sign in</Link>
       </>
@@ -171,7 +172,7 @@ export function ModuleTogglesPage() {
 
   return (
     <>
-      <h1>Module Toggles</h1>
+      <ScreenTitle>Module Toggles</ScreenTitle>
       {isReadOnly ? (
         <Alert live="polite">
           <span>Read-only until billing is settled</span>{" "}

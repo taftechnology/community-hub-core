@@ -5,6 +5,7 @@ import tokens from "./tokens.json" with { type: "json" };
 import {
   contrastRatio,
   contrastViolations,
+  decorativeViolations,
   generateTokens,
   missingPairViolations,
   namespaceViolations,
@@ -78,7 +79,7 @@ describe("generateTokens", () => {
     const { tokensCss, themeCss } = generateTokens(tokens);
     const combined = `${tokensCss}\n${themeCss}`;
     expect(combined).toContain("--ch-space-unit: 0.25rem");
-    expect(combined).toContain("--ch-background: #ffffff");
+    expect(combined).toContain("--ch-background: #f8fafc");
     expect(combined).toContain("--spacing: var(--ch-space-unit)");
     expect(combined).toContain("--radius-md: var(--ch-rounded-md)");
 
@@ -87,6 +88,140 @@ describe("generateTokens", () => {
       const tokenBlock = tokensCss;
       expect(tokenBlock.match(propertyPattern)).toBeNull();
     }
+  });
+
+  it("emits radius-pill as 999px without converting to rem", () => {
+    const { tokensCss } = generateTokens(tokens);
+    expect(tokensCss).toContain("--ch-rounded-pill: 999px");
+    expect(tokensCss).not.toContain("62.4375rem");
+  });
+
+  it("emits dark values under data-theme and prefers-color-scheme media query, not .dark", () => {
+    const { tokensCss } = generateTokens(tokens);
+    expect(tokensCss).toContain('[data-theme="dark"]');
+    expect(tokensCss).toContain("@media (prefers-color-scheme: dark)");
+    expect(tokensCss).toContain(':root:not([data-theme="light"])');
+    expect(tokensCss).not.toMatch(/\.dark\s*\{/);
+  });
+
+  it("never emits --font-sans in generated tokens.css", () => {
+    const { tokensCss } = generateTokens(tokens);
+    expect(tokensCss).not.toContain("--font-sans");
+  });
+
+  it("emits @custom-variant touch with pointer:coarse and width < 40rem in themeCss", () => {
+    const { themeCss } = generateTokens(tokens);
+    expect(themeCss).toContain("@custom-variant touch");
+    expect(themeCss).toContain("@media (pointer: coarse)");
+    expect(themeCss).toContain("@media (width < 40rem)");
+  });
+
+  it("accepts and emits each new group (type, spacing, size, shadow, decorative)", () => {
+    const { tokensCss, themeCss } = generateTokens(tokens);
+    // type
+    expect(tokensCss).toContain("--ch-font-sans:");
+    expect(themeCss).toContain("--font-sans: var(--ch-font-sans)");
+    // spacing
+    expect(tokensCss).toContain("--ch-space-4:");
+    // size
+    expect(tokensCss).toContain("--ch-size-control:");
+    // shadow
+    expect(tokensCss).toContain("--ch-shadow-overlay:");
+    expect(themeCss).toContain("--shadow-overlay: var(--ch-shadow-overlay)");
+  });
+});
+
+describe("design token contract", () => {
+  const EXPECTED_68_ROLES = [
+    "background",
+    "foreground",
+    "card",
+    "muted",
+    "muted-foreground",
+    "subtle-foreground",
+    "primary",
+    "primary-hover",
+    "primary-foreground",
+    "primary-ink",
+    "tint",
+    "tint-border",
+    "secondary",
+    "secondary-hover",
+    "secondary-foreground",
+    "border",
+    "input",
+    "field-border",
+    "field-border-hover",
+    "control-border",
+    "control-border-hover",
+    "ring",
+    "destructive",
+    "destructive-hover",
+    "destructive-foreground",
+    "destructive-ink",
+    "destructive-tint",
+    "destructive-border",
+    "warning-ink",
+    "warning-tint",
+    "warning-border",
+    "info-ink",
+    "info-tint",
+    "info-border",
+    "restricted-ink",
+    "restricted-tint",
+    "restricted-border",
+    "sidebar",
+    "sidebar-foreground",
+    "sidebar-muted",
+    "sidebar-heading",
+    "sidebar-border",
+    "sidebar-hover",
+    "sidebar-selected",
+    "sidebar-selected-foreground",
+    "sidebar-ring",
+    "sidebar-input",
+    "tone-blue-tint",
+    "tone-blue-ink",
+    "tone-green-tint",
+    "tone-green-ink",
+    "tone-orange-tint",
+    "tone-orange-ink",
+    "tone-violet-tint",
+    "tone-violet-ink",
+    "tone-pink-tint",
+    "tone-pink-ink",
+    "tone-fuchsia-tint",
+    "tone-fuchsia-ink",
+    "tone-teal-tint",
+    "tone-teal-ink",
+    "tone-amber-tint",
+    "tone-amber-ink",
+    "tone-rose-tint",
+    "tone-rose-ink",
+    "tone-cyan-tint",
+    "tone-cyan-ink",
+    "scrim",
+  ];
+
+  it("contains exactly the 68 design colour roles in both light and dark modes", () => {
+    expect(EXPECTED_68_ROLES).toHaveLength(68);
+    const lightRoles = Object.keys(tokens.modes.light.color).sort();
+    const darkRoles = Object.keys(tokens.modes.dark.color).sort();
+    const expectedSorted = [...EXPECTED_68_ROLES].sort();
+    expect(lightRoles).toEqual(expectedSorted);
+    expect(darkRoles).toEqual(expectedSorted);
+  });
+
+  it("accepts rgba only for decorative roles", () => {
+    const validWithScrim = structuredClone(tokens);
+    expect(validateTokens(validWithScrim)).toEqual([]);
+
+    const invalidRgba = structuredClone(tokens);
+    const mutatedModes: { light: { color: Record<string, string> } } = invalidRgba.modes;
+    mutatedModes.light.color.primary = "rgba(15, 118, 110, 0.5)";
+    expect(validateTokens(invalidRgba)).toEqual([
+      expect.objectContaining({ id: "rgba-non-decorative" }),
+    ]);
   });
 });
 
@@ -105,5 +240,19 @@ describe("selfReferenceViolations", () => {
       expect.objectContaining({ id: "self-reference" }),
     ]);
     expect(selfReferenceViolations("--radius-md: var(--ch-rounded-md);")).toEqual([]);
+  });
+});
+
+describe("decorativeViolations", () => {
+  it("flags declared colour roles that are not on the allowed decorative list", () => {
+    const invalidTokens = structuredClone(tokens);
+    invalidTokens.decorative = [...invalidTokens.decorative, "foreground"];
+    invalidTokens.pairs = invalidTokens.pairs.filter(
+      (p: { foreground: string; background: string }) =>
+        p.foreground !== "foreground" && p.background !== "foreground",
+    );
+    expect(decorativeViolations(invalidTokens)).toEqual([
+      expect.objectContaining({ id: "decorative-not-allowed" }),
+    ]);
   });
 });

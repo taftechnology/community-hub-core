@@ -30,3 +30,5 @@ export const passkeyAuthenticateVerifyBody = z.strictObject({
 export const refreshSessionBody = z.strictObject({
   refreshToken: bytes,
 });
+
+export const endSessionBody = z.strictObject({});

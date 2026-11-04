@@ -11,6 +11,7 @@ import {
 import { useBillingStatus } from "./billing-status";
 import { useCommunity } from "./community";
 import { planLabels } from "./labels";
+import { ScreenTitle } from "./screen-title";
 
 const STATE_WORDS: Record<BillingState, string> = {
   invoiced: "Invoiced",
@@ -254,7 +255,7 @@ export function GeneralSettingsPage() {
 
   return (
     <>
-      <h1>General Settings</h1>
+      <ScreenTitle>General Settings</ScreenTitle>
       <h2>Billing</h2>
 
       {notice && (

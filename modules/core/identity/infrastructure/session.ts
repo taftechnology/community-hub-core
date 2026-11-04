@@ -30,6 +30,11 @@ export type RefreshCheck = (
   row: { userId: string; absoluteExpiresAt: Date | null },
 ) => Promise<boolean>;
 
+export type EndSessionInput = {
+  accessToken: string;
+  now: Date;
+};
+
 function accessExpiresInSeconds(now: Date, accessExpiresAt: Date): number {
   return Math.max(0, Math.min(900, Math.floor((accessExpiresAt.getTime() - now.getTime()) / 1000)));
 }
@@ -351,6 +356,43 @@ export async function refreshSession(
     refreshToken: minted.refreshToken,
     expiresIn: accessExpiresInSeconds(input.now, claimed.accessExpiresAt),
   };
+}
+
+export async function endSession(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: EndSessionInput,
+): Promise<void> {
+  const accessHash = await sessionAccessHash(sql, kms, keyArn, input.accessToken);
+  if (accessHash === null) {
+    return;
+  }
+
+  const rows = await sql<{ id: string; user_id: string; refresh_family: string }[]>`
+    select id, user_id, refresh_family
+    from identity.sessions
+    where access_hash = ${accessHash}
+      and kind = 'tenant'
+    limit 1
+  `;
+  const row = rows[0];
+  if (row === undefined) {
+    return;
+  }
+
+  const nowIso = input.now.toISOString();
+  await sql.begin(async (tx) => {
+    await tx`
+      select pg_advisory_xact_lock(hashtextextended('family:' || ${row.refresh_family}::text, 0))
+    `;
+    await tx`
+      update identity.sessions
+      set revoked_at = ${nowIso}::timestamptz
+      where refresh_family = ${row.refresh_family}
+        and revoked_at is null
+    `;
+  });
 }
 
 async function mintWithBidx(bidx: webcrypto.CryptoKey): Promise<{

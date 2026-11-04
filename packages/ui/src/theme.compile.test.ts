@@ -69,3 +69,31 @@ ${theme}
   expect(ruleBody(css, ".bg-background")).toContain("background-color: var(--color-background)");
   expect(ruleBody(css, ".bg-background")).not.toContain("var(--ch-background)");
 });
+
+it("includes sample mappings and new custom-variant in theme.css", async () => {
+  const theme = readFileSync(new URL("../theme.css", import.meta.url), "utf8");
+  expect(theme).toContain("@custom-variant dark");
+  expect(theme).toContain('[data-theme="dark"]');
+  expect(theme).toContain("@media (prefers-color-scheme: dark)");
+  expect(theme).toContain("@custom-variant touch");
+  expect(theme).toContain("@media (pointer: coarse)");
+  expect(theme).toContain("@media (width < 40rem)");
+  expect(theme).toContain("--color-primary-hover: var(--ch-primary-hover);");
+  expect(theme).toContain("--font-sans: var(--ch-font-sans);");
+
+  const result = await compile(input, {
+    base: uiPackageDir,
+    onDependency: () => {},
+  });
+  const css = result.build([
+    "bg-primary-hover",
+    "font-sans",
+    "dark:bg-primary-hover",
+    "touch:h-(--ch-size-touch)",
+  ]);
+  expect(ruleBody(css, ".bg-primary-hover")).toContain("background-color: var(--ch-primary-hover)");
+  expect(ruleBody(css, ".font-sans")).toContain("font-family: var(--ch-font-sans)");
+  expect(css).toContain('[data-theme="dark"]');
+  expect(css).toContain("@media (pointer: coarse)");
+  expect(css).toContain("height: var(--ch-size-touch)");
+});

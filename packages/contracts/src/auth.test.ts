@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  endSessionBody,
   passkeyAuthenticateOptionsBody,
   passkeyAuthenticateVerifyBody,
   passkeyRegisterOptionsBody,
@@ -38,5 +39,7 @@ describe("auth bodies", () => {
     expect(passkeyAuthenticateOptionsBody.safeParse({}).success).toBe(true);
     expect(passkeyAuthenticateVerifyBody.safeParse({ extra: 1 }).success).toBe(false);
     expect(refreshSessionBody.safeParse({ refreshToken: "a", extra: 1 }).success).toBe(false);
+    expect(endSessionBody.safeParse({}).success).toBe(true);
+    expect(endSessionBody.safeParse({ extra: 1 }).success).toBe(false);
   });
 });

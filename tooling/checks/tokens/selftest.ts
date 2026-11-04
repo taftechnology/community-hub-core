@@ -23,6 +23,10 @@ const fixtureExpectations: Record<string, readonly string[]> = {
   "bad-value": ["bad-value"],
   "missing-tokens": ["missing-tokens"],
   "invalid-tokens": ["invalid-tokens"],
+  "decorative-unknown": ["decorative-unknown"],
+  "decorative-in-pair": ["decorative-in-pair"],
+  "decorative-not-allowed": ["decorative-not-allowed"],
+  "rgba-non-decorative": ["rgba-non-decorative"],
 };
 
 async function violationIds(root: string): Promise<string[]> {

@@ -16,9 +16,11 @@ export {
   type PasskeyRegistrationOptions,
 } from "../infrastructure/passkey.js";
 export {
+  endSession,
   readSession,
   readSessionWithKind,
   refreshSession,
+  type EndSessionInput,
   type RefreshCheck,
   type SessionKind,
   type SessionTokens,

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { post } from "./api";
-import { ACCESS_TOKEN_KEY } from "./directory";
+import { ACCESS_TOKEN_KEY, SIGNOUT_HANDLE_KEY } from "./directory";
 
 describe("admin api client post", () => {
   beforeEach(() => {
@@ -31,6 +31,25 @@ describe("admin api client post", () => {
       expect(response.status).toBe(401);
     }
     expect(sessionStorage.getItem(ACCESS_TOKEN_KEY)).toBeNull();
+  });
+
+  it("Pin 11: a 401 from post() removes community-hub.access-token and leaves community-hub.signout-handle", async () => {
+    sessionStorage.setItem(ACCESS_TOKEN_KEY, "test-token-pin11");
+    sessionStorage.setItem(SIGNOUT_HANDLE_KEY, "test-handle-pin11");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "unauthorized" }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const response = await post("/v1/billing/status", { communitySlug: "parish" });
+    expect(response).not.toBe("unavailable");
+    if (response !== "unavailable") {
+      expect(response.status).toBe(401);
+    }
+    expect(sessionStorage.getItem(ACCESS_TOKEN_KEY)).toBeNull();
+    expect(sessionStorage.getItem(SIGNOUT_HANDLE_KEY)).toBe("test-handle-pin11");
   });
 
   it("returns unavailable when no token is present without calling fetch", async () => {

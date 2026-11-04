@@ -4,7 +4,24 @@
 @source not "./src/cli-pin.ts";
 @source not "./src/opacity.ts";
 @source not "./src/write-theme-css.ts";
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark {
+  &:is([data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:is(html:not([data-theme="light"]) *) {
+      @slot;
+    }
+  }
+}
+@custom-variant touch {
+  @media (pointer: coarse) {
+    @slot;
+  }
+  @media (width < 40rem) {
+    @slot;
+  }
+}
 @theme inline {
   --color-background: var(--ch-background);
   --color-border: var(--ch-border);

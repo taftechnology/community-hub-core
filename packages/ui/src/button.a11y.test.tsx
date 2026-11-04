@@ -40,3 +40,25 @@ it("flags a control with no accessible name", async () => {
 
   expect(resultIds(results, "violations")).toContain("button-name");
 });
+
+it("passes axe for destructive button", async () => {
+  const { container } = render(<Button variant="destructive">Delete</Button>);
+  const results = await axe.run(container, {
+    rules: {
+      "color-contrast": { enabled: false },
+    },
+  });
+
+  expect(results.violations).toEqual([]);
+});
+
+it("passes axe for disabled button", async () => {
+  const { container } = render(<Button disabled>Disabled</Button>);
+  const results = await axe.run(container, {
+    rules: {
+      "color-contrast": { enabled: false },
+    },
+  });
+
+  expect(results.violations).toEqual([]);
+});

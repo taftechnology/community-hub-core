@@ -12,6 +12,7 @@ import { IdentityError } from "../domain/error.js";
 import { insertIdentityUser } from "./identity-user.js";
 import { createSession } from "./session.js";
 import {
+  endSession,
   readSession,
   readSessionWithKind,
   refreshSession,
@@ -1398,6 +1399,343 @@ describe("session kinds and absolute expiry", () => {
       `;
       expect(rows).toHaveLength(1);
       expect(computedHash).toEqual(new Uint8Array(rows[0]!.access_hash));
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("pin 1: endSession revokes the whole refresh family even when called with an earlier, rotated-out access token", async () => {
+    const now = new Date("2026-11-03T10:00:00.000Z");
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `pin1-${newId()}@example.test`,
+      });
+      const s1 = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+      });
+
+      const s2 = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: s1.refreshToken,
+        now: new Date(now.getTime() + 10_000),
+      });
+      expect(s2).not.toBeNull();
+
+      const s3 = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: s2!.refreshToken,
+        now: new Date(now.getTime() + 20_000),
+      });
+      expect(s3).not.toBeNull();
+
+      const famRows = await sql<{ refresh_family: string }[]>`
+        select refresh_family from identity.sessions where user_id = ${userId} limit 1
+      `;
+      const family = famRows[0]!.refresh_family;
+
+      await endSession(sql, kms, KEY_ARN, {
+        accessToken: s1.accessToken,
+        now: new Date(now.getTime() + 30_000),
+      });
+
+      const refreshed = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: s3!.refreshToken,
+        now: new Date(now.getTime() + 40_000),
+      });
+      expect(refreshed).toBeNull();
+
+      const rows = await sql<{ id: string; revoked_at: Date | null }[]>`
+        select id, revoked_at from identity.sessions where refresh_family = ${family}
+      `;
+      expect(rows).toHaveLength(3);
+      for (const row of rows) {
+        expect(row.revoked_at).not.toBeNull();
+      }
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("pin 2: an expired access token still ends its family", async () => {
+    const now = new Date("2026-11-03T10:00:00.000Z");
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `pin2-${newId()}@example.test`,
+      });
+      const session = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+      });
+
+      // Pass now > access_expires_at (20 mins past creation; expiry is 15 mins)
+      const expiredNow = new Date(now.getTime() + 20 * 60 * 1000);
+      await endSession(sql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        now: expiredNow,
+      });
+
+      // Refreshing within refresh window (30 days) returns null
+      const refreshed = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: session.refreshToken,
+        now: new Date(now.getTime() + 25 * 60 * 1000),
+      });
+      expect(refreshed).toBeNull();
+
+      const rows = await sql<{ revoked_at: Date | null }[]>`
+        select revoked_at from identity.sessions where user_id = ${userId}
+      `;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.revoked_at).not.toBeNull();
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("pin 3: an operator session's access token passed to endSession leaves the operator family untouched", async () => {
+    const now = new Date("2026-11-03T10:00:00.000Z");
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `pin3-${newId()}@example.test`,
+      });
+      const absoluteExpiresAt = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+      const opSession = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "operator",
+        absoluteExpiresAt,
+      });
+
+      await endSession(sql, kms, KEY_ARN, {
+        accessToken: opSession.accessToken,
+        now: new Date(now.getTime() + 60_000),
+      });
+
+      const rows = await sql<{ revoked_at: Date | null }[]>`
+        select revoked_at from identity.sessions where user_id = ${userId} and kind = 'operator'
+      `;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.revoked_at).toBeNull();
+
+      const refreshed = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: opSession.refreshToken,
+        now: new Date(now.getTime() + 120_000),
+        kinds: ["operator"],
+      });
+      expect(refreshed).not.toBeNull();
+      expect(refreshed!.userId).toBe(userId);
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("pin 4: two families for one user; ending one leaves the other refreshable", async () => {
+    const now = new Date("2026-11-03T10:00:00.000Z");
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `pin4-${newId()}@example.test`,
+      });
+      const sessionA = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+      });
+      const sessionB = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+      });
+
+      await endSession(sql, kms, KEY_ARN, {
+        accessToken: sessionA.accessToken,
+        now: new Date(now.getTime() + 60_000),
+      });
+
+      const refreshedB = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: sessionB.refreshToken,
+        now: new Date(now.getTime() + 120_000),
+      });
+      expect(refreshedB).not.toBeNull();
+      expect(refreshedB?.userId).toBe(userId);
+
+      const refreshedA = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: sessionA.refreshToken,
+        now: new Date(now.getTime() + 120_000),
+      });
+      expect(refreshedA).toBeNull();
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("pin 5: endSession waits on the family advisory lock before revoking", async () => {
+    const now = new Date("2026-11-03T10:00:00.000Z");
+    const runtime = loadRuntime();
+    const sql = createPlaintextIdentitySql(identityUrl(runtime));
+    const secondSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const observer = createPlaintextDirectSql(runtime.productOnlyUrl);
+
+    let releaseSecondTx: () => void = () => undefined;
+    const secondTxHeld = new Promise<void>((resolve) => {
+      releaseSecondTx = resolve;
+    });
+    let lockAcquiredNotify: () => void = () => undefined;
+    const lockAcquired = new Promise<void>((resolve) => {
+      lockAcquiredNotify = resolve;
+    });
+    let secondPid = 0;
+    let settled = false;
+    let endPromise: Promise<void> | undefined;
+    let secondTxPromise: Promise<void> | undefined;
+
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `pin5-${newId()}@example.test`,
+      });
+      const session = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+      });
+
+      const famRows = await sql<{ refresh_family: string }[]>`
+        select refresh_family from identity.sessions where user_id = ${userId} limit 1
+      `;
+      const family = famRows[0]!.refresh_family;
+
+      // 1. On second connection, open a transaction and take advisory lock
+      secondTxPromise = secondSql.begin(async (tx) => {
+        const pidRows = await tx<{ pid: number }[]>`select pg_backend_pid() as pid`;
+        secondPid = pidRows[0]!.pid;
+        await tx`select pg_advisory_xact_lock(hashtextextended('family:' || ${family}::text, 0))`;
+        lockAcquiredNotify();
+        await secondTxHeld;
+      });
+
+      await lockAcquired;
+
+      // 2. Start endSession without awaiting it
+      endPromise = endSession(sql, kms, KEY_ARN, {
+        accessToken: session.accessToken,
+        now: new Date(now.getTime() + 60_000),
+      }).then(() => {
+        settled = true;
+      });
+
+      // 3. Poll pg_locks until a backend that is not secondPid shows granted = false for locktype = 'advisory'
+      const pollStart = Date.now();
+      let waiterFound = false;
+      while (Date.now() - pollStart < 5000) {
+        if (settled) break;
+        const waitingRows = await observer<{ pid: number }[]>`
+          select pid
+          from pg_locks
+          where locktype = 'advisory'
+            and not granted
+            and pid <> ${secondPid}
+        `;
+        if (waitingRows.length > 0) {
+          waiterFound = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(waiterFound).toBe(true);
+
+      // 4. Assert endSession has not settled
+      expect(settled).toBe(false);
+
+      // 5. Release second connection, await endSession, assert every row is revoked
+      releaseSecondTx();
+      await secondTxPromise;
+      await endPromise;
+      expect(settled).toBe(true);
+
+      const rows = await sql<{ revoked_at: Date | null }[]>`
+        select revoked_at from identity.sessions where refresh_family = ${family}
+      `;
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) {
+        expect(row.revoked_at).not.toBeNull();
+      }
+    } finally {
+      releaseSecondTx();
+      await endPromise?.catch(() => undefined);
+      await secondTxPromise?.catch(() => undefined);
+      await secondSql.end({ timeout: 1 });
+      await observer.end({ timeout: 1 });
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("pin 5a: an enrolment session's access token passed to endSession leaves the enrolment family untouched", async () => {
+    const now = new Date("2026-11-03T10:00:00.000Z");
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `pin5a-${newId()}@example.test`,
+      });
+      const enrolSession = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "enrolment",
+      });
+
+      await endSession(sql, kms, KEY_ARN, {
+        accessToken: enrolSession.accessToken,
+        now: new Date(now.getTime() + 60_000),
+      });
+
+      const rows = await sql<{ revoked_at: Date | null }[]>`
+        select revoked_at from identity.sessions where user_id = ${userId} and kind = 'enrolment'
+      `;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.revoked_at).toBeNull();
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("endSession resolves without error and changes no row when passed an unknown token", async () => {
+    const now = new Date("2026-11-03T10:00:00.000Z");
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `unknown-token-${newId()}@example.test`,
+      });
+      const session = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+      });
+
+      const randomBytes = new Uint8Array(32);
+      crypto.getRandomValues(randomBytes);
+      const unknownToken = Buffer.from(randomBytes).toString("base64url");
+
+      await expect(
+        endSession(sql, kms, KEY_ARN, {
+          accessToken: unknownToken,
+          now: new Date(now.getTime() + 60_000),
+        }),
+      ).resolves.toBeUndefined();
+
+      const rows = await sql<{ revoked_at: Date | null }[]>`
+        select revoked_at from identity.sessions where user_id = ${userId}
+      `;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.revoked_at).toBeNull();
+
+      const refreshed = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: session.refreshToken,
+        now: new Date(now.getTime() + 120_000),
+      });
+      expect(refreshed).not.toBeNull();
+      expect(refreshed!.userId).toBe(userId);
     } finally {
       await sql.end({ timeout: 1 });
     }
