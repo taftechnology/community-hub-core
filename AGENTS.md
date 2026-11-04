@@ -18,7 +18,7 @@ Everything else in this file is process. These are correctness. A change that br
 1. **Personal data is stored and processed in Australia.** The service, the database, the keys that wrap personal data, and the logs are in `ap-southeast-2`. Backups are in `ap-southeast-2` only. Any future copy of personal data stays in Australia. It leaves Australia only when a tenant's own signed-in user opens it, wherever they are; when a support operator reads it under a grant or break-glass; or when it is sent to a named subprocessor, and only the fields that function needs (architecture §7.3, [ADR 0009](docs/adr/0009-personal-data-on-aws.md)).
 2. **Every `app`-schema table has `org_id`, RLS and `FORCE ROW LEVEL SECURITY`.** Tenant scope is set per transaction with `set_config(..., true)`, never session-level `SET`. Identity and platform schemas are region-scoped and have **no** `org_id` (§6.3).
 3. **A field that SQL must filter, sort or aggregate is not encrypted.** Use a blind index, a derived clear column, or reclassify (§12.2.1).
-4. **Minors' data is restricted by default.** When `is_minor` is true, that person's `confidential*` columns are held under the household key. Children never appear in public content, directories or data sources (§12.1, §12.3).
+4. **Minors' data is restricted by default.** When `is_minor` is true, that person's `confidential*` columns are held under the household key. Children never appear in public content, directories or data sources (§12.1, §12.3). A minor's details are visible only to their guardian and the Community Admin (per-field View with a fresh second factor, audited); support operators never read them, even under a grant or break-glass ([ADR 0017](docs/adr/0017-childrens-data-access.md)).
 5. **No personal data in URLs, logs, traces, analytics or AI calls.** Ever (§12.3, §17, §19.1).
 6. **No third-party analytics SDK or session replay on any surface** (D17).
 7. **Nothing touches production data outside production.** No prod dumps in dev, staging, tests, fixtures or an agent's context (§23.1).
@@ -392,7 +392,7 @@ Omitted until first real input plus a must-fail fixture: tenant-isolation suite,
 
 **Stage 4 — Deploy**
 
-- merge to `main` → migrations → deploy the container to `staging-au` → smoke tests + critical-journey e2e (sign-in, donate, RSVP, check-in, consent)
+- merge to `main` → migrations → deploy the container to `staging-au` → smoke tests + critical-journey e2e (sign-in, donate, RSVP, consent)
 - production is a **human-triggered** promotion of that exact build: migrations → gradual deployment → automatic rollback on error-rate alert
 - Terraform apply on `infra/` changes requires human approval
 - nightly on `main`: full e2e, restore drill check, dependency and licence report
