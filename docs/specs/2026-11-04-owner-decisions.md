@@ -1,7 +1,7 @@
 # Spec: Owner decisions 2026-11-04
 
 Slug: owner-decisions
-Status: draft
+Status: approved (2026-11-04, Abdus Salam)
 Architecture refs: §7.6, §8.1, §9, §10, §11.3, §11.4, §12.3, §14, §15, §19, §22, §23, §24, §25, §26, §21; ADR 0017, ADR 0018
 
 ## Problem

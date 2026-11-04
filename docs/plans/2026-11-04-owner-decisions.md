@@ -6,7 +6,7 @@ Spec: docs/specs/2026-11-04-owner-decisions.md
 
 **Tech stack:** Markdown, Prettier. No application code, Terraform, or migrations.
 
-Status: draft
+Status: approved (2026-11-04, Abdus Salam)
 
 **Branch:** `docs/2026-11-04-owner-decisions` · one PR · twenty tasks, one commit each
 
