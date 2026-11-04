@@ -464,6 +464,92 @@ describe("Shell and ShellLayout", () => {
     });
   });
 
+  it("clicking Sign out when server answers 500 navigates to /sign-in?signout=unconfirmed and clears sessionStorage", async () => {
+    sessionStorage.setItem("community-hub.access-token", "fake-token-500");
+    sessionStorage.setItem("community-hub.signout-handle", "fake-handle-500");
+    sessionStorage.setItem("community-hub.community", "parish-slug-500");
+    vi.stubEnv("VITE_AUTH_ORIGIN", "https://au.auth.example.test");
+    vi.stubEnv("VITE_API_ORIGIN", "https://au.api.example.test");
+
+    const location = window.location;
+    const assignMock = vi.fn();
+    vi.stubGlobal("location", {
+      ancestorOrigins: location.ancestorOrigins,
+      href: location.href,
+      origin: location.origin,
+      protocol: location.protocol,
+      host: location.host,
+      hostname: location.hostname,
+      port: location.port,
+      pathname: location.pathname,
+      search: location.search,
+      hash: location.hash,
+      assign: assignMock,
+      replace: location.replace.bind(location),
+      reload: location.reload.bind(location),
+    });
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 500 }));
+
+    render(<Shell />);
+
+    const accountBtn = screen.getByRole("button", { name: "Account" });
+    fireEvent.click(accountBtn);
+
+    const signOutBtn = await screen.findByRole("menuitem", { name: "Sign out" });
+    fireEvent.click(signOutBtn);
+
+    await waitFor(() => {
+      expect(assignMock).toHaveBeenCalledWith("/sign-in?signout=unconfirmed");
+    });
+    expect(sessionStorage.getItem("community-hub.access-token")).toBeNull();
+    expect(sessionStorage.getItem("community-hub.signout-handle")).toBeNull();
+    expect(sessionStorage.getItem("community-hub.community")).toBeNull();
+  });
+
+  it("clicking Sign out when fetch rejects navigates to /sign-in?signout=unconfirmed and clears sessionStorage", async () => {
+    sessionStorage.setItem("community-hub.access-token", "fake-token-reject");
+    sessionStorage.setItem("community-hub.signout-handle", "fake-handle-reject");
+    sessionStorage.setItem("community-hub.community", "parish-slug-reject");
+    vi.stubEnv("VITE_AUTH_ORIGIN", "https://au.auth.example.test");
+    vi.stubEnv("VITE_API_ORIGIN", "https://au.api.example.test");
+
+    const location = window.location;
+    const assignMock = vi.fn();
+    vi.stubGlobal("location", {
+      ancestorOrigins: location.ancestorOrigins,
+      href: location.href,
+      origin: location.origin,
+      protocol: location.protocol,
+      host: location.host,
+      hostname: location.hostname,
+      port: location.port,
+      pathname: location.pathname,
+      search: location.search,
+      hash: location.hash,
+      assign: assignMock,
+      replace: location.replace.bind(location),
+      reload: location.reload.bind(location),
+    });
+
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network failure"));
+
+    render(<Shell />);
+
+    const accountBtn = screen.getByRole("button", { name: "Account" });
+    fireEvent.click(accountBtn);
+
+    const signOutBtn = await screen.findByRole("menuitem", { name: "Sign out" });
+    fireEvent.click(signOutBtn);
+
+    await waitFor(() => {
+      expect(assignMock).toHaveBeenCalledWith("/sign-in?signout=unconfirmed");
+    });
+    expect(sessionStorage.getItem("community-hub.access-token")).toBeNull();
+    expect(sessionStorage.getItem("community-hub.signout-handle")).toBeNull();
+    expect(sessionStorage.getItem("community-hub.community")).toBeNull();
+  });
+
   it("axe reports no violations on shell with the user menu open in light and dark", async () => {
     sessionStorage.setItem("community-hub.signout-handle", "fake-" + "handle-3");
     const { container } = render(<Shell />);
