@@ -1,0 +1,365 @@
+Spec: docs/specs/2026-11-04-owner-decisions.md
+
+# Owner decisions 2026-11-04 implementation plan
+
+**Goal:** Record the owner's 2026-11-04 decisions in ADRs and living documents without changing code or infrastructure.
+
+**Tech stack:** Markdown, Prettier. No application code, Terraform, or migrations.
+
+Status: approved (2026-11-04, Abdus Salam)
+
+**Branch:** `docs/2026-11-04-owner-decisions` · one PR · twenty tasks, one commit each, plus title-fix commit `fbe35e5` after task 18 and round 3 review fixes — twenty-two commits total
+
+## Global constraints
+
+- Documents only. Do not change application code, tests, CI workflows, migrations, or Terraform.
+- Do not push, open a PR, merge, or touch AWS.
+- Do not edit the "Where we are" snapshot in `docs/roadmap.md`.
+- Run `pnpm exec prettier --write` on every Markdown file touched, then `pnpm exec prettier --check .` before finishing.
+- Session scratch is never committed.
+
+**Rollback:** Revert the PR. No migration or cloud state.
+
+---
+
+### Task 2: ADR 0017 children's data access
+
+**Files:** Create `docs/adr/0017-childrens-data-access.md`
+
+**Check:** File exists; links from `architecture.md` §11.3–11.4 and `AGENTS.md` rule 4; prettier on the file.
+
+**Commit:** `docs(adr): 0017 children's data access`
+
+---
+
+### Task 3: ADR 0018 client migration preview
+
+**Files:** Create `docs/adr/0018-client-migration-preview.md`
+
+**Check:** File exists; `architecture.md` §24 cites it; grep finds no "securely delete the self-hosted"; prettier on the file.
+
+**Commit:** `docs(adr): 0018 client migration through a production preview`
+
+---
+
+### Task 4: architecture.md
+
+**Files:** Modify `architecture.md` (sections listed in spec coverage table and brief Task 4 list)
+
+**Check:**
+
+- `grep -n -i "check-in\|check in\|checkin" architecture.md` — remaining hits state check-in is not built or removed from scope.
+- `grep -n "Email Settings" architecture.md` — dropped.
+- `grep -n -i "staging" architecture.md | grep -i -E "import|migrat|parallel|client"` — no real client data on staging.
+- Prettier on `architecture.md`.
+
+**Commit:** `docs(architecture): record the 2026-11-04 owner decisions`
+
+---
+
+### Task 5: AGENTS.md
+
+**Files:** Modify `AGENTS.md` only §1 rule 4 and §10 Stage 4 critical journeys.
+
+**Check:** `grep check-in AGENTS.md` — journey list has no check-in; rule 4 links ADR 0017; prettier.
+
+**Commit:** `docs(agents): minors' access rule and no check-in journey`
+
+---
+
+### Task 6: roadmap.md
+
+**Files:** Modify `docs/roadmap.md` per brief Task 6 (not the Where we are snapshot).
+
+**Check:** Email Settings and check-in grep rules; open questions aligned with architecture §26; prettier.
+
+**Commit:** `docs(roadmap): record the 2026-11-04 owner decisions`
+
+---
+
+## Final verification (report in impl-report.md)
+
+From worktree root:
+
+```bash
+grep -n -i "check-in\|check in\|checkin" architecture.md AGENTS.md docs/roadmap.md
+grep -n "Email Settings" architecture.md docs/roadmap.md
+grep -n -i "staging" architecture.md | grep -i -E "import|migrat|parallel|client"
+grep -n -i "securely delete the self-hosted" architecture.md
+pnpm exec prettier --check .
+git status --short
+git log --oneline origin/main..HEAD
+```
+
+Expect exactly six commits and a clean working tree.
+
+---
+
+## Brief 2 — later owner answers (2026-11-04)
+
+Four additional commits on the same branch. Do not rewrite the first six commits.
+
+### Task 7: ADR 0017 second-factor answer
+
+**Files:** `docs/adr/0017-childrens-data-access.md`
+
+**Check:** Decision 6 matches owner answer B; "Two-factor for staff" in consequences; interpretations section; "each field" wording; prettier.
+
+**Commit:** `docs(adr): record the second-factor answer in ADR 0017`
+
+---
+
+### Task 8: architecture.md (brief 2)
+
+**Files:** `architecture.md`
+
+**Check:**
+
+- Plan pricing grep (see brief-2 checks): no United States dollar amounts for the 200 / 500 / 1,500 launch prices in the four listed files (AUD, excluding GST).
+- `without checking which tenant` restored (line ~82).
+- Q9 original SES/Cloudflare/OtpMail text plus Email Settings dropped append.
+- Q18–Q22 closed per owner; Q23 open.
+- §11.1, §14, §19, §22 backup row per answer D.
+- Prettier on `architecture.md`.
+
+**Commit:** `docs(architecture): GST, second factor, receipt default and restore answers`
+
+---
+
+### Task 9: roadmap.md (brief 2)
+
+**Files:** `docs/roadmap.md`
+
+**Check:** Two-factor row; restore row renamed; AUD/GST; open questions Q18–Q22; inventory line; prettier.
+
+**Commit:** `docs(roadmap): GST, two-factor, receipt default and restore answers`
+
+---
+
+### Task 10: spec and plan (brief 2)
+
+**Files:** `docs/specs/2026-11-04-owner-decisions.md`, `docs/plans/2026-11-04-owner-decisions.md`
+
+**Check:** Decisions 13–16 (or refined 4, 6, 7, 9); open points; coverage; plan tasks 7–10; prettier.
+
+**Commit:** `docs: update the owner decisions spec and plan`
+
+---
+
+## Final verification (brief 2 — report in impl-report-2.md)
+
+```bash
+grep -n -E "USD (200|500|1,500)" architecture.md docs/roadmap.md docs/specs/2026-11-04-owner-decisions.md docs/plans/2026-11-04-owner-decisions.md
+grep -n -i "can see that backups exist\|admins see backups\|view and restore" architecture.md docs/roadmap.md docs/adr/0017-childrens-data-access.md docs/specs/2026-11-04-owner-decisions.md
+grep -n "without checking which tenant" architecture.md
+grep -n -E "^\| Q(18|19|20|21|22|23) " architecture.md docs/roadmap.md
+pnpm exec prettier --check .
+git status --short
+git log --oneline origin/main..HEAD
+```
+
+Expect ten commits and a clean working tree.
+
+---
+
+## Brief 3 — GivingJar is our own platform (2026-11-04)
+
+One additional commit on the same branch. Do not amend earlier commits.
+
+### Task 11: GivingJar platform decision
+
+**Files:** `architecture.md`, `docs/roadmap.md`, `docs/specs/2026-11-04-owner-decisions.md`, `docs/plans/2026-11-04-owner-decisions.md`
+
+**Check:**
+
+- `grep -n -i "confirm" architecture.md docs/roadmap.md docs/specs/2026-11-04-owner-decisions.md docs/plans/2026-11-04-owner-decisions.md | grep -i givingjar` — no hit.
+- `grep -n -E "^\| Q1 " architecture.md docs/roadmap.md` — both closed.
+- §14 GivingJar own-platform sentence; §10 "an AUD 1,500"; Phase 3 GivingJar capabilities row; spec decision 3 refined; open points and coverage updated.
+- Prettier on every Markdown file touched; `pnpm exec prettier --check .`.
+
+**Commit:** `docs: GivingJar is our own platform on Stripe Connect`
+
+---
+
+## Final verification (brief 3 — report in impl-report-3.md)
+
+```bash
+grep -n -i "confirm" architecture.md docs/roadmap.md docs/specs/2026-11-04-owner-decisions.md docs/plans/2026-11-04-owner-decisions.md | grep -i givingjar
+grep -n -E "^\| Q1 " architecture.md docs/roadmap.md
+pnpm exec prettier --check .
+git status --short
+git log --oneline origin/main..HEAD
+```
+
+Expect eleven commits and a clean working tree.
+
+---
+
+## Brief 4 — shop payments, child presence, mandatory two-factor (2026-11-04)
+
+One additional commit on the same branch. Do not amend earlier commits.
+
+### Task 12: Owner answers A–C
+
+**Files:** `architecture.md`, `docs/roadmap.md`, `docs/adr/0017-childrens-data-access.md`, `docs/specs/2026-11-04-owner-decisions.md`, `docs/plans/2026-11-04-owner-decisions.md`
+
+**Check:**
+
+- `grep -n -i "interpretation" architecture.md docs/roadmap.md docs/adr/0017-childrens-data-access.md docs/specs/2026-11-04-owner-decisions.md` — only the receipt-wording interpretation remains.
+- `grep -n -i -E "no second factor|has not set up|not yet set up" docs/adr/0017-childrens-data-access.md docs/specs/2026-11-04-owner-decisions.md` — no hit.
+- Shop: GivingJar / `PaymentProvider`; §14 community payments include orders; no stock or delivery.
+- Child presence for other staff in ADR 0017, architecture §11.3 / §12.3, roadmap children's row, spec decision 7.
+- Mandatory second factor in architecture §11.1, ADR 0017 decision 6, roadmap Two-factor row, spec decision 7 / 14.
+- Spec and plan: decisions refined later on 2026-11-04; open points; coverage; this task recorded.
+- Prettier on every Markdown file touched; `pnpm exec prettier --check .`.
+
+**Commit:** `docs: shop payments, child presence and mandatory two-factor`
+
+---
+
+## Final verification (brief 4 — report in impl-report-4.md)
+
+```bash
+grep -n -i "interpretation" architecture.md docs/roadmap.md docs/adr/0017-childrens-data-access.md docs/specs/2026-11-04-owner-decisions.md
+grep -n -i -E "no second factor|has not set up|not yet set up" docs/adr/0017-childrens-data-access.md docs/specs/2026-11-04-owner-decisions.md
+pnpm exec prettier --check .
+git status --short
+git log --oneline origin/main..HEAD
+```
+
+Expect twelve commits and a clean working tree.
+
+---
+
+## Brief 5 — Laravel backup, receipt edit, SMS, two-factor and restore record (2026-11-04)
+
+One additional commit on the same branch. Do not amend earlier commits.
+
+### Task 13: Owner answers A–E
+
+**Files:** `docs/adr/0018-client-migration-preview.md`, `architecture.md`, `docs/roadmap.md`, `docs/specs/2026-11-04-owner-decisions.md`, `docs/plans/2026-11-04-owner-decisions.md`
+
+**Check:**
+
+- `grep -n -i "interpretation\|to confirm" architecture.md docs/roadmap.md docs/adr/0017-childrens-data-access.md docs/adr/0018-client-migration-preview.md docs/specs/2026-11-04-owner-decisions.md` — no hit about this chunk's decisions (Q18 receipt wording, two-factor assumption, Laravel backup open point, receipt out-of-band).
+- `grep -n -E "^\| Q23 " architecture.md docs/roadmap.md` — both closed (owner 2026-11-04).
+- Laravel backup: ADR 0018 decision 4; architecture §24.2 step 6; roadmap Laravel row; spec decisions 10 and 17; Q23 closed in both open-question tables.
+- Receipt wording: Giving settings in admin; no interpretation-to-confirm; spec decisions 4, 15, 18.
+- Broadcast Messages: email only on roadmap row; spec decision 19; no SMS provider added.
+- Two-factor: existing/imported users at next sign-in stated as decided, not assumption (spec decisions 7, 14, 20).
+- Restore: parish request, ticket reference, ops audit and parish audit log in architecture §11.4, §22, §19; roadmap Restore row; spec decisions 9, 16, 21.
+- Spec open points none for this chunk; coverage rows 17–21; this task recorded.
+- Prettier on every Markdown file touched; `pnpm exec prettier --check .`.
+
+**Commit:** `docs: Laravel backup, receipt edit, SMS, two-factor and restore record answers`
+
+---
+
+## Final verification (brief 5 — report in impl-report-5.md)
+
+```bash
+grep -n -i "interpretation\|to confirm" architecture.md docs/roadmap.md docs/adr/0017-childrens-data-access.md docs/adr/0018-client-migration-preview.md docs/specs/2026-11-04-owner-decisions.md
+grep -n -E "^\| Q23 " architecture.md docs/roadmap.md
+pnpm exec prettier --check .
+git status --short
+git log --oneline origin/main..HEAD
+```
+
+Expect thirteen commits and a clean working tree.
+
+---
+
+## Brief 6 — Jellycube templates and second-review fixes (2026-11-04)
+
+Two additional commits on the same branch. Do not amend earlier commits.
+
+### Task 14: Jellycube templates; no in-core renderer
+
+**Files:** `architecture.md`, `docs/roadmap.md`, `docs/specs/2026-11-04-owner-decisions.md`, `docs/plans/2026-11-04-owner-decisions.md`
+
+**Check:**
+
+- `grep -n -i -E "thin (in-core )?renderer|in-core renderer|fallback renderer|Phase 4 renderer" architecture.md docs/roadmap.md docs/specs/2026-11-04-owner-decisions.md` — every remaining hit says it is dropped.
+- Q2 closed in architecture §26 and roadmap open questions; Phase 2 Website host contract freeze row kept.
+- Spec decision 8 refined; coverage row 8; open points Q2 closed.
+- Prettier on every Markdown file touched.
+
+**Commit:** `docs: Jellycube templates and no in-core renderer`
+
+---
+
+### Task 15: Second-review fixes (Grok at `b3fc650`)
+
+**Files:** `architecture.md`, `docs/roadmap.md`, `docs/adr/0017-childrens-data-access.md`, `docs/plans/2026-11-04-owner-decisions.md`
+
+**Check:** Brief 6 Part 2 items 1–11; `head -1 docs/plans/2026-11-04-owner-decisions.md` starts with `Spec:`; brief 6 grep checks; prettier.
+
+**Commit:** `docs: second-review fixes for the owner decisions`
+
+---
+
+### Task 16: Round 2 review fixes
+
+**Files:** `architecture.md`, `docs/roadmap.md`, `docs/plans/2026-11-04-owner-decisions.md`
+
+**Check:** Brief 7 items 1–4; prettier on every Markdown file touched; `git log --oneline origin/main..HEAD` shows sixteen commits.
+
+**Commit:** `docs: round 2 review fixes for the owner decisions`
+
+---
+
+### Task 17: Ops console build guide (brief 8 task A)
+
+**Files:** Create `docs/ops-console.md`
+
+**Check:** Build guide structure per brief 8; prettier on the file.
+
+**Commit:** `docs: ops console build guide`
+
+---
+
+### Task 18: Ops console roadmap and architecture (brief 8 task B)
+
+**Files:** `docs/roadmap.md`, `architecture.md` (§8.5 Ops console row, §19.3 Ops console subsection)
+
+**Check:** Ops console section with nine rows; three former Phase 2 ops rows not duplicated; architecture links to `docs/ops-console.md`; prettier.
+
+**Commit:** `docs: ops console in the roadmap and architecture`
+
+**Title-fix commit (not a plan task):** `fbe35e5` — restored the three moved ops row titles after this task so roadmap traceability phrases stay unique.
+
+---
+
+### Task 19: Ops console in spec and plan (brief 8 task C)
+
+**Files:** `docs/specs/2026-11-04-owner-decisions.md`, `docs/plans/2026-11-04-owner-decisions.md`
+
+**Check:** Decision 22 and coverage row; tasks 17–20 in plan; `Status:` lines unchanged in this commit; prettier.
+
+**Commit:** `docs: ops console in the owner decisions spec and plan`
+
+---
+
+### Task 20: Approve spec and plan (brief 8 task D)
+
+**Files:** `docs/specs/2026-11-04-owner-decisions.md`, `docs/plans/2026-11-04-owner-decisions.md`
+
+**Check:** Only the two `Status:` lines change to `approved (2026-11-04, Abdus Salam)`.
+
+**Commit:** `docs: approve the owner decisions spec and plan`
+
+---
+
+## Final verification (brief 8 — report in impl-report-8.md)
+
+```bash
+grep -n "^Status:" docs/specs/2026-11-04-owner-decisions.md docs/plans/2026-11-04-owner-decisions.md
+head -1 docs/plans/2026-11-04-owner-decisions.md
+grep -c "Plan prices and setup fee in the ops console\|Receipt wording in the ops console\|Restore one community" docs/roadmap.md
+git show --stat HEAD
+pnpm exec prettier --check .
+git status --short
+git log --oneline origin/main..HEAD
+```
+
+Expect twenty-two commits (twenty plan tasks, title-fix `fbe35e5` after task 18, round 3 review fixes), both statuses approved, and a clean working tree.
