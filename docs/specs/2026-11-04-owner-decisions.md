@@ -35,9 +35,9 @@ Sign-in mail is Amazon SES (ADR 0013). There is no per-parish email configuratio
 
 PDF upload is the default. A parish can also write a bulletin in the app (rich text). Both publish through the bulletins external collection.
 
-### Decision 3 — GivingJar on Stripe Connect
+### Decision 3 — GivingJar on Stripe Connect (refined later on 2026-11-04)
 
-GivingJar is built on Stripe Connect. Still to confirm with GivingJar: its API offers recurring donations, refunds, per-community onboarding, and signed webhooks. This narrows Q1; it does not close Q1.
+GivingJar is **our own platform**, built on Stripe Connect. Whatever core needs from it, we build in GivingJar, as far as Stripe Connect offers it. Recurring donations, refunds, per-community onboarding (Stripe Connect connected accounts), and signed webhooks to the Sydney hostname are built in GivingJar; core's `PaymentProvider` adapter uses them. Q1 is closed.
 
 ### Decision 4 — Tax receipt wording (refined later on 2026-11-04)
 
@@ -114,7 +114,7 @@ Documenting stricter children's access while `main` still allows `people.restric
 
 ## Out-of-band
 
-Shop interpretation (decision 5) needs owner confirmation. Receipt wording edit surface (decision 4) and children's staff visibility (decision 7) need owner confirmation. GivingJar API confirmation (Q1) remains with the vendor.
+Shop interpretation (decision 5) needs owner confirmation. Receipt wording edit surface (decision 4) and children's staff visibility (decision 7) need owner confirmation.
 
 ## Open points
 
@@ -124,7 +124,6 @@ Shop interpretation (decision 5) needs owner confirmation. Receipt wording edit 
 | Other staff and child count  | Interpretation: count vs nothing (decision 7)                   |
 | No second factor yet         | Interpretation: must enrol before View (decision 7)             |
 | Laravel backup after cutover | Location and retention, Australia only (Q23)                    |
-| GivingJar API                | Q1 narrowed; four capabilities still to confirm                 |
 | Shop delivery interpretation | Confirm with owner (decision 5 wording in architecture/roadmap) |
 
 ## Coverage table
@@ -133,7 +132,7 @@ Shop interpretation (decision 5) needs owner confirmation. Receipt wording edit 
 | --- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | Email Settings dropped | `architecture.md` §9 Laravel mapping note; `docs/roadmap.md` nav Settings row, inventory "Intentionally dropped", open questions Q9 closed                                                                                                                                                                |
 | 2   | Bulletins              | `architecture.md` §9 engagement row, §15.5 bulletins collection; `docs/roadmap.md` Phase 2 Bulletins row                                                                                                                                                                                                  |
-| 3   | GivingJar Connect      | `architecture.md` §14 payments, §26 Q1; `docs/roadmap.md` Phase 3 Giving row, open questions Q1                                                                                                                                                                                                           |
+| 3   | GivingJar Connect      | `architecture.md` §14 payments, §26 Q1 closed; `docs/roadmap.md` Phase 3 GivingJar capabilities row, Giving row, open questions Q1 closed                                                                                                                                                                 |
 | 4   | Receipt wording        | `architecture.md` §14.3, §19 ops console; `docs/roadmap.md` ops row; `architecture.md` §26 Q18 closed                                                                                                                                                                                                     |
 | 5   | Shop products only     | `architecture.md` §8.1 `commerce/`, §9 ecommerce row, §25 Phase 5; `docs/roadmap.md` Phase 3 Commerce, nav E-commerce, inventory                                                                                                                                                                          |
 | 6   | Plan pricing           | `architecture.md` §10 pricing, §19 ops; `docs/roadmap.md` ops row; `architecture.md` §26 Q8, Q19 closed                                                                                                                                                                                                   |

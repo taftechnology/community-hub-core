@@ -159,3 +159,36 @@ git log --oneline origin/main..HEAD
 ```
 
 Expect ten commits and a clean working tree.
+
+---
+
+## Brief 3 — GivingJar is our own platform (2026-11-04)
+
+One additional commit on the same branch. Do not amend earlier commits.
+
+### Task 11: GivingJar platform decision
+
+**Files:** `architecture.md`, `docs/roadmap.md`, `docs/specs/2026-11-04-owner-decisions.md`, `docs/plans/2026-11-04-owner-decisions.md`
+
+**Check:**
+
+- `grep -n -i "confirm" architecture.md docs/roadmap.md docs/specs/2026-11-04-owner-decisions.md docs/plans/2026-11-04-owner-decisions.md | grep -i givingjar` — no hit.
+- `grep -n -E "^\| Q1 " architecture.md docs/roadmap.md` — both closed.
+- §14 GivingJar own-platform sentence; §10 "an AUD 1,500"; Phase 3 GivingJar capabilities row; spec decision 3 refined; open points and coverage updated.
+- Prettier on every Markdown file touched; `pnpm exec prettier --check .`.
+
+**Commit:** `docs: GivingJar is our own platform on Stripe Connect`
+
+---
+
+## Final verification (brief 3 — report in impl-report-3.md)
+
+```bash
+grep -n -i "confirm" architecture.md docs/roadmap.md docs/specs/2026-11-04-owner-decisions.md docs/plans/2026-11-04-owner-decisions.md | grep -i givingjar
+grep -n -E "^\| Q1 " architecture.md docs/roadmap.md
+pnpm exec prettier --check .
+git status --short
+git log --oneline origin/main..HEAD
+```
+
+Expect eleven commits and a clean working tree.

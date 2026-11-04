@@ -175,15 +175,16 @@ Check-in is **not built** (owner decision 2026-11-04, [ADR 0017](../docs/adr/001
 
 ## Phase 3 — Money and safeguarding
 
-| Status      | Journey        | Nav / surface  | Must include                                                                                                                                                   |
-| ----------- | -------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| not started | Giving         | Donations      | Campaigns, splits, GivingJar adapter on **Stripe Connect**, ledger, receipts. Staging **donate** gate. Recurring blocked on Q1 confirmation                    |
-| not started | Membership     | Membership     | Plans, numbers, renewals via `PaymentProvider`                                                                                                                 |
-| not started | Records        | Records        | Compliance documents, due dates                                                                                                                                |
-| not started | Certifications | Certifications | Parish certificate requests (admin + mobile); restricted PDFs; often children’s data                                                                           |
-| not started | Volunteers     | Volunteers     | Applications, WWCC / Blue Card, documents, **police verification** page                                                                                        |
-| not started | Safeguarding   | (ops)          | **New in core.** Incidents and messaging rules only; **no check-in** (owner 2026-11-04, ADR 0017). Not a Laravel port                                          |
-| not started | Commerce       | E-commerce     | **In scope:** products only. Members buy and pay; order record holds purchase and payment. No stock levels, no delivery (interpretation to confirm with owner) |
+| Status      | Journey                | Nav / surface        | Must include                                                                                                                                                                                                                                                                                                                                   |
+| ----------- | ---------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| not started | GivingJar capabilities | (GivingJar platform) | Recurring donations, refunds, per-community onboarding (Stripe Connect connected accounts), signed webhooks to the Sydney hostname. Work in the GivingJar platform, not in this repo. Core's Giving chunk depends on it. Donor personal data stays in Australia except what Stripe needs to take a payment (Stripe is the named subprocessor). |
+| not started | Giving                 | Donations            | Campaigns, splits, GivingJar adapter on **Stripe Connect**, ledger, receipts. Staging **donate** gate. Recurring donations, refunds, and per-community onboarding are built in GivingJar on Stripe Connect; core's adapter uses them.                                                                                                          |
+| not started | Membership             | Membership           | Plans, numbers, renewals via `PaymentProvider`                                                                                                                                                                                                                                                                                                 |
+| not started | Records                | Records              | Compliance documents, due dates                                                                                                                                                                                                                                                                                                                |
+| not started | Certifications         | Certifications       | Parish certificate requests (admin + mobile); restricted PDFs; often children’s data                                                                                                                                                                                                                                                           |
+| not started | Volunteers             | Volunteers           | Applications, WWCC / Blue Card, documents, **police verification** page                                                                                                                                                                                                                                                                        |
+| not started | Safeguarding           | (ops)                | **New in core.** Incidents and messaging rules only; **no check-in** (owner 2026-11-04, ADR 0017). Not a Laravel port                                                                                                                                                                                                                          |
+| not started | Commerce               | E-commerce           | **In scope:** products only. Members buy and pay; order record holds purchase and payment. No stock levels, no delivery (interpretation to confirm with owner)                                                                                                                                                                                 |
 
 After this phase, donate + form submit + RSVP can be proven on staging APIs even if the public site is still Laravel (Phase 4 is the public-site gate).
 
@@ -256,21 +257,21 @@ Inventory: `/Users/iamabdus/ai-coding-2/Community-Hub` against architecture §9 
 
 From architecture §26. Do not invent answers in a spec.
 
-| #   | Blocks                                                                                                                         |
-| --- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Q1  | Recurring giving, refunds, GivingJar on Stripe Connect (confirm four API capabilities)                                         |
-| Q2  | Phase 4 Jellycube vs thin renderer; contract freeze row in Phase 2                                                             |
-| Q13 | Closed for forms, donations, and RSVPs: they post to the Sydney hostname. Which account serves Jellycube sites is not decided. |
-| Q3  | Closed by ADR 0011. There is no identity library.                                                                              |
-| Q8  | Decided: AUD 200 / AUD 500 monthly, AUD 1,500 setup, ops-editable, excluding GST (tax on top)                                  |
-| Q9  | Closed. SES for sign-in mail; **Email Settings dropped**                                                                       |
-| Q12 | Closed. Feature flags are `platform` tables. There is no vendor.                                                               |
-| Q18 | Closed (owner 2026-11-04). Default receipt wording in ops console; parish uses default or sets own                             |
-| Q19 | Closed (owner 2026-11-04). Prices exclude GST; tax charged on top                                                              |
-| Q20 | Closed (owner 2026-11-04). Authenticator, passkey, or email code; Two-factor for staff chunk first                             |
-| Q21 | Closed as a requirement (owner 2026-11-04). Per-community restore without affecting others                                     |
-| Q22 | Closed (owner 2026-11-04). Support restore from ops console; no tenant backup UI                                               |
-| Q23 | Laravel backup location and retention after cutover (Australia only)                                                           |
+| #   | Blocks                                                                                                                                                                                          |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Q1  | Closed (owner 2026-11-04). GivingJar is our own platform on Stripe Connect; recurring, refunds, per-community onboarding, and signed webhooks are built in GivingJar; core's adapter uses them. |
+| Q2  | Phase 4 Jellycube vs thin renderer; contract freeze row in Phase 2                                                                                                                              |
+| Q13 | Closed for forms, donations, and RSVPs: they post to the Sydney hostname. Which account serves Jellycube sites is not decided.                                                                  |
+| Q3  | Closed by ADR 0011. There is no identity library.                                                                                                                                               |
+| Q8  | Decided: AUD 200 / AUD 500 monthly, AUD 1,500 setup, ops-editable, excluding GST (tax on top)                                                                                                   |
+| Q9  | Closed. SES for sign-in mail; **Email Settings dropped**                                                                                                                                        |
+| Q12 | Closed. Feature flags are `platform` tables. There is no vendor.                                                                                                                                |
+| Q18 | Closed (owner 2026-11-04). Default receipt wording in ops console; parish uses default or sets own                                                                                              |
+| Q19 | Closed (owner 2026-11-04). Prices exclude GST; tax charged on top                                                                                                                               |
+| Q20 | Closed (owner 2026-11-04). Authenticator, passkey, or email code; Two-factor for staff chunk first                                                                                              |
+| Q21 | Closed as a requirement (owner 2026-11-04). Per-community restore without affecting others                                                                                                      |
+| Q22 | Closed (owner 2026-11-04). Support restore from ops console; no tenant backup UI                                                                                                                |
+| Q23 | Laravel backup location and retention after cutover (Australia only)                                                                                                                            |
 
 ---
 
