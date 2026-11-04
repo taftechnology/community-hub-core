@@ -8,7 +8,7 @@ Spec: docs/specs/2026-11-04-owner-decisions.md
 
 Status: approved (2026-11-04, Abdus Salam)
 
-**Branch:** `docs/2026-11-04-owner-decisions` · one PR · twenty tasks, one commit each
+**Branch:** `docs/2026-11-04-owner-decisions` · one PR · twenty tasks, one commit each, plus title-fix commit `fbe35e5` after task 18 and round 3 review fixes — twenty-two commits total
 
 ## Global constraints
 
@@ -326,6 +326,8 @@ Two additional commits on the same branch. Do not amend earlier commits.
 
 **Commit:** `docs: ops console in the roadmap and architecture`
 
+**Title-fix commit (not a plan task):** `fbe35e5` — restored the three moved ops row titles after this task so roadmap traceability phrases stay unique.
+
 ---
 
 ### Task 19: Ops console in spec and plan (brief 8 task C)
@@ -360,4 +362,4 @@ git status --short
 git log --oneline origin/main..HEAD
 ```
 
-Expect twenty commits, both statuses approved, and a clean working tree.
+Expect twenty-two commits (twenty plan tasks, title-fix `fbe35e5` after task 18, round 3 review fixes), both statuses approved, and a clean working tree.

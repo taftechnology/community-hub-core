@@ -118,7 +118,7 @@ A restore we run for a parish requires the parish's request with a ticket refere
 
 ### Decision 22 — Ops console build guide (owner 2026-11-04)
 
-The ops console is the Community Hub SaaS admin. SaaS operators sign in to it and manage every community and the platform from its dashboard. **It is not being built now.** This chunk records roadmap rows and [`docs/ops-console.md`](ops-console.md), a build guide so whoever builds each part later has everything decided and how to do it. The owner chose all four guide themes: (1) communities and their first admin; (2) plans, prices and billing, including per-community modules; (3) operators and support access, including an operator audit view; (4) default receipt wording, restoring one community, mobile app listings, and usage views. Each area in the guide is its own future chunk ([`AGENTS.md`](../../AGENTS.md) §3).
+The ops console is the Community Hub SaaS admin. SaaS operators sign in to it and manage every community and the platform from its dashboard. **It is not being built now.** This chunk records roadmap rows and [`docs/ops-console.md`](../ops-console.md), a build guide so whoever builds each part later has everything decided and how to do it. The owner chose all four guide themes: (1) communities and their first admin; (2) plans, prices and billing, including per-community modules — current clients move across with **no loss of features** whatever plan they land on; (3) operators and support access, including an operator audit view; (4) default receipt wording, restoring one community, mobile app listings, and usage views. Each area in the guide is its own future chunk ([`AGENTS.md`](../../AGENTS.md) §3).
 
 ## Data
 

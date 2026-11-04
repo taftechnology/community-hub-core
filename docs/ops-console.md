@@ -22,18 +22,18 @@ Merged specs: `docs/specs/2026-10-22-ops-operator-identity.md`, `docs/specs/2026
 
 ## Rules every ops chunk keeps
 
-| Rule                                                                                                                            | Source                                                                                       |
-| ------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Operators sign in with passkeys on the ops hostname; platform roles require passkeys (no email OTP to start a platform session) | [`architecture.md`](../architecture.md) §11.4; [`AGENTS.md`](../AGENTS.md) §1                |
-| Every operator action is recorded in the operator event record (ids only, no personal data in the payload)                      | [`architecture.md`](../architecture.md) §19.2; operator identity specs                       |
-| The `platform` database role has **no** privileges on the `app` schema                                                          | [`architecture.md`](../architecture.md) §11.4; [`AGENTS.md`](../AGENTS.md) §1 rule 2         |
-| Tenant data is read only under a §11.4 grant, using the `app` role with tenant scope set per transaction                        | [`architecture.md`](../architecture.md) §11.4                                                |
-| Support grants and break-glass never include a minor's details                                                                  | [ADR 0017](adr/0017-childrens-data-access.md); [`architecture.md`](../architecture.md) §11.4 |
-| No personal data in URLs, logs, traces or analytics                                                                             | [`AGENTS.md`](../AGENTS.md) §1 rules 5–6; [`architecture.md`](../architecture.md) §17, D17   |
-| Personal data stays in Australia (`ap-southeast-2`); Stripe Billing and webhooks use the Sydney hostname                        | [`AGENTS.md`](../AGENTS.md) §1 rule 1; [`architecture.md`](../architecture.md) §7.3, §14     |
-| Ops UI composes `packages/ui` and meets WCAG 2.2 AA                                                                             | [`architecture.md`](../architecture.md) §8.5, §21.1; [`AGENTS.md`](../AGENTS.md) §6          |
-| Permissions are enforced in the API, not only hidden in the UI                                                                  | [`architecture.md`](../architecture.md) §8.5 rule 3; [`AGENTS.md`](../AGENTS.md) §6          |
-| Destructive actions ask for confirmation                                                                                        | Product convention; each area spec states which actions                                      |
+| Rule                                                                                                                                                                  | Source                                                                                                                                       |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Operators sign in with passkeys on the ops hostname; platform roles require passkeys (no email OTP to start or recover a platform session)                            | [`architecture.md`](../architecture.md) §11.4                                                                                                |
+| Operator identity actions are recorded in `identity.operator_events` (ids only, no personal data in the payload). Tenant-visible grant reads use the tenant audit log | [`architecture.md`](../architecture.md) §11.4, §19.2; operator identity specs. **Proposed:** new ops-area audit action names in later chunks |
+| The `platform` database role has **no** privileges on the `app` schema                                                                                                | [`architecture.md`](../architecture.md) §11.4, §7.2                                                                                          |
+| Tenant data is read only under a §11.4 grant, using the `app` role with tenant scope set per transaction                                                              | [`architecture.md`](../architecture.md) §11.4                                                                                                |
+| Support grants and break-glass never include a minor's details                                                                                                        | [ADR 0017](adr/0017-childrens-data-access.md); [`architecture.md`](../architecture.md) §11.4                                                 |
+| No personal data in URLs, logs, traces, analytics or AI calls                                                                                                         | [`AGENTS.md`](../AGENTS.md) §1 rules 5–6; [`architecture.md`](../architecture.md) §17, D17                                                   |
+| Personal data stays in Australia (`ap-southeast-2`); Stripe Billing and webhooks use the Sydney hostname                                                              | [`AGENTS.md`](../AGENTS.md) §1 rule 1; [`architecture.md`](../architecture.md) §7.3, §14                                                     |
+| Ops UI composes `packages/ui` and meets WCAG 2.2 AA                                                                                                                   | [`architecture.md`](../architecture.md) §8.5, §21.1; [`AGENTS.md`](../AGENTS.md) §6                                                          |
+| Permissions are enforced in the API, not only hidden in the UI                                                                                                        | [`architecture.md`](../architecture.md) §8.5 rule 3; [`AGENTS.md`](../AGENTS.md) §6                                                          |
+| Destructive actions ask for confirmation                                                                                                                              | Product convention; each area spec states which actions                                                                                      |
 
 ---
 
@@ -50,7 +50,7 @@ Merged specs: `docs/specs/2026-10-22-ops-operator-identity.md`, `docs/specs/2026
 **Routes (Proposed).**
 
 - `POST /v1/ops/communities` — create organisation + first community + owner bootstrap
-- `GET /v1/ops/communities/{organisationId}` — organisation detail (ids and slugs only)
+- `GET /v1/ops/communities/{organisationId}` — organisation detail (fields per spec; not narrower than directory unless deliberate)
 - `PATCH /v1/ops/communities/{organisationId}/communities/{communityId}` — suspend / close / reactivate per spec
 
 **Permissions (Proposed).**
@@ -67,7 +67,7 @@ Merged specs: `docs/specs/2026-10-22-ops-operator-identity.md`, `docs/specs/2026
 
 **Depends on.** Ops sign-in and directory (`ops-console-api`, `ops-console-ui` — done).
 
-**Decided.** Directory today returns org and community ids and slugs only (`GET /v1/ops/directory`, `ops-routes.ts`). Closing a community follows the **tenant offboarding** resumable job in the regional service ([`architecture.md`](../architecture.md) §19 background jobs). Billing read-only behaviour when an organisation cannot write is already specified in `docs/specs/2026-10-19-billing-read-only.md` — cite that spec; do not redesign the 402 guard here.
+**Decided.** Directory today: each organisation returns `id`, `slug`, `kind` and `region`; each community returns `id` and `slug` (`GET /v1/ops/directory`, `listDirectory` in `modules/core/tenancy/infrastructure/directory.ts`; the UI shows slug, kind and region for organisations, not ids). Closing a community follows the **tenant offboarding** resumable job in the regional service ([`architecture.md`](../architecture.md) §18). Billing read-only behaviour when an organisation cannot write is already specified in `docs/specs/2026-10-19-billing-read-only.md` — cite that spec; do not redesign the 402 guard here.
 
 **Open for the spec.** What **suspend** and **close** mean in product terms; whether suspend blocks sign-in, writes, or public surfaces; timing relative to Stripe subscription state; whether the first admin is invited by email or linked to an existing identity user.
 
@@ -150,7 +150,7 @@ Merged specs: `docs/specs/2026-10-22-ops-operator-identity.md`, `docs/specs/2026
 
 **What it replaces.** No single one-off today; entitlements admin is API-only for tenants (`entitlements.manage`).
 
-**Data.** `platform.plans`, `platform.add_ons`, `platform.entitlement_allocations`, `platform.entitlement_overrides`, `platform.feature_flags` ([`docs/specs/2026-10-12-entitlements-plans.md`](specs/2026-10-12-entitlements-plans.md)).
+**Data.** `platform.plans`, `platform.add_ons`, `platform.organisation_plans`, `platform.organisation_add_ons`, `platform.community_allocations`, `platform.entitlement_overrides`, `platform.feature_flags` ([`docs/specs/2026-10-12-entitlements-plans.md`](specs/2026-10-12-entitlements-plans.md), [`architecture.md`](../architecture.md) §10.1).
 
 **Routes (Proposed).**
 
@@ -233,7 +233,7 @@ Merged specs: `docs/specs/2026-10-22-ops-operator-identity.md`, `docs/specs/2026
 | `ops.giving.receipt_default.view` | `platform_admin`, `platform_support` |
 | `ops.giving.receipt_default.edit` | `platform_admin`                     |
 
-**Audit.** Every change to default wording (hash or version id in audit, not full text in logs).
+**Audit.** Every change to default wording.
 
 **Sensitive?** No — product copy, not PII.
 
@@ -241,7 +241,7 @@ Merged specs: `docs/specs/2026-10-22-ops-operator-identity.md`, `docs/specs/2026
 
 **Decided.** Default set in the ops console; a parish that does not use it sets its own in **Giving settings** in admin (owner 2026-11-04, [`architecture.md`](../architecture.md) §14.3, Q18 closed).
 
-**Open for the spec.** Rich text versus plain; versioning; whether parishes see a diff when the default changes.
+**Open for the spec.** Rich text versus plain; versioning; whether parishes see a diff when the default changes; hash or version id in audit, not full text in logs.
 
 ---
 
