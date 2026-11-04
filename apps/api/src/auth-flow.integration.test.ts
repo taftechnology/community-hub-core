@@ -495,7 +495,7 @@ describe("auth flow", () => {
   });
 
   it("cross-site POST is refused", async () => {
-    let now = new Date("2026-10-11T00:00:00.000Z");
+    const now = new Date("2026-10-11T00:00:00.000Z");
     const logs: CapturedLog[] = [];
     const mail = new MemoryMail();
     const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
@@ -544,7 +544,7 @@ describe("auth flow", () => {
   });
 
   it("cross-site preflight gets no permission", async () => {
-    let now = new Date("2026-10-11T00:00:00.000Z");
+    const now = new Date("2026-10-11T00:00:00.000Z");
     const logs: CapturedLog[] = [];
     const mail = new MemoryMail();
     const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
@@ -579,7 +579,7 @@ describe("auth flow", () => {
   });
 
   it("calling it twice is harmless", async () => {
-    let now = new Date("2026-10-11T00:00:00.000Z");
+    const now = new Date("2026-10-11T00:00:00.000Z");
     const logs: CapturedLog[] = [];
     const mail = new MemoryMail();
     const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
@@ -655,7 +655,7 @@ describe("auth flow", () => {
   });
 
   it("no oracle", async () => {
-    let now = new Date("2026-10-11T00:00:00.000Z");
+    const now = new Date("2026-10-11T00:00:00.000Z");
     const logs: CapturedLog[] = [];
     const mail = new MemoryMail();
     const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
@@ -709,7 +709,7 @@ describe("auth flow", () => {
   });
 
   it("nothing leaks", async () => {
-    let now = new Date("2026-10-11T00:00:00.000Z");
+    const now = new Date("2026-10-11T00:00:00.000Z");
     const logs: CapturedLog[] = [];
     const mail = new MemoryMail();
     const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
