@@ -266,3 +266,49 @@ git log --oneline origin/main..HEAD
 ```
 
 Expect thirteen commits and a clean working tree.
+
+---
+
+## Brief 6 — Jellycube templates and second-review fixes (2026-11-04)
+
+Two additional commits on the same branch. Do not amend earlier commits.
+
+### Task 14: Jellycube templates; no in-core renderer
+
+**Files:** `architecture.md`, `docs/roadmap.md`, `docs/specs/2026-11-04-owner-decisions.md`, `docs/plans/2026-11-04-owner-decisions.md`
+
+**Check:**
+
+- `grep -n -i -E "thin (in-core )?renderer|in-core renderer|fallback renderer|Phase 4 renderer" architecture.md docs/roadmap.md docs/specs/2026-11-04-owner-decisions.md` — every remaining hit says it is dropped.
+- Q2 closed in architecture §26 and roadmap open questions; Phase 2 Website host contract freeze row kept.
+- Spec decision 8 refined; coverage row 8; open points Q2 closed.
+- Prettier on every Markdown file touched.
+
+**Commit:** `docs: Jellycube templates and no in-core renderer`
+
+---
+
+### Task 15: Second-review fixes (Grok at `b3fc650`)
+
+**Files:** `architecture.md`, `docs/roadmap.md`, `docs/adr/0017-childrens-data-access.md`, `docs/plans/2026-11-04-owner-decisions.md`
+
+**Check:** Brief 6 Part 2 items 1–11; `head -1 docs/plans/2026-11-04-owner-decisions.md` starts with `Spec:`; brief 6 grep checks; prettier.
+
+**Commit:** `docs: second-review fixes for the owner decisions`
+
+---
+
+## Final verification (brief 6 — report in impl-report-6.md)
+
+```bash
+grep -n -i -E "thin (in-core )?renderer|in-core renderer|fallback renderer|Phase 4 renderer" architecture.md docs/roadmap.md docs/specs/2026-11-04-owner-decisions.md
+grep -n -i "if a pilot uses\|when a pilot uses\|Phase 3 or 5" architecture.md docs/roadmap.md
+grep -n -i "except GST\|GST open\|GST is open" architecture.md docs/roadmap.md
+grep -n "people.restricted.read" architecture.md docs/roadmap.md | grep -i minor
+head -1 docs/plans/2026-11-04-owner-decisions.md
+pnpm exec prettier --check .
+git status --short
+git log --oneline origin/main..HEAD
+```
+
+Expect fifteen commits and a clean working tree.

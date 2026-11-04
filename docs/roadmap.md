@@ -12,7 +12,7 @@ This file is the catalogue later specs are cut from. Architecture §25 stays the
 
 A current Laravel parish leaves self-hosted Community Hub in **one window**: tenant admin, Parish Hub, and the public website all talk only to core ([architecture §24](../architecture.md#24-migrating-from-self-hosted-laravel)). Client validation uses a **preview hostname in the production account** with real imported data, never staging ([ADR 0018](../docs/adr/0018-client-migration-preview.md)).
 
-**Hard gate before any client moves:** on `staging-au`, donate, form submit, and RSVP succeed on the public site (or the Phase 4 fallback renderer) with synthetic data. Real client data is checked on the production preview hostname only.
+**Hard gate before any client moves:** on `staging-au`, donate, form submit, and RSVP succeed on the public site (Jellycube) with synthetic data. Real client data is checked on the production preview hostname only.
 
 ---
 
@@ -192,14 +192,14 @@ After this phase, donate + form submit + RSVP can be proven on staging APIs even
 
 ## Phase 4 — Public website on core
 
-| Status      | Journey                           | Must include                                                                                                                                                                                                       |
-| ----------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| not started | Jellycube host adapter            | `dataSources` over the Phase 2 collections (events, notices, bulletins, service times), OIDC + `mapRoles`, lifecycle, theme tokens, **Edit in Community Hub** links. **Cookie notice is Jellycube's**, not core's. |
-| not started | Host islands                      | `forms.embed`, `giving.donate`, `engagement.rsvp` in `packages/web-components`. Turnstile, WCAG 2.2 AA. Staging form submit, donate and RSVP gates                                                                 |
-| not started | Freshness notification            | `website.source.changed.v1` from the outbox, sent by the regional service, signed, IDs only; Jellycube re-renders the affected routes                                                                              |
-| not started | Embedded editor + parish template | Website & CMS opens the Jellycube editor in the admin; sites provisioned from the `faith-church` template into Jellycube-managed Git. Needs Q13                                                                    |
+| Status      | Journey                           | Must include                                                                                                                                                                                                                                                                                                                             |
+| ----------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| not started | Jellycube host adapter            | `dataSources` over the Phase 2 collections (events, notices, bulletins, service times as separate collections), OIDC + `mapRoles`, lifecycle, theme tokens, **Edit in Community Hub** links. **Cookie notice is Jellycube's**, not core's. Community Hub templates ship with those collections already bound (Q2 closed).                |
+| not started | Host islands                      | `forms.embed`, `giving.donate`, `engagement.rsvp` in `packages/web-components`. Turnstile, WCAG 2.2 AA. Staging form submit, donate and RSVP gates                                                                                                                                                                                       |
+| not started | Freshness notification            | `website.source.changed.v1` from the outbox, sent by the regional service, signed, IDs only; Jellycube re-renders the affected routes                                                                                                                                                                                                    |
+| not started | Embedded editor + parish template | Website & CMS opens the Jellycube editor in the admin; sites provisioned from the `faith-church` **Community Hub template** into Jellycube-managed Git, with mass times, events, bulletins and notices collections already in the template so data shows as soon as it arrives; designer drag-and-drop binding may come later. Needs Q13 |
 
-If Jellycube collections are not ready, ship the thin in-core renderer on the **same data sources** (Q2). Islands and the notification are the same either way.
+The thin in-core renderer fallback is **dropped** (owner 2026-11-04); the public site is Jellycube.
 
 Fills Website & CMS → Pages, Global Settings, Templates, and the top-bar **Website** button. Header/Footer live in the builder.
 
@@ -260,7 +260,7 @@ From architecture §26. Do not invent answers in a spec.
 | #   | Blocks                                                                                                                                                                                          |
 | --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Q1  | Closed (owner 2026-11-04). GivingJar is our own platform on Stripe Connect; recurring, refunds, per-community onboarding, and signed webhooks are built in GivingJar; core's adapter uses them. |
-| Q2  | Phase 4 Jellycube vs thin renderer; contract freeze row in Phase 2                                                                                                                              |
+| Q2  | **Closed (owner 2026-11-04).** Jellycube ready by Phase 4; Community Hub templates with collections built in; no in-core renderer. Website host contract freeze row in Phase 2 still stands     |
 | Q13 | Closed for forms, donations, and RSVPs: they post to the Sydney hostname. Which account serves Jellycube sites is not decided.                                                                  |
 | Q3  | Closed by ADR 0011. There is no identity library.                                                                                                                                               |
 | Q8  | Decided: AUD 200 / AUD 500 monthly, AUD 1,500 setup, ops-editable, excluding GST (tax on top)                                                                                                   |
