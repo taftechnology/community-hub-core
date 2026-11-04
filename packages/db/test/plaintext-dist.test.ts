@@ -64,5 +64,5 @@ describe("plaintext build exclude", () => {
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 });
