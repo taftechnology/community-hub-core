@@ -45,7 +45,7 @@ export function CommunitySwitcher({
               <Menu.Item
                 key={community.id}
                 onClick={() => onChange(community.id)}
-                className="h-(--ch-size-control) px-3 flex items-center text-sidebar-foreground text-sm rounded-md cursor-pointer hover:bg-sidebar-hover data-[highlighted]:bg-sidebar-hover focus:outline-none transition-colors select-none"
+                className="h-(--ch-size-control) touch:min-h-(--ch-size-touch) px-3 flex items-center text-sidebar-foreground text-sm rounded-md cursor-pointer hover:bg-sidebar-hover data-[highlighted]:bg-sidebar-hover focus:outline-none transition-colors select-none"
               >
                 <span className="truncate">{community.label}</span>
               </Menu.Item>

@@ -52,4 +52,22 @@ describe("CommunitySwitcher", () => {
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(onChange).toHaveBeenCalledWith("comm-2");
   });
+
+  it("carries touch:min-h-(--ch-size-touch) on each menu item for touch screens", async () => {
+    const communities = [
+      { id: "comm-1", label: "St Mary" },
+      { id: "comm-2", label: "St Patrick" },
+    ];
+
+    render(<CommunitySwitcher communities={communities} currentId="comm-1" onChange={() => {}} />);
+
+    const trigger = screen.getByText("St Mary");
+    fireEvent.click(trigger);
+
+    const items = await screen.findAllByRole("menuitem");
+    expect(items.length).toBe(2);
+    for (const item of items) {
+      expect(item.className).toContain("touch:min-h-(--ch-size-touch)");
+    }
+  });
 });
