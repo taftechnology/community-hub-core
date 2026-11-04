@@ -25,6 +25,7 @@ const fixtureExpectations: Record<string, readonly string[]> = {
   "invalid-tokens": ["invalid-tokens"],
   "decorative-unknown": ["decorative-unknown"],
   "decorative-in-pair": ["decorative-in-pair"],
+  "decorative-not-allowed": ["decorative-not-allowed"],
   "rgba-non-decorative": ["rgba-non-decorative"],
 };
 

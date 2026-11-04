@@ -5,6 +5,7 @@ import tokens from "./tokens.json" with { type: "json" };
 import {
   contrastRatio,
   contrastViolations,
+  decorativeViolations,
   generateTokens,
   missingPairViolations,
   namespaceViolations,
@@ -239,5 +240,19 @@ describe("selfReferenceViolations", () => {
       expect.objectContaining({ id: "self-reference" }),
     ]);
     expect(selfReferenceViolations("--radius-md: var(--ch-rounded-md);")).toEqual([]);
+  });
+});
+
+describe("decorativeViolations", () => {
+  it("flags declared colour roles that are not on the allowed decorative list", () => {
+    const invalidTokens = structuredClone(tokens);
+    invalidTokens.decorative = [...invalidTokens.decorative, "foreground"];
+    invalidTokens.pairs = invalidTokens.pairs.filter(
+      (p: { foreground: string; background: string }) =>
+        p.foreground !== "foreground" && p.background !== "foreground",
+    );
+    expect(decorativeViolations(invalidTokens)).toEqual([
+      expect.objectContaining({ id: "decorative-not-allowed" }),
+    ]);
   });
 });

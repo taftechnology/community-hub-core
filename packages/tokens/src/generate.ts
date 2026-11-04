@@ -20,6 +20,21 @@ const RGBA_PATTERN = /^rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*[\d.]+\s*\)$/;
 const PURPOSES = new Set(["text", "large-text", "non-text"]);
 const MODES = new Set(["light", "dark"]);
 
+export const ALLOWED_DECORATIVE_ROLES = [
+  "border",
+  "control-border",
+  "control-border-hover",
+  "tint-border",
+  "destructive-border",
+  "warning-border",
+  "info-border",
+  "restricted-border",
+  "sidebar-border",
+  "scrim",
+] as const;
+
+const ALLOWED_DECORATIVE_SET = new Set<string>(ALLOWED_DECORATIVE_ROLES);
+
 export const BANNED_PREFIXES = [
   "--color-",
   "--font-",
@@ -237,6 +252,13 @@ export function decorativeViolations(value: unknown): Violation[] {
     if (!knownColorRoles.has(name)) {
       hits.push(
         violation("decorative-unknown", `Decorative role ${name} is not a declared colour role`),
+      );
+    } else if (!ALLOWED_DECORATIVE_SET.has(name)) {
+      hits.push(
+        violation(
+          "decorative-not-allowed",
+          `Decorative role ${name} is not on the allowed decorative list`,
+        ),
       );
     }
   }
