@@ -8,7 +8,7 @@ Spec: docs/specs/2026-11-04-owner-decisions.md
 
 Status: draft
 
-**Branch:** `docs/2026-11-04-owner-decisions` · one PR · six tasks, one commit each
+**Branch:** `docs/2026-11-04-owner-decisions` · one PR · twelve tasks, one commit each
 
 ## Global constraints
 
@@ -192,3 +192,39 @@ git log --oneline origin/main..HEAD
 ```
 
 Expect eleven commits and a clean working tree.
+
+---
+
+## Brief 4 — shop payments, child presence, mandatory two-factor (2026-11-04)
+
+One additional commit on the same branch. Do not amend earlier commits.
+
+### Task 12: Owner answers A–C
+
+**Files:** `architecture.md`, `docs/roadmap.md`, `docs/adr/0017-childrens-data-access.md`, `docs/specs/2026-11-04-owner-decisions.md`, `docs/plans/2026-11-04-owner-decisions.md`
+
+**Check:**
+
+- `grep -n -i "interpretation" architecture.md docs/roadmap.md docs/adr/0017-childrens-data-access.md docs/specs/2026-11-04-owner-decisions.md` — only the receipt-wording interpretation remains.
+- `grep -n -i -E "no second factor|has not set up|not yet set up" docs/adr/0017-childrens-data-access.md docs/specs/2026-11-04-owner-decisions.md` — no hit.
+- Shop: GivingJar / `PaymentProvider`; §14 community payments include orders; no stock or delivery.
+- Child presence for other staff in ADR 0017, architecture §11.3 / §12.3, roadmap children's row, spec decision 7.
+- Mandatory second factor in architecture §11.1, ADR 0017 decision 6, roadmap Two-factor row, spec decision 7 / 14.
+- Spec and plan: decisions refined later on 2026-11-04; open points; coverage; this task recorded.
+- Prettier on every Markdown file touched; `pnpm exec prettier --check .`.
+
+**Commit:** `docs: shop payments, child presence and mandatory two-factor`
+
+---
+
+## Final verification (brief 4 — report in impl-report-4.md)
+
+```bash
+grep -n -i "interpretation" architecture.md docs/roadmap.md docs/adr/0017-childrens-data-access.md docs/specs/2026-11-04-owner-decisions.md
+grep -n -i -E "no second factor|has not set up|not yet set up" docs/adr/0017-childrens-data-access.md docs/specs/2026-11-04-owner-decisions.md
+pnpm exec prettier --check .
+git status --short
+git log --oneline origin/main..HEAD
+```
+
+Expect twelve commits and a clean working tree.

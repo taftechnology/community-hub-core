@@ -43,9 +43,9 @@ GivingJar is **our own platform**, built on Stripe Connect. Whatever core needs 
 
 Tax receipt wording is not hardcoded. There is a **default** wording set in the ops console. Each parish uses that default or sets its own wording. **Interpretation to confirm with the owner:** where a parish edits its own wording (Giving settings in admin).
 
-### Decision 5 — Shop (interpretation to confirm with the owner)
+### Decision 5 — Shop (refined later on 2026-11-04)
 
-Shop is in scope: products only. No stock levels and no delivery. Members can buy a product and pay; an order record exists so the purchase and payment are kept. No inventory counts, no shipping or delivery addresses.
+Shop is in scope: products only. Members buy products and pay online. Payments go through GivingJar, the same way as donations (`PaymentProvider` port). Every purchase is recorded in an order record. No stock levels and no delivery.
 
 ### Decision 6 — Pricing (refined later on 2026-11-04)
 
@@ -55,10 +55,10 @@ Two plans: **AUD 200 and AUD 500 per month**, plus a one-off **AUD 1,500 setup f
 
 - Check-in is not built (no check-in/check-out, no pickup codes, no kiosk).
 - A child's details are entered by their parent or guardian through member surfaces (portal / Parish Hub).
-- Only that guardian and the Community Admin role (`community_admin`) can see a child's details. Other staff cannot, whatever permission they hold (including `people.restricted.read`). Support operators cannot, even under a support grant or break-glass.
+- Only that guardian and the Community Admin role (`community_admin`) can see a child's details. Other staff cannot, whatever permission they hold (including `people.restricted.read`). Other staff may see that a household has a child, but no information about the child — no name, date of birth, or other field. Support operators cannot, even under a support grant or break-glass.
 - For a Community Admin, each field is hidden by default and revealed one field at a time by clicking View. Every View needs a fresh second-factor check. Every View is audited (ids only, no values).
 - Until the children's data access chunk ships, code on `main` is broader than this rule (for example Family Records and Life events use `people.restricted.read`). That gap must close before any client data is imported.
-- **Second factor (refined later on 2026-11-04):** The fresh check uses whatever second factor the Community Admin has set up — authenticator app, passkey, or email code. Tenant users need enrolment for a second factor (**Two-factor for staff** chunk; sensitive). **Interpretation to confirm:** if an admin has no second factor yet, they must set one up before using View. **Interpretation to confirm:** whether other staff can see that a household has a child (count only) or see nothing.
+- **Second factor (refined later on 2026-11-04):** Every user of the admin app must set up a second factor during sign-up — authenticator app, passkey, or email code — before they can use the admin. Users who already exist or arrive through the Laravel import must set one up at their next sign-in before they can continue. The fresh check when a Community Admin views a child's field uses whichever second factor that admin has enrolled (**Two-factor for staff** chunk; sensitive).
 
 ### Decision 8 — Cookie notice
 
@@ -86,7 +86,7 @@ Prices do not include GST or any other tax. Tax is charged on top of the listed 
 
 ### Decision 14 — Second factor (answer B; refines decision 7)
 
-See decision 7 second-factor bullet and ADR 0017 decision 6.
+Mandatory second factor at admin sign-up (or at next sign-in for existing and imported users). See decision 7 second-factor bullet and ADR 0017 decisions 6 and 7.
 
 ### Decision 15 — Receipt default (answer C; refines decision 4)
 
@@ -114,17 +114,14 @@ Documenting stricter children's access while `main` still allows `people.restric
 
 ## Out-of-band
 
-Shop interpretation (decision 5) needs owner confirmation. Receipt wording edit surface (decision 4) and children's staff visibility (decision 7) need owner confirmation.
+Receipt wording edit surface (decision 4) needs owner confirmation on where a parish edits its own wording.
 
 ## Open points
 
-| Topic                        | Status                                                          |
-| ---------------------------- | --------------------------------------------------------------- |
-| Receipt wording edit surface | Interpretation: Giving settings vs ops only (decision 4)        |
-| Other staff and child count  | Interpretation: count vs nothing (decision 7)                   |
-| No second factor yet         | Interpretation: must enrol before View (decision 7)             |
-| Laravel backup after cutover | Location and retention, Australia only (Q23)                    |
-| Shop delivery interpretation | Confirm with owner (decision 5 wording in architecture/roadmap) |
+| Topic                        | Status                                                   |
+| ---------------------------- | -------------------------------------------------------- |
+| Receipt wording edit surface | Interpretation: Giving settings vs ops only (decision 4) |
+| Laravel backup after cutover | Location and retention, Australia only (Q23)             |
 
 ## Coverage table
 
