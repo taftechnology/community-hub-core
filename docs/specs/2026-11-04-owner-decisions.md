@@ -116,6 +116,10 @@ Users who already exist or arrive through the Laravel import set up a second fac
 
 A restore we run for a parish requires the parish's request with a ticket reference and is logged in the ops audit and in that parish's audit log.
 
+### Decision 22 — Ops console build guide (owner 2026-11-04)
+
+The ops console is the Community Hub SaaS admin. SaaS operators sign in to it and manage every community and the platform from its dashboard. **It is not being built now.** This chunk records roadmap rows and [`docs/ops-console.md`](ops-console.md), a build guide so whoever builds each part later has everything decided and how to do it. The owner chose all four guide themes: (1) communities and their first admin; (2) plans, prices and billing, including per-community modules; (3) operators and support access, including an operator audit view; (4) default receipt wording, restoring one community, mobile app listings, and usage views. Each area in the guide is its own future chunk ([`AGENTS.md`](../../AGENTS.md) §3).
+
 ## Data
 
 No tables or columns change in this chunk.
@@ -161,3 +165,4 @@ None remain from the 2026-11-04 owner decisions. Q2 is closed in `architecture.m
 | 19  | Broadcast SMS scope                  | `docs/roadmap.md` Broadcast Messages row; spec decision 19                                                                                                                                                                                                                                                |
 | 20  | Two-factor at sign-in                | Spec decisions 7 and 14; `docs/adr/0017-childrens-data-access.md`; `architecture.md` §11.1; `docs/roadmap.md` Two-factor for staff                                                                                                                                                                        |
 | 21  | Restore audit                        | `architecture.md` §11.4, §22, §19; `docs/roadmap.md` Restore one community row; spec decisions 9 and 16                                                                                                                                                                                                   |
+| 22  | Ops console build guide              | `docs/ops-console.md`; `docs/roadmap.md` Ops console (SaaS admin) section; `architecture.md` §8.5 Ops console row, §19.3 Ops console subsection                                                                                                                                                           |

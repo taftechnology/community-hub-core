@@ -8,7 +8,7 @@ Spec: docs/specs/2026-11-04-owner-decisions.md
 
 Status: draft
 
-**Branch:** `docs/2026-11-04-owner-decisions` · one PR · sixteen tasks, one commit each
+**Branch:** `docs/2026-11-04-owner-decisions` · one PR · twenty tasks, one commit each
 
 ## Global constraints
 
@@ -308,17 +308,56 @@ Two additional commits on the same branch. Do not amend earlier commits.
 
 ---
 
-## Final verification (brief 6 — report in impl-report-6.md)
+### Task 17: Ops console build guide (brief 8 task A)
+
+**Files:** Create `docs/ops-console.md`
+
+**Check:** Build guide structure per brief 8; prettier on the file.
+
+**Commit:** `docs: ops console build guide`
+
+---
+
+### Task 18: Ops console roadmap and architecture (brief 8 task B)
+
+**Files:** `docs/roadmap.md`, `architecture.md` (§8.5 Ops console row, §19.3 Ops console subsection)
+
+**Check:** Ops console section with nine rows; three former Phase 2 ops rows not duplicated; architecture links to `docs/ops-console.md`; prettier.
+
+**Commit:** `docs: ops console in the roadmap and architecture`
+
+---
+
+### Task 19: Ops console in spec and plan (brief 8 task C)
+
+**Files:** `docs/specs/2026-11-04-owner-decisions.md`, `docs/plans/2026-11-04-owner-decisions.md`
+
+**Check:** Decision 22 and coverage row; tasks 17–20 in plan; `Status:` lines unchanged in this commit; prettier.
+
+**Commit:** `docs: ops console in the owner decisions spec and plan`
+
+---
+
+### Task 20: Approve spec and plan (brief 8 task D)
+
+**Files:** `docs/specs/2026-11-04-owner-decisions.md`, `docs/plans/2026-11-04-owner-decisions.md`
+
+**Check:** Only the two `Status:` lines change to `approved (2026-11-04, Abdus Salam)`.
+
+**Commit:** `docs: approve the owner decisions spec and plan`
+
+---
+
+## Final verification (brief 8 — report in impl-report-8.md)
 
 ```bash
-grep -n -i -E "thin (in-core )?renderer|in-core renderer|fallback renderer|Phase 4 renderer" architecture.md docs/roadmap.md docs/specs/2026-11-04-owner-decisions.md
-grep -n -i "if a pilot uses\|when a pilot uses\|Phase 3 or 5" architecture.md docs/roadmap.md
-grep -n -i "except GST\|GST open\|GST is open" architecture.md docs/roadmap.md
-grep -n "people.restricted.read" architecture.md docs/roadmap.md | grep -i minor
+grep -n "^Status:" docs/specs/2026-11-04-owner-decisions.md docs/plans/2026-11-04-owner-decisions.md
 head -1 docs/plans/2026-11-04-owner-decisions.md
+grep -c "Plan prices and setup fee in the ops console\|Receipt wording in the ops console\|Restore one community" docs/roadmap.md
+git show --stat HEAD
 pnpm exec prettier --check .
 git status --short
 git log --oneline origin/main..HEAD
 ```
 
-Expect sixteen commits and a clean working tree.
+Expect twenty commits, both statuses approved, and a clean working tree.
