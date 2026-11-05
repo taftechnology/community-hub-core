@@ -665,7 +665,7 @@ describe("service times integration", () => {
     }
   });
 
-  it("tenancy: update pins org_id and community_id predicates as defence in depth on connection bypassing row level security", async () => {
+  it("tenancy: update pins org_id predicate as defence in depth on connection bypassing row level security", async () => {
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
     const app = createPlaintextAppSql(roleUrl(runtime, "app"));
@@ -727,6 +727,94 @@ describe("service times integration", () => {
       try {
         await cleanScope(directSql, scopeA);
         await cleanScope(directSql, scopeB);
+      } finally {
+        await platform.end({ timeout: 1 });
+        await app.end({ timeout: 1 });
+        await directSql.end({ timeout: 1 });
+      }
+    }
+  });
+
+  it("tenancy: update pins community_id predicate as defence in depth on connection bypassing row level security", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    // directSql connects with the bootstrap role (hub) which is not subject to row level security
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+
+    const orgId = newId();
+    const comm1Id = newId();
+    const comm2Id = newId();
+    await platform.begin(async (tx) => {
+      await tx`
+        insert into platform.organisations (id, slug, region, kind)
+        values (${orgId}, ${`scope-${orgId}`}, 'au', 'implicit')
+      `;
+      await tx`
+        insert into platform.communities (id, organisation_id, slug, region)
+        values (${comm1Id}, ${orgId}, ${`comm-${comm1Id}`}, 'au')
+      `;
+      await tx`
+        insert into platform.communities (id, organisation_id, slug, region)
+        values (${comm2Id}, ${orgId}, ${`comm-${comm2Id}`}, 'au')
+      `;
+    });
+
+    const scope1 = { orgId, communityId: comm1Id };
+    const scope2 = { orgId, communityId: comm2Id };
+    const now = new Date("2026-06-01T10:00:00.000Z");
+
+    try {
+      // 1. Initial save for Community 2
+      await withRequest({ requestId: newId() }, () =>
+        withAppTransaction(app, scope2, async (tx) => {
+          await saveServiceTimes(tx, {
+            html: "<p>Comm 2 Content</p>",
+            expectedVersion: 0,
+            now,
+            actorUserId: null,
+          });
+        }),
+      );
+
+      // Verify Community 2 row has version 1
+      const originalRows = await directSql<
+        { content_html: string; version: number }[]
+      >`select content_html, version from app.service_times where org_id = ${orgId}::uuid and community_id = ${comm2Id}::uuid`;
+      expect(originalRows).toHaveLength(1);
+      expect(originalRows[0]!.version).toBe(1);
+      expect(originalRows[0]!.content_html).toBe("<p>Comm 2 Content</p>");
+
+      // 2. Cross-community update attempt through directSql (role not subject to RLS):
+      // app.org_id set to that organisation, app.community_id set to Community 1,
+      // with expectedVersion equal to Community 2's row version (1).
+      // Without the `community_id` predicate, this update would match Community 2's row (same org_id, version=1) and succeed.
+      // With the `community_id` predicate, 0 rows match and saveServiceTimes throws version_conflict.
+      const mismatchedScope = { orgId, communityId: comm1Id };
+      await expect(
+        withRequest({ requestId: newId() }, () =>
+          withAppTransaction(directSql, mismatchedScope, async (tx) => {
+            await saveServiceTimes(tx, {
+              html: "<p>Tampered by Community 1</p>",
+              expectedVersion: 1,
+              now,
+              actorUserId: null,
+            });
+          }),
+        ),
+      ).rejects.toThrow(new ServiceTimesError("version_conflict"));
+
+      // 3. Community 2's row must remain completely unchanged
+      const rowsAfterAttempt = await directSql<
+        { content_html: string; version: number }[]
+      >`select content_html, version from app.service_times where org_id = ${orgId}::uuid and community_id = ${comm2Id}::uuid`;
+      expect(rowsAfterAttempt).toHaveLength(1);
+      expect(rowsAfterAttempt[0]!.version).toBe(1);
+      expect(rowsAfterAttempt[0]!.content_html).toBe("<p>Comm 2 Content</p>");
+    } finally {
+      try {
+        await cleanScope(directSql, scope1);
+        await cleanScope(directSql, scope2);
       } finally {
         await platform.end({ timeout: 1 });
         await app.end({ timeout: 1 });
