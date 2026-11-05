@@ -88,7 +88,7 @@ The implementer runs each row once: weaken the source, see the named test fail, 
 | 1   | Sanitiser allow-list                                            | add `a` and `href` to the allowed tags and attributes       | `sanitise.test.ts` structural hostile suite: every element in the allow-list, zero attributes                                                                      |
 | 2   | No attributes of any kind                                       | `allowedAttributes: false`                                  | same file: an input with `onclick`, `style`, `class`, `data-x`, `start` keeps none                                                                                 |
 | 3   | `script` and `style` content removed                            | drop `script` from `nonTextTags`                            | same file: `<script>b</script>` leaves no `b`                                                                                                                      |
-| 4   | Container tags drop nested allowed tags                         | remove the `exclusiveFilter`                                | same file: `<svg><p>x</p></svg>` becomes `""`                                                                                                                      |
+| 4   | Container tags drop nested allowed tags                         | remove `svg` from the container list (`nonTextTags`)        | same file: `<svg><p>x</p></svg>` becomes `""`                                                                                                                      |
 | 5   | Empty normalisation                                             | return the raw cleaned string                               | same file: `<p></p>`, `<p><br></p>`, `<h1> </h1>`, `<ul><li><p></p></li></ul>` become `""`                                                                         |
 | 6   | The sanitiser runs inside `saveServiceTimes`                    | remove the call                                             | `service-times.integration.test.ts`: store `<p onclick=x>a</p><script>b</script>`, read back `<p>a</p>`                                                            |
 | 7   | The cap is on the cleaned string                                | check the raw string instead                                | same file: 21,000 raw units that clean to under 20,000 are accepted; cleaned 20,001 is `invalid_input`                                                             |
@@ -162,7 +162,7 @@ Pins 8 to 10. Must not break: the webhook limit and its 413; the 4,096-byte defa
   - the package scaffold copies `groups` (exports to `dist/public`, pinned `drizzle-orm`, `vitest.config.ts` with the shared `globalSetup`, `fileParallelism: false`);
   - `pnpm-workspace.yaml` gains the module line; `turbo.json` adds `@community-hub/engagement#test` to the serial Docker-database chain after groups and `modules/features/*/db/schema.ts` to the `@community-hub/db#test` inputs;
   - `sanitize-html` and `jsdom` (dev) pinned exactly; the lockfile updated;
-  - `sanitiseServiceTimesHtml` configured exactly as the spec says (`allowedTags`, `allowedAttributes: {}`, `disallowedTagsMode: "discard"`, `transformTags`, `nonTextTags` with the default entries repeated, an `exclusiveFilter` for the container tags, no `textFilter`, `allowVulnerableTags` false) plus the empty normalisation;
+  - `sanitiseServiceTimesHtml` configured exactly as the spec says (`allowedTags`, `allowedAttributes: {}`, `disallowedTagsMode: "discard"`, `transformTags`, `nonTextTags` with the default entries repeated, no `exclusiveFilter`, no `textFilter`, `allowVulnerableTags` left at the default) plus the empty normalisation;
   - `public/index.ts` exports it.
 - [ ] Report: the licence, who maintains it and the install size of `sanitize-html` and its dependencies (for the PR), and the weaken-and-fail result for pins 1 to 5.
 - [ ] Commit `feat(engagement): sanitiser for Mass Times content`.
@@ -345,3 +345,7 @@ These are answered once, at plan approval.
 ## Probe record
 
 None. There is no Terraform in this chunk.
+
+## Amendments after approval
+
+- 2026-11-05, after the second review of PR #76 (made before merge; the Status line above is unchanged): pin 4 now weakens the container list, because the `exclusiveFilter` was dead code and has been removed; two follow-up fix commits (API and sanitiser; admin screen) are recorded in the pull request as deviations, not as plan tasks.
