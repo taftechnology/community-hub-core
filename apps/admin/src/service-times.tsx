@@ -18,7 +18,7 @@ export function ServiceTimesPage() {
   const hasAccess =
     access.entitlements["module.engagement"] && access.permissions["service_times.manage"];
 
-  const { slug, version: communityVersion } = useCommunity();
+  const { slug, version: communityVersion, setSlug } = useCommunity();
   const { refresh: refreshBilling } = useBillingStatus();
 
   const editorRef = useRef<RichTextEditorHandle>(null);
@@ -27,24 +27,30 @@ export function ServiceTimesPage() {
   const loadGeneration = useRef<number>(0);
   const saveGeneration = useRef<number>(0);
   const lastLoadedKeyRef = useRef<string | null>(null);
+  const loadedSlugRef = useRef<string | null>(null);
+  const cancellingSwitchRef = useRef<boolean>(false);
   const savingRef = useRef<boolean>(false);
   const blockerAlertRef = useRef<HTMLDivElement>(null);
 
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [dirty, setDirty] = useState<boolean>(false);
+  const [loadedCommunitySlug, setLoadedCommunitySlug] = useState<string | null>(null);
+  const [pendingCommunitySlug, setPendingCommunitySlug] = useState<string | null>(null);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showReload, setShowReload] = useState<boolean>(false);
+
+  const isReady = loadedCommunitySlug !== null && loadedCommunitySlug === slug;
 
   // In-app navigation blocker
   const blocker = useBlocker(dirty);
 
   useEffect(() => {
-    if (blocker.state === "blocked") {
+    if (blocker.state === "blocked" || pendingCommunitySlug !== null) {
       blockerAlertRef.current?.focus();
     }
-  }, [blocker.state]);
+  }, [blocker.state, pendingCommunitySlug]);
 
   // Window beforeunload blocker
   useEffect(() => {
@@ -64,6 +70,16 @@ export function ServiceTimesPage() {
   const loadData = useCallback(async (communitySlug: string) => {
     saveGeneration.current++;
     const mine = ++loadGeneration.current;
+
+    if (communitySlug !== loadedSlugRef.current) {
+      editorRef.current?.setContent("");
+      baselineRef.current = "";
+      versionRef.current = 0;
+      loadedSlugRef.current = null;
+      setLoadedCommunitySlug(null);
+      setDirty(false);
+    }
+
     setIsLoading(true);
     setErrorMessage(null);
     setShowReload(false);
@@ -80,16 +96,22 @@ export function ServiceTimesPage() {
         // Capture baseline right after setContent (Pin 25)
         const newBaseline = editorRef.current?.getHTML() ?? "";
         baselineRef.current = newBaseline;
+        loadedSlugRef.current = communitySlug;
+        setLoadedCommunitySlug(communitySlug);
         setDirty(false);
         setSavedMessage(null);
+        setShowReload(false);
       } else if (outcome.kind === "forbidden") {
         setErrorMessage("You do not have permission to view this.");
+        setShowReload(false);
       } else {
         setErrorMessage("Could not load. Try again.");
+        setShowReload(true);
       }
     } catch {
       if (loadGeneration.current === mine) {
         setErrorMessage("Could not load. Try again.");
+        setShowReload(true);
       }
     } finally {
       if (loadGeneration.current === mine) {
@@ -103,13 +125,41 @@ export function ServiceTimesPage() {
       setIsLoading(false);
       return;
     }
+    if (cancellingSwitchRef.current) {
+      cancellingSwitchRef.current = false;
+      lastLoadedKeyRef.current = `${slug}|${communityVersion}`;
+      return;
+    }
+    if (dirty && loadedSlugRef.current && slug !== loadedSlugRef.current) {
+      setPendingCommunitySlug(slug);
+      return;
+    }
     const key = `${slug}|${communityVersion}`;
     if (lastLoadedKeyRef.current === key) {
       return;
     }
     lastLoadedKeyRef.current = key;
     void loadData(slug);
-  }, [slug, communityVersion, hasAccess, loadData]);
+  }, [slug, communityVersion, hasAccess, dirty, loadData]);
+
+  const handleCancelCommunitySwitch = () => {
+    const revertTo = loadedSlugRef.current;
+    setPendingCommunitySlug(null);
+    if (revertTo) {
+      cancellingSwitchRef.current = true;
+      setSlug(revertTo);
+    }
+  };
+
+  const handleConfirmCommunitySwitch = () => {
+    const nextSlug = pendingCommunitySlug;
+    setPendingCommunitySlug(null);
+    setDirty(false);
+    if (nextSlug) {
+      lastLoadedKeyRef.current = `${nextSlug}|${communityVersion}`;
+      void loadData(nextSlug);
+    }
+  };
 
   const handleEditorChange = () => {
     setSavedMessage(null);
@@ -121,7 +171,7 @@ export function ServiceTimesPage() {
   };
 
   const handleSave = async () => {
-    if (savingRef.current || !slug) {
+    if (savingRef.current || !slug || loadedSlugRef.current !== slug) {
       return;
     }
 
@@ -153,6 +203,8 @@ export function ServiceTimesPage() {
         // Capture new baseline right after setContent
         const newBaseline = editorRef.current?.getHTML() ?? "";
         baselineRef.current = newBaseline;
+        loadedSlugRef.current = slug;
+        setLoadedCommunitySlug(slug);
         setDirty(false);
         setSavedMessage("Saved");
         setShowReload(false);
@@ -201,7 +253,7 @@ export function ServiceTimesPage() {
     <div className="flex flex-col gap-6 max-w-4xl">
       <ScreenTitle>{term.plural}</ScreenTitle>
 
-      {blocker.state === "blocked" && (
+      {(blocker.state === "blocked" || pendingCommunitySlug !== null) && (
         <div
           ref={blockerAlertRef}
           role="alertdialog"
@@ -219,10 +271,32 @@ export function ServiceTimesPage() {
                 You have unsaved changes. Are you sure you want to leave?
               </span>
               <div className="flex items-center gap-2 pt-2">
-                <Button type="button" variant="secondary" onClick={() => blocker.reset()}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    if (pendingCommunitySlug !== null) {
+                      handleCancelCommunitySwitch();
+                    }
+                    if (blocker.state === "blocked") {
+                      blocker.reset();
+                    }
+                  }}
+                >
                   Stay
                 </Button>
-                <Button type="button" variant="destructive" onClick={() => blocker.proceed()}>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={() => {
+                    if (pendingCommunitySlug !== null) {
+                      handleConfirmCommunitySwitch();
+                    }
+                    if (blocker.state === "blocked") {
+                      blocker.proceed();
+                    }
+                  }}
+                >
                   Leave without saving
                 </Button>
               </div>
@@ -278,7 +352,7 @@ export function ServiceTimesPage() {
           describedBy={hintId}
           maxLength={SERVICE_TIMES_HTML_MAX}
           counterLabel={(used, max) => `${used} / ${max}`}
-          disabled={isLoading || isSaving}
+          disabled={!isReady || isLoading || isSaving}
           onChange={handleEditorChange}
         />
         <p id={hintId} className="text-xs text-muted-foreground">
@@ -287,7 +361,11 @@ export function ServiceTimesPage() {
       </div>
 
       <div className="flex items-center gap-3">
-        <Button type="button" disabled={isLoading || isSaving} onClick={() => void handleSave()}>
+        <Button
+          type="button"
+          disabled={!isReady || isLoading || isSaving}
+          onClick={() => void handleSave()}
+        >
           {isSaving ? "Saving..." : "Save"}
         </Button>
       </div>

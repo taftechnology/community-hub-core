@@ -811,4 +811,243 @@ describe("ServiceTimesPage", () => {
     expect(text).not.toContain("__testEditor");
     expect(text).not.toContain("window as unknown");
   });
+
+  it("F2: after failed load for new community, editor is cleared and disabled, Save is disabled and refuses, and retry enables B", async () => {
+    // 1. Initial load for parish-a succeeds (version 3)
+    fetchSpy.mockResolvedValueOnce(mockResponse(200, { html: "<p>Parish A text</p>", version: 3 }));
+
+    function F2Container() {
+      function SwitchToB() {
+        const { setSlug } = useCommunity();
+        return (
+          <button type="button" onClick={() => setSlug("parish-b")}>
+            Switch to B
+          </button>
+        );
+      }
+
+      return (
+        <PeopleAccessContext.Provider value={{ access: fullAccess }}>
+          <CommunityProvider>
+            <BillingStatusContext.Provider
+              value={{
+                status: {
+                  state: "ok",
+                  trial_end: null,
+                  grace_until: null,
+                  canView: true,
+                  canManage: true,
+                },
+                readiness: "ready",
+                refresh: vi.fn(),
+                returnMessage: null,
+              }}
+            >
+              <SwitchToB />
+              <ServiceTimesPage />
+            </BillingStatusContext.Provider>
+          </CommunityProvider>
+        </PeopleAccessContext.Provider>
+      );
+    }
+
+    sessionStorage.setItem("community-hub.community", "parish-a");
+    const router = createMemoryRouter([{ path: "/", element: <F2Container /> }], {
+      initialEntries: ["/"],
+    });
+
+    render(<RouterProvider router={router} />);
+
+    // Wait for Parish A to load
+    await waitFor(() => {
+      expect(screen.getByText("Parish A text")).toBeTruthy();
+    });
+
+    const saveBtn = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+    expect(saveBtn.disabled).toBe(false);
+
+    // 2. Mock GET for parish-b to fail (e.g. 500 error)
+    fetchSpy.mockResolvedValueOnce(mockResponse(500));
+
+    // Switch to B
+    fireEvent.click(screen.getByText("Switch to B"));
+
+    // Wait for error message
+    await waitFor(() => {
+      expect(screen.getByText("Could not load. Try again.")).toBeTruthy();
+    });
+
+    // Assert: Save is disabled
+    expect(saveBtn.disabled).toBe(true);
+
+    // Assert: Editor is cleared (Parish A text is gone) and disabled
+    expect(screen.queryByText("Parish A text")).toBeNull();
+    const editor = screen.getByRole("textbox");
+    expect(editor.getAttribute("contenteditable")).toBe("false");
+
+    // Invoke Save handler anyway (e.g. fireEvent.click)
+    fireEvent.click(saveBtn);
+
+    // Assert: No save request sent!
+    // Total fetch calls must be 2 (GET parish-a, GET parish-b), NO save call.
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    // 3. Successful retry/reload for B
+    fetchSpy.mockResolvedValueOnce(mockResponse(200, { html: "<p>Parish B text</p>", version: 7 }));
+
+    const reloadBtn = screen.getByRole("button", { name: /reload/i });
+    fireEvent.click(reloadBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText("Parish B text")).toBeTruthy();
+      expect(screen.getByRole("textbox").getAttribute("contenteditable")).toBe("true");
+    });
+
+    // Save is enabled now
+    const enabledSaveBtn = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+    expect(enabledSaveBtn.disabled).toBe(false);
+
+    // Mock successful save for B
+    fetchSpy.mockResolvedValueOnce(mockResponse(200, { html: "<p>Parish B text</p>", version: 8 }));
+
+    fireEvent.click(enabledSaveBtn);
+
+    await waitFor(() => {
+      expect(screen.getByRole("status").textContent).toContain("Saved");
+    });
+
+    // Verify Save sent B's slug and B's version
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
+    const saveCall = fetchSpy.mock.calls[3];
+    expect(String(saveCall?.[0])).toContain("/v1/engagement/service-times/save");
+    const savePayload = JSON.parse(saveCall?.[1]?.body as string);
+    expect(savePayload).toEqual({
+      communitySlug: "parish-b",
+      html: "<p>Parish B text</p>",
+      version: 7,
+    });
+  });
+
+  it("F3: switching community with unsaved edits asks to confirm, cancel keeps text and old community, confirm loads new community", async () => {
+    // 1. Initial load for parish-a
+    fetchSpy.mockResolvedValueOnce(
+      mockResponse(200, { html: "<p>Parish A initial</p>", version: 1 }),
+    );
+
+    function F3Container() {
+      const { slug, setSlug } = useCommunity();
+      return (
+        <PeopleAccessContext.Provider value={{ access: fullAccess }}>
+          <BillingStatusContext.Provider
+            value={{
+              status: {
+                state: "ok",
+                trial_end: null,
+                grace_until: null,
+                canView: true,
+                canManage: true,
+              },
+              readiness: "ready",
+              refresh: vi.fn(),
+              returnMessage: null,
+            }}
+          >
+            <div data-testid="active-slug">{slug}</div>
+            <button type="button" onClick={() => setSlug("parish-b")}>
+              Switch to B
+            </button>
+            <ServiceTimesPage />
+          </BillingStatusContext.Provider>
+        </PeopleAccessContext.Provider>
+      );
+    }
+
+    sessionStorage.setItem("community-hub.community", "parish-a");
+    const router = createMemoryRouter(
+      [
+        {
+          path: "/",
+          element: (
+            <CommunityProvider>
+              <F3Container />
+            </CommunityProvider>
+          ),
+        },
+      ],
+      { initialEntries: ["/"] },
+    );
+
+    render(<RouterProvider router={router} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Parish A initial")).toBeTruthy();
+    });
+    expect(screen.getByTestId("active-slug").textContent).toBe("parish-a");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // 2. Make editor dirty
+    const editor = captured.editor;
+    expect(editor).toBeTruthy();
+    act(() => {
+      editor!.commands.setContent("<p>Parish A unsaved edits</p>");
+    });
+
+    // 3. Trigger community switch to parish-b
+    fireEvent.click(screen.getByText("Switch to B"));
+
+    // 4. Assert confirm dialog appears
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    expect(
+      screen.getByText("You have unsaved changes. Are you sure you want to leave?"),
+    ).toBeTruthy();
+
+    // Assert: NO get request for parish-b was sent!
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // 5. Cancel the switch (click "Stay")
+    fireEvent.click(screen.getByRole("button", { name: "Stay" }));
+
+    // Assert: Confirm dialog disappears
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+
+    // Assert: Old community is kept in context
+    await waitFor(() => {
+      expect(screen.getByTestId("active-slug").textContent).toBe("parish-a");
+    });
+
+    // Assert: Unsaved text is preserved in the editor
+    expect(screen.getByText("Parish A unsaved edits")).toBeTruthy();
+
+    // Assert: Still no new get request sent
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // 6. Now switch again, and Confirm
+    fireEvent.click(screen.getByText("Switch to B"));
+
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // Mock GET response for parish-b
+    fetchSpy.mockResolvedValueOnce(
+      mockResponse(200, { html: "<p>Parish B loaded text</p>", version: 10 }),
+    );
+
+    // Click "Leave without saving" (Confirm)
+    fireEvent.click(screen.getByRole("button", { name: "Leave without saving" }));
+
+    // Assert: Confirm dialog disappears
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+
+    // Assert: GET request for parish-b was sent and content loaded
+    await waitFor(() => {
+      expect(screen.getByText("Parish B loaded text")).toBeTruthy();
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const getCall = fetchSpy.mock.calls[1];
+    expect(String(getCall?.[0])).toContain("/v1/engagement/service-times/get");
+    const getPayload = JSON.parse(getCall?.[1]?.body as string);
+    expect(getPayload).toEqual({ communitySlug: "parish-b" });
+  });
 });
