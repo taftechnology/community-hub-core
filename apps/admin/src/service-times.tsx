@@ -160,13 +160,12 @@ export function ServiceTimesPage() {
   };
 
   const handleConfirmCommunitySwitch = () => {
-    const nextSlug = pendingCommunitySlug;
     pendingRevertSlugRef.current = null;
     setPendingCommunitySlug(null);
     setDirty(false);
-    if (nextSlug) {
-      lastLoadedKeyRef.current = `${nextSlug}|${communityVersion}`;
-      void loadData(nextSlug);
+    if (slug) {
+      lastLoadedKeyRef.current = `${slug}|${communityVersion}`;
+      void loadData(slug);
     }
   };
 
@@ -212,10 +211,8 @@ export function ServiceTimesPage() {
         // Capture new baseline right after setContent
         const newBaseline = editorRef.current?.getHTML() ?? "";
         baselineRef.current = newBaseline;
-        if (!pendingRevertSlugRef.current) {
-          loadedSlugRef.current = slug;
-          setLoadedCommunitySlug(slug);
-        }
+        loadedSlugRef.current = slug;
+        setLoadedCommunitySlug(slug);
         setDirty(false);
         setSavedMessage("Saved");
         setShowReload(false);
