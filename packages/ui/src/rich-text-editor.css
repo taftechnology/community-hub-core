@@ -1,0 +1,139 @@
+.ch-rich-text-editor {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--ch-field-border);
+  background-color: var(--ch-card);
+  color: var(--ch-foreground);
+}
+
+.ch-rich-text-editor:hover {
+  border-color: var(--ch-field-border-hover);
+}
+
+.ch-rich-text-editor[data-invalid="true"] {
+  border-color: var(--ch-destructive);
+}
+
+.ch-rich-text-editor[data-disabled="true"] {
+  cursor: not-allowed;
+  background-color: var(--ch-muted);
+  color: var(--ch-muted-foreground);
+  border-color: var(--ch-border);
+}
+
+.ch-rich-text-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ch-space-1);
+  padding: var(--ch-space-1);
+  border-bottom: 1px solid var(--ch-border);
+  background-color: var(--ch-card);
+  border-top-left-radius: var(--radius-md);
+  border-top-right-radius: var(--radius-md);
+}
+
+.ch-rich-text-content {
+  min-height: 160px;
+  padding: var(--ch-space-3);
+  font-family: var(--ch-font-sans);
+  font-size: var(--ch-type-body-font-size);
+  line-height: var(--ch-type-body-line-height);
+  color: var(--ch-foreground);
+}
+
+.ch-rich-text-content .ProseMirror {
+  min-height: 140px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  outline: none;
+}
+
+.ch-rich-text-content .ProseMirror:focus-visible {
+  outline: 2px solid var(--ch-ring);
+  outline-offset: 2px;
+}
+
+.ch-rich-text-content .ProseMirror p {
+  margin-top: 0;
+  margin-bottom: var(--ch-space-2);
+}
+
+.ch-rich-text-content .ProseMirror p:last-child {
+  margin-bottom: 0;
+}
+
+.ch-rich-text-content .ProseMirror h1 {
+  font-size: var(--ch-type-page-title-font-size);
+  font-weight: var(--ch-type-page-title-font-weight);
+  line-height: var(--ch-type-page-title-line-height);
+  margin-top: var(--ch-space-4);
+  margin-bottom: var(--ch-space-2);
+}
+
+.ch-rich-text-content .ProseMirror h2 {
+  font-size: var(--ch-type-section-title-font-size);
+  font-weight: var(--ch-type-section-title-font-weight);
+  line-height: var(--ch-type-section-title-line-height);
+  margin-top: var(--ch-space-3);
+  margin-bottom: var(--ch-space-2);
+}
+
+.ch-rich-text-content .ProseMirror h3 {
+  font-size: var(--ch-type-panel-title-font-size);
+  font-weight: var(--ch-type-panel-title-font-weight);
+  line-height: var(--ch-type-panel-title-line-height);
+  margin-top: var(--ch-space-2);
+  margin-bottom: var(--ch-space-1);
+}
+
+.ch-rich-text-content .ProseMirror h4 {
+  font-size: var(--ch-type-body-strong-font-size);
+  font-weight: var(--ch-type-body-strong-font-weight);
+  line-height: var(--ch-type-body-strong-line-height);
+  margin-top: var(--ch-space-2);
+  margin-bottom: var(--ch-space-1);
+}
+
+.ch-rich-text-content .ProseMirror ul {
+  list-style-type: disc;
+  padding-left: var(--ch-space-5);
+  margin-top: 0;
+  margin-bottom: var(--ch-space-2);
+}
+
+.ch-rich-text-content .ProseMirror ol {
+  list-style-type: decimal;
+  padding-left: var(--ch-space-5);
+  margin-top: 0;
+  margin-bottom: var(--ch-space-2);
+}
+
+.ch-rich-text-content .ProseMirror li {
+  margin-top: var(--ch-space-1);
+  margin-bottom: var(--ch-space-1);
+}
+
+.ch-rich-text-content .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--ch-subtle-foreground);
+  pointer-events: none;
+  height: 0;
+}
+
+.ch-rich-text-counter {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--ch-space-1) var(--ch-space-3);
+  font-size: var(--ch-type-xs);
+  color: var(--ch-muted-foreground);
+}
+
+.ch-rich-text-counter[data-over="true"] {
+  color: var(--ch-destructive);
+  font-weight: var(--font-weight-medium);
+}
