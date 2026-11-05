@@ -30,7 +30,7 @@ CI enforces what it can. The rest is on the reviewer.
 
 ## 2. Roles
 
-Three roles. **No agent both writes and signs off on the same work.**
+Three roles: the humans (the chunk owner and the project owner), the reviewer agent and the implementer agent. **No agent both writes and signs off on the same work.**
 
 | Role                  | Who                                             | Does                                                                                                                                                                            | Must not                                                          |
 | --------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
@@ -256,7 +256,7 @@ Architecture-specific rules that reviewers check on every diff. Most map to a CI
 
 - A chunk that adds a resource billed by the hour or the month names it and its monthly cost in its spec. No NAT gateway, load balancer, or extra interface endpoint appears without that.
 - Staging is parked by default. Parked means enable_database = false and desired_count = 0 in the committed infra/regions/au/env/staging.tfvars, and no service_image in any committed var file under infra/regions/au/env/. Parking removes the database and runs zero tasks. Stopping a database is not parking, because RDS starts a stopped instance again after seven days.
-- Staging is unparked only inside a chunk whose approved spec says so. That spec names why, the expected extra monthly cost, and how long it stays up. The same chunk re-parks before its pull request is merged, and docs/runbooks/apply-staging-au.md records both applies. The human runs every park and unpark apply. An agent never does. The steps are in that runbook and are not copied here.
+- Staging is unparked only inside a chunk whose approved spec says so. That spec names why, the expected extra monthly cost, and how long it stays up. The same chunk re-parks before its pull request is merged, and docs/runbooks/apply-staging-au.md records both applies. The project owner runs every park and unpark apply. An agent never does. The steps are in that runbook and are not copied here.
 
 **Modules**
 
@@ -395,8 +395,8 @@ Omitted until first real input plus a must-fail fixture: tenant-isolation suite,
 **Stage 4 — Deploy**
 
 - merge to `main` → migrations → deploy the container to `staging-au` → smoke tests + critical-journey e2e (sign-in, donate, RSVP, consent)
-- production is a **human-triggered** promotion of that exact build: migrations → gradual deployment → automatic rollback on error-rate alert
-- Terraform apply on `infra/` changes requires human approval
+- production is a promotion the **project owner** triggers of that exact build: migrations → gradual deployment → automatic rollback on error-rate alert
+- Terraform apply on `infra/` changes requires the project owner's approval
 - nightly on `main`: full e2e, restore drill check, dependency and licence report
 
 **Required for merge:** Stages 1–3 green. Flaky test? Fix or quarantine with an issue and an owner in the same PR — never re-run until green.
@@ -428,6 +428,8 @@ Findings are specific, actionable and ranked. "Consider refactoring" is not a fi
 
 ## 12. When an agent must stop and ask
 
+Stop, do not improvise.
+
 **Ask the chunk owner** (the human in your session), and do not forward these to the project owner:
 
 - The spec or plan turns out to be wrong or ambiguous mid-implementation
@@ -439,10 +441,10 @@ Findings are specific, actionable and ranked. "Consider refactoring" is not a fi
 
 - Anything touching production data, secrets, live billing, or a live customer's tenant
 - A step only the project owner can run (AWS apply, secret, one-off task, merge)
-- A new paid service, vendor or subprocessor
+- A new paid service, vendor or subprocessor, a new AWS service, or a resource billed by the hour or the month (§6 Cost)
 - Anything legal or pricing
 - A privacy decision or an ADR-level architecture decision
-- Changing a rule in §1
+- A rule in §1 blocks the task, or the change would alter one
 - Dropping or changing a feature the Laravel Community Hub has
 - A security issue outside the chunk, or one on `main` or in production
 - Suspected secret exposure (also §14)
