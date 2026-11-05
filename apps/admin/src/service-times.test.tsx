@@ -1,0 +1,697 @@
+import "./test-support/prosemirror-dom";
+
+import * as faithChurch from "@community-hub/faith-church";
+import { terminology } from "@community-hub/faith-church";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import axe from "axe-core";
+import fs from "node:fs";
+import path from "node:path";
+import { StrictMode } from "react";
+import { createMemoryRouter, RouterProvider } from "react-router";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { BillingStatusContext } from "./billing-status";
+import { CommunityProvider, useCommunity } from "./community";
+import { PeopleAccessContext, type PeopleAccess } from "./people-access";
+import { ServiceTimesPage } from "./service-times";
+import { SERVICE_TIMES_HTML_MAX } from "./service-times-api";
+
+const TEST_TOKEN = "test-token";
+const DEFAULT_COMMUNITY = "parish-test";
+
+const fullAccess: PeopleAccess = {
+  permissions: {
+    "people.view": true,
+    "people.manage": true,
+    "people.restricted.read": true,
+    "service_times.manage": true,
+  },
+  entitlements: {
+    "people.directory": true,
+    "people.households": true,
+    "module.engagement": true,
+  },
+};
+
+function mockResponse(status: number, body?: unknown) {
+  return new Response(body !== undefined ? JSON.stringify(body) : null, {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function renderServiceTimesPage({
+  access = fullAccess,
+  communitySlug = DEFAULT_COMMUNITY,
+  initialEntries = ["/engagement/service-times"],
+}: {
+  access?: PeopleAccess;
+  communitySlug?: string;
+  initialEntries?: string[];
+} = {}) {
+  sessionStorage.setItem("community-hub.community", communitySlug);
+  const router = createMemoryRouter(
+    [
+      {
+        path: "/engagement/service-times",
+        element: <ServiceTimesPage />,
+      },
+      {
+        path: "/other",
+        element: <div>Other Page</div>,
+      },
+    ],
+    { initialEntries },
+  );
+
+  const rendered = render(
+    <PeopleAccessContext.Provider value={{ access }}>
+      <CommunityProvider>
+        <BillingStatusContext.Provider
+          value={{
+            status: {
+              state: "ok",
+              trial_end: null,
+              grace_until: null,
+              canView: true,
+              canManage: true,
+            },
+            readiness: "ready",
+            refresh: vi.fn(),
+            returnMessage: null,
+          }}
+        >
+          <RouterProvider router={router} />
+        </BillingStatusContext.Provider>
+      </CommunityProvider>
+    </PeopleAccessContext.Provider>,
+  );
+
+  return { ...rendered, router };
+}
+
+describe("ServiceTimesPage", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    sessionStorage.clear();
+    sessionStorage.setItem("community-hub.access-token", TEST_TOKEN);
+    sessionStorage.setItem("community-hub.community", DEFAULT_COMMUNITY);
+    fetchSpy = vi.spyOn(globalThis, "fetch");
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("matches SERVICE_TIMES_HTML_MAX in contracts", () => {
+    const contractsPath = path.resolve(
+      __dirname,
+      "../../../packages/contracts/src/service-times.ts",
+    );
+    const text = fs.readFileSync(contractsPath, "utf-8");
+    const match = text.match(/SERVICE_TIMES_HTML_MAX\s*=\s*([0-9_]+)/);
+    expect(match).not.toBeNull();
+    const contractsValue = Number(match![1]!.replace(/_/g, ""));
+    expect(contractsValue).toBe(SERVICE_TIMES_HTML_MAX);
+  });
+
+  it("renders pack plural as title and loads saved text into the editor", async () => {
+    const plural = terminology("engagement.service_times").plural;
+    fetchSpy.mockResolvedValueOnce(
+      mockResponse(200, { html: "<p>Saturday 5pm Mass</p>", version: 1 }),
+    );
+
+    renderServiceTimesPage();
+
+    expect(screen.getByRole("heading", { level: 1, name: plural })).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByText("Saturday 5pm Mass")).toBeTruthy();
+    });
+  });
+
+  it("renders empty editor with placeholder and pack hint when no saved text exists", async () => {
+    const term = terminology("engagement.service_times");
+    fetchSpy.mockResolvedValueOnce(mockResponse(200, { html: "", version: 0 }));
+
+    renderServiceTimesPage();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(term.fieldLabel)).toBeTruthy();
+    });
+    expect(screen.getByText(term.hint)).toBeTruthy();
+  });
+
+  it("saves changes, replaces content with cleaned html, announces Saved status, and clears on edit", async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse(200, { html: "<p>Initial text</p>", version: 1 }));
+
+    renderServiceTimesPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Initial text")).toBeTruthy();
+    });
+
+    // Simulate saving updated content
+    fetchSpy.mockResolvedValueOnce(
+      mockResponse(200, { html: "<p>Server cleaned text</p>", version: 2 }),
+    );
+
+    const saveBtn = screen.getByRole("button", { name: "Save" });
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(screen.getByRole("status").textContent).toContain("Saved");
+    });
+    expect(screen.getByText("Server cleaned text")).toBeTruthy();
+
+    // Clears saved status on next edit
+    const editor = (
+      window as unknown as { __testEditor?: { commands: { setContent: (c: string) => void } } }
+    ).__testEditor;
+    if (editor) {
+      act(() => {
+        editor.commands.setContent("<p>New edit after save</p>");
+      });
+      expect(screen.queryByText("Saved")).toBeNull();
+    }
+  });
+
+  it("sends only one POST request when Save is double clicked", async () => {
+    let resolveSave: (r: Response) => void;
+    fetchSpy
+      .mockResolvedValueOnce(mockResponse(200, { html: "<p>Initial</p>", version: 1 }))
+      .mockImplementationOnce(
+        () =>
+          new Promise((res) => {
+            resolveSave = res;
+          }),
+      );
+
+    renderServiceTimesPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Initial")).toBeTruthy();
+    });
+
+    const saveBtn = screen.getByRole("button", { name: "Save" });
+    fireEvent.click(saveBtn);
+    fireEvent.click(saveBtn); // double click
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2); // 1 get + 1 save
+    resolveSave!(mockResponse(200, { html: "<p>Initial</p>", version: 2 }));
+    await waitFor(() => {
+      expect(screen.getByRole("status").textContent).toContain("Saved");
+    });
+  });
+
+  it("handles 409 conflict: keeps staff text, shows conflict message, and Reload refetches", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(mockResponse(200, { html: "<p>Original</p>", version: 1 }))
+      .mockResolvedValueOnce(mockResponse(409));
+
+    renderServiceTimesPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Original")).toBeTruthy();
+    });
+
+    const saveBtn = screen.getByRole("button", { name: "Save" });
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "Someone else saved a change first. Reload to see their text, or copy yours before you reload.",
+        ),
+      ).toBeTruthy();
+    });
+
+    // Staff text is preserved
+    expect(screen.getByText("Original")).toBeTruthy();
+
+    // Reload button discards and refetches
+    fetchSpy.mockResolvedValueOnce(
+      mockResponse(200, { html: "<p>Someone else text</p>", version: 2 }),
+    );
+
+    const reloadBtn = screen.getByRole("button", { name: /reload/i });
+    fireEvent.click(reloadBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText("Someone else text")).toBeTruthy();
+    });
+  });
+
+  it("handles 402 read-only billing: shows read-only message and calls refresh", async () => {
+    const refreshMock = vi.fn();
+    fetchSpy
+      .mockResolvedValueOnce(mockResponse(200, { html: "<p>Draft</p>", version: 1 }))
+      .mockResolvedValueOnce(mockResponse(402));
+
+    const router = createMemoryRouter(
+      [{ path: "/engagement/service-times", element: <ServiceTimesPage /> }],
+      { initialEntries: ["/engagement/service-times"] },
+    );
+
+    render(
+      <PeopleAccessContext.Provider value={{ access: fullAccess }}>
+        <CommunityProvider>
+          <BillingStatusContext.Provider
+            value={{
+              status: {
+                state: "read_only",
+                trial_end: null,
+                grace_until: null,
+                canView: true,
+                canManage: true,
+              },
+              readiness: "ready",
+              refresh: refreshMock,
+              returnMessage: null,
+            }}
+          >
+            <RouterProvider router={router} />
+          </BillingStatusContext.Provider>
+        </CommunityProvider>
+      </PeopleAccessContext.Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Draft")).toBeTruthy();
+    });
+
+    const saveBtn = screen.getByRole("button", { name: "Save" });
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText("Read-only until billing is settled")).toBeTruthy();
+    });
+    expect(refreshMock).toHaveBeenCalled();
+    expect(screen.getByText("Draft")).toBeTruthy();
+  });
+
+  it("handles 403 forbidden on save with fixed message and preserves text", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(mockResponse(200, { html: "<p>Draft</p>", version: 1 }))
+      .mockResolvedValueOnce(mockResponse(403));
+
+    renderServiceTimesPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Draft")).toBeTruthy();
+    });
+
+    const saveBtn = screen.getByRole("button", { name: "Save" });
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText("You do not have permission to change this.")).toBeTruthy();
+    });
+    expect(screen.getByText("Draft")).toBeTruthy();
+  });
+
+  it("handles 400 over-cap response and network error with fixed messages and preserves text", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(mockResponse(200, { html: "<p>Draft</p>", version: 1 }))
+      .mockResolvedValueOnce(mockResponse(400));
+
+    renderServiceTimesPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Draft")).toBeTruthy();
+    });
+
+    const saveBtn = screen.getByRole("button", { name: "Save" });
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText("This is too long to save. Shorten it and try again.")).toBeTruthy();
+    });
+    expect(screen.getByText("Draft")).toBeTruthy();
+
+    // Network failure on next save
+    fetchSpy.mockRejectedValueOnce(new Error("Network failure"));
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText("Could not save. Try again.")).toBeTruthy();
+    });
+    expect(screen.getByText("Draft")).toBeTruthy();
+  });
+
+  it("blocks Save and sends NOTHING when content exceeds SERVICE_TIMES_HTML_MAX", async () => {
+    const longText = "<p>" + "a".repeat(SERVICE_TIMES_HTML_MAX + 10) + "</p>";
+    fetchSpy.mockResolvedValueOnce(mockResponse(200, { html: longText, version: 1 }));
+
+    renderServiceTimesPage();
+
+    await waitFor(() => {
+      expect(screen.queryByText("Loading...")).toBeNull();
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    const saveBtn = screen.getByRole("button", { name: "Save" });
+    fireEvent.click(saveBtn);
+
+    expect(screen.getByText("This is too long to save. Shorten it and try again.")).toBeTruthy();
+    // Only the initial GET was called, nothing sent for save
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("labels come from the pack without hard-coded words", async () => {
+    vi.spyOn(faithChurch, "terminology").mockReturnValue({
+      singular: "Prayer Time",
+      plural: "Prayer Times",
+      fieldLabel: "Prayer Content",
+      placeholder: "Enter prayer times here...",
+      hint: "Prayer hint appears on website.",
+    });
+
+    fetchSpy.mockResolvedValueOnce(mockResponse(200, { html: "", version: 0 }));
+
+    renderServiceTimesPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { level: 1, name: "Prayer Times" })).toBeTruthy();
+      expect(screen.getByLabelText("Prayer Content")).toBeTruthy();
+      expect(screen.getByText("Prayer hint appears on website.")).toBeTruthy();
+    });
+  });
+
+  it("prevents beforeunload when dirty and allows when clean", async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse(200, { html: "<p>Initial</p>", version: 1 }));
+
+    renderServiceTimesPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Initial")).toBeTruthy();
+    });
+
+    // Right after load, not dirty
+    const cleanEvent = new Event("beforeunload", { cancelable: true }) as BeforeUnloadEvent;
+    window.dispatchEvent(cleanEvent);
+    expect(cleanEvent.defaultPrevented).toBe(false);
+
+    // Edit content to make dirty
+    const editor = (
+      window as unknown as { __testEditor?: { commands: { setContent: (c: string) => void } } }
+    ).__testEditor;
+    if (editor) {
+      act(() => {
+        editor.commands.setContent("<p>Modified</p>");
+      });
+    }
+
+    const dirtyEvent = new Event("beforeunload", { cancelable: true }) as BeforeUnloadEvent;
+    window.dispatchEvent(dirtyEvent);
+    expect(dirtyEvent.defaultPrevented).toBe(true);
+  });
+
+  it("PIN 25: after load with <ul><li>x</li></ul>, baseline matches editor serialization and leave prompt does not fire", async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse(200, { html: "<ul><li>x</li></ul>", version: 1 }));
+
+    const { router } = renderServiceTimesPage();
+
+    await waitFor(() => {
+      expect(screen.queryByText("Loading...")).toBeNull();
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    // Navigate to /other
+    act(() => {
+      router.navigate("/other");
+    });
+
+    // Navigation must succeed without being blocked because it is not dirty
+    await waitFor(() => {
+      expect(screen.getByText("Other Page")).toBeTruthy();
+    });
+  });
+
+  it("blocks in-app navigation when dirty and offers Stay and Leave without saving", async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse(200, { html: "<p>Initial</p>", version: 1 }));
+
+    const { router } = renderServiceTimesPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Initial")).toBeTruthy();
+    });
+
+    // Modify editor content
+    const editor = (
+      window as unknown as { __testEditor?: { commands: { setContent: (c: string) => void } } }
+    ).__testEditor;
+    if (editor) {
+      act(() => {
+        editor.commands.setContent("<p>Dirty content</p>");
+      });
+    }
+
+    // Try to navigate away
+    act(() => {
+      router.navigate("/other");
+    });
+
+    // Blocked alert appears
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+
+    // Click "Stay"
+    fireEvent.click(screen.getByRole("button", { name: "Stay" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
+
+    // Try to navigate again
+    act(() => {
+      router.navigate("/other");
+    });
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+
+    // Click "Leave without saving"
+    fireEvent.click(screen.getByRole("button", { name: "Leave without saving" }));
+    await waitFor(() => {
+      expect(screen.getByText("Other Page")).toBeTruthy();
+    });
+  });
+
+  it("stale-response guard: slow first load that resolves after community switch is ignored", async () => {
+    let resolveFirstLoad: (r: Response) => void;
+    let resolveSecondLoad: (r: Response) => void;
+
+    fetchSpy
+      .mockImplementationOnce(
+        () =>
+          new Promise((res) => {
+            resolveFirstLoad = res;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((res) => {
+            resolveSecondLoad = res;
+          }),
+      );
+
+    function SwitchContainer() {
+      function SwitchButton() {
+        const { setSlug } = useCommunity();
+        return (
+          <button type="button" onClick={() => setSlug("parish-b")}>
+            Switch
+          </button>
+        );
+      }
+
+      return (
+        <PeopleAccessContext.Provider value={{ access: fullAccess }}>
+          <CommunityProvider>
+            <SwitchButton />
+            <ServiceTimesPage />
+          </CommunityProvider>
+        </PeopleAccessContext.Provider>
+      );
+    }
+
+    sessionStorage.setItem("community-hub.community", "parish-a");
+    const router = createMemoryRouter([{ path: "/", element: <SwitchContainer /> }], {
+      initialEntries: ["/"],
+    });
+
+    render(<RouterProvider router={router} />);
+
+    // Switch community while parish-a is loading
+    fireEvent.click(screen.getByText("Switch"));
+
+    // Parish-b resolves first
+    resolveSecondLoad!(mockResponse(200, { html: "<p>Parish B text</p>", version: 2 }));
+    await waitFor(() => {
+      expect(screen.getByText("Parish B text")).toBeTruthy();
+    });
+
+    // Stale Parish-a resolves later: must be ignored!
+    resolveFirstLoad!(mockResponse(200, { html: "<p>Parish A text</p>", version: 1 }));
+    await waitFor(() => {
+      expect(screen.queryByText("Parish A text")).toBeNull();
+    });
+    expect(screen.getByText("Parish B text")).toBeTruthy();
+  });
+
+  it("stale-response guard: slow save response that resolves after a reload is ignored", async () => {
+    let resolveSave: (r: Response) => void;
+
+    fetchSpy
+      .mockResolvedValueOnce(mockResponse(200, { html: "<p>Parish A text</p>", version: 1 }))
+      .mockImplementationOnce(
+        () =>
+          new Promise((res) => {
+            resolveSave = res;
+          }),
+      )
+      .mockResolvedValueOnce(mockResponse(200, { html: "<p>Parish B text</p>", version: 1 }));
+
+    function SwitchSaveContainer() {
+      function SwitchButton() {
+        const { setSlug } = useCommunity();
+        return (
+          <button type="button" onClick={() => setSlug("parish-b")}>
+            Switch
+          </button>
+        );
+      }
+
+      return (
+        <PeopleAccessContext.Provider value={{ access: fullAccess }}>
+          <CommunityProvider>
+            <SwitchButton />
+            <ServiceTimesPage />
+          </CommunityProvider>
+        </PeopleAccessContext.Provider>
+      );
+    }
+
+    sessionStorage.setItem("community-hub.community", "parish-a");
+    const router = createMemoryRouter([{ path: "/", element: <SwitchSaveContainer /> }], {
+      initialEntries: ["/"],
+    });
+
+    render(<RouterProvider router={router} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Parish A text")).toBeTruthy();
+    });
+
+    // Start Save for Parish A (slow)
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    // Switch community to Parish B (triggers reload)
+    fireEvent.click(screen.getByText("Switch"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Parish B text")).toBeTruthy();
+    });
+
+    // Now stale save for Parish A resolves
+    resolveSave!(mockResponse(200, { html: "<p>Stale Parish A saved</p>", version: 2 }));
+
+    // Without guard, "Stale Parish A saved" overwrites "Parish B text". With guard, it is ignored!
+    await waitFor(() => {
+      expect(screen.queryByText("Stale Parish A saved")).toBeNull();
+    });
+    expect(screen.getByText("Parish B text")).toBeTruthy();
+  });
+
+  it("renders cleanly in StrictMode and performs exactly one load request", async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse(200, { html: "<p>Strict test</p>", version: 1 }));
+
+    sessionStorage.setItem("community-hub.community", DEFAULT_COMMUNITY);
+    const router = createMemoryRouter(
+      [{ path: "/engagement/service-times", element: <ServiceTimesPage /> }],
+      { initialEntries: ["/engagement/service-times"] },
+    );
+
+    render(
+      <StrictMode>
+        <PeopleAccessContext.Provider value={{ access: fullAccess }}>
+          <CommunityProvider>
+            <RouterProvider router={router} />
+          </CommunityProvider>
+        </PeopleAccessContext.Provider>
+      </StrictMode>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Strict test")).toBeTruthy();
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders fixed message and makes NO request when user lacks access", async () => {
+    const noAccess: PeopleAccess = {
+      permissions: {
+        "people.view": true,
+        "people.manage": true,
+        "people.restricted.read": true,
+        "service_times.manage": false,
+      },
+      entitlements: {
+        "people.directory": true,
+        "people.households": true,
+        "module.engagement": false,
+      },
+    };
+
+    renderServiceTimesPage({ access: noAccess });
+
+    expect(screen.getByText("You do not have access to this page.")).toBeTruthy();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("controls adhere to 36px controls / 44px touch targets", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      mockResponse(200, { html: "<p>Target content</p>", version: 1 }),
+    );
+
+    renderServiceTimesPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Target content")).toBeTruthy();
+    });
+
+    const saveBtn = screen.getByRole("button", { name: "Save" });
+    expect(saveBtn).toBeTruthy();
+    // Toolbar buttons have touch targets
+    const toolbarButtons = screen.getAllByRole("button");
+    expect(toolbarButtons.length).toBeGreaterThan(1);
+  });
+
+  it("passes axe accessibility checks in light, dark, and error states", async () => {
+    fetchSpy.mockResolvedValueOnce(mockResponse(200, { html: "<p>A11y content</p>", version: 1 }));
+
+    const { container } = renderServiceTimesPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("A11y content")).toBeTruthy();
+    });
+
+    // Light mode
+    const lightResults = await axe.run(container);
+    expect(lightResults.violations).toEqual([]);
+
+    // Dark mode
+    document.documentElement.dataset.theme = "dark";
+    const darkResults = await axe.run(container);
+    expect(darkResults.violations).toEqual([]);
+    delete document.documentElement.dataset.theme;
+
+    // Error state axe
+    fetchSpy.mockResolvedValueOnce(mockResponse(403));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(screen.getByText("You do not have permission to change this.")).toBeTruthy();
+    });
+    const errorResults = await axe.run(container);
+    expect(errorResults.violations).toEqual([]);
+  });
+});

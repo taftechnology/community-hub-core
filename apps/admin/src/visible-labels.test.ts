@@ -28,3 +28,19 @@ it("includes Family Records when mapped to people.households and entitled", () =
     "Settings",
   ]);
 });
+
+it("includes Engagement when mapped to module.engagement and entitled", () => {
+  const map = {
+    Engagement: "module.engagement",
+    "Contacts & Members": "people.directory",
+    "Family Records": "people.households",
+  };
+  expect(visibleLabels(labels, ["module.engagement"], map)).toEqual([
+    "Dashboard",
+    "Engagement",
+    "Settings",
+  ]);
+  expect(
+    visibleLabels(labels, ["module.engagement", "people.directory", "people.households"], map),
+  ).toEqual(["Dashboard", "Engagement", "Contacts & Members", "Family Records", "Settings"]);
+});

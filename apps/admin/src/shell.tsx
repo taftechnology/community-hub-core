@@ -13,6 +13,7 @@ import { FamilyRecordsPage } from "./family-records";
 import { SignInPage } from "./sign-in";
 import { GeneralSettingsPage } from "./general-settings";
 import { ModuleTogglesPage } from "./module-toggles";
+import { ServiceTimesPage } from "./service-times";
 import { UsersRolesPage } from "./users-roles";
 
 function DashboardPage() {
@@ -70,6 +71,7 @@ export const router = createBrowserRouter([
       { path: "settings/modules", element: <ModuleTogglesPage /> },
       { path: "contacts", element: <AllContactsPage /> },
       { path: "family-records", element: <FamilyRecordsPage /> },
+      { path: "engagement/service-times", element: <ServiceTimesPage /> },
     ],
   },
 ]);

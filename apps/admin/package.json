@@ -10,6 +10,7 @@
     "build": "vite build"
   },
   "dependencies": {
+    "@community-hub/faith-church": "workspace:*",
     "@community-hub/tokens": "workspace:*",
     "@community-hub/ui": "workspace:*",
     "@tailwindcss/vite": "4.3.3",

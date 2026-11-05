@@ -1299,11 +1299,16 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
         <MinorsSection
           detailHousehold={sampleDetail}
           access={{
-            entitlements: { "people.directory": true, "people.households": false },
+            entitlements: {
+              "people.directory": true,
+              "people.households": false,
+              "module.engagement": false,
+            },
             permissions: {
               "people.view": true,
               "people.manage": true,
               "people.restricted.read": true,
+              "service_times.manage": false,
             },
           }}
           isReadOnly={false}
@@ -2333,10 +2338,12 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
             "people.view": true,
             "people.manage": true,
             "people.restricted.read": false,
+            "service_times.manage": false,
           },
           entitlements: {
             "people.directory": true,
             "people.households": true,
+            "module.engagement": false,
           },
         }}
         isReadOnly={false}
@@ -2355,10 +2362,12 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
             "people.view": true,
             "people.manage": true,
             "people.restricted.read": false,
+            "service_times.manage": false,
           },
           entitlements: {
             "people.directory": true,
             "people.households": true,
+            "module.engagement": false,
           },
         }}
         isReadOnly={false}
@@ -2377,10 +2386,12 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
             "people.view": true,
             "people.manage": true,
             "people.restricted.read": false,
+            "service_times.manage": false,
           },
           entitlements: {
             "people.directory": true,
             "people.households": true,
+            "module.engagement": false,
           },
         }}
         isReadOnly={false}
@@ -2401,10 +2412,12 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
             "people.view": true,
             "people.manage": true,
             "people.restricted.read": true,
+            "service_times.manage": false,
           },
           entitlements: {
             "people.directory": true,
             "people.households": true,
+            "module.engagement": false,
           },
         }}
         isReadOnly={false}
@@ -2424,10 +2437,12 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
             "people.view": true,
             "people.manage": false,
             "people.restricted.read": true,
+            "service_times.manage": false,
           },
           entitlements: {
             "people.directory": true,
             "people.households": true,
+            "module.engagement": false,
           },
         }}
         isReadOnly={false}
