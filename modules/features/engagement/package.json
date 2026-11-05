@@ -21,6 +21,7 @@
   "dependencies": {
     "@community-hub/db": "workspace:*",
     "@community-hub/kernel": "workspace:*",
+    "@community-hub/usage": "workspace:*",
     "drizzle-orm": "0.45.2",
     "postgres": "3.4.9",
     "sanitize-html": "2.18.1"
