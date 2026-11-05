@@ -109,7 +109,7 @@ The implementer runs each row once: weaken the source, see the named test fail, 
 | 22  | Usage is recorded last, on success only                         | call `recordSuccess` first, or on failure                   | integration test: a rejected save adds nothing to `module.engagement` usage; a good save adds one                                                                  |
 | 23  | Editor schema equals the allow-list                             | enable `strike` or `codeBlock`                              | `rich-text-editor.test.tsx`: node and mark names equal the sanitiser's allow-list                                                                                  |
 | 24  | No injected `<style>`                                           | set `injectCSS: true`                                       | same file: no `<style>` element after mount                                                                                                                        |
-| 25  | Dirty baseline is the editor's own output                       | compare against the server string                           | `mass-times.test.tsx`: load, then leave, gives no prompt                                                                                                           |
+| 25  | Dirty baseline is the editor's own output                       | compare against the server string                           | `service-times.test.tsx`: load, then leave, gives no prompt                                                                                                        |
 | 26  | Nav needs entitlement and permission                            | drop the permission from the predicate                      | `nav.test.tsx`: a user with the entitlement and without the permission sees no Mass Times item                                                                     |
 | 27  | Label boundary                                                  | put `mass` in an exported identifier or route               | `label-boundary.test.ts` fails                                                                                                                                     |
 
@@ -264,12 +264,12 @@ Must not break: the single catalogue (D16); the ops bundle (it must not import t
 
 ### Task 9: Admin nav, capabilities and the Mass Times screen
 
-**Files:** `apps/admin/{package.json,src/people-access.tsx,src/nav.tsx,src/labels.ts,src/visible-labels.ts,src/shell.tsx,src/mass-times.tsx,src/service-times-api.ts}` and their tests (`nav.test.tsx`, `shell.test.tsx`, `visible-labels.test.ts`, `mass-times.test.tsx`); `pnpm-lock.yaml`
+**Files:** `apps/admin/{package.json,src/people-access.tsx,src/nav.tsx,src/labels.ts,src/visible-labels.ts,src/shell.tsx,src/service-times.tsx,src/service-times-api.ts}` and their tests (`nav.test.tsx`, `shell.test.tsx`, `visible-labels.test.ts`, `service-times.test.tsx`); `pnpm-lock.yaml`
 
 - [ ] RED:
   - `PeopleAccess` default and `parseAccess` carry `module.engagement` and `service_times.manage`;
   - `nav.test.tsx` and `shell.test.tsx` (frozen labels): `Engagement` is in `entitlementMap`; a Mass Times child (label from the pack) shows only with the entitlement **and** the permission (pin 26); the Engagement parent is hidden when no child is visible; the frozen order is unchanged; `visible-labels.test.ts` updated;
-  - `mass-times.test.tsx`:
+  - `service-times.test.tsx`:
     - load with saved text; empty with the pack's placeholder; saving; "Saved" status announced;
     - the screen shows the server's cleaned HTML after a save;
     - 402, 403, generic error, and `version_conflict` states (the conflict keeps the staff member's text, says another change was saved first, and offers to reload);
