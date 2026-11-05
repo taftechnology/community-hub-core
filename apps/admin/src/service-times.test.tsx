@@ -440,12 +440,103 @@ describe("ServiceTimesPage", () => {
       expect(fetchSpy).toHaveBeenCalledTimes(1);
     });
 
-    // Navigate to /other
+    const editor = captured.editor;
+    expect(editor).toBeTruthy();
+
+    // Edit content to make dirty
+    act(() => {
+      editor!.commands.setContent("<p>Changed</p>");
+    });
+
+    // In-app navigation is blocked by unsaved changes dialog
     act(() => {
       router.navigate("/other");
     });
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
 
-    // Navigation must succeed without being blocked because it is not dirty
+    // Dismiss dialog via "Stay"
+    fireEvent.click(screen.getByRole("button", { name: "Stay" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+
+    // Restore content to loaded representation
+    act(() => {
+      editor!.commands.setContent("<ul><li>x</li></ul>");
+    });
+
+    // Window beforeunload is not prevented when restored to baseline
+    const cleanEvent = new Event("beforeunload", { cancelable: true }) as BeforeUnloadEvent;
+    window.dispatchEvent(cleanEvent);
+    expect(cleanEvent.defaultPrevented).toBe(false);
+
+    // In-app navigation proceeds without prompt
+    act(() => {
+      router.navigate("/other");
+    });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByText("Other Page")).toBeTruthy();
+    });
+  });
+
+  it("PIN 25: after save with <ul><li>x</li></ul>, baseline matches editor serialization and leave prompt does not fire", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(mockResponse(200, { html: "<p>Initial</p>", version: 1 }))
+      .mockResolvedValueOnce(mockResponse(200, { html: "<ul><li>x</li></ul>", version: 2 }));
+
+    const { router } = renderServiceTimesPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Initial")).toBeTruthy();
+    });
+
+    const editor = captured.editor;
+    expect(editor).toBeTruthy();
+
+    // Edit content to make dirty before save
+    act(() => {
+      editor!.commands.setContent("<p>Edit before save</p>");
+    });
+
+    // Save
+    const saveBtn = screen.getByRole("button", { name: "Save" });
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(screen.getByRole("status").textContent).toContain("Saved");
+    });
+
+    // Edit away to make dirty
+    act(() => {
+      editor!.commands.setContent("<p>Changed after save</p>");
+    });
+
+    // In-app navigation is blocked
+    act(() => {
+      router.navigate("/other");
+    });
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+
+    // Dismiss dialog via "Stay"
+    fireEvent.click(screen.getByRole("button", { name: "Stay" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+
+    // Restore content to saved HTML representation
+    act(() => {
+      editor!.commands.setContent("<ul><li>x</li></ul>");
+    });
+
+    // Window beforeunload is not prevented when restored to baseline
+    const cleanEvent = new Event("beforeunload", { cancelable: true }) as BeforeUnloadEvent;
+    window.dispatchEvent(cleanEvent);
+    expect(cleanEvent.defaultPrevented).toBe(false);
+
+    // In-app navigation proceeds without prompt
+    act(() => {
+      router.navigate("/other");
+    });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
     await waitFor(() => {
       expect(screen.getByText("Other Page")).toBeTruthy();
     });
