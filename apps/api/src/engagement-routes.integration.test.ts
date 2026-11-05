@@ -144,6 +144,7 @@ describe("engagement routes integration tests (real DB, Round trip)", () => {
 
   let tokenA: string;
   let tokenNoEntitlement: string;
+  const userIds: string[] = [];
 
   const checkout = async <T>(role: Role, run: (sql: never) => Promise<T>): Promise<T> => {
     if (role === "identity") {
@@ -165,6 +166,7 @@ describe("engagement routes integration tests (real DB, Round trip)", () => {
     if (session === null) {
       throw new Error("Failed to sign in");
     }
+    userIds.push(session.userId);
     return session;
   }
 
@@ -200,6 +202,7 @@ describe("engagement routes integration tests (real DB, Round trip)", () => {
     directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
     kms = createLocalKmsPort();
     mail = new MemoryMail();
+    await identity`delete from identity.identity_keys`;
 
     const env = envFor(PORT);
     const routes = engagementRoutes({
@@ -302,6 +305,11 @@ describe("engagement routes integration tests (real DB, Round trip)", () => {
     await new Promise<void>((resolve) => {
       server?.close(() => resolve());
     });
+    if (userIds.length > 0) {
+      await identity`delete from identity.sessions where user_id in ${identity(userIds)}`;
+      await identity`delete from identity.users where id in ${identity(userIds)}`;
+    }
+    await identity`delete from identity.identity_keys`;
     await directSql?.end({ timeout: 1 });
     await app?.end({ timeout: 1 });
     await platform?.end({ timeout: 1 });
