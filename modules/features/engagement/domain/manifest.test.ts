@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { isAuditAction, isAuditPurpose } from "@community-hub/kernel/module";
 
 import engagementModule from "../module.manifest.js";
+import "../public/index.js";
 
 describe("engagement manifest", () => {
   it("declares the engagement module manifest with all data classes (pin 25)", () => {
@@ -35,5 +37,10 @@ describe("engagement manifest", () => {
       "service_times.updated_at",
     ];
     expect(Object.keys(engagementModule.dataClasses ?? {}).sort()).toEqual(expectedColumns.sort());
+  });
+
+  it("registers engagement.permission.denied as an audit action and purpose", () => {
+    expect(isAuditAction("engagement.permission.denied")).toBe(true);
+    expect(isAuditPurpose("engagement.permission.denied")).toBe(true);
   });
 });

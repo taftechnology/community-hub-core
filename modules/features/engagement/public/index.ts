@@ -2,6 +2,8 @@ import { defineAuditAction, defineAuditPurpose } from "@community-hub/kernel/mod
 
 defineAuditAction("engagement.service_times.saved");
 defineAuditPurpose("engagement.service_times.saved");
+defineAuditAction("engagement.permission.denied");
+defineAuditPurpose("engagement.permission.denied");
 
 export { sanitiseServiceTimesHtml } from "../domain/sanitise.js";
 export { ServiceTimesError, type ServiceTimesErrorCode } from "../domain/error.js";

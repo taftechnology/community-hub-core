@@ -28,7 +28,7 @@ export const serviceTimesSaveBody = z
   .object({
     communitySlug: slug,
     html: z.string().max(SERVICE_TIMES_RAW_HTML_MAX),
-    version: z.number().int().min(0),
+    version: z.number().int().min(0).max(2_147_483_647),
   })
   .strict();
 
@@ -37,7 +37,7 @@ export type ServiceTimesSaveBody = z.infer<typeof serviceTimesSaveBody>;
 export const serviceTimesResponse = z
   .object({
     html: z.string(),
-    version: z.number().int().min(0),
+    version: z.number().int().min(0).max(2_147_483_647),
   })
   .strict();
 

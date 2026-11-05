@@ -116,6 +116,7 @@ export async function saveServiceTimes(
       set content_html = ${cleaned},
           version = version + 1,
           updated_at = ${input.now}
+      -- Row level security is the enforcement; org_id and community_id predicates are defence in depth.
       where org_id = current_setting('app.org_id')::uuid
         and community_id = current_setting('app.community_id')::uuid
         and version = ${input.expectedVersion}

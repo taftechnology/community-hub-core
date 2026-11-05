@@ -220,6 +220,16 @@ export const EDGE_CASE_FIXTURES: readonly {
     input: '<?xml version="1.0" encoding="utf-8"?><p>Mass Times</p>',
     expected: "<p>Mass Times</p>",
   },
+  {
+    name: "NUL byte is removed",
+    input: "<p>a\u0000b</p>",
+    expected: "<p>ab</p>",
+  },
+  {
+    name: "lone surrogate replaced with replacement character",
+    input: "<p>\ud83dz</p>",
+    expected: "<p>\ufffdz</p>",
+  },
 ];
 
 export const EMPTY_NORMALISATION_FIXTURES: readonly {

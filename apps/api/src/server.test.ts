@@ -724,6 +724,66 @@ describe("startServer", () => {
     expect(calls).toBe(0);
   });
 
+  it("a 6,000-byte body to the save path is accepted on API hostname but rejected with 400 on auth, ops, webhooks, and unknown hostnames", async () => {
+    const env = envFor(18470);
+    let calls = 0;
+    const server = startServer({
+      env,
+      routes: [
+        health,
+        {
+          method: "POST",
+          pattern: "/v1/engagement/service-times/save",
+          surface: "tenant",
+          billing: "write",
+          largeBody: "content",
+          handle: () => {
+            calls += 1;
+            return new Response(null, { status: 200 });
+          },
+        },
+      ],
+    });
+    servers.push(server);
+    await listening(server);
+
+    // 1. API hostname: 6,000 bytes reaches the handler (status 200)
+    const apiResponse = await fetch("http://127.0.0.1:18470/v1/engagement/service-times/save", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-community-hub-hostname": env.API_HOSTNAME,
+      },
+      body: "a".repeat(6000),
+    });
+    expect(apiResponse.status).toBe(200);
+    expect(calls).toBe(1);
+
+    // 2. Auth, ops, webhooks, and unknown hostnames: limited to 4,096 and rejected with 400
+    const nonApiHostnames = [
+      env.AUTH_HOSTNAME,
+      env.OPS_HOSTNAME,
+      env.WEBHOOKS_HOSTNAME,
+      "unknown.au.example.test",
+    ];
+
+    for (const hostname of nonApiHostnames) {
+      const response = await fetch("http://127.0.0.1:18470/v1/engagement/service-times/save", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-community-hub-hostname": hostname,
+        },
+        body: "a".repeat(6000),
+      });
+      expect(response.status).toBe(400);
+      expect(await response.text()).toBe("");
+    }
+
+    // Still only 1 call from the API hostname request
+    expect(calls).toBe(1);
+  });
+
   it("writes every Set-Cookie value", async () => {
     const env = envFor(18466);
     const server = startServer({

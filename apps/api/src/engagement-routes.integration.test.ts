@@ -3,7 +3,10 @@ import type { Server } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bootstrapOwner } from "@community-hub/access";
-import { serviceTimesPublicSchema } from "@community-hub/contracts/service-times";
+import {
+  serviceTimesPublicSchema,
+  serviceTimesResponse,
+} from "@community-hub/contracts/service-times";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import { applyProductMigrations, newId, withAppTransaction } from "@community-hub/db";
 import {
@@ -138,12 +141,18 @@ describe("engagement routes integration tests (real DB, Round trip)", () => {
   const orgIdNoEntitlement = newId();
   const communityIdA = newId();
   const communityIdNoEntitlement = newId();
+  const communityIdNoGrant = newId();
+  const communityIdClean = newId();
 
   const slugA = `eng-comm-a-${newId().slice(-8)}`;
   const slugNoEntitlement = `eng-comm-noent-${newId().slice(-8)}`;
+  const slugNoGrant = `eng-comm-nogrant-${newId().slice(-8)}`;
+  const slugClean = `eng-comm-clean-${newId().slice(-8)}`;
 
   let tokenA: string;
   let tokenNoEntitlement: string;
+  let tokenNoGrant: string;
+  let userIdNoGrant: string;
   const userIds: string[] = [];
 
   const checkout = async <T>(role: Role, run: (sql: never) => Promise<T>): Promise<T> => {
@@ -241,7 +250,9 @@ describe("engagement routes integration tests (real DB, Round trip)", () => {
         insert into platform.communities (id, organisation_id, slug, region)
         values
           (${communityIdA}::uuid, ${orgIdA}::uuid, ${slugA}, 'au'),
-          (${communityIdNoEntitlement}::uuid, ${orgIdNoEntitlement}::uuid, ${slugNoEntitlement}, 'au')
+          (${communityIdNoEntitlement}::uuid, ${orgIdNoEntitlement}::uuid, ${slugNoEntitlement}, 'au'),
+          (${communityIdNoGrant}::uuid, ${orgIdA}::uuid, ${slugNoGrant}, 'au'),
+          (${communityIdClean}::uuid, ${orgIdA}::uuid, ${slugClean}, 'au')
       `;
     });
 
@@ -274,6 +285,10 @@ describe("engagement routes integration tests (real DB, Round trip)", () => {
 
     const uNoEnt = await signIn(`noent-${newId().slice(-8)}@example.test`);
     tokenNoEntitlement = uNoEnt.accessToken;
+
+    const uNoGrant = await signIn(`nogrant-${newId().slice(-8)}@example.test`);
+    tokenNoGrant = uNoGrant.accessToken;
+    userIdNoGrant = uNoGrant.userId;
 
     await withRequest({ requestId: REQUEST_ID }, () =>
       withAppTransaction(app, { orgId: orgIdA, communityId: communityIdA }, async (tx) => {
@@ -426,5 +441,122 @@ describe("engagement routes integration tests (real DB, Round trip)", () => {
 
     // serviceTimesPublicSchema rejects the staff response shape (because it has a version)
     expect(() => serviceTimesPublicSchema.parse(staffResponse)).toThrow();
+  });
+
+  it("a signed-in user with NO grant in a community whose org has module.engagement gets 403 on get and save, exactly one denial audit row per call, and nothing stored in service_times", async () => {
+    // 1. GET attempt
+    const getRes = await postRoute(
+      "/v1/engagement/service-times/get",
+      { communitySlug: slugNoGrant },
+      tokenNoGrant,
+    );
+    expect(getRes.status).toBe(403);
+    expect(await getRes.text()).toBe("");
+
+    const auditAfterGet = await directSql<{ count: number }[]>`
+      select count(*)::int from app.audit_events
+      where action = 'engagement.permission.denied'
+        and purpose = 'engagement.permission.denied'
+        and actor_id = ${userIdNoGrant}
+    `;
+    expect(auditAfterGet[0]?.count).toBe(1);
+
+    // 2. SAVE attempt
+    const saveRes = await postRoute(
+      "/v1/engagement/service-times/save",
+      {
+        communitySlug: slugNoGrant,
+        html: "<p>Unauthorised save attempt</p>",
+        version: 0,
+      },
+      tokenNoGrant,
+    );
+    expect(saveRes.status).toBe(403);
+    expect(await saveRes.text()).toBe("");
+
+    const auditAfterSave = await directSql<{ count: number }[]>`
+      select count(*)::int from app.audit_events
+      where action = 'engagement.permission.denied'
+        and purpose = 'engagement.permission.denied'
+        and actor_id = ${userIdNoGrant}
+    `;
+    expect(auditAfterSave[0]?.count).toBe(2);
+
+    // 3. Verify nothing is stored in app.service_times after the save attempt
+    const storedRows = await directSql<{ count: number }[]>`
+      select count(*)::int from app.service_times
+      where community_id = ${communityIdNoGrant}::uuid
+    `;
+    expect(storedRows[0]?.count).toBe(0);
+  });
+
+  it("save handles NUL byte and lone surrogates, returning cleaned html that matches get", async () => {
+    // 1. Save input with NUL byte: <p>a\u0000b</p> -> stored/returned as <p>ab</p>
+    const saveNulRes = await postRoute(
+      "/v1/engagement/service-times/save",
+      {
+        communitySlug: slugClean,
+        html: "<p>a\u0000b</p>",
+        version: 0,
+      },
+      tokenA,
+    );
+    expect(saveNulRes.status).toBe(200);
+    const saveNulBody = serviceTimesResponse.parse(await saveNulRes.json());
+    expect(saveNulBody).toEqual({
+      html: "<p>ab</p>",
+      version: 1,
+    });
+
+    const getNulRes = await postRoute(
+      "/v1/engagement/service-times/get",
+      { communitySlug: slugClean },
+      tokenA,
+    );
+    expect(getNulRes.status).toBe(200);
+    const getNulBody = serviceTimesResponse.parse(await getNulRes.json());
+    expect(getNulBody.html).toBe(saveNulBody.html);
+    expect(getNulBody.html).toBe("<p>ab</p>");
+
+    // 2. Save input with lone surrogate: <p>\ud83dz</p> -> stored/returned as <p>\ufffdz</p>
+    const saveSurrogateRes = await postRoute(
+      "/v1/engagement/service-times/save",
+      {
+        communitySlug: slugClean,
+        html: "<p>\ud83dz</p>",
+        version: 1,
+      },
+      tokenA,
+    );
+    expect(saveSurrogateRes.status).toBe(200);
+    const saveSurrogateBody = serviceTimesResponse.parse(await saveSurrogateRes.json());
+    expect(saveSurrogateBody).toEqual({
+      html: "<p>\ufffdz</p>",
+      version: 2,
+    });
+
+    const getSurrogateRes = await postRoute(
+      "/v1/engagement/service-times/get",
+      { communitySlug: slugClean },
+      tokenA,
+    );
+    expect(getSurrogateRes.status).toBe(200);
+    const getSurrogateBody = serviceTimesResponse.parse(await getSurrogateRes.json());
+    expect(getSurrogateBody.html).toBe(saveSurrogateBody.html);
+    expect(getSurrogateBody.html).toBe("<p>\ufffdz</p>");
+  });
+
+  it("save with version 2147483648 returns 400 (invalid_input)", async () => {
+    const response = await postRoute(
+      "/v1/engagement/service-times/save",
+      {
+        communitySlug: slugA,
+        html: "<p>Text</p>",
+        version: 2147483648,
+      },
+      tokenA,
+    );
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("");
   });
 });

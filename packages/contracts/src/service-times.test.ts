@@ -115,6 +115,32 @@ describe("service times contract schemas", () => {
       ).toBe(false);
     });
 
+    it("enforces version maximum at signed 32-bit integer cap (2,147,483,647)", () => {
+      expect(
+        serviceTimesSaveBody.safeParse({
+          communitySlug: "parish-au",
+          html: "<p>Mass</p>",
+          version: 2_147_483_647,
+        }).success,
+      ).toBe(true);
+
+      expect(
+        serviceTimesSaveBody.safeParse({
+          communitySlug: "parish-au",
+          html: "<p>Mass</p>",
+          version: 2_147_483_648,
+        }).success,
+      ).toBe(false);
+
+      expect(
+        serviceTimesSaveBody.safeParse({
+          communitySlug: "parish-au",
+          html: "<p>Mass</p>",
+          version: Number.MAX_SAFE_INTEGER,
+        }).success,
+      ).toBe(false);
+    });
+
     it("rejects missing required fields", () => {
       expect(
         serviceTimesSaveBody.safeParse({
@@ -173,6 +199,29 @@ describe("service times contract schemas", () => {
       expect(serviceTimesResponse.safeParse({ html: "", version: -1 }).success).toBe(false);
       expect(serviceTimesResponse.safeParse({ html: "", version: 1.5 }).success).toBe(false);
       expect(serviceTimesResponse.safeParse({ html: "", version: "1" }).success).toBe(false);
+    });
+
+    it("enforces version maximum at signed 32-bit integer cap (2,147,483,647)", () => {
+      expect(
+        serviceTimesResponse.safeParse({
+          html: "<p>Mass</p>",
+          version: 2_147_483_647,
+        }).success,
+      ).toBe(true);
+
+      expect(
+        serviceTimesResponse.safeParse({
+          html: "<p>Mass</p>",
+          version: 2_147_483_648,
+        }).success,
+      ).toBe(false);
+
+      expect(
+        serviceTimesResponse.safeParse({
+          html: "<p>Mass</p>",
+          version: Number.MAX_SAFE_INTEGER,
+        }).success,
+      ).toBe(false);
     });
 
     it("rejects missing fields", () => {

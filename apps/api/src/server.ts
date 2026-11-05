@@ -140,8 +140,7 @@ export function startServer(options: {
             isLargeBody = true;
           } else if (
             matchingRoute?.largeBody === "content" &&
-            presentedHost !== undefined &&
-            !isWebhookHost
+            presentedHost === options.env.API_HOSTNAME.toLowerCase()
           ) {
             maxBytes = CONTENT_BODY_MAX_BYTES;
             isLargeBody = true;

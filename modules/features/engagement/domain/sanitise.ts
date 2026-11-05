@@ -14,7 +14,6 @@ const CONTAINER_TAGS = [
   "noscript",
   "textarea",
   "option",
-  "xmp",
 ];
 
 const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
@@ -26,11 +25,9 @@ const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
     i: "em",
   },
   nonTextTags: CONTAINER_TAGS,
-  exclusiveFilter(frame) {
-    return CONTAINER_TAGS.includes(frame.tag);
-  },
-  allowVulnerableTags: false,
 };
+
+const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
 
 function normaliseEmpty(cleaned: string): string {
   // A result with no non-whitespace text becomes ""
@@ -43,6 +40,7 @@ function normaliseEmpty(cleaned: string): string {
 }
 
 export function sanitiseServiceTimesHtml(input: string): string {
-  const cleaned = sanitizeHtml(input, SANITIZE_OPTIONS);
+  const prepared = input.replaceAll("\u0000", "").replace(LONE_SURROGATE_RE, "\uFFFD");
+  const cleaned = sanitizeHtml(prepared, SANITIZE_OPTIONS);
   return normaliseEmpty(cleaned);
 }

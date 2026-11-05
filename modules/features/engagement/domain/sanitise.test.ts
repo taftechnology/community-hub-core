@@ -115,6 +115,20 @@ describe("sanitiseServiceTimesHtml", () => {
     });
   });
 
+  describe("NUL bytes and lone surrogates", () => {
+    it("removes NUL byte (U+0000) so <p>a\\u0000b</p> produces <p>ab</p>", () => {
+      expect(sanitiseServiceTimesHtml("<p>a\u0000b</p>")).toBe("<p>ab</p>");
+    });
+
+    it("replaces lone surrogates with U+FFFD so <p>\\ud83dz</p> produces <p>\\ufffdz</p>", () => {
+      expect(sanitiseServiceTimesHtml("<p>\ud83dz</p>")).toBe("<p>\ufffdz</p>");
+    });
+
+    it("preserves valid surrogate pairs like emojis", () => {
+      expect(sanitiseServiceTimesHtml("<p>\ud83d\ude00</p>")).toBe("<p>😀</p>");
+    });
+  });
+
   describe("empty normalisation", () => {
     it.each(EMPTY_NORMALISATION_FIXTURES)("$name", ({ input, expected }) => {
       expect(sanitiseServiceTimesHtml(input)).toBe(expected);
