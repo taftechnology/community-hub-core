@@ -42,7 +42,8 @@ export function ServiceTimesPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showReload, setShowReload] = useState<boolean>(false);
 
-  const isReady = loadedCommunitySlug !== null && loadedCommunitySlug === slug;
+  const isReady =
+    pendingCommunitySlug === null && loadedCommunitySlug !== null && loadedCommunitySlug === slug;
 
   // In-app navigation blocker
   const blocker = useBlocker(dirty);

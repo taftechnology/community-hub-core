@@ -1522,4 +1522,182 @@ describe("ServiceTimesPage", () => {
     const saveBtn = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
     expect(saveBtn.disabled).toBe(false);
   });
+
+  it("picker moves A -> B -> A while dirty: dialog stays, Save and editor disabled, Stay preserves edits, Leave reloads A", async () => {
+    // 1. Initial load for parish-a
+    fetchSpy.mockResolvedValueOnce(
+      mockResponse(200, { html: "<p>Parish A initial</p>", version: 1 }),
+    );
+
+    function ABASwitchContainer() {
+      const { slug, setSlug } = useCommunity();
+      return (
+        <PeopleAccessContext.Provider value={{ access: fullAccess }}>
+          <BillingStatusContext.Provider
+            value={{
+              status: {
+                state: "ok",
+                trial_end: null,
+                grace_until: null,
+                canView: true,
+                canManage: true,
+              },
+              readiness: "ready",
+              refresh: vi.fn(),
+              returnMessage: null,
+            }}
+          >
+            <div data-testid="active-slug">{slug}</div>
+            <button type="button" onClick={() => setSlug("parish-a")}>
+              Switch to A
+            </button>
+            <button type="button" onClick={() => setSlug("parish-b")}>
+              Switch to B
+            </button>
+            <ServiceTimesPage />
+          </BillingStatusContext.Provider>
+        </PeopleAccessContext.Provider>
+      );
+    }
+
+    sessionStorage.setItem("community-hub.community", "parish-a");
+    const router = createMemoryRouter(
+      [
+        {
+          path: "/",
+          element: (
+            <CommunityProvider>
+              <ABASwitchContainer />
+            </CommunityProvider>
+          ),
+        },
+      ],
+      { initialEntries: ["/"] },
+    );
+
+    render(<RouterProvider router={router} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Parish A initial")).toBeTruthy();
+    });
+    expect(screen.getByTestId("active-slug").textContent).toBe("parish-a");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // 2. Make editor dirty
+    const editor = captured.editor;
+    expect(editor).toBeTruthy();
+    act(() => {
+      editor!.commands.setContent("<p>Parish A edited</p>");
+    });
+
+    // 3. Picker -> B (dialog opens)
+    fireEvent.click(screen.getByText("Switch to B"));
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+
+    // 4. Picker -> A (dialog still open)
+    fireEvent.click(screen.getByText("Switch to A"));
+
+    // Assert: dialog is still shown
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+
+    // Assert: Save button is disabled
+    const saveBtn = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+    expect(saveBtn.disabled).toBe(true);
+
+    // Assert: Editor is disabled
+    expect(screen.getByRole("textbox").getAttribute("contenteditable")).toBe("false");
+
+    // Assert: No get request was sent
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // Assert: Clicking Save sends no request
+    fireEvent.click(saveBtn);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // 5. Then Stay: dialog closes, picker on A, edited text still in editor, Save is enabled
+    fireEvent.click(screen.getByRole("button", { name: "Stay" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("active-slug").textContent).toBe("parish-a");
+    });
+    expect(screen.getByText("Parish A edited")).toBeTruthy();
+    expect(saveBtn.disabled).toBe(false);
+    expect(screen.getByRole("textbox").getAttribute("contenteditable")).toBe("true");
+
+    // Save sends A's text with A's version
+    fetchSpy.mockResolvedValueOnce(
+      mockResponse(200, { html: "<p>Parish A edited</p>", version: 2 }),
+    );
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(screen.getByRole("status").textContent).toContain("Saved");
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const saveCall = fetchSpy.mock.calls[1];
+    expect(String(saveCall?.[0])).toContain("/v1/engagement/service-times/save");
+    const savePayload = JSON.parse(saveCall?.[1]?.body as string);
+    expect(savePayload).toEqual({
+      communitySlug: "parish-a",
+      html: "<p>Parish A edited</p>",
+      version: 1,
+    });
+
+    // 6. Second case: same two moves, then Leave without saving
+    act(() => {
+      editor!.commands.setContent("<p>Parish A edited again</p>");
+    });
+    fireEvent.click(screen.getByText("Switch to B"));
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Switch to A"));
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    expect(saveBtn.disabled).toBe(true);
+    expect(screen.getByRole("textbox").getAttribute("contenteditable")).toBe("false");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(saveBtn);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    // Mock GET response for parish-a when leaving without saving
+    fetchSpy.mockResolvedValueOnce(
+      mockResponse(200, { html: "<p>Parish A reloaded</p>", version: 3 }),
+    );
+
+    // Click Leave without saving
+    fireEvent.click(screen.getByRole("button", { name: "Leave without saving" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+
+    // Assert: exactly one get for A, Save enabled with A's loaded version
+    await waitFor(() => {
+      expect(screen.getByText("Parish A reloaded")).toBeTruthy();
+      expect(screen.getByRole("textbox").getAttribute("contenteditable")).toBe("true");
+      expect(saveBtn.disabled).toBe(false);
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    const getCall = fetchSpy.mock.calls[2];
+    expect(String(getCall?.[0])).toContain("/v1/engagement/service-times/get");
+    const getPayload = JSON.parse(getCall?.[1]?.body as string);
+    expect(getPayload).toEqual({ communitySlug: "parish-a" });
+
+    expect(screen.getByTestId("active-slug").textContent).toBe("parish-a");
+
+    fetchSpy.mockResolvedValueOnce(
+      mockResponse(200, { html: "<p>Parish A reloaded</p>", version: 4 }),
+    );
+    fireEvent.click(saveBtn);
+    await waitFor(() => {
+      expect(screen.getByRole("status").textContent).toContain("Saved");
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
+    const secondSaveCall = fetchSpy.mock.calls[3];
+    expect(JSON.parse(secondSaveCall?.[1]?.body as string)).toEqual({
+      communitySlug: "parish-a",
+      html: "<p>Parish A reloaded</p>",
+      version: 3,
+    });
+  });
 });
