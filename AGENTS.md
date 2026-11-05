@@ -30,32 +30,33 @@ CI enforces what it can. The rest is on the reviewer.
 
 ## 2. Roles
 
-Three roles. **No agent both writes and signs off on the same work.**
+Three roles: the humans (the chunk owner and the project owner), the reviewer agent and the implementer agent. **No agent both writes and signs off on the same work.**
 
-| Role                  | Who                                             | Does                                                                                                                       | Must not                                                          |
-| --------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| **Human owner**       | You                                             | Approves specs and plans. Merges PRs. Decides trade-offs, scope, legal and product questions.                              | —                                                                 |
-| **Reviewer agent**    | The session you talk to (where subagents exist) | Writes the spec, drafts the plan, spawns implementers, reviews every task and the final PR, keeps `architecture.md` honest | Write implementation code or tests for the chunk it is reviewing  |
-| **Implementer agent** | Spawned subagent(s), fresh context              | Implements one task at a time, with tests, and reports back                                                                | Approve its own work, merge, or change the spec/plan unilaterally |
+| Role                  | Who                                             | Does                                                                                                                                                                            | Must not                                                          |
+| --------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| **Chunk owner**       | The developer who writes the chunk              | Approves their own spec and plan, with their own name on the `Status:` line. Decides scope, trade-offs, libraries, PR shape and product questions inside the chunk, within §12. | Merge, or put another person's name on a `Status:` line           |
+| **Project owner**     | The person who merges                           | Merges PRs. Runs the steps only they can run (AWS applies, secrets, one-off tasks). Decides the items §12 sends to them.                                                        | —                                                                 |
+| **Reviewer agent**    | The session you talk to (where subagents exist) | Writes the spec, drafts the plan, spawns implementers, reviews every task and the final PR, keeps `architecture.md` honest                                                      | Write implementation code or tests for the chunk it is reviewing  |
+| **Implementer agent** | Spawned subagent(s), fresh context              | Implements one task at a time, with tests, and reports back                                                                                                                     | Approve its own work, merge, or change the spec/plan unilaterally |
 
-Before approving a spec or a plan, and before merging, the owner has the work checked by an independent assistant. The assistant is in a different tool, and on a different model family, from the implementer and reviewer agents. The owner decides. The assistant reviews by diff, verifies by running, and never writes repo files, never applies, and never merges.
+Before approving a spec or a plan, the chunk owner has the work checked by an independent assistant. Before merging, the project owner has the work checked by an independent assistant. The assistant is in a different tool, and on a different model family, from the implementer and reviewer agents. The chunk owner or project owner decides, for their gate. The assistant reviews by diff, verifies by running, and never writes repo files, never applies, and never merges.
 
-There are still three roles. The assistant is how the owner checks. It is not a fourth role, and it is not one of the repo's agents.
+There are still three roles. The assistant is how the chunk owner and project owner check. It is not a fourth role, and it is not one of the repo's agents.
 
 **If the tool has no subagent capability**
 
-Single-agent tools (or a session where spawning is unavailable) collapse to **two roles, not one**: the agent implements, and **the human is the reviewer**. The principle does not bend — nobody signs off on their own work.
+Single-agent tools (or a session where spawning is unavailable) collapse to **two roles, not one**: the agent implements, and **the chunk owner is the reviewer**. The principle does not bend — nobody signs off on their own work.
 
 |                           | Multi-agent tool                                                           | Single-agent tool                     |
 | ------------------------- | -------------------------------------------------------------------------- | ------------------------------------- |
 | Spec and plan             | Reviewer agent drafts                                                      | Agent drafts                          |
-| Approval of spec and plan | Human                                                                      | Human                                 |
+| Approval of spec and plan | Chunk owner                                                                | Chunk owner                           |
 | Implementation            | Implementer agent(s)                                                       | The agent                             |
-| Task review               | Reviewer agent, diff only                                                  | **Human**, diff only                  |
+| Task review               | Reviewer agent, diff only                                                  | **Chunk owner**, diff only            |
 | Sensitive chunks (§2)     | Owner's assistant, in a fresh session. The reviewer agent may add its own. | Owner's assistant, in a fresh session |
-| Merge                     | Human                                                                      | Human                                 |
+| Merge                     | Project owner                                                              | Project owner                         |
 
-In that mode, keep tasks small enough that a human can review each commit in a few minutes — that is the whole reason for one commit per task.
+In that mode, keep tasks small enough that the chunk owner can review each commit in a few minutes — that is the whole reason for one commit per task.
 
 **Rules of separation**
 
@@ -89,6 +90,7 @@ A **chunk** is one shippable slice of behaviour. **One spec = one plan = one bra
 - Delivers something a user or another module can actually use (a vertical slice, not "the schema layer").
 - 3–10 tasks, each 1 commit.
 - Reviewable in one sitting: aim for **under ~800 changed lines** excluding generated files, lockfiles and migrations.
+- The line count is a guide for review, not a reason to split. Work that ships together goes in one PR, whatever its size. The chunk owner decides; do not ask the project owner.
 
 **Split the chunk if** it spans more than two modules, mixes a refactor with a feature, or needs more than one database migration wave.
 
@@ -111,7 +113,7 @@ A **chunk** is one shippable slice of behaviour. **One spec = one plan = one bra
   <chunk>.md           <chunk>.md             + reviewer sign-off
 ```
 
-Both gates are **human**. An agent never advances past a gate on its own judgement.
+Both gates are the **chunk owner's**. An agent never advances past a gate on its own judgement.
 
 ### Phase 1 — Spec (reviewer agent)
 
@@ -162,7 +164,7 @@ What could break tenancy, residency, children's data or money. Mitigations.
 Legal sign-off needed? Architecture change needed? New subprocessor?
 ```
 
-**Approval criteria:** unambiguous behaviour, every new column classified, no non-negotiable breached, risks named. Stop and ask the human for anything legal, pricing or product-shaped.
+**Approval criteria:** unambiguous behaviour, every new column classified, no non-negotiable breached, risks named. Product questions inside the chunk are the chunk owner's. Where the Laravel Community Hub already does it, keep Laravel's behaviour. Ask the project owner only for the items in §12.
 
 ### Phase 2 — Plan (reviewer agent)
 
@@ -254,7 +256,7 @@ Architecture-specific rules that reviewers check on every diff. Most map to a CI
 
 - A chunk that adds a resource billed by the hour or the month names it and its monthly cost in its spec. No NAT gateway, load balancer, or extra interface endpoint appears without that.
 - Staging is parked by default. Parked means enable_database = false and desired_count = 0 in the committed infra/regions/au/env/staging.tfvars, and no service_image in any committed var file under infra/regions/au/env/. Parking removes the database and runs zero tasks. Stopping a database is not parking, because RDS starts a stopped instance again after seven days.
-- Staging is unparked only inside a chunk whose approved spec says so. That spec names why, the expected extra monthly cost, and how long it stays up. The same chunk re-parks before its pull request is merged, and docs/runbooks/apply-staging-au.md records both applies. The human runs every park and unpark apply. An agent never does. The steps are in that runbook and are not copied here.
+- Staging is unparked only inside a chunk whose approved spec says so. That spec names why, the expected extra monthly cost, and how long it stays up. The same chunk re-parks before its pull request is merged, and docs/runbooks/apply-staging-au.md records both applies. The project owner runs every park and unpark apply. An agent never does. The steps are in that runbook and are not copied here.
 
 **Modules**
 
@@ -356,7 +358,7 @@ Never stage `docs/plans/*-report.md`, `.superpowers/`, or other session scratch.
 **Merge policy**
 
 - Required checks must pass. No exceptions, no admin override without a written reason in the PR.
-- **Agents never merge.** The human owner merges.
+- **Agents never merge.** The project owner merges.
 - The pull request merges with a merge commit.
 - After the first apply on a branch there is no rebase, no amend, and no force-push. When origin/main moves after that apply, it comes in by a merge commit.
 - Delete the branch after merge.
@@ -393,8 +395,8 @@ Omitted until first real input plus a must-fail fixture: tenant-isolation suite,
 **Stage 4 — Deploy**
 
 - merge to `main` → migrations → deploy the container to `staging-au` → smoke tests + critical-journey e2e (sign-in, donate, RSVP, consent)
-- production is a **human-triggered** promotion of that exact build: migrations → gradual deployment → automatic rollback on error-rate alert
-- Terraform apply on `infra/` changes requires human approval
+- production is a promotion the **project owner** triggers of that exact build: migrations → gradual deployment → automatic rollback on error-rate alert
+- Terraform apply on `infra/` changes requires the project owner's approval
 - nightly on `main`: full e2e, restore drill check, dependency and licence report
 
 **Required for merge:** Stages 1–3 green. Flaky test? Fix or quarantine with an issue and an owner in the same PR — never re-run until green.
@@ -426,15 +428,28 @@ Findings are specific, actionable and ranked. "Consider refactoring" is not a fi
 
 ## 12. When an agent must stop and ask
 
-Stop, do not improvise, and ask the human:
+Stop, do not improvise.
 
-- A rule in §1 blocks the task
+**Ask the chunk owner** (the human in your session), and do not forward these to the project owner:
+
 - The spec or plan turns out to be wrong or ambiguous mid-implementation
-- The change needs a new subprocessor, a legal opinion, or a privacy/ADR decision
-- Anything touching production data, secrets, billing, or a live customer's tenant
-- Cost or lock-in decisions (a new AWS service or vendor, a new paid service)
 - Two consecutive failed attempts at the same problem — report what you learned instead of a third guess
-- Something looks like a security issue, however small
+- A choice between designs, libraries, names or PR shape
+- A security finding inside the chunk's own code that the chunk can fix with a test
+
+**The chunk owner asks the project owner**, and only for these:
+
+- Anything touching production data, secrets, live billing, or a live customer's tenant
+- A step only the project owner can run (AWS apply, secret, one-off task, merge)
+- A new paid service, vendor or subprocessor, a new AWS service, or a resource billed by the hour or the month (§6 Cost)
+- Anything legal or pricing
+- A privacy decision or an ADR-level architecture decision
+- A rule in §1 blocks the task, or the change would alter one
+- Dropping or changing a feature the Laravel Community Hub has
+- A security issue outside the chunk, or one on `main` or in production
+- Suspected secret exposure (also §14)
+
+A free open-source library is not a vendor. The chunk owner picks it and justifies it in the PR (§14).
 
 Report progress honestly. "Tests fail, here is the output" is worth more than a confident summary that hides it.
 
@@ -454,7 +469,7 @@ Report progress honestly. "Tests fail, here is the output" is worth more than a 
 - Never print, log, echo or commit a secret, token, key, connection string or customer identifier.
 - Never paste production data into a prompt, test, fixture or issue.
 - Never disable a security check, RLS policy, or CI gate to make something pass. Fix the cause.
-- New dependency: justify it in the PR (what it replaces, licence, maintenance, size). Prefer the platform and the standard library.
+- New dependency: justify it in the PR (what it replaces, licence, maintenance, size). Prefer the platform and the standard library. The chunk owner decides.
 - Report suspected key exposure immediately and stop work on that branch.
 
 ---
@@ -484,13 +499,13 @@ Naming              docs/specs/YYYY-MM-DD-<slug>.md   (date created)
                     branch  <type>/<spec-date>-<slug> → one PR, one spec
                     chore/<today>-<slug> + No spec:  → bump, quarantine, CI fix
 
-New work            → spec (brainstorming) → HUMAN APPROVES
-                    → plan (writing-plans) → HUMAN APPROVES
+New work            → spec (brainstorming) → CHUNK OWNER APPROVES
+                    → plan (writing-plans) → CHUNK OWNER APPROVES
                     → tasks (subagent-driven-development, TDD, one commit each)
                     → last task: docs/roadmap.md on this branch (done + snapshot)
                     → each task reviewed by the reviewer agent
-                      (single-agent tool: the HUMAN reviews each task diff)
-                    → PR (finishing-a-development-branch) → HUMAN MERGES
+                      (single-agent tool: the CHUNK OWNER reviews each task diff)
+                    → PR (finishing-a-development-branch) → PROJECT OWNER MERGES
 Root docs           → architecture.md / AGENTS.md still go through a branch + PR
                     → no spec: if they do not change a decision; spec + ADR if they do
 
