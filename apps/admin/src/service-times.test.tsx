@@ -16,6 +16,33 @@ import { PeopleAccessContext, type PeopleAccess } from "./people-access";
 import { ServiceTimesPage } from "./service-times";
 import { SERVICE_TIMES_HTML_MAX } from "./service-times-api";
 
+type EditorInstance = Parameters<
+  NonNullable<import("@community-hub/ui/rich-text-editor").RichTextEditorProps["onEditorReady"]>
+>[0];
+
+const captured = vi.hoisted(() => ({
+  editor: null as EditorInstance | null,
+}));
+
+vi.mock("@community-hub/ui/rich-text-editor", async (importOriginal) => {
+  const React = await import("react");
+  const actual = await importOriginal<typeof import("@community-hub/ui/rich-text-editor")>();
+  const Wrapped = React.forwardRef<
+    import("@community-hub/ui/rich-text-editor").RichTextEditorHandle,
+    import("@community-hub/ui/rich-text-editor").RichTextEditorProps
+  >((props, ref) => {
+    return React.createElement(actual.RichTextEditor, {
+      ...props,
+      ref,
+      onEditorReady: (ed) => {
+        captured.editor = ed;
+        props.onEditorReady?.(ed);
+      },
+    });
+  });
+  return { ...actual, RichTextEditor: Wrapped };
+});
+
 const TEST_TOKEN = "test-token";
 const DEFAULT_COMMUNITY = "parish-test";
 
@@ -94,6 +121,7 @@ describe("ServiceTimesPage", () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
+    captured.editor = null;
     sessionStorage.clear();
     sessionStorage.setItem("community-hub.access-token", TEST_TOKEN);
     sessionStorage.setItem("community-hub.community", DEFAULT_COMMUNITY);
@@ -166,15 +194,12 @@ describe("ServiceTimesPage", () => {
     expect(screen.getByText("Server cleaned text")).toBeTruthy();
 
     // Clears saved status on next edit
-    const editor = (
-      window as unknown as { __testEditor?: { commands: { setContent: (c: string) => void } } }
-    ).__testEditor;
-    if (editor) {
-      act(() => {
-        editor.commands.setContent("<p>New edit after save</p>");
-      });
-      expect(screen.queryByText("Saved")).toBeNull();
-    }
+    const editor = captured.editor;
+    expect(editor).toBeTruthy();
+    act(() => {
+      editor!.commands.setContent("<p>New edit after save</p>");
+    });
+    expect(screen.queryByText("Saved")).toBeNull();
   });
 
   it("sends only one POST request when Save is double clicked", async () => {
@@ -394,14 +419,11 @@ describe("ServiceTimesPage", () => {
     expect(cleanEvent.defaultPrevented).toBe(false);
 
     // Edit content to make dirty
-    const editor = (
-      window as unknown as { __testEditor?: { commands: { setContent: (c: string) => void } } }
-    ).__testEditor;
-    if (editor) {
-      act(() => {
-        editor.commands.setContent("<p>Modified</p>");
-      });
-    }
+    const editor = captured.editor;
+    expect(editor).toBeTruthy();
+    act(() => {
+      editor!.commands.setContent("<p>Modified</p>");
+    });
 
     const dirtyEvent = new Event("beforeunload", { cancelable: true }) as BeforeUnloadEvent;
     window.dispatchEvent(dirtyEvent);
@@ -439,14 +461,11 @@ describe("ServiceTimesPage", () => {
     });
 
     // Modify editor content
-    const editor = (
-      window as unknown as { __testEditor?: { commands: { setContent: (c: string) => void } } }
-    ).__testEditor;
-    if (editor) {
-      act(() => {
-        editor.commands.setContent("<p>Dirty content</p>");
-      });
-    }
+    const editor = captured.editor;
+    expect(editor).toBeTruthy();
+    act(() => {
+      editor!.commands.setContent("<p>Dirty content</p>");
+    });
 
     // Try to navigate away
     act(() => {
@@ -693,5 +712,12 @@ describe("ServiceTimesPage", () => {
     });
     const errorResults = await axe.run(container);
     expect(errorResults.violations).toEqual([]);
+  });
+
+  it("guard: production component never leaks test hooks onto window", () => {
+    const sourcePath = path.resolve(__dirname, "service-times.tsx");
+    const text = fs.readFileSync(sourcePath, "utf-8");
+    expect(text).not.toContain("__testEditor");
+    expect(text).not.toContain("window as unknown");
   });
 });

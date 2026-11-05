@@ -280,11 +280,6 @@ export function ServiceTimesPage() {
           counterLabel={(used, max) => `${used} / ${max}`}
           disabled={isLoading || isSaving}
           onChange={handleEditorChange}
-          onEditorReady={(ed) => {
-            if (typeof window !== "undefined") {
-              (window as unknown as { __testEditor?: unknown }).__testEditor = ed;
-            }
-          }}
         />
         <p id={hintId} className="text-xs text-muted-foreground">
           {term.hint}
