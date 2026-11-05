@@ -3,7 +3,7 @@ import "./test-support/prosemirror-dom";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { Editor } from "@tiptap/core";
 import * as React from "react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 import {
   RichTextEditor,
@@ -21,6 +21,14 @@ const defaultToolbarLabels: RichTextEditorToolbarLabels = {
 };
 
 describe("RichTextEditor", () => {
+  beforeEach(() => {
+    document.querySelectorAll("style").forEach((el) => el.remove());
+  });
+
+  afterEach(() => {
+    document.querySelectorAll("style").forEach((el) => el.remove());
+  });
+
   it("schema node names and mark names match the exact sanitiser allow-list (Pin 23)", () => {
     let capturedEditor: Editor | null = null;
     render(
@@ -79,9 +87,13 @@ describe("RichTextEditor", () => {
   });
 
   it("does not inject any <style> element on or after mount (Pin 24)", () => {
-    const styleCountBefore = document.querySelectorAll("style").length;
+    // Before mounting, remove every style element and assert there are none
+    document.querySelectorAll("style").forEach((el) => el.remove());
+    expect(document.querySelectorAll("style").length).toBe(0);
+    expect(document.querySelector("[data-tiptap-style]")).toBeNull();
 
-    const { container } = render(
+    // 1. Mount fresh RichTextEditor without initialValue
+    const { container: containerEmpty, unmount: unmountEmpty } = render(
       <RichTextEditor
         label="Service schedule"
         toolbarLabel="Formatting controls"
@@ -89,8 +101,51 @@ describe("RichTextEditor", () => {
       />,
     );
 
-    const styleCountAfter = document.querySelectorAll("style").length;
-    expect(styleCountAfter).toBe(styleCountBefore);
+    expect(document.querySelectorAll("style").length).toBe(0);
+    expect(document.querySelector("[data-tiptap-style]")).toBeNull();
+    expect(containerEmpty.querySelectorAll("style").length).toBe(0);
+
+    const boldBtnEmpty = screen.getByRole("button", { name: "Bold" });
+    fireEvent.click(boldBtnEmpty);
+
+    expect(document.querySelectorAll("style").length).toBe(0);
+    expect(document.querySelector("[data-tiptap-style]")).toBeNull();
+    expect(containerEmpty.querySelectorAll("style").length).toBe(0);
+
+    unmountEmpty();
+
+    // Ensure DOM is clean before mounting next instance
+    document.querySelectorAll("style").forEach((el) => el.remove());
+    expect(document.querySelectorAll("style").length).toBe(0);
+    expect(document.querySelector("[data-tiptap-style]")).toBeNull();
+
+    // 2. Mount fresh RichTextEditor with initialValue
+    let capturedEditor: Editor | null = null;
+    const { container } = render(
+      <RichTextEditor
+        label="Service schedule"
+        toolbarLabel="Formatting controls"
+        toolbar={defaultToolbarLabels}
+        initialValue="<p>Test paragraph</p>"
+        onEditorReady={(editor) => {
+          capturedEditor = editor;
+        }}
+      />,
+    );
+
+    // Right after mount: no style elements in document or container
+    expect(document.querySelectorAll("style").length).toBe(0);
+    expect(document.querySelector("[data-tiptap-style]")).toBeNull();
+    expect(container.querySelectorAll("style").length).toBe(0);
+
+    // After one user edit via toolbar (toggling bold)
+    expect(capturedEditor).not.toBeNull();
+    capturedEditor!.commands.setTextSelection({ from: 1, to: 5 });
+    const boldBtn = screen.getByRole("button", { name: "Bold" });
+    fireEvent.click(boldBtn);
+
+    expect(document.querySelectorAll("style").length).toBe(0);
+    expect(document.querySelector("[data-tiptap-style]")).toBeNull();
     expect(container.querySelectorAll("style").length).toBe(0);
   });
 
