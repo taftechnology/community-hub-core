@@ -11,3 +11,4 @@ packages:
   - "modules/core/billing"
   - "modules/features/groups"
   - "modules/features/engagement"
+  - "modules/verticals/faith-church"
