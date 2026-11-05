@@ -39,6 +39,7 @@ vi.mock("@community-hub/billing", async (importOriginal) => {
 import { accessRoutes } from "./access-routes.js";
 import { authRoutes } from "./auth-routes.js";
 import type { Role } from "./checkout.js";
+import { engagementRoutes } from "./engagement-routes.js";
 import { entitlementRoutes } from "./entitlement-routes.js";
 import { householdRoutes } from "./household-routes.js";
 import { lifeEventRoutes } from "./life-event-routes.js";
@@ -216,6 +217,7 @@ describe("billing guard against a real database", () => {
       entitlements: [
         { key: "people.directory", limit: null },
         { key: "people.households", limit: null },
+        { key: "module.engagement", limit: null },
       ],
     });
     await assignPlan(platform, { organisationId: orgId, planKey, now });
@@ -396,6 +398,20 @@ describe("billing guard against a real database", () => {
           where id = ${eventId}::uuid
         `;
         return rows[0]?.version ?? 0;
+      },
+    );
+  }
+
+  async function countServiceTimes(setup: OrgSetup): Promise<number> {
+    return withAppTransaction(
+      app,
+      { orgId: setup.orgId, communityId: setup.communityId },
+      async (tx) => {
+        const rows = await tx<{ n: number }[]>`
+          select count(*)::int as n
+          from app.service_times
+        `;
+        return rows[0]!.n;
       },
     );
   }
@@ -1016,6 +1032,22 @@ describe("billing guard against a real database", () => {
         },
       },
     ],
+    [
+      "POST /v1/engagement/service-times/save",
+      {
+        path: "/v1/engagement/service-times/save",
+        prepare: async (setup) => {
+          return {
+            body: {
+              communitySlug: setup.slug,
+              html: "<p>Sunday Mass 10:00 AM</p>",
+              version: 0,
+            },
+            count: () => countServiceTimes(setup),
+          };
+        },
+      },
+    ],
   ]);
 
   beforeAll(async () => {
@@ -1082,6 +1114,15 @@ describe("billing guard against a real database", () => {
         guardLog: () => undefined,
       }),
       ...lifeEventRoutes({
+        checkout,
+        kms,
+        keyArn: KEY_ARN,
+        now: () => now,
+        apiHostname: API_HOSTNAME,
+        log: () => undefined,
+        guardLog: () => undefined,
+      }),
+      ...engagementRoutes({
         checkout,
         kms,
         keyArn: KEY_ARN,
