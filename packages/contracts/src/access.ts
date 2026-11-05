@@ -80,9 +80,14 @@ export const CAPABILITIES_PERMISSIONS = [
   "people.view",
   "people.manage",
   "people.restricted.read",
+  "service_times.manage",
 ] as const;
 
-export const CAPABILITIES_ENTITLEMENTS = ["people.directory", "people.households"] as const;
+export const CAPABILITIES_ENTITLEMENTS = [
+  "people.directory",
+  "people.households",
+  "module.engagement",
+] as const;
 
 export type CapabilityPermission = (typeof CAPABILITIES_PERMISSIONS)[number];
 export type CapabilityEntitlement = (typeof CAPABILITIES_ENTITLEMENTS)[number];
@@ -99,12 +104,14 @@ export const capabilitiesResponse = z
         "people.view": z.boolean(),
         "people.manage": z.boolean(),
         "people.restricted.read": z.boolean(),
+        "service_times.manage": z.boolean(),
       })
       .strict(),
     entitlements: z
       .object({
         "people.directory": z.boolean(),
         "people.households": z.boolean(),
+        "module.engagement": z.boolean(),
       })
       .strict(),
   })

@@ -38,6 +38,10 @@
     "./life-events": {
       "types": "./dist/life-events.d.ts",
       "import": "./dist/life-events.js"
+    },
+    "./service-times": {
+      "types": "./dist/service-times.d.ts",
+      "import": "./dist/service-times.js"
     }
   },
   "scripts": {
