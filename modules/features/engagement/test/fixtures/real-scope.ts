@@ -35,11 +35,11 @@ export async function createScope(
   await platform.begin(async (tx) => {
     await tx`
       insert into platform.organisations (id, slug, region, kind)
-      values (${orgId}, ${`scope-${orgId.slice(0, 8)}`}, 'au', 'implicit')
+      values (${orgId}, ${`scope-${orgId}`}, 'au', 'implicit')
     `;
     await tx`
       insert into platform.communities (id, organisation_id, slug, region)
-      values (${communityId}, ${orgId}, ${`scope-${communityId.slice(0, 8)}`}, 'au')
+      values (${communityId}, ${orgId}, ${`scope-${communityId}`}, 'au')
     `;
   });
   return { orgId, communityId };

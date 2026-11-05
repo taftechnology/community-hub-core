@@ -665,6 +665,76 @@ describe("service times integration", () => {
     }
   });
 
+  it("tenancy: update pins org_id and community_id predicates as defence in depth on connection bypassing row level security", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    // directSql connects with the bootstrap role (hub) which is not subject to row level security
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+
+    const scopeA = await createScope(platform);
+    const scopeB = await createScope(platform);
+    const now = new Date("2026-06-01T10:00:00.000Z");
+
+    try {
+      // 1. Initial save for Org B
+      await withRequest({ requestId: newId() }, () =>
+        withAppTransaction(app, scopeB, async (tx) => {
+          await saveServiceTimes(tx, {
+            html: "<p>Org B Content</p>",
+            expectedVersion: 0,
+            now,
+            actorUserId: null,
+          });
+        }),
+      );
+
+      // Verify Org B row has version 1
+      const originalRows = await directSql<
+        { content_html: string; version: number }[]
+      >`select content_html, version from app.service_times where org_id = ${scopeB.orgId}::uuid and community_id = ${scopeB.communityId}::uuid`;
+      expect(originalRows).toHaveLength(1);
+      expect(originalRows[0]!.version).toBe(1);
+      expect(originalRows[0]!.content_html).toBe("<p>Org B Content</p>");
+
+      // 2. Cross-scope update attempt through directSql (role not subject to RLS):
+      // app.org_id set to Org A, but app.community_id set to Org B's community,
+      // with expectedVersion equal to Org B's row version (1).
+      // Without the `org_id` predicate, this update would match B's row and succeed.
+      // With the `org_id` predicate, 0 rows match and saveServiceTimes throws version_conflict.
+      const mismatchedScope = { orgId: scopeA.orgId, communityId: scopeB.communityId };
+      await expect(
+        withRequest({ requestId: newId() }, () =>
+          withAppTransaction(directSql, mismatchedScope, async (tx) => {
+            await saveServiceTimes(tx, {
+              html: "<p>Tampered by Org A</p>",
+              expectedVersion: 1,
+              now,
+              actorUserId: null,
+            });
+          }),
+        ),
+      ).rejects.toThrow(new ServiceTimesError("version_conflict"));
+
+      // 3. Org B's row must remain completely unchanged
+      const rowsAfterAttempt = await directSql<
+        { content_html: string; version: number }[]
+      >`select content_html, version from app.service_times where org_id = ${scopeB.orgId}::uuid and community_id = ${scopeB.communityId}::uuid`;
+      expect(rowsAfterAttempt).toHaveLength(1);
+      expect(rowsAfterAttempt[0]!.version).toBe(1);
+      expect(rowsAfterAttempt[0]!.content_html).toBe("<p>Org B Content</p>");
+    } finally {
+      try {
+        await cleanScope(directSql, scopeA);
+        await cleanScope(directSql, scopeB);
+      } finally {
+        await platform.end({ timeout: 1 });
+        await app.end({ timeout: 1 });
+        await directSql.end({ timeout: 1 });
+      }
+    }
+  });
+
   it("audit: each successful save appends exactly one audit event with action engagement.service_times.saved; carries ids only and no content or length (pin 21)", async () => {
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
