@@ -732,13 +732,23 @@ describe("api boot wiring of the billing adapter and logger", () => {
         { method: "POST", pattern: "/v1/households/guardians/unlink", billing: "write" },
       ];
 
-      for (const expected of [...expectedLifeEventRoutes, ...expectedHouseholdRoutes]) {
+      const expectedEngagementRoutes = [
+        { method: "POST", pattern: "/v1/engagement/service-times/get", billing: "read" },
+        { method: "POST", pattern: "/v1/engagement/service-times/save", billing: "write" },
+      ];
+
+      for (const expected of [
+        ...expectedLifeEventRoutes,
+        ...expectedHouseholdRoutes,
+        ...expectedEngagementRoutes,
+      ]) {
         const found = passedRoutes.find(
           (r: { method: string; pattern: string }) =>
             r.method === expected.method && r.pattern === expected.pattern,
         );
         expect(found).toBeDefined();
         expect((found as { billing?: string })?.billing).toBe(expected.billing);
+        expect((found as { surface?: string })?.surface).toBe("tenant");
       }
     } finally {
       startServerSpy.mockRestore();
@@ -801,7 +811,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
         (route as { billing?: string }).billing,
       ]),
     );
-    expect(routes).toHaveLength(49);
+    expect(routes).toHaveLength(51);
     expect(markings).toEqual(
       new Map([
         ["GET /health", "exempt"],
@@ -825,6 +835,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
         ["POST /v1/people/life-events/list", "read"],
         ["POST /v1/households/list", "read"],
         ["POST /v1/households/read", "read"],
+        ["POST /v1/engagement/service-times/get", "read"],
         ["POST /v1/entitlements/list", "read"],
         ["POST /v1/access/grants", "write"],
         ["POST /v1/access/grants/revoke", "write"],
@@ -842,6 +853,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
         ["POST /v1/households/members/add-minor", "write"],
         ["POST /v1/households/guardians/link", "write"],
         ["POST /v1/households/guardians/unlink", "write"],
+        ["POST /v1/engagement/service-times/save", "write"],
         ["POST /v1/entitlements/toggle", "write"],
         ["POST /v1/ops/enrolment/start", "exempt"],
         ["POST /v1/ops/enrolment/verify", "exempt"],
@@ -868,6 +880,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
     // Task 7 extends this expected set with POST /v1/engagement/service-times/save: "content"
     expect(largeBodyRoutes).toEqual({
       "POST /v1/stripe/webhook": "webhooks",
+      "POST /v1/engagement/service-times/save": "content",
     });
 
     const invalidContentRoutes = routes.filter(

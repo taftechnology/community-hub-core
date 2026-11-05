@@ -18,6 +18,7 @@
     "@community-hub/contracts": "workspace:*",
     "@community-hub/crypto": "workspace:*",
     "@community-hub/db": "workspace:*",
+    "@community-hub/engagement": "workspace:*",
     "@community-hub/entitlements": "workspace:*",
     "@community-hub/entitlements-eval": "workspace:*",
     "@community-hub/identity": "workspace:*",

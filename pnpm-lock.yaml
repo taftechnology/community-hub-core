@@ -128,6 +128,9 @@ importers:
       '@community-hub/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@community-hub/engagement':
+        specifier: workspace:*
+        version: link:../../modules/features/engagement
       '@community-hub/entitlements':
         specifier: workspace:*
         version: link:../../modules/core/entitlements
