@@ -856,4 +856,25 @@ describe("api boot wiring of the billing adapter and logger", () => {
       ]),
     );
   });
+
+  it("enumerates every route with a largeBody marking and pins allowed patterns", () => {
+    const routes = productionRoutes(envWithBilling(), pem);
+    const largeBodyRoutes = Object.fromEntries(
+      routes
+        .filter((r) => r.largeBody !== undefined)
+        .map((r) => [`${r.method} ${r.pattern}`, r.largeBody]),
+    );
+
+    // Task 7 extends this expected set with POST /v1/engagement/service-times/save: "content"
+    expect(largeBodyRoutes).toEqual({
+      "POST /v1/stripe/webhook": "webhooks",
+    });
+
+    const invalidContentRoutes = routes.filter(
+      (r) =>
+        r.largeBody === "content" &&
+        (r.method !== "POST" || r.pattern !== "/v1/engagement/service-times/save"),
+    );
+    expect(invalidContentRoutes).toEqual([]);
+  });
 });
