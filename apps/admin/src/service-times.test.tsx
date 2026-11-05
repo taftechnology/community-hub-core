@@ -1050,4 +1050,273 @@ describe("ServiceTimesPage", () => {
     const getPayload = JSON.parse(getCall?.[1]?.body as string);
     expect(getPayload).toEqual({ communitySlug: "parish-b" });
   });
+
+  it("Grok-1: save in flight, picker changed to B, save resolves: no GET for B, Stay restores A with no new GET and enables Save; Leave loads B", async () => {
+    // 1. Initial load for parish-a
+    fetchSpy.mockResolvedValueOnce(
+      mockResponse(200, { html: "<p>Parish A initial</p>", version: 1 }),
+    );
+
+    function TestContainer() {
+      const { slug, setSlug } = useCommunity();
+      return (
+        <PeopleAccessContext.Provider value={{ access: fullAccess }}>
+          <BillingStatusContext.Provider
+            value={{
+              status: {
+                state: "ok",
+                trial_end: null,
+                grace_until: null,
+                canView: true,
+                canManage: true,
+              },
+              readiness: "ready",
+              refresh: vi.fn(),
+              returnMessage: null,
+            }}
+          >
+            <div data-testid="active-slug">{slug}</div>
+            <button type="button" onClick={() => setSlug("parish-b")}>
+              Switch to B
+            </button>
+            <ServiceTimesPage />
+          </BillingStatusContext.Provider>
+        </PeopleAccessContext.Provider>
+      );
+    }
+
+    sessionStorage.setItem("community-hub.community", "parish-a");
+    const router = createMemoryRouter(
+      [
+        {
+          path: "/",
+          element: (
+            <CommunityProvider>
+              <TestContainer />
+            </CommunityProvider>
+          ),
+        },
+      ],
+      { initialEntries: ["/"] },
+    );
+
+    render(<RouterProvider router={router} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Parish A initial")).toBeTruthy();
+    });
+    expect(screen.getByTestId("active-slug").textContent).toBe("parish-a");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // 2. Make editor dirty
+    const editor = captured.editor;
+    expect(editor).toBeTruthy();
+    act(() => {
+      editor!.commands.setContent("<p>Parish A edited</p>");
+    });
+
+    // 3. Controlled save response
+    let resolveSave: ((res: Response) => void) | undefined;
+    const savePromise = new Promise<Response>((resolve) => {
+      resolveSave = resolve;
+    });
+    fetchSpy.mockImplementationOnce(() => savePromise);
+
+    // 4. Click Save
+    const saveBtn = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+    fireEvent.click(saveBtn);
+
+    // Save is now in flight
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(saveBtn.textContent).toBe("Saving...");
+
+    // 5. Change picker to B while save is pending
+    fireEvent.click(screen.getByText("Switch to B"));
+
+    // Confirm dialog is shown
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+
+    // 6. Now save resolves OK
+    await act(async () => {
+      resolveSave!(mockResponse(200, { html: "<p>Parish A saved text</p>", version: 2 }));
+    });
+
+    // Assert: NO get request for B is sent, dialog is still shown
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    for (const call of fetchSpy.mock.calls) {
+      expect(String(call[0])).not.toContain("parish-b");
+      if (call[1]?.body) {
+        expect(String(call[1].body)).not.toContain("parish-b");
+      }
+    }
+
+    // 7. Click Stay
+    fireEvent.click(screen.getByRole("button", { name: "Stay" }));
+
+    // Assert: dialog closes, active slug is back to parish-a with no new get
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByTestId("active-slug").textContent).toBe("parish-a");
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    // Assert: editor shows the saved text for parish-a
+    expect(screen.getByText("Parish A saved text")).toBeTruthy();
+
+    // Assert: Save is enabled again for A
+    await waitFor(() => {
+      const currentSaveBtn = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+      expect(currentSaveBtn.disabled).toBe(false);
+    });
+
+    // 8. Second case: switch to B and Leave without saving loads B
+    act(() => {
+      editor!.commands.setContent("<p>Parish A new edit</p>");
+    });
+    fireEvent.click(screen.getByText("Switch to B"));
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+
+    // Mock GET for parish-b
+    fetchSpy.mockResolvedValueOnce(
+      mockResponse(200, { html: "<p>Parish B loaded text</p>", version: 5 }),
+    );
+
+    // Click "Leave without saving"
+    fireEvent.click(screen.getByRole("button", { name: "Leave without saving" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+
+    await waitFor(() => {
+      expect(screen.getByText("Parish B loaded text")).toBeTruthy();
+    });
+    expect(screen.getByTestId("active-slug").textContent).toBe("parish-b");
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    const getCall = fetchSpy.mock.calls[2];
+    expect(String(getCall?.[0])).toContain("/v1/engagement/service-times/get");
+    const getPayload = JSON.parse(getCall?.[1]?.body as string);
+    expect(getPayload).toEqual({ communitySlug: "parish-b" });
+  });
+
+  it("Grok-2: dirty editor, save returns 409 conflict, switch to B: Reload cannot fetch B, Stay restores A with unsaved text", async () => {
+    // 1. Initial load for parish-a
+    fetchSpy.mockResolvedValueOnce(
+      mockResponse(200, { html: "<p>Parish A initial</p>", version: 1 }),
+    );
+
+    function Test2Container() {
+      const { slug, setSlug } = useCommunity();
+      return (
+        <PeopleAccessContext.Provider value={{ access: fullAccess }}>
+          <BillingStatusContext.Provider
+            value={{
+              status: {
+                state: "ok",
+                trial_end: null,
+                grace_until: null,
+                canView: true,
+                canManage: true,
+              },
+              readiness: "ready",
+              refresh: vi.fn(),
+              returnMessage: null,
+            }}
+          >
+            <div data-testid="active-slug">{slug}</div>
+            <button type="button" onClick={() => setSlug("parish-b")}>
+              Switch to B
+            </button>
+            <ServiceTimesPage />
+          </BillingStatusContext.Provider>
+        </PeopleAccessContext.Provider>
+      );
+    }
+
+    sessionStorage.setItem("community-hub.community", "parish-a");
+    const router = createMemoryRouter(
+      [
+        {
+          path: "/",
+          element: (
+            <CommunityProvider>
+              <Test2Container />
+            </CommunityProvider>
+          ),
+        },
+      ],
+      { initialEntries: ["/"] },
+    );
+
+    render(<RouterProvider router={router} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Parish A initial")).toBeTruthy();
+    });
+    expect(screen.getByTestId("active-slug").textContent).toBe("parish-a");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // 2. Make editor dirty
+    const editor = captured.editor;
+    expect(editor).toBeTruthy();
+    act(() => {
+      editor!.commands.setContent("<p>Parish A local unsaved edits</p>");
+    });
+
+    // 3. Save returns 409 conflict
+    fetchSpy.mockResolvedValueOnce(mockResponse(409, { error: "version_conflict" }));
+
+    const saveBtn = screen.getByRole("button", { name: "Save" });
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "Someone else saved a change first. Reload to see their text, or copy yours before you reload.",
+        ),
+      ).toBeTruthy();
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    // Reload button is present
+    const reloadBtn = screen.getByRole("button", { name: /reload/i }) as HTMLButtonElement;
+    expect(reloadBtn).toBeTruthy();
+
+    // 4. Picker changed to B
+    fireEvent.click(screen.getByText("Switch to B"));
+
+    // Confirm dialog is shown
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+
+    // Reload button must be disabled while dialog is open (or clicking it must not load B)
+    expect(reloadBtn.disabled).toBe(true);
+    fireEvent.click(reloadBtn);
+
+    // Assert NO get for B before an answer
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    for (const call of fetchSpy.mock.calls) {
+      expect(String(call[0])).not.toContain("parish-b");
+    }
+
+    // Assert unsaved text for A is still in the editor
+    expect(screen.getByText("Parish A local unsaved edits")).toBeTruthy();
+
+    // 5. Click Stay
+    fireEvent.click(screen.getByRole("button", { name: "Stay" }));
+
+    // Assert dialog closes
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+
+    // Assert Stay restores A
+    await waitFor(() => {
+      expect(screen.getByTestId("active-slug").textContent).toBe("parish-a");
+    });
+    expect(screen.getByText("Parish A local unsaved edits")).toBeTruthy();
+
+    // No new GET request was sent
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    // Reload button is enabled again now that dialog is closed
+    expect(reloadBtn.disabled).toBe(false);
+  });
 });

@@ -28,6 +28,7 @@ export function ServiceTimesPage() {
   const saveGeneration = useRef<number>(0);
   const lastLoadedKeyRef = useRef<string | null>(null);
   const loadedSlugRef = useRef<string | null>(null);
+  const pendingRevertSlugRef = useRef<string | null>(null);
   const cancellingSwitchRef = useRef<boolean>(false);
   const savingRef = useRef<boolean>(false);
   const blockerAlertRef = useRef<HTMLDivElement>(null);
@@ -121,8 +122,10 @@ export function ServiceTimesPage() {
   }, []);
 
   useEffect(() => {
-    if (!slug || !hasAccess) {
-      setIsLoading(false);
+    if (!slug || !hasAccess || pendingCommunitySlug !== null) {
+      if (!slug || !hasAccess) {
+        setIsLoading(false);
+      }
       return;
     }
     if (cancellingSwitchRef.current) {
@@ -131,6 +134,8 @@ export function ServiceTimesPage() {
       return;
     }
     if (dirty && loadedSlugRef.current && slug !== loadedSlugRef.current) {
+      pendingRevertSlugRef.current = loadedSlugRef.current;
+      loadedSlugRef.current = null;
       setPendingCommunitySlug(slug);
       return;
     }
@@ -140,12 +145,15 @@ export function ServiceTimesPage() {
     }
     lastLoadedKeyRef.current = key;
     void loadData(slug);
-  }, [slug, communityVersion, hasAccess, dirty, loadData]);
+  }, [slug, communityVersion, hasAccess, dirty, pendingCommunitySlug, loadData]);
 
   const handleCancelCommunitySwitch = () => {
-    const revertTo = loadedSlugRef.current;
+    const revertTo = pendingRevertSlugRef.current;
+    pendingRevertSlugRef.current = null;
     setPendingCommunitySlug(null);
     if (revertTo) {
+      loadedSlugRef.current = revertTo;
+      setLoadedCommunitySlug(revertTo);
       cancellingSwitchRef.current = true;
       setSlug(revertTo);
     }
@@ -153,6 +161,7 @@ export function ServiceTimesPage() {
 
   const handleConfirmCommunitySwitch = () => {
     const nextSlug = pendingCommunitySlug;
+    pendingRevertSlugRef.current = null;
     setPendingCommunitySlug(null);
     setDirty(false);
     if (nextSlug) {
@@ -203,8 +212,10 @@ export function ServiceTimesPage() {
         // Capture new baseline right after setContent
         const newBaseline = editorRef.current?.getHTML() ?? "";
         baselineRef.current = newBaseline;
-        loadedSlugRef.current = slug;
-        setLoadedCommunitySlug(slug);
+        if (!pendingRevertSlugRef.current) {
+          loadedSlugRef.current = slug;
+          setLoadedCommunitySlug(slug);
+        }
         setDirty(false);
         setSavedMessage("Saved");
         setShowReload(false);
@@ -232,6 +243,9 @@ export function ServiceTimesPage() {
   };
 
   const handleReload = () => {
+    if (pendingCommunitySlug !== null) {
+      return;
+    }
     saveGeneration.current++;
     if (slug) {
       void loadData(slug);
@@ -314,6 +328,7 @@ export function ServiceTimesPage() {
                 type="button"
                 variant="secondary"
                 aria-label="Reload and discard local edits"
+                disabled={pendingCommunitySlug !== null}
                 onClick={handleReload}
               >
                 Reload
