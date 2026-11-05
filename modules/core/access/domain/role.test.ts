@@ -32,7 +32,7 @@ describe("permission lists", () => {
     expect(CATALOGUE_PERMISSIONS).toEqual(catalogue());
   });
 
-  it("returns a catalogue subset including people.view and people.manage", () => {
+  it("returns a catalogue subset including people.view, people.manage and service_times.manage", () => {
     expect(parsePermissionList(["access.users.view", "people.restricted.read"])).toEqual([
       "access.users.view",
       "people.restricted.read",
@@ -41,6 +41,7 @@ describe("permission lists", () => {
       "people.view",
       "people.manage",
     ]);
+    expect(parsePermissionList(["service_times.manage"])).toEqual(["service_times.manage"]);
   });
 
   it("rejects an empty list, a duplicate, and a string outside the catalogue", () => {

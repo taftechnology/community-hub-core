@@ -5,6 +5,12 @@
     "rootDir": ".",
     "tsBuildInfoFile": "./tsconfig.tsbuildinfo"
   },
-  "include": ["domain/**/*.ts", "public/**/*.ts"],
+  "include": [
+    "module.manifest.ts",
+    "domain/**/*.ts",
+    "public/**/*.ts",
+    "db/**/*.ts",
+    "infrastructure/**/*.ts"
+  ],
   "exclude": ["**/*.test.ts"]
 }

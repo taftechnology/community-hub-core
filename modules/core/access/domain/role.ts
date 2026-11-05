@@ -33,6 +33,7 @@ export const CATALOGUE_PERMISSIONS = [
   "people.restricted.read",
   "entitlements.view",
   "entitlements.manage",
+  "service_times.manage",
 ] as const;
 
 const KEY = /^[a-z][a-z0-9_]{1,31}$/;

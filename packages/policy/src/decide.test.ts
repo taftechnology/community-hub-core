@@ -23,7 +23,7 @@ function actor(
 }
 
 describe("catalogue", () => {
-  it("lists the nine permissions in order", () => {
+  it("lists the ten permissions in order", () => {
     expect(catalogue()).toEqual([
       "access.users.view",
       "access.users.manage",
@@ -34,6 +34,7 @@ describe("catalogue", () => {
       "people.restricted.read",
       "entitlements.view",
       "entitlements.manage",
+      "service_times.manage",
     ]);
   });
 
@@ -76,8 +77,30 @@ describe("bundle", () => {
     ]);
     expect(bundle("safeguarding_officer")).toEqual(["people.restricted.read", "access.users.view"]);
     expect(bundle("volunteer_coordinator")).toEqual(["access.users.view"]);
-    expect(bundle("content_editor")).toEqual([]);
+    expect(bundle("content_editor")).toEqual(["service_times.manage"]);
     expect(bundle("member")).toEqual([]);
+  });
+
+  it("grants service_times.manage to org_owner, org_admin, community_admin, content_editor", () => {
+    for (const role of ["org_owner", "org_admin", "community_admin", "content_editor"]) {
+      const perms = bundle(role) ?? [];
+      expect(perms, role).toContain("service_times.manage");
+    }
+  });
+
+  it("does not grant service_times.manage to other built-in roles", () => {
+    for (const role of [
+      "staff",
+      "finance",
+      "member",
+      "org_billing",
+      "org_auditor",
+      "safeguarding_officer",
+      "volunteer_coordinator",
+    ]) {
+      const perms = bundle(role) ?? [];
+      expect(perms, role).not.toContain("service_times.manage");
+    }
   });
 
   it("grants people.view and people.manage to org_owner, org_admin, community_admin", () => {
@@ -107,6 +130,59 @@ describe("bundle", () => {
 });
 
 describe("decide", () => {
+  it("decides service_times.manage for allowed and forbidden roles", () => {
+    for (const role of ["org_owner", "org_admin"]) {
+      expect(
+        decide(
+          actor("service_times.manage", {
+            organisationRoleKeys: [role],
+            communityRoleKeys: [],
+          }),
+        ),
+        role,
+      ).toBe(true);
+    }
+    for (const role of ["community_admin", "content_editor"]) {
+      expect(
+        decide(
+          actor("service_times.manage", {
+            organisationRoleKeys: [],
+            communityRoleKeys: [role],
+          }),
+        ),
+        role,
+      ).toBe(true);
+    }
+    for (const role of ["org_billing", "org_auditor"]) {
+      expect(
+        decide(
+          actor("service_times.manage", {
+            organisationRoleKeys: [role],
+            communityRoleKeys: [],
+          }),
+        ),
+        role,
+      ).toBe(false);
+    }
+    for (const role of [
+      "staff",
+      "finance",
+      "member",
+      "safeguarding_officer",
+      "volunteer_coordinator",
+    ]) {
+      expect(
+        decide(
+          actor("service_times.manage", {
+            organisationRoleKeys: [],
+            communityRoleKeys: [role],
+          }),
+        ),
+        role,
+      ).toBe(false);
+    }
+  });
+
   it("allows org_billing billing.manage", () => {
     expect(
       decide(

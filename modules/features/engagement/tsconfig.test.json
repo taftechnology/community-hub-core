@@ -6,7 +6,17 @@
     "declaration": false,
     "declarationMap": false,
     "lib": ["ES2022", "DOM"],
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "@community-hub/db/plaintext": ["../../../packages/db/src/plaintext.ts"]
+    }
   },
-  "include": ["domain/**/*.ts", "public/**/*.ts"]
+  "include": [
+    "module.manifest.ts",
+    "domain/**/*.ts",
+    "public/**/*.ts",
+    "db/**/*.ts",
+    "infrastructure/**/*.ts",
+    "test/**/*.ts"
+  ]
 }

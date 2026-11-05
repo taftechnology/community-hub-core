@@ -1,11 +1,25 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
-// Task 3 adds the shared globalSetup when the first database test arrives; Docker is down and this task has no database.
+const root = path.dirname(fileURLToPath(import.meta.url));
+const plaintext = path.resolve(root, "../../../packages/db/src/plaintext.ts");
+
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@community-hub/db/plaintext": plaintext,
+    },
+  },
   test: {
     env: {
       TZ: "Australia/Sydney",
     },
-    include: ["domain/**/*.test.ts"],
+    alias: {
+      "@community-hub/db/plaintext": plaintext,
+    },
+    include: ["domain/**/*.test.ts", "db/**/*.test.ts", "infrastructure/**/*.test.ts"],
+    globalSetup: path.resolve(root, "../../../packages/db/test/global-setup.ts"),
+    fileParallelism: false,
   },
 });

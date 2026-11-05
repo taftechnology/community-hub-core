@@ -434,6 +434,18 @@ importers:
 
   modules/features/engagement:
     dependencies:
+      '@community-hub/db':
+        specifier: workspace:*
+        version: link:../../../packages/db
+      '@community-hub/kernel':
+        specifier: workspace:*
+        version: link:../../../packages/kernel
+      drizzle-orm:
+        specifier: 0.45.2
+        version: 0.45.2(@cloudflare/workers-types@5.20260917.1)(postgres@3.4.9)
+      postgres:
+        specifier: 3.4.9
+        version: 3.4.9
       sanitize-html:
         specifier: 2.18.1
         version: 2.18.1

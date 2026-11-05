@@ -1,8 +1,10 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { catalogue } from "@community-hub/policy";
+import { applyProductMigrations } from "@community-hub/db";
+import { createPlaintextDirectSql } from "@community-hub/db/plaintext";
 
 const DRIZZLE = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -57,6 +59,24 @@ function createBody(sql: string, table: string): string {
 function statements(sql: string): string[] {
   return sql.split("--> statement-breakpoint").map((statement) => statement.replace(/\s+/g, " "));
 }
+
+beforeAll(async () => {
+  const runtime = JSON.parse(
+    readFileSync(
+      path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "../../../../packages/db/test/.runtime.json",
+      ),
+      "utf8",
+    ),
+  ) as { productOnlyUrl: string };
+  const sql = createPlaintextDirectSql(runtime.productOnlyUrl);
+  try {
+    await applyProductMigrations(sql);
+  } finally {
+    await sql.end({ timeout: 1 });
+  }
+});
 
 describe("access grant tables", () => {
   it("forces row level security and keeps organisation grants free of community_id", () => {
@@ -171,6 +191,16 @@ describe("access grant tables", () => {
     expect(sql).toContain("people.manage");
   });
 
+  it("widens the custom_role_permissions CHECK for service_times permissions in 0018", () => {
+    const files = readdirSync(DRIZZLE).filter(
+      (name) => name.startsWith("0018_") && name.endsWith(".sql"),
+    );
+    expect(files).toHaveLength(1);
+    const sql = readFileSync(path.join(DRIZZLE, files[0] ?? ""), "utf8");
+    expect(sql).toContain("custom_role_permissions_permission");
+    expect(sql).toContain("service_times.manage");
+  });
+
   it("pins that the schema custom_role_permissions CHECK list matches the policy catalogue (pin 14)", () => {
     const schemaSource = readFileSync(
       path.resolve(path.dirname(fileURLToPath(import.meta.url)), "schema.ts"),
@@ -181,6 +211,39 @@ describe("access grant tables", () => {
     );
     expect(match).not.toBeNull();
     const permissionsInCheck = [...(match?.[1] ?? "").matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    expect(permissionsInCheck).toHaveLength(10);
+    expect(permissionsInCheck).toContain("service_times.manage");
     expect(new Set(permissionsInCheck)).toEqual(new Set(catalogue()));
+  });
+
+  it("custom_role_permissions CHECK allows service_times.manage and rejects a bogus permission on the live database", async () => {
+    const runtime = JSON.parse(
+      readFileSync(
+        path.resolve(
+          path.dirname(fileURLToPath(import.meta.url)),
+          "../../../../packages/db/test/.runtime.json",
+        ),
+        "utf8",
+      ),
+    ) as { productOnlyUrl: string };
+    const sql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const orgId = "11111111-1111-4111-8111-111111111111";
+    const communityId = "22222222-2222-4222-8222-222222222222";
+    const customRoleId = "33333333-3333-4333-8333-333333333333";
+    try {
+      await sql`insert into app.custom_roles (id, org_id, community_id, key) values (${customRoleId}, ${orgId}, ${communityId}, 'service_role') on conflict do nothing`;
+
+      await sql`insert into app.custom_role_permissions (org_id, community_id, custom_role_id, permission) values (${orgId}, ${communityId}, ${customRoleId}, 'service_times.manage')`;
+
+      await expect(
+        sql`insert into app.custom_role_permissions (org_id, community_id, custom_role_id, permission) values (${orgId}, ${communityId}, ${customRoleId}, 'bogus.permission')`,
+      ).rejects.toThrow();
+    } finally {
+      await sql`delete from app.custom_role_permissions where custom_role_id = ${customRoleId}`.catch(
+        () => {},
+      );
+      await sql`delete from app.custom_roles where id = ${customRoleId}`.catch(() => {});
+      await sql.end({ timeout: 1 });
+    }
   });
 });
