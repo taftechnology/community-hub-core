@@ -115,6 +115,8 @@ Merged specs: `docs/specs/2026-10-22-ops-operator-identity.md`, `docs/specs/2026
 
 **What it replaces.** `billing-admin` one-off (`apps/api/src/billing-admin.ts`).
 
+Both plans include `module.engagement` (Mass Times), as Laravel does.
+
 **Data.** `platform.plans`, billing settings and accounts (`core/billing`, `core/entitlements` — see stripe-billing and entitlements-plans specs). Stripe ids stored as internal platform columns.
 
 **Routes (Proposed).**

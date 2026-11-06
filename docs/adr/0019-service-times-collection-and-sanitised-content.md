@@ -1,6 +1,6 @@
 # ADR 0019: Service times collection and sanitised content
 
-- Status: proposed (2026-11-05, awaiting the project owner's review in the pull request)
+- Status: accepted (2026-11-05, Abdus Salam)
 - Date: 2026-11-05
 - Spec: docs/specs/2026-11-04-mass-times.md
 

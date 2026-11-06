@@ -1,7 +1,7 @@
 # Spec: Mass Times
 
 Slug: mass-times
-Status: approved (2026-11-04, Abdus Salam)
+Status: approved (2026-11-04, Adnan Bin Hossen)
 Revision: draft 5, approved on condition that D8 and D9 read as answered below. Owner answers: D6 yes, D7 one PR, D8 libraries yes, D9 request size yes with the stated limits, and the Laravel shape (one rich-text block per community, no rows). A fresh-context review of draft 3 found 2 high, 6 medium and 5 low points; all are applied below.
 Architecture refs: §8.4, §8.5, §10.2, §12.1, §15.5, §24, §25 Phase 2, ADR 0006, D15; owner decisions 2026-11-02 (Laravel decisions page, group I: label "Mass Times") and 2026-11-04 (decision 8: Mass times are their own Jellycube collection). Implements the `Mass Timings` roadmap row (Engagement → Mass Times). Depends on `usage-facts` and `admin-design-shell` on `main`. **The plan's first task is gated on PR #74 (route list) being merged to `main`**; until then `run()` has its own route list.
 
