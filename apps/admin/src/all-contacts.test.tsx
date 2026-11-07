@@ -528,6 +528,7 @@ describe("All Contacts Screen", () => {
     // In detail view, Edit contact button must NOT appear
     fireEvent.click(screen.getByRole("button", { name: /^View/ }));
     expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
+    expect(await screen.findByText("Given name:")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Edit contact" })).toBeNull();
   });
 
@@ -604,6 +605,7 @@ describe("All Contacts Screen", () => {
     // View detail
     fireEvent.click(screen.getByRole("button", { name: /^View/ }));
     expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
+    expect(await screen.findByText("Given name:")).toBeTruthy();
     // Edit button must be hidden when read_only
     expect(screen.queryByRole("button", { name: "Edit contact" })).toBeNull();
   });
@@ -723,7 +725,7 @@ describe("All Contacts Screen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Set" }));
 
     await screen.findByRole("heading", { name: "All Contacts" });
-    const searchInput = screen.getByRole("textbox", { name: "Search contacts" });
+    const searchInput = await screen.findByRole("textbox", { name: "Search contacts" });
     fireEvent.change(searchInput, { target: { value: "SecretSearchTerm" } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
 
@@ -1121,7 +1123,7 @@ describe("All Contacts Screen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Set" }));
 
     await screen.findByRole("heading", { name: "All Contacts" });
-    const searchInput = screen.getByRole("textbox", { name: "Search contacts" });
+    const searchInput = await screen.findByRole("textbox", { name: "Search contacts" });
     fireEvent.change(searchInput, { target: { value: "NonExistent" } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
 
@@ -2203,7 +2205,7 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     fireEvent.click(viewButton);
 
     expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
-    expect(screen.getByText("ada@example.test")).toBeTruthy();
+    expect(await screen.findByText("ada@example.test")).toBeTruthy();
     expect(screen.getByText("+61400000001")).toBeTruthy();
     expect(screen.getByText("1980-05-12")).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/\bVersion\b/);
@@ -2245,6 +2247,7 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     fireEvent.click(screen.getByRole("button", { name: /^View/ }));
 
     expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
+    expect(await screen.findByText("Given name:")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Edit contact" })).toBeNull();
   });
 
@@ -2350,7 +2353,7 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     fireEvent.click(screen.getByRole("button", { name: /^View/ }));
 
     expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
-    const editButton = screen.getByRole("button", { name: "Edit contact" });
+    const editButton = await screen.findByRole("button", { name: "Edit contact" });
     fireEvent.click(editButton);
 
     expect(await screen.findByRole("heading", { name: "Edit Contact" })).toBeTruthy();
@@ -2416,7 +2419,7 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     fireEvent.click(screen.getByRole("button", { name: /^View/ }));
 
     expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Edit contact" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit contact" }));
 
     expect(await screen.findByRole("heading", { name: "Edit Contact" })).toBeTruthy();
     const saveButton = screen.getByRole("button", { name: "Save changes" });
@@ -2581,17 +2584,21 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
     const conflictAlert = await screen.findByRole("alert");
-    expect(document.activeElement).toBe(conflictAlert);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(conflictAlert);
+    });
     fireEvent.click(screen.getByRole("button", { name: "Reload" }));
 
     await act(async () => {});
 
     const alertAfterReload = await screen.findByRole("alert");
     expect(alertAfterReload).toBeTruthy();
-    expect(
-      document.activeElement === alertAfterReload ||
-        alertAfterReload.contains(document.activeElement),
-    ).toBe(true);
+    await waitFor(() => {
+      expect(
+        document.activeElement === alertAfterReload ||
+          alertAfterReload.contains(document.activeElement),
+      ).toBe(true);
+    });
     expect((screen.getByRole("textbox", { name: "Family name" }) as HTMLInputElement).value).toBe(
       "DraftFamily",
     );
@@ -2647,7 +2654,7 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Edit contact" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit contact" }));
 
     expect(await screen.findByRole("heading", { name: "Edit Contact" })).toBeTruthy();
     expect((screen.getByRole("textbox", { name: "Given name" }) as HTMLInputElement).value).toBe(
@@ -2748,6 +2755,7 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     fireEvent.click(screen.getByRole("button", { name: /^View/ }));
 
     expect(await screen.findByRole("heading", { name: "Contact Details" })).toBeTruthy();
+    expect(await screen.findByText("Given name:")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Edit contact" })).toBeNull();
   });
 
@@ -2948,7 +2956,9 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     await act(async () => {});
 
     const heading = await screen.findByRole("heading", { name: "All Contacts", level: 1 });
-    expect(document.activeElement).toBe(heading);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(heading);
+    });
   });
 
   it("moves focus to the heading after successful Edit save", async () => {
@@ -3003,7 +3013,9 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     await act(async () => {});
 
     const heading = await screen.findByRole("heading", { name: "Contact Details", level: 2 });
-    expect(document.activeElement).toBe(heading);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(heading);
+    });
   });
 
   it("moves focus to the alert on save error", async () => {
@@ -3045,7 +3057,9 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save contact" }));
 
     const alert = await screen.findByRole("alert");
-    expect(document.activeElement).toBe(alert);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(alert);
+    });
 
     const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
     expect(resultIds(results, "violations")).toEqual([]);
@@ -3080,7 +3094,9 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     fireEvent.click(addButton);
 
     const addHeading = await screen.findByRole("heading", { name: "Add Contact", level: 2 });
-    expect(document.activeElement).toBe(addHeading);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(addHeading);
+    });
   });
 
   it("moves focus to the Detail heading on opening Detail view", async () => {
@@ -3119,7 +3135,9 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     fireEvent.click(viewButton);
 
     const detailHeading = await screen.findByRole("heading", { name: "Contact Details", level: 2 });
-    expect(document.activeElement).toBe(detailHeading);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(detailHeading);
+    });
   });
 
   it("moves focus to the Edit heading on opening Edit view", async () => {
@@ -3160,7 +3178,9 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     fireEvent.click(editButton);
 
     const editHeading = await screen.findByRole("heading", { name: "Edit Contact", level: 2 });
-    expect(document.activeElement).toBe(editHeading);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(editHeading);
+    });
   });
 
   it("moves focus to the alert and asserts role alert on failed Edit save (500)", async () => {
@@ -3209,6 +3229,8 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.getAttribute("role")).toBe("alert");
     expect(within(alert).getByText("Unable to save changes")).toBeTruthy();
-    expect(document.activeElement).toBe(alert);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(alert);
+    });
   });
 });
