@@ -299,4 +299,4 @@ None. There is no Terraform in this chunk.
 
 ## Amendments after approval
 
-None yet.
+- 2026-11-07, chunk owner (Adnan Bin Hossen): Tasks 1 and 2 may start before PR #81 merges, because neither touches a file #81 changes. Task 3 still waits for the merge. The branch rebases on `origin/main` before Task 3, and it stays unpushed until then.
