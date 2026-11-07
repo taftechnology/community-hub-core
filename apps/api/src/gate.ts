@@ -14,7 +14,7 @@ export type GateRoute = {
   surface: Surface;
   billing: BillingMarking;
   handle: (request: Request, context: RouteContext) => Response | Promise<Response>;
-  largeBody?: "webhooks";
+  largeBody?: "webhooks" | "content";
   static?: true;
 };
 
@@ -84,9 +84,14 @@ export function assertRoutes(routes: readonly GateRoute[]): void {
     }
     if (
       route.largeBody !== undefined &&
-      (route.largeBody !== "webhooks" ||
-        route.method !== "POST" ||
-        route.pattern !== "/v1/stripe/webhook")
+      !(
+        (route.largeBody === "webhooks" &&
+          route.method === "POST" &&
+          route.pattern === "/v1/stripe/webhook") ||
+        (route.largeBody === "content" &&
+          route.method === "POST" &&
+          route.pattern === "/v1/engagement/service-times/save")
+      )
     ) {
       throw new RoutesRejected();
     }

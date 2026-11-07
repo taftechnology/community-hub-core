@@ -315,10 +315,12 @@ describe("access flow", () => {
           "people.view": true,
           "people.manage": true,
           "people.restricted.read": true,
+          "service_times.manage": true,
         },
         entitlements: {
           "people.directory": true,
           "people.households": true,
+          "module.engagement": false,
         },
       });
 
@@ -339,10 +341,12 @@ describe("access flow", () => {
           "people.view": true,
           "people.manage": true,
           "people.restricted.read": true,
+          "service_times.manage": true,
         },
         entitlements: {
           "people.directory": true,
           "people.households": false,
+          "module.engagement": false,
         },
       });
 
@@ -363,10 +367,12 @@ describe("access flow", () => {
           "people.view": false,
           "people.manage": false,
           "people.restricted.read": false,
+          "service_times.manage": false,
         },
         entitlements: {
           "people.directory": true,
           "people.households": true,
+          "module.engagement": false,
         },
       });
 

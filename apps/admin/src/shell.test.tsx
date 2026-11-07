@@ -1,3 +1,4 @@
+import { terminology } from "@community-hub/faith-church";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import axe from "axe-core";
 import { StrictMode } from "react";
@@ -190,10 +191,12 @@ describe("Shell and ShellLayout", () => {
         "people.view": true,
         "people.manage": true,
         "people.restricted.read": true,
+        "service_times.manage": false,
       },
       entitlements: {
         "people.directory": true,
         "people.households": true,
+        "module.engagement": false,
       },
     };
 
@@ -244,6 +247,48 @@ describe("Shell and ShellLayout", () => {
     expect(screen.queryByText("People")).toBeNull();
     expect(screen.queryByText("Outreach")).toBeNull();
     expect(screen.queryByText("Money")).toBeNull();
+  });
+
+  it("with engagement and people access, link order places Mass Times child after Dashboard and before Contacts & Members", () => {
+    const plural = terminology("engagement.service_times").plural;
+    const fullAccess: PeopleAccess = {
+      permissions: {
+        "people.view": true,
+        "people.manage": true,
+        "people.restricted.read": true,
+        "service_times.manage": true,
+      },
+      entitlements: {
+        "people.directory": true,
+        "people.households": true,
+        "module.engagement": true,
+      },
+    };
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <PeopleAccessContext.Provider value={{ access: fullAccess }}>
+          <ShellLayout />
+        </PeopleAccessContext.Provider>
+      </MemoryRouter>,
+    );
+
+    const nav = screen.getByRole("navigation", { name: "Admin" });
+    const links = within(nav).getAllByRole("link");
+    expect(links.map((link) => link.textContent)).toEqual([
+      "Dashboard",
+      plural,
+      "All Contacts",
+      "Family Records",
+      "General Settings",
+      "Users & Roles",
+      "Module Toggles",
+    ]);
+
+    expect(within(nav).getByText("Engagement")).toBeTruthy();
+    expect(within(nav).getByRole("link", { name: plural }).getAttribute("href")).toBe(
+      "/engagement/service-times",
+    );
   });
 
   it("theme toggle: clicking Dark mode sets data-theme to dark and stores it", () => {
@@ -677,10 +722,12 @@ describe("Shell and ShellLayout", () => {
         "people.view": true,
         "people.manage": true,
         "people.restricted.read": true,
+        "service_times.manage": false,
       },
       entitlements: {
         "people.directory": true,
         "people.households": true,
+        "module.engagement": false,
       },
     };
 

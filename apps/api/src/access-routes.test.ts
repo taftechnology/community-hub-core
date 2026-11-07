@@ -300,6 +300,7 @@ describe("access routes", () => {
       "people.restricted.read",
       "entitlements.view",
       "entitlements.manage",
+      "service_times.manage",
     ]);
     expect(body.grants).toEqual([
       {
@@ -529,10 +530,12 @@ describe("access routes", () => {
           "people.view": true,
           "people.manage": true,
           "people.restricted.read": true,
+          "service_times.manage": true,
         },
         entitlements: {
           "people.directory": true,
           "people.households": true,
+          "module.engagement": true,
         },
       });
 
@@ -555,6 +558,11 @@ describe("access routes", () => {
         { orgId: ORG, communityId: COMMUNITY },
         "people.households",
       );
+      expect(entitlementGuard.checkEntitlement).toHaveBeenCalledWith(
+        expect.anything(),
+        { orgId: ORG, communityId: COMMUNITY },
+        "module.engagement",
+      );
     });
 
     it("returns 200 with all permissions false when caller has role grant with no people permissions (finding 2)", async () => {
@@ -576,10 +584,12 @@ describe("access routes", () => {
         "people.view": false,
         "people.manage": false,
         "people.restricted.read": false,
+        "service_times.manage": false,
       });
       expect(data.entitlements).toEqual({
         "people.directory": true,
         "people.households": true,
+        "module.engagement": true,
       });
       expect(entitlementGuard.checkEntitlement).toHaveBeenCalledWith(
         expect.anything(),
@@ -590,6 +600,11 @@ describe("access routes", () => {
         expect.anything(),
         { orgId: ORG, communityId: COMMUNITY },
         "people.households",
+      );
+      expect(entitlementGuard.checkEntitlement).toHaveBeenCalledWith(
+        expect.anything(),
+        { orgId: ORG, communityId: COMMUNITY },
+        "module.engagement",
       );
     });
 
@@ -657,6 +672,7 @@ describe("access routes", () => {
         "people.view": true,
         "people.manage": false,
         "people.restricted.read": false,
+        "service_times.manage": false,
       });
 
       // only people.manage
@@ -677,6 +693,7 @@ describe("access routes", () => {
         "people.view": false,
         "people.manage": true,
         "people.restricted.read": false,
+        "service_times.manage": false,
       });
 
       // only people.restricted.read
@@ -697,6 +714,28 @@ describe("access routes", () => {
         "people.view": false,
         "people.manage": false,
         "people.restricted.read": true,
+        "service_times.manage": false,
+      });
+
+      // only service_times.manage
+      access.holdsPermission.mockImplementation(
+        async (_tx: unknown, _userId: string, perm: string) => perm === "service_times.manage",
+      );
+      const resServiceTimes = await route("/v1/access/capabilities").handle(
+        request(
+          "/v1/access/capabilities",
+          API_HOSTNAME,
+          { communitySlug: "parish" },
+          `Bearer ${TOKEN}`,
+        ),
+      );
+      expect(resServiceTimes.status).toBe(200);
+      const dataServiceTimes = (await resServiceTimes.json()) as CapabilitiesResponse;
+      expect(dataServiceTimes.permissions).toEqual({
+        "people.view": false,
+        "people.manage": false,
+        "people.restricted.read": false,
+        "service_times.manage": true,
       });
 
       // Entitlements toggles
@@ -717,6 +756,7 @@ describe("access routes", () => {
       expect(dataEnt1.entitlements).toEqual({
         "people.directory": true,
         "people.households": false,
+        "module.engagement": false,
       });
 
       entitlementGuard.checkEntitlement.mockImplementation(
@@ -735,6 +775,26 @@ describe("access routes", () => {
       expect(dataEnt2.entitlements).toEqual({
         "people.directory": false,
         "people.households": true,
+        "module.engagement": false,
+      });
+
+      entitlementGuard.checkEntitlement.mockImplementation(
+        async (_deps: unknown, _scope: unknown, key: string) => key === "module.engagement",
+      );
+      const resEnt3 = await route("/v1/access/capabilities").handle(
+        request(
+          "/v1/access/capabilities",
+          API_HOSTNAME,
+          { communitySlug: "parish" },
+          `Bearer ${TOKEN}`,
+        ),
+      );
+      expect(resEnt3.status).toBe(200);
+      const dataEnt3 = (await resEnt3.json()) as CapabilitiesResponse;
+      expect(dataEnt3.entitlements).toEqual({
+        "people.directory": false,
+        "people.households": false,
+        "module.engagement": true,
       });
     });
 

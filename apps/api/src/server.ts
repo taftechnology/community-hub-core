@@ -24,6 +24,7 @@ export type SignalSource = {
 const logger = createLogger();
 const POST_BODY_MAX_BYTES = 4096;
 const WEBHOOK_BODY_MAX_BYTES = 262_144;
+const CONTENT_BODY_MAX_BYTES = 131_072;
 
 function presentedHostnameFromReq(req: IncomingMessage): string | undefined {
   const raw = req.headers["x-community-hub-hostname"];
@@ -123,19 +124,27 @@ export function startServer(options: {
         let body: Uint8Array | undefined;
         if (req.method === "POST") {
           const pathname = new URL(`http://127.0.0.1${req.url ?? "/"}`).pathname;
-          const isLargeBodyRoute = options.routes.some(
-            (route) =>
-              route.method === "POST" &&
-              route.pattern === pathname &&
-              route.largeBody === "webhooks",
+          const matchingRoute = options.routes.find(
+            (route) => route.method === "POST" && route.pattern === pathname,
           );
           const presentedHost = presentedHostnameFromReq(req);
           const isWebhookHost =
             presentedHost !== undefined &&
             presentedHost === options.env.WEBHOOKS_HOSTNAME.toLowerCase();
 
-          const isLargeBody = isLargeBodyRoute && isWebhookHost;
-          const maxBytes = isLargeBody ? WEBHOOK_BODY_MAX_BYTES : POST_BODY_MAX_BYTES;
+          let maxBytes = POST_BODY_MAX_BYTES;
+          let isLargeBody = false;
+
+          if (matchingRoute?.largeBody === "webhooks" && isWebhookHost) {
+            maxBytes = WEBHOOK_BODY_MAX_BYTES;
+            isLargeBody = true;
+          } else if (
+            matchingRoute?.largeBody === "content" &&
+            presentedHost === options.env.API_HOSTNAME.toLowerCase()
+          ) {
+            maxBytes = CONTENT_BODY_MAX_BYTES;
+            isLargeBody = true;
+          }
 
           const read = await readPostBody(req, maxBytes);
           if (read === "over") {

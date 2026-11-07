@@ -15,7 +15,11 @@
     },
     "@community-hub/db#test": {
       "dependsOn": ["^build"],
-      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/modules/core/*/db/schema.ts"]
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/modules/core/*/db/schema.ts",
+        "$TURBO_ROOT$/modules/features/*/db/schema.ts"
+      ]
     },
     "@community-hub/tenancy#test": {
       "dependsOn": ["^build", "@community-hub/db#test"]
@@ -34,6 +38,9 @@
     },
     "@community-hub/groups#test": {
       "dependsOn": ["^build", "@community-hub/api#test"]
+    },
+    "@community-hub/engagement#test": {
+      "dependsOn": ["^build", "@community-hub/groups#test"]
     },
     "@community-hub/usage#test": {
       "dependsOn": ["^build", "@community-hub/identity#test"]

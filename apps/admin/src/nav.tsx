@@ -1,3 +1,4 @@
+import { terminology } from "@community-hub/faith-church";
 import { AppSidebar, type SidebarItem } from "@community-hub/ui";
 import { Link, useLocation } from "react-router";
 
@@ -7,6 +8,7 @@ import { usePeopleAccess } from "./people-access";
 import { visibleLabels } from "./visible-labels";
 
 const entitlementMap: Readonly<Record<string, string>> = {
+  Engagement: "module.engagement",
   "Contacts & Members": "people.directory",
   "Family Records": "people.households",
 };
@@ -48,6 +50,9 @@ export function useSidebarItems(): {
 } {
   const { access } = usePeopleAccess();
   const entitledKeys: string[] = [];
+  if (access.entitlements["module.engagement"] && access.permissions["service_times.manage"]) {
+    entitledKeys.push("module.engagement");
+  }
   if (access.entitlements["people.directory"] && access.permissions["people.view"]) {
     entitledKeys.push("people.directory");
   }
@@ -68,6 +73,18 @@ export function useSidebarItems(): {
         id: "dashboard",
         label: "Dashboard",
         href: "/",
+      });
+    } else if (label === "Engagement") {
+      items.push({
+        id: "engagement",
+        label: "Engagement",
+        children: [
+          {
+            id: "service-times",
+            label: terminology("engagement.service_times").plural,
+            href: "/engagement/service-times",
+          },
+        ],
       });
     } else if (label === "Contacts & Members") {
       items.push({

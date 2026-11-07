@@ -16,22 +16,26 @@ export type PeopleAccess = {
     "people.view": boolean;
     "people.manage": boolean;
     "people.restricted.read": boolean;
+    "service_times.manage": boolean;
   };
   entitlements: {
     "people.directory": boolean;
     "people.households": boolean;
+    "module.engagement": boolean;
   };
 };
 
-const defaultAccess: PeopleAccess = {
+export const defaultAccess: PeopleAccess = {
   permissions: {
     "people.view": false,
     "people.manage": false,
     "people.restricted.read": false,
+    "service_times.manage": false,
   },
   entitlements: {
     "people.directory": false,
     "people.households": false,
+    "module.engagement": false,
   },
 };
 
@@ -51,7 +55,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function parseAccess(value: unknown): PeopleAccess {
+export function parseAccess(value: unknown): PeopleAccess {
   if (!isRecord(value)) {
     return defaultAccess;
   }
@@ -62,10 +66,12 @@ function parseAccess(value: unknown): PeopleAccess {
       "people.view": perms["people.view"] === true,
       "people.manage": perms["people.manage"] === true,
       "people.restricted.read": perms["people.restricted.read"] === true,
+      "service_times.manage": perms["service_times.manage"] === true,
     },
     entitlements: {
       "people.directory": ents["people.directory"] === true,
       "people.households": ents["people.households"] === true,
+      "module.engagement": ents["module.engagement"] === true,
     },
   };
 }

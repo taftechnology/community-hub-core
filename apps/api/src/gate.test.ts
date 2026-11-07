@@ -734,6 +734,61 @@ describe("assertRoutes", () => {
     ).not.toThrow();
   });
 
+  it('accepts largeBody: "content" only on POST /v1/engagement/service-times/save', () => {
+    const handle = () => new Response(null, { status: 204 });
+    expect(() =>
+      assertRoutes([
+        {
+          method: "POST",
+          pattern: "/v1/engagement/service-times/save",
+          surface: "tenant",
+          billing: "write",
+          largeBody: "content",
+          handle,
+        },
+      ]),
+    ).not.toThrow();
+
+    expect(() =>
+      assertRoutes([
+        {
+          method: "GET",
+          pattern: "/v1/engagement/service-times/save",
+          surface: "tenant",
+          billing: "read",
+          largeBody: "content",
+          handle,
+        },
+      ]),
+    ).toThrow(RoutesRejected);
+
+    expect(() =>
+      assertRoutes([
+        {
+          method: "POST",
+          pattern: "/v1/other",
+          surface: "tenant",
+          billing: "write",
+          largeBody: "content",
+          handle,
+        },
+      ]),
+    ).toThrow(RoutesRejected);
+
+    expect(() =>
+      assertRoutes([
+        {
+          method: "POST",
+          pattern: "/v1/stripe/webhook",
+          surface: "tenant",
+          billing: "exempt",
+          largeBody: "content",
+          handle,
+        },
+      ]),
+    ).toThrow(RoutesRejected);
+  });
+
   it("rejects a route with no billing and with an unknown billing marking", () => {
     const handle = () => new Response(null, { status: 204 });
     expect(() =>

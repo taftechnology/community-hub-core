@@ -616,6 +616,174 @@ describe("startServer", () => {
     expect(calls).toBe(1);
   });
 
+  it("a 131,072-byte body to /v1/engagement/service-times/save with the api hostname reaches the handler", async () => {
+    const env = envFor(18467);
+    let calls = 0;
+    const server = startServer({
+      env,
+      routes: [
+        health,
+        {
+          method: "POST",
+          pattern: "/v1/engagement/service-times/save",
+          surface: "tenant",
+          billing: "write",
+          largeBody: "content",
+          handle: () => {
+            calls += 1;
+            return new Response(null, { status: 200 });
+          },
+        },
+      ],
+    });
+    servers.push(server);
+    await listening(server);
+
+    const response = await fetch("http://127.0.0.1:18467/v1/engagement/service-times/save", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-community-hub-hostname": env.API_HOSTNAME,
+      },
+      body: "a".repeat(131072),
+    });
+    expect(response.status).toBe(200);
+    expect(calls).toBe(1);
+  });
+
+  it("131,073 bytes to /v1/engagement/service-times/save gets 413 with empty body and Content-Length 0", async () => {
+    const env = envFor(18468);
+    let calls = 0;
+    const server = startServer({
+      env,
+      routes: [
+        health,
+        {
+          method: "POST",
+          pattern: "/v1/engagement/service-times/save",
+          surface: "tenant",
+          billing: "write",
+          largeBody: "content",
+          handle: () => {
+            calls += 1;
+            return new Response(null, { status: 200 });
+          },
+        },
+      ],
+    });
+    servers.push(server);
+    await listening(server);
+
+    const response = await fetch("http://127.0.0.1:18468/v1/engagement/service-times/save", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-community-hub-hostname": env.API_HOSTNAME,
+      },
+      body: "a".repeat(131073),
+    });
+    expect(response.status).toBe(413);
+    expect(response.headers.get("content-length")).toBe("0");
+    expect(await response.text()).toBe("");
+    expect(calls).toBe(0);
+  });
+
+  it("the save route on the webhooks hostname rejects a 4097-byte body with 400", async () => {
+    const env = envFor(18469);
+    let calls = 0;
+    const server = startServer({
+      env,
+      routes: [
+        health,
+        {
+          method: "POST",
+          pattern: "/v1/engagement/service-times/save",
+          surface: "tenant",
+          billing: "write",
+          largeBody: "content",
+          handle: () => {
+            calls += 1;
+            return new Response(null, { status: 200 });
+          },
+        },
+      ],
+    });
+    servers.push(server);
+    await listening(server);
+
+    const response = await fetch("http://127.0.0.1:18469/v1/engagement/service-times/save", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-community-hub-hostname": env.WEBHOOKS_HOSTNAME,
+      },
+      body: "a".repeat(4097),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("");
+    expect(calls).toBe(0);
+  });
+
+  it("a 6,000-byte body to the save path is accepted on API hostname but rejected with 400 on auth, ops, webhooks, and unknown hostnames", async () => {
+    const env = envFor(18470);
+    let calls = 0;
+    const server = startServer({
+      env,
+      routes: [
+        health,
+        {
+          method: "POST",
+          pattern: "/v1/engagement/service-times/save",
+          surface: "tenant",
+          billing: "write",
+          largeBody: "content",
+          handle: () => {
+            calls += 1;
+            return new Response(null, { status: 200 });
+          },
+        },
+      ],
+    });
+    servers.push(server);
+    await listening(server);
+
+    // 1. API hostname: 6,000 bytes reaches the handler (status 200)
+    const apiResponse = await fetch("http://127.0.0.1:18470/v1/engagement/service-times/save", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-community-hub-hostname": env.API_HOSTNAME,
+      },
+      body: "a".repeat(6000),
+    });
+    expect(apiResponse.status).toBe(200);
+    expect(calls).toBe(1);
+
+    // 2. Auth, ops, webhooks, and unknown hostnames: limited to 4,096 and rejected with 400
+    const nonApiHostnames = [
+      env.AUTH_HOSTNAME,
+      env.OPS_HOSTNAME,
+      env.WEBHOOKS_HOSTNAME,
+      "unknown.au.example.test",
+    ];
+
+    for (const hostname of nonApiHostnames) {
+      const response = await fetch("http://127.0.0.1:18470/v1/engagement/service-times/save", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-community-hub-hostname": hostname,
+        },
+        body: "a".repeat(6000),
+      });
+      expect(response.status).toBe(400);
+      expect(await response.text()).toBe("");
+    }
+
+    // Still only 1 call from the API hostname request
+    expect(calls).toBe(1);
+  });
+
   it("writes every Set-Cookie value", async () => {
     const env = envFor(18466);
     const server = startServer({

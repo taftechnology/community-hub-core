@@ -1,20 +1,28 @@
+import { terminology } from "@community-hub/faith-church";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 
-import { AdminNav } from "./nav";
+import { AdminNav, findActiveId } from "./nav";
 import { PeopleAccessContext, type PeopleAccess } from "./people-access";
 
-function renderNav(access: Partial<PeopleAccess> = {}) {
+function renderNav(
+  access: {
+    permissions?: Partial<PeopleAccess["permissions"]>;
+    entitlements?: Partial<PeopleAccess["entitlements"]>;
+  } = {},
+) {
   const fullAccess: PeopleAccess = {
     permissions: {
       "people.view": false,
       "people.manage": false,
       "people.restricted.read": false,
+      "service_times.manage": false,
       ...access.permissions,
     },
     entitlements: {
       "people.directory": false,
       "people.households": false,
+      "module.engagement": false,
       ...access.entitlements,
     },
   };
@@ -144,5 +152,70 @@ describe("AdminNav", () => {
     });
 
     expect(screen.queryByText("Family Records")).toBeNull();
+  });
+
+  it("renders Engagement and service-times child with pack plural when caller has module.engagement and service_times.manage", () => {
+    const plural = terminology("engagement.service_times").plural;
+    renderNav({
+      permissions: {
+        "service_times.manage": true,
+      },
+      entitlements: {
+        "module.engagement": true,
+      },
+    });
+
+    expect(screen.getByText("Engagement")).toBeTruthy();
+    const link = screen.getByRole("link", { name: plural });
+    expect(link).toBeTruthy();
+    expect(link.getAttribute("href")).toBe("/engagement/service-times");
+  });
+
+  it("hides Engagement parent and child when caller has module.engagement but lacks service_times.manage (Pin 26)", () => {
+    const plural = terminology("engagement.service_times").plural;
+    renderNav({
+      permissions: {
+        "service_times.manage": false,
+      },
+      entitlements: {
+        "module.engagement": true,
+      },
+    });
+
+    expect(screen.queryByText("Engagement")).toBeNull();
+    expect(screen.queryByRole("link", { name: plural })).toBeNull();
+  });
+
+  it("hides Engagement parent and child when caller has service_times.manage but lacks module.engagement", () => {
+    const plural = terminology("engagement.service_times").plural;
+    renderNav({
+      permissions: {
+        "service_times.manage": true,
+      },
+      entitlements: {
+        "module.engagement": false,
+      },
+    });
+
+    expect(screen.queryByText("Engagement")).toBeNull();
+    expect(screen.queryByRole("link", { name: plural })).toBeNull();
+  });
+
+  it("findActiveId selects service-times on /engagement/service-times", () => {
+    const plural = terminology("engagement.service_times").plural;
+    const items = [
+      {
+        id: "engagement",
+        label: "Engagement",
+        children: [
+          {
+            id: "service-times",
+            label: plural,
+            href: "/engagement/service-times",
+          },
+        ],
+      },
+    ];
+    expect(findActiveId(items, [], "/engagement/service-times")).toBe("service-times");
   });
 });

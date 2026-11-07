@@ -8,6 +8,7 @@ const CATALOGUE = [
   "people.restricted.read",
   "entitlements.view",
   "entitlements.manage",
+  "service_times.manage",
 ] as const;
 
 const BILLING = ["billing.view", "billing.manage"] as const;
@@ -24,7 +25,7 @@ const BUNDLES: Record<string, readonly string[]> = {
   finance: EMPTY,
   safeguarding_officer: ["people.restricted.read", "access.users.view"],
   volunteer_coordinator: ["access.users.view"],
-  content_editor: EMPTY,
+  content_editor: ["service_times.manage"],
   member: EMPTY,
 };
 

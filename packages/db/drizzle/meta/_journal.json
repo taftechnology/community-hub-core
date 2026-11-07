@@ -127,6 +127,13 @@
       "when": 1793592449274,
       "tag": "0017_adorable_anthem",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793856364347,
+      "tag": "0018_wise_starfox",
+      "breakpoints": true
     }
   ]
 }

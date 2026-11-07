@@ -98,10 +98,12 @@ describe("access bodies", () => {
           "people.view": true,
           "people.manage": false,
           "people.restricted.read": true,
+          "service_times.manage": true,
         },
         entitlements: {
           "people.directory": true,
           "people.households": false,
+          "module.engagement": true,
         },
       };
 
@@ -110,11 +112,22 @@ describe("access bodies", () => {
 
       // Verify constant allow-list contents
       expect(new Set(CAPABILITIES_ALLOW_LIST.permissions)).toEqual(
-        new Set(["people.view", "people.manage", "people.restricted.read"]),
+        new Set(["people.view", "people.manage", "people.restricted.read", "service_times.manage"]),
       );
       expect(new Set(CAPABILITIES_ALLOW_LIST.entitlements)).toEqual(
-        new Set(["people.directory", "people.households"]),
+        new Set(["people.directory", "people.households", "module.engagement"]),
       );
+      expect([...CAPABILITIES_ALLOW_LIST.permissions]).toEqual([
+        "people.view",
+        "people.manage",
+        "people.restricted.read",
+        "service_times.manage",
+      ]);
+      expect([...CAPABILITIES_ALLOW_LIST.entitlements]).toEqual([
+        "people.directory",
+        "people.households",
+        "module.engagement",
+      ]);
 
       // Verify schema shape matches allow-list
       expect(Object.keys(capabilitiesResponse.shape.permissions.shape).sort()).toEqual(
@@ -153,6 +166,34 @@ describe("access bodies", () => {
         capabilitiesResponse.safeParse({
           ...validResponse,
           permissions: missingPerm,
+        }).success,
+      ).toBe(false);
+
+      const missingServiceTimesPerm = { ...validResponse.permissions };
+      delete (missingServiceTimesPerm as Record<string, boolean>)["service_times.manage"];
+      expect(
+        capabilitiesResponse.safeParse({
+          ...validResponse,
+          permissions: missingServiceTimesPerm,
+        }).success,
+      ).toBe(false);
+
+      // Missing entitlement key rejected
+      const missingEnt = { ...validResponse.entitlements };
+      delete (missingEnt as Record<string, boolean>)["people.directory"];
+      expect(
+        capabilitiesResponse.safeParse({
+          ...validResponse,
+          entitlements: missingEnt,
+        }).success,
+      ).toBe(false);
+
+      const missingEngagementEnt = { ...validResponse.entitlements };
+      delete (missingEngagementEnt as Record<string, boolean>)["module.engagement"];
+      expect(
+        capabilitiesResponse.safeParse({
+          ...validResponse,
+          entitlements: missingEngagementEnt,
         }).success,
       ).toBe(false);
 
