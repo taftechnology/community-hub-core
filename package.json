@@ -11,6 +11,7 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "build": "turbo run build",
+    "build:admin": "pnpm --filter \"@community-hub/admin...\" build",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
     "check:boundaries": "tsx tooling/checks/run.ts",

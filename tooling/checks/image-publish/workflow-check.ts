@@ -126,11 +126,46 @@ function buildsAreAttested(text: string): boolean {
   );
 }
 
+const ADMIN_BUILD_COMMAND = "pnpm build:admin";
+const PULL_REQUEST_IF = "if: github.event_name == 'pull_request'";
+
+function adminBuildFails(job: string): boolean {
+  const lines = job.split("\n").map((line) => line.trim());
+  return (
+    job === "" ||
+    !lines.includes(PULL_REQUEST_IF) ||
+    !lines.includes(`run: ${ADMIN_BUILD_COMMAND}`) ||
+    job.includes("id-token") ||
+    job.includes("secrets.") ||
+    /(^|\s)aws\s/m.test(job)
+  );
+}
+
+function adminPublishBuildFails(job: string): boolean {
+  const lines = job.split("\n").map((line) => line.trim());
+  return !lines.includes(ADMIN_BUILD_COMMAND) || /--filter\s+\S*admin\S*\s+build/.test(job);
+}
+
+export function checkBuildAdminScript(packageJsonText: string): WorkflowCheck {
+  const violations: string[] = [];
+  const parsed: unknown = JSON.parse(packageJsonText);
+  const scripts =
+    typeof parsed === "object" && parsed !== null && "scripts" in parsed
+      ? (parsed as { scripts?: Record<string, unknown> }).scripts
+      : undefined;
+  const script = scripts?.["build:admin"];
+  if (typeof script !== "string" || !/@community-hub\/admin\.\.\./.test(script)) {
+    violations.push("build-admin-script");
+  }
+  return { ok: violations.length === 0, violations };
+}
+
 export function checkWorkflow(text: string): WorkflowCheck {
   const violations: string[] = [];
   const publish = jobBlock(text, "publish");
   const adminPublish = jobBlock(text, "admin-publish");
   const preview = jobBlock(text, "build-preview");
+  const adminBuild = jobBlock(text, "admin-build");
   const top = header(text);
   const idTokenCount = count(text, "id-token: write");
 
@@ -209,6 +244,12 @@ export function checkWorkflow(text: string): WorkflowCheck {
   }
   if (adminPublishQueryFails(adminPublish)) {
     violations.push("admin-publish-query");
+  }
+  if (adminBuildFails(adminBuild)) {
+    violations.push("admin-build");
+  }
+  if (adminPublishBuildFails(adminPublish)) {
+    violations.push("admin-publish-build");
   }
 
   return { ok: violations.length === 0, violations };

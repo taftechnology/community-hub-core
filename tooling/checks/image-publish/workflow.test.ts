@@ -4,11 +4,12 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { checkWorkflow } from "./workflow-check.js";
+import { checkBuildAdminScript, checkWorkflow } from "./workflow-check.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixturesDir = path.join(here, "fixtures");
 const workflowPath = path.join(here, "../../../.github/workflows/ci.yml");
+const rootPackagePath = path.join(here, "../../../package.json");
 
 const mustFail = [
   ["workflow-id-token", "workflow-id-token"],
@@ -35,6 +36,10 @@ const mustFail = [
   ["admin-publish-without-main", "admin-publish-without-main"],
   ["admin-publish-if-extra", "admin-publish-without-main"],
   ["admin-publish-query-and", "admin-publish-query"],
+  ["admin-build-missing", "admin-build"],
+  ["admin-build-no-pr-if", "admin-build"],
+  ["admin-build-bare-filter", "admin-build"],
+  ["admin-publish-bare-filter", "admin-publish-build"],
 ] as const;
 
 describe("workflow check fixtures", () => {
@@ -46,6 +51,21 @@ describe("workflow check fixtures", () => {
       expect(result.violations).toEqual([rule]);
     });
   }
+
+  it("fails a build:admin script that does not build the dependencies first", () => {
+    const bare = JSON.stringify({
+      scripts: { "build:admin": "pnpm --filter @community-hub/admin build" },
+    });
+    expect(checkBuildAdminScript(bare).violations).toEqual(["build-admin-script"]);
+    expect(checkBuildAdminScript(JSON.stringify({ scripts: {} })).violations).toEqual([
+      "build-admin-script",
+    ]);
+  });
+
+  it("passes the real build:admin script", () => {
+    const result = checkBuildAdminScript(fs.readFileSync(rootPackagePath, "utf8"));
+    expect(result.violations).toEqual([]);
+  });
 
   it("passes the real workflow", () => {
     const text = fs.readFileSync(workflowPath, "utf8");

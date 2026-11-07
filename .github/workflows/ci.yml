@@ -161,6 +161,30 @@ jobs:
           RUN_IMAGE_TESTS: "1"
         run: pnpm --filter @community-hub/api exec vitest run --config vitest.config.ts src/image.test.ts
 
+  admin-build:
+    name: admin-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the admin shell
+        run: pnpm build:admin
+
   publish:
     name: publish
     runs-on: ubuntu-24.04-arm
@@ -416,7 +440,7 @@ jobs:
           pnpm install --frozen-lockfile
           export VITE_API_ORIGIN="${ADMIN_API_ORIGIN}"
           export VITE_AUTH_ORIGIN="${ADMIN_AUTH_ORIGIN}"
-          pnpm --filter @community-hub/admin build
+          pnpm build:admin
 
           token_file="${RUNNER_TEMP}/github-oidc-token"
           response_file="${RUNNER_TEMP}/github-oidc-response"
