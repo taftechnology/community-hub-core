@@ -3,7 +3,7 @@ Spec: docs/specs/2026-11-07-admin-screens-restyle.md
 # Admin Screens Restyle Implementation Plan
 
 Slug: admin-screens-restyle
-Status: draft
+Status: approved (2026-11-07, Adnan Bin Hossen)
 
 > **For agentic workers:** one task = one commit, test first. Reports go to `.superpowers/sdd/task-N-report.md`, never `docs/plans/`.
 
