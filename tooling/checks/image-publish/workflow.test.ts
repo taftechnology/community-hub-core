@@ -39,7 +39,13 @@ const mustFail = [
   ["admin-build-missing", "admin-build"],
   ["admin-build-no-pr-if", "admin-build"],
   ["admin-build-bare-filter", "admin-build"],
+  ["admin-build-id-token", "admin-build"],
+  ["admin-build-secrets", "admin-build"],
+  ["admin-build-secrets-tojson", "admin-build"],
+  ["admin-build-aws", "admin-build"],
   ["admin-publish-bare-filter", "admin-publish-build"],
+  ["admin-publish-no-build", "admin-publish-build"],
+  ["admin-publish-both-lines", "admin-publish-build"],
 ] as const;
 
 describe("workflow check fixtures", () => {
@@ -60,6 +66,45 @@ describe("workflow check fixtures", () => {
     expect(checkBuildAdminScript(JSON.stringify({ scripts: {} })).violations).toEqual([
       "build-admin-script",
     ]);
+  });
+
+  it("fails a build:admin script that runs lint instead of build", () => {
+    const lintScript = JSON.stringify({
+      scripts: { "build:admin": 'pnpm --filter "@community-hub/admin..." lint' },
+    });
+    expect(checkBuildAdminScript(lintScript).violations).toEqual(["build-admin-script"]);
+  });
+
+  it("fails a build:admin script with trailing extra commands or sub-commands", () => {
+    const subCommand = JSON.stringify({
+      scripts: { "build:admin": 'pnpm --filter "@community-hub/admin..." build:foo' },
+    });
+    expect(checkBuildAdminScript(subCommand).violations).toEqual(["build-admin-script"]);
+    const trailingExtra = JSON.stringify({
+      scripts: { "build:admin": 'pnpm --filter "@community-hub/admin..." build && echo extra' },
+    });
+    expect(checkBuildAdminScript(trailingExtra).violations).toEqual(["build-admin-script"]);
+  });
+
+  it("fails a build:admin script with a leading command", () => {
+    const script = JSON.stringify({
+      scripts: { "build:admin": 'echo hi && pnpm --filter "@community-hub/admin..." build' },
+    });
+    expect(checkBuildAdminScript(script).violations).toEqual(["build-admin-script"]);
+  });
+
+  it("fails a build:admin script for another package", () => {
+    const script = JSON.stringify({
+      scripts: { "build:admin": 'pnpm --filter "@community-hub/api..." build' },
+    });
+    expect(checkBuildAdminScript(script).violations).toEqual(["build-admin-script"]);
+  });
+
+  it("fails a build:admin script with an unclosed quote", () => {
+    const script = JSON.stringify({
+      scripts: { "build:admin": 'pnpm --filter "@community-hub/admin... build' },
+    });
+    expect(checkBuildAdminScript(script).violations).toEqual(["build-admin-script"]);
   });
 
   it("passes the real build:admin script", () => {

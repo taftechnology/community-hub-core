@@ -136,7 +136,7 @@ function adminBuildFails(job: string): boolean {
     !lines.includes(PULL_REQUEST_IF) ||
     !lines.includes(`run: ${ADMIN_BUILD_COMMAND}`) ||
     job.includes("id-token") ||
-    job.includes("secrets.") ||
+    /\bsecrets\b/.test(job) ||
     /(^|\s)aws\s/m.test(job)
   );
 }
@@ -154,7 +154,10 @@ export function checkBuildAdminScript(packageJsonText: string): WorkflowCheck {
       ? (parsed as { scripts?: Record<string, unknown> }).scripts
       : undefined;
   const script = scripts?.["build:admin"];
-  if (typeof script !== "string" || !/@community-hub\/admin\.\.\./.test(script)) {
+  if (
+    typeof script !== "string" ||
+    !/^pnpm\s+--filter\s+("?)@community-hub\/admin\.\.\.\1\s+build$/.test(script.trim())
+  ) {
     violations.push("build-admin-script");
   }
   return { ok: violations.length === 0, violations };
