@@ -41,7 +41,7 @@ function Panel({
             <HeadingTag
               ref={headingRef}
               tabIndex={headingTabIndex}
-              className="font-semibold text-foreground text-base leading-6"
+              className="font-semibold text-foreground text-base leading-[22px]"
             >
               {title}
             </HeadingTag>

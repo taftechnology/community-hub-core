@@ -90,4 +90,13 @@ describe("Panel", () => {
     const section = container.querySelector("section");
     expect(section?.className).toContain("custom-panel-class");
   });
+
+  it("renders heading with panel-title typography classes including leading-[22px]", () => {
+    render(<Panel title="Typography Test" />);
+    const heading = screen.getByRole("heading", { name: "Typography Test" });
+    expect(heading.className).toContain("font-semibold");
+    expect(heading.className).toContain("text-foreground");
+    expect(heading.className).toContain("text-base");
+    expect(heading.className).toContain("leading-[22px]");
+  });
 });

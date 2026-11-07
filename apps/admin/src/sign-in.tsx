@@ -83,6 +83,7 @@ export function SignInPage() {
         </Alert>
       ) : null}
       <form
+        className="grid gap-4"
         onSubmit={(event) => {
           void sendCode(event);
         }}
@@ -96,9 +97,12 @@ export function SignInPage() {
             }}
           />
         </Field>
-        <Button type="submit">Send code</Button>
+        <Button className="justify-self-start" type="submit">
+          Send code
+        </Button>
       </form>
       <form
+        className="grid gap-4"
         onSubmit={(event) => {
           void verify(event);
         }}
@@ -111,7 +115,9 @@ export function SignInPage() {
             }}
           />
         </Field>
-        <Button type="submit">Verify</Button>
+        <Button className="justify-self-start" type="submit">
+          Verify
+        </Button>
       </form>
       {failed ? <p>Sign-in failed</p> : null}
     </>

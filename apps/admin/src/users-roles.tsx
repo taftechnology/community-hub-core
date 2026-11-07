@@ -382,6 +382,7 @@ export function UsersRolesPage() {
           {limitReached || !canManageRoles || hideWrites ? null : (
             <Panel>
               <form
+                className="grid gap-4"
                 onSubmit={(event: FormEvent<HTMLFormElement>) => {
                   event.preventDefault();
                   void mutate("/v1/access/custom-roles", {
@@ -409,13 +410,16 @@ export function UsersRolesPage() {
                     }}
                   />
                 ))}
-                <Button type="submit">Create custom role</Button>
+                <Button className="justify-self-start" type="submit">
+                  Create custom role
+                </Button>
               </form>
             </Panel>
           )}
           {canManageRoles && !hideWrites ? (
             <Panel>
               <form
+                className="grid gap-4"
                 onSubmit={(event: FormEvent<HTMLFormElement>) => {
                   event.preventDefault();
                   const custom = directory.customRoles.find((item) => item.key === role);
@@ -443,13 +447,16 @@ export function UsersRolesPage() {
                     }}
                   />
                 </Field>
-                <Button type="submit">Grant</Button>
+                <Button className="justify-self-start" type="submit">
+                  Grant
+                </Button>
               </form>
             </Panel>
           ) : null}
           {canManageUsers && !hideWrites ? (
             <Panel>
               <form
+                className="grid gap-4"
                 onSubmit={(event: FormEvent<HTMLFormElement>) => {
                   event.preventDefault();
                   void mutate("/v1/access/user-links", {
@@ -467,15 +474,17 @@ export function UsersRolesPage() {
                     }}
                   />
                 </Field>
-                <Button type="submit">Link</Button>
-                <Button
-                  type="button"
-                  onClick={() => {
-                    void mutate("/v1/access/user-links/delete", { communitySlug: slug, userId });
-                  }}
-                >
-                  Unlink
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="submit">Link</Button>
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      void mutate("/v1/access/user-links/delete", { communitySlug: slug, userId });
+                    }}
+                  >
+                    Unlink
+                  </Button>
+                </div>
               </form>
             </Panel>
           ) : null}

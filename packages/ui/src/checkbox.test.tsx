@@ -81,4 +81,12 @@ describe("Checkbox", () => {
     fireEvent.click(checkbox);
     expect(checked).toBe(true);
   });
+
+  it("takes focus and has tabIndex 0", () => {
+    render(<Checkbox label="Accessible checkbox" />);
+    const checkbox = screen.getByRole("checkbox", { name: "Accessible checkbox" });
+    (checkbox as HTMLInputElement).focus();
+    expect(document.activeElement).toBe(checkbox);
+    expect((checkbox as HTMLInputElement).tabIndex).toBe(0);
+  });
 });

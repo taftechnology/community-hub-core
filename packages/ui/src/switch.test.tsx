@@ -81,4 +81,12 @@ describe("Switch", () => {
     expect(switchControl.getAttribute("name")).toBe("module_status");
     expect((switchControl as HTMLInputElement).disabled).toBe(true);
   });
+
+  it("takes focus and has tabIndex 0", () => {
+    render(<Switch label="Accessible switch" />);
+    const switchControl = screen.getByRole("switch", { name: "Accessible switch" });
+    (switchControl as HTMLInputElement).focus();
+    expect(document.activeElement).toBe(switchControl);
+    expect((switchControl as HTMLInputElement).tabIndex).toBe(0);
+  });
 });
