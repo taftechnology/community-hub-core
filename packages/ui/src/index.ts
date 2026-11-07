@@ -8,6 +8,7 @@ export {
   type CommunitySwitcherProps,
 } from "./community-switcher.js";
 export { Drawer, type DrawerProps } from "./drawer.js";
+export { Field, type FieldProps } from "./field.js";
 export { Input } from "./input.js";
 export { Logo, type LogoProps } from "./logo.js";
 export {

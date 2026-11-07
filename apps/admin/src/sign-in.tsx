@@ -1,4 +1,4 @@
-import { Alert, Button } from "@community-hub/ui";
+import { Alert, Button, Field, Input } from "@community-hub/ui";
 import { type FormEvent, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 
@@ -87,16 +87,15 @@ export function SignInPage() {
           void sendCode(event);
         }}
       >
-        <label>
-          Email
-          <input
+        <Field label="Email">
+          <Input
             type="email"
             value={email}
             onChange={(event) => {
               setEmail(event.target.value);
             }}
           />
-        </label>
+        </Field>
         <Button type="submit">Send code</Button>
       </form>
       <form
@@ -104,15 +103,14 @@ export function SignInPage() {
           void verify(event);
         }}
       >
-        <label>
-          Code
-          <input
+        <Field label="Code">
+          <Input
             value={code}
             onChange={(event) => {
               setCode(event.target.value);
             }}
           />
-        </label>
+        </Field>
         <Button type="submit">Verify</Button>
       </form>
       {failed ? <p>Sign-in failed</p> : null}
