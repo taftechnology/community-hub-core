@@ -29,6 +29,12 @@ jobs:
         env:
           RUN_IMAGE_TESTS: "1"
         run: pnpm --filter @community-hub/api exec vitest run --config vitest.config.ts src/image.test.ts
+  admin-build:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Build the admin shell
+        run: pnpm build:admin
   publish:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
@@ -65,6 +71,7 @@ jobs:
       - name: Publish the shell
         run: |
           command -v aws >/dev/null
+          pnpm build:admin
           aws sts assume-role-with-web-identity \
             --query "Credentials"
           aws s3 sync apps/admin/dist/assets "s3://${ADMIN_BUCKET}/assets" --delete --only-show-errors --cache-control "public, max-age=31536000, immutable"
