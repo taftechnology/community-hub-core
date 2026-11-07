@@ -1,5 +1,3 @@
-// Adapted from shadcn/ui. MIT License. See THIRD_PARTY_NOTICES.
-
 import * as React from "react";
 
 import { cn } from "./lib/utils.js";
