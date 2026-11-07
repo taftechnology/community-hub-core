@@ -28,8 +28,8 @@ No table, column, migration, route, contract, permission, Terraform or workflow 
 
 ## Checkpoints
 
-- **After Task 4** (`DataTable` and the first list): the reviewer checks table semantics, `data-label` and pins 1, 10, 12, 15, 17, 20, 23, 24 and 25 before more screens move.
-- **After Task 8** (Family Details and minors): the reviewer reruns pins 2 to 9, 11, 13, 14, 18, 19, 21, 22, 26 to 30 and 39 to 41 before the forms move.
+- **After Task 5** (`DataTable` on the first list, committed): the reviewer checks table semantics, `data-label` and pins 1, 10, 12, 15, 17, 20, 23, 24 and 25 before more screens move.
+- **After Task 9** (Family Details and minors, committed): the reviewer reruns pins 2 to 9, 11, 13, 14, 18, 19, 21, 22, 26 to 30 and 39 to 41 before the forms move.
 
 ## Global constraints
 
@@ -46,7 +46,7 @@ No table, column, migration, route, contract, permission, Terraform or workflow 
 - **New `packages/ui` files** that adapt shadcn/ui keep the MIT header, as `input.tsx` does. Every new component is exported from `src/index.ts`. `opacity.test.ts` and `focus-classes.test.ts` scan new files too.
 - **Test timing.** A new or moved check waits for the state it needs. No sleeps, longer timeouts, retries or fake timers. Each task reruns its admin test files under the timing probe from PR #81, at 25 ms (`.superpowers/sdd/race.*`, scratch, not committed).
 - **A lost assertion is the main risk.** Each task's report lists every removed `expect(` line with its replacement. The reviewer checks that list against the diff. A selector may change. What it asserts may not.
-- **Local gate per task:** in a fresh worktree run `pnpm install --frozen-lockfile` and `pnpm --filter "@community-hub/admin^..." build` first. Then run the task's named test files, `pnpm --filter @community-hub/ui test` when `packages/ui` changed, admin `typecheck` and `lint`, `pnpm exec prettier --check .` and `pnpm check:boundaries`. The whole of `pnpm gate` runs once, after Task 10.
+- **Local gate per task:** in a fresh worktree run `pnpm install --frozen-lockfile` and `pnpm --filter "@community-hub/admin^..." build` first. Then run the task's named test files, `pnpm --filter @community-hub/ui test` when `packages/ui` changed, admin `typecheck` and `lint`, `pnpm exec prettier --check .` and `pnpm check:boundaries`. The whole of `pnpm gate` runs once, after the browser check and before Task 11, so any fix lands before the roadmap commit. This per-task subset is a §8 deviation (see Owner decisions).
 - **Allowed failures on this Windows machine,** and only these: `packages/db/src/generate.test.ts` drizzle ENOENT, the `image-publish` symlink EPERM, and the `migrate.integration` and `plaintext-dist` timeouts.
 
 ## Decisions fixed by the spec (do not reopen)
@@ -68,57 +68,62 @@ No table, column, migration, route, contract, permission, Terraform or workflow 
 
 ## Security pins
 
-Baseline measured on 2026-11-07 at `59180e2`, by weakening today's source: 47 changes, 36 caught, 11 not. Eight of the 11 become `New` pins here, and three are named under the table. The other `New` pins cover behaviour this chunk adds. **Exists** means an existing test failed. **New** means no test failed, so the named task adds one. The implementer runs each change once after the task that moves the gate, sees the test fail, restores the source and reports it. The weakened tree is never committed.
+Baseline measured on 2026-11-07 at `59180e2`, by weakening today's source: 47 changes, 36 caught, 11 not. Nine of the 11 become `New` pins here, and two are named under the table. The other `New` pins cover behaviour this chunk adds. **Exists** means an existing test failed. **New** means no test failed, so the named task adds one. The implementer runs each change once after the task that moves the gate, sees the test fail, restores the source and reports it. The weakened tree is never committed.
 
-| #   | Setting                                              | Source change                                    | Test that must fail                                                                     | State  | Task |
-| --- | ---------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------- | ------ | ---- |
-| 1   | `people.restricted.read`: All Contacts Minors button | Condition becomes `true`                         | "Minors tab appears only with people.restricted.read (Pin 15)"                          | Exists | 4    |
-| 2   | `people.restricted.read`: `MinorsSection` mount      | Drop the permission from the mount condition     | "defensively omits minors section when caller lacks people.restricted.read…"            | Exists | 8    |
-| 3   | `canRename`                                          | Drop `canRestricted`                             | "hides 'Rename household' button when caller lacks people.restricted.read"              | Exists | 8    |
-| 4   | `canMoveAdult`                                       | Drop `canRestricted`                             | "hides 'Move adult' button when caller lacks people.restricted.read (Pin 21)"           | Exists | 8    |
-| 5   | `MinorsSection` `canAddMinor`                        | Drop `canRestricted`                             | "independently hides 'Add minor' button in MinorsSection…"                              | Exists | 8    |
-| 6   | `MinorsSection` `canLinkGuardian`                    | Drop `canRestricted`                             | "independently hides 'Link guardian' button in MinorsSection…"                          | Exists | 8    |
-| 7   | `canUnlinkGuardian` on the inline confirm            | Drop `canRestricted`                             | "independently hides 'Unlink' button in MinorsSection…"                                 | Exists | 8    |
-| 8   | Page `canReadLifeEvents`                             | Drop `canRestricted`                             | "Pin 16: hides life events panel and sends no request without people.restricted.read"   | Exists | 8    |
-| 9   | `MinorsSection` `canReadLifeEvents`                  | Drop `canRestricted`                             | New: rendered directly without the permission, no life events panel and no request      | New    | 8    |
-| 10  | All Contacts `people.view`                           | Drop it from the page gate                       | "shows not allowed and makes no list call when caller has canManage but lacks canView…" | Exists | 4    |
-| 11  | Family Records `people.view`                         | Drop it from the page gate                       | "shows Not allowed and makes no list call when caller lacks people.view"                | Exists | 6    |
-| 12  | All Contacts `people.manage`                         | Drop it from Add contact                         | "treats missing permission fields in access response as not allowed (Pin 15)"           | Exists | 4    |
-| 13  | Edit contact `people.manage`                         | Drop it from Edit contact                        | "treats missing permission fields in access response as not allowed (Pin 15)"           | Exists | 5    |
-| 14  | Create household `people.manage`                     | Drop it from `canCreate`                         | "hides 'Create household' button when caller lacks people.manage (Pin 21)"              | Exists | 6    |
-| 15  | `people.directory` on All Contacts                   | Drop it from the page gate                       | "shows not allowed and makes no list call when directoryEnabled is false (Pin 15)"      | Exists | 4    |
-| 16  | `people.directory` on Add Adult                      | Drop it from `canAddAdult`                       | "hides 'Add adult' when people.directory entitlement is off"                            | Exists | 9    |
-| 17  | `hideWrites` on Add contact                          | Drop it                                          | "hides Add and Edit controls when billing status is read_only (Pin 15)"                 | Exists | 4    |
-| 18  | `hideWrites` on Create household                     | Drop it                                          | "read-only billing state hides write controls and shows read-only banner"               | Exists | 6    |
-| 19  | `isReadOnly` on Unlink                               | Drop it from `MinorsSection` `canUnlinkGuardian` | New: `MinorsSection` rendered read-only shows no Unlink                                 | New    | 8    |
-| 20  | `activeTab` on the search form                       | Condition becomes `true`                         | "Minors tab has no search box and never sends includeRestricted…"                       | Exists | 4    |
-| 21  | `canManage` into `LifeEventsPanel`, three places     | Each prop becomes `true`, one at a time          | "hides life event Add and Edit buttons while billing is loading or read-only…"          | Exists | 7, 8 |
-| 22  | `canEdit` in `LifeEventsPanel`                       | Drop `canManage`, then drop `isReadOnly`         | New: `life-events.test.tsx` covers each input on its own                                | New    | 7    |
-| 23  | `activeTab` on Add contact                           | Drop it                                          | "never provides create or edit control for a minor"                                     | Exists | 4    |
-| 24  | `submittedSearch` on Add contact                     | Drop `(!submittedSearch \|\| items.length > 0)`  | New: a search with no results shows no Add contact                                      | New    | 4    |
-| 25  | `Avatar` on the Minors list                          | Render it on every tab                           | New: a caller with `people.restricted.read` sees no `Avatar` on the Minors list         | New    | 4    |
-| 26  | `!detailPerson.isMinor` on Edit contact              | Drop it                                          | "never provides create or edit control for a minor"                                     | Exists | 5    |
-| 27  | `Avatar` on Contact Details                          | `isAdultConfirmed` becomes `!value.isMinor`      | New: `isMinor` missing shows no `Avatar`; `isMinor: true` shows none                    | New    | 5    |
-| 28  | Household name cell                                  | Swap `RestrictedValue` and `None`                | New: each caller sees the right one, with hidden text and `title`                       | New    | 6    |
-| 29  | New line, in both directions                         | Invert the `canRestricted` condition             | New: shows without the permission, beside "No households yet"; absent with it           | New    | 6    |
-| 30  | Family Details name row                              | Render the row when `label` is null              | New: no row with or without `people.restricted.read` when `label` is null               | New    | 8    |
-| 31  | `canManageRoles`                                     | `access.roles.manage` check removed              | "hides Grant, Revoke, and Delete without access.roles.manage"                           | Exists | 2    |
-| 32  | `canManageUsers`                                     | `access.users.manage` check removed              | "hides Link without access.users.manage"                                                | Exists | 2    |
-| 33  | Users & Roles `hideWrites`, five places              | Drop each, one at a time                         | "hides all write controls and shows read-only alert in none (pin 16)"                   | Exists | 2    |
-| 34  | Custom role limit                                    | Drop `limitReached`                              | New: at 20 custom roles the create form is absent                                       | New    | 2    |
-| 35  | Module Toggles `canManage`                           | Drop it                                          | "renders the key without a switch when canManage is false or missing"                   | Exists | 2    |
-| 36  | Module Toggles `hideWrites`                          | Drop it                                          | "hides toggle switch and shows read-only alert in none (pin 16)"                        | Exists | 2    |
-| 37  | `service_times.manage`                               | Drop it from `hasAccess`                         | New: permission off, entitlement on, fixed message and no request                       | New    | 3    |
-| 38  | `module.engagement`                                  | Drop it from `hasAccess`                         | New: entitlement off, permission on, fixed message and no request                       | New    | 3    |
-| 39  | `people.households` on Family Records                | Drop it from the page gate                       | "shows Not allowed when caller lacks people.households entitlement"                     | Exists | 6    |
-| 40  | `people.households` on the page life events panels   | Drop it from the page `canReadLifeEvents`        | New: without the entitlement, no adult life events panel and no request                 | New    | 8    |
-| 41  | `people.households` on `MinorsSection` life events   | Drop it from the section `canReadLifeEvents`     | "Pin 16: hides life events panel and sends no request without people.households"        | Exists | 8    |
+| #   | Setting                                                                    | Source change                                    | Test that must fail                                                                                        | State  | Task |
+| --- | -------------------------------------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- | ------ | ---- |
+| 1   | `people.restricted.read`: All Contacts Minors button                       | Condition becomes `true`                         | "Minors tab appears only with people.restricted.read (Pin 15)"                                             | Exists | 5    |
+| 2   | `people.restricted.read`: `MinorsSection` mount                            | Drop the permission from the mount condition     | "defensively omits minors section when caller lacks people.restricted.read…"                               | Exists | 9    |
+| 3   | `canRename`                                                                | Drop `canRestricted`                             | "hides 'Rename household' button when caller lacks people.restricted.read"                                 | Exists | 9    |
+| 4   | `canMoveAdult`                                                             | Drop `canRestricted`                             | "hides 'Move adult' button when caller lacks people.restricted.read (Pin 21)"                              | Exists | 9    |
+| 5   | `MinorsSection` `canAddMinor`                                              | Drop `canRestricted`                             | "independently hides 'Add minor' button in MinorsSection…"                                                 | Exists | 9    |
+| 6   | `MinorsSection` `canLinkGuardian`                                          | Drop `canRestricted`                             | "independently hides 'Link guardian' button in MinorsSection…"                                             | Exists | 9    |
+| 7   | `canUnlinkGuardian` on the inline confirm                                  | Drop `canRestricted`                             | "independently hides 'Unlink' button in MinorsSection…"                                                    | Exists | 9    |
+| 8   | Page `canReadLifeEvents`                                                   | Drop `canRestricted`                             | "Pin 16: hides life events panel and sends no request without people.restricted.read"                      | Exists | 9    |
+| 9   | `MinorsSection` `canReadLifeEvents`                                        | Drop `canRestricted`                             | New: rendered directly without the permission, no life events panel and no request                         | New    | 9    |
+| 10  | All Contacts `people.view`                                                 | Drop it from the page gate                       | "shows not allowed and makes no list call when caller has canManage but lacks canView…"                    | Exists | 5    |
+| 11  | Family Records `people.view`                                               | Drop it from the page gate                       | "shows Not allowed and makes no list call when caller lacks people.view"                                   | Exists | 7    |
+| 12  | All Contacts `people.manage`                                               | Drop it from Add contact                         | "treats missing permission fields in access response as not allowed (Pin 15)"                              | Exists | 5    |
+| 13  | Edit contact `people.manage`                                               | Drop it from Edit contact                        | "treats missing permission fields in access response as not allowed (Pin 15)"                              | Exists | 6    |
+| 14  | Create household `people.manage`                                           | Drop it from `canCreate`                         | "hides 'Create household' button when caller lacks people.manage (Pin 21)"                                 | Exists | 7    |
+| 15  | `people.directory` on All Contacts                                         | Drop it from the page gate                       | "shows not allowed and makes no list call when directoryEnabled is false (Pin 15)"                         | Exists | 5    |
+| 16  | `people.directory` on Add Adult                                            | Drop it from `canAddAdult`                       | "hides 'Add adult' when people.directory entitlement is off"                                               | Exists | 10   |
+| 17  | `hideWrites` on Add contact                                                | Drop it                                          | "hides Add and Edit controls when billing status is read_only (Pin 15)"                                    | Exists | 5    |
+| 18  | `hideWrites` on Create household                                           | Drop it                                          | "read-only billing state hides write controls and shows read-only banner"                                  | Exists | 7    |
+| 19  | `isReadOnly` on Unlink                                                     | Drop it from `MinorsSection` `canUnlinkGuardian` | New: `MinorsSection` rendered read-only shows no Unlink                                                    | New    | 9    |
+| 20  | `activeTab` on the search form                                             | Condition becomes `true`                         | "Minors tab has no search box and never sends includeRestricted…"                                          | Exists | 5    |
+| 21  | `canManage` to life events: adult mount, `MinorsSection` prop, minor mount | Each becomes `true`, one at a time               | "hides life event Add and Edit buttons while billing is loading or read-only…"                             | Exists | 8, 9 |
+| 22  | `canEdit` in `LifeEventsPanel`                                             | Drop `canManage`, then drop `isReadOnly`         | New: `life-events.test.tsx` covers each input on its own                                                   | New    | 8    |
+| 23  | `activeTab` on Add contact                                                 | Drop it                                          | "never provides create or edit control for a minor"                                                        | Exists | 5    |
+| 24  | `submittedSearch` on Add contact                                           | Drop `(!submittedSearch \|\| items.length > 0)`  | New: a search with no results shows no Add contact                                                         | New    | 5    |
+| 25  | `Avatar` on the Minors list                                                | Render it on every tab                           | New: a caller with `people.restricted.read` sees no `Avatar` on the Minors list                            | New    | 5    |
+| 26  | `!detailPerson.isMinor` on Edit contact                                    | Drop it                                          | "never provides create or edit control for a minor"                                                        | Exists | 6    |
+| 27  | `Avatar` on Contact Details                                                | `isAdultConfirmed` becomes `!value.isMinor`      | New: `isMinor` missing shows no `Avatar`; `isMinor: true` shows none                                       | New    | 6    |
+| 28  | Household name cell                                                        | Swap `RestrictedValue` and `None`                | New: each caller sees the right one, with hidden text and `title`                                          | New    | 7    |
+| 29  | New line on the Family Records list, both directions                       | Invert the `canRestricted` condition             | New: shows without the permission, beside "No households yet"; absent with it                              | New    | 7    |
+| 30  | Family Details name row                                                    | Render the row when `label` is null              | New: no row with or without `people.restricted.read` when `label` is null                                  | New    | 9    |
+| 31  | `canManageRoles`                                                           | `access.roles.manage` check removed              | "hides Grant, Revoke, and Delete without access.roles.manage"                                              | Exists | 2    |
+| 32  | `canManageUsers`                                                           | `access.users.manage` check removed              | "hides Link without access.users.manage"                                                                   | Exists | 2    |
+| 33  | Users & Roles `hideWrites`, five places                                    | Drop each, one at a time                         | "hides all write controls and shows read-only alert in none (pin 16)"                                      | Exists | 2    |
+| 34  | Custom role limit                                                          | Drop `limitReached`                              | New: at 20 custom roles the create form is absent                                                          | New    | 2    |
+| 35  | Module Toggles `canManage`                                                 | Drop it                                          | "renders the key without a switch when canManage is false or missing"                                      | Exists | 2    |
+| 36  | Module Toggles `hideWrites`                                                | Drop it                                          | "hides toggle switch and shows read-only alert in none (pin 16)"                                           | Exists | 2    |
+| 37  | `service_times.manage`                                                     | Drop it from `hasAccess`                         | New: permission off, entitlement on, fixed message and no request                                          | New    | 3    |
+| 38  | `module.engagement`                                                        | Drop it from `hasAccess`                         | New: entitlement off, permission on, fixed message and no request                                          | New    | 3    |
+| 39  | `people.households` on Family Records                                      | Drop it from the page gate                       | "shows Not allowed when caller lacks people.households entitlement"                                        | Exists | 7    |
+| 40  | New line on Family Details, both directions                                | Invert the `canRestricted` condition             | New: shows without the permission, after the access gate; absent with it                                   | New    | 9    |
+| 41  | `people.households` on `MinorsSection` life events                         | Drop it from the section `canReadLifeEvents`     | "Pin 16: hides life events panel and sends no request without people.households"                           | Exists | 9    |
+| 42  | Page `canAddMinor`                                                         | Drop `canRestricted`                             | New: open add minor, re-render access without `people.restricted.read`, submit, and no request is sent     | New    | 10   |
+| 43  | Page `canLinkGuardian`                                                     | Drop `canRestricted`                             | New: open link guardian, re-render access without `people.restricted.read`, submit, and no request is sent | New    | 10   |
 
-**Not pinned, on purpose.** Page-level `canAddMinor`, `canLinkGuardian` and `canUnlinkGuardian` (`family-records.tsx` lines 596 to 598) dropped `canRestricted` with no test failing. They guard handlers that can only start from buttons inside `MinorsSection`, which pins 2, 5, 6 and 7 already cover, so a test cannot reach them on their own. They stay as a second layer and this chunk does not change them. The final PR names them.
+**Not pinned, on purpose.** Two weakenings cannot change anything a test can see, and both stay as they are, because this chunk moves gates without rewriting them. The final PR names them.
 
-**The earlier test that overstates its reach.** The test "renders — for household label when label is null (unrestricted caller or unlabelled)" claims to cover both callers but covers only one. Task 6 corrects its title and adds the missing case.
+- Dropping `people.households` from the page-level `canReadLifeEvents` (`family-records.tsx` line 590). Line 1409 already returns "Not allowed" without that entitlement, and pins 39 and 41 cover it.
+- Dropping `canRestricted` from the page-level `canUnlinkGuardian` (line 598). Its handler starts only from the confirm inside `MinorsSection`, which unmounts without the permission. Pins 2 and 7 cover it.
 
-**Restricted data must-fail test.** Tasks 4, 6 and 8 each render their screen as a caller without `people.restricted.read`, against a fixture household that holds a minor, and assert that no minor's name, date of birth or marker appears.
+**The earlier test that overstates its reach.** The test "renders — for household label when label is null (unrestricted caller or unlabelled)" claims to cover both callers but covers only one. Task 7 corrects its title and adds the missing case.
+
+**Restricted data must-fail test.** Tasks 5, 7 and 9 each render their screen as a caller without `people.restricted.read`, against a fixture household that holds a minor, and assert that no minor's name, date of birth or marker appears.
 
 ## Rollback
 
@@ -173,31 +178,39 @@ Stop and report, without improvising, if:
 
 **Rule:** no change to `service-times.tsx` logic.
 
-### Task 4: `DataTable` and list parts, All Contacts list
+### Task 4: `DataTable` and list parts
 
-**Files:** `packages/ui/src/data-table.tsx`, `filter-bar.tsx`, `pagination.tsx`, `empty-state.tsx`, `skeleton.tsx`, `avatar.tsx`, with their tests, `index.ts`; `apps/admin/src/all-contacts.tsx`, `all-contacts.test.tsx`
+**Files:** `packages/ui/src/data-table.tsx`, `filter-bar.tsx`, `pagination.tsx`, `empty-state.tsx`, `skeleton.tsx`, `avatar.tsx`, with their tests, `index.ts`
 
 - [ ] Test first for `DataTable`: columns take `{ key, header, render, primary, srHeader }`; explicit `role` on the table, rows and cells; `data-label` equals the header and never holds a row value; cells can wrap; axe passes. It composes the existing `Table` parts, which stay exported and unchanged.
 - [ ] Test first for the rest: `FilterBar` keeps a submitted form with no debounce. `Pagination` shows "Next page" only with a cursor. `EmptyState` takes one sentence. `Skeleton` is `aria-hidden` and has no `status` role. `Avatar` is `aria-hidden`, gives one name the same tone every time, and never writes the name to `title`.
+- [ ] Commit `feat(ui): add DataTable and list parts`.
+
+**Rule:** no change to `apps/admin` in this task.
+
+### Task 5: All Contacts list
+
+**Files:** `apps/admin/src/all-contacts.tsx`, `all-contacts.test.tsx`
+
 - [ ] Add pins 24 and 25 and the restricted must-fail test.
-- [ ] All Contacts list: the card layout from the Screens table, on the Adults list, with `Avatar` in the first column. Adults and Minors buttons stay above the card, with `Contact types`, `aria-pressed` and the Minors gate.
-- [ ] Run pins 1, 10, 12, 15, 17, 20 and 23. Stop for the checkpoint. Commit `feat(ui): add DataTable and list parts for All Contacts`.
+- [ ] All Contacts list: the card layout from the Screens table, on the Adults list, with `Avatar` in the first column. `DataTable`, `FilterBar`, `Pagination`, `EmptyState`, and `Skeleton` marked `aria-hidden` with no loading words, as the list has none today. Adults and Minors buttons stay above the card, with `Contact types`, `aria-pressed` and the Minors gate.
+- [ ] Run pins 1, 10, 12, 15, 17, 20 and 23. Commit `feat(admin): restyle the All Contacts list`, then stop for the checkpoint.
 
 **Rule:** no search term in a URL, no change to when requests are sent.
 
-### Task 5: Contact Details, add and edit
+### Task 6: Contact Details, add and edit
 
 **Files:** `apps/admin/src/all-contacts.tsx`, `all-contacts.test.tsx`
 
 - [ ] Add pin 27, with `Boolean(value.isMinor)` kept for the Edit gate and a test that a missing `isMinor` keeps today's Edit behaviour.
 - [ ] `parsePersonDetail` gains `isAdultConfirmed: value.isMinor === false`. Only `Avatar` reads it.
-- [ ] Contact Details: one `Panel` with `Avatar`, today's Edit action, and `DescriptionList` for today's labels with their colons. `None` stays where it shows today.
+- [ ] Contact Details: one `Panel` with `Avatar`, today's Edit action, and `DescriptionList` for today's labels with their colons. `None` stays where it shows today. `Skeleton` shows while loading, with "Loading contact details..." kept as hidden text in a plain `<span>`.
 - [ ] Add and Edit: `Panel`, `Field` and `Input` in `ContactFields`. Heading refs, conflict, Reload and alert focus stay as they are.
 - [ ] Run pins 13 and 26. Commit `feat(admin): restyle Contact Details and its forms`.
 
 **Rule:** focus-target headings stay mounted during loading, error and not-found.
 
-### Task 6: Family Records list, `RestrictedValue`
+### Task 7: Family Records list, `RestrictedValue`
 
 **Files:** `packages/ui/src/restricted-value.tsx`, with its tests, `index.ts`; `apps/admin/src/family-records.tsx`, `family-records.test.tsx`
 
@@ -209,7 +222,7 @@ Stop and report, without improvising, if:
 
 **Rule:** the raw id in the move adult list stays. `billing-banner.test.tsx` still passes untouched.
 
-### Task 7: Life events
+### Task 8: Life events
 
 **Files:** `apps/admin/src/life-events.tsx`, `life-events.test.tsx`; `packages/ui/src/select.tsx`, `textarea.tsx`, with their tests, `index.ts`
 
@@ -220,30 +233,33 @@ Stop and report, without improvising, if:
 
 **Rule:** the panels stay in both places they mount today. The person's name stays out of titles and URLs.
 
-### Task 8: Family Details
+### Task 9: Family Details
 
 **Files:** `apps/admin/src/family-records.tsx`, `family-records.test.tsx`
 
 - [ ] Add pins 9, 19, 30 and 40, and the restricted must-fail test.
 - [ ] `Panel`s in the board's order: household details, Adults (`h3`), Minors and Guardians (`h3`). Back to list and Rename household at the top right. Add adult, Add minor and Link guardian in their own `Panel` head.
 - [ ] Adult members, Minor members and Guardian links each become a `DataTable` with today's columns and names. Adult members gets `Avatar` in its first column. Minor members never does.
+- [ ] `Skeleton` shows while loading, with "Loading household details..." kept as hidden text in a plain `<span>`.
+- [ ] The new line shows on this screen in `Alert live="polite"`, after the access gate, with the same words as the list.
 - [ ] Guardian unlink keeps its inline confirm in the row, with today's words, gate and focus.
-- [ ] Run pins 2 to 9, 19, 21, 30, 40 and 41. Stop for the checkpoint. Commit `feat(admin): restyle Family Details`.
+- [ ] Run pins 2 to 9, 19, 21, 30, 40 and 41. Commit `feat(admin): restyle Family Details`, then stop for the checkpoint.
 
 **Rule:** `MinorsSection` keeps its own gates. Life events panels stay after Adult members and inside `MinorsSection`.
 
-### Task 9: Family forms
+### Task 10: Family forms
 
 **Files:** `apps/admin/src/family-records.tsx`, `family-records.test.tsx`
 
 - [ ] Test first: the move adult `Select` keeps its existing `aria-describedby` through `Field`.
+- [ ] Add pins 42 and 43. Each test renders through `PeopleAccessContext.Provider`, so access can change while the form is open.
 - [ ] Create, rename, Add Adult, move adult, add minor and link guardian: one `Panel` each, `Field`, `Select`, `Checkbox`. Add Adult uses `FilterBar`, `DataTable`, `EmptyState` and `Skeleton` for its search. Add Adult's and move adult's paging sentences stay plain text.
 - [ ] Report the result of searching `apps/admin/src`, excluding tests, for `<Table`, `<select`, `<textarea`, `<input` and `type="checkbox"`. Each must be gone, or be inside a `packages/ui` component.
 - [ ] Run pin 16. Commit `feat(admin): restyle the family forms`.
 
 **Rule:** add minor and link guardian keep their conditions and messages.
 
-## Browser check before Task 10 (no commit)
+## Browser check before Task 11 (no commit)
 
 The screens run against a local stub API, rebuilt in `.superpowers/` and never committed. It copies the real contract shapes, including `minors` absent rather than empty.
 
@@ -252,19 +268,19 @@ The screens run against a local stub API, rebuilt in `.superpowers/` and never c
 - Each caller: with and without `people.restricted.read`; billing read-only.
 - All Contacts, Contact Details and Family Details beside their boards.
 
-Fixes go in as their own `fix(admin):` commits before Task 10. Screenshots of invented people go in the PR. The PR names the §8 deviation: this check ran against a stub, not the staging hostname.
+Fixes go in as their own `fix(admin):` commits before Task 11. The reviewer then runs `pnpm gate`, and any fix from that also lands before Task 11. Screenshots of invented people go in the PR. The PR names the §8 deviation: this check ran against a stub, not the staging hostname.
 
-### Task 10: Catalogue (last task on this branch)
+### Task 11: Catalogue (last task on this branch)
 
 **Files:** `docs/roadmap.md`, `AGENTS.md` (line 9 only)
 
 - [ ] `admin-screens-restyle` **done**. Take out the row's walk follow-ups, sign-in sentence and Users & Roles clause, and the open item "The admin shell has no layout or styling to speak of".
 - [ ] Add Phase 2 rows, each **not started**: `Users & Roles people details` (sensitive), `Add Adult create`, `People screens: Laravel parity` (listing what the spec's Out section lists), and `admin-screens-proof` (published build on the real publish path, and the `0013`–`0018` checks).
-- [ ] Snapshot: last shipped, next chunk, counts. Update `AGENTS.md` line 9.
+- [ ] Snapshot: last shipped, next chunk, counts. Update `AGENTS.md` line 9, as earlier chunk-closing commits did. The spec's Docs bullet does not list it, so the PR names it as a consistency edit.
 - [ ] Run the §5 cleanup: `rm -f docs/plans/*-report.md; git status --short`.
 - [ ] Commit `docs: mark admin-screens-restyle done`.
 
-After Task 10, the reviewer runs `pnpm gate`, then pushes, and opens the PR only then.
+After Task 11, the reviewer reruns `pnpm exec prettier --check .` and `pnpm check:boundaries`, pushes, and only then opens the PR. A fix CI needs after that follows the roadmap commit, as AGENTS.md §4 allows.
 
 ## Owner decisions
 
@@ -274,6 +290,8 @@ These are answered once, at plan approval.
 2. **Configurations:** implementer Antigravity (Gemini); reviewer Claude Code, Opus 5.5; owner's check and second review on Sonnet 5.5 or Fable 5.1.
 3. **Deviation policy:** extra attempts and actor changes are recorded as deviations in the PR. Cosmetic nits are noted in the PR, not as open items.
 4. **Open items carried by the new rows:** Users & Roles people details, Add Adult create, People screens: Laravel parity, and the proof chunk.
+5. **Per-task gate (§8 deviation):** each task runs the subset under Global constraints, and `pnpm gate` runs once before Task 11, because this machine has 12 GB of RAM. The PR records this.
+6. **Size:** 11 tasks, one over the usual ten, because Task 4 was split so its diff can be read in one sitting. The PR records this.
 
 ## Probe record
 
