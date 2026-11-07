@@ -86,6 +86,27 @@ describe("workflow check fixtures", () => {
     expect(checkBuildAdminScript(trailingExtra).violations).toEqual(["build-admin-script"]);
   });
 
+  it("fails a build:admin script with a leading command", () => {
+    const script = JSON.stringify({
+      scripts: { "build:admin": 'echo hi && pnpm --filter "@community-hub/admin..." build' },
+    });
+    expect(checkBuildAdminScript(script).violations).toEqual(["build-admin-script"]);
+  });
+
+  it("fails a build:admin script for another package", () => {
+    const script = JSON.stringify({
+      scripts: { "build:admin": 'pnpm --filter "@community-hub/api..." build' },
+    });
+    expect(checkBuildAdminScript(script).violations).toEqual(["build-admin-script"]);
+  });
+
+  it("fails a build:admin script with an unclosed quote", () => {
+    const script = JSON.stringify({
+      scripts: { "build:admin": 'pnpm --filter "@community-hub/admin... build' },
+    });
+    expect(checkBuildAdminScript(script).violations).toEqual(["build-admin-script"]);
+  });
+
   it("passes the real build:admin script", () => {
     const result = checkBuildAdminScript(fs.readFileSync(rootPackagePath, "utf8"));
     expect(result.violations).toEqual([]);
