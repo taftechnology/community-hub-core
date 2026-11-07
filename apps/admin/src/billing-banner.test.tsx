@@ -990,6 +990,7 @@ describe("BillingBanner and Shell Billing Return", () => {
       ).length;
 
       vi.advanceTimersByTime(6000);
+      await act(async () => {});
 
       const afterCalls = fetchSpy.mock.calls.filter((c) =>
         String(c[0]).includes("/v1/billing/status"),
