@@ -39,7 +39,12 @@ const mustFail = [
   ["admin-build-missing", "admin-build"],
   ["admin-build-no-pr-if", "admin-build"],
   ["admin-build-bare-filter", "admin-build"],
+  ["admin-build-id-token", "admin-build"],
+  ["admin-build-secrets", "admin-build"],
+  ["admin-build-aws", "admin-build"],
   ["admin-publish-bare-filter", "admin-publish-build"],
+  ["admin-publish-no-build", "admin-publish-build"],
+  ["admin-publish-both-lines", "admin-publish-build"],
 ] as const;
 
 describe("workflow check fixtures", () => {
