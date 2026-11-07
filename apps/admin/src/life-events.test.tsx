@@ -221,8 +221,8 @@ describe("LifeEventsPanel unit and accessibility tests", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Save life event" }));
 
-    expect(await screen.findByText("Marriage")).toBeTruthy();
-    expect(screen.getByText("2015-08-20")).toBeTruthy();
+    expect(await screen.findByText("2015-08-20")).toBeTruthy();
+    expect(screen.getByText("Marriage")).toBeTruthy();
     expect(screen.getByText("St Mary Cathedral")).toBeTruthy();
     expect(screen.getByText("Witnesses signed")).toBeTruthy();
 

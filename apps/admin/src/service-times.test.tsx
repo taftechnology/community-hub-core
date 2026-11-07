@@ -117,6 +117,16 @@ function renderServiceTimesPage({
   return { ...rendered, router };
 }
 
+// Waits until the Save button is enabled and returns it.
+// The editor writes its text to the DOM before React commits the state that enables Save.
+async function waitForSaveButton(): Promise<HTMLButtonElement> {
+  return waitFor(() => {
+    const button = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    return button;
+  });
+}
+
 describe("ServiceTimesPage", () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>;
 
@@ -185,7 +195,7 @@ describe("ServiceTimesPage", () => {
       mockResponse(200, { html: "<p>Server cleaned text</p>", version: 2 }),
     );
 
-    const saveBtn = screen.getByRole("button", { name: "Save" });
+    const saveBtn = await waitForSaveButton();
     fireEvent.click(saveBtn);
 
     await waitFor(() => {
@@ -219,7 +229,7 @@ describe("ServiceTimesPage", () => {
       expect(screen.getByText("Initial")).toBeTruthy();
     });
 
-    const saveBtn = screen.getByRole("button", { name: "Save" });
+    const saveBtn = await waitForSaveButton();
     fireEvent.click(saveBtn);
     fireEvent.click(saveBtn); // double click
 
@@ -241,7 +251,7 @@ describe("ServiceTimesPage", () => {
       expect(screen.getByText("Original")).toBeTruthy();
     });
 
-    const saveBtn = screen.getByRole("button", { name: "Save" });
+    const saveBtn = await waitForSaveButton();
     fireEvent.click(saveBtn);
 
     await waitFor(() => {
@@ -306,7 +316,7 @@ describe("ServiceTimesPage", () => {
       expect(screen.getByText("Draft")).toBeTruthy();
     });
 
-    const saveBtn = screen.getByRole("button", { name: "Save" });
+    const saveBtn = await waitForSaveButton();
     fireEvent.click(saveBtn);
 
     await waitFor(() => {
@@ -327,7 +337,7 @@ describe("ServiceTimesPage", () => {
       expect(screen.getByText("Draft")).toBeTruthy();
     });
 
-    const saveBtn = screen.getByRole("button", { name: "Save" });
+    const saveBtn = await waitForSaveButton();
     fireEvent.click(saveBtn);
 
     await waitFor(() => {
@@ -347,7 +357,7 @@ describe("ServiceTimesPage", () => {
       expect(screen.getByText("Draft")).toBeTruthy();
     });
 
-    const saveBtn = screen.getByRole("button", { name: "Save" });
+    const saveBtn = await waitForSaveButton();
     fireEvent.click(saveBtn);
 
     await waitFor(() => {
@@ -499,7 +509,7 @@ describe("ServiceTimesPage", () => {
     });
 
     // Save
-    const saveBtn = screen.getByRole("button", { name: "Save" });
+    const saveBtn = await waitForSaveButton();
     fireEvent.click(saveBtn);
 
     await waitFor(() => {
@@ -692,7 +702,8 @@ describe("ServiceTimesPage", () => {
     });
 
     // Start Save for Parish A (slow)
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const saveBtn = await waitForSaveButton();
+    fireEvent.click(saveBtn);
 
     // Switch community to Parish B (triggers reload)
     fireEvent.click(screen.getByText("Switch"));
@@ -797,7 +808,8 @@ describe("ServiceTimesPage", () => {
 
     // Error state axe
     fetchSpy.mockResolvedValueOnce(mockResponse(403));
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const saveBtn = await waitForSaveButton();
+    fireEvent.click(saveBtn);
     await waitFor(() => {
       expect(screen.getByText("You do not have permission to change this.")).toBeTruthy();
     });
@@ -859,12 +871,11 @@ describe("ServiceTimesPage", () => {
     render(<RouterProvider router={router} />);
 
     // Wait for Parish A to load
+    const saveBtn = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
     await waitFor(() => {
       expect(screen.getByText("Parish A text")).toBeTruthy();
+      expect(saveBtn.disabled).toBe(false);
     });
-
-    const saveBtn = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
-    expect(saveBtn.disabled).toBe(false);
 
     // 2. Mock GET for parish-b to fail (e.g. 500 error)
     fetchSpy.mockResolvedValueOnce(mockResponse(500));
@@ -905,7 +916,9 @@ describe("ServiceTimesPage", () => {
 
     // Save is enabled now
     const enabledSaveBtn = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
-    expect(enabledSaveBtn.disabled).toBe(false);
+    await waitFor(() => {
+      expect(enabledSaveBtn.disabled).toBe(false);
+    });
 
     // Mock successful save for B
     fetchSpy.mockResolvedValueOnce(mockResponse(200, { html: "<p>Parish B text</p>", version: 8 }));
@@ -1123,7 +1136,7 @@ describe("ServiceTimesPage", () => {
     fetchSpy.mockImplementationOnce(() => savePromise);
 
     // 4. Click Save
-    const saveBtn = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+    const saveBtn = await waitForSaveButton();
     fireEvent.click(saveBtn);
 
     // Save is now in flight
@@ -1265,7 +1278,7 @@ describe("ServiceTimesPage", () => {
     // 3. Save returns 409 conflict
     fetchSpy.mockResolvedValueOnce(mockResponse(409, { error: "version_conflict" }));
 
-    const saveBtn = screen.getByRole("button", { name: "Save" });
+    const saveBtn = await waitForSaveButton();
     fireEvent.click(saveBtn);
 
     await waitFor(() => {
@@ -1425,7 +1438,9 @@ describe("ServiceTimesPage", () => {
     // Assert: editor and Save enabled for C with C's version
     expect(screen.getByTestId("active-slug").textContent).toBe("parish-c");
     const saveBtn = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
-    expect(saveBtn.disabled).toBe(false);
+    await waitFor(() => {
+      expect(saveBtn.disabled).toBe(false);
+    });
   });
 
   it("picker moves A -> B -> C while dirty: Stay returns the picker to A with A's text and no get", async () => {
@@ -1520,7 +1535,9 @@ describe("ServiceTimesPage", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
     const saveBtn = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
-    expect(saveBtn.disabled).toBe(false);
+    await waitFor(() => {
+      expect(saveBtn.disabled).toBe(false);
+    });
   });
 
   it("picker moves A -> B -> A while dirty: dialog stays, Save and editor disabled, Stay preserves edits, Leave reloads A", async () => {
@@ -1622,9 +1639,9 @@ describe("ServiceTimesPage", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("active-slug").textContent).toBe("parish-a");
+      expect(saveBtn.disabled).toBe(false);
     });
     expect(screen.getByText("Parish A edited")).toBeTruthy();
-    expect(saveBtn.disabled).toBe(false);
     expect(screen.getByRole("textbox").getAttribute("contenteditable")).toBe("true");
 
     // Save sends A's text with A's version
