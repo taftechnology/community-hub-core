@@ -1,4 +1,4 @@
-import { Alert } from "@community-hub/ui";
+import { Alert, Panel, Switch } from "@community-hub/ui";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 
@@ -185,27 +185,25 @@ export function ModuleTogglesPage() {
       {modules === undefined ? null : modules.length === 0 ? (
         <p>No modules are allocated.</p>
       ) : (
-        <ul>
-          {modules.map((row) => (
-            <li key={row.key}>
-              {canManage && !hideWrites ? (
-                <label>
-                  <input
-                    type="checkbox"
-                    role="switch"
+        <Panel>
+          <ul>
+            {modules.map((row) => (
+              <li key={row.key}>
+                {canManage && !hideWrites ? (
+                  <Switch
+                    label={row.key}
                     checked={row.enabled}
                     onChange={(event) => {
                       void turn(row.key, event.target.checked);
                     }}
                   />
-                  {row.key}
-                </label>
-              ) : (
-                row.key
-              )}
-            </li>
-          ))}
-        </ul>
+                ) : (
+                  row.key
+                )}
+              </li>
+            ))}
+          </ul>
+        </Panel>
       )}
     </>
   );

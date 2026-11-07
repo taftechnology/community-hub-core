@@ -961,3 +961,39 @@ it("renders Users & Roles in StrictMode cleanly", async () => {
   expect(await screen.findByText("Read-only until billing is settled")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Grant" })).toBeNull();
 });
+
+it("hides 'Create custom role' button when custom role limit of 20 is reached, and shows it when fewer (pin 34)", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify(directory(20, [ownerGrant], ["access.roles.manage"])), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
+  );
+  await showUsers();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  expect(await screen.findByText(USER, { exact: false })).toBeTruthy();
+  expect(screen.getByText("Custom role limit reached")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Create custom role" })).toBeNull();
+
+  cleanup();
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify(directory(19, [ownerGrant], ["access.roles.manage"])), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
+  );
+  await showUsers();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  expect(await screen.findByRole("button", { name: "Create custom role" })).toBeTruthy();
+  expect(screen.queryByText("Custom role limit reached")).toBeNull();
+});
