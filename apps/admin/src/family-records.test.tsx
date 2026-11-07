@@ -786,7 +786,7 @@ describe("Family Records detail view", () => {
     fireEvent.click(viewBtn);
 
     expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
-    expect(screen.getByText("Clarke Family")).toBeTruthy();
+    expect(await screen.findByText("Clarke Family")).toBeTruthy();
     expect(screen.getByText("Arthur")).toBeTruthy();
     expect(screen.getAllByText("Clarke").length).toBeGreaterThanOrEqual(1);
 
@@ -1041,7 +1041,7 @@ describe("Family Records detail view", () => {
     fireEvent.click(viewBtn);
 
     expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
-    expect(screen.getByText("Arthur")).toBeTruthy();
+    expect(await screen.findByText("Arthur")).toBeTruthy();
 
     // Minors section and guardians section MUST NOT be rendered
     expect(screen.queryByRole("heading", { name: "Minors" })).toBeNull();
@@ -1072,7 +1072,7 @@ describe("Family Records detail view", () => {
     fireEvent.click(viewBtn);
 
     expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
-    expect(screen.getByText("Arthur")).toBeTruthy();
+    expect(await screen.findByText("Arthur")).toBeTruthy();
 
     // Pin 21: UI MUST NOT render minors section without people.restricted.read
     expect(screen.queryByRole("heading", { name: "Minors" })).toBeNull();
@@ -1278,7 +1278,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
     fireEvent.click(viewBtn);
 
     expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
-    expect(screen.getByText("Arthur")).toBeTruthy();
+    expect(await screen.findByText("Arthur")).toBeTruthy();
 
     expect(screen.queryByText(/Life events: Arthur Clarke/i)).toBeNull();
     expect(screen.queryByText("No life events recorded")).toBeNull();
@@ -1351,7 +1351,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
     fireEvent.click(viewBtn);
 
     expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
-    expect(screen.getByText("Arthur")).toBeTruthy();
+    expect(await screen.findByText("Arthur")).toBeTruthy();
     expect(screen.getByText("Leo")).toBeTruthy();
 
     expect(await screen.findByText(/Life events: Arthur Clarke/i)).toBeTruthy();
@@ -1359,26 +1359,28 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
 
     const adultPersonId = sampleDetail.adults[0]?.personId;
     const minorPersonId = sampleDetail.minors[0]?.personId;
-    const lifeEventCalls = postCalls.filter((p) => p.path === "/v1/people/life-events/list");
-    expect(lifeEventCalls).toHaveLength(2);
-    expect(
-      lifeEventCalls.some(
-        (c) =>
-          typeof c.body === "object" &&
-          c.body !== null &&
-          "personId" in c.body &&
-          (c.body as { personId: string }).personId === adultPersonId,
-      ),
-    ).toBe(true);
-    expect(
-      lifeEventCalls.some(
-        (c) =>
-          typeof c.body === "object" &&
-          c.body !== null &&
-          "personId" in c.body &&
-          (c.body as { personId: string }).personId === minorPersonId,
-      ),
-    ).toBe(true);
+    await waitFor(() => {
+      const lifeEventCalls = postCalls.filter((p) => p.path === "/v1/people/life-events/list");
+      expect(lifeEventCalls).toHaveLength(2);
+      expect(
+        lifeEventCalls.some(
+          (c) =>
+            typeof c.body === "object" &&
+            c.body !== null &&
+            "personId" in c.body &&
+            (c.body as { personId: string }).personId === adultPersonId,
+        ),
+      ).toBe(true);
+      expect(
+        lifeEventCalls.some(
+          (c) =>
+            typeof c.body === "object" &&
+            c.body !== null &&
+            "personId" in c.body &&
+            (c.body as { personId: string }).personId === minorPersonId,
+        ),
+      ).toBe(true);
+    });
   });
 
   it("hides life event Add and Edit buttons while billing is loading or read-only, and displays them when ready and writable", async () => {
