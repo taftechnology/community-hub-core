@@ -1,7 +1,7 @@
 import "@community-hub/ui/rich-text-editor.css";
 
 import { terminology } from "@community-hub/faith-church";
-import { Alert, Button } from "@community-hub/ui";
+import { Alert, Button, Panel } from "@community-hub/ui";
 import { type RichTextEditorHandle, RichTextEditor } from "@community-hub/ui/rich-text-editor";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useBlocker } from "react-router";
@@ -348,40 +348,42 @@ export function ServiceTimesPage() {
         </div>
       )}
 
-      <div className="flex flex-col gap-2">
-        <RichTextEditor
-          ref={editorRef}
-          label={term.fieldLabel}
-          toolbarLabel="Formatting tools"
-          toolbar={{
-            heading2: "Heading 2",
-            heading3: "Heading 3",
-            bold: "Bold",
-            italic: "Italic",
-            bulletList: "Bullet list",
-            orderedList: "Numbered list",
-          }}
-          placeholder={term.placeholder}
-          describedBy={hintId}
-          maxLength={SERVICE_TIMES_HTML_MAX}
-          counterLabel={(used, max) => `${used} / ${max}`}
-          disabled={!isReady || isLoading || isSaving}
-          onChange={handleEditorChange}
-        />
-        <p id={hintId} className="text-xs text-muted-foreground">
-          {term.hint}
-        </p>
-      </div>
+      <Panel>
+        <div className="flex flex-col gap-2">
+          <RichTextEditor
+            ref={editorRef}
+            label={term.fieldLabel}
+            toolbarLabel="Formatting tools"
+            toolbar={{
+              heading2: "Heading 2",
+              heading3: "Heading 3",
+              bold: "Bold",
+              italic: "Italic",
+              bulletList: "Bullet list",
+              orderedList: "Numbered list",
+            }}
+            placeholder={term.placeholder}
+            describedBy={hintId}
+            maxLength={SERVICE_TIMES_HTML_MAX}
+            counterLabel={(used, max) => `${used} / ${max}`}
+            disabled={!isReady || isLoading || isSaving}
+            onChange={handleEditorChange}
+          />
+          <p id={hintId} className="text-xs text-muted-foreground">
+            {term.hint}
+          </p>
+        </div>
 
-      <div className="flex items-center gap-3">
-        <Button
-          type="button"
-          disabled={!isReady || isLoading || isSaving}
-          onClick={() => void handleSave()}
-        >
-          {isSaving ? "Saving..." : "Save"}
-        </Button>
-      </div>
+        <div className="flex items-center gap-3">
+          <Button
+            type="button"
+            disabled={!isReady || isLoading || isSaving}
+            onClick={() => void handleSave()}
+          >
+            {isSaving ? "Saving..." : "Save"}
+          </Button>
+        </div>
+      </Panel>
     </div>
   );
 }
