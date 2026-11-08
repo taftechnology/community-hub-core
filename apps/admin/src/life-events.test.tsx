@@ -592,4 +592,222 @@ describe("LifeEventsPanel unit and accessibility tests", () => {
       })),
     ).toEqual(expected);
   });
+
+  it("Pin 22: canManage and isReadOnly independently control Add life event and Edit buttons", async () => {
+    const sampleEvents: LifeEvent[] = [
+      {
+        eventId: "00000000-0000-4000-8000-000000000001",
+        version: 1,
+        type: "baptism",
+        date: "2010-04-15",
+        place: "St Timothy Chapel",
+        notes: "Recorded by parish registrar",
+      },
+    ];
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      if (url.includes("/v1/people/life-events/list")) {
+        return new Response(JSON.stringify({ items: sampleEvents }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    // 1. canManage: true, isReadOnly: false -> shows Add life event and Edit button
+    const { unmount: unmount1 } = renderPanel({ canManage: true, isReadOnly: false });
+    expect(await screen.findByText("Baptism")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Add life event" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Edit/i })).toBeTruthy();
+    unmount1();
+    cleanup();
+
+    // 2. canManage: false, isReadOnly: false -> shows neither
+    const { unmount: unmount2 } = renderPanel({ canManage: false, isReadOnly: false });
+    expect(await screen.findByText("Baptism")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add life event" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Edit/i })).toBeNull();
+    unmount2();
+    cleanup();
+
+    // 3. canManage: true, isReadOnly: true -> shows neither
+    renderPanel({ canManage: true, isReadOnly: true });
+    expect(await screen.findByText("Baptism")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add life event" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Edit/i })).toBeNull();
+  });
+
+  it("shows 'None' in muted-foreground for null place and null notes, and no dash", async () => {
+    const sampleEvents: LifeEvent[] = [
+      {
+        eventId: "00000000-0000-4000-8000-000000000001",
+        version: 1,
+        type: "baptism",
+        date: "2010-04-15",
+        place: null,
+        notes: null,
+      },
+    ];
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      if (url.includes("/v1/people/life-events/list")) {
+        return new Response(JSON.stringify({ items: sampleEvents }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    renderPanel();
+    expect(await screen.findByText("Baptism")).toBeTruthy();
+
+    const noneElements = screen.getAllByText("None");
+    expect(noneElements).toHaveLength(2);
+    for (const el of noneElements) {
+      expect(el.className).toContain("text-muted-foreground");
+    }
+    expect(screen.queryByText("-")).toBeNull();
+  });
+
+  it("renders h4 panel heading with person name and h5 add form heading", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      if (url.includes("/v1/people/life-events/list")) {
+        return new Response(JSON.stringify({ items: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    renderPanel({ personName: "Rowan Vance", canManage: true, isReadOnly: false });
+    expect(await screen.findByText("No life events recorded")).toBeTruthy();
+
+    const panelHeading = screen.getByRole("heading", {
+      level: 4,
+      name: "Life events: Rowan Vance",
+    });
+    expect(panelHeading).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add life event" }));
+
+    const formHeading = screen.getByRole("heading", { level: 5, name: "Add Life Event" });
+    expect(formHeading).toBeTruthy();
+  });
+
+  it("renders aria-hidden skeleton and sr-only plain span loading words while pending", async () => {
+    let resolveList!: (value: Response) => void;
+    const listPromise = new Promise<Response>((resolve) => {
+      resolveList = resolve;
+    });
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      if (url.includes("/v1/people/life-events/list")) {
+        return listPromise;
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    const { container } = renderPanel();
+
+    const skeleton = container.querySelector('[data-slot="skeleton"]');
+    expect(skeleton).not.toBeNull();
+    expect(skeleton?.getAttribute("aria-hidden")).toBe("true");
+
+    const loadingSpan = screen.getByText("Loading life events...");
+    expect(loadingSpan.tagName).toBe("SPAN");
+    expect(loadingSpan.className).toContain("sr-only");
+    expect(loadingSpan.getAttribute("role")).toBeNull();
+    expect(loadingSpan.getAttribute("aria-live")).toBeNull();
+
+    await act(async () => {
+      resolveList(
+        new Response(JSON.stringify({ items: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+
+    expect(await screen.findByText("No life events recorded")).toBeTruthy();
+  });
+
+  it("renders Select and Textarea with data-slot and stable control ids in the add form", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      if (url.includes("/v1/people/life-events/list")) {
+        return new Response(JSON.stringify({ items: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    renderPanel({ personId: PERSON_ID, canManage: true, isReadOnly: false });
+    expect(await screen.findByText("No life events recorded")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add life event" }));
+
+    const typeSelect = screen.getByLabelText(/Event type/i);
+    expect(typeSelect.tagName).toBe("SELECT");
+    expect(typeSelect.getAttribute("data-slot")).toBe("select");
+    expect(typeSelect.id).toBe(`life-event-type-${PERSON_ID}`);
+
+    const notesTextarea = screen.getByLabelText(/Notes/i);
+    expect(notesTextarea.tagName).toBe("TEXTAREA");
+    expect(notesTextarea.getAttribute("data-slot")).toBe("textarea");
+    expect(notesTextarea.id).toBe(`life-event-notes-${PERSON_ID}`);
+
+    const dateInput = screen.getByLabelText(/Date/i);
+    expect(dateInput.id).toBe(`life-event-date-${PERSON_ID}`);
+
+    const placeInput = screen.getByLabelText(/Place/i);
+    expect(placeInput.id).toBe(`life-event-place-${PERSON_ID}`);
+  });
+
+  it("assigns each cell a data-label from column headers with no sensitive or row values", async () => {
+    const sampleEvents: LifeEvent[] = [
+      {
+        eventId: "00000000-0000-4000-8000-000000000001",
+        version: 1,
+        type: "baptism",
+        date: "2010-04-15",
+        place: "St Timothy Chapel",
+        notes: "Recorded by parish registrar",
+      },
+    ];
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      if (url.includes("/v1/people/life-events/list")) {
+        return new Response(JSON.stringify({ items: sampleEvents }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    renderPanel({ personName: "Rowan Vance", canManage: true, isReadOnly: false });
+    expect(await screen.findByText("Baptism")).toBeTruthy();
+
+    const cells = screen.getAllByRole("cell");
+    expect(cells.length).toBeGreaterThan(0);
+
+    const allowedHeaders = ["Type", "Date", "Place", "Notes", "Actions"];
+    for (const cell of cells) {
+      const label = cell.getAttribute("data-label");
+      expect(allowedHeaders).toContain(label);
+      expect(label).not.toBe("Rowan Vance");
+      expect(label).not.toBe("St Timothy Chapel");
+      expect(label).not.toBe("Recorded by parish registrar");
+    }
+  });
 });
