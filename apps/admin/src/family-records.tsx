@@ -2,20 +2,18 @@ import {
   Alert,
   Avatar,
   Button,
+  Checkbox,
   DataTable,
   type DataTableColumn,
   EmptyState,
+  Field,
+  FilterBar,
   Input,
   Pagination,
   Panel,
   RestrictedValue,
+  Select,
   Skeleton,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from "@community-hub/ui";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
@@ -1456,35 +1454,37 @@ export function FamilyRecordsPage() {
     return (
       <>
         <ScreenTitle>Family Records</ScreenTitle>
-        <h2 ref={createHeadingRef} tabIndex={-1}>
-          Create Household
-        </h2>
+        <Panel
+          title="Create Household"
+          level={2}
+          headingRef={createHeadingRef}
+          headingTabIndex={-1}
+        >
+          {createNotice ? (
+            <Alert ref={createAlertRef} tabIndex={-1} variant="destructive" role="alert">
+              <span>{createNotice}</span>
+            </Alert>
+          ) : null}
 
-        {createNotice ? (
-          <Alert ref={createAlertRef} tabIndex={-1} variant="destructive" role="alert">
-            <span>{createNotice}</span>
-          </Alert>
-        ) : null}
+          <form onSubmit={handleCreateSubmit} className="grid gap-4">
+            <Field label="Household name (optional)">
+              <Input
+                id="create-household-label"
+                value={createLabel}
+                onChange={(e) => setCreateLabel(e.target.value)}
+              />
+            </Field>
 
-        <form onSubmit={handleCreateSubmit}>
-          <div>
-            <label htmlFor="create-household-label">Household name (optional)</label>
-            <Input
-              id="create-household-label"
-              value={createLabel}
-              onChange={(e) => setCreateLabel(e.target.value)}
-            />
-          </div>
-
-          <div>
-            <Button type="submit" disabled={submitting}>
-              Save household
-            </Button>
-            <Button type="button" variant="outline" onClick={backToList}>
-              Cancel
-            </Button>
-          </div>
-        </form>
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" disabled={submitting}>
+                Save household
+              </Button>
+              <Button type="button" variant="outline" onClick={backToList}>
+                Cancel
+              </Button>
+            </div>
+          </form>
+        </Panel>
       </>
     );
   }
@@ -1493,84 +1493,108 @@ export function FamilyRecordsPage() {
     return (
       <>
         <ScreenTitle>Family Records</ScreenTitle>
-        <h2 ref={renameHeadingRef} tabIndex={-1}>
-          Rename Household
-        </h2>
+        <Panel
+          title="Rename Household"
+          level={2}
+          headingRef={renameHeadingRef}
+          headingTabIndex={-1}
+        >
+          {renameConflict ? (
+            <Alert ref={renameAlertRef} tabIndex={-1} role="alert">
+              <span>
+                This household was changed by someone else. Reload to see the latest details; your
+                unsaved changes will be discarded.
+              </span>
+              <Button type="button" onClick={handleReloadFromConflict}>
+                Reload
+              </Button>
+            </Alert>
+          ) : null}
 
-        {renameConflict ? (
-          <Alert ref={renameAlertRef} tabIndex={-1} role="alert">
-            <span>
-              This household was changed by someone else. Reload to see the latest details; your
-              unsaved changes will be discarded.
-            </span>
-            <Button type="button" onClick={handleReloadFromConflict}>
-              Reload
-            </Button>
-          </Alert>
-        ) : null}
+          {renameNotice ? (
+            <Alert ref={renameAlertRef} tabIndex={-1} variant="destructive" role="alert">
+              <span>{renameNotice}</span>
+            </Alert>
+          ) : null}
 
-        {renameNotice ? (
-          <Alert ref={renameAlertRef} tabIndex={-1} variant="destructive" role="alert">
-            <span>{renameNotice}</span>
-          </Alert>
-        ) : null}
+          <form onSubmit={handleRenameSubmit} className="grid gap-4">
+            <Field label="Household name">
+              <Input
+                id="rename-household-label"
+                value={renameLabel}
+                onChange={(e) => setRenameLabel(e.target.value)}
+              />
+            </Field>
 
-        <form onSubmit={handleRenameSubmit}>
-          <div>
-            <label htmlFor="rename-household-label">Household name</label>
-            <Input
-              id="rename-household-label"
-              value={renameLabel}
-              onChange={(e) => setRenameLabel(e.target.value)}
-            />
-          </div>
-
-          <div>
-            <Button type="submit" disabled={submitting}>
-              Save changes
-            </Button>
-            <Button type="button" variant="outline" onClick={() => setView("detail")}>
-              Cancel
-            </Button>
-          </div>
-        </form>
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" disabled={submitting}>
+                Save changes
+              </Button>
+              <Button type="button" variant="outline" onClick={() => setView("detail")}>
+                Cancel
+              </Button>
+            </div>
+          </form>
+        </Panel>
       </>
     );
   }
+
+  const adultSearchColumns: DataTableColumn<AdultSearchItem>[] = [
+    {
+      key: "givenName",
+      header: "Given name",
+      primary: true,
+      render: (adult) => adult.givenName,
+    },
+    {
+      key: "familyName",
+      header: "Family name",
+      render: (adult) => adult.familyName,
+    },
+    {
+      key: "actions",
+      header: "Actions",
+      render: (adult) => (
+        <Button
+          type="button"
+          disabled={submitting}
+          aria-label={`Add ${adult.givenName} ${adult.familyName} to household`}
+          onClick={() => void handleAddAdultToHousehold(adult)}
+        >
+          Add to household
+        </Button>
+      ),
+    },
+  ];
 
   if (view === "add-adult") {
     return (
       <>
         <ScreenTitle>Family Records</ScreenTitle>
-        <h2 ref={addAdultHeadingRef} tabIndex={-1}>
-          Add Adult
-        </h2>
+        <Panel title="Add Adult" level={2} headingRef={addAdultHeadingRef} headingTabIndex={-1}>
+          {adultSearchNotice ? (
+            <Alert ref={addAdultAlertRef} tabIndex={-1} variant="destructive" role="alert">
+              <span>{adultSearchNotice}</span>
+            </Alert>
+          ) : null}
 
-        {adultSearchNotice ? (
-          <Alert ref={addAdultAlertRef} tabIndex={-1} variant="destructive" role="alert">
-            <span>{adultSearchNotice}</span>
-          </Alert>
-        ) : null}
+          {adultSearchError ? (
+            <Alert variant="destructive" live="assertive">
+              <span>Failed to search adults</span>
+            </Alert>
+          ) : null}
 
-        {adultSearchError ? (
-          <Alert variant="destructive" live="assertive">
-            <span>Failed to search adults</span>
-          </Alert>
-        ) : null}
+          <FilterBar
+            label="Search adults"
+            inputId="add-adult-search"
+            value={adultSearchDraft}
+            onValueChange={setAdultSearchDraft}
+            onSubmit={handleAdultSearch}
+            submitDisabled={adultSearchLoading}
+          />
 
-        <form onSubmit={handleAdultSearch}>
-          <div>
-            <label htmlFor="add-adult-search">Search adults</label>
-            <Input
-              id="add-adult-search"
-              value={adultSearchDraft}
-              onChange={(e) => setAdultSearchDraft(e.target.value)}
-            />
-          </div>
-          <div>
-            <Button type="submit" disabled={adultSearchLoading}>
-              Search
-            </Button>
+          <div className="flex flex-wrap gap-2">
             <Button
               type="button"
               variant="outline"
@@ -1582,46 +1606,32 @@ export function FamilyRecordsPage() {
               Cancel
             </Button>
           </div>
-        </form>
 
-        {adultSearchLoading ? <p>Searching...</p> : null}
+          {adultSearchLoading ? (
+            <>
+              <Skeleton />
+              <span className="sr-only">Searching...</span>
+            </>
+          ) : null}
 
-        {adultSearchResults !== null && adultSearchResults.length === 0 ? (
-          <p>No adults found</p>
-        ) : null}
+          {adultSearchResults !== null && adultSearchResults.length === 0 ? (
+            <EmptyState message="No adults found" />
+          ) : null}
 
-        {adultSearchResults !== null && adultSearchResults.length > 0 ? (
-          <>
-            <Table aria-label="Adult search results">
-              <TableHeader>
-                <TableRow>
-                  <TableHead scope="col">Given name</TableHead>
-                  <TableHead scope="col">Family name</TableHead>
-                  <TableHead scope="col">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {adultSearchResults.map((adult) => (
-                  <TableRow key={adult.personId}>
-                    <TableCell>{adult.givenName}</TableCell>
-                    <TableCell>{adult.familyName}</TableCell>
-                    <TableCell>
-                      <Button
-                        type="button"
-                        disabled={submitting}
-                        aria-label={`Add ${adult.givenName} ${adult.familyName} to household`}
-                        onClick={() => void handleAddAdultToHousehold(adult)}
-                      >
-                        Add to household
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            {adultSearchNextCursor !== null ? <p>More results exist. Refine your search.</p> : null}
-          </>
-        ) : null}
+          {adultSearchResults !== null && adultSearchResults.length > 0 ? (
+            <>
+              <DataTable
+                aria-label="Adult search results"
+                rowKey={(adult) => adult.personId}
+                columns={adultSearchColumns}
+                rows={adultSearchResults}
+              />
+              {adultSearchNextCursor !== null ? (
+                <p>More results exist. Refine your search.</p>
+              ) : null}
+            </>
+          ) : null}
+        </Panel>
       </>
     );
   }
@@ -1630,84 +1640,82 @@ export function FamilyRecordsPage() {
     return (
       <>
         <ScreenTitle>Family Records</ScreenTitle>
-        <h2 ref={moveAdultHeadingRef} tabIndex={-1}>
-          Move Adult
-        </h2>
+        <Panel title="Move Adult" level={2} headingRef={moveAdultHeadingRef} headingTabIndex={-1}>
+          {moveConflict ? (
+            <Alert ref={moveAlertRef} tabIndex={-1} role="alert">
+              <span>
+                This change could not be applied. The adult may have guardian links, or the
+                household changed. Reload to see the latest.
+              </span>
+              <Button type="button" onClick={handleReloadFromMoveConflict}>
+                Reload
+              </Button>
+            </Alert>
+          ) : null}
 
-        {moveConflict ? (
-          <Alert ref={moveAlertRef} tabIndex={-1} role="alert">
-            <span>
-              This change could not be applied. The adult may have guardian links, or the household
-              changed. Reload to see the latest.
-            </span>
-            <Button type="button" onClick={handleReloadFromMoveConflict}>
-              Reload
-            </Button>
-          </Alert>
-        ) : null}
+          {moveNotice ? (
+            <Alert ref={moveAlertRef} tabIndex={-1} variant="destructive" role="alert">
+              <span>{moveNotice}</span>
+            </Alert>
+          ) : null}
 
-        {moveNotice ? (
-          <Alert ref={moveAlertRef} tabIndex={-1} variant="destructive" role="alert">
-            <span>{moveNotice}</span>
-          </Alert>
-        ) : null}
+          {selectedAdult ? (
+            <p>
+              <strong>Adult:</strong> {selectedAdult.givenName} {selectedAdult.familyName}
+            </p>
+          ) : null}
 
-        {selectedAdult ? (
-          <p>
-            <strong>Adult:</strong> {selectedAdult.givenName} {selectedAdult.familyName}
-          </p>
-        ) : null}
+          <form onSubmit={handleMoveAdultSubmit} className="grid gap-4">
+            <Field label="Target household">
+              <Select
+                id="move-adult-target"
+                aria-describedby={
+                  nextCursor !== null
+                    ? "move-adult-target-hint move-adult-paged-notice"
+                    : "move-adult-target-hint"
+                }
+                value={moveTargetHouseholdId}
+                onChange={(e) => setMoveTargetHouseholdId(e.target.value)}
+              >
+                <option value="">No household</option>
+                {(items ?? []).map((h) => (
+                  <option key={h.householdId} value={h.householdId}>
+                    {h.label ? h.label : h.householdId}
+                  </option>
+                ))}
+              </Select>
+            </Field>
 
-        <form onSubmit={handleMoveAdultSubmit}>
-          <div>
-            <label htmlFor="move-adult-target">Target household</label>
-            <p id="move-adult-target-hint">
+            <p id="move-adult-target-hint" className="text-sm text-muted-foreground">
               Select a target household, or choose &quot;No household&quot; to remove from
               household.
             </p>
             {nextCursor !== null ? (
-              <p id="move-adult-paged-notice">
+              <p id="move-adult-paged-notice" className="text-sm text-muted-foreground">
                 The household list is paged. Only currently loaded households are offered.
               </p>
             ) : null}
-            <select
-              id="move-adult-target"
-              aria-describedby={
-                nextCursor !== null
-                  ? "move-adult-target-hint move-adult-paged-notice"
-                  : "move-adult-target-hint"
-              }
-              value={moveTargetHouseholdId}
-              onChange={(e) => setMoveTargetHouseholdId(e.target.value)}
-            >
-              <option value="">No household</option>
-              {(items ?? []).map((h) => (
-                <option key={h.householdId} value={h.householdId}>
-                  {h.label ? h.label : h.householdId}
-                </option>
-              ))}
-            </select>
-          </div>
 
-          <div>
-            <Button type="submit" disabled={submitting}>
-              Save move
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setSelectedAdult(null);
-                setMoveTargetHouseholdId("");
-                setMoveConflict(false);
-                setMoveNotice(null);
-                setView("detail");
-              }}
-            >
-              Cancel
-            </Button>
-          </div>
-        </form>
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" disabled={submitting}>
+                Save move
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setSelectedAdult(null);
+                  setMoveTargetHouseholdId("");
+                  setMoveConflict(false);
+                  setMoveNotice(null);
+                  setView("detail");
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          </form>
+        </Panel>
       </>
     );
   }
@@ -1716,107 +1724,92 @@ export function FamilyRecordsPage() {
     return (
       <>
         <ScreenTitle>Family Records</ScreenTitle>
-        <h2 ref={addMinorHeadingRef} tabIndex={-1}>
-          Add Minor
-        </h2>
+        <Panel title="Add Minor" level={2} headingRef={addMinorHeadingRef} headingTabIndex={-1}>
+          {addMinorNotice ? (
+            <Alert ref={addMinorAlertRef} tabIndex={-1} variant="destructive" role="alert">
+              <span>{addMinorNotice}</span>
+            </Alert>
+          ) : null}
 
-        {addMinorNotice ? (
-          <Alert ref={addMinorAlertRef} tabIndex={-1} variant="destructive" role="alert">
-            <span>{addMinorNotice}</span>
-          </Alert>
-        ) : null}
+          <form onSubmit={handleAddMinorSubmit} className="grid gap-4">
+            <Field label="Given name">
+              <Input
+                id="minor-given-name"
+                value={minorGivenName}
+                onChange={(e) => setMinorGivenName(e.target.value)}
+                required
+              />
+            </Field>
 
-        <form onSubmit={handleAddMinorSubmit}>
-          <div>
-            <label htmlFor="minor-given-name">Given name</label>
-            <Input
-              id="minor-given-name"
-              value={minorGivenName}
-              onChange={(e) => setMinorGivenName(e.target.value)}
-              required
-            />
-          </div>
-          <div>
-            <label htmlFor="minor-family-name">Family name</label>
-            <Input
-              id="minor-family-name"
-              value={minorFamilyName}
-              onChange={(e) => setMinorFamilyName(e.target.value)}
-              required
-            />
-          </div>
-          <div>
-            <label htmlFor="minor-dob">Date of birth</label>
-            <Input
-              id="minor-dob"
-              type="date"
-              value={minorDob}
-              onChange={(e) => setMinorDob(e.target.value)}
-              required
-            />
-          </div>
-          <div>
-            <label htmlFor="minor-guardian">Guardian</label>
-            <select
-              id="minor-guardian"
-              value={minorGuardianId}
-              onChange={(e) => setMinorGuardianId(e.target.value)}
-              required
-            >
-              <option value="">Select guardian</option>
-              {detailHousehold?.adults.map((adult) => (
-                <option key={adult.personId} value={adult.personId}>
-                  {adult.givenName} {adult.familyName}
-                </option>
-              ))}
-            </select>
-          </div>
+            <Field label="Family name">
+              <Input
+                id="minor-family-name"
+                value={minorFamilyName}
+                onChange={(e) => setMinorFamilyName(e.target.value)}
+                required
+              />
+            </Field>
 
-          <fieldset>
-            <legend>Guardian rights</legend>
-            <label>
-              <input
-                type="checkbox"
+            <Field label="Date of birth">
+              <Input
+                id="minor-dob"
+                type="date"
+                value={minorDob}
+                onChange={(e) => setMinorDob(e.target.value)}
+                required
+              />
+            </Field>
+
+            <Field label="Guardian">
+              <Select
+                id="minor-guardian"
+                value={minorGuardianId}
+                onChange={(e) => setMinorGuardianId(e.target.value)}
+                required
+              >
+                <option value="">Select guardian</option>
+                {detailHousehold?.adults.map((adult) => (
+                  <option key={adult.personId} value={adult.personId}>
+                    {adult.givenName} {adult.familyName}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+
+            <fieldset className="grid gap-2">
+              <legend>Guardian rights</legend>
+              <Checkbox
+                label="Consent"
                 checked={minorRights.consent}
                 onChange={(e) => setMinorRights((r) => ({ ...r, consent: e.target.checked }))}
-              />{" "}
-              Consent
-            </label>
-            <label>
-              <input
-                type="checkbox"
+              />
+              <Checkbox
+                label="Pickup"
                 checked={minorRights.pickup}
                 onChange={(e) => setMinorRights((r) => ({ ...r, pickup: e.target.checked }))}
-              />{" "}
-              Pickup
-            </label>
-            <label>
-              <input
-                type="checkbox"
+              />
+              <Checkbox
+                label="View"
                 checked={minorRights.view}
                 onChange={(e) => setMinorRights((r) => ({ ...r, view: e.target.checked }))}
-              />{" "}
-              View
-            </label>
-            <label>
-              <input
-                type="checkbox"
+              />
+              <Checkbox
+                label="Manage"
                 checked={minorRights.manage}
                 onChange={(e) => setMinorRights((r) => ({ ...r, manage: e.target.checked }))}
-              />{" "}
-              Manage
-            </label>
-          </fieldset>
+              />
+            </fieldset>
 
-          <div>
-            <Button type="submit" disabled={submitting}>
-              Save minor
-            </Button>
-            <Button type="button" variant="outline" onClick={() => setView("detail")}>
-              Cancel
-            </Button>
-          </div>
-        </form>
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" disabled={submitting}>
+                Save minor
+              </Button>
+              <Button type="button" variant="outline" onClick={() => setView("detail")}>
+                Cancel
+              </Button>
+            </div>
+          </form>
+        </Panel>
       </>
     );
   }
@@ -1825,96 +1818,85 @@ export function FamilyRecordsPage() {
     return (
       <>
         <ScreenTitle>Family Records</ScreenTitle>
-        <h2 ref={linkGuardianHeadingRef} tabIndex={-1}>
-          Link Guardian
-        </h2>
+        <Panel
+          title="Link Guardian"
+          level={2}
+          headingRef={linkGuardianHeadingRef}
+          headingTabIndex={-1}
+        >
+          {linkNotice ? (
+            <Alert ref={linkAlertRef} tabIndex={-1} variant="destructive" role="alert">
+              <span>{linkNotice}</span>
+            </Alert>
+          ) : null}
 
-        {linkNotice ? (
-          <Alert ref={linkAlertRef} tabIndex={-1} variant="destructive" role="alert">
-            <span>{linkNotice}</span>
-          </Alert>
-        ) : null}
+          <form onSubmit={handleLinkGuardianSubmit} className="grid gap-4">
+            <Field label="Guardian">
+              <Select
+                id="link-guardian-adult"
+                value={linkGuardianId}
+                onChange={(e) => setLinkGuardianId(e.target.value)}
+                required
+              >
+                <option value="">Select guardian</option>
+                {detailHousehold?.adults.map((adult) => (
+                  <option key={adult.personId} value={adult.personId}>
+                    {adult.givenName} {adult.familyName}
+                  </option>
+                ))}
+              </Select>
+            </Field>
 
-        <form onSubmit={handleLinkGuardianSubmit}>
-          <div>
-            <label htmlFor="link-guardian-adult">Guardian</label>
-            <select
-              id="link-guardian-adult"
-              value={linkGuardianId}
-              onChange={(e) => setLinkGuardianId(e.target.value)}
-              required
-            >
-              <option value="">Select guardian</option>
-              {detailHousehold?.adults.map((adult) => (
-                <option key={adult.personId} value={adult.personId}>
-                  {adult.givenName} {adult.familyName}
-                </option>
-              ))}
-            </select>
-          </div>
+            <Field label="Child">
+              <Select
+                id="link-guardian-child"
+                value={linkChildId}
+                onChange={(e) => setLinkChildId(e.target.value)}
+                required
+              >
+                <option value="">Select child</option>
+                {detailHousehold?.minors?.map((minor) => (
+                  <option key={minor.personId} value={minor.personId}>
+                    {minor.givenName} {minor.familyName}
+                  </option>
+                ))}
+              </Select>
+            </Field>
 
-          <div>
-            <label htmlFor="link-guardian-child">Child</label>
-            <select
-              id="link-guardian-child"
-              value={linkChildId}
-              onChange={(e) => setLinkChildId(e.target.value)}
-              required
-            >
-              <option value="">Select child</option>
-              {detailHousehold?.minors?.map((minor) => (
-                <option key={minor.personId} value={minor.personId}>
-                  {minor.givenName} {minor.familyName}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <fieldset>
-            <legend>Guardian rights</legend>
-            <label>
-              <input
-                type="checkbox"
+            <fieldset className="grid gap-2">
+              <legend>Guardian rights</legend>
+              <Checkbox
+                label="Consent"
                 checked={linkRights.consent}
                 onChange={(e) => setLinkRights((r) => ({ ...r, consent: e.target.checked }))}
-              />{" "}
-              Consent
-            </label>
-            <label>
-              <input
-                type="checkbox"
+              />
+              <Checkbox
+                label="Pickup"
                 checked={linkRights.pickup}
                 onChange={(e) => setLinkRights((r) => ({ ...r, pickup: e.target.checked }))}
-              />{" "}
-              Pickup
-            </label>
-            <label>
-              <input
-                type="checkbox"
+              />
+              <Checkbox
+                label="View"
                 checked={linkRights.view}
                 onChange={(e) => setLinkRights((r) => ({ ...r, view: e.target.checked }))}
-              />{" "}
-              View
-            </label>
-            <label>
-              <input
-                type="checkbox"
+              />
+              <Checkbox
+                label="Manage"
                 checked={linkRights.manage}
                 onChange={(e) => setLinkRights((r) => ({ ...r, manage: e.target.checked }))}
-              />{" "}
-              Manage
-            </label>
-          </fieldset>
+              />
+            </fieldset>
 
-          <div>
-            <Button type="submit" disabled={submitting}>
-              Save link
-            </Button>
-            <Button type="button" variant="outline" onClick={() => setView("detail")}>
-              Cancel
-            </Button>
-          </div>
-        </form>
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" disabled={submitting}>
+                Save link
+              </Button>
+              <Button type="button" variant="outline" onClick={() => setView("detail")}>
+                Cancel
+              </Button>
+            </div>
+          </form>
+        </Panel>
       </>
     );
   }
