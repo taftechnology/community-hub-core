@@ -6098,4 +6098,195 @@ describe("Family forms restyle & security pins (Task 10)", () => {
     expect(linkGuardianHeading.closest("section")).not.toBeNull();
     expect(document.activeElement).toBe(linkGuardianHeading);
   });
+
+  it.each([
+    { right: "consent", label: "Consent" },
+    { right: "pickup", label: "Pickup" },
+    { right: "view", label: "View" },
+    { right: "manage", label: "Manage" },
+  ] as const)(
+    "pins Add Minor guardian right $right to checkbox $label",
+    async ({ right, label }) => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      sessionStorage.setItem("community-hub.community", SLUG);
+      const postCalls: Array<{ path: string; body: unknown }> = [];
+
+      mockApi({
+        access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+        listResult: {
+          items: [
+            {
+              householdId: sampleDetail.householdId,
+              version: 1,
+              label: sampleDetail.label,
+              adultCount: 1,
+            },
+          ],
+          nextCursor: null,
+        },
+        detailResult: sampleDetail,
+        onPost: (path, body) => postCalls.push({ path, body }),
+      });
+
+      render(
+        <PeopleAccessContext.Provider value={{ access: fullAccess }}>
+          <CommunityProvider>
+            <BillingStatusProvider>
+              <MemoryRouter initialEntries={["/family-records"]}>
+                <FamilyRecordsPage />
+              </MemoryRouter>
+            </BillingStatusProvider>
+          </CommunityProvider>
+        </PeopleAccessContext.Provider>,
+      );
+
+      fireEvent.click(await screen.findByRole("button", { name: "View Clarke Family" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Add minor" }));
+      expect(await screen.findByRole("heading", { name: "Add Minor" })).toBeTruthy();
+
+      fireEvent.change(screen.getByLabelText(/Given name/i), { target: { value: "Corin" } });
+      fireEvent.change(screen.getByLabelText(/Family name/i), { target: { value: "Blythe" } });
+      fireEvent.change(screen.getByLabelText(/Date of birth/i), {
+        target: { value: "2017-04-12" },
+      });
+      fireEvent.change(screen.getByLabelText(/Guardian/i), {
+        target: { value: sampleDetail.adults[0]!.personId },
+      });
+
+      const consentCb = screen.getByRole("checkbox", { name: "Consent" }) as HTMLInputElement;
+      const pickupCb = screen.getByRole("checkbox", { name: "Pickup" }) as HTMLInputElement;
+      const viewCb = screen.getByRole("checkbox", { name: "View" }) as HTMLInputElement;
+      const manageCb = screen.getByRole("checkbox", { name: "Manage" }) as HTMLInputElement;
+
+      // Consent and View are checked by default — uncheck both
+      fireEvent.click(consentCb);
+      fireEvent.click(viewCb);
+
+      const targetCb = screen.getByRole("checkbox", { name: label });
+      fireEvent.click(targetCb);
+
+      const checkboxes = {
+        consent: consentCb,
+        pickup: pickupCb,
+        view: viewCb,
+        manage: manageCb,
+      };
+
+      for (const [r, cb] of Object.entries(checkboxes)) {
+        if (r === right) {
+          expect(cb.checked).toBe(true);
+        } else {
+          expect(cb.checked).toBe(false);
+        }
+      }
+
+      fireEvent.click(screen.getByRole("button", { name: "Save minor" }));
+
+      await waitFor(() => {
+        expect(postCalls.some((c) => c.path === "/v1/households/members/add-minor")).toBe(true);
+      });
+
+      const call = postCalls.find((c) => c.path === "/v1/households/members/add-minor");
+      const body = call?.body as { rights?: Record<string, boolean> };
+      expect(body.rights).toEqual({
+        consent: right === "consent",
+        pickup: right === "pickup",
+        view: right === "view",
+        manage: right === "manage",
+      });
+    },
+  );
+
+  it.each([
+    { right: "consent", label: "Consent" },
+    { right: "pickup", label: "Pickup" },
+    { right: "view", label: "View" },
+    { right: "manage", label: "Manage" },
+  ] as const)("pins Link Guardian right $right to checkbox $label", async ({ right, label }) => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    sessionStorage.setItem("community-hub.community", SLUG);
+    const postCalls: Array<{ path: string; body: unknown }> = [];
+
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+      onPost: (path, body) => postCalls.push({ path, body }),
+    });
+
+    render(
+      <PeopleAccessContext.Provider value={{ access: fullAccess }}>
+        <CommunityProvider>
+          <BillingStatusProvider>
+            <MemoryRouter initialEntries={["/family-records"]}>
+              <FamilyRecordsPage />
+            </MemoryRouter>
+          </BillingStatusProvider>
+        </CommunityProvider>
+      </PeopleAccessContext.Provider>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "View Clarke Family" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Link guardian" }));
+    expect(await screen.findByRole("heading", { name: "Link Guardian" })).toBeTruthy();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Guardian" }), {
+      target: { value: sampleDetail.adults[0]!.personId },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "Child" }), {
+      target: { value: sampleDetail.minors![0]!.personId },
+    });
+
+    const consentCb = screen.getByRole("checkbox", { name: "Consent" }) as HTMLInputElement;
+    const pickupCb = screen.getByRole("checkbox", { name: "Pickup" }) as HTMLInputElement;
+    const viewCb = screen.getByRole("checkbox", { name: "View" }) as HTMLInputElement;
+    const manageCb = screen.getByRole("checkbox", { name: "Manage" }) as HTMLInputElement;
+
+    // Consent and View are checked by default — uncheck both
+    fireEvent.click(consentCb);
+    fireEvent.click(viewCb);
+
+    const targetCb = screen.getByRole("checkbox", { name: label });
+    fireEvent.click(targetCb);
+
+    const checkboxes = {
+      consent: consentCb,
+      pickup: pickupCb,
+      view: viewCb,
+      manage: manageCb,
+    };
+
+    for (const [r, cb] of Object.entries(checkboxes)) {
+      if (r === right) {
+        expect(cb.checked).toBe(true);
+      } else {
+        expect(cb.checked).toBe(false);
+      }
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: "Save link" }));
+
+    await waitFor(() => {
+      expect(postCalls.some((c) => c.path === "/v1/households/guardians/link")).toBe(true);
+    });
+
+    const call = postCalls.find((c) => c.path === "/v1/households/guardians/link");
+    const body = call?.body as { rights?: Record<string, boolean> };
+    expect(body.rights).toEqual({
+      consent: right === "consent",
+      pickup: right === "pickup",
+      view: right === "view",
+      manage: right === "manage",
+    });
+  });
 });
