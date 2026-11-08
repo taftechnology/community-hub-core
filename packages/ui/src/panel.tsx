@@ -46,7 +46,7 @@ function Panel({
               {title}
             </HeadingTag>
           )}
-          {actions && <div className="flex items-center gap-2">{actions}</div>}
+          {actions && <div className="flex items-center gap-2 ml-auto">{actions}</div>}
         </div>
       )}
       <div data-slot="panel-body" className="p-4 grid gap-4">

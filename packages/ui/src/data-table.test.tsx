@@ -243,4 +243,25 @@ describe("DataTable", () => {
     expect(thead).not.toBeNull();
     expect(thead?.className).toContain("max-sm:sr-only");
   });
+
+  it("applies border-border to the header row and each body row", () => {
+    const { container } = render(
+      <DataTable
+        aria-label="Community Members"
+        columns={TEST_COLUMNS}
+        rows={TEST_ROWS}
+        rowKey={(row) => row.id}
+      />,
+    );
+
+    const headerRow = container.querySelector("thead tr");
+    expect(headerRow).not.toBeNull();
+    expect(headerRow?.className).toContain("border-border");
+
+    const bodyRows = container.querySelectorAll("tbody tr");
+    expect(bodyRows.length).toBe(2);
+    for (const tr of bodyRows) {
+      expect(tr.className).toContain("border-border");
+    }
+  });
 });

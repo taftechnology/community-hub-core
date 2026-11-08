@@ -33,7 +33,7 @@ export function DataTable<T>({
       className={cn("max-sm:block max-sm:w-full", className)}
     >
       <TableHeader role="rowgroup" className="max-sm:sr-only">
-        <TableRow role="row">
+        <TableRow role="row" className="border-border">
           {columns.map((column) => (
             <TableHead
               key={column.key}
@@ -51,7 +51,7 @@ export function DataTable<T>({
           <TableRow
             key={rowKey(row)}
             role="row"
-            className="max-sm:block max-sm:w-full max-sm:px-4 max-sm:py-3 max-sm:h-auto border-b"
+            className="max-sm:block max-sm:w-full max-sm:px-4 max-sm:py-3 max-sm:h-auto border-b border-border"
           >
             {columns.map((column) => (
               <TableCell

@@ -99,4 +99,15 @@ describe("Panel", () => {
     expect(heading.className).toContain("text-base");
     expect(heading.className).toContain("leading-[22px]");
   });
+
+  it("gives the actions wrapper ml-auto with and without a title", () => {
+    const { rerender } = render(
+      <Panel title="Settings" actions={<button type="button">Action</button>} />,
+    );
+    const actionButton = screen.getByRole("button", { name: "Action" });
+    expect(actionButton.parentElement?.className).toContain("ml-auto");
+
+    rerender(<Panel actions={<button type="button">Action</button>} />);
+    expect(actionButton.parentElement?.className).toContain("ml-auto");
+  });
 });
