@@ -4168,5 +4168,92 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
         expect(span?.textContent).toBe("None");
       }
     });
+
+    it("hides Edit contact and Avatar when update returns 404 and Contact not found is shown", async () => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      const adultContact = {
+        id: "person-saved-gone-1",
+        personId: "person-saved-gone-1",
+        isMinor: false,
+        givenName: "Tamsin",
+        familyName: "Drake",
+        version: 1,
+      };
+      const adultContactDetail = {
+        personId: "person-saved-gone-1",
+        householdId: null,
+        isMinor: false,
+        givenName: "Tamsin",
+        familyName: "Drake",
+        email: "tamsin@example.test",
+        phone: null,
+        dateOfBirth: null,
+        version: 1,
+      };
+
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+        const url = String(info);
+        const path = url.replace(/^https?:\/\/[^/]+/, "");
+
+        if (path === "/v1/access/capabilities") {
+          return mockCapabilitiesResponse({ canManage: true, canView: true, canReadMinors: false });
+        }
+        if (path === "/v1/billing/status") {
+          return new Response(
+            JSON.stringify({
+              state: "ok",
+              trial_end: null,
+              grace_until: null,
+              canView: true,
+              canManage: true,
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          );
+        }
+        if (path === "/v1/people/list") {
+          return new Response(JSON.stringify({ items: [adultContact], nextCursor: null }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (path === "/v1/people/read") {
+          return new Response(JSON.stringify(adultContactDetail), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (path === "/v1/people/update") {
+          return new Response(null, { status: 404 });
+        }
+        return new Response(null, { status: 404 });
+      });
+
+      await showContacts();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      expect(await screen.findByText("Tamsin")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "View Tamsin Drake" }));
+
+      expect(
+        await screen.findByRole("heading", { name: "Contact Details", level: 2 }),
+      ).toBeTruthy();
+      expect(await screen.findByRole("button", { name: "Edit contact" })).toBeTruthy();
+      expect(document.querySelectorAll('[data-slot="avatar"]')).toHaveLength(1);
+
+      fireEvent.click(screen.getByRole("button", { name: "Edit contact" }));
+      expect(await screen.findByRole("heading", { name: "Edit Contact", level: 2 })).toBeTruthy();
+
+      fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+      expect(await screen.findByText("Contact not found")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Edit contact" })).toBeNull();
+      expect(document.querySelectorAll('[data-slot="avatar"]')).toHaveLength(0);
+    });
   });
 });
