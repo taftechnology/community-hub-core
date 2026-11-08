@@ -1,10 +1,13 @@
 import {
   Alert,
+  Avatar,
   Button,
   DataTable,
+  type DataTableColumn,
   EmptyState,
   Input,
   Pagination,
+  Panel,
   RestrictedValue,
   Skeleton,
   Table,
@@ -279,6 +282,22 @@ export type MinorsSectionProps = {
   setUnlinkNotice?: (notice: string | null) => void;
 };
 
+function getGuardianLinkDetails(link: GuardianLink, household: HouseholdDetail) {
+  const guardian = household.adults.find((a) => a.personId === link.guardianId);
+  const minor = household.minors?.find((m) => m.personId === link.childId);
+  const guardianName = guardian ? `${guardian.givenName} ${guardian.familyName}` : link.guardianId;
+  const childName = minor ? `${minor.givenName} ${minor.familyName}` : link.childId;
+  const rightsList = [
+    link.rights.consent && "Consent",
+    link.rights.pickup && "Pickup",
+    link.rights.view && "View",
+    link.rights.manage && "Manage",
+  ]
+    .filter(Boolean)
+    .join(", ");
+  return { guardianName, childName, rightsList };
+}
+
 export function MinorsSection({
   detailHousehold,
   access,
@@ -299,140 +318,153 @@ export function MinorsSection({
   const canLinkGuardian = canManage && canRestricted && !isReadOnly;
   const canUnlinkGuardian = canManage && canRestricted && !isReadOnly;
 
+  const minorColumns: DataTableColumn<MinorMember>[] = [
+    {
+      key: "givenName",
+      header: "Given name",
+      primary: true,
+      render: (minor) => minor.givenName,
+    },
+    {
+      key: "familyName",
+      header: "Family name",
+      render: (minor) => minor.familyName,
+    },
+    {
+      key: "dateOfBirth",
+      header: "Date of birth",
+      render: (minor) =>
+        minor.dateOfBirth ? minor.dateOfBirth : <span className="text-muted-foreground">None</span>,
+    },
+  ];
+
+  const guardianColumns: DataTableColumn<GuardianLink>[] = [
+    {
+      key: "guardian",
+      header: "Guardian",
+      render: (link) => getGuardianLinkDetails(link, detailHousehold).guardianName,
+    },
+    {
+      key: "child",
+      header: "Child",
+      render: (link) => getGuardianLinkDetails(link, detailHousehold).childName,
+    },
+    {
+      key: "rights",
+      header: "Rights",
+      render: (link) =>
+        getGuardianLinkDetails(link, detailHousehold).rightsList || (
+          <span className="text-muted-foreground">None</span>
+        ),
+    },
+    ...(canUnlinkGuardian
+      ? [
+          {
+            key: "actions",
+            header: "Actions",
+            render: (link: GuardianLink) => {
+              const { guardianName, childName } = getGuardianLinkDetails(link, detailHousehold);
+              return unlinkingLinkId === link.linkId ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span>Are you sure you want to remove this guardian link?</span>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    disabled={submitting}
+                    onClick={() => handleConfirmUnlink?.(link.linkId)}
+                  >
+                    Confirm unlink
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={submitting}
+                    onClick={() => {
+                      setUnlinkingLinkId?.(null);
+                      setUnlinkNotice?.(null);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  aria-label={`Unlink ${guardianName} from ${childName}`}
+                  onClick={() => {
+                    setUnlinkingLinkId?.(link.linkId);
+                    setUnlinkNotice?.(null);
+                  }}
+                >
+                  Unlink
+                </Button>
+              );
+            },
+          },
+        ]
+      : []),
+  ];
+
   return (
     <>
-      <h3>Minors</h3>
-      {canAddMinor ? (
-        <div>
-          <Button type="button" onClick={openAddMinor}>
-            Add minor
-          </Button>
-        </div>
-      ) : null}
+      <Panel
+        title="Minors"
+        level={3}
+        actions={
+          canAddMinor ? (
+            <Button type="button" onClick={openAddMinor}>
+              Add minor
+            </Button>
+          ) : null
+        }
+      >
+        {detailHousehold.minors && detailHousehold.minors.length === 0 ? (
+          <p>No minor members</p>
+        ) : (
+          <DataTable
+            aria-label="Minor members"
+            rowKey={(minor) => minor.personId}
+            rows={detailHousehold.minors ?? []}
+            columns={minorColumns}
+          />
+        )}
 
-      {detailHousehold.minors && detailHousehold.minors.length === 0 ? (
-        <p>No minor members</p>
-      ) : (
-        <Table aria-label="Minor members">
-          <TableHeader>
-            <TableRow>
-              <TableHead scope="col">Given name</TableHead>
-              <TableHead scope="col">Family name</TableHead>
-              <TableHead scope="col">Date of birth</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {detailHousehold.minors?.map((minor) => (
-              <TableRow key={minor.personId}>
-                <TableCell>{minor.givenName}</TableCell>
-                <TableCell>{minor.familyName}</TableCell>
-                <TableCell>{minor.dateOfBirth ?? "None"}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+        {canReadLifeEvents && detailHousehold.minors
+          ? detailHousehold.minors.map((minor) => (
+              <LifeEventsPanel
+                key={minor.personId}
+                personId={minor.personId}
+                personName={`${minor.givenName} ${minor.familyName}`}
+                isReadOnly={isReadOnly}
+                canManage={canManage}
+              />
+            ))
+          : null}
+      </Panel>
 
-      {canReadLifeEvents && detailHousehold.minors
-        ? detailHousehold.minors.map((minor) => (
-            <LifeEventsPanel
-              key={minor.personId}
-              personId={minor.personId}
-              personName={`${minor.givenName} ${minor.familyName}`}
-              isReadOnly={isReadOnly}
-              canManage={canManage}
-            />
-          ))
-        : null}
-
-      <h3>Guardians</h3>
-      {canLinkGuardian ? (
-        <div>
-          <Button type="button" onClick={openLinkGuardian}>
-            Link guardian
-          </Button>
-        </div>
-      ) : null}
-
-      {detailHousehold.guardians.length === 0 ? (
-        <p>No guardian links</p>
-      ) : (
-        <Table aria-label="Guardian links">
-          <TableHeader>
-            <TableRow>
-              <TableHead scope="col">Guardian</TableHead>
-              <TableHead scope="col">Child</TableHead>
-              <TableHead scope="col">Rights</TableHead>
-              {canUnlinkGuardian ? <TableHead scope="col">Actions</TableHead> : null}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {detailHousehold.guardians.map((link) => {
-              const guardian = detailHousehold.adults.find((a) => a.personId === link.guardianId);
-              const minor = detailHousehold.minors?.find((m) => m.personId === link.childId);
-              const guardianName = guardian
-                ? `${guardian.givenName} ${guardian.familyName}`
-                : link.guardianId;
-              const childName = minor ? `${minor.givenName} ${minor.familyName}` : link.childId;
-              const rightsList = [
-                link.rights.consent && "Consent",
-                link.rights.pickup && "Pickup",
-                link.rights.view && "View",
-                link.rights.manage && "Manage",
-              ]
-                .filter(Boolean)
-                .join(", ");
-              return (
-                <TableRow key={link.linkId}>
-                  <TableCell>{guardianName}</TableCell>
-                  <TableCell>{childName}</TableCell>
-                  <TableCell>{rightsList || "None"}</TableCell>
-                  {canUnlinkGuardian ? (
-                    <TableCell>
-                      {unlinkingLinkId === link.linkId ? (
-                        <div>
-                          <span>Are you sure you want to remove this guardian link?</span>
-                          <Button
-                            type="button"
-                            variant="destructive"
-                            disabled={submitting}
-                            onClick={() => handleConfirmUnlink?.(link.linkId)}
-                          >
-                            Confirm unlink
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            disabled={submitting}
-                            onClick={() => {
-                              setUnlinkingLinkId?.(null);
-                              setUnlinkNotice?.(null);
-                            }}
-                          >
-                            Cancel
-                          </Button>
-                        </div>
-                      ) : (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          aria-label={`Unlink ${guardianName} from ${childName}`}
-                          onClick={() => {
-                            setUnlinkingLinkId?.(link.linkId);
-                            setUnlinkNotice?.(null);
-                          }}
-                        >
-                          Unlink
-                        </Button>
-                      )}
-                    </TableCell>
-                  ) : null}
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      )}
+      <Panel
+        title="Guardians"
+        level={3}
+        actions={
+          canLinkGuardian ? (
+            <Button type="button" onClick={openLinkGuardian}>
+              Link guardian
+            </Button>
+          ) : null
+        }
+      >
+        {detailHousehold.guardians.length === 0 ? (
+          <p>No guardian links</p>
+        ) : (
+          <DataTable
+            aria-label="Guardian links"
+            rowKey={(link) => link.linkId}
+            rows={detailHousehold.guardians}
+            columns={guardianColumns}
+          />
+        )}
+      </Panel>
     </>
   );
 }
@@ -1887,6 +1919,43 @@ export function FamilyRecordsPage() {
     );
   }
 
+  const adultColumns: DataTableColumn<AdultMember>[] = [
+    {
+      key: "givenName",
+      header: "Given name",
+      primary: true,
+      render: (adult) => (
+        <span className="flex items-center gap-2">
+          <Avatar name={`${adult.givenName} ${adult.familyName}`} />
+          <span>{adult.givenName}</span>
+        </span>
+      ),
+    },
+    {
+      key: "familyName",
+      header: "Family name",
+      render: (adult) => adult.familyName,
+    },
+    ...(canMoveAdult
+      ? [
+          {
+            key: "actions",
+            header: "Actions",
+            render: (adult: AdultMember) => (
+              <Button
+                type="button"
+                variant="outline"
+                aria-label={`Move ${adult.givenName} ${adult.familyName}`}
+                onClick={() => openMoveAdult(adult)}
+              >
+                Move adult
+              </Button>
+            ),
+          },
+        ]
+      : []),
+  ];
+
   if (view === "detail") {
     return (
       <>
@@ -1898,20 +1967,9 @@ export function FamilyRecordsPage() {
           </Alert>
         ) : null}
 
-        <h2 ref={detailHeadingRef} tabIndex={-1}>
-          Household Details
-        </h2>
-
-        <div>
-          <Button type="button" onClick={backToList}>
-            Back to list
-          </Button>
-          {canRename && detailHousehold ? (
-            <Button type="button" onClick={openRename}>
-              Rename household
-            </Button>
-          ) : null}
-        </div>
+        {!canRestricted ? (
+          <Alert live="polite">Household names and children are hidden for your role.</Alert>
+        ) : null}
 
         {unlinkNotice ? (
           <Alert ref={unlinkAlertRef} tabIndex={-1} variant="destructive" role="alert">
@@ -1919,82 +1977,89 @@ export function FamilyRecordsPage() {
           </Alert>
         ) : null}
 
-        {detailLoading ? <p>Loading household details...</p> : null}
+        <Panel
+          title="Household Details"
+          level={2}
+          headingRef={detailHeadingRef}
+          headingTabIndex={-1}
+          actions={
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" onClick={backToList}>
+                Back to list
+              </Button>
+              {canRename && detailHousehold ? (
+                <Button type="button" onClick={openRename}>
+                  Rename household
+                </Button>
+              ) : null}
+            </div>
+          }
+        >
+          {detailLoading ? (
+            <>
+              <Skeleton />
+              <span className="sr-only">Loading household details...</span>
+            </>
+          ) : null}
 
-        {detailNotFound ? (
-          <Alert live="polite">
-            <span>Household not found</span>
-          </Alert>
-        ) : null}
+          {detailNotFound ? (
+            <Alert live="polite">
+              <span>Household not found</span>
+            </Alert>
+          ) : null}
 
-        {detailError ? (
-          <Alert variant="destructive" live="assertive">
-            <span>Failed to load household</span>
-            <Button type="button" onClick={reloadDetail}>
-              Retry
-            </Button>
-          </Alert>
-        ) : null}
+          {detailError ? (
+            <Alert variant="destructive" live="assertive">
+              <span>Failed to load household</span>
+              <Button type="button" onClick={reloadDetail}>
+                Retry
+              </Button>
+            </Alert>
+          ) : null}
+
+          {!detailLoading && !detailNotFound && !detailError && detailHousehold?.label ? (
+            <p>
+              <strong>Household name:</strong> {detailHousehold.label}
+            </p>
+          ) : null}
+        </Panel>
 
         {!detailLoading && !detailNotFound && !detailError && detailHousehold ? (
-          <div>
-            {detailHousehold.label ? (
-              <p>
-                <strong>Household name:</strong> {detailHousehold.label}
-              </p>
-            ) : null}
+          <>
+            <Panel
+              title="Adults"
+              level={3}
+              actions={
+                canAddAdult ? (
+                  <Button type="button" onClick={openAddAdult}>
+                    Add adult
+                  </Button>
+                ) : null
+              }
+            >
+              {detailHousehold.adults.length === 0 ? (
+                <p>No adult members</p>
+              ) : (
+                <DataTable
+                  aria-label="Adult members"
+                  rowKey={(adult) => adult.personId}
+                  rows={detailHousehold.adults}
+                  columns={adultColumns}
+                />
+              )}
 
-            <h3>Adults</h3>
-            {canAddAdult ? (
-              <Button type="button" onClick={openAddAdult}>
-                Add adult
-              </Button>
-            ) : null}
-            {detailHousehold.adults.length === 0 ? (
-              <p>No adult members</p>
-            ) : (
-              <Table aria-label="Adult members">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead scope="col">Given name</TableHead>
-                    <TableHead scope="col">Family name</TableHead>
-                    {canMoveAdult ? <TableHead scope="col">Actions</TableHead> : null}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {detailHousehold.adults.map((adult) => (
-                    <TableRow key={adult.personId}>
-                      <TableCell>{adult.givenName}</TableCell>
-                      <TableCell>{adult.familyName}</TableCell>
-                      {canMoveAdult ? (
-                        <TableCell>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            aria-label={`Move ${adult.givenName} ${adult.familyName}`}
-                            onClick={() => openMoveAdult(adult)}
-                          >
-                            Move adult
-                          </Button>
-                        </TableCell>
-                      ) : null}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-
-            {canReadLifeEvents
-              ? detailHousehold.adults.map((adult) => (
-                  <LifeEventsPanel
-                    key={adult.personId}
-                    personId={adult.personId}
-                    personName={`${adult.givenName} ${adult.familyName}`}
-                    isReadOnly={isReadOnly}
-                    canManage={canManage && !hideWrites}
-                  />
-                ))
-              : null}
+              {canReadLifeEvents
+                ? detailHousehold.adults.map((adult) => (
+                    <LifeEventsPanel
+                      key={adult.personId}
+                      personId={adult.personId}
+                      personName={`${adult.givenName} ${adult.familyName}`}
+                      isReadOnly={isReadOnly}
+                      canManage={canManage && !hideWrites}
+                    />
+                  ))
+                : null}
+            </Panel>
 
             {access.permissions["people.restricted.read"] && detailHousehold.minors ? (
               <MinorsSection
@@ -2011,7 +2076,7 @@ export function FamilyRecordsPage() {
                 setUnlinkNotice={setUnlinkNotice}
               />
             ) : null}
-          </div>
+          </>
         ) : null}
       </>
     );
