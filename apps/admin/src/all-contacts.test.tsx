@@ -3739,4 +3739,434 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
       expect(screen.queryByRole("button", { name: "Add contact" })).toBeNull();
     });
   });
+
+  describe("Task 6 Contact Details, add, and edit restyle", () => {
+    it("renders Avatar only when isMinor is explicitly false, and omits Avatar when isMinor is missing or true (Pin 27)", async () => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      const personAdult = {
+        id: "person-p27-adult",
+        personId: "person-p27-adult",
+        isMinor: false,
+        givenName: "Doran",
+        familyName: "Gable",
+        version: 1,
+      };
+      const personMissing = {
+        id: "person-p27-missing",
+        personId: "person-p27-missing",
+        isMinor: false,
+        givenName: "Lyra",
+        familyName: "Vance",
+        version: 1,
+      };
+      const personMinor = {
+        id: "person-p27-minor",
+        personId: "person-p27-minor",
+        isMinor: true,
+        givenName: "Corin",
+        familyName: "Sterling",
+        version: 1,
+      };
+
+      const detailAdult = {
+        personId: "person-p27-adult",
+        isMinor: false,
+        givenName: "Doran",
+        familyName: "Gable",
+        email: "doran@example.test",
+        phone: null,
+        dateOfBirth: null,
+        version: 1,
+      };
+      const detailMissing = {
+        personId: "person-p27-missing",
+        // isMinor omitted
+        givenName: "Lyra",
+        familyName: "Vance",
+        email: "lyra@example.test",
+        phone: null,
+        dateOfBirth: null,
+        version: 1,
+      };
+      const detailMinor = {
+        personId: "person-p27-minor",
+        isMinor: true,
+        givenName: "Corin",
+        familyName: "Sterling",
+        email: null,
+        phone: null,
+        dateOfBirth: null,
+        version: 1,
+      };
+
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
+        const url = String(info);
+        const path = url.replace(/^https?:\/\/[^/]+/, "");
+        const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+
+        if (path === "/v1/access/capabilities") {
+          return mockCapabilitiesResponse({ canManage: true, canView: true, canReadMinors: true });
+        }
+        if (path === "/v1/people/list") {
+          if (body.kind === "minors") {
+            return new Response(JSON.stringify({ items: [personMinor], nextCursor: null }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          return new Response(
+            JSON.stringify({ items: [personAdult, personMissing], nextCursor: null }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          );
+        }
+        if (path === "/v1/people/read") {
+          if (body.personId === "person-p27-adult") {
+            return new Response(JSON.stringify(detailAdult), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          if (body.personId === "person-p27-missing") {
+            return new Response(JSON.stringify(detailMissing), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          if (body.personId === "person-p27-minor") {
+            return new Response(JSON.stringify(detailMinor), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          }
+        }
+        return new Response(null, { status: 404 });
+      });
+
+      await showContacts();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      // Case 1: isMinor is false -> exactly one avatar shows with aria-hidden="true"
+      expect(await screen.findByText("Doran")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "View Doran Gable" }));
+      expect(
+        await screen.findByRole("heading", { name: "Contact Details", level: 2 }),
+      ).toBeTruthy();
+      expect(await screen.findByText("doran@example.test")).toBeTruthy();
+      const avatarsAdult = document.querySelectorAll('[data-slot="avatar"]');
+      expect(avatarsAdult).toHaveLength(1);
+      expect(avatarsAdult[0]?.getAttribute("aria-hidden")).toBe("true");
+
+      // Back to list
+      fireEvent.click(screen.getByRole("button", { name: "Back to list" }));
+      expect(await screen.findByText("Lyra")).toBeTruthy();
+
+      // Case 2: isMinor is missing -> no avatar shows
+      fireEvent.click(screen.getByRole("button", { name: "View Lyra Vance" }));
+      expect(
+        await screen.findByRole("heading", { name: "Contact Details", level: 2 }),
+      ).toBeTruthy();
+      expect(await screen.findByText("lyra@example.test")).toBeTruthy();
+      expect(document.querySelectorAll('[data-slot="avatar"]')).toHaveLength(0);
+
+      // Back to list, switch to minors tab
+      fireEvent.click(screen.getByRole("button", { name: "Back to list" }));
+      const minorsTab = await screen.findByRole("button", { name: "Minors" });
+      fireEvent.click(minorsTab);
+
+      // Case 3: isMinor is true -> no avatar shows
+      expect(await screen.findByText("Corin")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "View Corin Sterling" }));
+      expect(
+        await screen.findByRole("heading", { name: "Contact Details", level: 2 }),
+      ).toBeTruthy();
+      expect(await screen.findByText("Corin")).toBeTruthy();
+      expect(document.querySelectorAll('[data-slot="avatar"]')).toHaveLength(0);
+    });
+
+    it("shows Edit contact when isMinor is missing from detail response", async () => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      const personMissing = {
+        id: "person-edit-missing",
+        personId: "person-edit-missing",
+        isMinor: false,
+        givenName: "Bram",
+        familyName: "Calder",
+        version: 1,
+      };
+      const detailMissing = {
+        personId: "person-edit-missing",
+        // isMinor omitted
+        givenName: "Bram",
+        familyName: "Calder",
+        email: "bram@example.test",
+        phone: null,
+        dateOfBirth: null,
+        version: 1,
+      };
+
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+        const url = String(info);
+        const path = url.replace(/^https?:\/\/[^/]+/, "");
+
+        if (path === "/v1/access/capabilities") {
+          return mockCapabilitiesResponse({ canManage: true, canView: true, canReadMinors: false });
+        }
+        if (path === "/v1/people/list") {
+          return new Response(JSON.stringify({ items: [personMissing], nextCursor: null }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (path === "/v1/people/read") {
+          return new Response(JSON.stringify(detailMissing), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(null, { status: 404 });
+      });
+
+      await showContacts();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      expect(await screen.findByText("Bram")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "View Bram Calder" }));
+
+      expect(
+        await screen.findByRole("heading", { name: "Contact Details", level: 2 }),
+      ).toBeTruthy();
+      expect(await screen.findByRole("button", { name: "Edit contact" })).toBeTruthy();
+    });
+
+    it("keeps Contact Details level 2 heading mounted while loading, on 404, and on failed load", async () => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      const personItem = {
+        id: "person-heading-1",
+        personId: "person-heading-1",
+        isMinor: false,
+        givenName: "Elora",
+        familyName: "Quinn",
+        version: 1,
+      };
+
+      let resolvePending: ((res: Response) => void) | undefined;
+      let readStatus: "pending" | "404" | "500" = "pending";
+
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+        const url = String(info);
+        const path = url.replace(/^https?:\/\/[^/]+/, "");
+
+        if (path === "/v1/access/capabilities") {
+          return mockCapabilitiesResponse({ canManage: true, canView: true, canReadMinors: false });
+        }
+        if (path === "/v1/people/list") {
+          return new Response(JSON.stringify({ items: [personItem], nextCursor: null }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (path === "/v1/people/read") {
+          if (readStatus === "pending") {
+            return new Promise<Response>((resolve) => {
+              resolvePending = resolve;
+            });
+          }
+          if (readStatus === "404") {
+            return new Response(null, { status: 404 });
+          }
+          if (readStatus === "500") {
+            return new Response(null, { status: 500 });
+          }
+        }
+        return new Response(null, { status: 404 });
+      });
+
+      await showContacts();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      expect(await screen.findByText("Elora")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "View Elora Quinn" }));
+
+      // 1. While loading / pending
+      expect(screen.getByRole("heading", { name: "Contact Details", level: 2 })).toBeTruthy();
+
+      // 2. Resolve as 404 ("Contact not found")
+      resolvePending!(new Response(null, { status: 404 }));
+      expect(await screen.findByText("Contact not found")).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Contact Details", level: 2 })).toBeTruthy();
+
+      // 3. Failed load ("Failed to load contact")
+      readStatus = "500";
+      fireEvent.click(screen.getByRole("button", { name: "Back to list" }));
+      expect(await screen.findByText("Elora")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "View Elora Quinn" }));
+
+      expect(await screen.findByText("Failed to load contact")).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Contact Details", level: 2 })).toBeTruthy();
+    });
+
+    it("shows skeleton with aria-hidden and Loading contact details in a plain sr-only span with no role or aria-live while loading", async () => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      const personItem = {
+        id: "person-loading-1",
+        personId: "person-loading-1",
+        isMinor: false,
+        givenName: "Thane",
+        familyName: "Rennick",
+        version: 1,
+      };
+
+      let resolvePending: ((res: Response) => void) | undefined;
+
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+        const url = String(info);
+        const path = url.replace(/^https?:\/\/[^/]+/, "");
+
+        if (path === "/v1/access/capabilities") {
+          return mockCapabilitiesResponse({ canManage: true, canView: true, canReadMinors: false });
+        }
+        if (path === "/v1/people/list") {
+          return new Response(JSON.stringify({ items: [personItem], nextCursor: null }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (path === "/v1/people/read") {
+          return new Promise<Response>((resolve) => {
+            resolvePending = resolve;
+          });
+        }
+        return new Response(null, { status: 404 });
+      });
+
+      await showContacts();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      expect(await screen.findByText("Thane")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "View Thane Rennick" }));
+
+      const skeleton = await waitFor(() => {
+        const el = document.querySelector('[data-slot="skeleton"]');
+        expect(el).not.toBeNull();
+        return el!;
+      });
+      expect(skeleton.getAttribute("aria-hidden")).toBe("true");
+
+      const loadingText = screen.getByText("Loading contact details...");
+      expect(loadingText.tagName.toLowerCase()).toBe("span");
+      expect(loadingText.classList.contains("sr-only")).toBe(true);
+      expect(loadingText.getAttribute("role")).toBeNull();
+      expect(loadingText.getAttribute("aria-live")).toBeNull();
+
+      const panel = document.querySelector('[data-slot="panel"]');
+      expect(panel).not.toBeNull();
+      let current: HTMLElement | null = loadingText.parentElement;
+      while (current && current !== panel) {
+        expect(current.getAttribute("role")).toBeNull();
+        expect(current.getAttribute("aria-live")).toBeNull();
+        current = current.parentElement;
+      }
+      expect(panel?.getAttribute("role")).toBeNull();
+      expect(panel?.getAttribute("aria-live")).toBeNull();
+
+      resolvePending!(new Response(null, { status: 404 }));
+      await screen.findByText("Contact not found");
+    });
+
+    it("renders dt labels in order with colons, and shows None for missing email, phone, and date of birth", async () => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      const personItem = {
+        id: "person-labels-1",
+        personId: "person-labels-1",
+        isMinor: false,
+        givenName: "Kaelen",
+        familyName: "Vex",
+        version: 1,
+      };
+      const detailItem = {
+        personId: "person-labels-1",
+        isMinor: false,
+        givenName: "Kaelen",
+        familyName: "Vex",
+        email: null,
+        phone: null,
+        dateOfBirth: null,
+        version: 1,
+      };
+
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+        const url = String(info);
+        const path = url.replace(/^https?:\/\/[^/]+/, "");
+
+        if (path === "/v1/access/capabilities") {
+          return mockCapabilitiesResponse({ canManage: true, canView: true, canReadMinors: false });
+        }
+        if (path === "/v1/people/list") {
+          return new Response(JSON.stringify({ items: [personItem], nextCursor: null }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (path === "/v1/people/read") {
+          return new Response(JSON.stringify(detailItem), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(null, { status: 404 });
+      });
+
+      await showContacts();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      expect(await screen.findByText("Kaelen")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "View Kaelen Vex" }));
+
+      expect(
+        await screen.findByRole("heading", { name: "Contact Details", level: 2 }),
+      ).toBeTruthy();
+      await screen.findByText("Given name:");
+
+      const dts = Array.from(document.querySelectorAll('[data-slot="panel"] dt'));
+      expect(dts.map((dt) => dt.textContent?.trim())).toEqual([
+        "Given name:",
+        "Family name:",
+        "Email:",
+        "Phone:",
+        "Date of birth:",
+      ]);
+
+      const dds = Array.from(document.querySelectorAll('[data-slot="panel"] dd'));
+      expect(dds).toHaveLength(5);
+      expect(dds[0]?.textContent?.trim()).toBe("Kaelen");
+      expect(dds[1]?.textContent?.trim()).toBe("Vex");
+      expect(dds[2]?.textContent?.trim()).toBe("None");
+      expect(dds[3]?.textContent?.trim()).toBe("None");
+      expect(dds[4]?.textContent?.trim()).toBe("None");
+
+      for (const index of [2, 3, 4]) {
+        const span = dds[index]?.querySelector("span");
+        expect(span?.classList.contains("text-muted-foreground")).toBe(true);
+        expect(span?.textContent).toBe("None");
+      }
+    });
+  });
 });

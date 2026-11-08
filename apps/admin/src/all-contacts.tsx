@@ -3,7 +3,9 @@ import {
   Avatar,
   Button,
   DataTable,
+  DescriptionList,
   EmptyState,
+  Field,
   FilterBar,
   Input,
   Pagination,
@@ -34,6 +36,7 @@ type ListResponse = {
 type PersonDetail = {
   personId: string;
   isMinor: boolean;
+  isAdultConfirmed: boolean;
   givenName: string;
   familyName: string;
   email: string | null;
@@ -95,6 +98,7 @@ function parsePersonDetail(value: unknown): PersonDetail | null {
   return {
     personId: value.personId,
     isMinor: Boolean(value.isMinor),
+    isAdultConfirmed: value.isMinor === false,
     givenName: typeof value.givenName === "string" ? value.givenName : "",
     familyName: typeof value.familyName === "string" ? value.familyName : "",
     email: typeof value.email === "string" ? value.email : null,
@@ -115,51 +119,46 @@ function ContactFields({
 }) {
   return (
     <>
-      <div>
-        <label htmlFor={`${prefix}-given-name`}>Given name</label>
+      <Field label="Given name">
         <Input
           id={`${prefix}-given-name`}
           value={data.givenName}
           onChange={(e) => onChange({ ...data, givenName: e.target.value })}
           required
         />
-      </div>
-      <div>
-        <label htmlFor={`${prefix}-family-name`}>Family name</label>
+      </Field>
+      <Field label="Family name">
         <Input
           id={`${prefix}-family-name`}
           value={data.familyName}
           onChange={(e) => onChange({ ...data, familyName: e.target.value })}
           required
         />
-      </div>
-      <div>
-        <label htmlFor={`${prefix}-email`}>Email</label>
+      </Field>
+      <Field label="Email">
         <Input
           id={`${prefix}-email`}
           type="email"
           value={data.email}
           onChange={(e) => onChange({ ...data, email: e.target.value })}
         />
-      </div>
-      <div>
-        <label htmlFor={`${prefix}-phone`}>Phone</label>
+      </Field>
+      <Field label="Phone">
         <Input
           id={`${prefix}-phone`}
           type="tel"
           value={data.phone}
           onChange={(e) => onChange({ ...data, phone: e.target.value })}
         />
-      </div>
-      <div>
-        <label htmlFor={`${prefix}-dob`}>Date of birth</label>
+      </Field>
+      <Field label="Date of birth">
         <Input
           id={`${prefix}-dob`}
           type="date"
           value={data.dateOfBirth}
           onChange={(e) => onChange({ ...data, dateOfBirth: e.target.value })}
         />
-      </div>
+      </Field>
     </>
   );
 }
@@ -620,59 +619,84 @@ export function AllContactsPage() {
   }
 
   if (view === "detail") {
+    const detailLoaded = !detailLoading && !detailNotFound && !detailError && detailPerson !== null;
+    const canShowAvatar = detailLoaded && detailPerson.isAdultConfirmed;
+    const canShowEdit =
+      detailLoaded && !detailPerson.isMinor && access.permissions["people.manage"] && !hideWrites;
+    const hasDetailActions = canShowAvatar || canShowEdit;
+
     return (
       <>
         <ScreenTitle>All Contacts</ScreenTitle>
-        <h2 ref={detailHeadingRef} tabIndex={-1}>
-          Contact Details
-        </h2>
-
         <Button type="button" onClick={backToList}>
           Back to list
         </Button>
 
-        {detailLoading ? <p>Loading contact details...</p> : null}
+        <Panel
+          title="Contact Details"
+          level={2}
+          headingRef={detailHeadingRef}
+          headingTabIndex={-1}
+          actions={
+            hasDetailActions ? (
+              <div className="flex items-center gap-2">
+                {canShowAvatar ? (
+                  <Avatar name={`${detailPerson.givenName} ${detailPerson.familyName}`} />
+                ) : null}
+                {canShowEdit ? (
+                  <Button type="button" onClick={() => openEdit(detailPerson)}>
+                    Edit contact
+                  </Button>
+                ) : null}
+              </div>
+            ) : undefined
+          }
+        >
+          {detailLoading ? (
+            <>
+              <Skeleton />
+              <span className="sr-only">Loading contact details...</span>
+            </>
+          ) : null}
 
-        {detailNotFound ? (
-          <Alert live="polite">
-            <span>Contact not found</span>
-          </Alert>
-        ) : null}
+          {detailNotFound ? (
+            <Alert live="polite">
+              <span>Contact not found</span>
+            </Alert>
+          ) : null}
 
-        {detailError ? (
-          <Alert variant="destructive" live="assertive">
-            <span>Failed to load contact</span>
-            <Button type="button" onClick={reloadDetail}>
-              Retry
-            </Button>
-          </Alert>
-        ) : null}
-
-        {!detailLoading && !detailNotFound && !detailError && detailPerson ? (
-          <div>
-            <p>
-              <strong>Given name:</strong> {detailPerson.givenName}
-            </p>
-            <p>
-              <strong>Family name:</strong> {detailPerson.familyName}
-            </p>
-            <p>
-              <strong>Email:</strong> {detailPerson.email ?? "None"}
-            </p>
-            <p>
-              <strong>Phone:</strong> {detailPerson.phone ?? "None"}
-            </p>
-            <p>
-              <strong>Date of birth:</strong> {detailPerson.dateOfBirth ?? "None"}
-            </p>
-
-            {!detailPerson.isMinor && access.permissions["people.manage"] && !hideWrites ? (
-              <Button type="button" onClick={() => openEdit(detailPerson)}>
-                Edit contact
+          {detailError ? (
+            <Alert variant="destructive" live="assertive">
+              <span>Failed to load contact</span>
+              <Button type="button" onClick={reloadDetail}>
+                Retry
               </Button>
-            ) : null}
-          </div>
-        ) : null}
+            </Alert>
+          ) : null}
+
+          {detailLoaded ? (
+            <DescriptionList
+              items={[
+                { term: "Given name:", value: detailPerson.givenName },
+                { term: "Family name:", value: detailPerson.familyName },
+                {
+                  term: "Email:",
+                  value: detailPerson.email ?? <span className="text-muted-foreground">None</span>,
+                },
+                {
+                  term: "Phone:",
+                  value: detailPerson.phone ?? <span className="text-muted-foreground">None</span>,
+                },
+                {
+                  term: "Date of birth:",
+                  value: detailPerson.dateOfBirth ?? (
+                    <span className="text-muted-foreground">None</span>
+                  ),
+                },
+              ]}
+            />
+          ) : null}
+        </Panel>
       </>
     );
   }
@@ -681,28 +705,26 @@ export function AllContactsPage() {
     return (
       <>
         <ScreenTitle>All Contacts</ScreenTitle>
-        <h2 ref={addHeadingRef} tabIndex={-1}>
-          Add Contact
-        </h2>
+        <Panel title="Add Contact" level={2} headingRef={addHeadingRef} headingTabIndex={-1}>
+          {addNotice ? (
+            <Alert ref={addAlertRef} tabIndex={-1} variant="destructive" role="alert">
+              <span>{addNotice}</span>
+            </Alert>
+          ) : null}
 
-        {addNotice ? (
-          <Alert ref={addAlertRef} tabIndex={-1} variant="destructive" role="alert">
-            <span>{addNotice}</span>
-          </Alert>
-        ) : null}
+          <form onSubmit={handleAddSubmit} className="grid gap-4">
+            <ContactFields prefix="add" data={addForm} onChange={setAddForm} />
 
-        <form onSubmit={handleAddSubmit}>
-          <ContactFields prefix="add" data={addForm} onChange={setAddForm} />
-
-          <div>
-            <Button type="submit" disabled={submitting}>
-              Save contact
-            </Button>
-            <Button type="button" variant="outline" onClick={backToList}>
-              Cancel
-            </Button>
-          </div>
-        </form>
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" disabled={submitting}>
+                Save contact
+              </Button>
+              <Button type="button" variant="outline" onClick={backToList}>
+                Cancel
+              </Button>
+            </div>
+          </form>
+        </Panel>
       </>
     );
   }
@@ -711,40 +733,38 @@ export function AllContactsPage() {
     return (
       <>
         <ScreenTitle>All Contacts</ScreenTitle>
-        <h2 ref={editHeadingRef} tabIndex={-1}>
-          Edit Contact
-        </h2>
+        <Panel title="Edit Contact" level={2} headingRef={editHeadingRef} headingTabIndex={-1}>
+          {editConflict ? (
+            <Alert ref={editAlertRef} tabIndex={-1} role="alert">
+              <span>
+                This contact was changed by someone else, or that email or phone is already in use.
+                Reload to see the latest details; your unsaved changes will be discarded.
+              </span>
+              <Button type="button" onClick={reloadDetail}>
+                Reload
+              </Button>
+            </Alert>
+          ) : null}
 
-        {editConflict ? (
-          <Alert ref={editAlertRef} tabIndex={-1} role="alert">
-            <span>
-              This contact was changed by someone else, or that email or phone is already in use.
-              Reload to see the latest details; your unsaved changes will be discarded.
-            </span>
-            <Button type="button" onClick={reloadDetail}>
-              Reload
-            </Button>
-          </Alert>
-        ) : null}
+          {editNotice ? (
+            <Alert ref={editAlertRef} tabIndex={-1} variant="destructive" role="alert">
+              <span>{editNotice}</span>
+            </Alert>
+          ) : null}
 
-        {editNotice ? (
-          <Alert ref={editAlertRef} tabIndex={-1} variant="destructive" role="alert">
-            <span>{editNotice}</span>
-          </Alert>
-        ) : null}
+          <form onSubmit={handleEditSubmit} className="grid gap-4">
+            <ContactFields prefix="edit" data={editForm} onChange={setEditForm} />
 
-        <form onSubmit={handleEditSubmit}>
-          <ContactFields prefix="edit" data={editForm} onChange={setEditForm} />
-
-          <div>
-            <Button type="submit" disabled={submitting}>
-              Save changes
-            </Button>
-            <Button type="button" variant="outline" onClick={() => setView("detail")}>
-              Cancel
-            </Button>
-          </div>
-        </form>
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" disabled={submitting}>
+                Save changes
+              </Button>
+              <Button type="button" variant="outline" onClick={() => setView("detail")}>
+                Cancel
+              </Button>
+            </div>
+          </form>
+        </Panel>
       </>
     );
   }
