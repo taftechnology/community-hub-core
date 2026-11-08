@@ -1,13 +1,14 @@
 import {
   Alert,
+  Avatar,
   Button,
+  DataTable,
+  EmptyState,
+  FilterBar,
   Input,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Pagination,
+  Panel,
+  Skeleton,
 } from "@community-hub/ui";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
@@ -780,83 +781,94 @@ export function AllContactsPage() {
         ) : null}
       </div>
 
-      {activeTab === "adults" ? (
-        <form onSubmit={handleSearchSubmit}>
-          <label htmlFor="contact-search-input">
-            Search contacts
-            <Input
-              id="contact-search-input"
-              value={searchDraft}
-              onChange={(event) => setSearchDraft(event.target.value)}
-            />
-          </label>
-          <Button type="submit">Search</Button>
-        </form>
-      ) : null}
-
-      {error ? (
-        <Alert variant="destructive" live="assertive">
-          <span>Failed to load contacts</span>
-          <Button type="button" onClick={() => reload()}>
-            Retry
-          </Button>
-        </Alert>
-      ) : null}
-
-      {!loading && !error && items !== null ? (
-        <>
-          {access.permissions["people.manage"] &&
+      <Panel
+        actions={
+          !loading &&
+          !error &&
+          items !== null &&
+          access.permissions["people.manage"] &&
           !hideWrites &&
           activeTab === "adults" &&
           (!submittedSearch || items.length > 0) ? (
-            <div>
-              <Button type="button" onClick={openAdd}>
-                Add contact
-              </Button>
-            </div>
-          ) : null}
+            <Button type="button" onClick={openAdd}>
+              Add contact
+            </Button>
+          ) : undefined
+        }
+        footer={
+          !loading && !error && items !== null && items.length > 0 && nextCursor !== null ? (
+            <Pagination cursor={nextCursor} onNext={handleNextPage} />
+          ) : undefined
+        }
+      >
+        {activeTab === "adults" ? (
+          <FilterBar
+            label="Search contacts"
+            inputId="contact-search-input"
+            value={searchDraft}
+            onValueChange={setSearchDraft}
+            onSubmit={handleSearchSubmit}
+          />
+        ) : null}
 
-          {items.length === 0 ? (
-            <p>{submittedSearch ? "No contacts match" : "No contacts yet"}</p>
+        {error ? (
+          <Alert variant="destructive" live="assertive">
+            <span>Failed to load contacts</span>
+            <Button type="button" onClick={() => reload()}>
+              Retry
+            </Button>
+          </Alert>
+        ) : null}
+
+        {loading ? <Skeleton /> : null}
+
+        {!loading && !error && items !== null ? (
+          items.length === 0 ? (
+            <EmptyState message={submittedSearch ? "No contacts match" : "No contacts yet"} />
           ) : (
-            <>
-              <Table aria-label="Contacts">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead scope="col">Given name</TableHead>
-                    <TableHead scope="col">Family name</TableHead>
-                    <TableHead scope="col">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {items.map((person) => (
-                    <TableRow key={person.id}>
-                      <TableCell>{person.givenName}</TableCell>
-                      <TableCell>{person.familyName}</TableCell>
-                      <TableCell>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          aria-label={`View ${person.givenName} ${person.familyName}`}
-                          onClick={() => openDetail(person.id)}
-                        >
-                          View
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-
-              {nextCursor !== null ? (
-                <Button type="button" onClick={() => handleNextPage(nextCursor)}>
-                  Next page
-                </Button>
-              ) : null}
-            </>
-          )}
-        </>
-      ) : null}
+            <DataTable
+              aria-label="Contacts"
+              rowKey={(person) => person.id}
+              columns={[
+                {
+                  key: "givenName",
+                  header: "Given name",
+                  primary: true,
+                  render: (person) =>
+                    activeTab === "adults" ? (
+                      <span className="flex items-center gap-2">
+                        <Avatar name={`${person.givenName} ${person.familyName}`} />
+                        <span>{person.givenName}</span>
+                      </span>
+                    ) : (
+                      person.givenName
+                    ),
+                },
+                {
+                  key: "familyName",
+                  header: "Family name",
+                  render: (person) => person.familyName,
+                },
+                {
+                  key: "actions",
+                  header: "Actions",
+                  render: (person) => (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      aria-label={`View ${person.givenName} ${person.familyName}`}
+                      onClick={() => openDetail(person.id)}
+                    >
+                      View
+                    </Button>
+                  ),
+                },
+              ]}
+              rows={items}
+            />
+          )
+        ) : null}
+      </Panel>
     </>
   );
 }

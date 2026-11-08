@@ -3233,4 +3233,364 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
       expect(document.activeElement).toBe(alert);
     });
   });
+
+  describe("Task 5 All Contacts list restyle", () => {
+    it("hides Add contact when search returns no items, and shows Add contact when search returns items (Pin 24)", async () => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      const adultPerson = {
+        id: "adult-1",
+        personId: "adult-1",
+        isMinor: false,
+        givenName: "Mira",
+        familyName: "Tolland",
+        version: 1,
+      };
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
+        const url = String(info);
+        const path = url.replace(/^https?:\/\/[^/]+/, "");
+        const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+
+        if (path === "/v1/access/capabilities") {
+          return mockCapabilitiesResponse({ canManage: true, canReadMinors: false });
+        }
+        if (path === "/v1/people/list") {
+          if (body.search === "Tolland") {
+            return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          if (body.search === "Nobody") {
+            return new Response(JSON.stringify({ items: [], nextCursor: null }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(null, { status: 404 });
+      });
+
+      await showContacts();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      expect(await screen.findByText("Mira")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Add contact" })).toBeTruthy();
+
+      const searchInput = screen.getByRole("textbox", { name: "Search contacts" });
+      fireEvent.change(searchInput, { target: { value: "Nobody" } });
+      fireEvent.click(screen.getByRole("button", { name: "Search" }));
+
+      expect(await screen.findByText("No contacts match")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Add contact" })).toBeNull();
+
+      // Control: search that returns items shows Add contact
+      fireEvent.change(searchInput, { target: { value: "Tolland" } });
+      fireEvent.click(screen.getByRole("button", { name: "Search" }));
+
+      expect(await screen.findByText("Mira")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Add contact" })).toBeTruthy();
+    });
+
+    it("renders Avatar on adults list and no Avatar on minors list (Pin 25)", async () => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      const adultPerson1 = {
+        id: "adult-1",
+        personId: "adult-1",
+        isMinor: false,
+        givenName: "Mira",
+        familyName: "Tolland",
+        version: 1,
+      };
+      const adultPerson2 = {
+        id: "adult-2",
+        personId: "adult-2",
+        isMinor: false,
+        givenName: "Owen",
+        familyName: "Barrah",
+        version: 1,
+      };
+      const minorPerson1 = {
+        id: "minor-1",
+        personId: "minor-1",
+        isMinor: true,
+        givenName: "Pip",
+        familyName: "Tolland",
+        version: 1,
+      };
+
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
+        const url = String(info);
+        const path = url.replace(/^https?:\/\/[^/]+/, "");
+        const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+
+        if (path === "/v1/access/capabilities") {
+          return mockCapabilitiesResponse({ canReadMinors: true });
+        }
+        if (path === "/v1/people/list") {
+          if (body.kind === "minors") {
+            return new Response(JSON.stringify({ items: [minorPerson1], nextCursor: null }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          return new Response(
+            JSON.stringify({ items: [adultPerson1, adultPerson2], nextCursor: null }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          );
+        }
+        return new Response(null, { status: 404 });
+      });
+
+      await showContacts();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      expect(await screen.findByText("Mira")).toBeTruthy();
+      expect(screen.getByText("Owen")).toBeTruthy();
+
+      // Control: Adults list shows one [data-slot="avatar"] per row, each with aria-hidden="true"
+      const adultAvatars = document.querySelectorAll('[data-slot="avatar"]');
+      expect(adultAvatars).toHaveLength(2);
+      for (const avatar of adultAvatars) {
+        expect(avatar.getAttribute("aria-hidden")).toBe("true");
+      }
+
+      // Switch to Minors
+      const group = screen.getByRole("group", { name: "Contact types" });
+      const minorsBtn = within(group).getByRole("button", { name: "Minors" });
+      fireEvent.click(minorsBtn);
+
+      expect(await screen.findByText("Pip")).toBeTruthy();
+      // Minors list must have no [data-slot="avatar"] in the page
+      const minorAvatars = document.querySelectorAll('[data-slot="avatar"]');
+      expect(minorAvatars).toHaveLength(0);
+    });
+
+    it("never displays minor data or marker and never requests minors when caller lacks people.restricted.read (restricted must-fail)", async () => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      sessionStorage.setItem("community-hub.community", SLUG);
+      const adultPerson1 = {
+        id: "adult-1",
+        personId: "adult-1",
+        isMinor: false,
+        givenName: "Mira",
+        familyName: "Tolland",
+        version: 1,
+      };
+      const adultPerson2 = {
+        id: "adult-2",
+        personId: "adult-2",
+        isMinor: false,
+        givenName: "Owen",
+        familyName: "Barrah",
+        version: 1,
+      };
+      const minorPip = {
+        id: "minor-1",
+        personId: "minor-1",
+        isMinor: true,
+        givenName: "Pip",
+        familyName: "Tolland",
+        dateOfBirth: "2016-03-14",
+        version: 1,
+      };
+
+      const requestedBodies: Record<string, unknown>[] = [];
+      const requestedUrls: string[] = [];
+
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
+        const url = String(info);
+        requestedUrls.push(url);
+        const path = url.replace(/^https?:\/\/[^/]+/, "");
+        const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+        requestedBodies.push(body);
+
+        if (path === "/v1/access/capabilities") {
+          return mockCapabilitiesResponse({ canReadMinors: false });
+        }
+        if (path === "/v1/people/list") {
+          if (body.kind === "minors") {
+            return new Response(JSON.stringify({ items: [minorPip], nextCursor: null }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          return new Response(
+            JSON.stringify({ items: [adultPerson1, adultPerson2], nextCursor: null }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          );
+        }
+        return new Response(null, { status: 404 });
+      });
+
+      await showContacts();
+
+      expect(await screen.findByText("Mira")).toBeTruthy();
+      expect(screen.getByText("Owen")).toBeTruthy();
+
+      expect(document.body.textContent).not.toContain("Pip Tolland");
+      expect(document.body.textContent).not.toContain("Pip");
+      expect(document.body.textContent).not.toContain("2016");
+      expect(document.body.textContent).not.toContain("Minors");
+      expect(screen.queryByRole("button", { name: "Minors" })).toBeNull();
+
+      for (const body of requestedBodies) {
+        expect(body.kind).not.toBe("minors");
+        expect(body).not.toHaveProperty("includeRestricted");
+      }
+      for (const url of requestedUrls) {
+        expect(url).not.toContain("minors");
+        expect(url).not.toContain("includeRestricted");
+      }
+    });
+
+    it("lays out the list view in order with Panel, Skeleton, and cursor pagination", async () => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      let resolveFirstList: (value: Response) => void;
+      const firstListPromise = new Promise<Response>((resolve) => {
+        resolveFirstList = resolve;
+      });
+
+      const adultPerson = {
+        id: "adult-1",
+        personId: "adult-1",
+        isMinor: false,
+        givenName: "Mira",
+        familyName: "Tolland",
+        version: 1,
+      };
+
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
+        const url = String(info);
+        const path = url.replace(/^https?:\/\/[^/]+/, "");
+        const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+
+        if (path === "/v1/access/capabilities") {
+          return mockCapabilitiesResponse({ canManage: true, canReadMinors: true });
+        }
+        if (path === "/v1/people/list") {
+          if (!body.cursor) {
+            return firstListPromise;
+          }
+          return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(null, { status: 404 });
+      });
+
+      await showContacts();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      // While list request is pending, skeleton is shown with aria-hidden="true" and no text
+      const skeleton = await waitFor(() => {
+        const el = document.querySelector('[data-slot="skeleton"]');
+        expect(el).not.toBeNull();
+        return el!;
+      });
+      expect(skeleton.getAttribute("aria-hidden")).toBe("true");
+      expect(skeleton.textContent).toBe("");
+
+      // Resolve list request with cursor
+      resolveFirstList!(
+        new Response(JSON.stringify({ items: [adultPerson], nextCursor: "cursor-page-2" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+      const table = await screen.findByRole("table", { name: "Contacts" });
+      expect(document.querySelector('[data-slot="skeleton"]')).toBeNull();
+
+      const panel = table.closest("section");
+      expect(panel).not.toBeNull();
+      expect(panel?.getAttribute("data-slot")).toBe("panel");
+
+      // Contact types group is outside section, before it
+      const contactTypesGroup = screen.getByRole("group", { name: "Contact types" });
+      expect(panel?.contains(contactTypesGroup)).toBe(false);
+      expect(
+        Boolean(
+          contactTypesGroup.compareDocumentPosition(panel!) & Node.DOCUMENT_POSITION_FOLLOWING,
+        ),
+      ).toBe(true);
+
+      // Panel holds, in document order: Add contact button, search form, Contacts table
+      const addBtn = within(panel!).getByRole("button", { name: "Add contact" });
+      const searchForm = panel!.querySelector("form");
+      expect(searchForm).not.toBeNull();
+      expect(
+        Boolean(addBtn.compareDocumentPosition(searchForm!) & Node.DOCUMENT_POSITION_FOLLOWING),
+      ).toBe(true);
+      expect(
+        Boolean(searchForm!.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING),
+      ).toBe(true);
+
+      // With a nextCursor, Next page button is inside the section's footer
+      const nextBtn = screen.getByRole("button", { name: "Next page" });
+      const footer = panel!.querySelector('[data-slot="panel-foot"]');
+      expect(footer).not.toBeNull();
+      expect(footer?.contains(nextBtn)).toBe(true);
+
+      // Click Next page -> second page has nextCursor: null
+      fireEvent.click(nextBtn);
+      await waitFor(() => {
+        expect(screen.queryByRole("button", { name: "Next page" })).toBeNull();
+      });
+      expect(panel!.querySelector('[data-slot="panel-foot"]')).toBeNull();
+    });
+
+    it("sets phone data-label attributes on every Contacts table cell", async () => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      const adultPerson = {
+        id: "adult-1",
+        personId: "adult-1",
+        isMinor: false,
+        givenName: "Mira",
+        familyName: "Tolland",
+        version: 1,
+      };
+      mockApi(
+        { canView: true, canManage: true, canReadMinors: false },
+        { items: [adultPerson], nextCursor: null },
+      );
+
+      await showContacts();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      const table = await screen.findByRole("table", { name: "Contacts" });
+      const cells = table.querySelectorAll("td");
+      expect(cells.length).toBeGreaterThan(0);
+
+      const allowed = new Set(["Given name", "Family name", "Actions"]);
+      for (const cell of cells) {
+        const dataLabel = cell.getAttribute("data-label");
+        expect(allowed.has(dataLabel ?? "")).toBe(true);
+        expect(dataLabel).not.toBe("Mira");
+        expect(dataLabel).not.toBe("Tolland");
+      }
+    });
+  });
 });
