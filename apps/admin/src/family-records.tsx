@@ -1,7 +1,12 @@
 import {
   Alert,
   Button,
+  DataTable,
+  EmptyState,
   Input,
+  Pagination,
+  RestrictedValue,
+  Skeleton,
   Table,
   TableBody,
   TableCell,
@@ -2023,6 +2028,10 @@ export function FamilyRecordsPage() {
         </Alert>
       ) : null}
 
+      {!canRestricted ? (
+        <Alert live="polite">Household names and children are hidden for your role.</Alert>
+      ) : null}
+
       {canCreate ? (
         <div>
           <Button type="button" onClick={openCreate}>
@@ -2031,7 +2040,12 @@ export function FamilyRecordsPage() {
         </div>
       ) : null}
 
-      {loading && items === null ? <p>Loading households...</p> : null}
+      {loading && items === null ? (
+        <>
+          <Skeleton />
+          <span className="sr-only">Loading households...</span>
+        </>
+      ) : null}
 
       {error ? (
         <Alert variant="destructive" live="assertive">
@@ -2043,47 +2057,53 @@ export function FamilyRecordsPage() {
       ) : null}
 
       {!error && items !== null ? (
-        <>
-          {items.length === 0 ? (
-            <p>No households yet</p>
-          ) : (
-            <>
-              <Table aria-label="Households">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead scope="col">Household</TableHead>
-                    <TableHead scope="col">Adults</TableHead>
-                    <TableHead scope="col">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {items.map((household) => (
-                    <TableRow key={household.householdId}>
-                      <TableCell>{household.label ?? "—"}</TableCell>
-                      <TableCell>{household.adultCount}</TableCell>
-                      <TableCell>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          aria-label={`View ${household.label ?? "household"}`}
-                          onClick={() => openDetail(household.householdId)}
-                        >
-                          View
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+        items.length === 0 ? (
+          <EmptyState message="No households yet" />
+        ) : (
+          <>
+            <DataTable
+              aria-label="Households"
+              rowKey={(household) => household.householdId}
+              columns={[
+                {
+                  key: "household",
+                  header: "Household",
+                  primary: true,
+                  render: (household) =>
+                    household.label !== null ? (
+                      household.label
+                    ) : canRestricted ? (
+                      <span className="text-muted-foreground">None</span>
+                    ) : (
+                      <RestrictedValue label="Household name hidden for your role" />
+                    ),
+                },
+                {
+                  key: "adults",
+                  header: "Adults",
+                  render: (household) => household.adultCount,
+                },
+                {
+                  key: "actions",
+                  header: "Actions",
+                  render: (household) => (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      aria-label={`View ${household.label ?? "household"}`}
+                      onClick={() => openDetail(household.householdId)}
+                    >
+                      View
+                    </Button>
+                  ),
+                },
+              ]}
+              rows={items}
+            />
 
-              {nextCursor !== null ? (
-                <Button type="button" onClick={() => handleNextPage(nextCursor)}>
-                  Next page
-                </Button>
-              ) : null}
-            </>
-          )}
-        </>
+            <Pagination cursor={nextCursor} onNext={handleNextPage} />
+          </>
+        )
       ) : null}
     </>
   );

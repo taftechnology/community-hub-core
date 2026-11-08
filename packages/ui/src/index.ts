@@ -23,6 +23,7 @@ export { Input } from "./input.js";
 export { Logo, type LogoProps } from "./logo.js";
 export { Pagination, type PaginationProps } from "./pagination.js";
 export { Panel, type PanelProps } from "./panel.js";
+export { RestrictedValue, type RestrictedValueProps } from "./restricted-value.js";
 export { Skeleton, type SkeletonProps } from "./skeleton.js";
 export { StatusBadge, type StatusBadgeProps, type StatusBadgeTone } from "./status-badge.js";
 export { Switch, type SwitchProps } from "./switch.js";

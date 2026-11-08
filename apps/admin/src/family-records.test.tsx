@@ -517,7 +517,7 @@ describe("Family Records list view", () => {
     expect(resultIds(results, "violations")).toEqual([]);
   });
 
-  it("renders — for household label when label is null (unrestricted caller or unlabelled)", async () => {
+  it("renders — for household label when label is null for caller without people.restricted.read", async () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);
     const householdItem = {
       householdId: "00000000-0000-4000-8000-000000000002",
@@ -539,6 +539,405 @@ describe("Family Records list view", () => {
     expect(await screen.findByText("—")).toBeTruthy();
     expect(screen.getByText("1")).toBeTruthy();
     expect(screen.getByRole("button", { name: "View household" })).toBeTruthy();
+  });
+
+  it("renders None for household label when label is null for caller with people.restricted.read", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const householdItem = {
+      householdId: "00000000-0000-4000-8000-000000000002",
+      version: 1,
+      label: null,
+      adultCount: 1,
+    };
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canReadMinors: true },
+      listResult: { items: [householdItem], nextCursor: null },
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const noneEl = await screen.findByText("None");
+    expect(noneEl).toBeTruthy();
+    expect(noneEl.closest("td")?.getAttribute("data-label")).toBe("Household");
+    expect(noneEl.className).toContain("text-muted-foreground");
+    expect(document.querySelector('[data-slot="restricted-value"]')).toBeNull();
+  });
+
+  it("renders RestrictedValue in the Household cell for caller without people.restricted.read when label is null (Pin 28)", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const householdItem = {
+      householdId: "00000000-0000-4000-8000-000000000002",
+      version: 1,
+      label: null,
+      adultCount: 1,
+    };
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canReadMinors: false },
+      listResult: { items: [householdItem], nextCursor: null },
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    await screen.findByText("—");
+    const restricted = document.querySelector('[data-slot="restricted-value"]');
+    expect(restricted).not.toBeNull();
+    expect(restricted?.getAttribute("title")).toBe("Hidden for your role");
+    expect(restricted?.textContent).toContain("Household name hidden for your role");
+    const householdCell = restricted?.closest("td");
+    expect(householdCell?.getAttribute("data-label")).toBe("Household");
+    expect(within(householdCell!).queryByText("None")).toBeNull();
+  });
+
+  describe("Pin 29: new line alert visibility in both directions", () => {
+    const HIDDEN_NOTICE = "Household names and children are hidden for your role.";
+
+    it("shows the new line alert without people.restricted.read across list, empty, pending, and error states (Pin 29)", async () => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+
+      // State 1: pending list request
+      let resolveList: ((res: Response) => void) | undefined;
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+        const url = String(info);
+        const path = url.replace(/^https?:\/\/[^/]+/, "");
+        if (path === "/v1/access/capabilities") {
+          return mockCapabilitiesResponse({
+            householdsEnabled: true,
+            canView: true,
+            canReadMinors: false,
+          });
+        }
+        if (path === "/v1/billing/status") {
+          return new Response(
+            JSON.stringify({
+              state: "ok",
+              trial_end: null,
+              grace_until: null,
+              canView: true,
+              canManage: true,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (path === "/v1/households/list") {
+          return new Promise<Response>((resolve) => {
+            resolveList = resolve;
+          });
+        }
+        return new Response(null, { status: 404 });
+      });
+
+      await showFamilyRecords();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      // Pending state
+      await waitFor(() => {
+        expect(resolveList).toBeDefined();
+      });
+      expect(screen.getByText(HIDDEN_NOTICE)).toBeTruthy();
+
+      // Resolve with households list (State 2: with list)
+      resolveList!(
+        new Response(
+          JSON.stringify({
+            items: [
+              {
+                householdId: "00000000-0000-4000-8000-000000000001",
+                version: 1,
+                label: null,
+                adultCount: 1,
+              },
+            ],
+            nextCursor: null,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+
+      expect(await screen.findByText("—")).toBeTruthy();
+      expect(screen.getByText(HIDDEN_NOTICE)).toBeTruthy();
+
+      cleanup();
+
+      // State 3: empty list (beside "No households yet")
+      mockApi({
+        access: { householdsEnabled: true, canView: true, canReadMinors: false },
+        listResult: { items: [], nextCursor: null },
+      });
+      await showFamilyRecords();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      expect(await screen.findByText("No households yet")).toBeTruthy();
+      expect(screen.getByText(HIDDEN_NOTICE)).toBeTruthy();
+
+      cleanup();
+
+      // State 4: failed load error
+      mockApi({
+        access: { householdsEnabled: true, canView: true, canReadMinors: false },
+        listResult: 500,
+      });
+      await showFamilyRecords();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      expect(await screen.findByText("Failed to load households")).toBeTruthy();
+      expect(screen.getByText(HIDDEN_NOTICE)).toBeTruthy();
+    });
+
+    it("does not show the new line alert with people.restricted.read across list, empty, pending, and error states, and not when Not allowed (Pin 29)", async () => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+
+      // State 1: pending list request
+      let resolveList: ((res: Response) => void) | undefined;
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+        const url = String(info);
+        const path = url.replace(/^https?:\/\/[^/]+/, "");
+        if (path === "/v1/access/capabilities") {
+          return mockCapabilitiesResponse({
+            householdsEnabled: true,
+            canView: true,
+            canReadMinors: true,
+          });
+        }
+        if (path === "/v1/billing/status") {
+          return new Response(
+            JSON.stringify({
+              state: "ok",
+              trial_end: null,
+              grace_until: null,
+              canView: true,
+              canManage: true,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (path === "/v1/households/list") {
+          return new Promise<Response>((resolve) => {
+            resolveList = resolve;
+          });
+        }
+        return new Response(null, { status: 404 });
+      });
+
+      await showFamilyRecords();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      await waitFor(() => {
+        expect(resolveList).toBeDefined();
+        expect(document.querySelector('[data-slot="skeleton"]')).not.toBeNull();
+      });
+      expect(screen.queryByText(HIDDEN_NOTICE)).toBeNull();
+
+      // Resolve with households list (State 2: with list)
+      resolveList!(
+        new Response(
+          JSON.stringify({
+            items: [
+              {
+                householdId: "00000000-0000-4000-8000-000000000001",
+                version: 1,
+                label: "Harrow Family",
+                adultCount: 2,
+              },
+            ],
+            nextCursor: null,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+
+      expect(await screen.findByText("Harrow Family")).toBeTruthy();
+      expect(screen.queryByText(HIDDEN_NOTICE)).toBeNull();
+
+      cleanup();
+
+      // State 3: empty list (beside "No households yet")
+      mockApi({
+        access: { householdsEnabled: true, canView: true, canReadMinors: true },
+        listResult: { items: [], nextCursor: null },
+      });
+      await showFamilyRecords();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      expect(await screen.findByText("No households yet")).toBeTruthy();
+      expect(screen.queryByText(HIDDEN_NOTICE)).toBeNull();
+
+      cleanup();
+
+      // State 4: failed load error
+      mockApi({
+        access: { householdsEnabled: true, canView: true, canReadMinors: true },
+        listResult: 500,
+      });
+      await showFamilyRecords();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      expect(await screen.findByText("Failed to load households")).toBeTruthy();
+      expect(screen.queryByText(HIDDEN_NOTICE)).toBeNull();
+
+      cleanup();
+
+      // State 5: Not allowed (access gate failure)
+      mockApi({
+        access: { householdsEnabled: false, canView: true, canReadMinors: false },
+      });
+      await showFamilyRecords();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      expect(await screen.findByText("Not allowed")).toBeTruthy();
+      expect(screen.queryByText(HIDDEN_NOTICE)).toBeNull();
+    });
+  });
+
+  it("defensively reveals no minor data on list when caller lacks people.restricted.read", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const householdItem = {
+      householdId: "00000000-0000-4000-8000-000000000002",
+      version: 1,
+      label: null,
+      adultCount: 1,
+      minors: [{ givenName: "Pip", familyName: "Tolland", dateOfBirth: "2016-03-14" }],
+      minorCount: 1,
+    };
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canReadMinors: false },
+      listResult: { items: [householdItem], nextCursor: null },
+    });
+
+    const container = await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    expect(await screen.findByText("—")).toBeTruthy();
+    const html = container.innerHTML;
+    expect(html).not.toContain("Pip");
+    expect(html).not.toContain("Tolland");
+    expect(html).not.toContain("2016");
+    expect(/minor/i.test(html)).toBe(false);
+    const restricted = container.querySelector('[data-slot="restricted-value"]');
+    expect(restricted).not.toBeNull();
+    expect(restricted?.closest("td")?.getAttribute("data-label")).toBe("Household");
+  });
+
+  it("shows skeleton with aria-hidden and Loading households in a plain sr-only span with no role or aria-live while loading", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    let resolvePending: ((res: Response) => void) | undefined;
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({
+          householdsEnabled: true,
+          canView: true,
+          canReadMinors: true,
+        });
+      }
+      if (path === "/v1/billing/status") {
+        return new Response(
+          JSON.stringify({
+            state: "ok",
+            trial_end: null,
+            grace_until: null,
+            canView: true,
+            canManage: true,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (path === "/v1/households/list") {
+        return new Promise<Response>((resolve) => {
+          resolvePending = resolve;
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    const skeleton = await waitFor(() => {
+      const el = document.querySelector('[data-slot="skeleton"]');
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    expect(skeleton.getAttribute("aria-hidden")).toBe("true");
+
+    const loadingText = screen.getByText("Loading households...");
+    expect(loadingText.tagName.toLowerCase()).toBe("span");
+    expect(loadingText.classList.contains("sr-only")).toBe(true);
+    expect(loadingText.getAttribute("role")).toBeNull();
+    expect(loadingText.getAttribute("aria-live")).toBeNull();
+
+    resolvePending?.(
+      new Response(JSON.stringify({ items: [], nextCursor: null }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+  });
+
+  it("sets data-label on every table cell matching column headers and none equals household label", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const householdItem = {
+      householdId: "00000000-0000-4000-8000-000000000001",
+      version: 1,
+      label: "Vance Household",
+      adultCount: 3,
+    };
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canReadMinors: true },
+      listResult: { items: [householdItem], nextCursor: null },
+    });
+
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    expect(await screen.findByText("Vance Household")).toBeTruthy();
+    const cells = Array.from(document.querySelectorAll("table[aria-label='Households'] tbody td"));
+    expect(cells.length).toBe(3);
+    const allowedLabels = new Set(["Household", "Adults", "Actions"]);
+    for (const cell of cells) {
+      const dataLabel = cell.getAttribute("data-label");
+      expect(allowedLabels.has(dataLabel ?? "")).toBe(true);
+      expect(dataLabel).not.toBe(householdItem.label);
+    }
   });
 
   it("handles keyset pagination with limit 25 and cursor", async () => {
