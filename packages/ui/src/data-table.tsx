@@ -51,7 +51,7 @@ export function DataTable<T>({
           <TableRow
             key={rowKey(row)}
             role="row"
-            className="max-sm:block max-sm:w-full max-sm:px-4 max-sm:py-3 border-b"
+            className="max-sm:block max-sm:w-full max-sm:px-4 max-sm:py-3 max-sm:h-auto border-b"
           >
             {columns.map((column) => (
               <TableCell

@@ -27,17 +27,7 @@ export function FilterBar({
   return (
     <form onSubmit={onSubmit} className={cn("flex flex-wrap gap-2 items-end", className)}>
       <Field label={label} className="flex-1 min-w-0">
-        <Input
-          id={inputId}
-          value={value}
-          onChange={(e) => onValueChange(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !submitDisabled) {
-              e.preventDefault();
-              e.currentTarget.form?.requestSubmit();
-            }
-          }}
-        />
+        <Input id={inputId} value={value} onChange={(e) => onValueChange(e.target.value)} />
       </Field>
       <Button type="submit" disabled={submitDisabled}>
         Search

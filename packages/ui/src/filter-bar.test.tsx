@@ -63,10 +63,10 @@ describe("FilterBar", () => {
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
-  it("calls onSubmit once when pressing Enter in the input", () => {
+  it("leaves Enter to the browser with form-associated input and a single Search submit button", () => {
     const onSubmit = vi.fn((e) => e.preventDefault());
 
-    render(
+    const { container } = render(
       <FilterBar
         label="Search contacts"
         value="Owen"
@@ -75,9 +75,19 @@ describe("FilterBar", () => {
       />,
     );
 
-    const input = screen.getByRole("textbox", { name: "Search contacts" });
-    fireEvent.keyDown(input, { key: "Enter" });
+    const form = container.querySelector("form");
+    expect(form).not.toBeNull();
 
+    const input = screen.getByRole("textbox", { name: "Search contacts" }) as HTMLInputElement;
+    expect(input.form).toBe(form);
+
+    const buttons = form?.querySelectorAll("button");
+    expect(buttons).toHaveLength(1);
+
+    const searchButton = screen.getByRole("button", { name: "Search" }) as HTMLButtonElement;
+    expect(searchButton.type).toBe("submit");
+
+    fireEvent.submit(form!);
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 

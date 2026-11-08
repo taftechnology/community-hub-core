@@ -211,4 +211,21 @@ describe("DataTable", () => {
       expect(td.className).not.toContain("max-sm:before:content-none");
     }
   });
+
+  it("applies max-sm:h-auto to each body row so phone rows can grow beyond fixed height", () => {
+    const { container } = render(
+      <DataTable
+        aria-label="Community Members"
+        columns={TEST_COLUMNS}
+        rows={TEST_ROWS}
+        rowKey={(row) => row.id}
+      />,
+    );
+
+    const bodyRows = container.querySelectorAll("tbody tr");
+    expect(bodyRows.length).toBe(2);
+    for (const tr of bodyRows) {
+      expect(tr.className).toContain("max-sm:h-auto");
+    }
+  });
 });
