@@ -228,4 +228,19 @@ describe("DataTable", () => {
       expect(tr.className).toContain("max-sm:h-auto");
     }
   });
+
+  it("hides the header row on phone viewports with max-sm:sr-only", () => {
+    const { container } = render(
+      <DataTable
+        aria-label="Community Members"
+        columns={TEST_COLUMNS}
+        rows={TEST_ROWS}
+        rowKey={(row) => row.id}
+      />,
+    );
+
+    const thead = container.querySelector("thead");
+    expect(thead).not.toBeNull();
+    expect(thead?.className).toContain("max-sm:sr-only");
+  });
 });

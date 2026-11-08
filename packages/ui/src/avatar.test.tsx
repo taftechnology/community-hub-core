@@ -1,7 +1,7 @@
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { Avatar } from "./avatar.js";
+import { Avatar, type AvatarTone } from "./avatar.js";
 
 const INVENTED_NAMES = [
   "Mira Tolland",
@@ -14,6 +14,19 @@ const INVENTED_NAMES = [
   "Silas Drake",
   "Tessa Brooks",
   "Callum Reid",
+];
+
+const TONE_CASES: { tone: AvatarTone; name: string }[] = [
+  { tone: "blue", name: "Aria Holloway" },
+  { tone: "green", name: "Vesper Finch" },
+  { tone: "orange", name: "Daphne Vale" },
+  { tone: "violet", name: "Bram Winter" },
+  { tone: "pink", name: "Cassian Frost" },
+  { tone: "fuchsia", name: "Milo Thorne" },
+  { tone: "teal", name: "Orin Sterling" },
+  { tone: "amber", name: "Lyra Vance" },
+  { tone: "rose", name: "Priya Conway" },
+  { tone: "cyan", name: "Zane Garrick" },
 ];
 
 describe("Avatar", () => {
@@ -100,5 +113,17 @@ describe("Avatar", () => {
     expect(tone).toBeTruthy();
     expect(avatar.className).toContain(`bg-tone-${tone}-tint`);
     expect(avatar.className).toContain(`text-tone-${tone}-ink`);
+  });
+
+  it("applies both tint and ink classes for every avatar tone matching its data-tone", () => {
+    for (const { tone, name } of TONE_CASES) {
+      const { container, unmount } = render(<Avatar name={name} />);
+      const avatar = container.querySelector('[data-slot="avatar"]');
+      expect(avatar).not.toBeNull();
+      expect(avatar?.getAttribute("data-tone")).toBe(tone);
+      expect(avatar?.className).toContain(`bg-tone-${tone}-tint`);
+      expect(avatar?.className).toContain(`text-tone-${tone}-ink`);
+      unmount();
+    }
   });
 });
