@@ -22,6 +22,11 @@ describe("DescriptionList", () => {
 
     const rows = dl?.querySelectorAll("div");
     expect(rows?.length).toBe(2);
+    for (const row of rows ?? []) {
+      expect(row.className).toContain("border-b");
+      expect(row.className).toContain("border-border");
+      expect(row.className).toContain("last:border-b-0");
+    }
 
     const dts = container.querySelectorAll("dt");
     const dds = container.querySelectorAll("dd");

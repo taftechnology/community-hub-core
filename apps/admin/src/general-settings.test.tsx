@@ -242,6 +242,33 @@ describe("GeneralSettingsPage - Settings -> General Settings -> Billing", () => 
         screen.getByText(new Date("2026-11-05T00:00:00.000Z").toLocaleDateString()),
       ).toBeTruthy();
     });
+
+    it("renders billing description list row labels in order", () => {
+      const { container } = renderGeneralSettings({
+        status: {
+          state: "ok",
+          planKey: "starter",
+          quantity: 4,
+          current_period_end: "2026-12-31T00:00:00.000Z",
+          trial_end: "2026-10-25T00:00:00.000Z",
+          grace_until: "2026-11-05T00:00:00.000Z",
+          canView: true,
+          canManage: false,
+        },
+      });
+
+      const dl = container.querySelector("dl");
+      expect(dl).not.toBeNull();
+      const dtTexts = Array.from(dl?.querySelectorAll("dt") ?? []).map((dt) => dt.textContent);
+      expect(dtTexts).toEqual([
+        "State",
+        "Plan",
+        "Quantity",
+        "Current period end",
+        "Trial end",
+        "Grace until",
+      ]);
+    });
   });
 
   describe("canManage actions and plan list", () => {
