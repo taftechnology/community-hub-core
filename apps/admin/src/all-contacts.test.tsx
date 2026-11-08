@@ -3679,11 +3679,21 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
       expect(document.querySelector('[data-slot="skeleton"]')).toBeNull();
     });
 
-    it("hides Add contact after a failed list load", async () => {
+    it("hides Add contact after a failed reload", async () => {
       sessionStorage.setItem("community-hub.access-token", TOKEN);
-      vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const adultPerson = {
+        id: "adult-1",
+        personId: "adult-1",
+        isMinor: false,
+        givenName: "Lyle",
+        familyName: "Marrow",
+        version: 1,
+      };
+
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
         const url = String(info);
         const path = url.replace(/^https?:\/\/[^/]+/, "");
+        const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
 
         if (path === "/v1/access/capabilities") {
           return mockCapabilitiesResponse({ canManage: true, canView: true, canReadMinors: false });
@@ -3701,7 +3711,13 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
           );
         }
         if (path === "/v1/people/list") {
-          return new Response(null, { status: 500 });
+          if (body.search) {
+            return new Response(null, { status: 500 });
+          }
+          return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
         }
         return new Response(null, { status: 404 });
       });
@@ -3711,6 +3727,13 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
         target: { value: SLUG },
       });
       fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      expect(await screen.findByText("Lyle")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Add contact" })).toBeTruthy();
+
+      const searchInput = screen.getByRole("textbox", { name: "Search contacts" });
+      fireEvent.change(searchInput, { target: { value: "Marrow" } });
+      fireEvent.click(screen.getByRole("button", { name: "Search" }));
 
       expect(await screen.findByText("Failed to load contacts")).toBeTruthy();
       expect(screen.queryByRole("button", { name: "Add contact" })).toBeNull();
