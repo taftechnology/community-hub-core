@@ -6289,4 +6289,97 @@ describe("Family forms restyle & security pins (Task 10)", () => {
       manage: right === "manage",
     });
   });
+
+  it("uses the small size for buttons inside table rows", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    sessionStorage.setItem("community-hub.community", SLUG);
+
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult: {
+        items: [
+          {
+            householdId: sampleDetail.householdId,
+            version: 1,
+            label: sampleDetail.label,
+            adultCount: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+      detailResult: sampleDetail,
+      peopleListResult: {
+        items: [
+          {
+            personId: "00000000-0000-4000-8000-000000000099",
+            givenName: "Beatrice",
+            familyName: "Webb",
+            isMinor: false,
+            version: 1,
+          },
+        ],
+        nextCursor: null,
+      },
+    });
+
+    render(
+      <PeopleAccessContext.Provider value={{ access: fullAccess }}>
+        <CommunityProvider>
+          <BillingStatusProvider>
+            <MemoryRouter initialEntries={["/family-records"]}>
+              <FamilyRecordsPage />
+            </MemoryRouter>
+          </BillingStatusProvider>
+        </CommunityProvider>
+      </PeopleAccessContext.Provider>,
+    );
+
+    // 1. Households table (list view)
+    const householdsTable = await screen.findByRole("table", { name: "Households" });
+    const householdButtons = householdsTable.querySelectorAll("button");
+    expect(householdButtons.length).toBeGreaterThan(0);
+    for (const btn of householdButtons) {
+      expect(btn.className).toContain("h-(--ch-size-control-sm)");
+    }
+
+    // 2. Detail view: Adult members and Guardian links tables
+    fireEvent.click(await screen.findByRole("button", { name: "View Clarke Family" }));
+
+    const adultTable = await screen.findByRole("table", { name: "Adult members" });
+    const adultButtons = adultTable.querySelectorAll("button");
+    expect(adultButtons.length).toBeGreaterThan(0);
+    for (const btn of adultButtons) {
+      expect(btn.className).toContain("h-(--ch-size-control-sm)");
+    }
+
+    const guardianTable = await screen.findByRole("table", { name: "Guardian links" });
+    const unlinkButtons = guardianTable.querySelectorAll("button");
+    expect(unlinkButtons.length).toBeGreaterThan(0);
+    for (const btn of unlinkButtons) {
+      expect(btn.className).toContain("h-(--ch-size-control-sm)");
+    }
+
+    // Open inline confirm in Guardian links table
+    fireEvent.click(unlinkButtons[0]!);
+    const confirmButtons = guardianTable.querySelectorAll("button");
+    expect(confirmButtons.length).toBe(2);
+    for (const btn of confirmButtons) {
+      expect(btn.className).toContain("h-(--ch-size-control-sm)");
+    }
+
+    // 3. Add adult view: Adult search results table
+    fireEvent.click(await screen.findByRole("button", { name: "Add adult" }));
+    expect(await screen.findByRole("heading", { name: "Add Adult", level: 2 })).toBeTruthy();
+    fireEvent.change(screen.getByRole("textbox", { name: "Search adults" }), {
+      target: { value: "Webb" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+
+    const searchTable = await screen.findByRole("table", { name: "Adult search results" });
+    const searchButtons = searchTable.querySelectorAll("button");
+    expect(searchButtons.length).toBeGreaterThan(0);
+    for (const btn of searchButtons) {
+      expect(btn.className).toContain("h-(--ch-size-control-sm)");
+    }
+  });
 });

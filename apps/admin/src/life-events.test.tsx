@@ -837,4 +837,34 @@ describe("LifeEventsPanel unit and accessibility tests", () => {
     expect(dateElement.tagName.toLowerCase()).toBe("span");
     expect(dateElement.className).toContain("whitespace-nowrap");
   });
+
+  it("uses the small size for buttons inside table rows", async () => {
+    const sampleEvent: LifeEvent = {
+      eventId: "00000000-0000-4000-8000-000000000001",
+      version: 1,
+      type: "baptism",
+      date: "2010-04-15",
+      place: "St Timothy Chapel",
+      notes: "Recorded by parish registrar",
+    };
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      if (url.includes("/v1/people/life-events/list")) {
+        return new Response(JSON.stringify({ items: [sampleEvent] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    renderPanel({ personName: "Rowan Vance", canManage: true, isReadOnly: false });
+    const table = await screen.findByRole("table", { name: "Life events for Rowan Vance" });
+    const buttons = table.querySelectorAll("button");
+    expect(buttons.length).toBeGreaterThan(0);
+    for (const btn of buttons) {
+      expect(btn.className).toContain("h-(--ch-size-control-sm)");
+    }
+  });
 });

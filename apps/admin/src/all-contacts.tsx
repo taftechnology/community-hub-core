@@ -876,6 +876,7 @@ export function AllContactsPage() {
                     <Button
                       type="button"
                       variant="outline"
+                      size="sm"
                       aria-label={`View ${person.givenName} ${person.familyName}`}
                       onClick={() => openDetail(person.id)}
                     >

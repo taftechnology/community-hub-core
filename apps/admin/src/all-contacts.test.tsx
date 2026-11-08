@@ -4348,5 +4348,34 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
       expect(backButton.className).toContain("justify-self-start");
       expect(backButton.className).toContain("self-start");
     });
+
+    it("uses the small size for buttons inside table rows", async () => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      const adultPerson = {
+        id: "adult-1",
+        personId: "adult-1",
+        isMinor: false,
+        givenName: "Mira",
+        familyName: "Tolland",
+        version: 1,
+      };
+      mockApi(
+        { canView: true, canManage: true, canReadMinors: false },
+        { items: [adultPerson], nextCursor: null },
+      );
+
+      await showContacts();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      const table = await screen.findByRole("table", { name: "Contacts" });
+      const buttons = table.querySelectorAll("button");
+      expect(buttons.length).toBeGreaterThan(0);
+      for (const btn of buttons) {
+        expect(btn.className).toContain("h-(--ch-size-control-sm)");
+      }
+    });
   });
 });

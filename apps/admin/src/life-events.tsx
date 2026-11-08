@@ -378,6 +378,7 @@ export function LifeEventsPanel({
                         <Button
                           type="button"
                           variant="outline"
+                          size="sm"
                           aria-label={`Edit ${formatType(event.type)} for ${personName}`}
                           onClick={() => startEdit(event)}
                         >

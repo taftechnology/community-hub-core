@@ -368,6 +368,7 @@ export function MinorsSection({
                   <Button
                     type="button"
                     variant="destructive"
+                    size="sm"
                     disabled={submitting}
                     onClick={() => handleConfirmUnlink?.(link.linkId)}
                   >
@@ -376,6 +377,7 @@ export function MinorsSection({
                   <Button
                     type="button"
                     variant="outline"
+                    size="sm"
                     disabled={submitting}
                     onClick={() => {
                       setUnlinkingLinkId?.(null);
@@ -389,6 +391,7 @@ export function MinorsSection({
                 <Button
                   type="button"
                   variant="outline"
+                  size="sm"
                   aria-label={`Unlink ${guardianName} from ${childName}`}
                   onClick={() => {
                     setUnlinkingLinkId?.(link.linkId);
@@ -1558,6 +1561,7 @@ export function FamilyRecordsPage() {
       render: (adult) => (
         <Button
           type="button"
+          size="sm"
           disabled={submitting}
           aria-label={`Add ${adult.givenName} ${adult.familyName} to household`}
           onClick={() => void handleAddAdultToHousehold(adult)}
@@ -1927,6 +1931,7 @@ export function FamilyRecordsPage() {
               <Button
                 type="button"
                 variant="outline"
+                size="sm"
                 aria-label={`Move ${adult.givenName} ${adult.familyName}`}
                 onClick={() => openMoveAdult(adult)}
               >
@@ -2137,6 +2142,7 @@ export function FamilyRecordsPage() {
                     <Button
                       type="button"
                       variant="outline"
+                      size="sm"
                       aria-label={`View ${household.label ?? "household"}`}
                       onClick={() => openDetail(household.householdId)}
                     >
