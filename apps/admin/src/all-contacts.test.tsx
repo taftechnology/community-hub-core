@@ -3592,5 +3592,128 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
         expect(dataLabel).not.toBe("Tolland");
       }
     });
+
+    it("hides Add contact and shows skeleton while a search request is loading, then shows Add contact once resolved", async () => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      let resolveSearchList: (value: Response) => void;
+      const searchListPromise = new Promise<Response>((resolve) => {
+        resolveSearchList = resolve;
+      });
+
+      const adultPerson1 = {
+        id: "adult-1",
+        personId: "adult-1",
+        isMinor: false,
+        givenName: "Doran",
+        familyName: "Kite",
+        version: 1,
+      };
+      const adultPerson2 = {
+        id: "adult-2",
+        personId: "adult-2",
+        isMinor: false,
+        givenName: "Talia",
+        familyName: "Vance",
+        version: 1,
+      };
+
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
+        const url = String(info);
+        const path = url.replace(/^https?:\/\/[^/]+/, "");
+        const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+
+        if (path === "/v1/access/capabilities") {
+          return mockCapabilitiesResponse({ canManage: true, canView: true, canReadMinors: false });
+        }
+        if (path === "/v1/billing/status") {
+          return new Response(
+            JSON.stringify({
+              state: "ok",
+              trial_end: null,
+              grace_until: null,
+              canView: true,
+              canManage: true,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (path === "/v1/people/list") {
+          if (body.search) {
+            return searchListPromise;
+          }
+          return new Response(JSON.stringify({ items: [adultPerson1], nextCursor: null }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(null, { status: 404 });
+      });
+
+      await showContacts();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      expect(await screen.findByText("Doran")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Add contact" })).toBeTruthy();
+
+      const searchInput = screen.getByRole("textbox", { name: "Search contacts" });
+      fireEvent.change(searchInput, { target: { value: "Vance" } });
+      fireEvent.click(screen.getByRole("button", { name: "Search" }));
+
+      await waitFor(() => {
+        expect(document.querySelector('[data-slot="skeleton"]')).not.toBeNull();
+      });
+      expect(screen.queryByRole("button", { name: "Add contact" })).toBeNull();
+
+      resolveSearchList!(
+        new Response(JSON.stringify({ items: [adultPerson2], nextCursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+      expect(await screen.findByRole("button", { name: "Add contact" })).toBeTruthy();
+      expect(await screen.findByText("Talia")).toBeTruthy();
+      expect(document.querySelector('[data-slot="skeleton"]')).toBeNull();
+    });
+
+    it("hides Add contact after a failed list load", async () => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+        const url = String(info);
+        const path = url.replace(/^https?:\/\/[^/]+/, "");
+
+        if (path === "/v1/access/capabilities") {
+          return mockCapabilitiesResponse({ canManage: true, canView: true, canReadMinors: false });
+        }
+        if (path === "/v1/billing/status") {
+          return new Response(
+            JSON.stringify({
+              state: "ok",
+              trial_end: null,
+              grace_until: null,
+              canView: true,
+              canManage: true,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (path === "/v1/people/list") {
+          return new Response(null, { status: 500 });
+        }
+        return new Response(null, { status: 404 });
+      });
+
+      await showContacts();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      expect(await screen.findByText("Failed to load contacts")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Add contact" })).toBeNull();
+    });
   });
 });
