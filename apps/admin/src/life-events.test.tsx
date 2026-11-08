@@ -810,4 +810,31 @@ describe("LifeEventsPanel unit and accessibility tests", () => {
       expect(label).not.toBe("Recorded by parish registrar");
     }
   });
+
+  it("renders the date in a span with whitespace-nowrap", async () => {
+    const sampleEvent: LifeEvent = {
+      eventId: "e-1",
+      version: 1,
+      type: "baptism",
+      date: "2024-05-12",
+      place: "St Jude",
+      notes: "First note",
+    };
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      if (url.includes("/v1/people/life-events/list")) {
+        return new Response(JSON.stringify({ items: [sampleEvent] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    renderPanel();
+    const dateElement = await screen.findByText("2024-05-12");
+    expect(dateElement.tagName.toLowerCase()).toBe("span");
+    expect(dateElement.className).toContain("whitespace-nowrap");
+  });
 });

@@ -628,7 +628,7 @@ export function AllContactsPage() {
     return (
       <>
         <ScreenTitle>All Contacts</ScreenTitle>
-        <Button type="button" onClick={backToList}>
+        <Button type="button" className="justify-self-start self-start" onClick={backToList}>
           Back to list
         </Button>
 
@@ -780,7 +780,7 @@ export function AllContactsPage() {
         </Alert>
       ) : null}
 
-      <div role="group" aria-label="Contact types">
+      <div role="group" aria-label="Contact types" className="flex flex-wrap gap-2">
         <Button
           type="button"
           aria-pressed={activeTab === "adults"}

@@ -309,7 +309,7 @@ export function UsersRolesPage() {
             <Panel>
               <ul>
                 {directory.grants.map((grant) => (
-                  <li key={grant.grantId}>
+                  <li key={grant.grantId} className="flex flex-wrap items-center gap-2">
                     <span>{grantLine(grant)}</span>
                     {canManageRoles && !hideWrites ? (
                       <Button
@@ -334,7 +334,7 @@ export function UsersRolesPage() {
             <Panel>
               <ul>
                 {directory.customRoles.map((customRole) => (
-                  <li key={customRole.customRoleId}>
+                  <li key={customRole.customRoleId} className="flex flex-wrap items-center gap-2">
                     <span>
                       {customRole.key} {customRole.permissions.join(" ")}
                     </span>
@@ -360,7 +360,7 @@ export function UsersRolesPage() {
             <Panel>
               <ul>
                 {directory.builtIn.map((builtIn) => (
-                  <li key={builtIn.roleKey}>
+                  <li key={builtIn.roleKey} className="flex flex-wrap items-center gap-2">
                     {builtIn.roleKey} {builtIn.permissions.join(" ")}
                   </li>
                 ))}
@@ -371,7 +371,7 @@ export function UsersRolesPage() {
             <Panel>
               <ul>
                 {directory.userLinks.map((link) => (
-                  <li key={link.userId}>
+                  <li key={link.userId} className="flex flex-wrap items-center gap-2">
                     {link.userId} {link.personId}
                   </li>
                 ))}

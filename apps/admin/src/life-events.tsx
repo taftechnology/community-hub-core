@@ -347,7 +347,7 @@ export function LifeEventsPanel({
               {
                 key: "date",
                 header: "Date",
-                render: (event) => event.date,
+                render: (event) => <span className="whitespace-nowrap">{event.date}</span>,
               },
               {
                 key: "place",

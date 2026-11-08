@@ -4255,5 +4255,98 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
       expect(screen.queryByRole("button", { name: "Edit contact" })).toBeNull();
       expect(document.querySelectorAll('[data-slot="avatar"]')).toHaveLength(0);
     });
+
+    it("spaces the Adults and Minors buttons with flex flex-wrap gap-2", async () => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      mockApi({ directoryEnabled: true, canView: true, canManage: true, canReadMinors: true });
+
+      await showContacts();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      const group = await screen.findByRole("group", { name: "Contact types" });
+      expect(group.className).toContain("flex");
+      expect(group.className).toContain("flex-wrap");
+      expect(group.className).toContain("gap-2");
+    });
+
+    it("gives the Back to list button justify-self-start self-start in detail view", async () => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+        const url = String(info);
+        const path = url.replace(/^https?:\/\/[^/]+/, "");
+        if (path === "/v1/access/capabilities") {
+          return mockCapabilitiesResponse({
+            directoryEnabled: true,
+            canView: true,
+            canManage: true,
+            canReadMinors: true,
+          });
+        }
+        if (path === "/v1/billing/status") {
+          return new Response(
+            JSON.stringify({
+              state: "ok",
+              trial_end: null,
+              grace_until: null,
+              canView: true,
+              canManage: true,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (path === "/v1/people/list") {
+          return new Response(
+            JSON.stringify({
+              items: [
+                {
+                  id: "p-1",
+                  personId: "p-1",
+                  givenName: "Mira",
+                  familyName: "Tolland",
+                  isMinor: false,
+                },
+              ],
+              nextCursor: null,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (path === "/v1/people/read") {
+          return new Response(
+            JSON.stringify({
+              personId: "p-1",
+              givenName: "Mira",
+              familyName: "Tolland",
+              email: "mira@example.test",
+              phone: null,
+              dateOfBirth: null,
+              isMinor: false,
+              version: 1,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(null, { status: 404 });
+      });
+
+      await showContacts();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+      expect(await screen.findByText("Mira")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "View Mira Tolland" }));
+      expect(
+        await screen.findByRole("heading", { name: "Contact Details", level: 2 }),
+      ).toBeTruthy();
+
+      const backButton = screen.getByRole("button", { name: "Back to list" });
+      expect(backButton.className).toContain("justify-self-start");
+      expect(backButton.className).toContain("self-start");
+    });
   });
 });
