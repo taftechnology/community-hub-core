@@ -3941,6 +3941,596 @@ Placeholders for Tasks 3 and 5 to fill in:
   6. `GET /` on the API host logs reason `ops_route_on_other_hostname`, because `/` is an ops route; the runbook said it logged path `unmatched` with no reason. The text is corrected. All three O1 cross-host requests log a reason, so the floor is 3, as the plan says; it was met with 10.
   7. The spec's floor for `/v1/ops/passkey/authenticate/verify` 200 is 4; the runbook's 3 is right (plan deviation 1). The run logged 6.
 
+## Admin screens proof
+
+This section is the operator path for the admin screens proof on staging (`docs/specs/2026-11-09-admin-screens-proof.md`, plan `docs/plans/2026-11-09-admin-screens-proof.md`). The human owner runs every apply, ECS one-off, secret step, and Stripe dashboard step. The developer types every email address, sign-in code, slug, U2's id, and synthetic Checkout value into the browser. The reviewer agent drives the proof profile through playwriter under spec A8 and A9, and is read-only on AWS. Nothing in an agent task calls AWS.
+
+**Deviations from the spec:**
+
+1. P1's build check verifies that the served `index.html` names exactly the one `assets/index-*.js` in the bucket (which publish `--delete` sync holds for the latest build), because CI builds inside `admin-publish` and does not upload an artefact.
+2. P1's host count runs over B1 across sign-in and billing, not on the signed-out page. Requests made while on Stripe Checkout are not counted.
+3. P3 webhook check verifies `checkout.session.completed` is `processed` with no `errorCode`, and stops on `failed` or any `errorCode`, because unlinked apply results are logged as `ignored` rather than `unlinked`.
+
+### General rules
+
+The opening paragraph of **Staging proof run** and **Stripe billing proof → General rules** applies: the owner applies, the assistant is read-only, and a failed proof or a second failure on one step is a stop and a re-park.
+
+Stop after any failed proof, or after a second failure on the same step (AGENTS.md section 12). Then re-park before further attempts. The 24-hour target and 48-hour hard stop are measured from Apply 1 completion to the start of the re-park apply; the owner runs the re-park at that hard stop even if proofs remain.
+
+Start gate: Apply 1 starts only when the owner and the developer can run H1–H9 in one sitting of about 4–8 hours.
+
+Browser work runs in the sessions in the **Browser sessions** table below, in one tab, and every reload is at `/`. Deep links return 403 on reload, so every screen change is navigation inside the app.
+
+The theme is set through the stored preference `community-hub.theme`, then a reload at `/`. The width comes from the viewport size. There is no media emulation (spec A10).
+
+The reviewer agent prints no page text, URL, `sessionStorage`, request target or id (spec A9). Scripts print only booleans, counts, HTTP statuses, and role-query results.
+
+One-offs never overlap. A Spot interruption is not a failure; rerun that step once. Every `filter-log-events` call carries `--start-time`.
+
+Before any command that uses a held value, run `setopt pipefail`.
+
+Shell variables and placeholders only. Never paste an account id, ARN, hostname, email address, code, token, slug, or IP address into evidence. Say "the api hostname", "the auth hostname", and "the admin hostname". Values that come from AWS at run time are held in shell variables and never recorded. In zsh write `${VAR}:text`, not `$VAR:text`. Do not put an inline `#` comment inside a command string. One pasteable command per indented block. Evidence rules: counts, statuses, and yes/no facts only.
+
+New prose writes an at-sign as `$'\x40'`.
+
+Millisecond timestamps use `$(( $(date +%s) * 1000 ))`.
+
+### Shell variables
+
+Hold these in the shell. Never record their values.
+
+| Variable                     | Meaning                                                                                          |
+| ---------------------------- | ------------------------------------------------------------------------------------------------ |
+| `${AWS_PROFILE}`             | Apply and one-off profile (default `ch-admin`)                                                   |
+| `${ZONE_NAME}`               | Apex hosted zone name from `staging_zone_id`                                                     |
+| `${ADMIN_HOST}`              | Admin hostname (`admin.${ZONE_NAME}`)                                                            |
+| `${API_HOST}`                | Tenant API hostname (`au.api.${ZONE_NAME}`)                                                      |
+| `${AUTH_HOST}`               | Auth hostname (`auth.au.${ZONE_NAME}`)                                                           |
+| `${WEBHOOKS_HOST}`           | Webhooks hostname (`webhooks.au.${ZONE_NAME}`)                                                   |
+| `${DEPLOY_SHA}`              | Commit SHA of latest `main` containing `cfcf3f7`                                                 |
+| `${DIGEST}`                  | ECR image digest for `${DEPLOY_SHA}` (never recorded)                                            |
+| `${RUN_ID}`                  | GitHub Actions run id for the publish workflow run                                               |
+| `${PROVISION_SECRET_NAME}`   | The one fixed secret name (`${name}-provision-owner`)                                            |
+| `${BILLING_SECRET_ID}`       | Billing secret identifier / ARN in Secrets Manager (never recorded)                              |
+| `${SECRETS_KEY_ARN}`         | KMS customer-managed key ARN for Secrets Manager encryption                                      |
+| `${DB_INSTANCE_ID}`          | RDS database instance identifier (`ch-staging-postgres`)                                         |
+| `${CLUSTER}`                 | ECS cluster name for staging (`ch-staging`)                                                      |
+| `${SERVICE}`                 | ECS service name for staging (`ch-staging`)                                                      |
+| `${SERVICE_TASK_DEFINITION}` | Service task definition family (`ch-staging`)                                                    |
+| `${OPS_TASK_DEFINITION}`     | Ops task definition family (`ch-staging-db-ops`)                                                 |
+| `${SUBNET}`                  | Staging public subnet id (from Terraform / describe; never recorded)                             |
+| `${TASK_SECURITY_GROUP}`     | Task security group id (from Terraform / describe; never recorded)                               |
+| `${TASK_ARN}`                | ECS task ARN for running one-off tasks (never recorded)                                          |
+| `${LOG_GROUP}`               | Service log group `/community-hub/ch-staging/service` (streams use prefixes `service`, `db-ops`) |
+| `${API_ACCESS_LOG_GROUP}`    | API access log group `/community-hub/ch-staging/api-access`                                      |
+| `${OPS_ACCESS_LOG_GROUP}`    | Ops access log group `/community-hub/ch-staging/ops-access`                                      |
+| `${PLAN_FILE}`               | Saved plan file path outside the repository (never committed; deleted after apply)               |
+| `${HELD_U1_EMAIL}`           | Verified U1 operator/owner email entered at silent prompt (never recorded)                       |
+| `${HELD_U2_EMAIL}`           | Verified U2 email entered at silent prompt (never recorded)                                      |
+| `${HELD_ORG_SLUG}`           | Organisation synthetic slug (`proof-$(openssl rand -hex 4)`)                                     |
+| `${HELD_COMMUNITY_SLUG}`     | Community synthetic slug (`proof-$(openssl rand -hex 4)`)                                        |
+| `${PROOF_EMAIL}`             | Synthetic email for Checkout (`proof-billing$'\x40'example.com`)                                 |
+| `${PROOF_NAME}`              | Synthetic name for Checkout (`Proof$(openssl rand -hex 4)`)                                      |
+| `${WINDOW_START_MS}`         | Proof window start in epoch milliseconds (set before B1; never recorded)                         |
+| `${HARD_STOP_UTC}`           | Apply 1 completion plus 48 hours                                                                 |
+
+Initialize shell tracking variables:
+
+    setopt pipefail
+
+    ADMIN_HOST="admin.${ZONE_NAME}"
+
+    HELD_ORG_SLUG="proof-$(openssl rand -hex 4)"
+
+    HELD_COMMUNITY_SLUG="proof-$(openssl rand -hex 4)"
+
+    PROOF_EMAIL="proof-billing$'\x40'example.com"
+
+    PROOF_NAME="Proof$(openssl rand -hex 4)"
+
+Prompt for verified email addresses in lowercase without echo:
+
+    read -rs "HELD_U1_EMAIL?Verified U1 email: "
+
+    print
+
+    read -rs "HELD_U2_EMAIL?Verified U2 email: "
+
+    print
+
+Every held variable stays set until the final `unset`.
+
+### Before the unpark (owner and developer, parked)
+
+The owner and developer verify these conditions while staging is parked. Answer yes/no for each item. Stop if any answer is no.
+
+1. **SES recipient verification (owner, own shell):** both A4 addresses (`${HELD_U1_EMAIL}` and `${HELD_U2_EMAIL}`) show `VerificationStatus` `SUCCESS`. Status only; neither address is printed or recorded:
+
+        aws sesv2 get-email-identity --profile ${AWS_PROFILE} --region ap-southeast-2 --email-identity "${HELD_U1_EMAIL}" --query 'VerificationStatus' --output text
+
+        aws sesv2 get-email-identity --profile ${AWS_PROFILE} --region ap-southeast-2 --email-identity "${HELD_U2_EMAIL}" --query 'VerificationStatus' --output text
+
+   Expected: `SUCCESS` for both.
+
+2. **Stripe dashboard and webhook secret (owner):**
+   - The four checks in **Stripe billing proof → Stripe dashboard (owner, test mode, while parked)** pass (Customer Portal, retry schedule, webhook endpoint on `${WEBHOOKS_HOST}` at `/v1/stripe/webhook` with the six events, and restricted key permissions).
+   - The owner checks under **Stripe billing proof → Webhook secret (owner, while parked)** print `true` for both the `whsec_` and `rk_test_` checks. Answer yes/no only.
+
+3. **Browser profile (developer):**
+   - A dedicated Brave profile exists, used only for this run.
+   - Its only extension is playwriter.
+   - Brave Shields is off for `https://${ADMIN_HOST}`.
+
+### Pre-checks
+
+Hold `${DEPLOY_SHA}` as the latest `main` commit that contains `cfcf3f7`:
+
+    git fetch origin
+
+    DEPLOY_SHA=$(git rev-parse origin/main)
+
+    git merge-base --is-ancestor cfcf3f7 ${DEPLOY_SHA} && print ok
+
+Expected: `ok`.
+
+Run pre-checks (assistant and owner; any failure is a stop before spend):
+
+1. **Branch ancestors (assistant):** confirm branch contains origin/main and `${DEPLOY_SHA}`:
+
+        git merge-base --is-ancestor origin/main HEAD && git merge-base --is-ancestor ${DEPLOY_SHA} HEAD && print ok
+
+   Expected: `ok`. The branch must contain `origin/main`, with linear history, and no pushed commit is rewritten.
+
+2. **Infrastructure unchanged (assistant):** confirm `infra/` has no commit between `57b2d3d` and `${DEPLOY_SHA}`:
+
+        git log --oneline 57b2d3d..${DEPLOY_SHA} -- infra/
+
+   Expected: prints nothing.
+
+3. **Latest build:** `admin-publish` runs on every push to `main`, so `${DEPLOY_SHA}` must be the newest `main` push run, and that run succeeded:
+
+        [[ "$(gh run list --workflow ci.yml --branch main --event push --limit 1 --json headSha,conclusion --jq '.[0].headSha + " " + .[0].conclusion')" == "$(git rev-parse ${DEPLOY_SHA}) success" ]] && print yes || print no
+
+   Expected: `yes`. A successful run means `publish` and `admin-publish` both passed.
+
+4. **Image digest (assistant; record digest length only, never the registry host):**
+
+        DIGEST=$(aws ecr describe-images --profile ${AWS_PROFILE} --region ap-southeast-2 --repository-name ch-staging/service --image-ids imageTag=${DEPLOY_SHA} --query 'imageDetails[0].imageDigest' --output text)
+
+        print ${#DIGEST}
+
+   Expected: `71`.
+
+5. **Scan status and CRITICAL count (assistant):**
+
+        aws ecr describe-image-scan-findings --profile ${AWS_PROFILE} --region ap-southeast-2 --repository-name ch-staging/service --image-id imageTag=${DEPLOY_SHA} --query '{status:imageScanStatus.status,critical:imageScanFindings.findingSeverityCounts.CRITICAL || `0`}' --output json
+
+   Expected: `COMPLETE` and `0` critical findings.
+
+6. **Migration journal tags at `${DEPLOY_SHA}` (assistant; expect the 19 tags `0000_schemas` to `0018_wise_starfox` in journal order):**
+
+        git show ${DEPLOY_SHA}:packages/db/drizzle/meta/_journal.json | jq -r '.entries[].tag'
+
+7. **SES domain checks (assistant, read-only, no address):**
+
+        aws sesv2 get-email-identity --profile ${AWS_PROFILE} --region ap-southeast-2 --email-identity "mail.${ZONE_NAME}" --query '{Identity:VerificationStatus,Dkim:DkimAttributes.Status}' --output json
+
+        aws sesv2 get-email-identity --profile ${AWS_PROFILE} --region ap-southeast-2 --email-identity "mail.${ZONE_NAME}" --query 'MailFromAttributes.MailFromDomainStatus' --output text
+
+        aws sesv2 get-account --profile ${AWS_PROFILE} --region ap-southeast-2 --query 'ProductionAccessEnabled' --output text
+
+   Expected: domain identity and DKIM status `SUCCESS`, MAIL FROM domain status `SUCCESS`, production access `False` (sandbox).
+
+8. **A3 admin build target (owner, own shell, never printed):** Each origin must equal its host exactly, with no trailing slash, because the admin builds `${origins.api}${path}` (`apps/admin/src/api.ts:100`) and CORS allows one exact origin (`infra/modules/aws-ingress/main.tf:195-200`):
+
+        [[ "$(gh variable get ADMIN_API_ORIGIN)" == "https://${API_HOST}" ]] && print yes || print no
+
+        [[ "$(gh variable get ADMIN_AUTH_ORIGIN)" == "https://${AUTH_HOST}" ]] && print yes || print no
+
+   Expected: `yes` twice. If either is `no`, the owner sets it and reruns `admin-publish`, and A1 names that run.
+
+9. **Served build (owner):** The served `index.html` names a script that is in the bucket, which the publish sync (`--delete`) holds for the latest build only (Deviation 1):
+
+        terraform -chdir=infra/regions/au init -backend-config=backend/staging.hcl -lockfile=readonly >/dev/null && print yes || print no
+
+        ADMIN_BUCKET=$(terraform -chdir=infra/regions/au output -raw admin_bucket)
+
+        SERVED=$(curl -fsS "https://${ADMIN_HOST}/index.html" | grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' | sort -u)
+
+        [[ $(print -r -- "${SERVED}" | wc -l) -eq 1 && -n "${SERVED}" ]] && aws s3 ls --profile ${AWS_PROFILE} "s3://${ADMIN_BUCKET}/${SERVED}" >/dev/null 2>&1 && print yes || print no
+
+        unset ADMIN_BUCKET SERVED
+
+   Expected: `yes`.
+
+10. **Confirm staging is still parked (assistant; read-only counts):**
+
+        aws rds describe-db-instances --profile ${AWS_PROFILE} --region ap-southeast-2 --query 'length(DBInstances)' --output text
+
+        aws ecs list-clusters --profile ${AWS_PROFILE} --region ap-southeast-2 --query 'length(clusterArns)' --output text
+
+    Expected: `0` for both.
+
+11. **Write `service_image` line into `staging.local.tfvars`:**
+    From `infra/regions/au`, the owner writes the `service_image` line into `env/staging.local.tfvars` using the block in **SES sign-in proof → Apply 1**, and confirms the count check prints 1:
+
+        grep -c '^service_image' env/staging.local.tfvars
+
+    Expected: `1`.
+
+12. **Read-only plan without the lock (assistant):**
+    From `infra/regions/au` on the pushed Task 2 SHA, after the owner has written the `service_image` line:
+
+        terraform init -backend-config=backend/staging.hcl -lockfile=readonly
+
+        terraform plan -lock=false -no-color -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -out=${PLAN_FILE} -input=false | grep --line-buffered '^Plan:'
+
+    Expected: `Plan: 18 to add, 0 to change, 0 to destroy.`
+
+    List addresses from the plan:
+
+        terraform show -json ${PLAN_FILE} | jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | "\(.change.actions | join(" ")) \(.address)"'
+
+    Confirm all 18 addresses match the expected list in **Apply 1** below.
+
+        rm -f ${PLAN_FILE}
+
+Stop if any pre-check fails. Push the Task 2 commit after the reviewer accepts both Task 1 and Task 2.
+
+### Apply 1
+
+Follow the procedure in **Ops console proof → Apply 1**, with these values:
+
+- The branch moves to the unpark commit (`enable_database = true`, `desired_count = 1` in `infra/regions/au/env/staging.tfvars`).
+- The `service_image` line in `staging.local.tfvars` is reused from **Pre-checks**.
+- Run before-each-apply checks against the Task 2 SHA on origin.
+- Plan to `${PLAN_FILE}`: confirm exactly the 18 addresses listed in **Ops console proof → Apply 1** (8 `module.rds[0]`, 4 `db_ops`, 6 `module.ingress`). Any other address is a stop.
+- Apply the plan file:
+
+        terraform apply -input=false ${PLAN_FILE} | grep --line-buffered -E ': (Creating|Still creating|Creation complete|Modifying|Still modifying|Modification complete|Destroying|Still destroying|Destruction complete)|Apply complete' | sed -l -E 's/ \[id=[^]]+\]//'
+
+- Record the UTC completion time under evidence. Set `HARD_STOP_UTC` to 48 hours later. Rate: USD 0.0468 per hour.
+- Delete the plan file: `rm -f ${PLAN_FILE}`.
+- Wait until RDS instance is `available`:
+
+        aws rds describe-db-instances --profile ${AWS_PROFILE} --db-instance-identifier ${DB_INSTANCE_ID} --query 'DBInstances[0].DBInstanceStatus' --output text
+
+  Expected: `available`.
+
+### One-offs
+
+Run the one-off tasks in order on the freshly unparked database. Each step ends with the three **After a db-ops-container one-off** commands or their `service`-container equivalent.
+
+Note: U1's bootstrap roles (`org_owner` and `community_admin` via `bootstrapOwner`) map to the full permission catalogue (`packages/policy/src/decide.ts:19,23`), which includes `people.view`, `people.manage`, `people.restricted.read`, and `service_times.manage`. No role step is needed for U1.
+
+1. **`db-bootstrap` and `db-migrate`:**
+   - Run `db-bootstrap` as in **Ops console proof → One-offs**: exit 0, stdout exactly one integer (`max_connections`), stderr empty.
+   - Run `db-migrate` as in **Ops console proof → One-offs**: exit 0, stdout 19 `applied <tag>` lines for `0000_schemas` to `0018_wise_starfox` in journal order, then `done applied=19 total=19`, with stderr empty.
+
+2. **`provision-owner` for U1:**
+   As in the create step under **Ops console proof → One-offs** (runbook :3076), including its "Confirm secret name is free" command (:3065), with `${HELD_U1_EMAIL}` in place of `${HELD_EMAIL}`:
+   - Confirm secret name is free:
+
+         print -r -- "$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null)" | grep -c ResourceNotFoundException
+
+     Expected: `1`.
+
+   - Create the provision secret:
+
+         jq -n --arg o "${HELD_ORG_SLUG}" --arg c "${HELD_COMMUNITY_SLUG}" --arg e "${HELD_U1_EMAIL}" \
+           '{organisationSlug: $o, communitySlug: $c, email: $e}' \
+           | aws secretsmanager create-secret --profile ${AWS_PROFILE} \
+             --name ${PROVISION_SECRET_NAME} --kms-key-id ${SECRETS_KEY_ARN} \
+             --secret-string file:///dev/stdin >/dev/null
+
+   - Run `provision-owner.js` as in **Ops console proof → One-offs**:
+
+         PROVISION_SECRET_ARN=$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} \
+           --secret-id ${PROVISION_SECRET_NAME} --query 'ARN' --output text)
+
+         TASK_ARN=$(aws ecs run-task \
+           --profile ${AWS_PROFILE} \
+           --cluster ${CLUSTER} \
+           --task-definition ${SERVICE_TASK_DEFINITION} \
+           --launch-type FARGATE \
+           --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+           --overrides "{\"containerOverrides\":[{\"name\":\"service\",\"command\":[\"node\",\"/app/provision-owner.js\"],\"environment\":[{\"name\":\"PROVISION_SECRET_ARN\",\"value\":\"${PROVISION_SECRET_ARN}\"}]}]}" \
+           --query 'tasks[0].taskArn' --output text)
+
+         aws ecs wait tasks-stopped --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN}
+
+         aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN} --query 'tasks[0].[containers[0].exitCode,stoppedReason]' --output text
+
+         aws logs get-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --log-stream-name "service/service/${TASK_ARN##*/}" --query 'events[].message' --output text | tr '\t' '\n'
+
+     Expected: exit 0, stdout `created`, stderr empty. `already_bootstrapped` is a stop.
+
+   - Delete and verify secret:
+
+         aws secretsmanager delete-secret --profile ${AWS_PROFILE} \
+           --secret-id ${PROVISION_SECRET_NAME} --force-delete-without-recovery >/dev/null
+
+         repeat 12; do gone=$(print -r -- "$(aws secretsmanager describe-secret --profile ${AWS_PROFILE} --secret-id ${PROVISION_SECRET_NAME} 2>&1 >/dev/null)" | grep -c ResourceNotFoundException); (( gone == 1 )) && break; sleep 5; done; print ${gone}
+
+         unset PROVISION_SECRET_ARN TASK_ARN gone
+
+     Expected: `1`. The owner passes `${HELD_COMMUNITY_SLUG}` privately to the developer.
+
+3. **`billing-admin` one-offs:**
+   Run from **Stripe billing proof → One-offs**:
+   - `billing-admin settings` with `GST_BPS=1000`, `INCLUSIVE=true`, `TRIAL_DAYS=30`, `GRACE_DAYS=7`, `NOTE="admin-screens-proof"`: exit 0, stdout starts with `tax_rate `.
+   - `billing-admin plan` with `PLAN_KEY=starter`, `LOOKUP_KEY=starter_monthly`, `TRIAL_ELIGIBLE=true`, and `ENTITLEMENTS="module.engagement,module.forms,module.content,module.giving,people.directory,people.households,groups.basic,communications.email,giving.one_off"`: exit 0, stdout `plan_set`.
+   - `billing-admin seed-test-catalogue` once: exit 0, stdout `seeded`.
+   - `billing-admin mode ${HELD_ORG_SLUG} self_serve`: exit 0, stdout `none`.
+
+### Running-task check (assistant)
+
+Follow **Ops console proof → Running-task check**:
+
+Wait until the ECS service is stable:
+
+    aws ecs wait services-stable --profile ${AWS_PROFILE} --cluster ${CLUSTER} --services ${SERVICE}
+
+Check that the running task's image digest matches the pre-checked digest:
+
+    SERVICE_TASK_ARN=$(aws ecs list-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --service-name ${SERVICE} --desired-status RUNNING --query 'taskArns[0]' --output text)
+
+    aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks "${SERVICE_TASK_ARN}" --query 'tasks[0].containers[0].imageDigest' --output text
+
+Expected: equals `${DIGEST}`.
+
+Check container environment variable names:
+
+    TASK_DEF_ARN=$(aws ecs describe-services --profile ${AWS_PROFILE} --cluster ${CLUSTER} --services ${SERVICE} --query 'services[0].taskDefinition' --output text)
+
+    aws ecs describe-task-definition --profile ${AWS_PROFILE} --task-definition "${TASK_DEF_ARN}" --query 'taskDefinition.containerDefinitions[?name==`service`].environment[].name' --output text
+
+Expected: output lists all four of `ADMIN_ORIGIN`, `BILLING_SECRET_ARN`, `MAIL_FROM_ADDRESS`, and `SES_CONFIGURATION_SET` (names only; never print values).
+
+    unset SERVICE_TASK_ARN TASK_DEF_ARN
+
+### M13–M18 (owner)
+
+Run the M13–M18 schema and permission validation task on family `${OPS_TASK_DEFINITION}`, container `db-ops`:
+
+    TASK_ARN=$(aws ecs run-task \
+      --profile ${AWS_PROFILE} \
+      --cluster ${CLUSTER} \
+      --task-definition ${OPS_TASK_DEFINITION} \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+      --overrides '{"containerOverrides":[{"name":"db-ops","command":["node","--input-type=module","-e","import{createDirectSql}from'\''@community-hub/db'\'';import{readFileSync}from'\''node:fs'\'';try{const pem=readFileSync('\''/app/certs/rds-ap-southeast-2-bundle.pem'\'','\''utf8'\'');const e=process.env;const sql=createDirectSql({host:e.PGHOST,port:Number(e.PGPORT),database:e.PGDATABASE,user:'\''identity'\'',password:e.PGPASSWORD_IDENTITY,ca:pem});const T=[['\''usage_facts_daily'\'',1,1,0,0,1,'\''*'\''],['\''groups'\'',1,1,0,0,1,'\''*'\''],['\''group_members'\'',1,1,1,0,1,'\''*'\''],['\''persons'\'',1,1,0,0,0,'\''age_basis,birthday_md,date_of_birth,email,email_bidx,family_name,given_name,household_id,phone,phone_bidx,version'\''],['\''households'\'',1,1,0,0,0,'\''label,version'\''],['\''household_keys'\'',1,1,0,0,0,'\'''\''],['\''life_events'\'',1,1,0,0,0,'\''event_date,event_type,notes,place,version'\''],['\''service_times'\'',1,1,0,0,0,'\''content_html,updated_at,version'\'']];let bad=0;const out=[];for(const [n,rls,frc,del,trn,upd,cols] of T){const k=await sql`select c.oid::int o,c.relrowsecurity r,c.relforcerowsecurity f from pg_class c join pg_namespace s on s.oid=c.relnamespace where s.nspname='\''app'\'' and c.relname=${n} and c.relkind='\''r'\''`;if(k.length!==1){bad++;out.push(n+'\'' exists false'\'');continue;}const o=k[0].o;const p=await sql`select has_table_privilege('\''app'\'',${o}::oid,'\''DELETE'\'') d,has_table_privilege('\''app'\'',${o}::oid,'\''TRUNCATE'\'') t,has_table_privilege('\''app'\'',${o}::oid,'\''UPDATE'\'') u`;const a=await sql`select a.attname::text n,has_column_privilege('\''app'\'',${o}::oid,a.attnum,'\''UPDATE'\'') u from pg_attribute a where a.attrelid=${o}::oid and a.attnum>0 and not a.attisdropped order by a.attname`;const got=a.filter(x=>x.u).map(x=>x.n).join('\'','\'');const want=cols==='\''*'\''?a.map(x=>x.n).join('\'','\''):cols;const ok=[k[0].r===!!rls,k[0].f===!!frc,p[0].d===!!del,p[0].t===!!trn,p[0].u===!!upd,got===want];const m=ok.filter(x=>!x).length;bad+=m;out.push(n+'\'' '\''+ok.map(x=>x?1:0).join('\'''\''));}const v=await sql`select count(*)::int c from pg_attribute a join pg_class c on c.oid=a.attrelid join pg_namespace s on s.oid=c.relnamespace where s.nspname='\''app'\'' and a.attname='\''version'\'' and c.relname in ('\''persons'\'','\''households'\'') and not a.attisdropped`;if(v[0].c!==2)bad++;out.push('\''version_columns '\''+v[0].c);const g=await sql`select count(*)::int c from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace s on s.oid=c.relnamespace where s.nspname='\''app'\'' and c.relname='\''persons'\'' and t.tgname='\''persons_before_update'\'' and not t.tgisinternal`;if(g[0].c!==1)bad++;out.push('\''trigger '\''+g[0].c);const d=await sql`select pg_get_constraintdef(x.oid) d from pg_constraint x join pg_class c on c.oid=x.conrelid join pg_namespace s on s.oid=c.relnamespace where s.nspname='\''app'\'' and c.relname='\''custom_role_permissions'\'' and x.conname='\''custom_role_permissions_permission'\''`;const has=d.length===1&&['\''people.view'\'','\''people.manage'\'','\''service_times.manage'\''].every(w=>d[0].d.includes(w));if(!has)bad++;out.push('\''permission_check '\''+(has?1:0));out.push('\''mismatches '\''+bad);for(const l of out)console.log(l);if(bad!==0){await sql.end({timeout:1});process.exit(1);}await sql.end({timeout:1});}catch{console.error('\''fail'\'');process.exit(1);}"]}]}' \
+      --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
+
+Next run the three **After a db-ops-container one-off** commands:
+
+    aws ecs wait tasks-stopped --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN}
+
+    aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN} --query 'tasks[0].[containers[0].exitCode,stoppedReason]' --output text
+
+    aws logs get-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --log-stream-name "db-ops/db-ops/${TASK_ARN##*/}" --query 'events[].message' --output text | tr '\t' '\n'
+
+Expected output: exit 0, exactly twelve lines in order:
+
+    usage_facts_daily 111111
+    groups 111111
+    group_members 111111
+    persons 111111
+    households 111111
+    household_keys 111111
+    life_events 111111
+    service_times 111111
+    version_columns 2
+    trigger 1
+    permission_check 1
+    mismatches 0
+
+Each table line's six digits are, in order: RLS, FORCE, `DELETE`, `TRUNCATE`, table `UPDATE`, and the column `UPDATE` set, each `1` when matching the expected migration grant state.
+
+### Browser sessions B0–B5
+
+Browser work runs in sessions of 14 minutes or less in one tab, with every reload at `/`. Access tokens last 15 minutes and the admin never refreshes them (spec A12). If a session is not complete at 13 minutes, work stops and resumes in the next session.
+
+**Code count rule:** Codes are capped at 5 per address per rolling 60 minutes. U1 signs in for B1–B5 and B7 (6 codes); U2 signs in for B6 and B8 (2 codes). The developer records request times. No address requests a 5th code within 60 minutes of its first in a window: B5 starts at least 60 minutes after B1's code; B7 starts at least 60 minutes after B2's code. Reserve sessions B4b and B5b each use one U1 code under the same rule. If a code does not arrive, wait out the 60-minute window; never resend.
+
+**Expected 4xx (not failures, subtracted from failed-request counts):**
+
+- Browser `GET /favicon.ico` on the admin host (admin ships no favicon).
+- For U2 in B6: 403 responses to people and household reads before grant, and whatever `/v1/access/capabilities` and `/v1/billing/status` return to a user without a grant (5xx is a stop).
+- Any 401 after a token expires at a session's end.
+
+**Browser sessions table:**
+
+| #        | User | Work list                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | Proofs           |
+| -------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| B0       | —    | Baseline: the developer opens `/` on the admin host in the proof profile. The agent records the console baseline (count of messages, by source host only) and sign-in's axe result (recorded, not required to be 0; spec A10) before sign-in.                                                                                                                                                                                                                                                                                                                                         | Baseline         |
+| B1       | U1   | Sign in; type the slug; open General Settings → Billing; subscribe. The developer types the Stripe test card and the synthetic Checkout values by hand, declining every autofill. While the tab is on the admin origin (from sign-in to the click that opens Checkout, and again from arrival at `/?billing=done`, `apps/api/src/billing-routes.ts:254`), the agent records the distinct request hosts other than the admin host (count), the methods of requests to the API and auth hosts, CSP violations and CORS failures. Nothing is counted while the tab is on Stripe's pages. | P1, P2, P3 (1–2) |
+| B2       | U1   | After the webhook check: sign in at `/`; record `state` and `planKey` from the billing status response and stop unless `ok` and `starter`; the three nav items show; add the six adults in All Contacts; create the three households; add each household's adults.                                                                                                                                                                                                                                                                                                                    | P3 (5), P4       |
+| B3       | U1   | Add the two minors; link the guardian; add the two life events; save the Mass Times text, navigate away and back.                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | P4, P6           |
+| B4       | U1   | The A10 views at 1280px, light; P5 checks and screenshots; positive control: Family Details for `Tolland household` shows Pip Tolland and the guardian link (booleans).                                                                                                                                                                                                                                                                                                                                                                                                               | P5               |
+| B5       | U1   | The A10 views at 375px, dark; P5 checks and screenshots; Users & Roles role-query assertions (no screenshot).                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | P5               |
+| B4b, B5b | U1   | Reserve: only the unfinished part of B4 or B5.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | P5               |
+
+**Synthetic data (spec A7):**
+
+| Household           | Adults                      | Minors                                  | Links and events                                                                                                                                            |
+| ------------------- | --------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Tolland household` | Mira Tolland, Owen Tolland  | Pip Tolland, date of birth `2016-03-14` | Guardian link Mira Tolland → Pip Tolland (all four rights). Life events: Mira, marriage, `2012-09-08`, place "Riverside chapel"; Pip, baptism, `2016-06-01` |
+| `Barrah household`  | Hester Barrah, Ilan Barrah  | Wren Barrah, no date of birth           | —                                                                                                                                                           |
+| `Vessey household`  | Corin Vessey, Tamsin Quarle | —                                       | —                                                                                                                                                           |
+
+- Mass Times text: heading "Sunday" and line "Mass at 9:00 am".
+- Custom role: key `proof_people`, permissions `people.view` and `people.manage` only.
+- U2's added adult: Rafe Lindqvist.
+- P7 minor-name test strings: `Pip Tolland`, `Wren Barrah`, `Pip`, `Wren`, `2016-03-14`.
+
+**Expected results for B0–B5:**
+
+- **B0 Baseline:** Console message count by source host recorded. Sign-in axe violations recorded.
+- **B1 (P1, P2, P3 1–2):**
+  - Published build (P1): served `index.html` names the one `assets/index-*.js` script in the bucket; exactly two distinct request hosts other than the admin host (API host and auth host; count 2); methods `POST` plus `OPTIONS` preflights; 0 CSP violations; 0 CORS failures.
+  - Sign-in (P2): U1 signs in by email code from `/`; shell loads the community.
+  - Checkout (P3 1–2): General Settings → Billing → subscribe; test card `4242 4242 4242 4242` and synthetic Checkout values; Checkout redirects to `/?billing=done`; admin strips query; "Payment received, your plan will appear shortly" shows once.
+- **Webhook check (between B1 and B2, assistant):**
+  Set `WINDOW_START_MS` before B1. Within 5 minutes of Checkout, check webhook outcomes in the service logs as in **Stripe billing proof → S4**:
+
+      aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${WINDOW_START_MS} --query 'events[].message' --output text | tr '\t' '\n' | jq -rR 'fromjson? | select(.message=="webhook") | "\(.stripeEventType) \(.outcome) \(.errorCode // "-")"' | sort | uniq -c
+
+  Check key sets:
+
+      aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${WINDOW_START_MS} --query 'events[].message' --output text | tr '\t' '\n' | jq -rR 'fromjson? | select(.message=="webhook") | "\(.stripeEventType) \(keys | tostring)"' | sort -u
+
+  Expected: `checkout.session.completed` shows `processed` with no `errorCode`; key set has exactly `["level","message","operation","organisationId","outcome","stripeEventId","stripeEventType"]`; any `failed` line or `errorCode` is a stop (Deviation 3). Stripe dashboard shows 2xx for deliveries.
+
+- **B2 (P3 5, P4):**
+  - Sign in at `/`; `/v1/billing/status` returns `state` `ok` and `planKey` `starter` (stop unless both match).
+  - All Contacts, Family Records, and Mass Times show in navigation.
+  - Add 6 adults in All Contacts; create 3 households; add adults to households: all writes answer 2xx.
+- **B3 (P4, P6):**
+  - Add 2 minors; link guardian Mira → Pip (all 4 rights); add 2 life events: all writes answer 2xx.
+  - Mass Times (P6): save text, navigate away and back, text persists.
+- **B4 (P5, 1280px light):**
+  - Views: General Settings and Billing, Module Toggles, Mass Times, All Contacts (Adults and Minors), Contact Details, Family Records, Family Details, and open forms.
+  - Every shell screen: 0 axe violations, 0 counted console errors, 0 failed requests (minus expected 4xx).
+  - Positive control: Family Details for `Tolland household` shows Pip Tolland and the guardian link (booleans true).
+  - Screenshots captured with sidebar Community picker hidden by injected CSS.
+- **B5 (P5, 375px dark):**
+  - Same views at 375px dark: 0 axe violations, no sideways scroll, 0 counted console errors, 0 failed requests.
+  - Users & Roles assertions (role queries only, no screenshot): one `h1`; grant, custom-role, built-in-role, and user-link lists render as `listitem`s; Revoke, Delete custom role, Create custom role, and Grant buttons present for U1; 0 axe violations; no sideways scroll.
+
+### U2 (B6, H6, B7, B8)
+
+Follow the restricted caller proof procedure:
+
+1. **B6 (U2 first sign-in):**
+   - Developer opens `/` in the proof profile and signs in as U2 (`${HELD_U2_EMAIL}`).
+   - U2 has no grant. Confirm U2 sees no people screen.
+   - Expected: U2 sees no people navigation item and cannot open people screens.
+   - U2 signs out.
+
+2. **A6 one-off (owner):**
+   Owner runs the identity login query on `${OPS_TASK_DEFINITION}`, container `db-ops`:
+
+       TASK_ARN=$(aws ecs run-task \
+         --profile ${AWS_PROFILE} \
+         --cluster ${CLUSTER} \
+         --task-definition ${OPS_TASK_DEFINITION} \
+         --launch-type FARGATE \
+         --network-configuration "awsvpcConfiguration={subnets=[${SUBNET}],securityGroups=[${TASK_SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+         --overrides '{"containerOverrides":[{"name":"db-ops","command":["node","--input-type=module","-e","import{createDirectSql}from'\''@community-hub/db'\'';import{readFileSync}from'\''node:fs'\'';try{const pem=readFileSync('\''/app/certs/rds-ap-southeast-2-bundle.pem'\'','\''utf8'\'');const e=process.env;const sql=createDirectSql({host:e.PGHOST,port:Number(e.PGPORT),database:e.PGDATABASE,user:'\''identity'\'',password:e.PGPASSWORD_IDENTITY,ca:pem});const c=await sql`select count(*)::int c from identity.users`;if(c[0].c!==2){console.log('\''count '\''+c[0].c);await sql.end({timeout:1});process.exit(1);}const r=await sql`select id::text id from identity.users order by id desc limit 1`;console.log('\''count 2'\'');console.log(r[0].id);await sql.end({timeout:1});}catch{console.error('\''fail'\'');process.exit(1);}"]}]}' \
+         --query 'tasks[0].taskArn' --output text) && print ${#TASK_ARN}
+
+   The owner alone runs the three **After a db-ops-container one-off** commands:
+
+       aws ecs wait tasks-stopped --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN}
+
+       aws ecs describe-tasks --profile ${AWS_PROFILE} --cluster ${CLUSTER} --tasks ${TASK_ARN} --query 'tasks[0].[containers[0].exitCode,stoppedReason]' --output text
+
+       aws logs get-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --log-stream-name "db-ops/db-ops/${TASK_ARN##*/}" --query 'events[].message' --output text | tr '\t' '\n'
+
+   Expected: exit 0, stdout `count 2` followed by U2's UUID on the next line.
+   The owner reports the exit code and the `count 2` line only. The owner passes U2's UUID privately to the developer.
+
+   Before `${TASK_ARN}` is reused, the owner deletes that task's log stream and verifies:
+
+       aws logs delete-log-stream --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --log-stream-name "db-ops/db-ops/${TASK_ARN##*/}"
+
+       aws logs describe-log-streams --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --log-stream-name-prefix "db-ops/db-ops/${TASK_ARN##*/}" --query 'length(logStreams)' --output text
+
+   Expected: describe prints `0`. Record yes.
+
+3. **B7 (U1 grants role to U2):**
+   - Developer signs in as U1 at `/`.
+   - Opens Users & Roles. Creates custom role `proof_people` with `people.view` and `people.manage` only (no `people.restricted.read`).
+   - Checks that U2's id is not on the owner's grant line.
+   - Pastes U2's id into Users & Roles → Grant with role `proof_people`.
+   - Users & Roles assertions: grant list has one more item than before; assertions pass (P7 step 3).
+   - U1 signs out. A reload at `/` asks for sign-in (P9).
+
+4. **B8 (U2 restricted checks and adult add):**
+   - Developer signs in as U2 at `/`.
+   - P7 checks:
+     - All Contacts has no Minors button.
+     - Family Records shows the alert "Household names and children are hidden for your role."
+     - Every household cell holds the restricted marker labelled "Household name hidden for your role".
+     - Every `households/list` response row has `label: null`.
+     - Every `people/list` item U2 receives has `isMinor` false.
+     - The `households/read` response for `Tolland household` has no `minors` key and no guardian link to a minor.
+     - Family Details shows no minor, no guardian row, and no date of birth.
+     - None of the minor-name strings (`Pip Tolland`, `Wren Barrah`, `Pip`, `Wren`, `2016-03-14`) appears in page text (`innerText.includes` per string).
+     - Contact Details, Family Records, and Family Details pass the A10 checks at 1280px light and 375px dark (0 axe violations, no sideways scroll, 0 counted console errors, 0 unexpected failed requests). Captured with Community picker and target-household select hidden.
+   - P8 write as U2:
+     - U2 adds adult Rafe Lindqvist. The write answers 2xx, and Rafe Lindqvist appears.
+   - P9 sign out:
+     - U2 signs out. A reload at `/` asks for sign-in.
+
+### Close-out
+
+1. **Cancel subscription and delivery check (owner and assistant):**
+   - In Stripe dashboard: owner cancels the test subscription immediately.
+   - Within 5 minutes, assistant checks service logs as in **Stripe billing proof → S9**:
+
+         aws logs filter-log-events --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --start-time ${WINDOW_START_MS} --query 'events[].message' --output text | tr '\t' '\n' | jq -rR 'fromjson? | select(.message=="webhook") | "\(.stripeEventType) \(.outcome) \(.errorCode // "-")"' | grep 'customer.subscription.deleted'
+
+     Expected: `customer.subscription.deleted processed -`.
+
+   - Owner checks Stripe dashboard: delivery answered 2xx (yes/no). Cancelling before re-park ensures Stripe does not retry against a parked host.
+
+2. **Evidence and re-park commits:**
+   - Record proof evidence (Task 3 commit).
+   - Re-park commit (Task 4): `enable_database = false` and `desired_count = 0` in `infra/regions/au/env/staging.tfvars`.
+
+3. **Remove `service_image` line:**
+   The owner removes the `service_image` line from `infra/regions/au/env/staging.local.tfvars` and checks:
+
+       grep -c '^service_image' env/staging.local.tfvars
+
+   Expected: `0`.
+
+4. **Apply 2.** Run the re-park apply below.
+
+### Apply 2
+
+Follow **Ops console proof → Apply 2** from `infra/regions/au` on the pushed Task 4 SHA:
+
+1. Initialize Terraform with the staging backend:
+
+        terraform init -backend-config=backend/staging.hcl -lockfile=readonly
+
+2. Plan to the saved file outside the repository:
+
+        terraform plan -no-color -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -out=${PLAN_FILE} -input=false | grep --line-buffered '^Plan:'
+
+   Expected: `Plan: 0 to add, 0 to change, 18 to destroy.`
+
+   Confirm the 18 destroyed addresses match the same addresses created in Apply 1:
+
+        terraform show -json ${PLAN_FILE} | jq -r '.resource_changes[] | select(.change.actions != ["no-op"]) | "\(.change.actions | join(" ")) \(.address)"'
+
+3. Apply that file:
+
+        terraform apply -input=false ${PLAN_FILE} | grep --line-buffered -E ': (Destroying|Still destroying|Destruction complete)|Apply complete' | sed -l -E 's/ \[id=[^]]+\]//'
+
+4. Delete the plan file:
+
+        rm -f ${PLAN_FILE}
+
+5. Confirm staging is parked (read back):
+
+        aws rds describe-db-instances --profile ${AWS_PROFILE} --region ap-southeast-2 --query 'length(DBInstances)' --output text
+
+        aws ecs list-clusters --profile ${AWS_PROFILE} --region ap-southeast-2 --query 'length(clusterArns)' --output text
+
+   Expected: `0` for both.
+
+6. Confirm plan is empty:
+
+        terraform plan -no-color -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -input=false
+
+   Expected: `No changes. Your infrastructure matches the configuration.`
+
+7. Record the re-park (Task 5).
+
 ## Restore drill
 
 Quarterly, and only against staging. Restore the staging database to a new instance from point-in-time recovery. Record the time taken against the 4-hour target. Then delete the restored instance, because it bills by the hour. This drill does not restore production. Reading `SHOW max_connections` belongs to `first-running-task`, not to this drill.
