@@ -172,6 +172,25 @@ it("hides Grant, Revoke, and Delete without access.roles.manage", async () => {
   expect(screen.getByRole("button", { name: "Link" })).toBeTruthy();
 });
 
+it("hides the create custom role form without access.roles.manage", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(
+      JSON.stringify(directory(1, [ownerGrant], ["access.users.view", "access.users.manage"])),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ),
+  );
+  await showUsers();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+  expect(await screen.findByText(USER, { exact: false })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Create custom role" })).toBeNull();
+  expect(screen.queryByRole("textbox", { name: "Custom role key" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Link" })).toBeTruthy();
+});
+
 it("hides Link without access.users.manage", async () => {
   sessionStorage.setItem("community-hub.access-token", TOKEN);
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
