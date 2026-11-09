@@ -53,6 +53,11 @@ The developer approves this plan after the independent assistant's check (AGENTS
 - Session scratch (`.superpowers/`, `*-report.md`) is never committed.
 - **Second review.** Required before merge (spec Out-of-band). It starts when the pull request opens, on a model that is neither Gemini 3.8 Flash nor Claude Opus 5.5.
 
+**Deviations from the spec (repeated in the PR body):**
+
+1. **P1's build check.** The spec says the served `index.html` script name "matches the CI artefact". CI uploads no artefact: `admin-publish` builds inside the job and syncs to the bucket (`.github/workflows/ci.yml:394-500`). The plan checks instead that the served `index.html` names exactly the one `assets/index-*.js` in the bucket, which the `--delete` sync makes the only one.
+2. **P1's host count runs over B1,** across sign-in and billing, not on the signed-out page, which calls neither the API nor the auth host.
+
 **Migration wave:** none. The nineteen existing migrations (`0000_schemas` to `0018_wise_starfox`) apply to a database that the re-park destroys.
 
 **Terraform asserts added by this chunk:** none. `staging_unpark`, `database_off`, `prod_database_off_fails` and `image_without_database_fails` in `infra/regions/au/tests/cell.tftest.hcl` already pin the plan shapes.
@@ -73,21 +78,23 @@ The runbook commands are zsh on macOS, in the owner's shell.
 
 Each pin is weakened once in a scratch copy, and its test is seen to fail. Then the source is restored. The weakened tree is never committed. Results go in the task report.
 
-| Setting (spec, Rules touched)                    | Test that pins it                                                                                  | Weakening change, and the expected failure                                                                                                     |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1a. `enable_database = false` committed at merge | `parked.test.ts`, `access/domain/boundaries.test.ts`, `people/domain/boundaries.test.ts`           | Seen naturally on Task 2: all three fail. Task 4 adds a byte-equality check of `staging.tfvars` against `origin/main`                          |
-| 1b. `desired_count = 0` committed at merge       | The same three files                                                                               | In Task 4's scratch copy, flip only `desired_count = 1`; at least one of the three fails                                                       |
-| 1c. No `service_image` in any file under `env/`  | The same three files, and `database_off` in `cell.tftest.hcl`                                      | In Task 4's scratch copy, add `service_image = "x"` to `staging.tfvars`; at least one fails                                                    |
-| 2. Production refuses `enable_database = false`  | `prod_database_off_fails` (`cell.tftest.hcl`)                                                      | In Task 4's scratch copy, replace only that validation's `condition` with `true`; the run fails. If Terraform cannot run on Windows, record it |
-| 3. No identifier in any added line               | The implementer scans each staged file's added lines; the reviewer then scans `origin/main...HEAD` | In a scratch file, plant one sample of each class below; each must hit                                                                         |
-| Live: U2 gets no minor                           | P7's response booleans (spec Behaviour)                                                            | Live only. The positive control is P5's minors shown to U1                                                                                     |
-| Live: migration grants                           | M13–M18 one-off, `mismatches 0`                                                                    | Weakened locally before this plan was sent (see **Probe record**): each of three planted grant changes was caught                              |
+| Setting (spec, Rules touched)                    | Test that pins it                                                                                                        | Weakening change, and the expected failure                                                                                                                                                           |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1a. `enable_database = false` committed at merge | `parked.test.ts`, `access/domain/boundaries.test.ts`, `people/domain/boundaries.test.ts`                                 | Seen naturally on Task 2: all three fail. Task 4 adds a byte-equality check of `staging.tfvars` against `origin/main`                                                                                |
+| 1b. `desired_count = 0` committed at merge       | The same three files (`parked.test.ts:15`, `people/domain/boundaries.test.ts:47`, `access/domain/boundaries.test.ts:38`) | In Task 4's scratch copy, flip only `desired_count = 1`; all three fail                                                                                                                              |
+| 1c. No `service_image` in any file under `env/`  | The same three files (`parked.test.ts:16`, `people/domain/boundaries.test.ts:53`, `access/domain/boundaries.test.ts:44`) | In Task 4's scratch copy, add `service_image = "x"` to `staging.tfvars`; all three fail                                                                                                              |
+| 2. Production refuses `enable_database = false`  | `prod_database_off_fails` (`cell.tftest.hcl:958`, `expect_failures` at :974-977)                                         | In Task 4's scratch copy, replace the `condition` at `infra/regions/au/main.tf:69` with `true`, run, restore; then the same for `:77`. Each run fails. If Terraform cannot run on Windows, record it |
+| 3. No identifier in any added line               | The implementer scans each staged file's added lines; the reviewer then scans `origin/main...HEAD` and the PR body       | In a scratch file, plant each sample listed under the pattern; each must hit                                                                                                                         |
+| Live: U2 gets no minor                           | P7's response booleans (spec Behaviour)                                                                                  | Live only. The positive control is P5's minors shown to U1                                                                                                                                           |
+| Live: migration grants                           | M13–M18 one-off, `mismatches 0`                                                                                          | Weakened locally before this plan was sent (see **Probe record**): each of three planted grant changes was caught                                                                                    |
 
 **Pin 3 pattern** (`grep -n -E`, one alternation):
 
 ```
-[0-9]{12}|\barn:|@|\bZ[0-9A-Z]{10,}\b|\.amazonaws\.com|communityhub-staging|\b([0-9]{1,3}\.){3}[0-9]{1,3}\b|\b([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b|[0-9a-fA-F:]*::[0-9a-fA-F:]+|\b[0-9a-f]{32}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b|\b(subnet|sg|vpc|eni)-[0-9a-f]{8,17}\b|\b(cus|sub|price|prod|in|pi|cs|evt|we)_[A-Za-z0-9]{8,}\b
+[0-9]{12}|\barn:|@|\bZ[0-9A-Z]{10,}\b|\.amazonaws\.com|communityhub-staging|\b([0-9]{1,3}\.){3}[0-9]{1,3}\b|\b([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b|[0-9a-fA-F:]*::[0-9a-fA-F:]+|\b[0-9a-f]{32}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b|\b(subnet|sg|vpc|eni)-[0-9a-f]{8,17}\b|\b(cus|sub|price|prod|in|pi|cs|evt|we)_[A-Za-z0-9]{8,}\b|\b[0-9]{8}\b|\bproof-[0-9a-f]{8}\b|\beyJ[A-Za-z0-9_-]{10,}|\b[A-Za-z0-9_-]{43}\b
 ```
+
+**Samples to plant** for the pin 3 weakening, one per line, each of which must hit: `123456789012`, `arn:aws:iam::x`, `name$'\x40'example.test` written with a literal at-sign, `Z0123456789ABC`, `x.amazonaws.com`, `communityhub-staging`, `10.0.0.1`, `fe80::1`, `0123456789abcdef0123456789abcdef`, `0198c3a2-7b1e-7c00-8a00-000000000000`, `subnet-0123456789abcdef0`, `cus_ABCDEFGH12`, `12345678` (an 8-digit sign-in code), `proof-1a2b3c4d` (a slug), `eyJhbGciOiJIUzI1NiJ9`, and a 43-character token `abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ`.
 
 **Allowed hits**, each still listed by file and line in the task report:
 
@@ -95,6 +102,8 @@ Each pin is weakened once in a scratch copy, and its test is seen to fail. Then 
 - The at-sign in `@community-hub/db` inside the one-off commands, in zsh array expansions, in the existing `service@${DIGEST}` image reference, and in existing runbook lines. New prose writes an at-sign as `$'\x40'`.
 - The existing `0.0.0.0` CIDR text and `communityhub-staging` in the existing Shell variables table.
 - `sha256:` digests and the decimal runs inside them.
+- Long Terraform resource names caught by the 43-character run.
+- Dates written `YYYY-MM-DD` do not match the 8-digit class; an 8-digit run that is a count or a time stays a stop until the reviewer clears it.
 - Terraform resource addresses and `terraform test` run names already in committed Terraform.
 - Placeholder hostnames built from variables, such as `admin.${ZONE_NAME}`.
 - The approved spec file and this plan file.
@@ -120,22 +129,26 @@ Invented names only, fixed here so P7 can test for them by name. No contact gets
 
 Access tokens last 15 minutes and the admin never refreshes them (spec A12). Each session below starts with a sign-in at `/` and must finish its list within 14 minutes. The reviewer agent scripts each list in advance and runs it as one playwriter call; the developer types only the values. If a list is not finished at 13 minutes, the session stops, and the rest moves to the next session. A code that never arrives means the address hit its cap: wait for the window, never resend.
 
-| #   | User | Work list                                                                                                                                                                         | Proofs       |
-| --- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
-| B0  | —    | Baseline: the developer opens `/` on the admin host in the proof profile. The agent records the console baseline, the served script name, and the request hosts before sign-in.   | P1 (part)    |
-| B1  | U1   | Sign in; type the slug; open General Settings → Billing; subscribe. The developer types the Stripe test card and the synthetic Checkout values by hand, declining every autofill. | P2, P3 (1–2) |
-| B2  | U1   | After the webhook check: reload at `/`; the three nav items show; add the six adults in All Contacts; create the three households; add each household's adults.                   | P3 (5), P4   |
-| B3  | U1   | Add the two minors; link the guardian; add the two life events; save the Mass Times text, navigate away and back.                                                                 | P4, P6       |
-| B4  | U1   | The A10 views at 1280px, light; P5 checks and screenshots.                                                                                                                        | P5           |
-| B5  | U1   | The A10 views at 375px, dark; P5 checks and screenshots; Users & Roles role-query assertions (no screenshot).                                                                     | P5           |
-| B6  | U2   | First sign-in only. Check that no people screen shows. Sign out.                                                                                                                  | P7 (1)       |
-| —   | —    | The owner runs the A6 one-off (Human H6) and passes U2's id privately to the developer.                                                                                           | P7 (2)       |
-| B7  | U1   | Create the `proof_people` role; the developer pastes U2's id into Grant after checking it is not on the owner's grant line; Users & Roles assertions. Sign out.                   | P7 (3), P9   |
-| B8  | U2   | P7 checks and screenshots at 1280px light and 375px dark; add Rafe Lindqvist; sign out; reload at `/` asks for sign-in.                                                           | P7, P8, P9   |
+| #   | User | Work list                                                                                                                                                                                                                                                                                                                                      | Proofs           |
+| --- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| B0  | —    | Baseline: the developer opens `/` on the admin host in the proof profile. The agent records the console baseline (count of messages, by source host only) before sign-in.                                                                                                                                                                      | Baseline         |
+| B1  | U1   | Sign in; type the slug; open General Settings → Billing; subscribe. The developer types the Stripe test card and the synthetic Checkout values by hand, declining every autofill. Across the whole session the agent records the distinct request hosts other than the admin host (count), the methods used, CSP violations and CORS failures. | P1, P2, P3 (1–2) |
+| B2  | U1   | After the webhook check: reload at `/`; the three nav items show; add the six adults in All Contacts; create the three households; add each household's adults.                                                                                                                                                                                | P3 (5), P4       |
+| B3  | U1   | Add the two minors; link the guardian; add the two life events; save the Mass Times text, navigate away and back.                                                                                                                                                                                                                              | P4, P6           |
+| B4  | U1   | The A10 views at 1280px, light; P5 checks and screenshots.                                                                                                                                                                                                                                                                                     | P5               |
+| B5  | U1   | The A10 views at 375px, dark; P5 checks and screenshots; Users & Roles role-query assertions (no screenshot).                                                                                                                                                                                                                                  | P5               |
+| B6  | U2   | First sign-in only. Check that no people screen shows. Sign out.                                                                                                                                                                                                                                                                               | P7 (1)           |
+| —   | —    | The owner runs the A6 one-off (Human H6) and passes U2's id privately to the developer.                                                                                                                                                                                                                                                        | P7 (2)           |
+| B7  | U1   | Create the `proof_people` role; the developer pastes U2's id into Grant after checking it is not on the owner's grant line; the Users & Roles assertions below. Sign out; reload at `/` asks for sign-in.                                                                                                                                      | P7 (3), P9       |
+| B8  | U2   | P7 checks and screenshots at 1280px light and 375px dark; add Rafe Lindqvist; sign out; reload at `/` asks for sign-in.                                                                                                                                                                                                                        | P7, P8, P9       |
 
 **Code count.** U1 signs in for B1–B5 and B7 (six codes) and U2 for B6 and B8 (two). The developer keeps a list of each code's request time per address. No address requests a fifth code within 60 minutes of its first in a window; B4 or B5 waits if needed.
 
-**Screens for P5 and P7.** The restyle spec's Screens list, minus sign-in and Users & Roles: General Settings and Billing, Module Toggles, Mass Times, All Contacts (Adults; Minors for U1 only), Contact Details, Family Records, Family Details, and the forms opened from them. Every capture first injects the style rule that hides the sidebar Community picker, and, for U2, the Family Records target-household select.
+**Screens.** For U1 (P5): the restyle spec's Screens list, minus sign-in and Users & Roles: General Settings and Billing, Module Toggles, Mass Times, All Contacts (Adults and Minors), Contact Details, Family Records, Family Details, and the forms opened from them. For U2 (P7), spec A10: Contact Details, Family Records and Family Details only, plus All Contacts for the Minors-button check. Every capture first injects the style rule that hides the sidebar Community picker, and, for U2, the Family Records target-household select.
+
+**Users & Roles assertions** (B5 and B7, role queries only, no screenshot): the page has one `h1`; the grant, custom-role, built-in-role and user-link lists render as `listitem`s; Revoke, Delete custom role, Create custom role and Grant buttons are present for U1; after B7's grant, the grant list has one more item than before; 0 axe violations; no sideways scroll at 375px.
+
+**Expected 4xx, not failures** (subtracted from P5 and P7's failed-request count): the browser's own `GET /favicon.ico` on the admin host (the admin ships no icon; Ops console proof finding at runbook :3918); for U2 in B6, the 403 answers to people and household reads before the grant; any 401 after a token expires at a session's end. Every other 4xx or 5xx counts.
 
 ## Rollback
 
@@ -165,7 +178,8 @@ When a proof failed because of code, the fix lands on `main` through its own `fi
 - the plan does not match the 18 addresses;
 - a one-off prints anything but its fixed success output (`done applied=19 total=19`, `created`, `tax_rate `-prefixed, `plan_set`, `seeded`, `none`, `count 2` plus one id, or the M13–M18 lines ending `mismatches 0`);
 - `provision-owner` prints `already_bootstrapped`;
-- P1 finds other than two API-side hosts, a CSP violation or a CORS failure;
+- P1, over B1, finds other than two hosts besides the admin host, a CSP violation or a CORS failure;
+- the served `index.html` does not name the one `assets/index-*.js` the bucket holds (subsection 3);
 - the webhook check in P3 finds an `unlinked` outcome or no `processed` one within 5 minutes;
 - `/v1/billing/status` is not `ok` after P3;
 - any P5 or P7 check fails, or any U2 view contains a minor-name string;
@@ -179,24 +193,36 @@ When a proof failed because of code, the fix lands on `main` through its own `fi
 
 **Files:** Modify `docs/runbooks/apply-staging-au.md`. Add a new section `## Admin screens proof` directly after the end of `## Ops console proof` and before the next `##` heading. Edit no other section.
 
-**Change.** Write the section in the runbook's conventions: one pasteable command per indented block; zsh with `${VAR}`; no inline `#` comments; evidence as counts and yes/no only. Refer to **Ops console proof** and **Stripe billing proof** by subsection name where a step is unchanged, substituting `${DEPLOY_SHA}`, 19 tags, and both `publish` and `admin-publish`.
+**Change.** Write the section in the runbook's conventions: one pasteable command per indented block; zsh with `${VAR}`; no inline `#` comments; evidence as counts and yes/no only. Refer to **Ops console proof** and **Stripe billing proof** by subsection name where a step is unchanged, substituting `${DEPLOY_SHA}` for any fixed SHA, `cfcf3f7` for `fd59b1e` (runbook :2805, :2870, :2876), 19 tags, and both `publish` and `admin-publish`. Where an Ops step reads `${HELD_EMAIL}` (the SES check at :2930-2934), this section uses `${HELD_U1_EMAIL}` and `${HELD_U2_EMAIL}` instead. Each appendix below is the `--overrides` word only; the runbook wraps each in the full `aws ecs run-task` block from **Row counts (counts only)** (:1170-1177), with `${OPS_TASK_DEFINITION}` and container `db-ops`.
 
-0. **General rules.** The opening rules of **Ops console proof → General rules** apply, except those about passkeys, operators and the ops host. Add:
+0. **General rules.** Write this section's own rules; do not inherit **Ops console proof → General rules**, which are about passkeys and an 8-hour session. The rules:
    - Browser work runs in the sessions in this plan's **Browser sessions** table, one tab, every reload at `/`.
    - The reviewer agent prints no page text, URL, `sessionStorage`, request target or id.
+   - One-offs never overlap. A Spot interruption is not a failure; rerun that step once. Every `filter-log-events` call carries `--start-time`.
    - Start gate: Apply 1 starts only when the owner and the developer can run H1–H9 in one sitting of about 4–8 hours.
-1. **Shell variables.** Reuse **Ops console proof → Shell variables** for the AWS, cluster, task-definition, network and log-group variables. Add `${ADMIN_HOST}` = `admin.${ZONE_NAME}`, `${HELD_ORG_SLUG}` and `${HELD_COMMUNITY_SLUG}` (each generated once with `"proof-$(openssl rand -hex 4)"`), `${WINDOW_START_MS}` and `${HARD_STOP_UTC}`.
+1. **Shell variables.** Reuse **Ops console proof → Shell variables** for the AWS, cluster, task-definition, network and log-group variables, and **Stripe billing proof → Shell variables** for `${BILLING_SECRET_ID}`, `${PROOF_EMAIL}`, `${PROOF_NAME}` and `${SERVICE}`. Add:
+   - `${ADMIN_HOST}` = `admin.${ZONE_NAME}`;
+   - `${HELD_U1_EMAIL}` and `${HELD_U2_EMAIL}`, each entered once at a silent prompt;
+   - `${HELD_ORG_SLUG}` and `${HELD_COMMUNITY_SLUG}`, each generated once with `"proof-$(openssl rand -hex 4)"`;
+   - `${WINDOW_START_MS}`, set just before B1 with the runbook's `$(( $(date +%s) * 1000 ))` form;
+   - `${HARD_STOP_UTC}`.
 2. **Before the unpark (owner and developer, parked).** Yes/no, stop on any no:
-   - both spec A4 addresses show `VerificationStatus` `SUCCESS` (owner's shell, status only);
-   - the four **Stripe billing proof → Stripe dashboard** checks pass and the billing secret has an `AWSCURRENT` version (owner);
+   - both A4 addresses show `VerificationStatus` `SUCCESS` (owner's shell, status only);
+   - the four **Stripe billing proof → Stripe dashboard** checks pass, and **Stripe billing proof → Webhook secret → Owner checks** prints `true` for both the `whsec_` and the `rk_test_` checks (owner);
    - the developer's proof profile exists, with playwriter as its only extension and Shields off for the admin host.
-3. **Pre-checks.** As in **Ops console proof → Pre-checks**, plus: `admin-publish` is `success` for `${DEPLOY_SHA}` and no later `admin-publish` ran; the journal holds 19 tags; `git log --oneline 57b2d3d..${DEPLOY_SHA} -- infra/` prints nothing; the owner writes `service_image` and `grep -c '^service_image'` prints 1; a read-only plan without the lock matches the 18 addresses that **Stripe billing proof → Apply 1** lists.
+3. **Pre-checks.** As in **Ops console proof → Pre-checks**, plus:
+   - **A3 (owner, own shell, never printed):** repository variable `ADMIN_API_ORIGIN` equals the staging API origin and `ADMIN_AUTH_ORIGIN` the staging auth origin, as in **Stripe billing proof → Pre-checks** item 4 ("present, no placeholder", :1870), extended to compare each with its host. Yes/no. If no, the owner sets them and reruns `admin-publish`, and A1 names that run.
+   - `admin-publish` is `success` for `${DEPLOY_SHA}`, and no later `admin-publish` ran.
+   - **Served build (owner, yes/no):** the served `https://${ADMIN_HOST}/index.html` names exactly the one `assets/index-*.js` that the admin bucket's `assets/` prefix holds (the publish sync uses `--delete`). This replaces the spec's "matches the CI artefact" (see Deviations).
+   - The journal holds 19 tags. `git log --oneline 57b2d3d..${DEPLOY_SHA} -- infra/` prints nothing.
+   - The owner writes `service_image`, and `grep -c '^service_image'` prints 1.
+   - A read-only plan without the lock matches the 18 addresses that **Stripe billing proof → Apply 1** lists.
 4. **Apply 1.** As in **Ops console proof → Apply 1**. Record the UTC completion and set `HARD_STOP_UTC` to 48 hours later.
 5. **One-offs.** In order, each with the three **After a db-ops-container one-off** commands or their `service`-container equivalent:
    1. `db-bootstrap`, then `db-migrate`: `done applied=19 total=19`.
    2. `provision-owner` for U1, using the held slugs and the developer's U1 address entered at a silent prompt: `created`. The owner then passes `${HELD_COMMUNITY_SLUG}` privately to the developer.
    3. **Stripe billing proof → One-offs** `billing-admin settings` (same values), `plan` with `PLAN_KEY=starter`, `LOOKUP_KEY=starter_monthly`, `TRIAL_ELIGIBLE=true` and `ENTITLEMENTS="module.engagement,module.forms,module.content,module.giving,people.directory,people.households,groups.basic,communications.email,giving.one_off"`, `seed-test-catalogue` once, and `mode ${HELD_ORG_SLUG} self_serve`: `none`.
-6. **Running-task check (assistant).** As in **Ops console proof**.
+6. **Running-task check (assistant).** As in **Ops console proof → Running-task check**, with the environment-name check from **Stripe billing proof → Running-task check** (:2170-2178): the `service` container lists all four of `ADMIN_ORIGIN`, `BILLING_SECRET_ARN`, `MAIL_FROM_ADDRESS` and `SES_CONFIGURATION_SET`, names only.
 7. **M13–M18 (owner).** The **Appendix: M13–M18 one-off** command on `${OPS_TASK_DEFINITION}`, container `db-ops`, then the three **After** commands. Expected output, in order:
 
    ```
@@ -217,13 +243,21 @@ When a proof failed because of code, the fix lands on `main` through its own `fi
    Each table line's six digits are, in order: RLS, FORCE, `DELETE`, `TRUNCATE`, table `UPDATE` and the column `UPDATE` set, each `1` when it matches the spec's expected value.
 
 8. **Browser sessions B0–B5.** The plan's table, with the P1–P6 expected results from the spec. Between B1 and B2, the assistant checks the webhook outcomes as in **Stripe billing proof → S4** (counts only) and `/v1/billing/status` from the page's own response (`state` `ok`, `planKey` `starter`).
-9. **U2 (B6, H6, B7, B8).** B6; then the owner runs the **Appendix: A6 one-off** and alone runs its three **After** commands, reporting the exit code and the `count 2` line only; passes the id to the developer privately; then deletes that task's log stream with `aws logs delete-log-stream` and records yes. Then B7 and B8.
+9. **U2 (B6, H6, B7, B8).** B6. Then the owner runs the **Appendix: A6 one-off** and alone runs its three **After** commands, reporting the exit code and the `count 2` line only, and passes the id to the developer privately. Before `${TASK_ARN}` is reused, the owner deletes that task's log stream and checks it is gone:
+
+       aws logs delete-log-stream --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --log-stream-name "db-ops/db-ops/${TASK_ARN##*/}"
+
+       aws logs describe-log-streams --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --log-stream-name-prefix "db-ops/db-ops/${TASK_ARN##*/}" --query 'length(logStreams)' --output text
+
+   Expected: the second prints `0`. Record yes. Then B7 and B8.
+
 10. **Close-out.** The owner cancels the test subscription in the Stripe dashboard; within 5 minutes, the assistant counts a `customer.subscription.deleted` webhook with outcome `processed` and a 2xx delivery, as in **Stripe billing proof → S9**. Then Task 3, Task 4, the removal of `service_image` (`grep -c` prints 0), and Apply 2.
 11. **Apply 2.** As in **Ops console proof → Apply 2**: 0 to add, 0 to change, 18 to destroy; read back 0 RDS instances and 0 ECS clusters; a plan with no changes.
 
 **Commit subject:** `docs(runbooks): add the admin screens proof`
 
-- [ ] Write the section, including both appendix commands copied byte for byte from this plan.
+- [ ] Write the section, including both appendix `--overrides` words copied byte for byte from this plan, each inside its full `run-task` block.
+- [ ] Note in the section that U1's bootstrap roles hold every permission the screens need (see **Probe record**), so no role step is needed for U1.
 - [ ] Run `pnpm exec prettier --check docs/runbooks/apply-staging-au.md` and `pnpm check:boundaries`.
 - [ ] Run the pin 3 scan on the staged added lines and list every hit with its allowed reason.
 - [ ] Check that `git diff --cached --name-only` shows only the runbook. Commit.
@@ -274,7 +308,7 @@ When a proof failed because of code, the fix lands on `main` through its own `fi
 
 **Files:** Modify `docs/runbooks/apply-staging-au.md`, inside `## Admin screens proof` only.
 
-**Change:** an **Evidence** subsection with the reviewer's lines from H1–H9: SHAs, digest, scan counts, the 18 addresses as Terraform addresses, each one-off's exit code and fixed output, the M13–M18 lines, P1–P9 as yes/no and counts, the screenshot count kept, the webhook counts, the cost clock start and the hard stop. Then a **Verified on staging** list naming each of `usage-facts`, `Groups`, `All Contacts admin`, `Family Records`, `Life events`, `Mass Times` and `admin-screens-restyle` with the proof that covers it.
+**Change:** an **Evidence** subsection with the reviewer's lines from H1–H9: SHAs, digest, scan counts, the 18 addresses as Terraform addresses, each one-off's exit code and fixed output, the M13–M18 lines, P1–P9 as yes/no and counts, the screenshot count kept, the webhook counts, the cost clock start and the hard stop. Then a **Verified on staging** list naming each of `usage-facts`, `Groups`, `All Contacts admin`, `Family Records`, `Life events`, `Mass Times` and `admin-screens-restyle` with the proof that covers it. `usage-facts` and `Groups` have no admin screen, so their lines rest on M13 and M14 only, and say so.
 
 **Commit subject:** `docs(runbooks): record the admin screens proof evidence`
 
@@ -294,6 +328,7 @@ When a proof failed because of code, the fix lands on `main` through its own `fi
 
 - [ ] Edit, `terraform fmt`, and the byte-equality check.
 - [ ] Run pins 1b, 1c and 2 in a scratch copy, each failing as the Security pins table says; restore.
+- [ ] Run `terraform test` for `infra/regions/au` explicitly, because the gate skips Terraform when `staging.tfvars` equals `main`'s. If Windows cannot, record it; CI's offline Terraform job covers it.
 - [ ] Run the Windows full gate; only the known Windows exceptions fail.
 - [ ] Check `git diff --cached --name-only`; pin 3 scan; commit. Push only after the reviewer accepts.
 
@@ -309,7 +344,7 @@ When a proof failed because of code, the fix lands on `main` through its own `fi
 
 **Files:** Modify `docs/runbooks/apply-staging-au.md`, inside `## Admin screens proof` only.
 
-**Change:** Apply 2's counts and addresses, the read-back, the no-change plan, the cost clock end and total, and one line under the existing **Re-park record** list.
+**Change:** under **Admin screens proof → Evidence**: Apply 2's counts and addresses, the read-back, the no-change plan, and the cost clock end and total.
 
 **Commit subject:** `docs(runbooks): record the admin screens proof re-park`
 
@@ -323,7 +358,12 @@ When a proof failed because of code, the fix lands on `main` through its own `fi
 
 **Change:**
 
-- `docs/roadmap.md`: the snapshot (last shipped `admin-screens-proof`, next chunk, counts reconciled); the `admin-screens-proof` row marked **done** with what was proven and the spec and plan paths; delete the six "The next chunk that unparks staging verifies migration `00NN`" open-item paragraphs; the "Next is" line; Next spec (the chunk owner names it).
+- `docs/roadmap.md`:
+  - the snapshot (:25; last shipped `admin-screens-proof`, next chunk, counts reconciled);
+  - the "Next is" line (:99);
+  - the `admin-screens-proof` row (:174), marked **done** with what was proven and the spec and plan paths;
+  - delete the six open-item paragraphs: the five that start "The next chunk that unparks staging verifies migration" (`0013` :350, `0014` :352, `0015` :364, `0016` :376, `0017` :382) and the one that starts "The first chunk that unparks staging verifies migration `0018`" (:396);
+  - Next spec (:408; the chunk owner names it). Line numbers are as at `b5b017d`; match by text.
 - `AGENTS.md:9`: add `` `admin-screens-proof` `` to the done list and update "Next is".
 
 **Commit subject:** `docs: mark admin-screens-proof done`
@@ -340,6 +380,7 @@ When a proof failed because of code, the fix lands on `main` through its own `fi
 - [ ] Staging parked in committed files; Apply 2 applied; plan empty.
 - [ ] The full gate green after the re-park; CI green.
 - [ ] Screenshots attached to the PR; second review recorded.
+- [ ] The reviewer runs the pin 3 scan on the PR body before the PR opens.
 
 ## Probe record
 
@@ -347,6 +388,7 @@ Run on 2026-11-09 in the developer's machine, before this plan was sent for appr
 
 - A6 with 1, 2 and 3 identity users: exit 1 (`count 1`), exit 0 (`count 2` and the newer id, which matched the second inserted), exit 1 (`count 3`).
 - M13–M18 on fresh migrations: exit 0, the twelve expected lines, `mismatches 0`.
+- A5's role check, from code: `bootstrapOwner` grants `org_owner` and `community_admin` (`modules/core/access/infrastructure/grants.ts:252-290`), and both map to the full permission catalogue (`packages/policy/src/decide.ts:19,23`), which includes `people.view`, `people.manage`, `people.restricted.read` and `service_times.manage` (`modules/core/access/domain/role.ts:26-36`).
 - Weakened, one at a time, then restored: `grant delete on app.persons to app` gave `persons 110111`, `mismatches 1`; `grant update on app.life_events to app` gave `life_events 111100`, `mismatches 2`; `no force row level security` on `service_times` gave `service_times 101111`, `mismatches 1`. After restoring: `mismatches 0`.
 
 ## Appendix: A6 one-off
@@ -358,6 +400,8 @@ The `--overrides` word for `aws ecs run-task` on `${OPS_TASK_DEFINITION}`, used 
 ```
 
 ## Appendix: M13–M18 one-off
+
+The `--overrides` word for `aws ecs run-task` on `${OPS_TASK_DEFINITION}`, used in place of the Row counts block's word:
 
 ```
 '{"containerOverrides":[{"name":"db-ops","command":["node","--input-type=module","-e","import{createDirectSql}from'\''@community-hub/db'\'';import{readFileSync}from'\''node:fs'\'';try{const pem=readFileSync('\''/app/certs/rds-ap-southeast-2-bundle.pem'\'','\''utf8'\'');const e=process.env;const sql=createDirectSql({host:e.PGHOST,port:Number(e.PGPORT),database:e.PGDATABASE,user:'\''identity'\'',password:e.PGPASSWORD_IDENTITY,ca:pem});const T=[['\''usage_facts_daily'\'',1,1,0,0,1,'\''*'\''],['\''groups'\'',1,1,0,0,1,'\''*'\''],['\''group_members'\'',1,1,1,0,1,'\''*'\''],['\''persons'\'',1,1,0,0,0,'\''age_basis,birthday_md,date_of_birth,email,email_bidx,family_name,given_name,household_id,phone,phone_bidx,version'\''],['\''households'\'',1,1,0,0,0,'\''label,version'\''],['\''household_keys'\'',1,1,0,0,0,'\'''\''],['\''life_events'\'',1,1,0,0,0,'\''event_date,event_type,notes,place,version'\''],['\''service_times'\'',1,1,0,0,0,'\''content_html,updated_at,version'\'']];let bad=0;const out=[];for(const [n,rls,frc,del,trn,upd,cols] of T){const k=await sql`select c.oid::int o,c.relrowsecurity r,c.relforcerowsecurity f from pg_class c join pg_namespace s on s.oid=c.relnamespace where s.nspname='\''app'\'' and c.relname=${n} and c.relkind='\''r'\''`;if(k.length!==1){bad++;out.push(n+'\'' exists false'\'');continue;}const o=k[0].o;const p=await sql`select has_table_privilege('\''app'\'',${o}::oid,'\''DELETE'\'') d,has_table_privilege('\''app'\'',${o}::oid,'\''TRUNCATE'\'') t,has_table_privilege('\''app'\'',${o}::oid,'\''UPDATE'\'') u`;const a=await sql`select a.attname::text n,has_column_privilege('\''app'\'',${o}::oid,a.attnum,'\''UPDATE'\'') u from pg_attribute a where a.attrelid=${o}::oid and a.attnum>0 and not a.attisdropped order by a.attname`;const got=a.filter(x=>x.u).map(x=>x.n).join('\'','\'');const want=cols==='\''*'\''?a.map(x=>x.n).join('\'','\''):cols;const ok=[k[0].r===!!rls,k[0].f===!!frc,p[0].d===!!del,p[0].t===!!trn,p[0].u===!!upd,got===want];const m=ok.filter(x=>!x).length;bad+=m;out.push(n+'\'' '\''+ok.map(x=>x?1:0).join('\'''\''));}const v=await sql`select count(*)::int c from pg_attribute a join pg_class c on c.oid=a.attrelid join pg_namespace s on s.oid=c.relnamespace where s.nspname='\''app'\'' and a.attname='\''version'\'' and c.relname in ('\''persons'\'','\''households'\'') and not a.attisdropped`;if(v[0].c!==2)bad++;out.push('\''version_columns '\''+v[0].c);const g=await sql`select count(*)::int c from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace s on s.oid=c.relnamespace where s.nspname='\''app'\'' and c.relname='\''persons'\'' and t.tgname='\''persons_before_update'\'' and not t.tgisinternal`;if(g[0].c!==1)bad++;out.push('\''trigger '\''+g[0].c);const d=await sql`select pg_get_constraintdef(x.oid) d from pg_constraint x join pg_class c on c.oid=x.conrelid join pg_namespace s on s.oid=c.relnamespace where s.nspname='\''app'\'' and c.relname='\''custom_role_permissions'\'' and x.conname='\''custom_role_permissions_permission'\''`;const has=d.length===1&&['\''people.view'\'','\''people.manage'\'','\''service_times.manage'\''].every(w=>d[0].d.includes(w));if(!has)bad++;out.push('\''permission_check '\''+(has?1:0));out.push('\''mismatches '\''+bad);for(const l of out)console.log(l);if(bad!==0){await sql.end({timeout:1});process.exit(1);}await sql.end({timeout:1});}catch{console.error('\''fail'\'');process.exit(1);}"]}]}'
