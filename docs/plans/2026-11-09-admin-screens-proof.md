@@ -91,7 +91,7 @@ Each pin is weakened once in a scratch copy, and its test is seen to fail. Then 
 **Pin 3 pattern** (`grep -n -E`, one alternation):
 
 ```
-[0-9]{12}|\barn:|@|\bZ[0-9A-Z]{10,}\b|\.amazonaws\.com|communityhub-staging|\b([0-9]{1,3}\.){3}[0-9]{1,3}\b|\b([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b|[0-9a-fA-F:]*::[0-9a-fA-F:]+|\b[0-9a-f]{32}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b|\b(subnet|sg|vpc|eni)-[0-9a-f]{8,17}\b|\b(cus|sub|price|prod|in|pi|cs|evt|we)_[A-Za-z0-9]{8,}\b|\b[0-9]{8}\b|\bproof-[0-9a-f]{8}\b|\beyJ[A-Za-z0-9_-]{10,}|\b[A-Za-z0-9_-]{43}\b
+[0-9]{12}|\barn:|@|\bZ[0-9A-Z]{10,}\b|\.amazonaws\.com|communityhub-staging|\b([0-9]{1,3}\.){3}[0-9]{1,3}\b|\b([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b|[0-9a-fA-F:]*::[0-9a-fA-F:]+|\b[0-9a-f]{32}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b|\b(subnet|sg|vpc|eni)-[0-9a-f]{8,17}\b|\b(cus|sub|price|prod|in|pi|cs|evt|we)_[A-Za-z0-9]{8,}\b|\b[0-9]{8}\b|\bproof-[0-9a-f]{8}\b|\beyJ[A-Za-z0-9_-]{10,}|(^|[^A-Za-z0-9_-])[A-Za-z0-9_-]{43,}
 ```
 
 **Samples to plant** for the pin 3 weakening, one per line, each of which must hit: `123456789012`, `arn:aws:iam::x`, `name$'\x40'example.test` written with a literal at-sign, `Z0123456789ABC`, `x.amazonaws.com`, `communityhub-staging`, `10.0.0.1`, `fe80::1`, `0123456789abcdef0123456789abcdef`, `0198c3a2-7b1e-7c00-8a00-000000000000`, `subnet-0123456789abcdef0`, `cus_ABCDEFGH12`, `12345678` (an 8-digit sign-in code), `proof-1a2b3c4d` (a slug), `eyJhbGciOiJIUzI1NiJ9`, and a 43-character token `abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ`.
@@ -131,9 +131,9 @@ Access tokens last 15 minutes and the admin never refreshes them (spec A12). Eac
 
 | #   | User | Work list                                                                                                                                                                                                                                                                                                                                      | Proofs           |
 | --- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| B0  | —    | Baseline: the developer opens `/` on the admin host in the proof profile. The agent records the console baseline (count of messages, by source host only) before sign-in.                                                                                                                                                                      | Baseline         |
+| B0  | —    | Baseline: the developer opens `/` on the admin host in the proof profile. The agent records the console baseline (count of messages, by source host only) and sign-in's axe result (recorded, not required to be 0; spec A10) before sign-in.                                                                                                  | Baseline         |
 | B1  | U1   | Sign in; type the slug; open General Settings → Billing; subscribe. The developer types the Stripe test card and the synthetic Checkout values by hand, declining every autofill. Across the whole session the agent records the distinct request hosts other than the admin host (count), the methods used, CSP violations and CORS failures. | P1, P2, P3 (1–2) |
-| B2  | U1   | After the webhook check: reload at `/`; the three nav items show; add the six adults in All Contacts; create the three households; add each household's adults.                                                                                                                                                                                | P3 (5), P4       |
+| B2  | U1   | After the webhook check: sign in at `/`; record `state` and `planKey` from the billing status response and stop unless `ok` and `starter`; the three nav items show; add the six adults in All Contacts; create the three households; add each household's adults.                                                                             | P3 (5), P4       |
 | B3  | U1   | Add the two minors; link the guardian; add the two life events; save the Mass Times text, navigate away and back.                                                                                                                                                                                                                              | P4, P6           |
 | B4  | U1   | The A10 views at 1280px, light; P5 checks and screenshots.                                                                                                                                                                                                                                                                                     | P5               |
 | B5  | U1   | The A10 views at 375px, dark; P5 checks and screenshots; Users & Roles role-query assertions (no screenshot).                                                                                                                                                                                                                                  | P5               |
@@ -200,7 +200,7 @@ When a proof failed because of code, the fix lands on `main` through its own `fi
    - The reviewer agent prints no page text, URL, `sessionStorage`, request target or id.
    - One-offs never overlap. A Spot interruption is not a failure; rerun that step once. Every `filter-log-events` call carries `--start-time`.
    - Start gate: Apply 1 starts only when the owner and the developer can run H1–H9 in one sitting of about 4–8 hours.
-1. **Shell variables.** Reuse **Ops console proof → Shell variables** for the AWS, cluster, task-definition, network and log-group variables, and **Stripe billing proof → Shell variables** for `${BILLING_SECRET_ID}`, `${PROOF_EMAIL}`, `${PROOF_NAME}` and `${SERVICE}`. Add:
+1. **Shell variables.** Reuse the whole **Ops console proof → Shell variables** table (including `${PROVISION_SECRET_NAME}`, `${SECRETS_KEY_ARN}`, `${DB_INSTANCE_ID}`, `${PLAN_FILE}`, `${API_HOST}` and `${AUTH_HOST}`) and the whole **Stripe billing proof → Shell variables** table (including `${BILLING_SECRET_ID}`, `${PROOF_EMAIL}`, `${PROOF_NAME}` and `${SERVICE}`). Add:
    - `${ADMIN_HOST}` = `admin.${ZONE_NAME}`;
    - `${HELD_U1_EMAIL}` and `${HELD_U2_EMAIL}`, each entered once at a silent prompt;
    - `${HELD_ORG_SLUG}` and `${HELD_COMMUNITY_SLUG}`, each generated once with `"proof-$(openssl rand -hex 4)"`;
@@ -211,16 +211,39 @@ When a proof failed because of code, the fix lands on `main` through its own `fi
    - the four **Stripe billing proof → Stripe dashboard** checks pass, and **Stripe billing proof → Webhook secret → Owner checks** prints `true` for both the `whsec_` and the `rk_test_` checks (owner);
    - the developer's proof profile exists, with playwriter as its only extension and Shields off for the admin host.
 3. **Pre-checks.** As in **Ops console proof → Pre-checks**, plus:
-   - **A3 (owner, own shell, never printed):** repository variable `ADMIN_API_ORIGIN` equals the staging API origin and `ADMIN_AUTH_ORIGIN` the staging auth origin, as in **Stripe billing proof → Pre-checks** item 4 ("present, no placeholder", :1870), extended to compare each with its host. Yes/no. If no, the owner sets them and reruns `admin-publish`, and A1 names that run.
-   - `admin-publish` is `success` for `${DEPLOY_SHA}`, and no later `admin-publish` ran.
-   - **Served build (owner, yes/no):** the served `https://${ADMIN_HOST}/index.html` names exactly the one `assets/index-*.js` that the admin bucket's `assets/` prefix holds (the publish sync uses `--delete`). This replaces the spec's "matches the CI artefact" (see Deviations).
+   - **A3 (owner, own shell, never printed).** Each origin must equal its host exactly, with no trailing slash, because the admin builds `${origins.api}${path}` (`apps/admin/src/api.ts:100`) and CORS allows one exact origin (`infra/modules/aws-ingress/main.tf:195-200`):
+
+         [[ "$(gh variable get ADMIN_API_ORIGIN)" == "https://${API_HOST}" ]] && print yes || print no
+
+         [[ "$(gh variable get ADMIN_AUTH_ORIGIN)" == "https://${AUTH_HOST}" ]] && print yes || print no
+
+     Expected: `yes` twice. If either is `no`, the owner sets it and reruns `admin-publish`, and A1 names that run.
+
+   - **Latest build.** `admin-publish` runs on every push to `main`, so `${DEPLOY_SHA}` must be the newest `main` push run, and that run succeeded:
+
+         [[ "$(gh run list --workflow ci.yml --branch main --event push --limit 1 --json headSha,conclusion --jq '.[0].headSha + " " + .[0].conclusion')" == "$(git rev-parse ${DEPLOY_SHA}) success" ]] && print yes || print no
+
+     Expected: `yes`. A successful run means `publish` and `admin-publish` both passed.
+
+   - **Served build (owner).** The served `index.html` names a script that is in the bucket, which the publish sync (`--delete`) holds for the latest build only. This replaces the spec's "matches the CI artefact" (see Deviations):
+
+         ADMIN_BUCKET=$(terraform -chdir=infra/regions/au output -raw admin_bucket)
+
+         SERVED=$(curl -fsS "https://${ADMIN_HOST}/index.html" | grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' | sort -u)
+
+         [[ $(print -r -- "${SERVED}" | wc -l) -eq 1 && -n "${SERVED}" ]] && aws s3 ls --profile ${AWS_PROFILE} "s3://${ADMIN_BUCKET}/${SERVED}" >/dev/null 2>&1 && print yes || print no
+
+         unset ADMIN_BUCKET SERVED
+
+     Expected: `yes`.
+
    - The journal holds 19 tags. `git log --oneline 57b2d3d..${DEPLOY_SHA} -- infra/` prints nothing.
    - The owner writes `service_image`, and `grep -c '^service_image'` prints 1.
    - A read-only plan without the lock matches the 18 addresses that **Stripe billing proof → Apply 1** lists.
 4. **Apply 1.** As in **Ops console proof → Apply 1**. Record the UTC completion and set `HARD_STOP_UTC` to 48 hours later.
 5. **One-offs.** In order, each with the three **After a db-ops-container one-off** commands or their `service`-container equivalent:
    1. `db-bootstrap`, then `db-migrate`: `done applied=19 total=19`.
-   2. `provision-owner` for U1, using the held slugs and the developer's U1 address entered at a silent prompt: `created`. The owner then passes `${HELD_COMMUNITY_SLUG}` privately to the developer.
+   2. `provision-owner` for U1, as in **Ops console proof → One-offs → Create**, including **Check the name is free** (runbook :3063-3078), with `${HELD_U1_EMAIL}` in place of `${HELD_EMAIL}` everywhere it appears: `created`. The owner then passes `${HELD_COMMUNITY_SLUG}` privately to the developer.
    3. **Stripe billing proof → One-offs** `billing-admin settings` (same values), `plan` with `PLAN_KEY=starter`, `LOOKUP_KEY=starter_monthly`, `TRIAL_ELIGIBLE=true` and `ENTITLEMENTS="module.engagement,module.forms,module.content,module.giving,people.directory,people.households,groups.basic,communications.email,giving.one_off"`, `seed-test-catalogue` once, and `mode ${HELD_ORG_SLUG} self_serve`: `none`.
 6. **Running-task check (assistant).** As in **Ops console proof → Running-task check**, with the environment-name check from **Stripe billing proof → Running-task check** (:2170-2178): the `service` container lists all four of `ADMIN_ORIGIN`, `BILLING_SECRET_ARN`, `MAIL_FROM_ADDRESS` and `SES_CONFIGURATION_SET`, names only.
 7. **M13–M18 (owner).** The **Appendix: M13–M18 one-off** command on `${OPS_TASK_DEFINITION}`, container `db-ops`, then the three **After** commands. Expected output, in order:
@@ -242,7 +265,7 @@ When a proof failed because of code, the fix lands on `main` through its own `fi
 
    Each table line's six digits are, in order: RLS, FORCE, `DELETE`, `TRUNCATE`, table `UPDATE` and the column `UPDATE` set, each `1` when it matches the spec's expected value.
 
-8. **Browser sessions B0–B5.** The plan's table, with the P1–P6 expected results from the spec. Between B1 and B2, the assistant checks the webhook outcomes as in **Stripe billing proof → S4** (counts only) and `/v1/billing/status` from the page's own response (`state` `ok`, `planKey` `starter`).
+8. **Browser sessions B0–B5.** The plan's table, with the P1–P6 expected results from the spec. Between B1 and B2, the assistant checks the webhook outcomes as in **Stripe billing proof → S4** (counts only). B2 opens with its sign-in at `/`, and the agent records `state` and `planKey` from the page's own `/v1/billing/status` response. The rest of B2 runs only if they are `ok` and `starter`.
 9. **U2 (B6, H6, B7, B8).** B6. Then the owner runs the **Appendix: A6 one-off** and alone runs its three **After** commands, reporting the exit code and the `count 2` line only, and passes the id to the developer privately. Before `${TASK_ARN}` is reused, the owner deletes that task's log stream and checks it is gone:
 
        aws logs delete-log-stream --profile ${AWS_PROFILE} --log-group-name ${LOG_GROUP} --log-stream-name "db-ops/db-ops/${TASK_ARN##*/}"
