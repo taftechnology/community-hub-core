@@ -330,3 +330,11 @@ it("shows no unconfirmed signout message when signout flag is omitted or has oth
   expect(screen.queryByRole("alert")).toBeNull();
   expect(document.body.textContent).not.toContain("<script>");
 });
+
+it("renders Email and Code inputs through Input component with data-slot input", async () => {
+  await showSignIn();
+  const emailInput = screen.getByRole("textbox", { name: "Email" });
+  const codeInput = screen.getByRole("textbox", { name: "Code" });
+  expect(emailInput.getAttribute("data-slot")).toBe("input");
+  expect(codeInput.getAttribute("data-slot")).toBe("input");
+});

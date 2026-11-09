@@ -1,4 +1,4 @@
-import { Alert, Button } from "@community-hub/ui";
+import { Alert, Button, Checkbox, Field, Input, Panel } from "@community-hub/ui";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 
@@ -302,172 +302,191 @@ export function UsersRolesPage() {
       {directory === undefined ? null : (
         <>
           {directory.grants.length === 0 ? (
-            <p>No role grants</p>
+            <Panel>
+              <p>No role grants</p>
+            </Panel>
           ) : (
-            <ul>
-              {directory.grants.map((grant) => (
-                <li key={grant.grantId}>
-                  <span>{grantLine(grant)}</span>
-                  {canManageRoles && !hideWrites ? (
-                    <Button
-                      type="button"
-                      onClick={() => {
-                        void mutate("/v1/access/grants/revoke", {
-                          communitySlug: slug,
-                          grantId: grant.grantId,
-                          scope: grant.scope === "community" ? "community" : "organisation",
-                        });
-                      }}
-                    >
-                      Revoke
-                    </Button>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
+            <Panel>
+              <ul>
+                {directory.grants.map((grant) => (
+                  <li key={grant.grantId} className="flex flex-wrap items-center gap-2">
+                    <span>{grantLine(grant)}</span>
+                    {canManageRoles && !hideWrites ? (
+                      <Button
+                        type="button"
+                        onClick={() => {
+                          void mutate("/v1/access/grants/revoke", {
+                            communitySlug: slug,
+                            grantId: grant.grantId,
+                            scope: grant.scope === "community" ? "community" : "organisation",
+                          });
+                        }}
+                      >
+                        Revoke
+                      </Button>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </Panel>
           )}
           {directory.customRoles.length === 0 ? null : (
-            <ul>
-              {directory.customRoles.map((customRole) => (
-                <li key={customRole.customRoleId}>
-                  <span>
-                    {customRole.key} {customRole.permissions.join(" ")}
-                  </span>
-                  {canManageRoles && !hideWrites ? (
-                    <Button
-                      type="button"
-                      onClick={() => {
-                        void mutate("/v1/access/custom-roles/delete", {
-                          communitySlug: slug,
-                          customRoleId: customRole.customRoleId,
-                        });
-                      }}
-                    >
-                      Delete custom role
-                    </Button>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
+            <Panel>
+              <ul>
+                {directory.customRoles.map((customRole) => (
+                  <li key={customRole.customRoleId} className="flex flex-wrap items-center gap-2">
+                    <span>
+                      {customRole.key} {customRole.permissions.join(" ")}
+                    </span>
+                    {canManageRoles && !hideWrites ? (
+                      <Button
+                        type="button"
+                        onClick={() => {
+                          void mutate("/v1/access/custom-roles/delete", {
+                            communitySlug: slug,
+                            customRoleId: customRole.customRoleId,
+                          });
+                        }}
+                      >
+                        Delete custom role
+                      </Button>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </Panel>
           )}
           {directory.builtIn.length === 0 ? null : (
-            <ul>
-              {directory.builtIn.map((builtIn) => (
-                <li key={builtIn.roleKey}>
-                  {builtIn.roleKey} {builtIn.permissions.join(" ")}
-                </li>
-              ))}
-            </ul>
+            <Panel>
+              <ul>
+                {directory.builtIn.map((builtIn) => (
+                  <li key={builtIn.roleKey} className="flex flex-wrap items-center gap-2">
+                    {builtIn.roleKey} {builtIn.permissions.join(" ")}
+                  </li>
+                ))}
+              </ul>
+            </Panel>
           )}
           {directory.userLinks.length === 0 ? null : (
-            <ul>
-              {directory.userLinks.map((link) => (
-                <li key={link.userId}>
-                  {link.userId} {link.personId}
-                </li>
-              ))}
-            </ul>
+            <Panel>
+              <ul>
+                {directory.userLinks.map((link) => (
+                  <li key={link.userId} className="flex flex-wrap items-center gap-2">
+                    {link.userId} {link.personId}
+                  </li>
+                ))}
+              </ul>
+            </Panel>
           )}
           {limitReached ? <p>Custom role limit reached</p> : null}
           {limitReached || !canManageRoles || hideWrites ? null : (
-            <form
-              onSubmit={(event: FormEvent<HTMLFormElement>) => {
-                event.preventDefault();
-                void mutate("/v1/access/custom-roles", {
-                  communitySlug: slug,
-                  key: customKey,
-                  permissions: [...selected],
-                });
-              }}
-            >
-              <label>
-                Custom role key
-                <input
-                  value={customKey}
-                  onChange={(event) => {
-                    setCustomKey(event.target.value);
-                  }}
-                />
-              </label>
-              {directory.catalogue.map((permission) => (
-                <label key={permission}>
-                  <input
-                    type="checkbox"
+            <Panel>
+              <form
+                className="grid gap-4"
+                onSubmit={(event: FormEvent<HTMLFormElement>) => {
+                  event.preventDefault();
+                  void mutate("/v1/access/custom-roles", {
+                    communitySlug: slug,
+                    key: customKey,
+                    permissions: [...selected],
+                  });
+                }}
+              >
+                <Field label="Custom role key">
+                  <Input
+                    value={customKey}
+                    onChange={(event) => {
+                      setCustomKey(event.target.value);
+                    }}
+                  />
+                </Field>
+                {directory.catalogue.map((permission) => (
+                  <Checkbox
+                    key={permission}
+                    label={permission}
                     checked={selected.has(permission)}
                     onChange={() => {
                       toggle(permission);
                     }}
                   />
-                  {permission}
-                </label>
-              ))}
-              <Button type="submit">Create custom role</Button>
-            </form>
+                ))}
+                <Button className="justify-self-start" type="submit">
+                  Create custom role
+                </Button>
+              </form>
+            </Panel>
           )}
           {canManageRoles && !hideWrites ? (
-            <form
-              onSubmit={(event: FormEvent<HTMLFormElement>) => {
-                event.preventDefault();
-                const custom = directory.customRoles.find((item) => item.key === role);
-                void mutate(
-                  "/v1/access/grants",
-                  custom === undefined
-                    ? { communitySlug: slug, userId, roleKey: role }
-                    : { communitySlug: slug, userId, customRoleId: custom.customRoleId },
-                );
-              }}
-            >
-              <label>
-                User
-                <input
-                  value={userId}
-                  onChange={(event) => {
-                    setUserId(event.target.value);
-                  }}
-                />
-              </label>
-              <label>
-                Role
-                <input
-                  value={role}
-                  onChange={(event) => {
-                    setRole(event.target.value);
-                  }}
-                />
-              </label>
-              <Button type="submit">Grant</Button>
-            </form>
-          ) : null}
-          {canManageUsers && !hideWrites ? (
-            <form
-              onSubmit={(event: FormEvent<HTMLFormElement>) => {
-                event.preventDefault();
-                void mutate("/v1/access/user-links", {
-                  communitySlug: slug,
-                  userId,
-                  personId,
-                });
-              }}
-            >
-              <label>
-                Person
-                <input
-                  value={personId}
-                  onChange={(event) => {
-                    setPersonId(event.target.value);
-                  }}
-                />
-              </label>
-              <Button type="submit">Link</Button>
-              <Button
-                type="button"
-                onClick={() => {
-                  void mutate("/v1/access/user-links/delete", { communitySlug: slug, userId });
+            <Panel>
+              <form
+                className="grid gap-4"
+                onSubmit={(event: FormEvent<HTMLFormElement>) => {
+                  event.preventDefault();
+                  const custom = directory.customRoles.find((item) => item.key === role);
+                  void mutate(
+                    "/v1/access/grants",
+                    custom === undefined
+                      ? { communitySlug: slug, userId, roleKey: role }
+                      : { communitySlug: slug, userId, customRoleId: custom.customRoleId },
+                  );
                 }}
               >
-                Unlink
-              </Button>
-            </form>
+                <Field label="User">
+                  <Input
+                    value={userId}
+                    onChange={(event) => {
+                      setUserId(event.target.value);
+                    }}
+                  />
+                </Field>
+                <Field label="Role">
+                  <Input
+                    value={role}
+                    onChange={(event) => {
+                      setRole(event.target.value);
+                    }}
+                  />
+                </Field>
+                <Button className="justify-self-start" type="submit">
+                  Grant
+                </Button>
+              </form>
+            </Panel>
+          ) : null}
+          {canManageUsers && !hideWrites ? (
+            <Panel>
+              <form
+                className="grid gap-4"
+                onSubmit={(event: FormEvent<HTMLFormElement>) => {
+                  event.preventDefault();
+                  void mutate("/v1/access/user-links", {
+                    communitySlug: slug,
+                    userId,
+                    personId,
+                  });
+                }}
+              >
+                <Field label="Person">
+                  <Input
+                    value={personId}
+                    onChange={(event) => {
+                      setPersonId(event.target.value);
+                    }}
+                  />
+                </Field>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="submit">Link</Button>
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      void mutate("/v1/access/user-links/delete", { communitySlug: slug, userId });
+                    }}
+                  >
+                    Unlink
+                  </Button>
+                </div>
+              </form>
+            </Panel>
           ) : null}
         </>
       )}

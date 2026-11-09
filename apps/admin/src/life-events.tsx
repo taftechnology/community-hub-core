@@ -1,13 +1,14 @@
 import {
   Alert,
   Button,
+  DataTable,
+  EmptyState,
+  Field,
   Input,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Panel,
+  Select,
+  Skeleton,
+  Textarea,
 } from "@community-hub/ui";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
@@ -222,160 +223,176 @@ export function LifeEventsPanel({
   const canEdit = canManage && !isReadOnly;
 
   return (
-    <div className="mt-4 border-t pt-4" data-testid={`life-events-panel-${personId}`}>
-      <div className="flex items-center justify-between mb-2">
-        <h4 className="font-semibold text-base">Life events: {personName}</h4>
-        {canEdit && formMode === "none" ? (
-          <Button type="button" variant="outline" onClick={startAdd}>
-            Add life event
-          </Button>
+    <div data-testid={`life-events-panel-${personId}`}>
+      <Panel
+        title={`Life events: ${personName}`}
+        level={4}
+        actions={
+          canEdit && formMode === "none" ? (
+            <Button type="button" variant="outline" onClick={startAdd}>
+              Add life event
+            </Button>
+          ) : null
+        }
+      >
+        {loading && events === null ? (
+          <>
+            <Skeleton />
+            <span className="sr-only">Loading life events...</span>
+          </>
         ) : null}
-      </div>
 
-      {loading && events === null ? <p>Loading life events...</p> : null}
-
-      {error ? (
-        <Alert variant="destructive" role="alert">
-          <span>Failed to load life events</span>
-          <Button type="button" onClick={() => void loadEvents()}>
-            Retry
-          </Button>
-        </Alert>
-      ) : null}
-
-      {isConflict ? (
-        <Alert variant="destructive" role="alert">
-          <span>
-            This record was modified by someone else. Please refresh to see the latest changes.
-          </span>
-          <Button type="button" onClick={() => void handleRefreshConflict()}>
-            Refresh
-          </Button>
-        </Alert>
-      ) : null}
-
-      {actionError ? (
-        <Alert variant="destructive" role="alert">
-          <span>{actionError}</span>
-        </Alert>
-      ) : null}
-
-      {formMode !== "none" ? (
-        <form onSubmit={handleSubmit} className="space-y-3 mb-4 p-3 bg-muted/40 rounded border">
-          <h5 className="font-medium text-sm">
-            {formMode === "add" ? "Add Life Event" : "Edit Life Event"}
-          </h5>
-          <div>
-            <label htmlFor={`life-event-type-${personId}`} className="block text-sm font-medium">
-              Event type
-            </label>
-            <select
-              id={`life-event-type-${personId}`}
-              value={formType}
-              onChange={(e) => setFormType(e.target.value as LifeEventType)}
-              required
-              className="mt-1 block w-full rounded border p-1.5 text-sm"
-            >
-              {LIFE_EVENT_TYPES.map((t) => (
-                <option key={t.key} value={t.key}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label htmlFor={`life-event-date-${personId}`} className="block text-sm font-medium">
-              Date
-            </label>
-            <Input
-              id={`life-event-date-${personId}`}
-              type="date"
-              value={formDate}
-              onChange={(e) => setFormDate(e.target.value)}
-              required
-              className="mt-1"
-            />
-          </div>
-
-          <div>
-            <label htmlFor={`life-event-place-${personId}`} className="block text-sm font-medium">
-              Place
-            </label>
-            <Input
-              id={`life-event-place-${personId}`}
-              type="text"
-              maxLength={200}
-              value={formPlace}
-              onChange={(e) => setFormPlace(e.target.value)}
-              className="mt-1"
-            />
-          </div>
-
-          <div>
-            <label htmlFor={`life-event-notes-${personId}`} className="block text-sm font-medium">
-              Notes
-            </label>
-            <textarea
-              id={`life-event-notes-${personId}`}
-              maxLength={2000}
-              value={formNotes}
-              onChange={(e) => setFormNotes(e.target.value)}
-              rows={3}
-              className="mt-1 block w-full rounded border p-2 text-sm"
-            />
-          </div>
-
-          <div className="flex gap-2">
-            <Button type="submit" disabled={submitting}>
-              {formMode === "add" ? "Save life event" : "Save changes"}
+        {error ? (
+          <Alert variant="destructive" role="alert">
+            <span>Failed to load life events</span>
+            <Button type="button" onClick={() => void loadEvents()}>
+              Retry
             </Button>
-            <Button type="button" variant="outline" onClick={cancelForm}>
-              Cancel
+          </Alert>
+        ) : null}
+
+        {isConflict ? (
+          <Alert variant="destructive" role="alert">
+            <span>
+              This record was modified by someone else. Please refresh to see the latest changes.
+            </span>
+            <Button type="button" onClick={() => void handleRefreshConflict()}>
+              Refresh
             </Button>
-          </div>
-        </form>
-      ) : null}
+          </Alert>
+        ) : null}
 
-      {!loading && !error && events !== null && events.length === 0 && formMode === "none" ? (
-        <p>No life events recorded</p>
-      ) : null}
+        {actionError ? (
+          <Alert variant="destructive" role="alert">
+            <span>{actionError}</span>
+          </Alert>
+        ) : null}
 
-      {!loading && !error && events !== null && events.length > 0 ? (
-        <Table aria-label={`Life events for ${personName}`}>
-          <TableHeader>
-            <TableRow>
-              <TableHead scope="col">Type</TableHead>
-              <TableHead scope="col">Date</TableHead>
-              <TableHead scope="col">Place</TableHead>
-              <TableHead scope="col">Notes</TableHead>
-              {canEdit ? <TableHead scope="col">Actions</TableHead> : null}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {events.map((event) => (
-              <TableRow key={event.eventId}>
-                <TableCell>{formatType(event.type)}</TableCell>
-                <TableCell>{event.date}</TableCell>
-                <TableCell>{event.place ?? "-"}</TableCell>
-                <TableCell>{event.notes ?? "-"}</TableCell>
-                {canEdit ? (
-                  <TableCell>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      aria-label={`Edit ${formatType(event.type)} for ${personName}`}
-                      onClick={() => startEdit(event)}
-                    >
-                      Edit
-                    </Button>
-                  </TableCell>
-                ) : null}
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      ) : null}
+        {formMode !== "none" ? (
+          <form onSubmit={handleSubmit} className="grid gap-4 rounded-md border border-border p-3">
+            <h5 className="font-medium text-sm">
+              {formMode === "add" ? "Add Life Event" : "Edit Life Event"}
+            </h5>
+            <Field label="Event type">
+              <Select
+                id={`life-event-type-${personId}`}
+                value={formType}
+                onChange={(e) => setFormType(e.target.value as LifeEventType)}
+                required
+              >
+                {LIFE_EVENT_TYPES.map((t) => (
+                  <option key={t.key} value={t.key}>
+                    {t.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+
+            <Field label="Date">
+              <Input
+                id={`life-event-date-${personId}`}
+                type="date"
+                value={formDate}
+                onChange={(e) => setFormDate(e.target.value)}
+                required
+              />
+            </Field>
+
+            <Field label="Place">
+              <Input
+                id={`life-event-place-${personId}`}
+                type="text"
+                maxLength={200}
+                value={formPlace}
+                onChange={(e) => setFormPlace(e.target.value)}
+              />
+            </Field>
+
+            <Field label="Notes">
+              <Textarea
+                id={`life-event-notes-${personId}`}
+                maxLength={2000}
+                value={formNotes}
+                onChange={(e) => setFormNotes(e.target.value)}
+                rows={3}
+              />
+            </Field>
+
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" disabled={submitting}>
+                {formMode === "add" ? "Save life event" : "Save changes"}
+              </Button>
+              <Button type="button" variant="outline" onClick={cancelForm}>
+                Cancel
+              </Button>
+            </div>
+          </form>
+        ) : null}
+
+        {!loading && !error && events !== null && events.length === 0 && formMode === "none" ? (
+          <EmptyState message="No life events recorded" />
+        ) : null}
+
+        {!loading && !error && events !== null && events.length > 0 ? (
+          <DataTable
+            aria-label={`Life events for ${personName}`}
+            rowKey={(event) => event.eventId}
+            columns={[
+              {
+                key: "type",
+                header: "Type",
+                primary: true,
+                render: (event) => formatType(event.type),
+              },
+              {
+                key: "date",
+                header: "Date",
+                render: (event) => <span className="whitespace-nowrap">{event.date}</span>,
+              },
+              {
+                key: "place",
+                header: "Place",
+                render: (event) =>
+                  event.place !== null ? (
+                    event.place
+                  ) : (
+                    <span className="text-muted-foreground">None</span>
+                  ),
+              },
+              {
+                key: "notes",
+                header: "Notes",
+                render: (event) =>
+                  event.notes !== null ? (
+                    event.notes
+                  ) : (
+                    <span className="text-muted-foreground">None</span>
+                  ),
+              },
+              ...(canEdit
+                ? [
+                    {
+                      key: "actions",
+                      header: "Actions",
+                      render: (event: LifeEvent) => (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          aria-label={`Edit ${formatType(event.type)} for ${personName}`}
+                          onClick={() => startEdit(event)}
+                        >
+                          Edit
+                        </Button>
+                      ),
+                    },
+                  ]
+                : []),
+            ]}
+            rows={events}
+          />
+        ) : null}
+      </Panel>
     </div>
   );
 }

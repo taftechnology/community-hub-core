@@ -1,4 +1,12 @@
-import { Alert, Button } from "@community-hub/ui";
+import {
+  Alert,
+  Button,
+  DescriptionList,
+  type DescriptionListItem,
+  Panel,
+  StatusBadge,
+  type StatusBadgeTone,
+} from "@community-hub/ui";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -20,6 +28,15 @@ const STATE_WORDS: Record<BillingState, string> = {
   retrying: "Payment retrying",
   grace: "In grace period",
   read_only: "Read-only",
+};
+
+const STATE_TONES: Record<BillingState, StatusBadgeTone> = {
+  invoiced: "neutral",
+  none: "neutral",
+  ok: "success",
+  retrying: "warning",
+  grace: "warning",
+  read_only: "danger",
 };
 
 export function GeneralSettingsPage() {
@@ -253,109 +270,113 @@ export function GeneralSettingsPage() {
     status?.canManage &&
     (status.state === "none" || (status.state === "read_only" && !status.grace_until));
 
+  const billingItems: DescriptionListItem[] = status?.canView
+    ? [
+        {
+          term: "State",
+          value: (
+            <StatusBadge tone={STATE_TONES[status.state] ?? "neutral"}>
+              {STATE_WORDS[status.state] ?? status.state}
+            </StatusBadge>
+          ),
+        },
+        ...(status.planKey
+          ? [{ term: "Plan", value: planLabels[status.planKey] ?? status.planKey }]
+          : []),
+        ...(status.quantity != null ? [{ term: "Quantity", value: status.quantity }] : []),
+        ...(status.current_period_end
+          ? [
+              {
+                term: "Current period end",
+                value: new Date(status.current_period_end).toLocaleDateString(),
+              },
+            ]
+          : []),
+        ...(status.trial_end
+          ? [
+              {
+                term: "Trial end",
+                value: new Date(status.trial_end).toLocaleDateString(),
+              },
+            ]
+          : []),
+        ...(status.grace_until
+          ? [
+              {
+                term: "Grace until",
+                value: new Date(status.grace_until).toLocaleDateString(),
+              },
+            ]
+          : []),
+      ]
+    : [];
+
   return (
     <>
       <ScreenTitle>General Settings</ScreenTitle>
-      <h2>Billing</h2>
+      <Panel title="Billing" level={2}>
+        {notice && (
+          <Alert live="polite" variant="default">
+            {notice}
+          </Alert>
+        )}
 
-      {notice && (
-        <Alert live="polite" variant="default">
-          {notice}
-        </Alert>
-      )}
+        {slug && status === null && <p>Billing status unavailable</p>}
 
-      {slug && status === null && <p>Billing status unavailable</p>}
+        {status && !status.canView && !status.canManage && (
+          <p>You do not have access to billing for this organisation.</p>
+        )}
 
-      {status && !status.canView && !status.canManage && (
-        <p>You do not have access to billing for this organisation.</p>
-      )}
+        {status && (status.canView || status.canManage) && status.state === "invoiced" && (
+          <p>Billing is handled by invoice.</p>
+        )}
 
-      {status && (status.canView || status.canManage) && status.state === "invoiced" && (
-        <p>Billing is handled by invoice.</p>
-      )}
+        {status && (status.canView || status.canManage) && status.state !== "invoiced" && (
+          <>
+            {status.canView && <DescriptionList items={billingItems} />}
 
-      {status && (status.canView || status.canManage) && status.state !== "invoiced" && (
-        <>
-          {status.canView && (
-            <dl>
+            {status.canManage && (
               <div>
-                <dt>State</dt>
-                <dd>{STATE_WORDS[status.state] ?? status.state}</dd>
+                {showPortalButton && (
+                  <Button type="button" onClick={() => void handlePortal()}>
+                    Manage billing
+                  </Button>
+                )}
+
+                {offerPortal && (
+                  <Button type="button" onClick={() => void handlePortal()}>
+                    Finish payment
+                  </Button>
+                )}
+
+                {showPlanList && (
+                  <>
+                    {contactSupport ? (
+                      <p>Contact support</p>
+                    ) : (
+                      plans && (
+                        <ul>
+                          {plans.map((plan) => (
+                            <li key={plan.key}>
+                              <div>
+                                <span>{planLabels[plan.key] ?? plan.key}</span>
+                                {plan.trialAvailable && <span>Includes a free trial</span>}
+                              </div>
+                              <Button type="button" onClick={() => void handleCheckout(plan.key)}>
+                                Start subscription
+                              </Button>
+                            </li>
+                          ))}
+                        </ul>
+                      )
+                    )}
+                  </>
+                )}
               </div>
-              {status.planKey && (
-                <div>
-                  <dt>Plan</dt>
-                  <dd>{planLabels[status.planKey] ?? status.planKey}</dd>
-                </div>
-              )}
-              {status.quantity != null && (
-                <div>
-                  <dt>Quantity</dt>
-                  <dd>{status.quantity}</dd>
-                </div>
-              )}
-              {status.current_period_end && (
-                <div>
-                  <dt>Current period end</dt>
-                  <dd>{new Date(status.current_period_end).toLocaleDateString()}</dd>
-                </div>
-              )}
-              {status.trial_end && (
-                <div>
-                  <dt>Trial end</dt>
-                  <dd>{new Date(status.trial_end).toLocaleDateString()}</dd>
-                </div>
-              )}
-              {status.grace_until && (
-                <div>
-                  <dt>Grace until</dt>
-                  <dd>{new Date(status.grace_until).toLocaleDateString()}</dd>
-                </div>
-              )}
-            </dl>
-          )}
-
-          {status.canManage && (
-            <div>
-              {showPortalButton && (
-                <Button type="button" onClick={() => void handlePortal()}>
-                  Manage billing
-                </Button>
-              )}
-
-              {offerPortal && (
-                <Button type="button" onClick={() => void handlePortal()}>
-                  Finish payment
-                </Button>
-              )}
-
-              {showPlanList && (
-                <>
-                  {contactSupport ? (
-                    <p>Contact support</p>
-                  ) : (
-                    plans && (
-                      <ul>
-                        {plans.map((plan) => (
-                          <li key={plan.key}>
-                            <div>
-                              <span>{planLabels[plan.key] ?? plan.key}</span>
-                              {plan.trialAvailable && <span>Includes a free trial</span>}
-                            </div>
-                            <Button type="button" onClick={() => void handleCheckout(plan.key)}>
-                              Start subscription
-                            </Button>
-                          </li>
-                        ))}
-                      </ul>
-                    )
-                  )}
-                </>
-              )}
-            </div>
-          )}
-        </>
-      )}
+            )}
+          </>
+        )}
+      </Panel>
     </>
   );
 }

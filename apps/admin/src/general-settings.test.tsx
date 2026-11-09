@@ -4,7 +4,7 @@ import { StrictMode, useState } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { BillingStatus } from "./api";
+import type { BillingState, BillingStatus } from "./api";
 import { BillingStatusContext, BillingStatusProvider } from "./billing-status";
 import { CommunityProvider, useCommunity } from "./community";
 import { GeneralSettingsPage } from "./general-settings";
@@ -162,6 +162,38 @@ describe("GeneralSettingsPage - Settings -> General Settings -> Billing", () => 
   });
 
   describe("canView content", () => {
+    it("renders State word inside StatusBadge with matching tone for each state", () => {
+      const cases: Array<{
+        state: BillingState;
+        word: string;
+        tone: "success" | "warning" | "danger" | "neutral";
+      }> = [
+        { state: "ok", word: "Active", tone: "success" },
+        { state: "retrying", word: "Payment retrying", tone: "warning" },
+        { state: "grace", word: "In grace period", tone: "warning" },
+        { state: "read_only", word: "Read-only", tone: "danger" },
+        { state: "none", word: "No active subscription", tone: "neutral" },
+      ];
+
+      for (const { state, word, tone } of cases) {
+        const { unmount } = renderGeneralSettings({
+          status: {
+            state,
+            planKey: "starter",
+            trial_end: null,
+            grace_until: null,
+            canView: true,
+            canManage: false,
+          },
+        });
+
+        const badge = screen.getByText(word).closest('[data-slot="status-badge"]');
+        expect(badge).not.toBeNull();
+        expect(badge?.getAttribute("data-tone")).toBe(tone);
+        unmount();
+      }
+    });
+
     it("renders state in words, plan label, quantity, current period end, trial end, and grace until", () => {
       renderGeneralSettings({
         status: {
@@ -209,6 +241,33 @@ describe("GeneralSettingsPage - Settings -> General Settings -> Billing", () => 
       expect(
         screen.getByText(new Date("2026-11-05T00:00:00.000Z").toLocaleDateString()),
       ).toBeTruthy();
+    });
+
+    it("renders billing description list row labels in order", () => {
+      const { container } = renderGeneralSettings({
+        status: {
+          state: "ok",
+          planKey: "starter",
+          quantity: 4,
+          current_period_end: "2026-12-31T00:00:00.000Z",
+          trial_end: "2026-10-25T00:00:00.000Z",
+          grace_until: "2026-11-05T00:00:00.000Z",
+          canView: true,
+          canManage: false,
+        },
+      });
+
+      const dl = container.querySelector("dl");
+      expect(dl).not.toBeNull();
+      const dtTexts = Array.from(dl?.querySelectorAll("dt") ?? []).map((dt) => dt.textContent);
+      expect(dtTexts).toEqual([
+        "State",
+        "Plan",
+        "Quantity",
+        "Current period end",
+        "Trial end",
+        "Grace until",
+      ]);
     });
   });
 

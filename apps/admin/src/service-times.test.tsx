@@ -769,6 +769,48 @@ describe("ServiceTimesPage", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("shows no access message and sends no request when lacking service_times.manage permission (Pin 37)", async () => {
+    const accessWithoutPermission: PeopleAccess = {
+      permissions: {
+        "people.view": true,
+        "people.manage": true,
+        "people.restricted.read": true,
+        "service_times.manage": false,
+      },
+      entitlements: {
+        "people.directory": true,
+        "people.households": true,
+        "module.engagement": true,
+      },
+    };
+
+    renderServiceTimesPage({ access: accessWithoutPermission });
+
+    expect(screen.getByText("You do not have access to this page.")).toBeTruthy();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("shows no access message and sends no request when lacking module.engagement entitlement (Pin 38)", async () => {
+    const accessWithoutEntitlement: PeopleAccess = {
+      permissions: {
+        "people.view": true,
+        "people.manage": true,
+        "people.restricted.read": true,
+        "service_times.manage": true,
+      },
+      entitlements: {
+        "people.directory": true,
+        "people.households": true,
+        "module.engagement": false,
+      },
+    };
+
+    renderServiceTimesPage({ access: accessWithoutEntitlement });
+
+    expect(screen.getByText("You do not have access to this page.")).toBeTruthy();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("controls adhere to 36px controls / 44px touch targets", async () => {
     fetchSpy.mockResolvedValueOnce(
       mockResponse(200, { html: "<p>Target content</p>", version: 1 }),

@@ -1,4 +1,4 @@
-import { Alert, Button } from "@community-hub/ui";
+import { Alert, Button, Field, Input } from "@community-hub/ui";
 import { type FormEvent, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 
@@ -83,37 +83,41 @@ export function SignInPage() {
         </Alert>
       ) : null}
       <form
+        className="grid gap-4"
         onSubmit={(event) => {
           void sendCode(event);
         }}
       >
-        <label>
-          Email
-          <input
+        <Field label="Email">
+          <Input
             type="email"
             value={email}
             onChange={(event) => {
               setEmail(event.target.value);
             }}
           />
-        </label>
-        <Button type="submit">Send code</Button>
+        </Field>
+        <Button className="justify-self-start" type="submit">
+          Send code
+        </Button>
       </form>
       <form
+        className="grid gap-4"
         onSubmit={(event) => {
           void verify(event);
         }}
       >
-        <label>
-          Code
-          <input
+        <Field label="Code">
+          <Input
             value={code}
             onChange={(event) => {
               setCode(event.target.value);
             }}
           />
-        </label>
-        <Button type="submit">Verify</Button>
+        </Field>
+        <Button className="justify-self-start" type="submit">
+          Verify
+        </Button>
       </form>
       {failed ? <p>Sign-in failed</p> : null}
     </>
