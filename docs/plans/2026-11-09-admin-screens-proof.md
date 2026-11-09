@@ -3,7 +3,7 @@ Spec: docs/specs/2026-11-09-admin-screens-proof.md
 # Admin screens proof Implementation Plan
 
 Slug: admin-screens-proof
-Status: draft
+Status: approved (2026-11-09, Adnan Bin Hossen)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
