@@ -4024,7 +4024,7 @@ Initialize shell tracking variables:
 
     HELD_COMMUNITY_SLUG="proof-$(openssl rand -hex 4)"
 
-    PROOF_EMAIL="proof-billing$'\x40'example.com"
+    PROOF_EMAIL=proof-billing$'\x40'example.com
 
     PROOF_NAME="Proof$(openssl rand -hex 4)"
 
@@ -4523,13 +4523,21 @@ Follow **Ops console proof → Apply 2** from `infra/regions/au` on the pushed T
 
    Expected: `0` for both.
 
-6. Confirm plan is empty:
+6. Unset held values:
+
+        unset HELD_U1_EMAIL HELD_U2_EMAIL HELD_ORG_SLUG HELD_COMMUNITY_SLUG PROOF_EMAIL PROOF_NAME DIGEST WINDOW_START_MS
+
+        print ${#HELD_U1_EMAIL} ${#HELD_U2_EMAIL} ${#HELD_ORG_SLUG} ${#HELD_COMMUNITY_SLUG}
+
+   Expected: `0 0 0 0`.
+
+7. Confirm plan is empty:
 
         terraform plan -no-color -var-file=env/staging.tfvars -var-file=env/staging.local.tfvars -input=false
 
    Expected: `No changes. Your infrastructure matches the configuration.`
 
-7. Record the re-park (Task 5).
+8. Record the re-park (Task 5).
 
 ## Restore drill
 
