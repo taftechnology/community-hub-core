@@ -4580,7 +4580,7 @@ Follow **Ops console proof → Apply 2** from `infra/regions/au` on the pushed T
   - P1: Playwright doesn't see CORS preflights, so OPTIONS isn't counted. 0 CORS failures were logged.
   - The restricted alert renders with role="status", not role="alert". Its text is exact.
   - Users & Roles has no user-link list because no links exist, so it was recorded as not present.
-  - Apply 2 ran from main (b5b017d), which is already parked, not from the Task 4 SHA. Task 4 still needs committing (enable_database = false, desired_count = 0).
+  - Apply 2 ran from main (b5b017d), which is already parked, not from the Task 4 SHA. Task 4 commits the parked file (`eb52f64`).
 - **Verified on staging:**
   - `usage-facts`: verified on staging by M13 only (has no admin screen)
   - `Groups`: verified on staging by M14 only (has no admin screen)
@@ -4589,6 +4589,13 @@ Follow **Ops console proof → Apply 2** from `infra/regions/au` on the pushed T
   - `Life events`: verified on staging by M17, P4 and P5
   - `Mass Times`: verified on staging by M18, P5 and P6
   - `admin-screens-restyle`: verified on staging by B0, P1, P2, P3, P4, P5, P6, P7, P8 and P9
+- **Re-park (Apply 2):**
+  - Apply 2 ran from `main` at `b5b017d`, which was already parked. The Task 4 commit `eb52f64` makes `staging.tfvars` equal to `main`'s byte for byte.
+  - Subscription cancelled; S9 answered 2xx.
+  - `service_image` lines: 0.
+  - Apply 2: 0 added, 0 changed, 18 destroyed.
+  - Plan file removed: yes. RDS: 0. Clusters: 0. Held variable lengths: 0 0 0 0. Final plan: No changes.
+  - Cost clock end: about 2026-11-10T00:25Z. Up for about 2 hours 20 minutes (clock start about 2026-11-09T22:05Z), so about USD 0.11 at USD 0.0468 an hour. The total is computed from the hourly rate, not read from a bill.
 
 ## Restore drill
 
