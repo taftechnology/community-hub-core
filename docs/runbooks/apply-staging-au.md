@@ -4551,38 +4551,47 @@ Follow **Ops console proof → Apply 2** from `infra/regions/au` on the pushed T
 
 ### Evidence
 
+- **Pre-checks (before the unpark):**
+  - publish and admin-publish: success for b5b017d. Latest build: yes.
+  - Image scan: COMPLETE, 0 critical, 0 high.
+  - Served build: yes (the served index names the one script in the bucket).
+  - A3: API origin yes, auth origin yes.
+  - SES: domain identity, DKIM and MAIL FROM SUCCESS. Production access false, so SES was in sandbox. Both sign-in addresses SUCCESS.
+  - Stripe dashboard checks: not recorded.
+  - Parked before Apply 1: 0 RDS instances, 0 clusters.
 - Deploy b5b017d3ab745cf4339892ab591c04607c2146b3 (contains cfcf3f7). Digest sha256:d838fb83e69d0c60744caf04153a6e393cb08f48e9108f22da331d1e7610dae1. Scan: 0 critical, 0 high. 19 migration tags.
-- Apply 1: 18 added (module.rds[0] 8, module.ingress 6, db_ops 4). Cost clock start about 2026-11-09T22:05Z. Hard stop about 2026-11-11T22:05Z (cost clock start plus 48 hours).
+- Apply 1 at `8a9e016` (the Task 2 commit): plan 18 to add, and the 18 printed addresses matched (module.rds[0] 8, module.ingress 6, db_ops 4). 18 added. Cost clock start about 2026-11-09T22:05Z. Hard stop about 2026-11-11T22:05Z (cost clock start plus 48 hours).
 - One-offs, all exit 0:
   - bootstrap ok; migrate done applied=19 total=19; provision created, secret deleted yes.
   - billing: tax_rate, plan_set, seeded, none.
 - Running-task check: 1 of 1 running; ADMIN_ORIGIN, BILLING_SECRET_ARN, MAIL_FROM_ADDRESS and SES_CONFIGURATION_SET present.
 - M13–M18: all eight tables 111111, version_columns 2, trigger 1, permission_check 1, mismatches 0.
 - B0: 1 console message (admin host, favicon 404). Sign-in: 0 axe violations.
-- P1: served index names the one bucket script. Request hosts other than admin: 2 (API and auth). Plus the single Checkout navigation request, which is the click that opens Checkout. Methods: POST. 0 CSP violations, 0 CORS failures.
+- P1: served index names the one bucket script. Request hosts other than admin: 2 (API and auth). Plus the single Checkout navigation request, which is the click that opens Checkout. Methods: POST. 0 CSP violations, 0 CORS failures. In B1, one duplicate request to start the email code was cancelled by the browser (net::ERR_ABORTED); the request that counted returned 204. Console errors in B1: favicon only.
 - P2: U1 signed in by code.
 - P3: Checkout returned and showed "Payment received" once, with the query stripped.
-- S4: checkout.session.completed processed -, key set exact. customer.subscription.created and invoice.paid were ignored.
+- S4: checkout.session.completed processed -, key set exact. customer.subscription.created and invoice.paid were ignored. Stripe dashboard delivery status: not recorded (the result is from the service log).
 - P3(5): status ok / starter.
 - P4: 6 adults (201), 3 households (201), 6 adds to households (200), 2 minors (201), guardian Mira→Pip with all four rights, 2 life events (201).
 - P6: Mass Times saved (200) and persisted after navigating away and back.
 - P5:
-  - 1280px light: 15 views and forms, 0 axe violations, no sideways scroll, 0 failed requests. Positive control (Pip and the guardian link shown) true.
-  - 375px dark: 16 views and forms, same results.
+  - 1280px light: 16 views and forms, 0 axe violations, no sideways scroll, 0 failed requests. Positive control (Pip and the guardian link shown) true. Mass Times showed 1 color-contrast result while still loading and 0 on the recheck.
+  - 375px dark: 16 views and forms, same results. U1 console errors at both widths: favicon only.
+  - Both widths covered the same 16 views (16 screenshots each). Billing is inside General Settings, not a separate view. B2–B5 finished about 12 minutes after B1's code, inside the 15-minute access token.
   - Users & Roles: one h1; lists as listitems; Revoke, Create custom role and Grant present; 0 axe violations; no sideways scroll.
 - P7:
   - B6: U2 has no people nav. The expected 403s on capabilities, billing status and grants list, with no 5xx.
   - A6: count 2, log stream deleted (0).
-  - B7: proof_people created (people.view and people.manage only) and granted (200). Grants went from 2 to 3. Delete custom role present. 0 axe at 1280 and 375.
-  - B8: no Minors button; alert text shown; a marker in all 3 cells.
+  - B7: proof_people created (people.view and people.manage only) and granted (200). Grants went from 2 to 3. Delete custom role present. 0 axe at 1280 and 375. U2's id was compared with the owner's grant line before the grant and was not on it.
+  - B8: no Minors button; alert text shown; the exact text "Household name hidden for your role" in all 3 cells, as an aria-label, a title or visible text; whether it is the accessible name: not recorded.
   - households/list: 3 rows, label null. people/list: 6 items, isMinor false.
-  - Tolland read: no minors key, guardians empty.
-  - Family Details: no minor, guardian or date of birth. Minor strings: 0 of 5.
-  - Contact Details, Family Records and Family Details: 0 axe at 1280 light and 375 dark.
+  - Tolland read (the household with the minor Pip): no minors key, guardians empty, label null. Barrah read as U2: not recorded.
+  - Tolland Family Details: no minor, guardian or date of birth. Minor strings (Pip Tolland, Wren Barrah, Pip, Wren, 2016-03-14): 0 of 5 in All Contacts, Family Records and Tolland Family Details. 2018-07-02 and Barrah Family Details as U2: not recorded.
+  - Contact Details, Family Records and Family Details: 0 axe at 1280 light and 375 dark, no sideways scroll, 0 failed requests. Console errors: favicon, plus one each time U2 loaded the shell, from the grants list 403 (the follow-up in the pull request).
 - P8: Rafe Lindqvist created (201) and shown.
 - P9: U1 and U2 sign-out, then a reload asks for sign-in.
 - S9: customer.subscription.deleted processed -, HTTP 200.
-- Screenshots kept: 39.
+- Screenshots kept: 39. The script hid the community picker in all 39. All 39 were checked by text recognition for addresses, slugs, hostnames and ids, and none was found; 8 were also checked by eye.
 - **Deviations (run by the project owner):**
   - Abdus ran the run in place of the developer. The browser was a separate Playwright-driven Chrome for Testing window, not the playwriter profile. The sign-in page's CSP blocks injecting axe any other way.
   - B2–B5 ran inside the B1 sign-in. U1 used 2 codes in total (B1 and B7), and U2 used 2 (B6 and B8).
@@ -4603,7 +4612,7 @@ Follow **Ops console proof → Apply 2** from `infra/regions/au` on the pushed T
   - Apply 2 ran from `main` at `b5b017d`, which was already parked. The Task 4 commit `eb52f64` makes `staging.tfvars` equal to `main`'s byte for byte.
   - Subscription cancelled; S9 answered 2xx.
   - `service_image` lines: 0.
-  - Apply 2: 0 added, 0 changed, 18 destroyed.
+  - Apply 2: plan 18 to destroy, with the same counts by group as Apply 1 (4, 6 and 8); the addresses were not compared one by one. 0 added, 0 changed, 18 destroyed.
   - Plan file removed: yes. RDS: 0. Clusters: 0. Held variable lengths: 0 0 0 0. Final plan: No changes.
   - Cost clock end: about 2026-11-10T00:25Z. Up for about 2 hours 20 minutes (clock start about 2026-11-09T22:05Z), so about USD 0.11 at USD 0.0468 an hour. The total is computed from the hourly rate, not read from a bill.
 
