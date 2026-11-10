@@ -4539,6 +4539,57 @@ Follow **Ops console proof → Apply 2** from `infra/regions/au` on the pushed T
 
 8. Record the re-park (Task 5).
 
+### Evidence
+
+- Deploy b5b017d3ab745cf4339892ab591c04607c2146b3 (contains cfcf3f7). Digest sha256:d838fb83e69d0c60744caf04153a6e393cb08f48e9108f22da331d1e7610dae1. Scan: 0 critical, 0 high. 19 migration tags.
+- Apply 1: 18 added (module.rds[0] 8, module.ingress 6, db_ops 4). Cost clock start about 2026-11-09T22:05Z. Hard stop about 2026-11-11T22:05Z (cost clock start plus 48 hours).
+- One-offs, all exit 0:
+  - bootstrap ok; migrate done applied=19 total=19; provision created, secret deleted yes.
+  - billing: tax_rate, plan_set, seeded, none.
+- Running-task check: 1 of 1 running; ADMIN_ORIGIN, BILLING_SECRET_ARN, MAIL_FROM_ADDRESS and SES_CONFIGURATION_SET present.
+- M13–M18: all eight tables 111111, version_columns 2, trigger 1, permission_check 1, mismatches 0.
+- B0: 1 console message (admin host, favicon 404). Sign-in: 0 axe violations.
+- P1: served index names the one bucket script. Request hosts other than admin: 2 (API and auth). Plus the single Checkout navigation request, which is the click that opens Checkout. Methods: POST. 0 CSP violations, 0 CORS failures.
+- P2: U1 signed in by code.
+- P3: Checkout returned and showed "Payment received" once, with the query stripped.
+- S4: checkout.session.completed processed -, key set exact. customer.subscription.created and invoice.paid were ignored.
+- P3(5): status ok / starter.
+- P4: 6 adults (201), 3 households (201), 6 adds to households (200), 2 minors (201), guardian Mira→Pip with all four rights, 2 life events (201).
+- P6: Mass Times saved (200) and persisted after navigating away and back.
+- P5:
+  - 1280px light: 15 views and forms, 0 axe violations, no sideways scroll, 0 failed requests. Positive control (Pip and the guardian link shown) true.
+  - 375px dark: 16 views and forms, same results.
+  - Users & Roles: one h1; lists as listitems; Revoke, Create custom role and Grant present; 0 axe violations; no sideways scroll.
+- P7:
+  - B6: U2 has no people nav. The expected 403s on capabilities, billing status and grants list, with no 5xx.
+  - A6: count 2, log stream deleted (0).
+  - B7: proof_people created (people.view and people.manage only) and granted (200). Grants went from 2 to 3. Delete custom role present. 0 axe at 1280 and 375.
+  - B8: no Minors button; alert text shown; a marker in all 3 cells.
+  - households/list: 3 rows, label null. people/list: 6 items, isMinor false.
+  - Tolland read: no minors key, guardians empty.
+  - Family Details: no minor, guardian or date of birth. Minor strings: 0 of 5.
+  - Contact Details, Family Records and Family Details: 0 axe at 1280 light and 375 dark.
+- P8: Rafe Lindqvist created (201) and shown.
+- P9: U1 and U2 sign-out, then a reload asks for sign-in.
+- S9: customer.subscription.deleted processed -, HTTP 200.
+- Screenshots kept: 39.
+- **Deviations (run by the project owner):**
+  - Abdus ran the run in place of the developer. The browser was a separate Playwright-driven Chrome for Testing window, not the playwriter profile. The sign-in page's CSP blocks injecting axe any other way.
+  - B2–B5 ran inside the B1 sign-in. U1 used 2 codes in total (B1 and B7), and U2 used 2 (B6 and B8).
+  - The Add minor form requires a date of birth and pre-selects a guardian. So Wren Barrah has the date 2018-07-02, and Hester was auto-selected with no rights ticked.
+  - P1: Playwright doesn't see CORS preflights, so OPTIONS isn't counted. 0 CORS failures were logged.
+  - The restricted alert renders with role="status", not role="alert". Its text is exact.
+  - Users & Roles has no user-link list because no links exist, so it was recorded as not present.
+  - Apply 2 ran from main (b5b017d), which is already parked, not from the Task 4 SHA. Task 4 still needs committing (enable_database = false, desired_count = 0).
+- **Verified on staging:**
+  - `usage-facts`: verified on staging by M13 only (has no admin screen)
+  - `Groups`: verified on staging by M14 only (has no admin screen)
+  - `All Contacts admin`: verified on staging by M15, P4, P5, P7 and P8
+  - `Family Records`: verified on staging by M16, P4, P5 and P7
+  - `Life events`: verified on staging by M17, P4 and P5
+  - `Mass Times`: verified on staging by M18, P5 and P6
+  - `admin-screens-restyle`: verified on staging by B0, P1, P2, P3, P4, P5, P6, P7, P8 and P9
+
 ## Restore drill
 
 Quarterly, and only against staging. Restore the staging database to a new instance from point-in-time recovery. Record the time taken against the 4-hour target. Then delete the restored instance, because it bills by the hour. This drill does not restore production. Reading `SHOW max_connections` belongs to `first-running-task`, not to this drill.
