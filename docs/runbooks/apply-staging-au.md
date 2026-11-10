@@ -3988,7 +3988,7 @@ Hold these in the shell. Never record their values.
 | `${AUTH_HOST}`               | Auth hostname (`auth.au.${ZONE_NAME}`)                                                           |
 | `${WEBHOOKS_HOST}`           | Webhooks hostname (`webhooks.au.${ZONE_NAME}`)                                                   |
 | `${DEPLOY_SHA}`              | Commit SHA of latest `main` containing `cfcf3f7`                                                 |
-| `${DIGEST}`                  | ECR image digest for `${DEPLOY_SHA}` (never recorded)                                            |
+| `${DIGEST}`                  | ECR image digest for `${DEPLOY_SHA}` (an image digest, which may be recorded)                    |
 | `${RUN_ID}`                  | GitHub Actions run id for the publish workflow run                                               |
 | `${PROVISION_SECRET_NAME}`   | The one fixed secret name (`${name}-provision-owner`)                                            |
 | `${BILLING_SECRET_ID}`       | Billing secret identifier / ARN in Secrets Manager (never recorded)                              |
@@ -4046,9 +4046,9 @@ The owner and developer verify these conditions while staging is parked. Answer 
 
 1. **SES recipient verification (owner, own shell):** both A4 addresses (`${HELD_U1_EMAIL}` and `${HELD_U2_EMAIL}`) show `VerificationStatus` `SUCCESS`. Status only; neither address is printed or recorded:
 
-        aws sesv2 get-email-identity --profile ${AWS_PROFILE} --region ap-southeast-2 --email-identity "${HELD_U1_EMAIL}" --query 'VerificationStatus' --output text
+        aws sesv2 get-email-identity --profile ${AWS_PROFILE} --region ap-southeast-2 --email-identity "${HELD_U1_EMAIL}" --query 'VerificationStatus' --output text 2>/dev/null
 
-        aws sesv2 get-email-identity --profile ${AWS_PROFILE} --region ap-southeast-2 --email-identity "${HELD_U2_EMAIL}" --query 'VerificationStatus' --output text
+        aws sesv2 get-email-identity --profile ${AWS_PROFILE} --region ap-southeast-2 --email-identity "${HELD_U2_EMAIL}" --query 'VerificationStatus' --output text 2>/dev/null
 
    Expected: `SUCCESS` for both.
 
@@ -4121,7 +4121,7 @@ Run pre-checks (assistant and owner; any failure is a stop before spend):
 
    Expected: domain identity and DKIM status `SUCCESS`, MAIL FROM domain status `SUCCESS`, production access `False` (sandbox).
 
-8. **A3 admin build target (owner, own shell, never printed):** Each origin must equal its host exactly, with no trailing slash, because the admin builds `${origins.api}${path}` (`apps/admin/src/api.ts:100`) and CORS allows one exact origin (`infra/modules/aws-ingress/main.tf:195-200`):
+8. **A3 admin build target (owner, own shell, never printed):** Each origin must equal its host exactly, with no trailing slash, because the admin builds `${origins.api}${path}` (`apps/admin/src/api.ts:99`) and CORS allows one exact origin (`infra/modules/aws-ingress/main.tf:195-200`):
 
         [[ "$(gh variable get ADMIN_API_ORIGIN)" == "https://${API_HOST}" ]] && print yes || print no
 
@@ -4135,7 +4135,7 @@ Run pre-checks (assistant and owner; any failure is a stop before spend):
 
         ADMIN_BUCKET=$(terraform -chdir=infra/regions/au output -raw admin_bucket)
 
-        SERVED=$(curl -fsS "https://${ADMIN_HOST}/index.html" | grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' | sort -u)
+        SERVED=$(curl -fsS "https://${ADMIN_HOST}/index.html" 2>/dev/null | grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' | sort -u)
 
         [[ $(print -r -- "${SERVED}" | wc -l) -eq 1 && -n "${SERVED}" ]] && aws s3 ls --profile ${AWS_PROFILE} "s3://${ADMIN_BUCKET}/${SERVED}" >/dev/null 2>&1 && print yes || print no
 
@@ -4464,6 +4464,16 @@ Follow the restricted caller proof procedure:
    - P9 sign out:
      - U2 signs out. A reload at `/` asks for sign-in.
 
+### Abort or hard stop
+
+1. Stop the proofs.
+2. If a test subscription exists, cancel it and check its delivery, as in **Close-out** step 1.
+3. Remove the `service_image` line from the local file and check it, as in **Close-out** step 3.
+4. Make the re-park commit (`enable_database = false` and `desired_count = 0`, equal to `main`'s file) and push it after review.
+5. Run **Apply 2**.
+
+The hard stop is 48 hours after Apply 1 completion, and the owner runs the re-park at that time even if proofs remain.
+
 ### Close-out
 
 1. **Cancel subscription and delivery check (owner and assistant):**
@@ -4481,7 +4491,7 @@ Follow the restricted caller proof procedure:
    - Re-park commit (Task 4): `enable_database = false` and `desired_count = 0` in `infra/regions/au/env/staging.tfvars`.
 
 3. **Remove `service_image` line:**
-   The owner removes the `service_image` line from `infra/regions/au/env/staging.local.tfvars` and checks:
+   The owner removes the `service_image` line from `infra/regions/au/env/staging.local.tfvars` and checks, from `infra/regions/au`:
 
        grep -c '^service_image' env/staging.local.tfvars
 
