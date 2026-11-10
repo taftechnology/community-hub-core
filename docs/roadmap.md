@@ -21,8 +21,8 @@ A current Laravel parish leaves self-hosted Community Hub in **one window**: ten
 |              |                                                                   |
 | ------------ | ----------------------------------------------------------------- |
 | Phase        | 2 — Engagement and mobile (Phase 1 complete)                      |
-| Last shipped | `admin-screens-restyle`                                           |
-| Next chunk   | `admin-screens-proof`                                             |
+| Last shipped | `admin-screens-proof`                                             |
+| Next chunk   | `Users & Roles people details`                                    |
 | Phase 0      | 26 rows: 25 done, 1 superseded (`api-au-hostname`), 0 not started |
 | Later phases | not started                                                       |
 
@@ -96,7 +96,7 @@ Architecture: monorepo, CI, Terraform for AWS in `ap-southeast-2`, kernel, db wi
 | done       | `db-migrate-command`         | The image gains `/app/db-migrate.js`, which applies the product migrations as the master login, refuses to run before `db-bootstrap`, and prints the tags it applied. It has not been run on staging. Spec `docs/specs/2026-10-12-db-migrate-command.md`.                                                                                                                                                                                                                          |
 | done       | `staging-proof-run`          | The distroless image runs on Fargate. `db-bootstrap` then `db-migrate` applied the ten product migrations to RDS and a second run applied none. The sign-in-code route answers 503 with no mail vendor; role and entitlement routes refuse a request with no session; the service re-read a changed database secret and recovered without a restart. Staging was re-parked the same day. Spec `docs/specs/2026-10-12-staging-proof-run.md`.                                        |
 
-Next is `admin-screens-proof`.
+Next is `Users & Roles people details`.
 
 SQS, EventBridge, file storage, and the admin static-file distribution are not rows here. Each waits for the first chunk that uses it.
 
@@ -171,7 +171,7 @@ Journeys, not a full backlog. Cut specs when this phase starts. Fill nav in this
 | not started | Users & Roles people details   | Settings → Users & Roles                  | **Sensitive.** Show names, emails and phones instead of ids and role keys. The route selects ids only today; the fix joins `app.persons` and `identity.users` across two schemas, decrypts, and needs a new contract. Moved out of the restyle (spec Out).                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | not started | Add Adult create               | Family Records                            | A create action in Add Adult, so a new adult can be added to a household without leaving it (walk follow-up from `admin-design-shell`, decision D1 of the restyle spec).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | not started | People screens: Laravel parity | Contacts & Members; Family Records        | All Contacts delete, CSV export, the extra columns, the inline Active switch and the filters; the Groups screen; family status, delete a family, move a child, edit a child; emergency contacts and pastoral notes.                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| not started | admin-screens-proof            | —                                         | The restyled admin checked on the staging hostname from a published build on the real publish path, and the `0013` to `0018` checks (option C, chosen by the project owner on 2026-11-07; see the restyle spec's Staging section). It unparks staging only under its own approved spec.                                                                                                                                                                                                                                                                                                                                                                                           |
+| done        | admin-screens-proof            | —                                         | The restyled admin was checked on the staging hostname from a published build on the real publish path, with the `0013` to `0018` checks (M13 to M18) passing, and proofs P1 to P9 passing, with the deviations recorded in the runbook (option C, chosen by the project owner on 2026-11-07; see the restyle spec's Staging section); the project owner ran it on 2026-11-09 and 2026-11-10; staging was up about 2 hours 20 minutes, about USD 0.11, and is parked again; the evidence is in `docs/runbooks/apply-staging-au.md`, section "Admin screens proof"; spec `docs/specs/2026-11-09-admin-screens-proof.md`, plan `docs/plans/2026-11-09-admin-screens-proof.md`.      |
 | not started | Community memberships endpoint | Sidebar community switcher                | API listing the communities a user belongs to, so `CommunitySwitcher` (built in admin-design-shell, not rendered) can replace the slug field. Sidebar shows the **parish name at the bottom** (owner 2026-11-04).                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | not started | Tenant session audit           | —                                         | Audit events for tenant sign-in and sign-out, ids only. Tenant sessions have no audit trail today; operator sessions do. Show last sign-in on Users & Roles (Laravel shows Last login). Needs a table and a migration, so it gets its own spec.                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | not started | Profile Settings               | Account menu                              | Name and email, from the Account menu (decision F). **Sign out of all devices** in the same chunk (server ends every tenant session family; sensitive authentication). Laravel's account menu has it; not rendered until it has a backend.                                                                                                                                                                                                                                                                                                                                                                                                                                        |
@@ -347,10 +347,6 @@ The ops console proof observed the 8-hour operator session limit live: refresh s
 
 The ops access log format (`access_log_format` in `infra/modules/aws-ingress/main.tf`) is not pinned exactly by a Terraform test; the ops console proof checked its nine keys live only.
 
-The next chunk that unparks staging verifies migration `0013`: `app.usage_facts_daily` exists, `relrowsecurity` and `relforcerowsecurity` are true, and `app` lacks `DELETE`.
-
-The next chunk that unparks staging verifies migration `0014`: both tables exist with `relrowsecurity` and `relforcerowsecurity` true, and `app` lacks `DELETE` on `app.groups`.
-
 A group route chunk must never take minor inclusion from request input; minor inclusion follows [ADR 0017](../docs/adr/0017-childrens-data-access.md) (guardian or `community_admin` only), not `people.restricted.read`. The chunk must check `groups.manage` and `groups.export`, gate on `groups.basic`, and add the `--filter @community-hub/groups` line to the Dockerfile and `image.test.ts`.
 
 The membership foreign keys and `life_events_person_fk` carry `org_id` but not `community_id`, so the database alone does not stop a membership or life event pointing at a group or person in another community of the same organisation. `addMember` and `createLifeEvent` check both in code. Before a second writer of `app.group_members` or `app.life_events` ships (bulk import, a route that inserts directly), add `(org_id, community_id, id)` keys on groups and persons and include `community_id` in both membership foreign keys and `life_events_person_fk`, with a raw cross-community insert test.
@@ -360,8 +356,6 @@ The membership foreign keys and `life_events_person_fk` carry `org_id` but not `
 A group name must not carry a child's name; the group UI chunk adds that guidance.
 
 `createPerson` has its first production caller in `POST /v1/people/create`, so the `people.directory` usage fact is now written in production when a contact is added.
-
-The next chunk that unparks staging verifies migration `0015`: `app.persons.version` exists, the permission CHECK admits `people.view` and `people.manage`, `relrowsecurity` and `relforcerowsecurity` are still true on `persons`, `app` lacks `DELETE`, and `app` has `UPDATE` only on the ten columns `updatePerson` writes plus `household_id` (see the `0016` paragraph below).
 
 No index on `app.persons` was added for the contacts list. On synthetic data of 5,000 adults plus 50 minors in one community, the sequential scan took 5.9 ms for adults and 0.4 ms for minors. An `org_id`-led index should be added when a real community passes a few tens of thousands of contacts or the list is measured slow.
 
@@ -373,13 +367,9 @@ The unique blind-index indexes `persons_adult_email_bidx`, `persons_adult_phone_
 
 Guardian read over HTTP waits for a later chunk (Family Records or the member portal/app), as callers lacking both `people.view` and `people.restricted.read` are refused before the gate runs.
 
-The next chunk that unparks staging verifies migration `0016`: `app.households.version` exists, the `BEFORE UPDATE` trigger on `app.persons` is present, `relrowsecurity` and `relforcerowsecurity` are still true on `households` and `persons`, `app` lacks `DELETE` on `households`, `persons`, and `household_keys`, and `app` has `UPDATE` only on `households(label, version)` and `persons(household_id)`.
-
 No index on `app.persons` was added for `(org_id, household_id)`. Member counts and lookups scan `persons`. This chunk accepts the sequential scan, as All Contacts did; an `org_id`-led index should be added when a real community passes a few tens of thousands of contacts or household queries are measured slow.
 
 A list page of 25 households makes 25 KMS Decrypt requests and 25 key unwraps (`keys.ts:116-135`). On synthetic data of 25 households containing adults, minors, and guardian links, the 25-household list page time had 5 runs of `[116.93 ms, 119.81 ms, 120.99 ms, 121.99 ms, 144.42 ms]` with a median of `120.99 ms`. A request-scoped key cache remains an open optimization when scale warrants it.
-
-The next chunk that unparks staging verifies migration `0017`: `app.life_events` exists, `relrowsecurity` and `relforcerowsecurity` are true, `app` lacks `DELETE`, and `app` has `UPDATE` only on the five named columns (`event_type`, `event_date`, `place`, `notes`, `version`).
 
 Any chunk that ever changes `is_minor` must re-key a minor's life events (they remain sealed under the household key today).
 
@@ -393,8 +383,6 @@ The admin All Contacts screen is larger than the minimal target: `apps/admin/src
 - Sidebar parish name: [Community memberships endpoint](#phase-2--engagement-and-mobile) row (decision 12).
 - the accepted theme flash on load.
 
-The first chunk that unparks staging verifies migration `0018`: `app.service_times` exists, row level security is forced, `app` lacks `TRUNCATE` and `DELETE`, and column-level `UPDATE` is restricted to (`content_html`, `version`, `updated_at`).
-
 The plans in the ops console must include the `module.engagement` entitlement before the Mass Times screen shows for any community (a project-owner data step).
 
 The `HostCollection` JSON Schema and query shape for a one-item collection belong to the host contract freeze.
@@ -405,7 +393,7 @@ The trailing empty paragraph the editor can leave after a final list or heading 
 
 ## Next spec
 
-The next chunk is **admin-screens-proof** (the restyled admin checked on the staging hostname from a published build on the real publish path, and the `0013` to `0018` checks), the next Phase 2 journey. Its spec is cut when work starts. Plan prices are **AUD 200 / AUD 500 a month**, **AUD 1,500 setup**, excluding GST, tax on top (Q8, Q19 closed).
+The next chunk is **Users & Roles people details** (Settings → Users & Roles, sensitive, selected by the chunk owner on 2026-11-10). Its spec is cut when work starts. Plan prices are **AUD 200 / AUD 500 a month**, **AUD 1,500 setup**, excluding GST, tax on top (Q8, Q19 closed).
 
 ---
 
