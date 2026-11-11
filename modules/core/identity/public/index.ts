@@ -3,6 +3,7 @@ export { OtpMailUnavailable, rejectingOtpMail, type OtpMail } from "../domain/ot
 export { startEmailOtp, verifyEmailOtp, type OtpPurpose } from "../infrastructure/email-otp.js";
 export { ensureIdentityKey } from "../infrastructure/identity-key.js";
 export { findOrCreateUserByEmail, findUserByEmail } from "../infrastructure/email-lookup.js";
+export { readUserEmails } from "../infrastructure/user-emails.js";
 export {
   beginPasskeyAuthentication,
   beginPasskeyRegistration,
