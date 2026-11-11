@@ -232,8 +232,16 @@ function renderUserDetails(
   return (
     <>
       {nameText ? <span>{nameText}</span> : null}
-      <span>{emailText}</span>
-      {phoneVisible ? <span>{phoneText}</span> : null}
+      <span>
+        <span className="sr-only">Email: </span>
+        {emailText}
+      </span>
+      {phoneVisible ? (
+        <span>
+          <span className="sr-only">Phone: </span>
+          {phoneText}
+        </span>
+      ) : null}
       <span className="text-xs text-muted-foreground">{userId}</span>
     </>
   );

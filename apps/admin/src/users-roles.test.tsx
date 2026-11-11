@@ -179,6 +179,10 @@ it("renders names, emails, phones, secondary user ids and role labels when users
   expect(screen.getByText(USER, { exact: false })).toBeTruthy();
   expect(screen.getByText("Organisation Owner")).toBeTruthy();
 
+  expect(document.body.textContent).not.toContain("Ada Person");
+  expect(document.body.textContent).not.toContain("+61400000000");
+  expect(document.body.textContent).not.toContain(EMAIL);
+
   const usersCall = fetchSpy.mock.calls.find((call) =>
     String(call[0]).includes("/v1/access/users/list"),
   );
@@ -232,6 +236,60 @@ it("renders 'Details hidden' and no personal data anywhere on screen for minor: 
   expect(document.body.textContent).not.toContain("Taylor");
   expect(document.body.textContent).not.toContain("robin.taylor@example.com");
   expect(document.body.textContent).not.toContain("+61491570156");
+});
+
+it("renders 'Details hidden' in both grants and userLinks for a minor user", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  const dirWithLink = {
+    ...directory(0, [ownerGrant], ["access.users.view"]),
+    userLinks: [
+      {
+        userId: USER,
+        personId: "00000000-0000-4000-8000-000000000099",
+      },
+    ],
+  };
+
+  urlKeyedFetch({
+    grants: () =>
+      new Response(JSON.stringify(dirWithLink), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    users: () =>
+      new Response(
+        JSON.stringify(
+          usersListResponse([
+            {
+              userId: USER,
+              personId: "00000000-0000-4000-8000-000000000099",
+              name: { given: "Robin", family: "Taylor" },
+              email: "robin.taylor@example.com",
+              phone: "+61491570156",
+              minor: true,
+            },
+          ]),
+        ),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  });
+
+  await showUsers();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  expect(await screen.findAllByText("Details hidden")).toHaveLength(2);
+  expect(screen.getAllByText("Details hidden")).toHaveLength(2);
+
+  expect(document.body.textContent).not.toContain("Robin");
+  expect(document.body.textContent).not.toContain("Taylor");
+  expect(document.body.textContent).not.toContain("robin.taylor@example.com");
+  expect(document.body.textContent).not.toContain("+61491570156");
+  expect(document.body.textContent).not.toContain("Ada Person");
+  expect(document.body.textContent).not.toContain("+61400000000");
+  expect(document.body.textContent).not.toContain(EMAIL);
 });
 
 it("renders 'No contact linked' in the name slot when personId is null and not minor", async () => {
@@ -368,6 +426,51 @@ it("renders nothing in the phone slot when phoneVisible is false", async () => {
   expect(screen.getByText("morgan.finch@example.com")).toBeTruthy();
   expect(document.body.textContent).not.toContain("+61491570006");
   expect(screen.queryByText("—")).toBeNull();
+});
+
+it("renders screen-reader-only labels for email and phone, omitting Phone: when phoneVisible is false", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  urlKeyedFetch({
+    users: () =>
+      new Response(JSON.stringify(usersListResponse([defaultUserDetail], true)), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+  });
+
+  await showUsers();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  expect(await screen.findByText("Morgan Finch")).toBeTruthy();
+  expect(screen.getByText("Email:", { exact: false })).toBeTruthy();
+  expect(screen.getByText("Phone:", { exact: false })).toBeTruthy();
+  expect(document.body.textContent).toContain("Email:");
+  expect(document.body.textContent).toContain("Phone:");
+
+  cleanup();
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  urlKeyedFetch({
+    users: () =>
+      new Response(JSON.stringify(usersListResponse([defaultUserDetail], false)), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+  });
+
+  await showUsers();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  expect(await screen.findByText("Morgan Finch")).toBeTruthy();
+  expect(screen.getByText("Email:", { exact: false })).toBeTruthy();
+  expect(document.body.textContent).toContain("Email:");
+  expect(screen.queryByText("Phone:", { exact: false })).toBeNull();
+  expect(document.body.textContent).not.toContain("Phone:");
 });
 
 it("keeps ids view when users state has no row for that user", async () => {
@@ -537,7 +640,7 @@ it("shows 'Sign in required' when users/list returns 401", async () => {
 it("does not call users/list when caller lacks access.users.view (exact call count 0)", async () => {
   sessionStorage.setItem("community-hub.access-token", TOKEN);
   let usersCallCount = 0;
-  urlKeyedFetch({
+  const fetchSpy = urlKeyedFetch({
     grants: () =>
       new Response(
         JSON.stringify(directory(0, [ownerGrant], ["access.roles.view", "access.roles.manage"])),
@@ -560,6 +663,24 @@ it("does not call users/list when caller lacks access.users.view (exact call cou
 
   expect(await screen.findByText(USER, { exact: false })).toBeTruthy();
   expect(usersCallCount).toBe(0);
+
+  expect(document.body.textContent).not.toContain(EMAIL);
+  expect(document.body.textContent).not.toContain("Ada Person");
+  expect(document.body.textContent).not.toContain("+61400000000");
+  expect(document.body.textContent).toContain("Organisation Owner");
+  expect(screen.queryByRole("button", { name: "Become the owner" })).toBeNull();
+
+  const grantsCall = fetchSpy.mock.calls.find((call) =>
+    String(call[0]).includes("/v1/access/grants/list"),
+  );
+  expect(grantsCall).toBeDefined();
+  expect(String(grantsCall?.[0])).toBe("https://au.api.example.test/v1/access/grants/list");
+  expect(String(grantsCall?.[0])).not.toContain("parish");
+  expect(String(grantsCall?.[0])).not.toContain(TOKEN);
+  const init = grantsCall?.[1] as RequestInit;
+  expect(init.method).toBe("POST");
+  expect(init.body).toBe(JSON.stringify({ communitySlug: "parish" }));
+  expect(new Headers(init.headers).get("authorization")).toBe(`Bearer ${TOKEN}`);
 });
 
 it("calls users/list again after a grant change through the form", async () => {
@@ -573,7 +694,14 @@ it("calls users/list again after a grant change through the form", async () => {
       ),
     users: () => {
       usersCalls++;
-      return new Response(JSON.stringify(usersListResponse()), {
+      const userDetail =
+        usersCalls === 1
+          ? defaultUserDetail
+          : {
+              ...defaultUserDetail,
+              name: { given: "Morgan", family: "Finch-Lee" },
+            };
+      return new Response(JSON.stringify(usersListResponse([userDetail])), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -601,7 +729,7 @@ it("calls users/list again after a grant change through the form", async () => {
   const revokeButton = screen.getByRole("button", { name: "Revoke" });
   fireEvent.click(revokeButton);
 
-  await screen.findByText("Morgan Finch");
+  expect(await screen.findByText("Morgan Finch-Lee")).toBeTruthy();
   expect(usersCalls).toBe(2);
 });
 
