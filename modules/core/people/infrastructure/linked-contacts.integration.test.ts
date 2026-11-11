@@ -239,11 +239,15 @@ describe("readLinkedContacts integration", () => {
             givenName: "Child",
             familyName: "Hopper",
             email: null,
-            phone: null,
+            phone: "+61411000999",
             actorUserId,
           });
           minorId = minor.personId;
         });
+
+        // Clear audit events from creation
+        await directSql`delete from app.audit_events where org_id = ${scope.orgId}::uuid`;
+        kms.resetCounts();
 
         const statements: string[] = [];
         await withAppTransaction(app, scope, async (tx) => {
@@ -258,10 +262,21 @@ describe("readLinkedContacts integration", () => {
           expect(result.get(minorId)).toEqual({ minor: true });
         });
 
+        expect(kms.decryptCalls).toBe(0);
+        expect(kms.generateDataKeyCalls).toBe(0);
+
         expect(statements.length).toBeGreaterThan(0);
         for (const statement of statements) {
           expect(statement).not.toContain("household_keys");
         }
+
+        const auditRows = await directSql<{ count: number }[]>`
+          select count(*)::int as count
+          from app.audit_events
+          where action = 'people.person.read'
+            and org_id = ${scope.orgId}::uuid
+        `;
+        expect(auditRows[0]?.count).toBe(0);
       });
     } finally {
       await cleanScope(directSql, scope);
@@ -351,6 +366,7 @@ describe("readLinkedContacts integration", () => {
     try {
       let adultWithPhoneId = "";
       let adultWithoutPhoneId = "";
+      let minorId = "";
 
       await withRequest({ requestId: REQUEST_ID }, async () => {
         await withAppTransaction(app, scope, async (tx) => {
@@ -379,6 +395,24 @@ describe("readLinkedContacts integration", () => {
             actorUserId,
           });
           adultWithoutPhoneId = adult2.personId;
+
+          const household = await createHousehold(tx, kms, KEY_ARN, {
+            now: NOW,
+            label: "Booth",
+            actorUserId,
+          });
+          const minor = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId: household.householdId,
+            dateOfBirth: null,
+            givenName: "Young",
+            familyName: "Booth",
+            email: null,
+            phone: "+61499888666",
+            actorUserId,
+          });
+          minorId = minor.personId;
         });
 
         // 1. When no adult has a phone, no audit row is written
@@ -404,11 +438,12 @@ describe("readLinkedContacts integration", () => {
         // 2. When one adult has a phone and one does not: exactly one audit row written with target_ids = [adultWithPhoneId]
         await withAppTransaction(app, scope, async (tx) => {
           const result = await readLinkedContacts(tx, kms, KEY_ARN, {
-            personIds: [adultWithPhoneId, adultWithoutPhoneId],
+            personIds: [adultWithPhoneId, adultWithoutPhoneId, minorId],
             includePhone: true,
             actorUserId,
           });
-          expect(result.size).toBe(2);
+          expect(result.size).toBe(3);
+          expect(result.get(minorId)).toEqual({ minor: true });
         });
 
         const auditRows = await directSql<
@@ -430,13 +465,14 @@ describe("readLinkedContacts integration", () => {
         expect(auditRows).toHaveLength(1);
         expect(auditRows[0]?.actor_kind).toBe("user");
         expect(auditRows[0]?.actor_id).toBe(actorUserId);
+        expect(auditRows[0]?.purpose).toBe("people.person.read");
         expect(auditRows[0]?.target_ids).toEqual([adultWithPhoneId]);
 
         // Verify no fixture name or phone appears anywhere in the audit row
         const rowJson = JSON.stringify(auditRows[0]);
         expect(rowJson).not.toContain("Kathleen");
         expect(rowJson).not.toContain("Booth");
-        expect(rowJson).not.toContain("+61499888777");
+        expect(rowJson).not.toContain("61499888777");
       });
     } finally {
       await cleanScope(directSql, scope);
