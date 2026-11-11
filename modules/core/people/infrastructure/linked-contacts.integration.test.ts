@@ -179,10 +179,10 @@ describe("readLinkedContacts integration", () => {
             declaredAdult: true,
             householdId: null,
             dateOfBirth: null,
-            givenName: "Grace",
-            familyName: "Hopper",
+            givenName: "Morgan",
+            familyName: "Finch",
             email: null,
-            phone: "+61411222333",
+            phone: "+61491570006",
             actorUserId,
           });
           adultId = adult.personId;
@@ -198,9 +198,9 @@ describe("readLinkedContacts integration", () => {
           expect(result.size).toBe(1);
           expect(result.get(adultId)).toEqual({
             minor: false,
-            given: "Grace",
-            family: "Hopper",
-            phone: "61411222333",
+            given: "Morgan",
+            family: "Finch",
+            phone: "61491570006",
           });
         });
       });
@@ -228,7 +228,7 @@ describe("readLinkedContacts integration", () => {
         await withAppTransaction(app, scope, async (tx) => {
           const household = await createHousehold(tx, kms, KEY_ARN, {
             now: NOW,
-            label: "Hopper",
+            label: "Finch",
             actorUserId,
           });
           const minor = await createPerson(tx, kms, KEY_ARN, {
@@ -237,9 +237,9 @@ describe("readLinkedContacts integration", () => {
             householdId: household.householdId,
             dateOfBirth: null,
             givenName: "Child",
-            familyName: "Hopper",
+            familyName: "Finch",
             email: null,
-            phone: "+61411000999",
+            phone: "+61491570156",
             actorUserId,
           });
           minorId = minor.personId;
@@ -305,10 +305,10 @@ describe("readLinkedContacts integration", () => {
             declaredAdult: true,
             householdId: null,
             dateOfBirth: null,
-            givenName: "Ada",
-            familyName: "Lovelace",
+            givenName: "Robin",
+            familyName: "Taylor",
             email: null,
-            phone: "+61412345678",
+            phone: "+61491570157",
             actorUserId,
           });
           adultId = adult.personId;
@@ -328,8 +328,8 @@ describe("readLinkedContacts integration", () => {
           expect(result.size).toBe(1);
           expect(result.get(adultId)).toEqual({
             minor: false,
-            given: "Ada",
-            family: "Lovelace",
+            given: "Robin",
+            family: "Taylor",
             phone: null,
           });
         });
@@ -375,10 +375,10 @@ describe("readLinkedContacts integration", () => {
             declaredAdult: true,
             householdId: null,
             dateOfBirth: null,
-            givenName: "Kathleen",
-            familyName: "Booth",
+            givenName: "Avery",
+            familyName: "Quill",
             email: null,
-            phone: "+61499888777",
+            phone: "+61491570158",
             actorUserId,
           });
           adultWithPhoneId = adult1.personId;
@@ -388,8 +388,8 @@ describe("readLinkedContacts integration", () => {
             declaredAdult: true,
             householdId: null,
             dateOfBirth: null,
-            givenName: "Jean",
-            familyName: "Bartik",
+            givenName: "Jordan",
+            familyName: "River",
             email: null,
             phone: null,
             actorUserId,
@@ -398,7 +398,7 @@ describe("readLinkedContacts integration", () => {
 
           const household = await createHousehold(tx, kms, KEY_ARN, {
             now: NOW,
-            label: "Booth",
+            label: "Quill",
             actorUserId,
           });
           const minor = await createPerson(tx, kms, KEY_ARN, {
@@ -407,9 +407,9 @@ describe("readLinkedContacts integration", () => {
             householdId: household.householdId,
             dateOfBirth: null,
             givenName: "Young",
-            familyName: "Booth",
+            familyName: "Quill",
             email: null,
-            phone: "+61499888666",
+            phone: "+61491570159",
             actorUserId,
           });
           minorId = minor.personId;
@@ -470,9 +470,9 @@ describe("readLinkedContacts integration", () => {
 
         // Verify no fixture name or phone appears anywhere in the audit row
         const rowJson = JSON.stringify(auditRows[0]);
-        expect(rowJson).not.toContain("Kathleen");
-        expect(rowJson).not.toContain("Booth");
-        expect(rowJson).not.toContain("61499888777");
+        expect(rowJson).not.toContain("Avery");
+        expect(rowJson).not.toContain("Quill");
+        expect(rowJson).not.toContain("61491570158");
       });
     } finally {
       await cleanScope(directSql, scope);
@@ -502,10 +502,10 @@ describe("readLinkedContacts integration", () => {
             declaredAdult: true,
             householdId: null,
             dateOfBirth: null,
-            givenName: "Marlyn",
-            familyName: "Wescoff",
+            givenName: "Casey",
+            familyName: "Rowan",
             email: null,
-            phone: "+61400111222",
+            phone: "+61491570110",
             actorUserId,
           });
           adultId1 = adult.personId;
@@ -582,8 +582,8 @@ describe("readLinkedContacts integration", () => {
           ${scope2.communityId}::uuid,
           false,
           'declared_adult',
-          'Ruth',
-          'Teitelbaum',
+          'Riley',
+          'Harper',
           ${new Uint8Array(32)},
           ${new Uint8Array(32)}
         )
@@ -648,10 +648,10 @@ describe("readLinkedContacts integration", () => {
             declaredAdult: true,
             householdId: null,
             dateOfBirth: null,
-            givenName: "Frances",
-            familyName: "Spence",
+            givenName: "Dana",
+            familyName: "Brooks",
             email: null,
-            phone: "+61422333444",
+            phone: "+61491570313",
             actorUserId,
           });
           adultA1Id = adult.personId;
@@ -664,10 +664,10 @@ describe("readLinkedContacts integration", () => {
             declaredAdult: true,
             householdId: null,
             dateOfBirth: null,
-            givenName: "Betty",
-            familyName: "Holberton",
+            givenName: "Ellis",
+            familyName: "Vance",
             email: null,
-            phone: "+61433444555",
+            phone: "+61491570737",
             actorUserId,
           });
           adultA2Id = adult.personId;
@@ -680,10 +680,10 @@ describe("readLinkedContacts integration", () => {
             declaredAdult: true,
             householdId: null,
             dateOfBirth: null,
-            givenName: "Adele",
-            familyName: "Goldstine",
+            givenName: "Cameron",
+            familyName: "Reed",
             email: null,
-            phone: "+61444555666",
+            phone: "+61491570006",
             actorUserId,
           });
           adultBId = adult.personId;
@@ -702,8 +702,8 @@ describe("readLinkedContacts integration", () => {
           expect(result.size).toBe(1);
           expect(result.get(adultA1Id)).toEqual({
             minor: false,
-            given: "Frances",
-            family: "Spence",
+            given: "Dana",
+            family: "Brooks",
             phone: null,
           });
         });

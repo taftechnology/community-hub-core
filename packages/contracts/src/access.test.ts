@@ -217,7 +217,7 @@ describe("access bodies", () => {
 
   describe("listUsersBody (pin 4)", () => {
     it("parses valid body with communitySlug only", () => {
-      expect(listUsersBody.safeParse({ communitySlug: "ada" }).success).toBe(true);
+      expect(listUsersBody.safeParse({ communitySlug: "parish" }).success).toBe(true);
     });
 
     it("rejects missing or invalid communitySlug", () => {
@@ -227,10 +227,10 @@ describe("access bodies", () => {
     });
 
     it("rejects extra keys such as userIds", () => {
-      expect(listUsersBody.safeParse({ communitySlug: "ada", userIds: [USER] }).success).toBe(
+      expect(listUsersBody.safeParse({ communitySlug: "parish", userIds: [USER] }).success).toBe(
         false,
       );
-      expect(listUsersBody.safeParse({ communitySlug: "ada", extra: "forbidden" }).success).toBe(
+      expect(listUsersBody.safeParse({ communitySlug: "parish", extra: "forbidden" }).success).toBe(
         false,
       );
     });
@@ -240,9 +240,9 @@ describe("access bodies", () => {
     const fullUser = {
       userId: USER,
       personId: PERSON,
-      name: { given: "Ada", family: "Lovelace" },
-      email: "ada@example.com",
-      phone: "+61411111111",
+      name: { given: "Morgan", family: "Finch" },
+      email: "morgan@example.com",
+      phone: "+61491570006",
       minor: false,
     };
 
@@ -260,7 +260,7 @@ describe("access bodies", () => {
         userId: USER,
         personId: null,
         name: null,
-        email: "ada@example.com",
+        email: "morgan@example.com",
         phone: null,
         minor: false,
       };
@@ -275,9 +275,9 @@ describe("access bodies", () => {
       const noAccountUser = {
         userId: USER,
         personId: PERSON,
-        name: { given: "Ada", family: "Lovelace" },
+        name: { given: "Morgan", family: "Finch" },
         email: null,
-        phone: "+61411111111",
+        phone: "+61491570006",
         minor: false,
       };
       expect(
@@ -307,8 +307,8 @@ describe("access bodies", () => {
       const noPhoneUser = {
         userId: USER,
         personId: PERSON,
-        name: { given: "Ada", family: "Lovelace" },
-        email: "ada@example.com",
+        name: { given: "Morgan", family: "Finch" },
+        email: "morgan@example.com",
         phone: null,
         minor: false,
       };
@@ -392,8 +392,8 @@ describe("access bodies", () => {
             {
               ...fullUser,
               name: {
-                given: "Ada",
-                family: "Lovelace",
+                given: "Morgan",
+                family: "Finch",
                 extra: "forbidden",
               },
             },

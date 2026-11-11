@@ -116,6 +116,15 @@ function post(
   });
 }
 
+async function cleanIdentity(sql: ReturnType<typeof createPlaintextIdentitySql>): Promise<void> {
+  await sql`delete from identity.sessions`;
+  await sql`delete from identity.passkey_credentials`;
+  await sql`delete from identity.passkey_challenges`;
+  await sql`delete from identity.otp_challenges`;
+  await sql`delete from identity.users`;
+  await sql`delete from identity.identity_keys`;
+}
+
 beforeAll(async () => {
   const migration = createPlaintextDirectSql(loadRuntime().productOnlyUrl);
   try {
@@ -146,6 +155,7 @@ describe("users list integration", () => {
   };
 
   beforeAll(async () => {
+    await cleanIdentity(identity);
     server = startServer({
       env: envFor(PORT),
       routes: [
@@ -185,6 +195,7 @@ describe("users list integration", () => {
       server.closeAllConnections?.();
       server.close(() => resolve());
     });
+    await cleanIdentity(identity);
     await identity.end({ timeout: 1 });
     await platform.end({ timeout: 1 });
     await app.end({ timeout: 1 });
@@ -271,7 +282,7 @@ describe("users list integration", () => {
 
   it("happy path: an owner is linked to an adult person with a phone and lists themself", async () => {
     const tenant = await createTenant();
-    const phone = "+61491570123";
+    const phone = "+61491570006";
     const email = uniqueEmail("owner");
     const owner = await setupOwner(tenant, email);
 
@@ -286,8 +297,8 @@ describe("users list integration", () => {
             declaredAdult: true,
             householdId: null,
             dateOfBirth: null,
-            givenName: "Ada",
-            familyName: "Lovelace",
+            givenName: "Morgan",
+            familyName: "Finch",
             email: null,
             phone,
             actorUserId: owner.userId,
@@ -320,9 +331,9 @@ describe("users list integration", () => {
         {
           userId: owner.userId,
           personId,
-          name: { given: "Ada", family: "Lovelace" },
+          name: { given: "Morgan", family: "Finch" },
           email,
-          phone: "61491570123",
+          phone: "61491570006",
           minor: false,
         },
       ],
@@ -380,6 +391,18 @@ describe("users list integration", () => {
 
     expect(body.users.some((u) => u.userId === userB.userId)).toBe(false);
     expect(body.users.some((u) => u.userId === ownerB.userId)).toBe(false);
+
+    // Positive control: organisation B's list does include user B
+    const resB = await post(
+      API_HOSTNAME,
+      "/v1/access/users/list",
+      { communitySlug: tenantB.slug },
+      ownerB.bearer,
+    );
+    expect(resB.status).toBe(200);
+    const bodyB = (await resB.json()) as ListUsersResponse;
+    expect(listUsersResponse.safeParse(bodyB).success).toBe(true);
+    expect(bodyB.users.some((u) => u.userId === userB.userId)).toBe(true);
   });
 
   it("tenancy: a caller in community 1 never sees a user who belongs only to community 2", async () => {
@@ -432,7 +455,7 @@ describe("users list integration", () => {
     expect(grantOrg.status).toBe(200);
 
     let personC2Id = "";
-    const phone = "+61491570222";
+    const phone = "+61491570156";
     await withRequest({ requestId: REQUEST_ID }, () =>
       withAppTransaction(
         app,
@@ -443,8 +466,8 @@ describe("users list integration", () => {
             declaredAdult: true,
             householdId: null,
             dateOfBirth: null,
-            givenName: "Grace",
-            familyName: "Hopper",
+            givenName: "Robin",
+            familyName: "Taylor",
             email: null,
             phone,
             actorUserId: owner.userId,
@@ -494,9 +517,9 @@ describe("users list integration", () => {
     expect(row2).toEqual({
       userId: orgUser.userId,
       personId: personC2Id,
-      name: { given: "Grace", family: "Hopper" },
+      name: { given: "Robin", family: "Taylor" },
       email: orgUser.email,
-      phone: "61491570222",
+      phone: "61491570156",
       minor: false,
     });
   });
@@ -563,7 +586,7 @@ describe("users list integration", () => {
     const owner = await setupOwner(tenant);
 
     let minorPersonId = "";
-    const minorPhone = "+61491570888";
+    const minorPhone = "+61491570157";
     await withRequest({ requestId: REQUEST_ID }, () =>
       withAppTransaction(
         app,
@@ -638,6 +661,7 @@ describe("users list integration", () => {
     const adminRawText = await adminRes.text();
     expect(adminRawText).not.toContain(minorUser.email);
     expect(adminRawText).not.toContain(minorPhone);
+    expect(adminRawText).not.toContain("61491570157");
     expect(adminRawText).not.toContain("MinorGiven");
     const adminBody = JSON.parse(adminRawText) as ListUsersResponse;
     expect(listUsersResponse.safeParse(adminBody).success).toBe(true);
@@ -675,6 +699,7 @@ describe("users list integration", () => {
     const staffRawText = await staffRes.text();
     expect(staffRawText).not.toContain(minorUser.email);
     expect(staffRawText).not.toContain(minorPhone);
+    expect(staffRawText).not.toContain("61491570157");
     expect(staffRawText).not.toContain("MinorGiven");
     const staffBody = JSON.parse(staffRawText) as ListUsersResponse;
     expect(listUsersResponse.safeParse(staffBody).success).toBe(true);
@@ -696,7 +721,7 @@ describe("users list integration", () => {
 
     // In community 2, create a household and minor person
     let minorPersonC2Id = "";
-    const minorPhone = "+61491570777";
+    const minorPhone = "+61491570158";
     await withRequest({ requestId: REQUEST_ID }, () =>
       withAppTransaction(
         app,
@@ -771,6 +796,7 @@ describe("users list integration", () => {
     const rawText = await res.text();
     expect(rawText).not.toContain(userA1.email);
     expect(rawText).not.toContain(minorPhone);
+    expect(rawText).not.toContain("61491570158");
     expect(rawText).not.toContain("MinorTwo");
 
     const body = JSON.parse(rawText) as ListUsersResponse;
@@ -791,7 +817,7 @@ describe("users list integration", () => {
     const tenant = await createTenant();
     const owner = await setupOwner(tenant);
 
-    const phone = "+61491570123";
+    const phone = "+61491570159";
     let personId = "";
     await withRequest({ requestId: REQUEST_ID }, () =>
       withAppTransaction(
@@ -803,8 +829,8 @@ describe("users list integration", () => {
             declaredAdult: true,
             householdId: null,
             dateOfBirth: null,
-            givenName: "Grace",
-            familyName: "Hopper",
+            givenName: "Avery",
+            familyName: "Quill",
             email: null,
             phone,
             actorUserId: owner.userId,
@@ -870,11 +896,11 @@ describe("users list integration", () => {
     });
 
     const auditText = JSON.stringify(auditRows);
-    expect(auditText).not.toContain("Grace");
-    expect(auditText).not.toContain("Hopper");
+    expect(auditText).not.toContain("Avery");
+    expect(auditText).not.toContain("Quill");
     expect(auditText).not.toContain(owner.email);
     expect(auditText).not.toContain(phone);
-    expect(auditText).not.toContain("61491570123");
+    expect(auditText).not.toContain("61491570159");
   });
 
   it("rollback (pin 7): a corrupted identity email ciphertext returns empty 500 and commits no audit rows", async () => {
@@ -883,7 +909,7 @@ describe("users list integration", () => {
 
     const targetEmail = uniqueEmail("target");
     const targetUser = await createSession(targetEmail);
-    const targetPhone = "+61491570345";
+    const targetPhone = "+61491570110";
 
     await withRequest({ requestId: REQUEST_ID }, () =>
       withAppTransaction(
@@ -895,8 +921,8 @@ describe("users list integration", () => {
             declaredAdult: true,
             householdId: null,
             dateOfBirth: null,
-            givenName: "Katherine",
-            familyName: "Johnson",
+            givenName: "Jordan",
+            familyName: "River",
             email: null,
             phone: targetPhone,
             actorUserId: owner.userId,
@@ -935,7 +961,7 @@ describe("users list integration", () => {
     `;
     expect(row?.email).toBeDefined();
     const corrupted = new Uint8Array(row!.email);
-    corrupted[0]! ^= 1;
+    corrupted[corrupted.length - 1]! ^= 1;
     await identity`
       update identity.users set email = ${corrupted} where id = ${targetUser.userId}::uuid
     `;
@@ -1133,7 +1159,7 @@ describe("users list integration", () => {
     const owner = await setupOwner(tenant);
 
     // Link an adult with a phone so the route attempts to open the community key
-    const phone = "+61491570111";
+    const phone = "+61491570313";
     await withRequest({ requestId: REQUEST_ID }, () =>
       withAppTransaction(
         app,
@@ -1144,8 +1170,8 @@ describe("users list integration", () => {
             declaredAdult: true,
             householdId: null,
             dateOfBirth: null,
-            givenName: "Hedy",
-            familyName: "Lamarr",
+            givenName: "Casey",
+            familyName: "Rowan",
             email: null,
             phone,
             actorUserId: owner.userId,

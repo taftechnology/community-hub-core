@@ -1089,7 +1089,7 @@ describe("access routes", () => {
               minor: false,
               given: "Staff",
               family: "Member",
-              phone: "+61491570123",
+              phone: "+61491570006",
             },
           ],
         ]),
@@ -1250,7 +1250,7 @@ describe("access routes", () => {
         logCalls.push({ message, fields });
       });
 
-      const fixtureEmail = "ada@example.test";
+      const fixtureEmail = "morgan@example.test";
       const sensitiveMessage = `forced error with ${fixtureEmail} and select email from identity.users`;
       identity.readUserEmails.mockRejectedValueOnce(new Error(sensitiveMessage));
 
@@ -1274,7 +1274,7 @@ describe("access routes", () => {
 
       const rendered = util.inspect(loggedCall, { depth: null });
       expect(rendered).not.toContain(fixtureEmail);
-      expect(rendered).not.toContain("Ada");
+      expect(rendered).not.toContain("Morgan");
       expect(rendered).not.toContain("+61491570");
       expect(rendered).not.toContain("select");
       expect(rendered).not.toContain("identity.");
