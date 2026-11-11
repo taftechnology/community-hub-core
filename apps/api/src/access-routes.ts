@@ -5,6 +5,7 @@ import {
   grantBody,
   linkUserBody,
   listGrantsBody,
+  listUsersBody,
   revokeGrantBody,
   unlinkUserBody,
   CAPABILITIES_ALLOW_LIST,
@@ -24,7 +25,9 @@ import {
 import { appendAuditEvent, withAppTransaction, type AppTransaction } from "@community-hub/db";
 import { bundle, catalogue, decide } from "@community-hub/policy";
 import { findCommunityBySlug } from "@community-hub/tenancy";
-import { readSession } from "@community-hub/identity";
+import { readSession, readUserEmails } from "@community-hub/identity";
+import { readLinkedContacts, type LinkedContact } from "@community-hub/people";
+import { getRequestContext } from "@community-hub/kernel";
 
 import type { Checkout } from "./checkout.js";
 import type { GateRoute, RouteContext } from "./gate.js";
@@ -61,6 +64,7 @@ const CONFLICT = new Set([
   "limit_reached",
   "role_in_use",
   "minor_forbidden",
+  "too_many",
 ]);
 
 type Scope = { orgId: string; communityId: string };
@@ -100,6 +104,64 @@ export type AccessDeps = {
 
 function empty(status: number): Response {
   return new Response(null, { status });
+}
+
+function noStore(response: Response): Response {
+  response.headers.set("cache-control", "no-store");
+  return response;
+}
+
+const ERROR_CLASS = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+
+function errorClassFor(error: unknown): string {
+  if (error instanceof Error) {
+    const name: unknown = error.name;
+    return typeof name === "string" && ERROR_CLASS.test(name) ? name : "Error";
+  }
+  return "NonError";
+}
+
+export type UserListItem = {
+  userId: string;
+  personId: string | null;
+  name: { given: string; family: string } | null;
+  email: string | null;
+  phone: string | null;
+  minor: boolean;
+};
+
+export function sortUsers(users: readonly UserListItem[]): UserListItem[] {
+  return [...users].sort((a, b) => {
+    if (a.name !== null && b.name === null) {
+      return -1;
+    }
+    if (a.name === null && b.name !== null) {
+      return 1;
+    }
+    if (a.name !== null && b.name !== null) {
+      const fam = a.name.family.localeCompare(b.name.family, "en-AU", { sensitivity: "base" });
+      if (fam !== 0) {
+        return fam;
+      }
+      const giv = a.name.given.localeCompare(b.name.given, "en-AU", { sensitivity: "base" });
+      if (giv !== 0) {
+        return giv;
+      }
+    }
+    if (a.email !== null && b.email === null) {
+      return -1;
+    }
+    if (a.email === null && b.email !== null) {
+      return 1;
+    }
+    if (a.email !== null && b.email !== null) {
+      const em = a.email.localeCompare(b.email, "en-AU", { sensitivity: "base" });
+      if (em !== 0) {
+        return em;
+      }
+    }
+    return a.userId.localeCompare(b.userId, "en-AU", { sensitivity: "base" });
+  });
 }
 
 function presentedHostname(request: Request): string | undefined {
@@ -417,6 +479,157 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
           return listBody(directory, callerPermissions(directory, actor.userId));
         });
         return finish(outcome, (value) => Response.json(value));
+      },
+    },
+    {
+      method: "POST",
+      pattern: "/v1/access/users/list",
+      surface: "tenant",
+      billing: "read",
+      handle: async (request, context) => {
+        try {
+          const hidden = foreignHost(request);
+          if (hidden !== undefined) {
+            return noStore(hidden);
+          }
+          const body = await parse(request, listUsersBody);
+          if (body === undefined) {
+            return noStore(empty(400));
+          }
+          const actor = await sessionUser(request);
+          if (actor instanceof Response) {
+            return noStore(actor);
+          }
+          const scope = await communityScope(body.communitySlug, context, actor.userId);
+          if (scope === null) {
+            return noStore(empty(403));
+          }
+          if (scope instanceof Response) {
+            return noStore(scope);
+          }
+
+          const outcome = await transact(scope, async (tx) => {
+            const directory = await loadDirectory(tx);
+            const permissions = callerPermissions(directory, actor.userId);
+
+            if (!permissions.includes("access.roles.view")) {
+              return deny(tx, actor.userId, "access.roles.view");
+            }
+            if (!permissions.includes("access.users.view")) {
+              return deny(tx, actor.userId, "access.users.view");
+            }
+
+            const userIds = Array.from(
+              new Set([
+                ...directory.grants.map((g) => g.userId),
+                ...directory.userLinks.map((l) => l.userId),
+              ]),
+            );
+
+            if (userIds.length > 500) {
+              throw new AccessError("too_many");
+            }
+
+            const userToPersonId = new Map<string, string>();
+            for (const link of directory.userLinks) {
+              userToPersonId.set(link.userId, link.personId);
+            }
+
+            const personIds = Array.from(new Set(directory.userLinks.map((l) => l.personId)));
+            const includePhone = permissions.includes("people.view");
+
+            let linkedContacts = new Map<string, LinkedContact>();
+            if (personIds.length > 0) {
+              linkedContacts = await readLinkedContacts(tx, deps.kms, deps.keyArn, {
+                personIds,
+                includePhone,
+                actorUserId: actor.userId,
+              });
+            }
+
+            const emailUserIds: string[] = [];
+            for (const userId of userIds) {
+              const personId = userToPersonId.get(userId);
+              const contact = personId !== undefined ? linkedContacts.get(personId) : undefined;
+              if (contact?.minor !== true) {
+                emailUserIds.push(userId);
+              }
+            }
+
+            let userEmails = new Map<string, string>();
+            if (emailUserIds.length > 0) {
+              userEmails = await deps.checkout("identity", (sql) =>
+                readUserEmails(sql, deps.kms, deps.keyArn, emailUserIds),
+              );
+            }
+
+            const rows: UserListItem[] = userIds.map((userId) => {
+              const personId = userToPersonId.get(userId) ?? null;
+              const contact = personId !== null ? linkedContacts.get(personId) : undefined;
+              const isMinor = contact?.minor === true;
+
+              if (isMinor) {
+                return {
+                  userId,
+                  personId,
+                  name: null,
+                  email: null,
+                  phone: null,
+                  minor: true,
+                };
+              }
+
+              let name: { given: string; family: string } | null = null;
+              let phone: string | null = null;
+              if (contact !== undefined && !contact.minor) {
+                name = { given: contact.given, family: contact.family };
+                phone = includePhone ? contact.phone : null;
+              }
+              const email = userEmails.get(userId) ?? null;
+
+              return {
+                userId,
+                personId,
+                name,
+                email,
+                phone,
+                minor: false,
+              };
+            });
+
+            const sortedUsers = sortUsers(rows);
+
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: "access.users.listed",
+              purpose: "access.users.listed",
+              targetIds: sortedUsers.map((u) => u.userId),
+            });
+
+            return {
+              phoneVisible: includePhone,
+              users: sortedUsers,
+            };
+          });
+
+          return noStore(finish(outcome, (value) => Response.json(value)));
+        } catch (error) {
+          if (error instanceof AccessError) {
+            const mapped = statusFor(error);
+            if (mapped !== undefined) {
+              return noStore(mapped);
+            }
+          }
+          const errorClass = errorClassFor(error);
+          deps.log("request", {
+            path: new URL(request.url).pathname,
+            status: "500",
+            requestId: getRequestContext().requestId,
+            errorClass,
+          });
+          return noStore(empty(500));
+        }
       },
     },
     {

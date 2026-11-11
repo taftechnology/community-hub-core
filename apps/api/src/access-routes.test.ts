@@ -1,12 +1,20 @@
+import util from "node:util";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BillingReadOnly } from "@community-hub/billing";
 import {
   CAPABILITIES_ALLOW_LIST,
+  listUsersResponse,
   type CapabilitiesResponse,
 } from "@community-hub/contracts/access";
+import { withRequest } from "@community-hub/kernel";
 
 const identity = vi.hoisted(() => ({
   readSession: vi.fn(),
+  readUserEmails: vi.fn(),
+}));
+
+const people = vi.hoisted(() => ({
+  readLinkedContacts: vi.fn(),
 }));
 
 const tenancy = vi.hoisted(() => ({
@@ -51,8 +59,16 @@ const db = vi.hoisted(() => ({
 vi.mock("@community-hub/identity", async () => {
   const actual =
     await vi.importActual<typeof import("@community-hub/identity")>("@community-hub/identity");
-  return { ...actual, readSession: identity.readSession };
+  return {
+    ...actual,
+    readSession: identity.readSession,
+    readUserEmails: identity.readUserEmails,
+  };
 });
+
+vi.mock("@community-hub/people", () => ({
+  readLinkedContacts: people.readLinkedContacts,
+}));
 
 vi.mock("@community-hub/tenancy", () => tenancy);
 
@@ -92,7 +108,7 @@ vi.mock("@community-hub/db", async () => {
   };
 });
 
-import { accessRoutes, type AccessDeps } from "./access-routes.js";
+import { accessRoutes, sortUsers, type AccessDeps } from "./access-routes.js";
 
 const API_HOSTNAME = "au.api.example.test";
 const AUTH_HOSTNAME = "auth.au.example.test";
@@ -102,12 +118,41 @@ const ORG = "00000000-0000-4000-8000-000000000010";
 const COMMUNITY = "00000000-0000-4000-8000-000000000011";
 const ORG_GRANT = "00000000-0000-4000-8000-000000000020";
 const COMMUNITY_GRANT = "00000000-0000-4000-8000-000000000021";
+const REQUEST_ID = "66666666-6666-4666-8666-666666666666";
 
 let grantsVisible = true;
 let directoryMode: "owner" | "billing" = "owner";
+let customRoles: { custom_role_id: string; key: string }[] = [];
+let customRolePermissions: { custom_role_id: string; permission: string }[] = [];
+let userLinks: { user_id: string; person_id: string }[] = [];
+let customOrgGrants: { grant_id: string; user_id: string; role_key: string }[] | undefined;
+let customCommunityGrants:
+  | {
+      grant_id: string;
+      user_id: string;
+      role_key: string | null;
+      custom_role_id: string | null;
+      custom_role_key: string | null;
+    }[]
+  | undefined;
 
 function fakeTx(strings: TemplateStringsArray): unknown[] {
   const text = strings.join(" ");
+  if (text.includes("from app.custom_roles")) {
+    return customRoles;
+  }
+  if (text.includes("from app.custom_role_permissions")) {
+    return customRolePermissions;
+  }
+  if (text.includes("from app.user_links")) {
+    return userLinks;
+  }
+  if (customOrgGrants !== undefined && text.includes("app.organisation_role_grants")) {
+    return customOrgGrants;
+  }
+  if (customCommunityGrants !== undefined && text.includes("app.community_role_grants")) {
+    return customCommunityGrants;
+  }
   if (!grantsVisible || directoryMode === "billing") {
     if (directoryMode === "billing" && text.includes("app.organisation_role_grants")) {
       return [{ grant_id: ORG_GRANT, user_id: USER, role_key: "org_billing" }];
@@ -200,12 +245,22 @@ describe("access routes", () => {
       slug: "parish",
       region: "au",
     });
+    customRoles = [];
+    customRolePermissions = [];
+    userLinks = [];
+    customOrgGrants = undefined;
+    customCommunityGrants = undefined;
+    people.readLinkedContacts.mockReset();
+    identity.readUserEmails.mockReset();
+    people.readLinkedContacts.mockResolvedValue(new Map());
+    identity.readUserEmails.mockResolvedValue(new Map());
   });
 
-  it("registers eight tenant posts", () => {
+  it("registers nine tenant posts", () => {
     const routes = accessRoutes(deps());
     expect(routes.map((item) => `${item.method} ${item.pattern}`)).toEqual([
       "POST /v1/access/grants/list",
+      "POST /v1/access/users/list",
       "POST /v1/access/capabilities",
       "POST /v1/access/grants",
       "POST /v1/access/grants/revoke",
@@ -872,6 +927,394 @@ describe("access routes", () => {
       expect(logged).not.toContain(COMMUNITY);
       expect(logged).not.toContain("canReadMinors");
       expect(logged).not.toContain("people.view");
+    });
+  });
+
+  describe("POST /v1/access/users/list", () => {
+    async function callUsersList(
+      body: unknown,
+      token = TOKEN,
+      hostname = API_HOSTNAME,
+      bound = deps(),
+    ): Promise<Response> {
+      return await withRequest(
+        { requestId: REQUEST_ID },
+        async () =>
+          await route("/v1/access/users/list", bound).handle(
+            request(
+              "/v1/access/users/list",
+              hostname,
+              body,
+              token === "" ? undefined : `Bearer ${token}`,
+            ),
+          ),
+      );
+    }
+
+    it("Pin 12: returns 404 with no-store and empty body on foreign host", async () => {
+      const res = await callUsersList({ communitySlug: "parish" }, TOKEN, "foreign.example.test");
+      expect(res.status).toBe(404);
+      expect(res.headers.get("cache-control")).toBe("no-store");
+      expect(await res.text()).toBe("");
+    });
+
+    it("Pin 12: returns 401 with no-store and empty body when unauthenticated or session invalid", async () => {
+      const missing = await callUsersList({ communitySlug: "parish" }, "");
+      expect(missing.status).toBe(401);
+      expect(missing.headers.get("cache-control")).toBe("no-store");
+      expect(await missing.text()).toBe("");
+
+      identity.readSession.mockResolvedValueOnce(null);
+      const invalid = await callUsersList({ communitySlug: "parish" });
+      expect(invalid.status).toBe(401);
+      expect(invalid.headers.get("cache-control")).toBe("no-store");
+      expect(await invalid.text()).toBe("");
+    });
+
+    it("Pin 4: returns 400 with no-store and empty body on body with extra userIds, calling neither export", async () => {
+      const res = await callUsersList({
+        communitySlug: "parish",
+        userIds: [USER],
+      });
+      expect(res.status).toBe(400);
+      expect(res.headers.get("cache-control")).toBe("no-store");
+      expect(await res.text()).toBe("");
+      expect(people.readLinkedContacts).not.toHaveBeenCalled();
+      expect(identity.readUserEmails).not.toHaveBeenCalled();
+    });
+
+    it("Pin 12: returns 403 with no-store and empty body when community slug is unknown", async () => {
+      tenancy.findCommunityBySlug.mockResolvedValueOnce(null);
+      const res = await callUsersList({ communitySlug: "unknown-parish" });
+      expect(res.status).toBe(403);
+      expect(res.headers.get("cache-control")).toBe("no-store");
+      expect(await res.text()).toBe("");
+    });
+
+    it("Pin 1: checks permissions (roles.view only -> 403, users.view only -> 403, both -> 200)", async () => {
+      const customRoleId = "00000000-0000-4000-8000-000000000077";
+      customOrgGrants = [];
+
+      // Case 1: Caller with access.roles.view only
+      customRoles = [{ custom_role_id: customRoleId, key: "role_viewer" }];
+      customRolePermissions = [{ custom_role_id: customRoleId, permission: "access.roles.view" }];
+      customCommunityGrants = [
+        {
+          grant_id: COMMUNITY_GRANT,
+          user_id: USER,
+          role_key: null,
+          custom_role_id: customRoleId,
+          custom_role_key: "role_viewer",
+        },
+      ];
+      db.appendAuditEvent.mockClear();
+      const rolesOnly = await callUsersList({ communitySlug: "parish" });
+      expect(rolesOnly.status).toBe(403);
+      expect(rolesOnly.headers.get("cache-control")).toBe("no-store");
+      expect(await rolesOnly.text()).toBe("");
+      expect(db.appendAuditEvent).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          action: "access.permission.denied",
+          purpose: "access.users.view",
+          targetIds: [USER],
+        }),
+      );
+
+      // Case 2: Caller with access.users.view only
+      customRoles = [{ custom_role_id: customRoleId, key: "user_viewer" }];
+      customRolePermissions = [{ custom_role_id: customRoleId, permission: "access.users.view" }];
+      customCommunityGrants = [
+        {
+          grant_id: COMMUNITY_GRANT,
+          user_id: USER,
+          role_key: null,
+          custom_role_id: customRoleId,
+          custom_role_key: "user_viewer",
+        },
+      ];
+      db.appendAuditEvent.mockClear();
+      const usersOnly = await callUsersList({ communitySlug: "parish" });
+      expect(usersOnly.status).toBe(403);
+      expect(usersOnly.headers.get("cache-control")).toBe("no-store");
+      expect(await usersOnly.text()).toBe("");
+
+      // Case 3: Caller who lacks both
+      customCommunityGrants = [];
+      db.appendAuditEvent.mockClear();
+      const neither = await callUsersList({ communitySlug: "parish" });
+      expect(neither.status).toBe(403);
+      expect(neither.headers.get("cache-control")).toBe("no-store");
+      expect(await neither.text()).toBe("");
+      expect(db.appendAuditEvent).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          action: "access.permission.denied",
+          purpose: "access.roles.view",
+          targetIds: [USER],
+        }),
+      );
+
+      // Case 4: Caller with both (e.g. org_owner from default fakeTx)
+      customCommunityGrants = undefined;
+      customOrgGrants = undefined;
+      customRoles = [];
+      customRolePermissions = [];
+      identity.readUserEmails.mockResolvedValueOnce(new Map([[USER, "owner@example.com"]]));
+      const ok = await callUsersList({ communitySlug: "parish" });
+      expect(ok.status).toBe(200);
+      expect(ok.headers.get("cache-control")).toBe("no-store");
+      const parsed = listUsersResponse.safeParse(await ok.json());
+      expect(parsed.success).toBe(true);
+    });
+
+    it("Pin 2: phone needs people.view (both view permissions without people.view -> phone null, phoneVisible false)", async () => {
+      customOrgGrants = [];
+      customCommunityGrants = [
+        {
+          grant_id: COMMUNITY_GRANT,
+          user_id: USER,
+          role_key: "staff",
+          custom_role_id: null,
+          custom_role_key: null,
+        },
+      ];
+      const personId = "00000000-0000-4000-8000-000000000033";
+      userLinks = [{ user_id: USER, person_id: personId }];
+      people.readLinkedContacts.mockResolvedValueOnce(
+        new Map([
+          [
+            personId,
+            {
+              minor: false,
+              given: "Staff",
+              family: "Member",
+              phone: "+61491570123",
+            },
+          ],
+        ]),
+      );
+      identity.readUserEmails.mockResolvedValueOnce(new Map([[USER, "staff@example.com"]]));
+
+      const res = await callUsersList({ communitySlug: "parish" });
+      expect(res.status).toBe(200);
+      expect(people.readLinkedContacts).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({
+          includePhone: false,
+          actorUserId: USER,
+          personIds: [personId],
+        }),
+      );
+
+      const body = listUsersResponse.parse(await res.json());
+      expect(body.phoneVisible).toBe(false);
+      expect(body.users).toHaveLength(1);
+      expect(body.users[0]?.phone).toBeNull();
+      expect(body.users[0]?.name).toEqual({ given: "Staff", family: "Member" });
+      expect(body.users[0]?.email).toBe("staff@example.com");
+    });
+
+    it("Pin 3: minor-linked user id never reaches readUserEmails, row has minor: true and nulls", async () => {
+      const minorPersonId = "00000000-0000-4000-8000-000000000044";
+      userLinks = [{ user_id: USER, person_id: minorPersonId }];
+      people.readLinkedContacts.mockResolvedValueOnce(new Map([[minorPersonId, { minor: true }]]));
+
+      const res = await callUsersList({ communitySlug: "parish" });
+      expect(res.status).toBe(200);
+      expect(identity.readUserEmails).not.toHaveBeenCalled();
+
+      const body = listUsersResponse.parse(await res.json());
+      expect(body.users).toEqual([
+        {
+          userId: USER,
+          personId: minorPersonId,
+          name: null,
+          email: null,
+          phone: null,
+          minor: true,
+        },
+      ]);
+    });
+
+    it("Pin 9: 501 directory users -> 409 (too_many) with no export calls and no audit, 500 -> 200", async () => {
+      const makeUsers = (count: number) => {
+        const grants = [];
+        for (let i = 0; i < count; i += 1) {
+          const hex = i.toString(16).padStart(12, "0");
+          grants.push({
+            grant_id: `00000000-0000-4000-8000-${hex}`,
+            user_id: `00000000-0000-4000-8000-${hex}`,
+            role_key: i === 0 ? "org_owner" : "member",
+          });
+        }
+        return grants;
+      };
+
+      // 501 users
+      customOrgGrants = makeUsers(501);
+      userLinks = [{ user_id: USER, person_id: "00000000-0000-4000-8000-000000000099" }];
+      db.appendAuditEvent.mockClear();
+      people.readLinkedContacts.mockClear();
+      identity.readUserEmails.mockClear();
+
+      const tooMany = await callUsersList({ communitySlug: "parish" });
+      expect(tooMany.status).toBe(409);
+      expect(tooMany.headers.get("cache-control")).toBe("no-store");
+      expect(await tooMany.text()).toBe("");
+      expect(people.readLinkedContacts).not.toHaveBeenCalled();
+      expect(identity.readUserEmails).not.toHaveBeenCalled();
+      expect(db.appendAuditEvent).not.toHaveBeenCalled();
+
+      // Exactly 500 users
+      customOrgGrants = makeUsers(500);
+      people.readLinkedContacts.mockClear();
+      identity.readUserEmails.mockClear();
+      identity.readUserEmails.mockResolvedValueOnce(new Map());
+
+      const exactly500 = await callUsersList({ communitySlug: "parish" });
+      expect(exactly500.status).toBe(200);
+      expect(exactly500.headers.get("cache-control")).toBe("no-store");
+      const body = listUsersResponse.parse(await exactly500.json());
+      expect(body.users).toHaveLength(500);
+    });
+
+    it("Pin 12: every response carries cache-control: no-store, empty bodies on non-200, grants/list 200 untouched", async () => {
+      const ok = await callUsersList({ communitySlug: "parish" });
+      expect(ok.status).toBe(200);
+      expect(ok.headers.get("cache-control")).toBe("no-store");
+
+      const grantsRes = await route("/v1/access/grants/list").handle(
+        request(
+          "/v1/access/grants/list",
+          API_HOSTNAME,
+          { communitySlug: "parish" },
+          `Bearer ${TOKEN}`,
+        ),
+      );
+      expect(grantsRes.status).toBe(200);
+      expect(grantsRes.headers.get("cache-control")).toBeNull();
+
+      identity.readUserEmails.mockRejectedValueOnce(new Error("kms decrypt error"));
+      const decryptFail = await callUsersList({ communitySlug: "parish" });
+      expect(decryptFail.status).toBe(500);
+      expect(decryptFail.headers.get("cache-control")).toBe("no-store");
+      expect(await decryptFail.text()).toBe("");
+
+      tenancy.findCommunityBySlug.mockRejectedValueOnce(new Error("platform db dead"));
+      const platformFail = await callUsersList({ communitySlug: "parish" });
+      expect(platformFail.status).toBe(500);
+      expect(platformFail.headers.get("cache-control")).toBe("no-store");
+      expect(await platformFail.text()).toBe("");
+
+      identity.readSession.mockRejectedValueOnce(new Error("identity session db dead"));
+      const sessionFail = await callUsersList({ communitySlug: "parish" });
+      expect(sessionFail.status).toBe(500);
+      expect(sessionFail.headers.get("cache-control")).toBe("no-store");
+      expect(await sessionFail.text()).toBe("");
+    });
+
+    it("Pin 15: logs on 500 record primitive fields only and leak no fixture, SQL, hostname or stack", async () => {
+      const logCalls: { message: string; fields?: Record<string, unknown> }[] = [];
+      const bound = deps((message, fields) => {
+        logCalls.push({ message, fields });
+      });
+
+      const fixtureEmail = "ada@example.test";
+      const sensitiveMessage = `forced error with ${fixtureEmail} and select email from identity.users`;
+      identity.readUserEmails.mockRejectedValueOnce(new Error(sensitiveMessage));
+
+      const res = await callUsersList({ communitySlug: "parish" }, TOKEN, API_HOSTNAME, bound);
+      expect(res.status).toBe(500);
+      expect(await res.text()).toBe("");
+      expect(logCalls).toHaveLength(1);
+
+      const loggedCall = logCalls[0]!;
+      expect(loggedCall.fields).toBeDefined();
+
+      for (const value of Object.values(loggedCall.fields ?? {})) {
+        const isPrimitive =
+          typeof value === "string" ||
+          typeof value === "number" ||
+          typeof value === "boolean" ||
+          value === null ||
+          value === undefined;
+        expect(isPrimitive).toBe(true);
+      }
+
+      const rendered = util.inspect(loggedCall, { depth: null });
+      expect(rendered).not.toContain(fixtureEmail);
+      expect(rendered).not.toContain("Ada");
+      expect(rendered).not.toContain("+61491570");
+      expect(rendered).not.toContain("select");
+      expect(rendered).not.toContain("identity.");
+      expect(rendered).not.toContain(API_HOSTNAME);
+      expect(rendered).not.toContain("at ");
+    });
+
+    it("sortUsers pure function: handles named rows, unnamed rows, null emails, accented names, and ties", () => {
+      const items = [
+        {
+          userId: "00000000-0000-4000-8000-000000000003",
+          personId: null,
+          name: null,
+          email: "charlie@example.com",
+          phone: null,
+          minor: false,
+        },
+        {
+          userId: "00000000-0000-4000-8000-000000000001",
+          personId: "00000000-0000-4000-8000-000000000010",
+          name: { given: "Bob", family: "Smith" },
+          email: "bob@example.com",
+          phone: null,
+          minor: false,
+        },
+        {
+          userId: "00000000-0000-4000-8000-000000000002",
+          personId: "00000000-0000-4000-8000-000000000011",
+          name: { given: "Alice", family: "Smith" },
+          email: "alice@example.com",
+          phone: null,
+          minor: false,
+        },
+        {
+          userId: "00000000-0000-4000-8000-000000000004",
+          personId: null,
+          name: null,
+          email: null,
+          phone: null,
+          minor: false,
+        },
+        {
+          userId: "00000000-0000-4000-8000-000000000005",
+          personId: "00000000-0000-4000-8000-000000000012",
+          name: { given: "Chloë", family: "Brown" },
+          email: "chloe2@example.com",
+          phone: null,
+          minor: false,
+        },
+        {
+          userId: "00000000-0000-4000-8000-000000000006",
+          personId: "00000000-0000-4000-8000-000000000013",
+          name: { given: "Chloe", family: "Brown" },
+          email: "chloe1@example.com",
+          phone: null,
+          minor: false,
+        },
+      ];
+
+      const sorted = sortUsers(items);
+      expect(sorted.map((u) => u.userId)).toEqual([
+        "00000000-0000-4000-8000-000000000006",
+        "00000000-0000-4000-8000-000000000005",
+        "00000000-0000-4000-8000-000000000002",
+        "00000000-0000-4000-8000-000000000001",
+        "00000000-0000-4000-8000-000000000003",
+        "00000000-0000-4000-8000-000000000004",
+      ]);
     });
   });
 });
