@@ -1139,6 +1139,33 @@ describe("access routes", () => {
       ]);
     });
 
+    it("a linked user whose person is not returned is hidden and never reaches readUserEmails", async () => {
+      const missingPersonId = "00000000-0000-4000-8000-000000000088";
+      userLinks = [{ user_id: USER, person_id: missingPersonId }];
+      people.readLinkedContacts.mockResolvedValueOnce(new Map());
+      identity.readUserEmails.mockResolvedValueOnce(new Map([[USER, "hidden@example.test"]]));
+
+      const res = await callUsersList({ communitySlug: "parish" });
+      expect(res.status).toBe(200);
+
+      const body = listUsersResponse.parse(await res.json());
+      expect(body.users).toEqual([
+        {
+          userId: USER,
+          personId: missingPersonId,
+          name: null,
+          email: null,
+          phone: null,
+          minor: true,
+        },
+      ]);
+
+      expect(identity.readUserEmails).not.toHaveBeenCalled();
+      for (const call of identity.readUserEmails.mock.calls) {
+        expect((call[3] as string[] | undefined) ?? []).not.toContain(USER);
+      }
+    });
+
     it("Pin 9: 501 directory users -> 409 (too_many) with no export calls and no audit, 500 -> 200", async () => {
       const makeUsers = (count: number) => {
         const grants = [];
@@ -1185,6 +1212,7 @@ describe("access routes", () => {
       const ok = await callUsersList({ communitySlug: "parish" });
       expect(ok.status).toBe(200);
       expect(ok.headers.get("cache-control")).toBe("no-store");
+      listUsersResponse.parse(await ok.json());
 
       const grantsRes = await route("/v1/access/grants/list").handle(
         request(

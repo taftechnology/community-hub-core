@@ -551,7 +551,7 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
             for (const userId of userIds) {
               const personId = userToPersonId.get(userId);
               const contact = personId !== undefined ? linkedContacts.get(personId) : undefined;
-              if (contact?.minor !== true) {
+              if (personId === undefined || contact?.minor === false) {
                 emailUserIds.push(userId);
               }
             }
@@ -566,7 +566,8 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
             const rows: UserListItem[] = userIds.map((userId) => {
               const personId = userToPersonId.get(userId) ?? null;
               const contact = personId !== null ? linkedContacts.get(personId) : undefined;
-              const isMinor = contact?.minor === true;
+              const isMinor =
+                contact?.minor === true || (personId !== null && contact === undefined);
 
               if (isMinor) {
                 return {
@@ -624,7 +625,7 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
           const errorClass = errorClassFor(error);
           deps.log("request", {
             path: new URL(request.url).pathname,
-            status: "500",
+            status: 500,
             requestId: getRequestContext().requestId,
             errorClass,
           });
