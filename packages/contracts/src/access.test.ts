@@ -328,6 +328,39 @@ describe("access bodies", () => {
       ).toBe(true);
     });
 
+    it("rejects a missing key at either level", () => {
+      const keys: (keyof typeof fullUser)[] = [
+        "userId",
+        "personId",
+        "name",
+        "email",
+        "phone",
+        "minor",
+      ];
+      for (const key of keys) {
+        const { [key]: _, ...rest } = fullUser;
+        void _;
+        expect(
+          listUsersResponse.safeParse({
+            phoneVisible: true,
+            users: [rest],
+          }).success,
+        ).toBe(false);
+      }
+
+      expect(
+        listUsersResponse.safeParse({
+          users: [fullUser],
+        }).success,
+      ).toBe(false);
+
+      expect(
+        listUsersResponse.safeParse({
+          phoneVisible: true,
+        }).success,
+      ).toBe(false);
+    });
+
     it("rejects an extra key at both levels", () => {
       // Top-level extra key
       expect(
@@ -399,6 +432,22 @@ describe("access bodies", () => {
         listUsersResponse.safeParse({
           phoneVisible: "true",
           users: [fullUser],
+        }).success,
+      ).toBe(false);
+
+      // null userId
+      expect(
+        listUsersResponse.safeParse({
+          phoneVisible: true,
+          users: [{ ...fullUser, userId: null }],
+        }).success,
+      ).toBe(false);
+
+      // null minor
+      expect(
+        listUsersResponse.safeParse({
+          phoneVisible: true,
+          users: [{ ...fullUser, minor: null }],
         }).success,
       ).toBe(false);
     });

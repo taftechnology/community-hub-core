@@ -3,7 +3,6 @@ import { isAuditAction, isAuditPurpose } from "@community-hub/kernel/module";
 
 import type { AccessErrorCode } from "../domain/error.js";
 import { AccessError } from "../public/index.js";
-import "../public/index.js";
 
 describe("audit registration", () => {
   it("registers users listed action and purpose and users view purpose", () => {
