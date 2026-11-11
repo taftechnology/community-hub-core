@@ -179,6 +179,38 @@ export async function openCommunityHkdf(
   return { keyId: community.id, hkdf };
 }
 
+export async function openExistingCommunityHkdf(
+  tx: AppTransaction,
+  kms: KmsPort,
+  keyArn: string,
+): Promise<{ keyId: string; hkdf: webcrypto.CryptoKey }> {
+  const organisation = await selectOrganisationKey(tx);
+  if (organisation === undefined) {
+    throw new Error("organisation key is missing");
+  }
+  const community = await selectCommunityKey(tx);
+  if (community === undefined) {
+    throw new Error("community key is missing");
+  }
+  const orgId = await setting(tx, "app.org_id");
+  const orgHkdf = await unwrapKmsRoot(
+    kms,
+    keyArn,
+    organisation.wrapped,
+    organisationContext(orgId),
+  );
+  const { wrap } = await deriveKeys(orgHkdf);
+  const communityId = await setting(tx, "app.community_id");
+  const hkdf = await unwrapKey(community.wrapped, wrap, {
+    tag: "chub/wrap/v1",
+    childKind: "community",
+    childId: uuidToBytes(communityId),
+    childKeyId: uuidToBytes(community.id),
+    parentKeyId: uuidToBytes(organisation.id),
+  });
+  return { keyId: community.id, hkdf };
+}
+
 export async function ensureCommunityKey(
   tx: AppTransaction,
   kms: KmsPort,
