@@ -12,6 +12,40 @@ const community = z
 export const listGrantsBody = community;
 export const bootstrapOwnerBody = community;
 
+export const listUsersBody = z
+  .object({
+    communitySlug: slug,
+  })
+  .strict();
+
+export type ListUsersBody = z.infer<typeof listUsersBody>;
+
+const userListItem = z
+  .object({
+    userId: uuid,
+    personId: uuid.nullable(),
+    name: z
+      .object({
+        given: z.string(),
+        family: z.string(),
+      })
+      .strict()
+      .nullable(),
+    email: z.string().nullable(),
+    phone: z.string().nullable(),
+    minor: z.boolean(),
+  })
+  .strict();
+
+export const listUsersResponse = z
+  .object({
+    phoneVisible: z.boolean(),
+    users: z.array(userListItem),
+  })
+  .strict();
+
+export type ListUsersResponse = z.infer<typeof listUsersResponse>;
+
 const grantRoleBody = z
   .object({
     communitySlug: slug,

@@ -11,7 +11,8 @@ export type AccessErrorCode =
   | "already_bootstrapped"
   | "last_owner"
   | "limit_reached"
-  | "role_in_use";
+  | "role_in_use"
+  | "too_many";
 
 export class AccessError extends Error {
   readonly code: AccessErrorCode;
