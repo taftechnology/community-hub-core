@@ -488,7 +488,7 @@ export function UsersRolesPage() {
       {notice === "forbidden" ? <p>You cannot manage roles</p> : null}
       {notice === "conflict" ? <p>That change was rejected</p> : null}
       {notice === "unavailable" ? <p>Directory unavailable</p> : null}
-      {usersMessage ? <p>{usersMessage}</p> : null}
+      {usersMessage ? <p role="status">{usersMessage}</p> : null}
       {directory === undefined ? null : (
         <>
           {directory.grants.length === 0 ? (

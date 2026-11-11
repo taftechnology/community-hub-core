@@ -993,6 +993,13 @@ describe("access routes", () => {
 
     it("Pin 1: checks permissions (roles.view only -> 403, users.view only -> 403, both -> 200)", async () => {
       const customRoleId = "00000000-0000-4000-8000-000000000077";
+      const linkedPersonId = "00000000-0000-4000-8000-000000000055";
+      userLinks = [{ user_id: USER, person_id: linkedPersonId }];
+      people.readLinkedContacts.mockResolvedValue(
+        new Map([
+          [linkedPersonId, { minor: false, given: "Ada", family: "Lovelace", phone: null }],
+        ]),
+      );
       customOrgGrants = [];
 
       // Case 1: Caller with access.roles.view only
@@ -1007,11 +1014,15 @@ describe("access routes", () => {
           custom_role_key: "role_viewer",
         },
       ];
+      people.readLinkedContacts.mockClear();
+      identity.readUserEmails.mockClear();
       db.appendAuditEvent.mockClear();
       const rolesOnly = await callUsersList({ communitySlug: "parish" });
       expect(rolesOnly.status).toBe(403);
       expect(rolesOnly.headers.get("cache-control")).toBe("no-store");
       expect(await rolesOnly.text()).toBe("");
+      expect(people.readLinkedContacts).not.toHaveBeenCalled();
+      expect(identity.readUserEmails).not.toHaveBeenCalled();
       expect(db.appendAuditEvent).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({
@@ -1033,19 +1044,27 @@ describe("access routes", () => {
           custom_role_key: "user_viewer",
         },
       ];
+      people.readLinkedContacts.mockClear();
+      identity.readUserEmails.mockClear();
       db.appendAuditEvent.mockClear();
       const usersOnly = await callUsersList({ communitySlug: "parish" });
       expect(usersOnly.status).toBe(403);
       expect(usersOnly.headers.get("cache-control")).toBe("no-store");
       expect(await usersOnly.text()).toBe("");
+      expect(people.readLinkedContacts).not.toHaveBeenCalled();
+      expect(identity.readUserEmails).not.toHaveBeenCalled();
 
       // Case 3: Caller who lacks both
       customCommunityGrants = [];
+      people.readLinkedContacts.mockClear();
+      identity.readUserEmails.mockClear();
       db.appendAuditEvent.mockClear();
       const neither = await callUsersList({ communitySlug: "parish" });
       expect(neither.status).toBe(403);
       expect(neither.headers.get("cache-control")).toBe("no-store");
       expect(await neither.text()).toBe("");
+      expect(people.readLinkedContacts).not.toHaveBeenCalled();
+      expect(identity.readUserEmails).not.toHaveBeenCalled();
       expect(db.appendAuditEvent).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({
@@ -1164,6 +1183,60 @@ describe("access routes", () => {
       for (const call of identity.readUserEmails.mock.calls) {
         expect((call[3] as string[] | undefined) ?? []).not.toContain(USER);
       }
+    });
+
+    it("mixed directory (L3): readUserEmails receives exactly the adult-linked user and unlinked user, never the minor", async () => {
+      const userAdult = USER;
+      const userMinor = "00000000-0000-4000-8000-0000000000a2";
+      const userUnlinked = "00000000-0000-4000-8000-0000000000a3";
+      const adultPersonId = "00000000-0000-4000-8000-0000000000b1";
+      const minorPersonId = "00000000-0000-4000-8000-0000000000b2";
+
+      customOrgGrants = [
+        {
+          grant_id: "00000000-0000-4000-8000-0000000000c1",
+          user_id: userAdult,
+          role_key: "org_owner",
+        },
+        {
+          grant_id: "00000000-0000-4000-8000-0000000000c2",
+          user_id: userMinor,
+          role_key: "member",
+        },
+        {
+          grant_id: "00000000-0000-4000-8000-0000000000c3",
+          user_id: userUnlinked,
+          role_key: "member",
+        },
+      ];
+      userLinks = [
+        { user_id: userAdult, person_id: adultPersonId },
+        { user_id: userMinor, person_id: minorPersonId },
+      ];
+      people.readLinkedContacts.mockResolvedValueOnce(
+        new Map([
+          [
+            adultPersonId,
+            { minor: false, given: "Adult", family: "Person", phone: "+61491570111" },
+          ],
+          [minorPersonId, { minor: true }],
+        ]),
+      );
+      identity.readUserEmails.mockResolvedValueOnce(
+        new Map([
+          [userAdult, "adult@example.com"],
+          [userUnlinked, "unlinked@example.com"],
+        ]),
+      );
+
+      const res = await callUsersList({ communitySlug: "parish" });
+      expect(res.status).toBe(200);
+
+      expect(identity.readUserEmails).toHaveBeenCalledTimes(1);
+      const fourthArg = (identity.readUserEmails.mock.calls[0]?.[3] as string[]) ?? [];
+      expect(new Set(fourthArg)).toEqual(new Set([userAdult, userUnlinked]));
+      expect(fourthArg).toHaveLength(2);
+      expect(fourthArg).not.toContain(userMinor);
     });
 
     it("Pin 9: 501 directory users -> 409 (too_many) with no export calls and no audit, 500 -> 200", async () => {

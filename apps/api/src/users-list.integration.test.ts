@@ -1013,7 +1013,34 @@ describe("users list integration", () => {
     );
     expect(grantRes.status).toBe(200);
 
-    const countDenied = async (): Promise<number> => {
+    const phone = "+61491570110";
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(
+        app,
+        { orgId: tenant.organisationId, communityId: tenant.communityId },
+        async (tx) => {
+          const person = await createPerson(tx, kms, KEY_ARN, {
+            now,
+            declaredAdult: true,
+            householdId: null,
+            dateOfBirth: null,
+            givenName: "Custom",
+            familyName: "Viewer",
+            email: null,
+            phone,
+            actorUserId: owner.userId,
+          });
+          await linkUser(tx, {
+            now,
+            userId: customCaller.userId,
+            personId: person.personId,
+            actorUserId: owner.userId,
+          });
+        },
+      ),
+    );
+
+    const countSpecific = async (action: string): Promise<number> => {
       const rows = await withAppTransaction(
         app,
         { orgId: tenant.organisationId, communityId: tenant.communityId },
@@ -1022,13 +1049,15 @@ describe("users list integration", () => {
             select count(*)::int as count
             from app.audit_events
             where org_id = current_setting('app.org_id')::uuid
-              and action = 'access.permission.denied'
+              and action = ${action}
           `,
       );
       return rows[0]!.count;
     };
 
-    const beforeDenied = await countDenied();
+    const beforeDenied = await countSpecific("access.permission.denied");
+    const beforeListed = await countSpecific("access.users.listed");
+    const beforeRead = await countSpecific("people.person.read");
 
     const res = await post(
       API_HOSTNAME,
@@ -1039,6 +1068,11 @@ describe("users list integration", () => {
     expect(res.status).toBe(403);
     expect(await res.text()).toBe("");
     expect(res.headers.get("cache-control")).toBe("no-store");
+
+    const afterListed = await countSpecific("access.users.listed");
+    const afterRead = await countSpecific("people.person.read");
+    expect(afterListed).toBe(beforeListed);
+    expect(afterRead).toBe(beforeRead);
 
     const deniedRows = await withAppTransaction(
       app,

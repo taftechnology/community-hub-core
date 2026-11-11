@@ -528,6 +528,22 @@ it("shows 'Details unavailable. Try again.' and keeps ids view on 500", async ()
   expect(screen.getAllByText("Organisation Owner", { exact: false }).length).toBeGreaterThan(0);
 });
 
+it("announces 'Details unavailable. Try again.' with status role after users/list 500", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  urlKeyedFetch({
+    users: () => new Response(null, { status: 500 }),
+  });
+
+  await showUsers();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  expect(await screen.findByText("Details unavailable. Try again.")).toBeTruthy();
+  expect(screen.getByRole("status").textContent).toBe("Details unavailable. Try again.");
+});
+
 it("shows 'Details unavailable. Try again.' on network unavailability", async () => {
   sessionStorage.setItem("community-hub.access-token", TOKEN);
   urlKeyedFetch({
