@@ -136,7 +136,9 @@ describe("readUserEmails integration", () => {
         update identity.users set email = ${row1!.email} where id = ${user2.userId}::uuid
       `;
 
-      await expect(readUserEmails(sql, kms, KEY_ARN, [user2.userId])).rejects.toThrow();
+      await expect(readUserEmails(sql, kms, KEY_ARN, [user2.userId])).rejects.toThrow(
+        "decryption failed",
+      );
     });
   });
 
@@ -167,7 +169,9 @@ describe("readUserEmails integration", () => {
 
       kms.resetCounts();
 
-      await expect(readUserEmails(sql, kms, KEY_ARN, [user1.userId])).rejects.toThrow();
+      await expect(readUserEmails(sql, kms, KEY_ARN, [user1.userId])).rejects.toThrow(
+        "identity key is missing",
+      );
 
       const keyRows = await sql<{ count: number }[]>`
         select count(*)::int as count from identity.identity_keys

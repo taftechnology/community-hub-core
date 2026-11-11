@@ -27,15 +27,16 @@ describe("readUserEmails unit", () => {
   });
 
   it("throws IdentityError with code invalid_input for non-UUID strings", async () => {
-    const invalidIds = [
-      "not-a-uuid",
-      "12345",
-      "00000000-0000-0000-0000-00000000000z",
-      "00000000000000000000000000000000",
-      "",
+    const invalidBatches: string[][] = [
+      ["not-a-uuid"],
+      ["12345"],
+      ["00000000-0000-0000-0000-00000000000z"],
+      ["00000000000000000000000000000000"],
+      [""],
+      [newId(), "not-a-uuid"],
     ];
-    for (const invalidId of invalidIds) {
-      await expect(readUserEmails(dummySql, dummyKms, keyArn, [invalidId])).rejects.toThrow(
+    for (const invalidBatch of invalidBatches) {
+      await expect(readUserEmails(dummySql, dummyKms, keyArn, invalidBatch)).rejects.toThrow(
         new IdentityError("invalid_input"),
       );
     }
@@ -45,6 +46,13 @@ describe("readUserEmails unit", () => {
     const ids = Array.from({ length: 501 }, () => newId());
     await expect(readUserEmails(dummySql, dummyKms, keyArn, ids)).rejects.toThrow(
       new IdentityError("invalid_input"),
+    );
+  });
+
+  it("accepts exactly 500 ids and reaches the database", async () => {
+    const ids = Array.from({ length: 500 }, () => newId());
+    await expect(readUserEmails(dummySql, dummyKms, keyArn, ids)).rejects.toThrow(
+      "unexpected sql call",
     );
   });
 
