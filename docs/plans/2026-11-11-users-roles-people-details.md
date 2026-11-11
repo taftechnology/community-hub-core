@@ -3,7 +3,7 @@ Spec: docs/specs/2026-11-11-users-roles-people-details.md
 # Users & Roles people details Implementation Plan
 
 Slug: users-roles-people-details
-Status: draft
+Status: approved (2026-11-11, Adnan Bin Hossen)
 
 > **For agentic workers:** use superpowers:subagent-driven-development, test-driven-development inside each task, and verification-before-completion before reporting. One task = one commit. Reports go to `.superpowers/sdd/task-N-report.md`, never `docs/plans/` and never a commit.
 
