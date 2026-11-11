@@ -470,4 +470,8 @@ This plan has no Terraform assert, so no scratch probe is needed (AGENTS.md §4)
 
 ## Amendments after approval
 
-None yet.
+- **2026-11-11, A1: a link to a person the community cannot see is treated like a minor link.** Decided by the chunk owner, Adnan Bin Hossen, after the Task 4 review finding M1.
+  - **The case:** a `user_links` row can point at a person that `readLinkedContacts` does not return, for example a person in another community of the same organisation. The link's foreign key covers `(org_id, person_id)` only (migration `0007`). No product path creates such a link today, but imported or hand-made data can.
+  - **The rule:** that user's row returns `minor: true`, with `name`, `email` and `phone` all null. The user id is never passed to `readUserEmails`, and the screen shows "Details hidden". This fails closed: when the person cannot be seen, nothing about them is shown.
+  - **Effect on the spec:** this narrows the spec's field table, where `minor` was "the linked person's `is_minor`". `minor` is now true when the linked person is a minor **or cannot be read**.
+  - **Effect on the plan:** the rule joins pin 3, and Task 4 gets a fix commit with a test. The Task 4 review's L1 (log `status` as the number 500) and L2 (parse the 200 body with `listUsersResponse` in the pin 12 test) go in the same commit.
