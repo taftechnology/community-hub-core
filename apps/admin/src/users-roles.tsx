@@ -6,7 +6,27 @@ import { post } from "./api";
 import { useBillingStatus } from "./billing-status";
 import { useCommunity } from "./community";
 import { directoryOrigins, readAccessToken } from "./directory";
+import { roleLabel } from "./role-labels";
 import { ScreenTitle } from "./screen-title";
+
+type UserNameView = {
+  given: string;
+  family: string;
+};
+
+type UserDetailView = {
+  userId: string;
+  personId: string | null;
+  name: UserNameView | null;
+  email: string | null;
+  phone: string | null;
+  minor: boolean;
+};
+
+type UsersView = {
+  phoneVisible: boolean;
+  users: UserDetailView[];
+};
 
 type GrantView = {
   grantId: string;
@@ -130,8 +150,105 @@ function readDirectory(value: unknown): Directory | undefined {
   };
 }
 
+function readUserName(value: unknown): UserNameView | null | undefined {
+  if (value === null) {
+    return null;
+  }
+  if (!isRecord(value) || typeof value.given !== "string" || typeof value.family !== "string") {
+    return undefined;
+  }
+  return { given: value.given, family: value.family };
+}
+
+function readUserItem(value: unknown): UserDetailView | undefined {
+  if (!isRecord(value) || typeof value.userId !== "string" || typeof value.minor !== "boolean") {
+    return undefined;
+  }
+  if (value.personId !== null && typeof value.personId !== "string") {
+    return undefined;
+  }
+  if (value.email !== null && typeof value.email !== "string") {
+    return undefined;
+  }
+  if (value.phone !== null && typeof value.phone !== "string") {
+    return undefined;
+  }
+  const name = readUserName(value.name);
+  if (name === undefined) {
+    return undefined;
+  }
+  return {
+    userId: value.userId,
+    personId: value.personId,
+    name: value.minor ? null : name,
+    email: value.minor ? null : value.email,
+    phone: value.minor ? null : value.phone,
+    minor: value.minor,
+  };
+}
+
+function readUsers(value: unknown): UsersView | undefined {
+  if (!isRecord(value) || typeof value.phoneVisible !== "boolean" || !Array.isArray(value.users)) {
+    return undefined;
+  }
+  const users: UserDetailView[] = [];
+  for (const item of value.users) {
+    const read = readUserItem(item);
+    if (read === undefined) {
+      return undefined;
+    }
+    users.push(read);
+  }
+  return {
+    phoneVisible: value.phoneVisible,
+    users,
+  };
+}
+
+function renderUserDetails(
+  userId: string,
+  user: UserDetailView | undefined,
+  phoneVisible: boolean,
+) {
+  if (user === undefined) {
+    return null;
+  }
+  if (user.minor) {
+    return (
+      <>
+        <span>Details hidden</span>
+        <span className="text-xs text-muted-foreground">{userId}</span>
+      </>
+    );
+  }
+  const nameText = user.name
+    ? `${user.name.given} ${user.name.family}`
+    : user.personId === null
+      ? "No contact linked"
+      : "";
+  const emailText = user.email ?? "No sign-in account";
+  const phoneText = user.phone ?? "—";
+
+  return (
+    <>
+      {nameText ? <span>{nameText}</span> : null}
+      <span>
+        <span className="sr-only">Email: </span>
+        {emailText}
+      </span>
+      {phoneVisible ? (
+        <span>
+          <span className="sr-only">Phone: </span>
+          {phoneText}
+        </span>
+      ) : null}
+      <span className="text-xs text-muted-foreground">{userId}</span>
+    </>
+  );
+}
+
 function grantLine(grant: GrantView): string {
-  const role = grant.roleKey ?? grant.customRoleKey ?? "";
+  const role = roleLabel(grant.roleKey ?? grant.customRoleKey ?? "");
   return `${grant.userId} ${role}`.trim();
 }
 
@@ -165,7 +282,9 @@ export function UsersRolesPage() {
   const { status, readiness, refresh } = useBillingStatus();
   const [readOnlyBlocked, setReadOnlyBlocked] = useState(false);
   const [directory, setDirectory] = useState<Directory | undefined>(undefined);
+  const [users, setUsers] = useState<UsersView | undefined>(undefined);
   const [notice, setNotice] = useState<Notice | undefined>(undefined);
+  const [usersMessage, setUsersMessage] = useState<string | undefined>(undefined);
   const [userId, setUserId] = useState("");
   const [role, setRole] = useState("");
   const [personId, setPersonId] = useState("");
@@ -181,6 +300,8 @@ export function UsersRolesPage() {
     if (outcome === "signed-out") {
       setToken(null);
       setDirectory(undefined);
+      setUsers(undefined);
+      setUsersMessage(undefined);
       return;
     }
     setNotice(outcome);
@@ -211,6 +332,69 @@ export function UsersRolesPage() {
       }
       setNotice(undefined);
       setDirectory(parsed);
+
+      if (!parsed.permissions.includes("access.users.view")) {
+        setUsers(undefined);
+        setUsersMessage(undefined);
+        return;
+      }
+
+      const usersResponse = await post("/v1/access/users/list", { communitySlug });
+      if (!isCurrent()) {
+        return;
+      }
+
+      if (usersResponse === "unavailable") {
+        setUsers(undefined);
+        setUsersMessage("Details unavailable. Try again.");
+        return;
+      }
+
+      if (usersResponse.status === 401) {
+        show("signed-out");
+        return;
+      }
+
+      if (usersResponse.status === 403) {
+        setUsers(undefined);
+        setUsersMessage(undefined);
+        return;
+      }
+
+      if (usersResponse.status === 409) {
+        setUsers(undefined);
+        setUsersMessage("Too many users to show details");
+        return;
+      }
+
+      if (usersResponse.status !== 200) {
+        setUsers(undefined);
+        setUsersMessage("Details unavailable. Try again.");
+        return;
+      }
+
+      try {
+        const usersBody: unknown = await usersResponse.json();
+        if (!isCurrent()) {
+          return;
+        }
+
+        const parsedUsers = readUsers(usersBody);
+        if (parsedUsers === undefined) {
+          setUsers(undefined);
+          setUsersMessage("Details unavailable. Try again.");
+          return;
+        }
+
+        setUsers(parsedUsers);
+        setUsersMessage(undefined);
+      } catch {
+        if (!isCurrent()) {
+          return;
+        }
+        setUsers(undefined);
+        setUsersMessage("Details unavailable. Try again.");
+      }
     } catch {
       if (!isCurrent()) {
         return;
@@ -223,6 +407,8 @@ export function UsersRolesPage() {
     const mine = ++generation.current;
     setDirectory(undefined);
     setNotice(undefined);
+    setUsers(undefined);
+    setUsersMessage(undefined);
     setReadOnlyBlocked(false);
     if (slug) {
       void load(slug, () => generation.current === mine);
@@ -287,6 +473,9 @@ export function UsersRolesPage() {
   const canManageUsers =
     directory !== undefined && directory.permissions.includes("access.users.manage");
 
+  const usersById = new Map((users?.users ?? []).map((user) => [user.userId, user]));
+  const phoneVisible = users?.phoneVisible ?? false;
+
   return (
     <>
       <ScreenTitle>Users & Roles</ScreenTitle>
@@ -299,6 +488,7 @@ export function UsersRolesPage() {
       {notice === "forbidden" ? <p>You cannot manage roles</p> : null}
       {notice === "conflict" ? <p>That change was rejected</p> : null}
       {notice === "unavailable" ? <p>Directory unavailable</p> : null}
+      {usersMessage ? <p role="status">{usersMessage}</p> : null}
       {directory === undefined ? null : (
         <>
           {directory.grants.length === 0 ? (
@@ -308,25 +498,36 @@ export function UsersRolesPage() {
           ) : (
             <Panel>
               <ul>
-                {directory.grants.map((grant) => (
-                  <li key={grant.grantId} className="flex flex-wrap items-center gap-2">
-                    <span>{grantLine(grant)}</span>
-                    {canManageRoles && !hideWrites ? (
-                      <Button
-                        type="button"
-                        onClick={() => {
-                          void mutate("/v1/access/grants/revoke", {
-                            communitySlug: slug,
-                            grantId: grant.grantId,
-                            scope: grant.scope === "community" ? "community" : "organisation",
-                          });
-                        }}
-                      >
-                        Revoke
-                      </Button>
-                    ) : null}
-                  </li>
-                ))}
+                {directory.grants.map((grant) => {
+                  const user = usersById.get(grant.userId);
+                  const roleText = roleLabel(grant.roleKey ?? grant.customRoleKey ?? "");
+                  return (
+                    <li key={grant.grantId} className="flex flex-wrap items-center gap-2">
+                      {user ? (
+                        <>
+                          {renderUserDetails(grant.userId, user, phoneVisible)}
+                          <span>{roleText}</span>
+                        </>
+                      ) : (
+                        <span>{grantLine(grant)}</span>
+                      )}
+                      {canManageRoles && !hideWrites ? (
+                        <Button
+                          type="button"
+                          onClick={() => {
+                            void mutate("/v1/access/grants/revoke", {
+                              communitySlug: slug,
+                              grantId: grant.grantId,
+                              scope: grant.scope === "community" ? "community" : "organisation",
+                            });
+                          }}
+                        >
+                          Revoke
+                        </Button>
+                      ) : null}
+                    </li>
+                  );
+                })}
               </ul>
             </Panel>
           )}
@@ -361,7 +562,7 @@ export function UsersRolesPage() {
               <ul>
                 {directory.builtIn.map((builtIn) => (
                   <li key={builtIn.roleKey} className="flex flex-wrap items-center gap-2">
-                    {builtIn.roleKey} {builtIn.permissions.join(" ")}
+                    {roleLabel(builtIn.roleKey)} {builtIn.permissions.join(" ")}
                   </li>
                 ))}
               </ul>
@@ -370,11 +571,20 @@ export function UsersRolesPage() {
           {directory.userLinks.length === 0 ? null : (
             <Panel>
               <ul>
-                {directory.userLinks.map((link) => (
-                  <li key={link.userId} className="flex flex-wrap items-center gap-2">
-                    {link.userId} {link.personId}
-                  </li>
-                ))}
+                {directory.userLinks.map((link) => {
+                  const user = usersById.get(link.userId);
+                  return (
+                    <li key={link.userId} className="flex flex-wrap items-center gap-2">
+                      {user ? (
+                        renderUserDetails(link.userId, user, phoneVisible)
+                      ) : (
+                        <>
+                          {link.userId} {link.personId}
+                        </>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             </Panel>
           )}

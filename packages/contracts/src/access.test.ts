@@ -10,6 +10,8 @@ import {
   grantBody,
   linkUserBody,
   listGrantsBody,
+  listUsersBody,
+  listUsersResponse,
   revokeGrantBody,
   unlinkUserBody,
 } from "./access.js";
@@ -208,6 +210,244 @@ describe("access bodies", () => {
         capabilitiesResponse.safeParse({
           ...validResponse,
           orgId: ORGANISATION,
+        }).success,
+      ).toBe(false);
+    });
+  });
+
+  describe("listUsersBody (pin 4)", () => {
+    it("parses valid body with communitySlug only", () => {
+      expect(listUsersBody.safeParse({ communitySlug: "parish" }).success).toBe(true);
+    });
+
+    it("rejects missing or invalid communitySlug", () => {
+      expect(listUsersBody.safeParse({}).success).toBe(false);
+      expect(listUsersBody.safeParse({ communitySlug: "" }).success).toBe(false);
+      expect(listUsersBody.safeParse({ communitySlug: 123 }).success).toBe(false);
+    });
+
+    it("rejects extra keys such as userIds", () => {
+      expect(listUsersBody.safeParse({ communitySlug: "parish", userIds: [USER] }).success).toBe(
+        false,
+      );
+      expect(listUsersBody.safeParse({ communitySlug: "parish", extra: "forbidden" }).success).toBe(
+        false,
+      );
+    });
+  });
+
+  describe("listUsersResponse", () => {
+    const fullUser = {
+      userId: USER,
+      personId: PERSON,
+      name: { given: "Morgan", family: "Finch" },
+      email: "morgan@example.com",
+      phone: "+61491570006",
+      minor: false,
+    };
+
+    it("parses valid full response", () => {
+      const res = {
+        phoneVisible: true,
+        users: [fullUser],
+      };
+      expect(listUsersResponse.safeParse(res).success).toBe(true);
+    });
+
+    it("parses each null case in the spec's table", () => {
+      // 1. User with no link (unlinked user): personId null, name null, phone null, minor false
+      const unlinkedUser = {
+        userId: USER,
+        personId: null,
+        name: null,
+        email: "morgan@example.com",
+        phone: null,
+        minor: false,
+      };
+      expect(
+        listUsersResponse.safeParse({
+          phoneVisible: true,
+          users: [unlinkedUser],
+        }).success,
+      ).toBe(true);
+
+      // 2. User id with no sign-in account: email null
+      const noAccountUser = {
+        userId: USER,
+        personId: PERSON,
+        name: { given: "Morgan", family: "Finch" },
+        email: null,
+        phone: "+61491570006",
+        minor: false,
+      };
+      expect(
+        listUsersResponse.safeParse({
+          phoneVisible: true,
+          users: [noAccountUser],
+        }).success,
+      ).toBe(true);
+
+      // 3. Minor-linked user: name null, email null, phone null, minor true
+      const minorUser = {
+        userId: USER,
+        personId: PERSON,
+        name: null,
+        email: null,
+        phone: null,
+        minor: true,
+      };
+      expect(
+        listUsersResponse.safeParse({
+          phoneVisible: true,
+          users: [minorUser],
+        }).success,
+      ).toBe(true);
+
+      // 4. Caller lacks people.view or person has no phone: phone null, phoneVisible false
+      const noPhoneUser = {
+        userId: USER,
+        personId: PERSON,
+        name: { given: "Morgan", family: "Finch" },
+        email: "morgan@example.com",
+        phone: null,
+        minor: false,
+      };
+      expect(
+        listUsersResponse.safeParse({
+          phoneVisible: false,
+          users: [noPhoneUser],
+        }).success,
+      ).toBe(true);
+
+      // 5. Empty user list
+      expect(
+        listUsersResponse.safeParse({
+          phoneVisible: false,
+          users: [],
+        }).success,
+      ).toBe(true);
+    });
+
+    it("rejects a missing key at either level", () => {
+      const keys: (keyof typeof fullUser)[] = [
+        "userId",
+        "personId",
+        "name",
+        "email",
+        "phone",
+        "minor",
+      ];
+      for (const key of keys) {
+        const { [key]: _, ...rest } = fullUser;
+        void _;
+        expect(
+          listUsersResponse.safeParse({
+            phoneVisible: true,
+            users: [rest],
+          }).success,
+        ).toBe(false);
+      }
+
+      expect(
+        listUsersResponse.safeParse({
+          users: [fullUser],
+        }).success,
+      ).toBe(false);
+
+      expect(
+        listUsersResponse.safeParse({
+          phoneVisible: true,
+        }).success,
+      ).toBe(false);
+    });
+
+    it("rejects an extra key at both levels", () => {
+      // Top-level extra key
+      expect(
+        listUsersResponse.safeParse({
+          phoneVisible: true,
+          users: [fullUser],
+          extra: "forbidden",
+        }).success,
+      ).toBe(false);
+
+      // User-level extra key
+      expect(
+        listUsersResponse.safeParse({
+          phoneVisible: true,
+          users: [
+            {
+              ...fullUser,
+              extra: "forbidden",
+            },
+          ],
+        }).success,
+      ).toBe(false);
+
+      // Name-level extra key
+      expect(
+        listUsersResponse.safeParse({
+          phoneVisible: true,
+          users: [
+            {
+              ...fullUser,
+              name: {
+                given: "Morgan",
+                family: "Finch",
+                extra: "forbidden",
+              },
+            },
+          ],
+        }).success,
+      ).toBe(false);
+    });
+
+    it("rejects invalid types", () => {
+      // invalid userId
+      expect(
+        listUsersResponse.safeParse({
+          phoneVisible: true,
+          users: [{ ...fullUser, userId: "not-a-uuid" }],
+        }).success,
+      ).toBe(false);
+
+      // invalid personId
+      expect(
+        listUsersResponse.safeParse({
+          phoneVisible: true,
+          users: [{ ...fullUser, personId: "not-a-uuid" }],
+        }).success,
+      ).toBe(false);
+
+      // invalid minor (not boolean)
+      expect(
+        listUsersResponse.safeParse({
+          phoneVisible: true,
+          users: [{ ...fullUser, minor: "false" }],
+        }).success,
+      ).toBe(false);
+
+      // invalid phoneVisible (not boolean)
+      expect(
+        listUsersResponse.safeParse({
+          phoneVisible: "true",
+          users: [fullUser],
+        }).success,
+      ).toBe(false);
+
+      // null userId
+      expect(
+        listUsersResponse.safeParse({
+          phoneVisible: true,
+          users: [{ ...fullUser, userId: null }],
+        }).success,
+      ).toBe(false);
+
+      // null minor
+      expect(
+        listUsersResponse.safeParse({
+          phoneVisible: true,
+          users: [{ ...fullUser, minor: null }],
         }).success,
       ).toBe(false);
     });

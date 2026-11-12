@@ -19,6 +19,9 @@ defineAuditPurpose("access.permission.denied");
 defineAuditPurpose("access.roles.manage");
 defineAuditPurpose("access.roles.view");
 defineAuditPurpose("access.users.manage");
+defineAuditAction("access.users.listed");
+defineAuditPurpose("access.users.listed");
+defineAuditPurpose("access.users.view");
 defineAuditPurpose("people.person.view");
 defineAuditPurpose("people.restricted.read");
 

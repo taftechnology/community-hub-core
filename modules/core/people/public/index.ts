@@ -82,6 +82,11 @@ export { attachTag, createTag, detachTag, listPersonTags } from "../infrastructu
 export { openPersonFieldKeys } from "../infrastructure/person-keys.js";
 export { readRosterNames } from "../infrastructure/roster-names.js";
 export {
+  readLinkedContacts,
+  type LinkedContact,
+  type ReadLinkedContactsInput,
+} from "../infrastructure/linked-contacts.js";
+export {
   createLifeEvent,
   listLifeEvents,
   updateLifeEvent,
