@@ -16,4 +16,42 @@ describe("audit registration", () => {
     const error = new AccessError(code);
     expect(error.code).toBe("too_many");
   });
+
+  it("registers invitation audit actions and purposes", () => {
+    const invitationActions = [
+      "access.invitation.created",
+      "access.invitation.resent",
+      "access.invitation.revoked",
+      "access.invitation.accepted",
+      "access.invitation.voided",
+      "access.invitations.listed",
+    ];
+
+    for (const action of invitationActions) {
+      expect(isAuditAction(action)).toBe(true);
+      expect(isAuditPurpose(action)).toBe(true);
+    }
+
+    expect(isAuditPurpose("access.user.not_member")).toBe(true);
+  });
+
+  it("includes new error codes in AccessErrorCode", () => {
+    const newCodes: AccessErrorCode[] = [
+      "not_member",
+      "already_invited",
+      "invitation_invalid",
+      "wrong_address",
+      "invitation_void",
+      "invitation_not_found",
+      "person_linked",
+      "person_minor",
+      "person_not_found",
+      "role_not_found",
+    ];
+
+    for (const code of newCodes) {
+      const error = new AccessError(code);
+      expect(error.code).toBe(code);
+    }
+  });
 });

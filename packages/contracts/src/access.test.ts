@@ -1,15 +1,23 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  acceptInvitationBody,
+  acceptInvitationResponse,
+  accessErrorBody,
   bootstrapOwnerBody,
   CAPABILITIES_ALLOW_LIST,
   capabilitiesBody,
   capabilitiesResponse,
   createCustomRoleBody,
+  createInvitationBody,
+  createInvitationResponse,
   deleteCustomRoleBody,
   grantBody,
+  invitationActionBody,
   linkUserBody,
   listGrantsBody,
+  listInvitationsBody,
+  listInvitationsResponse,
   listUsersBody,
   listUsersResponse,
   revokeGrantBody,
@@ -450,6 +458,358 @@ describe("access bodies", () => {
           users: [{ ...fullUser, minor: null }],
         }).success,
       ).toBe(false);
+    });
+  });
+
+  describe("invitation schemas (Task 1)", () => {
+    describe("createInvitationBody", () => {
+      it("accepts valid inputs with roleKey only, customRoleId only, or personId only", () => {
+        expect(
+          createInvitationBody.safeParse({
+            communitySlug: "ada",
+            email: "alex@example.test",
+            roleKey: "community_admin",
+          }).success,
+        ).toBe(true);
+
+        expect(
+          createInvitationBody.safeParse({
+            communitySlug: "ada",
+            email: "alex@example.test",
+            customRoleId: CUSTOM,
+          }).success,
+        ).toBe(true);
+
+        expect(
+          createInvitationBody.safeParse({
+            communitySlug: "ada",
+            email: "alex@example.test",
+            personId: PERSON,
+          }).success,
+        ).toBe(true);
+      });
+
+      it("accepts valid inputs with both role and personId", () => {
+        expect(
+          createInvitationBody.safeParse({
+            communitySlug: "ada",
+            email: "alex@example.test",
+            roleKey: "community_admin",
+            personId: PERSON,
+          }).success,
+        ).toBe(true);
+
+        expect(
+          createInvitationBody.safeParse({
+            communitySlug: "ada",
+            email: "alex@example.test",
+            customRoleId: CUSTOM,
+            personId: PERSON,
+          }).success,
+        ).toBe(true);
+      });
+
+      it("rejects neither role nor contact", () => {
+        expect(
+          createInvitationBody.safeParse({
+            communitySlug: "ada",
+            email: "alex@example.test",
+          }).success,
+        ).toBe(false);
+      });
+
+      it("rejects both roleKey and customRoleId", () => {
+        expect(
+          createInvitationBody.safeParse({
+            communitySlug: "ada",
+            email: "alex@example.test",
+            roleKey: "community_admin",
+            customRoleId: CUSTOM,
+          }).success,
+        ).toBe(false);
+
+        expect(
+          createInvitationBody.safeParse({
+            communitySlug: "ada",
+            email: "alex@example.test",
+            roleKey: "community_admin",
+            customRoleId: CUSTOM,
+            personId: PERSON,
+          }).success,
+        ).toBe(false);
+      });
+
+      it("enforces email validation and length limits", () => {
+        // "alex@" rejected
+        expect(
+          createInvitationBody.safeParse({
+            communitySlug: "ada",
+            email: "alex@",
+            roleKey: "community_admin",
+          }).success,
+        ).toBe(false);
+
+        // 254-char email accepted
+        const valid254 = `${"a".repeat(241)}@example.test`;
+        expect(valid254.length).toBe(254);
+        expect(
+          createInvitationBody.safeParse({
+            communitySlug: "ada",
+            email: valid254,
+            roleKey: "community_admin",
+          }).success,
+        ).toBe(true);
+
+        // 255-char email rejected
+        const invalid255 = `${"a".repeat(242)}@example.test`;
+        expect(invalid255.length).toBe(255);
+        expect(
+          createInvitationBody.safeParse({
+            communitySlug: "ada",
+            email: invalid255,
+            roleKey: "community_admin",
+          }).success,
+        ).toBe(false);
+      });
+
+      it("strictly rejects extra keys", () => {
+        expect(
+          createInvitationBody.safeParse({
+            communitySlug: "ada",
+            email: "alex@example.test",
+            roleKey: "community_admin",
+            extra: "forbidden",
+          }).success,
+        ).toBe(false);
+      });
+    });
+
+    describe("createInvitationResponse", () => {
+      it("parses valid response", () => {
+        expect(
+          createInvitationResponse.safeParse({
+            invitationId: GRANT,
+          }).success,
+        ).toBe(true);
+      });
+
+      it("strictly rejects extra keys", () => {
+        expect(
+          createInvitationResponse.safeParse({
+            invitationId: GRANT,
+            extra: "forbidden",
+          }).success,
+        ).toBe(false);
+      });
+
+      it("rejects invalid invitationId", () => {
+        expect(
+          createInvitationResponse.safeParse({
+            invitationId: "not-a-uuid",
+          }).success,
+        ).toBe(false);
+      });
+    });
+
+    describe("listInvitationsBody", () => {
+      it("parses valid body", () => {
+        expect(listInvitationsBody.safeParse({ communitySlug: "ada" }).success).toBe(true);
+      });
+
+      it("strictly rejects extra keys", () => {
+        expect(
+          listInvitationsBody.safeParse({ communitySlug: "ada", extra: "forbidden" }).success,
+        ).toBe(false);
+      });
+
+      it("rejects invalid communitySlug", () => {
+        expect(listInvitationsBody.safeParse({}).success).toBe(false);
+        expect(listInvitationsBody.safeParse({ communitySlug: "" }).success).toBe(false);
+      });
+    });
+
+    describe("listInvitationsResponse", () => {
+      const validItem = {
+        id: "00000000-0000-4000-8000-000000000010",
+        email: "alex@example.test",
+        roleKey: "community_admin",
+        customRoleId: null,
+        linksContact: true,
+        expiresAt: "2026-11-21T00:00:00.000Z",
+      };
+
+      it("parses valid response with items", () => {
+        expect(
+          listInvitationsResponse.safeParse({
+            invitations: [
+              validItem,
+              {
+                id: "00000000-0000-4000-8000-000000000011",
+                email: "sam@example.test",
+                roleKey: null,
+                customRoleId: CUSTOM,
+                linksContact: false,
+                expiresAt: "2026-11-21T00:00:00.000Z",
+              },
+            ],
+          }).success,
+        ).toBe(true);
+      });
+
+      it("parses empty invitations array", () => {
+        expect(listInvitationsResponse.safeParse({ invitations: [] }).success).toBe(true);
+      });
+
+      it("strictly rejects extra keys at top level and item level", () => {
+        expect(
+          listInvitationsResponse.safeParse({
+            invitations: [validItem],
+            extra: "forbidden",
+          }).success,
+        ).toBe(false);
+
+        expect(
+          listInvitationsResponse.safeParse({
+            invitations: [{ ...validItem, extra: "forbidden" }],
+          }).success,
+        ).toBe(false);
+      });
+
+      it("rejects missing or invalid fields in item", () => {
+        expect(
+          listInvitationsResponse.safeParse({
+            invitations: [{ ...validItem, linksContact: "true" }],
+          }).success,
+        ).toBe(false);
+
+        expect(
+          listInvitationsResponse.safeParse({
+            invitations: [{ ...validItem, id: "not-a-uuid" }],
+          }).success,
+        ).toBe(false);
+
+        const { linksContact: _, ...withoutLinksContact } = validItem;
+        void _;
+        expect(
+          listInvitationsResponse.safeParse({
+            invitations: [withoutLinksContact],
+          }).success,
+        ).toBe(false);
+      });
+    });
+
+    describe("invitationActionBody", () => {
+      it("parses valid body", () => {
+        expect(
+          invitationActionBody.safeParse({
+            communitySlug: "ada",
+            invitationId: GRANT,
+          }).success,
+        ).toBe(true);
+      });
+
+      it("strictly rejects extra keys", () => {
+        expect(
+          invitationActionBody.safeParse({
+            communitySlug: "ada",
+            invitationId: GRANT,
+            extra: "forbidden",
+          }).success,
+        ).toBe(false);
+      });
+
+      it("rejects invalid invitationId or missing fields", () => {
+        expect(
+          invitationActionBody.safeParse({
+            communitySlug: "ada",
+            invitationId: "not-a-uuid",
+          }).success,
+        ).toBe(false);
+
+        expect(invitationActionBody.safeParse({ communitySlug: "ada" }).success).toBe(false);
+      });
+    });
+
+    describe("acceptInvitationBody", () => {
+      it("parses valid token of at most 120 characters", () => {
+        expect(acceptInvitationBody.safeParse({ token: "v1.valid-token" }).success).toBe(true);
+        expect(acceptInvitationBody.safeParse({ token: "a".repeat(120) }).success).toBe(true);
+      });
+
+      it("rejects token exceeding 120 characters", () => {
+        expect(acceptInvitationBody.safeParse({ token: "a".repeat(121) }).success).toBe(false);
+      });
+
+      it("strictly rejects extra keys", () => {
+        expect(
+          acceptInvitationBody.safeParse({
+            token: "v1.valid-token",
+            extra: "forbidden",
+          }).success,
+        ).toBe(false);
+      });
+
+      it("rejects invalid types or missing token", () => {
+        expect(acceptInvitationBody.safeParse({}).success).toBe(false);
+        expect(acceptInvitationBody.safeParse({ token: 12345 }).success).toBe(false);
+      });
+    });
+
+    describe("acceptInvitationResponse", () => {
+      it("parses valid response", () => {
+        expect(acceptInvitationResponse.safeParse({ communitySlug: "ada" }).success).toBe(true);
+      });
+
+      it("strictly rejects extra keys", () => {
+        expect(
+          acceptInvitationResponse.safeParse({
+            communitySlug: "ada",
+            extra: "forbidden",
+          }).success,
+        ).toBe(false);
+      });
+
+      it("rejects empty or missing communitySlug", () => {
+        expect(acceptInvitationResponse.safeParse({}).success).toBe(false);
+        expect(acceptInvitationResponse.safeParse({ communitySlug: "" }).success).toBe(false);
+      });
+    });
+
+    describe("accessErrorBody", () => {
+      const allowedCodes = [
+        "user_not_member",
+        "wrong_address",
+        "role_not_found",
+        "person_not_found",
+        "invitation_invalid",
+        "invitation_not_found",
+        "already_invited",
+        "too_many",
+        "person_linked",
+        "invitation_void",
+        "person_minor",
+      ] as const;
+
+      it("parses each of the 11 error codes", () => {
+        for (const code of allowedCodes) {
+          expect(accessErrorBody.safeParse({ error: code }).success).toBe(true);
+        }
+      });
+
+      it("strictly rejects extra keys", () => {
+        expect(
+          accessErrorBody.safeParse({
+            error: "user_not_member",
+            extra: "forbidden",
+          }).success,
+        ).toBe(false);
+      });
+
+      it("rejects unknown error codes", () => {
+        expect(accessErrorBody.safeParse({ error: "not_found" }).success).toBe(false);
+        expect(accessErrorBody.safeParse({ error: "unknown_error" }).success).toBe(false);
+        expect(accessErrorBody.safeParse({}).success).toBe(false);
+      });
     });
   });
 });

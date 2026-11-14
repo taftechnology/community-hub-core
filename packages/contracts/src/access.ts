@@ -152,3 +152,111 @@ export const capabilitiesResponse = z
   .strict();
 
 export type CapabilitiesResponse = z.infer<typeof capabilitiesResponse>;
+
+export const createInvitationBody = z
+  .object({
+    communitySlug: slug,
+    email: z.string().max(254).email(),
+    roleKey: z.string().optional(),
+    customRoleId: uuid.optional(),
+    personId: uuid.optional(),
+  })
+  .strict()
+  .refine(
+    (data) => {
+      const hasRoleKey = data.roleKey !== undefined;
+      const hasCustomRoleId = data.customRoleId !== undefined;
+      const hasPersonId = data.personId !== undefined;
+      if (hasRoleKey && hasCustomRoleId) {
+        return false;
+      }
+      return hasRoleKey || hasCustomRoleId || hasPersonId;
+    },
+    { message: "Must specify a role or contact, and at most one role" },
+  );
+
+export type CreateInvitationBody = z.infer<typeof createInvitationBody>;
+
+export const createInvitationResponse = z
+  .object({
+    invitationId: uuid,
+  })
+  .strict();
+
+export type CreateInvitationResponse = z.infer<typeof createInvitationResponse>;
+
+export const listInvitationsBody = z
+  .object({
+    communitySlug: slug,
+  })
+  .strict();
+
+export type ListInvitationsBody = z.infer<typeof listInvitationsBody>;
+
+const invitationListItem = z
+  .object({
+    id: uuid,
+    email: z.string(),
+    roleKey: z.string().nullable(),
+    customRoleId: uuid.nullable(),
+    linksContact: z.boolean(),
+    expiresAt: z.string(),
+  })
+  .strict();
+
+export const listInvitationsResponse = z
+  .object({
+    invitations: z.array(invitationListItem),
+  })
+  .strict();
+
+export type ListInvitationsResponse = z.infer<typeof listInvitationsResponse>;
+
+export const invitationActionBody = z
+  .object({
+    communitySlug: slug,
+    invitationId: uuid,
+  })
+  .strict();
+
+export type InvitationActionBody = z.infer<typeof invitationActionBody>;
+
+export const acceptInvitationBody = z
+  .object({
+    token: z.string().max(120),
+  })
+  .strict();
+
+export type AcceptInvitationBody = z.infer<typeof acceptInvitationBody>;
+
+export const acceptInvitationResponse = z
+  .object({
+    communitySlug: slug,
+  })
+  .strict();
+
+export type AcceptInvitationResponse = z.infer<typeof acceptInvitationResponse>;
+
+export const ACCESS_ERROR_CODES = [
+  "user_not_member",
+  "wrong_address",
+  "role_not_found",
+  "person_not_found",
+  "invitation_invalid",
+  "invitation_not_found",
+  "already_invited",
+  "too_many",
+  "person_linked",
+  "invitation_void",
+  "person_minor",
+] as const;
+
+export type AccessErrorJsonCode = (typeof ACCESS_ERROR_CODES)[number];
+
+export const accessErrorBody = z
+  .object({
+    error: z.enum(ACCESS_ERROR_CODES),
+  })
+  .strict();
+
+export type AccessErrorBody = z.infer<typeof accessErrorBody>;
