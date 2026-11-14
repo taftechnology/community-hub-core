@@ -34,7 +34,9 @@ describe("invitation-email unit tests", () => {
       (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
     );
 
-    await expect(openInvitationEmails(sql, kms, KEY_ARN, ids)).rejects.toThrow();
+    await expect(openInvitationEmails(sql, kms, KEY_ARN, ids)).rejects.toMatchObject({
+      code: "invalid_input",
+    });
     expect(queryFn).not.toHaveBeenCalled();
   });
 
@@ -126,7 +128,7 @@ describe("invitation-email unit tests", () => {
     expect(queryFn).not.toHaveBeenCalled();
   });
 
-  it("source scan of invitation-email.ts finds no app. reference (pin 17b)", () => {
+  it("source scan of invitation-email.ts finds no app. reference (pin 17 (no app table))", () => {
     const sourcePath = path.resolve(
       path.dirname(fileURLToPath(import.meta.url)),
       "invitation-email.ts",

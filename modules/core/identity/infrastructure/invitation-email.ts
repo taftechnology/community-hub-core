@@ -125,6 +125,7 @@ export async function refreshInvitationEmail(
     set expires_at = ${input.expiresAt}
     where invitation_id = ${input.invitationId}
       and closed_at is null
+      and expires_at > now()
       and email is not null
   `;
   return result.count > 0;
@@ -227,6 +228,7 @@ export async function sweepInvitationEmails(
         and coalesce(closed_at, expires_at) >= ${now}::timestamptz - interval '30 days'
       order by expires_at asc
       limit 500
+      for update skip locked
     ),
     erased as (
       update identity.invitation_emails
@@ -240,6 +242,7 @@ export async function sweepInvitationEmails(
       where coalesce(closed_at, expires_at) < ${now}::timestamptz - interval '30 days'
       order by coalesce(closed_at, expires_at) asc
       limit 500
+      for update skip locked
     ),
     deleted as (
       delete from identity.invitation_emails

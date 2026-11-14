@@ -481,6 +481,36 @@ describe("invitation-email integration tests", () => {
     });
   });
 
+  it("M1 pin: sweep deletes rather than erases row expired > 30 days ago with unswept address", async () => {
+    await withSql(async (sql) => {
+      const now = new Date();
+      const dayMs = 24 * 3600_000;
+      const id = newId();
+      const dummyByte = new Uint8Array(32);
+      dummyByte.fill(1);
+
+      // Seed one row that is never closed, still holds an address, and expired 31 days before now
+      await sql`
+        insert into identity.invitation_emails (
+          invitation_id, region, email, email_bidx, dedupe_key, expires_at, closed_at, created_at
+        ) values (
+          ${id}::uuid, 'au', ${dummyByte}, ${dummyByte}, ${dummyByte},
+          ${new Date(now.getTime() - 31 * dayMs)},
+          null,
+          ${new Date(now.getTime() - 40 * dayMs)}
+        )
+      `;
+
+      const result = await sweepInvitationEmails(sql, now);
+      expect(result).toEqual({ erased: 0, deleted: 1 });
+
+      const remaining = await sql<{ count: number }[]>`
+        select count(*)::int as count from identity.invitation_emails
+      `;
+      expect(remaining[0]?.count).toBe(0);
+    });
+  });
+
   it("A5 test d: seeding 501 erasable rows, first sweep erases 500, second erases 1", async () => {
     await withSql(async (sql) => {
       const now = new Date();
@@ -588,6 +618,36 @@ describe("invitation-email integration tests", () => {
         expiresAt: newExpiry,
       });
       expect(okMissing).toBe(false);
+    });
+  });
+
+  it("L1 pin: refreshInvitationEmail returns false and leaves expires_at unchanged for expired unswept row", async () => {
+    const kms = createLocalKmsPort();
+    await withSql(async (sql) => {
+      await ensureIdentityKey(sql, kms, KEY_ARN);
+      const communityId = newId();
+      const idExpired = newId();
+      const pastExpiry = new Date(Date.now() - 3600_000);
+      const newExpiry = new Date(Date.now() + 7200_000);
+
+      await createInvitationEmail(sql, kms, KEY_ARN, {
+        invitationId: idExpired,
+        communityId,
+        address: "expired@example.test",
+        expiresAt: pastExpiry,
+      });
+
+      // No sweep has run, so the expired row still holds an address
+      const refreshed = await refreshInvitationEmail(sql, {
+        invitationId: idExpired,
+        expiresAt: newExpiry,
+      });
+      expect(refreshed).toBe(false);
+
+      const [row] = await sql<{ expires_at: Date }[]>`
+        select expires_at from identity.invitation_emails where invitation_id = ${idExpired}::uuid
+      `;
+      expect(row?.expires_at.getTime()).toBe(pastExpiry.getTime());
     });
   });
 });
