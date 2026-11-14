@@ -344,11 +344,11 @@ Security-relevant settings the plan must pin, each with a weakening that makes i
 - **New subprocessor or vendor:** none. SES is already named (ADR 0013).
 - **Cost:** no new billed resource. SES charges per message, which is negligible.
 - **Second review:** required (sensitive chunk). The reviewer agent runs on Claude Opus 5.5. The owner's checks and the second review must run on a different model (not Opus 5.5, not Gemini/Antigravity). The PR records both.
-- **Owner decisions (project owner, AGENTS.md §12), pending:**
-  - **O1. Privacy: storing an invitee's address before they consent.**
+- **Owner decisions (project owner, AGENTS.md §12):**
+  - **O1. Privacy: storing an invitee's address before they consent. Accepted by the project owner on 2026-11-14: lazy deletion in create and list, no sweep job in this chunk.**
     - The address is held encrypted while the invitation is pending, and cleared when it is accepted, revoked or voided.
     - Rows are deleted 30 days after closing or expiring, the next time that community creates or lists invitations.
-    - **Recommendation: accept.** The alternative is a regional sweep job in this chunk, which adds a scheduled task and its ECS schedule (Terraform).
+    - The alternative was a regional sweep job in this chunk, which would have added a scheduled task and its ECS schedule (Terraform). It was not chosen.
 - **Decided without the project owner:**
   - **O2. Architecture record: no ADR (chunk owner, 2026-11-14).**
     - This is not an ADR-level decision. §11.1 already says users "hold memberships", and D13 already records `OtpMail` as an interim port.
