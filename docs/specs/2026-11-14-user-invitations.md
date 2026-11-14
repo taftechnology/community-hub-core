@@ -370,7 +370,7 @@ Security-relevant settings the plan must pin, each with a weakening that makes i
 
 ## Amendments after approval
 
-Proposed 2026-11-14 from plan check 1 (Claude Opus 5.5). Each one needs the chunk owner's approval before the plan is approved.
+Proposed 2026-11-14 from plan check 1 (Claude Opus 5.5). Approved by the chunk owner, Adnan Bin Hossen, on 2026-11-14, together with the plan.
 
 - **A1. Backfill scope test.** The backfill section says the test asserts `current_setting('app.org_id', true)` is empty after `0019`. That check cannot fail, because the settings revert when drizzle's single migration transaction commits. The test instead appends a probe migration (`0020_probe.sql`) to its temporary folder only. The probe raises an error if either setting is non-empty, so a missing reset fails the apply. The reset itself is unchanged.
 - **A2. Custom roles and closed invitations.**

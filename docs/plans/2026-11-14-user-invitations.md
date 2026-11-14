@@ -3,7 +3,7 @@ Spec: docs/specs/2026-11-14-user-invitations.md
 # User invitations Implementation Plan
 
 Slug: user-invitations
-Status: draft
+Status: approved (2026-11-14, Adnan Bin Hossen)
 
 > **For agentic workers:** use superpowers:subagent-driven-development, test-driven-development inside each task, and verification-before-completion before reporting. One task = one commit. Reports go to `.superpowers/sdd/task-N-report.md`, never `docs/plans/` and never a commit.
 
