@@ -686,3 +686,36 @@ This plan has no Terraform assert, so no scratch probe is needed (AGENTS.md §4)
     - 23 means close erases in identity.
   - **Tasks 5 to 7:** `createInvitation`, list, resend, revoke and accept call the identity functions through injected dependencies, inside the app transaction's callback (the users-list nested-checkout pattern). Every action calls `sweepInvitationEmails` first. `app.invitations` holds no address.
   - **Unchanged:** Tasks 1 and 3, the token, and the accept order.
+- **P2 (approved 2026-11-14, Adnan Bin Hossen, with spec A6). Task 5 under A5 and A6.**
+  - **New file in Task 5:** `modules/core/access/domain/invitation-addresses.ts`. It holds the `InvitationAddresses` port, with five methods that mirror the identity functions without the `sql`, `kms` and `keyArn` arguments:
+    - `sweep(now)`;
+    - `create({ invitationId, communityId, address, expiresAt })`;
+    - `refresh({ invitationId, expiresAt })`;
+    - `close(invitationId)`;
+    - `open(invitationIds)`.
+
+    `matches` is added in Task 6. Task 7 binds the port to identity through `deps.checkout("identity", …)`. Tests in `core/access` use an in-memory stub that records calls.
+
+  - **Dependency types:**
+    - `createInvitation` takes `Pick<InvitationAddresses, "sweep" | "create">`, which replaces pin 39's `{ seal }` assertion;
+    - list takes `sweep` and `open`;
+    - resend takes `sweep` and `refresh`;
+    - revoke and the two mail-failure paths take `sweep` and `close`.
+  - **Task 4 gets a fix commit** for its review findings: a test pinning the sweep's 30-day erase condition, `refreshInvitationEmail` limited to `expires_at > now()` (A6), `FOR UPDATE SKIP LOCKED` in both sweep subqueries, and test labels.
+  - **Pins revised:**
+    - **21 (access half):** 100 pending in community 2 do not trigger `too_many` in community 1. RLS (pin 1) enforces this, so the row has no weakening. The identity half is Task 4's pin 21.
+    - **22 (a):** re-inviting after expiry succeeds without changing the earlier row. Create, move the first row's `expires_at` into the past, and create again for the same address: the second create succeeds. The first row is unchanged in every column (still `pending`, same `token_hash`, `person_id`, `custom_role_id` and `closed_at`), and no `access.invitation.voided` row is written. The weakening voids expired pending rows at create.
+    - **22 (b):** expired pending rows count toward no cap. Seed 100 pending rows that expired, created more than an hour ago; a create succeeds. The weakening drops `expires_at > now()` from the pending-cap count.
+    - **23 (revoke, Task 5):** revoke sets `revoked`, clears `person_id` and `custom_role_id`, sets `closed_at`, and calls `close` with that id. Weakenings: (a) remove the `close` call; (b) skip clearing `custom_role_id`.
+    - **30:** in `custom-roles.integration.test.ts`:
+      - (a) a role named by an unexpired pending invitation gives `role_in_use`;
+      - (b) a role named only by an expired pending invitation deletes, never a 500. The invitation becomes `void` with `custom_role_id` and `person_id` cleared and `closed_at` set, and one `access.invitation.voided` row is written;
+      - (c) a role named only by a revoked invitation deletes.
+
+      Weakenings: (i) remove the pending count, which fails (a); (ii) remove the expired-row close, which fails (b) with the foreign-key error; (iii) count expired pending rows too, which fails (b) with `role_in_use`.
+  - **Pins added:**
+    - **48:** every action calls `sweep` before any other port call. The stub records the order for create, list, resend and revoke. The weakening removes `sweep` from list.
+    - **49:** `already_invited` rolls back. The stub's `create` answers `already_invited`; `createInvitation` throws `already_invited`, and after the caller's transaction there is no app row and no `access.invitation.created` row. The weakening ignores the result of `create`.
+    - **50:** resend with an erased or expired address. The stub's `refresh` answers `false`; resend gives `invitation_not_found` and writes no audit row, and `token_hash` is unchanged. The weakening ignores the result of `refresh`.
+    - **51 (Task 7):** the route compensates. With `createInvitationEmail` succeeding and the app transaction then failing (a forced audit failure), `closeInvitationEmail` is called with the same id. The weakening removes the compensation.
+  - **Unchanged:** the token, caps, permissions, the contact rules, the purge (A3), and Task 6's accept order.

@@ -441,3 +441,43 @@ Proposed 2026-11-14 from plan check 1 (Claude Opus 5.5). Approved by the chunk o
     - pins 15 to 18, 21 and 23 are revised, and the tests (a) to (f) are added.
 
     The plan records this as amendment P1.
+- **A6 (approved 2026-11-14, Adnan Bin Hossen). Create, resend, list and role deletion after A5.**
+  - **Why.** A5 moved the address out of `app.invitations`, so `core/access` can no longer find an older invitation by its address. Chosen by the chunk owner, 2026-11-14.
+  - **Re-inviting after expiry (replaces the void sentence in Inviting).**
+    - Create no longer voids an expired pending row for the same address, and the earlier row is not changed.
+    - Identity `createInvitationEmail` erases that row's address, through the `dedupe_key` match, and any sweep erases it too.
+    - The old `app.invitations` row stays pending and expired:
+      - it is not listed and cannot be resent;
+      - accept answers `invitation_invalid`;
+      - it can be revoked;
+      - A3 purges it 30 days after expiry.
+    - No `access.invitation.voided` row is written for it.
+  - **The duplicate check** is identity's unique `dedupe_key` alone. `core/access` reads no address and no address-derived value.
+  - **Create order.**
+    1. Take the lock.
+    2. Sweep.
+    3. Purge.
+    4. Check the caps. Expired pending rows count toward no cap.
+    5. Check the role and the contact.
+    6. Insert the app row.
+    7. Write `access.invitation.created`.
+    8. Last, call `createInvitationEmail`.
+
+    `already_invited` from identity throws, so the caller's transaction rolls the app row back.
+
+  - **The caller chooses the invitation id.** If the app transaction fails after `createInvitationEmail` succeeded, the route calls `closeInvitationEmail` for that id. This is best-effort, with no body change, so an orphan address does not block a re-invite for 7 days.
+  - **Resend.**
+    - Identity `refreshInvitationEmail` extends only an open, unexpired address (`expires_at > now()`), so an expired address is never revived.
+    - Resend calls it inside the transaction. If it returns `false`, resend answers `invitation_not_found` with no audit row, and the transaction rolls back.
+  - **List** returns each row's address from `openInvitationEmails`, or `null` when identity has none. The panel shows "Address removed" for `null`.
+  - **Custom role deletion (refines A2).**
+    - `deleteCustomRole` answers `role_in_use` only for unexpired pending invitations naming the role (`status = 'pending' AND expires_at > now()`), as well as grants.
+    - In the same transaction, before the delete, it closes expired pending invitations naming the role:
+      - status `void`;
+      - `person_id` and `custom_role_id` cleared;
+      - `closed_at` set;
+      - one `access.invitation.voided` row each.
+
+      The `restrict` foreign key then never turns the delete into a 500.
+
+    - Their addresses are already erased by expiry, or are erased by the next sweep.
