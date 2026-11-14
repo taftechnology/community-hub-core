@@ -273,9 +273,13 @@ describe("access grant tables", () => {
       '"invitations_custom_role_fk" FOREIGN KEY ("org_id","custom_role_id") REFERENCES "app"."custom_roles"("org_id","id") ON DELETE restrict',
     );
 
+    const appSql = [createBody(sql, "organisation_members"), createBody(sql, "invitations")].join(
+      "\n",
+    );
     const uniqueTargets = [
-      ...sql.matchAll(/UNIQUE\(([^)]+)\)/g),
-      ...sql.matchAll(/CREATE UNIQUE INDEX \S+ ON \S+ USING btree \(([^)]+)\)/g),
+      ...appSql.matchAll(/PRIMARY KEY\s*\(([^)]+)\)/g),
+      ...appSql.matchAll(/UNIQUE\s*\(([^)]+)\)/g),
+      ...sql.matchAll(/CREATE UNIQUE INDEX \S+ ON (?:app|"app")\.\S+ USING btree \(([^)]+)\)/g),
     ].map((match) => match[1] ?? "");
     expect(uniqueTargets.length).toBeGreaterThan(0);
     for (const target of uniqueTargets) {

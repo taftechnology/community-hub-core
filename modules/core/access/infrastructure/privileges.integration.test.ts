@@ -105,9 +105,9 @@ describe("access grant privileges", () => {
           (${orgB}, ${userB}, 'provision', now())
       `;
       await sql`
-        insert into app.invitations (org_id, community_id, id, invited_by, email, email_bidx, role_key, token_hash, status, expires_at, resend_count, last_sent_at, created_at) values
-          (${orgA}, ${commA1}, ${invA1Id}, ${userA}, ${Buffer.from("inv1")}, ${Buffer.alloc(32)}, 'staff', ${Buffer.alloc(32)}, 'pending', now() + interval '7 days', 0, now(), now()),
-          (${orgA}, ${commA2}, ${invA2Id}, ${userA}, ${Buffer.from("inv2")}, ${Buffer.alloc(32)}, 'staff', ${Buffer.alloc(32)}, 'pending', now() + interval '7 days', 0, now(), now())
+        insert into app.invitations (org_id, community_id, id, invited_by, role_key, token_hash, status, expires_at, resend_count, last_sent_at, created_at) values
+          (${orgA}, ${commA1}, ${invA1Id}, ${userA}, 'staff', ${Buffer.alloc(32)}, 'pending', now() + interval '7 days', 0, now(), now()),
+          (${orgA}, ${commA2}, ${invA2Id}, ${userA}, 'staff', ${Buffer.alloc(32)}, 'pending', now() + interval '7 days', 0, now(), now())
       `;
 
       const app = createPlaintextAppSql(roleUrl(runtime, "app"));
@@ -159,8 +159,6 @@ describe("access grant privileges", () => {
 
       const allowedColumns = [
         "status",
-        "email",
-        "email_bidx",
         "token_hash",
         "expires_at",
         "resend_count",

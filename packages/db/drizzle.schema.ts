@@ -53,6 +53,7 @@ export const passkeyChallenges = identityRows.passkeyChallenges;
 export const identitySessions = identityRows.sessions;
 export const operatorGrants = identityRows.operatorGrants;
 export const operatorEvents = identityRows.operatorEvents;
+export const invitationEmails = identityRows.invitationEmails;
 
 const peopleRows = peopleTables(appNamespace, { encryptedColumn, blindIndexColumn });
 
@@ -68,7 +69,7 @@ export const personActivity = peopleRows.personActivity;
 export const lifeEvents = peopleRows.lifeEvents;
 
 rememberPersonKey(persons);
-const accessRows = accessTables(appNamespace, { encryptedColumn, blindIndexColumn });
+const accessRows = accessTables(appNamespace);
 
 export const organisationRoleGrants = accessRows.organisationRoleGrants;
 export const communityRoleGrants = accessRows.communityRoleGrants;

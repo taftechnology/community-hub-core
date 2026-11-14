@@ -50,8 +50,6 @@ describe("core.access manifest", () => {
         "invitations.community_id": "internal",
         "invitations.id": "internal",
         "invitations.invited_by": "internal",
-        "invitations.email": "confidential-blind",
-        "invitations.email_bidx": "confidential-blind",
         "invitations.token_hash": "internal",
         "invitations.role_key": "internal",
         "invitations.custom_role_id": "internal",

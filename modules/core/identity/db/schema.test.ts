@@ -34,6 +34,33 @@ function migration0012Sql(): string {
   return readFileSync(path.join(DRIZZLE, files[0] ?? ""), "utf8");
 }
 
+function migration0019Sql(): string {
+  const files = readdirSync(DRIZZLE).filter(
+    (name) => name.startsWith("0019_") && name.endsWith(".sql"),
+  );
+  expect(files).toHaveLength(1);
+  return readFileSync(path.join(DRIZZLE, files[0] ?? ""), "utf8");
+}
+
+function createTableBody(sql: string, schema: string, table: string): string {
+  const marker = `CREATE TABLE "${schema}"."${table}"`;
+  const start = sql.indexOf(marker);
+  expect(start, table).toBeGreaterThanOrEqual(0);
+  const open = sql.indexOf("(", start);
+  let depth = 0;
+  for (let i = open; i < sql.length; i += 1) {
+    if (sql[i] === "(") {
+      depth += 1;
+    } else if (sql[i] === ")") {
+      depth -= 1;
+      if (depth === 0) {
+        return sql.slice(open + 1, i);
+      }
+    }
+  }
+  throw new Error(`unclosed create table ${table}`);
+}
+
 describe("identity tables", () => {
   it("creates the six tables without org_id or row level security", () => {
     const sql = identitySql();
@@ -146,6 +173,45 @@ describe("identity tables", () => {
       expect(sql).not.toMatch(/ALTER TABLE (?!("identity"\.)?"operator_)/i);
       expect(sql).not.toMatch(/\borg_id\b/i);
       expect(sql).not.toContain("ROW LEVEL SECURITY");
+    });
+  });
+
+  describe("migration 0019", () => {
+    it("contains identity.invitation_emails with its columns, checks, unique index and privileges", () => {
+      const sql = migration0019Sql();
+
+      // Table
+      expect(sql).toContain('CREATE TABLE "identity"."invitation_emails"');
+      const body = createTableBody(sql, "identity", "invitation_emails");
+      expect(body).not.toMatch(/\borg_id\b/);
+
+      // Columns
+      expect(body).toContain('"invitation_id" uuid PRIMARY KEY NOT NULL');
+      expect(body).toContain('"region" text NOT NULL');
+      expect(body).toContain('"email" "bytea"');
+      expect(body).toContain('"email_bidx" "bytea"');
+      expect(body).toContain('"dedupe_key" "bytea"');
+      expect(body).toContain('"expires_at" timestamp with time zone NOT NULL');
+      expect(body).toContain('"closed_at" timestamp with time zone');
+      expect(body).toContain('"created_at" timestamp with time zone NOT NULL');
+
+      // Checks
+      expect(body).toContain("invitation_emails_region_au");
+      expect(body).toContain("invitation_emails_payload_set");
+      expect(body).toContain("invitation_emails_email_bidx_len");
+      expect(body).toContain("invitation_emails_dedupe_key_len");
+
+      // Unique index on dedupe_key
+      expect(sql).toContain(
+        'CREATE UNIQUE INDEX "invitation_emails_dedupe_key_unique" ON "identity"."invitation_emails" USING btree ("dedupe_key")',
+      );
+
+      // Privileges
+      expect(sql).toContain("REVOKE UPDATE, TRUNCATE ON identity.invitation_emails FROM identity;");
+      expect(sql).toContain(
+        "GRANT UPDATE (email, email_bidx, dedupe_key, expires_at, closed_at) ON identity.invitation_emails TO identity;",
+      );
+      expect(sql).toContain("REVOKE ALL ON identity.invitation_emails FROM app, platform;");
     });
   });
 });

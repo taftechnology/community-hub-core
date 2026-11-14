@@ -1,5 +1,5 @@
 {
-  "id": "34a291a2-9291-4385-b515-105c77e98407",
+  "id": "e6602729-ef8e-4d2f-a6f1-21b57d205526",
   "prevId": "b946dd11-194a-4328-92c7-30472d54a0de",
   "version": "7",
   "dialect": "postgresql",
@@ -2097,6 +2097,100 @@
       },
       "isRLSEnabled": false
     },
+    "identity.invitation_emails": {
+      "name": "invitation_emails",
+      "schema": "identity",
+      "columns": {
+        "invitation_id": {
+          "name": "invitation_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "region": {
+          "name": "region",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "email_bidx": {
+          "name": "email_bidx",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dedupe_key": {
+          "name": "dedupe_key",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "closed_at": {
+          "name": "closed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "invitation_emails_dedupe_key_unique": {
+          "name": "invitation_emails_dedupe_key_unique",
+          "columns": [
+            {
+              "expression": "dedupe_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "invitation_emails_region_au": {
+          "name": "invitation_emails_region_au",
+          "value": "\"identity\".\"invitation_emails\".\"region\" = 'au'"
+        },
+        "invitation_emails_payload_set": {
+          "name": "invitation_emails_payload_set",
+          "value": "(\"identity\".\"invitation_emails\".\"email\" is null and \"identity\".\"invitation_emails\".\"email_bidx\" is null and \"identity\".\"invitation_emails\".\"dedupe_key\" is null) or (\"identity\".\"invitation_emails\".\"email\" is not null and \"identity\".\"invitation_emails\".\"email_bidx\" is not null and \"identity\".\"invitation_emails\".\"dedupe_key\" is not null)"
+        },
+        "invitation_emails_email_bidx_len": {
+          "name": "invitation_emails_email_bidx_len",
+          "value": "\"identity\".\"invitation_emails\".\"email_bidx\" is null or octet_length(\"identity\".\"invitation_emails\".\"email_bidx\") = 32"
+        },
+        "invitation_emails_dedupe_key_len": {
+          "name": "invitation_emails_dedupe_key_len",
+          "value": "\"identity\".\"invitation_emails\".\"dedupe_key\" is null or octet_length(\"identity\".\"invitation_emails\".\"dedupe_key\") = 32"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "app.invitations": {
       "name": "invitations",
       "schema": "app",
@@ -2124,18 +2218,6 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
-        },
-        "email": {
-          "name": "email",
-          "type": "bytea",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "email_bidx": {
-          "name": "email_bidx",
-          "type": "bytea",
-          "primaryKey": false,
-          "notNull": false
         },
         "token_hash": {
           "name": "token_hash",
@@ -2204,36 +2286,7 @@
           "notNull": true
         }
       },
-      "indexes": {
-        "invitations_community_email_bidx_unique": {
-          "name": "invitations_community_email_bidx_unique",
-          "columns": [
-            {
-              "expression": "org_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "community_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "email_bidx",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"app\".\"invitations\".\"status\" = 'pending'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "invitations_person_fk": {
           "name": "invitations_person_fk",
@@ -2306,18 +2359,6 @@
         "invitations_role_or_contact_while_pending": {
           "name": "invitations_role_or_contact_while_pending",
           "value": "\"app\".\"invitations\".\"status\" <> 'pending' or \"app\".\"invitations\".\"role_key\" is not null or \"app\".\"invitations\".\"custom_role_id\" is not null or \"app\".\"invitations\".\"person_id\" is not null"
-        },
-        "invitations_email_pair": {
-          "name": "invitations_email_pair",
-          "value": "(\"app\".\"invitations\".\"email\" is null) = (\"app\".\"invitations\".\"email_bidx\" is null)"
-        },
-        "invitations_email_bidx_len": {
-          "name": "invitations_email_bidx_len",
-          "value": "\"app\".\"invitations\".\"email_bidx\" is null or octet_length(\"app\".\"invitations\".\"email_bidx\") = 32"
-        },
-        "invitations_email_bidx_while_pending": {
-          "name": "invitations_email_bidx_while_pending",
-          "value": "\"app\".\"invitations\".\"status\" <> 'pending' or \"app\".\"invitations\".\"email_bidx\" is not null"
         }
       },
       "isRLSEnabled": true

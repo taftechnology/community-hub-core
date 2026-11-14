@@ -188,6 +188,36 @@ export function identityTables(identity: PgSchema) {
     ],
   );
 
+  const invitationEmails = identity.table(
+    "invitation_emails",
+    {
+      invitationId: uuid("invitation_id").primaryKey(),
+      region: text("region").notNull(),
+      email: bytea("email"),
+      emailBidx: bytea("email_bidx"),
+      dedupeKey: bytea("dedupe_key"),
+      expiresAt: tz("expires_at").notNull(),
+      closedAt: tz("closed_at"),
+      createdAt: tz("created_at").notNull(),
+    },
+    (t) => [
+      uniqueIndex("invitation_emails_dedupe_key_unique").on(t.dedupeKey),
+      check("invitation_emails_region_au", sql`${t.region} = 'au'`),
+      check(
+        "invitation_emails_payload_set",
+        sql`(${t.email} is null and ${t.emailBidx} is null and ${t.dedupeKey} is null) or (${t.email} is not null and ${t.emailBidx} is not null and ${t.dedupeKey} is not null)`,
+      ),
+      check(
+        "invitation_emails_email_bidx_len",
+        sql`${t.emailBidx} is null or octet_length(${t.emailBidx}) = 32`,
+      ),
+      check(
+        "invitation_emails_dedupe_key_len",
+        sql`${t.dedupeKey} is null or octet_length(${t.dedupeKey}) = 32`,
+      ),
+    ],
+  );
+
   return {
     users,
     identityKeys,
@@ -197,5 +227,6 @@ export function identityTables(identity: PgSchema) {
     sessions,
     operatorGrants,
     operatorEvents,
+    invitationEmails,
   };
 }
