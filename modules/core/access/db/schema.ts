@@ -1,16 +1,32 @@
+// Type-only: drizzle-kit loads this file with require(), which cannot resolve the ESM-only
+// @community-hub/db package, so the column constructors come in as an argument instead.
+import type { blindIndexColumn, encryptedColumn } from "@community-hub/db";
 import { sql, type SQL } from "drizzle-orm";
 import {
   check,
+  customType,
   foreignKey,
+  integer,
   pgPolicy,
   primaryKey,
   text,
+  timestamp,
   unique,
   uniqueIndex,
   uuid,
   type PgColumn,
   type PgSchema,
 } from "drizzle-orm/pg-core";
+
+const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({
+  dataType() {
+    return "bytea";
+  },
+});
+
+function tz(name: string) {
+  return timestamp(name, { withTimezone: true, mode: "date" });
+}
 
 type PersonKey = {
   orgId: PgColumn;
@@ -38,7 +54,15 @@ function communityPredicate(orgId: PgColumn, communityId: PgColumn): SQL {
   return sql`${orgId} = current_setting('app.org_id')::uuid and ${communityId} = current_setting('app.community_id')::uuid`;
 }
 
-export function accessTables(app: PgSchema) {
+export interface AccessColumnConstructors {
+  readonly encryptedColumn: typeof encryptedColumn;
+  readonly blindIndexColumn: typeof blindIndexColumn;
+}
+
+export function accessTables(
+  app: PgSchema,
+  { encryptedColumn, blindIndexColumn }: AccessColumnConstructors,
+) {
   const persons = requirePersonKey();
 
   const organisationRoleGrants = app
@@ -189,11 +213,106 @@ export function accessTables(app: PgSchema) {
     )
     .enableRLS();
 
+  const organisationMembers = app
+    .table(
+      "organisation_members",
+      {
+        orgId: uuid("org_id").notNull(),
+        userId: uuid("user_id").notNull(),
+        source: text("source").notNull(),
+        invitationId: uuid("invitation_id"),
+        createdAt: tz("created_at").notNull(),
+      },
+      (t) => [
+        primaryKey({ columns: [t.orgId, t.userId] }),
+        check(
+          "organisation_members_source",
+          sql`${t.source} in ('invitation', 'provision', 'backfill')`,
+        ),
+        pgPolicy("org_isolation", {
+          for: "all",
+          using: orgPredicate(t.orgId),
+          withCheck: orgPredicate(t.orgId),
+        }),
+      ],
+    )
+    .enableRLS();
+
+  const invitations = app
+    .table(
+      "invitations",
+      {
+        orgId: uuid("org_id").notNull(),
+        communityId: uuid("community_id").notNull(),
+        id: uuid("id").notNull(),
+        invitedBy: uuid("invited_by").notNull(),
+        email: encryptedColumn("email", { label: "app.invitations.email" }),
+        emailBidx: blindIndexColumn("email_bidx", { purpose: "access.invitations.email" }),
+        tokenHash: bytea("token_hash").notNull(),
+        roleKey: text("role_key"),
+        customRoleId: uuid("custom_role_id"),
+        personId: uuid("person_id"),
+        status: text("status").notNull(),
+        expiresAt: tz("expires_at").notNull(),
+        resendCount: integer("resend_count").notNull(),
+        lastSentAt: tz("last_sent_at").notNull(),
+        acceptedUserId: uuid("accepted_user_id"),
+        closedAt: tz("closed_at"),
+        createdAt: tz("created_at").notNull(),
+      },
+      (t) => [
+        primaryKey({ columns: [t.orgId, t.id] }),
+        uniqueIndex("invitations_community_email_bidx_unique")
+          .on(t.orgId, t.communityId, t.emailBidx)
+          .where(sql`${t.status} = 'pending'`),
+        foreignKey({
+          columns: [t.orgId, t.personId],
+          foreignColumns: [persons.orgId, persons.id],
+          name: "invitations_person_fk",
+        }).onDelete("restrict"),
+        foreignKey({
+          columns: [t.orgId, t.customRoleId],
+          foreignColumns: [customRoles.orgId, customRoles.id],
+          name: "invitations_custom_role_fk",
+        }).onDelete("restrict"),
+        check("invitations_status", sql`${t.status} in ('pending', 'accepted', 'revoked', 'void')`),
+        check(
+          "invitations_role_key",
+          sql`${t.roleKey} is null or ${t.roleKey} in ('org_owner', 'org_admin', 'org_billing', 'org_auditor', 'community_admin', 'staff', 'finance', 'safeguarding_officer', 'volunteer_coordinator', 'content_editor', 'member')`,
+        ),
+        check(
+          "invitations_at_most_one_role",
+          sql`${t.roleKey} is null or ${t.customRoleId} is null`,
+        ),
+        check(
+          "invitations_role_or_contact_while_pending",
+          sql`${t.status} <> 'pending' or ${t.roleKey} is not null or ${t.customRoleId} is not null or ${t.personId} is not null`,
+        ),
+        check("invitations_email_pair", sql`(${t.email} is null) = (${t.emailBidx} is null)`),
+        check(
+          "invitations_email_bidx_len",
+          sql`${t.emailBidx} is null or octet_length(${t.emailBidx}) = 32`,
+        ),
+        check(
+          "invitations_email_bidx_while_pending",
+          sql`${t.status} <> 'pending' or ${t.emailBidx} is not null`,
+        ),
+        pgPolicy("community_isolation", {
+          for: "all",
+          using: communityPredicate(t.orgId, t.communityId),
+          withCheck: communityPredicate(t.orgId, t.communityId),
+        }),
+      ],
+    )
+    .enableRLS();
+
   return {
     organisationRoleGrants,
     communityRoleGrants,
     customRoles,
     customRolePermissions,
     userLinks,
+    organisationMembers,
+    invitations,
   };
 }

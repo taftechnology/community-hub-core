@@ -68,13 +68,15 @@ export const personActivity = peopleRows.personActivity;
 export const lifeEvents = peopleRows.lifeEvents;
 
 rememberPersonKey(persons);
-const accessRows = accessTables(appNamespace);
+const accessRows = accessTables(appNamespace, { encryptedColumn, blindIndexColumn });
 
 export const organisationRoleGrants = accessRows.organisationRoleGrants;
 export const communityRoleGrants = accessRows.communityRoleGrants;
 export const customRoles = accessRows.customRoles;
 export const customRolePermissions = accessRows.customRolePermissions;
 export const userLinks = accessRows.userLinks;
+export const organisationMembers = accessRows.organisationMembers;
+export const invitations = accessRows.invitations;
 
 const usageRows = usageTables(appNamespace);
 

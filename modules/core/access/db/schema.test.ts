@@ -60,6 +60,25 @@ function statements(sql: string): string[] {
   return sql.split("--> statement-breakpoint").map((statement) => statement.replace(/\s+/g, " "));
 }
 
+function clause(statement: string, kind: "USING" | "WITH CHECK"): string {
+  const marker = ` ${kind} `;
+  const start = statement.indexOf(marker);
+  expect(start, kind).toBeGreaterThanOrEqual(0);
+  const open = statement.indexOf("(", start);
+  let depth = 0;
+  for (let i = open; i < statement.length; i += 1) {
+    if (statement[i] === "(") {
+      depth += 1;
+    } else if (statement[i] === ")") {
+      depth -= 1;
+      if (depth === 0) {
+        return statement.slice(open, i + 1);
+      }
+    }
+  }
+  throw new Error(`unclosed ${kind}`);
+}
+
 beforeAll(async () => {
   const runtime = JSON.parse(
     readFileSync(
@@ -121,24 +140,6 @@ describe("access grant tables", () => {
     const orgPredicate = `("app"."organisation_role_grants"."org_id" = current_setting('app.org_id')::uuid)`;
     function communityPredicate(table: string): string {
       return `("app"."${table}"."org_id" = current_setting('app.org_id')::uuid and "app"."${table}"."community_id" = current_setting('app.community_id')::uuid)`;
-    }
-    function clause(statement: string, kind: "USING" | "WITH CHECK"): string {
-      const marker = ` ${kind} `;
-      const start = statement.indexOf(marker);
-      expect(start, kind).toBeGreaterThanOrEqual(0);
-      const open = statement.indexOf("(", start);
-      let depth = 0;
-      for (let i = open; i < statement.length; i += 1) {
-        if (statement[i] === "(") {
-          depth += 1;
-        } else if (statement[i] === ")") {
-          depth -= 1;
-          if (depth === 0) {
-            return statement.slice(open, i + 1);
-          }
-        }
-      }
-      throw new Error(`unclosed ${kind}`);
     }
     for (const statement of policies) {
       const using = clause(statement, "USING");
@@ -245,5 +246,57 @@ describe("access grant tables", () => {
       await sql`delete from app.custom_roles where id = ${customRoleId}`.catch(() => {});
       await sql.end({ timeout: 1 });
     }
+  });
+
+  it("creates organisation_members and invitations with RLS, FORCE RLS, symmetric policies and unique keys starting with org_id (pin 6)", () => {
+    const files = readdirSync(DRIZZLE).filter(
+      (name) => name.startsWith("0019_") && name.endsWith(".sql"),
+    );
+    expect(files).toHaveLength(1);
+    const sql = readFileSync(path.join(DRIZZLE, files[0] ?? ""), "utf8");
+
+    expect(sql).toContain('CREATE TABLE "app"."organisation_members"');
+    expect(sql).toContain('CREATE TABLE "app"."invitations"');
+
+    expect(sql).toMatch(
+      /ALTER TABLE (?:app|"app")\.(?:organisation_members|"organisation_members") FORCE ROW LEVEL SECURITY/,
+    );
+    expect(sql).toMatch(
+      /ALTER TABLE (?:app|"app")\.(?:invitations|"invitations") FORCE ROW LEVEL SECURITY/,
+    );
+
+    expect(sql).not.toContain("ON DELETE CASCADE");
+
+    const uniqueTargets = [
+      ...sql.matchAll(/UNIQUE\(([^)]+)\)/g),
+      ...sql.matchAll(/CREATE UNIQUE INDEX \S+ ON \S+ USING btree \(([^)]+)\)/g),
+    ].map((match) => match[1] ?? "");
+    expect(uniqueTargets.length).toBeGreaterThan(0);
+    for (const target of uniqueTargets) {
+      expect(target.replaceAll('"', "").split(",")[0]?.trim(), target).toBe("org_id");
+    }
+
+    const policies = statements(sql).filter((statement) => statement.includes("CREATE POLICY"));
+    const orgMembersPolicy = policies.filter((statement) =>
+      statement.includes('"app"."organisation_members"'),
+    );
+    expect(orgMembersPolicy).toHaveLength(1);
+    const orgPolicyUsing = clause(orgMembersPolicy[0] ?? "", "USING");
+    const orgPolicyCheck = clause(orgMembersPolicy[0] ?? "", "WITH CHECK");
+    expect(orgPolicyCheck).toBe(orgPolicyUsing);
+    expect(orgPolicyUsing).toBe(
+      `("app"."organisation_members"."org_id" = current_setting('app.org_id')::uuid)`,
+    );
+
+    const invitationsPolicy = policies.filter((statement) =>
+      statement.includes('"app"."invitations"'),
+    );
+    expect(invitationsPolicy).toHaveLength(1);
+    const invPolicyUsing = clause(invitationsPolicy[0] ?? "", "USING");
+    const invPolicyCheck = clause(invitationsPolicy[0] ?? "", "WITH CHECK");
+    expect(invPolicyCheck).toBe(invPolicyUsing);
+    expect(invPolicyUsing).toBe(
+      `("app"."invitations"."org_id" = current_setting('app.org_id')::uuid and "app"."invitations"."community_id" = current_setting('app.community_id')::uuid)`,
+    );
   });
 });
