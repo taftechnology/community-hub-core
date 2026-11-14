@@ -3,6 +3,7 @@ import type { Server } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bootstrapOwner, createCustomRole, grantRole, linkUser } from "@community-hub/access";
+import { addMember } from "@community-hub/access/testing";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import { applyProductMigrations, newId, withAppTransaction } from "@community-hub/db";
 import {
@@ -423,6 +424,11 @@ describe("billing guard against a real database", () => {
         path: "/v1/access/grants",
         prepare: async (setup) => {
           const subjectUserId = newId();
+          await withRequest({ requestId: REQUEST_ID }, () =>
+            withAppTransaction(app, { orgId: setup.orgId, communityId: setup.communityId }, (tx) =>
+              addMember(tx, subjectUserId),
+            ),
+          );
           return {
             body: {
               communitySlug: setup.slug,
@@ -441,14 +447,19 @@ describe("billing guard against a real database", () => {
         prepare: async (setup) => {
           const subjectUserId = newId();
           const grant = await withRequest({ requestId: REQUEST_ID }, () =>
-            withAppTransaction(app, { orgId: setup.orgId, communityId: setup.communityId }, (tx) =>
-              grantRole(tx, {
-                now: setup.now,
-                userId: subjectUserId,
-                roleKey: "member",
-                customRoleId: null,
-                actorUserId: setup.ownerUserId,
-              }),
+            withAppTransaction(
+              app,
+              { orgId: setup.orgId, communityId: setup.communityId },
+              async (tx) => {
+                await addMember(tx, subjectUserId);
+                return grantRole(tx, {
+                  now: setup.now,
+                  userId: subjectUserId,
+                  roleKey: "member",
+                  customRoleId: null,
+                  actorUserId: setup.ownerUserId,
+                });
+              },
             ),
           );
           return {
@@ -518,6 +529,7 @@ describe("billing guard against a real database", () => {
             app,
             { orgId: setup.orgId, communityId: setup.communityId },
             async (tx) => {
+              await addMember(tx, linkUserId);
               await tx`
                 insert into app.persons (id, org_id, community_id, is_minor, age_basis, given_name, family_name)
                 values (
@@ -555,6 +567,7 @@ describe("billing guard against a real database", () => {
               app,
               { orgId: setup.orgId, communityId: setup.communityId },
               async (tx) => {
+                await addMember(tx, unlinkUserId);
                 await tx`
                   insert into app.persons (id, org_id, community_id, is_minor, age_basis, given_name, family_name)
                   values (
@@ -1222,9 +1235,15 @@ describe("billing guard against a real database", () => {
       expect(await resAA.text()).toBe("");
 
       // Grant-holder of B writing to B -> 200
+      const subjectB = newId();
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: setupB.orgId, communityId: setupB.communityId }, (tx) =>
+          addMember(tx, subjectB),
+        ),
+      );
       const resBB = await post(
         "/v1/access/grants",
-        { communitySlug: setupB.slug, userId: newId(), roleKey: "member" },
+        { communitySlug: setupB.slug, userId: subjectB, roleKey: "member" },
         setupB.token,
       );
       expect(resBB.status).toBe(200);
@@ -1254,9 +1273,15 @@ describe("billing guard against a real database", () => {
       const setupB = await createFreshSetup("read_only");
 
       // Grant-holder of A writing to A -> 200
+      const subjectA = newId();
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: setupA.orgId, communityId: setupA.communityId }, (tx) =>
+          addMember(tx, subjectA),
+        ),
+      );
       const resAA = await post(
         "/v1/access/grants",
-        { communitySlug: setupA.slug, userId: newId(), roleKey: "member" },
+        { communitySlug: setupA.slug, userId: subjectA, roleKey: "member" },
         setupA.token,
       );
       expect(resAA.status).toBe(200);

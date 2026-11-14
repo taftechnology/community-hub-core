@@ -3,6 +3,7 @@ import type { Server } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bootstrapOwner, linkUser } from "@community-hub/access";
+import { addMember } from "@community-hub/access/testing";
 import { listUsersResponse, type ListUsersResponse } from "@community-hub/contracts/access";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import { applyProductMigrations, newId, withAppTransaction } from "@community-hub/db";
@@ -280,6 +281,19 @@ describe("users list integration", () => {
     return user;
   }
 
+  async function makeMember(
+    tenant: { organisationId: string; communityId: string },
+    userId: string,
+  ) {
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(
+        app,
+        { orgId: tenant.organisationId, communityId: tenant.communityId },
+        (tx) => addMember(tx, userId),
+      ),
+    );
+  }
+
   it("happy path: an owner is linked to an adult person with a phone and lists themself", async () => {
     const tenant = await createTenant();
     const phone = "+61491570006";
@@ -367,6 +381,7 @@ describe("users list integration", () => {
     const ownerB = await setupOwner(tenantB);
 
     const userB = await createSession(uniqueEmail("userb"));
+    await makeMember(tenantB, userB.userId);
     const grantB = await post(
       API_HOSTNAME,
       "/v1/access/grants",
@@ -411,6 +426,10 @@ describe("users list integration", () => {
     const comm2 = await createCommunity(tenant.organisationId);
 
     const userC2 = await createSession(uniqueEmail("userc2"));
+    await makeMember(
+      { organisationId: tenant.organisationId, communityId: comm2.communityId },
+      userC2.userId,
+    );
     const grantC2 = await post(
       API_HOSTNAME,
       "/v1/access/grants",
@@ -442,6 +461,7 @@ describe("users list integration", () => {
     const comm2 = await createCommunity(tenant.organisationId);
 
     const orgUser = await createSession(uniqueEmail("orguser"));
+    await makeMember(tenant, orgUser.userId);
     const grantOrg = await post(
       API_HOSTNAME,
       "/v1/access/grants",
@@ -532,6 +552,8 @@ describe("users list integration", () => {
     const ownerB = await setupOwner(tenantB);
 
     const sharedUser = await createSession(uniqueEmail("shared"));
+    await makeMember(tenantA, sharedUser.userId);
+    await makeMember(tenantB, sharedUser.userId);
 
     const grantA = await post(
       API_HOSTNAME,
@@ -614,6 +636,7 @@ describe("users list integration", () => {
     );
 
     const minorUser = await createSession(uniqueEmail("minoruser"));
+    await makeMember(tenant, minorUser.userId);
     const grantMinor = await post(
       API_HOSTNAME,
       "/v1/access/grants",
@@ -639,6 +662,7 @@ describe("users list integration", () => {
 
     // 1. Check for community_admin
     const adminUser = await createSession(uniqueEmail("admin"));
+    await makeMember(tenant, adminUser.userId);
     const grantAdmin = await post(
       API_HOSTNAME,
       "/v1/access/grants",
@@ -677,6 +701,7 @@ describe("users list integration", () => {
 
     // 2. Check for staff
     const staffUser = await createSession(uniqueEmail("staff"));
+    await makeMember(tenant, staffUser.userId);
     const grantStaff = await post(
       API_HOSTNAME,
       "/v1/access/grants",
@@ -749,6 +774,7 @@ describe("users list integration", () => {
     );
 
     const userA1 = await createSession(uniqueEmail("usera1"));
+    await makeMember(tenant, userA1.userId);
     const grantA1 = await post(
       API_HOSTNAME,
       "/v1/access/grants",
@@ -774,6 +800,7 @@ describe("users list integration", () => {
 
     // Call users/list as community 1 admin
     const adminUser = await createSession(uniqueEmail("c1admin"));
+    await makeMember(tenant, adminUser.userId);
     const grantAdmin = await post(
       API_HOSTNAME,
       "/v1/access/grants",
@@ -909,6 +936,7 @@ describe("users list integration", () => {
 
     const targetEmail = uniqueEmail("target");
     const targetUser = await createSession(targetEmail);
+    await makeMember(tenant, targetUser.userId);
     const targetPhone = "+61491570110";
 
     await withRequest({ requestId: REQUEST_ID }, () =>
@@ -1001,6 +1029,7 @@ describe("users list integration", () => {
     const { customRoleId } = (await createRoleRes.json()) as { customRoleId: string };
 
     const customCaller = await createSession(uniqueEmail("custom"));
+    await makeMember(tenant, customCaller.userId);
     const grantRes = await post(
       API_HOSTNAME,
       "/v1/access/grants",
@@ -1102,6 +1131,7 @@ describe("users list integration", () => {
     const owner = await setupOwner(tenant);
 
     const freshUserId = newId();
+    await makeMember(tenant, freshUserId);
     const grantRes = await post(
       API_HOSTNAME,
       "/v1/access/grants",

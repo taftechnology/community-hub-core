@@ -509,6 +509,41 @@ describe("access routes", () => {
     expect(access.grantRole).not.toHaveBeenCalled();
   });
 
+  it("maps not_member to 422 with json error on POST /v1/access/grants and /v1/access/user-links", async () => {
+    const subject = "00000000-0000-4000-8000-000000000030";
+    access.grantRole.mockReset();
+    access.grantRole.mockRejectedValue(new access.AccessError("not_member"));
+    const grantRes = await route("/v1/access/grants").handle(
+      request(
+        "/v1/access/grants",
+        API_HOSTNAME,
+        { communitySlug: "parish", userId: subject, roleKey: "member" },
+        `Bearer ${TOKEN}`,
+      ),
+    );
+    expect(grantRes.status).toBe(422);
+    expect(grantRes.headers.get("content-type")).toBe("application/json");
+    expect(await grantRes.text()).toBe('{"error":"user_not_member"}');
+
+    access.linkUser.mockReset();
+    access.linkUser.mockRejectedValue(new access.AccessError("not_member"));
+    const linkRes = await route("/v1/access/user-links").handle(
+      request(
+        "/v1/access/user-links",
+        API_HOSTNAME,
+        {
+          communitySlug: "parish",
+          userId: subject,
+          personId: "00000000-0000-4000-8000-000000000031",
+        },
+        `Bearer ${TOKEN}`,
+      ),
+    );
+    expect(linkRes.status).toBe(422);
+    expect(linkRes.headers.get("content-type")).toBe("application/json");
+    expect(await linkRes.text()).toBe('{"error":"user_not_member"}');
+  });
+
   it("a member without access.roles.manage gets 402 on POST /v1/access/grants in read_only and 403 in ok", async () => {
     access.grantRole.mockRejectedValue(new access.AccessError("forbidden"));
     billing.assertWritable.mockRejectedValue(new BillingReadOnly("read_only"));

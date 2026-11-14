@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 
+import { addMember } from "@community-hub/access/testing";
 import {
   applyProductMigrations,
   newId,
@@ -86,6 +87,7 @@ describe("holdsPermission", () => {
       await withRequest({ requestId: REQUEST_ID }, () =>
         withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
           await bootstrapOwner(tx, { now: NOW, userId: ownerId, actorUserId: ownerId });
+          await addMember(tx, staffId);
           await grantRole(tx, {
             now: NOW,
             userId: staffId,
@@ -112,6 +114,7 @@ describe("holdsPermission", () => {
               'entitlements.manage'
             )
           `;
+          await addMember(tx, customUserId);
           await tx`
             insert into app.community_role_grants (
               id, org_id, community_id, user_id, role_key, custom_role_id
@@ -169,6 +172,7 @@ describe("holdsPermission", () => {
       await withRequest({ requestId: REQUEST_ID }, () =>
         withAppTransaction(app, { orgId: organisationB, communityId: communityB }, async (tx) => {
           await bootstrapOwner(tx, { now: NOW, userId: ownerB, actorUserId: ownerB });
+          await addMember(tx, staffId);
           await grantRole(tx, {
             now: NOW,
             userId: staffId,

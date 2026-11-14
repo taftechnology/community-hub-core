@@ -3,6 +3,7 @@ import type { Server } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bootstrapOwner, createCustomRole, grantRole } from "@community-hub/access";
+import { addMember } from "@community-hub/access/testing";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import { applyProductMigrations, newId, withAppTransaction } from "@community-hub/db";
 import {
@@ -329,6 +330,7 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
           permissions: ["people.manage"],
           actorUserId: uAll.userId,
         });
+        await addMember(tx, uManage.userId);
         await grantRole(tx, {
           now,
           userId: uManage.userId,
@@ -343,6 +345,7 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
           permissions: ["people.restricted.read"],
           actorUserId: uAll.userId,
         });
+        await addMember(tx, uRestricted.userId);
         await grantRole(tx, {
           now,
           userId: uRestricted.userId,
@@ -357,6 +360,7 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
           permissions: ["people.view"],
           actorUserId: uAll.userId,
         });
+        await addMember(tx, uView.userId);
         await grantRole(tx, {
           now,
           userId: uView.userId,

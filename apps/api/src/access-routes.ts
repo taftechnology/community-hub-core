@@ -206,7 +206,16 @@ function bearer(request: Request): string | undefined {
   return match?.[1];
 }
 
-function statusFor(error: AccessError): Response | undefined {
+function statusFor(error: AccessError, route?: "grants" | "user-links"): Response | undefined {
+  if (error.code === "not_member") {
+    if (route === "grants" || route === "user-links") {
+      return new Response(JSON.stringify({ error: "user_not_member" }), {
+        status: 422,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return undefined;
+  }
   if (error.code === "forbidden") {
     return empty(403);
   }
@@ -423,9 +432,13 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
     );
   }
 
-  function finish<T>(outcome: T | AccessError, ok: (value: T) => Response): Response {
+  function finish<T>(
+    outcome: T | AccessError,
+    ok: (value: T) => Response,
+    route?: "grants" | "user-links",
+  ): Response {
     if (outcome instanceof AccessError) {
-      const response = statusFor(outcome);
+      const response = statusFor(outcome, route);
       if (response !== undefined) {
         return response;
       }
@@ -737,7 +750,7 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
             actorUserId: actor.userId,
           }),
         );
-        return finish(outcome, (value) => Response.json(value));
+        return finish(outcome, (value) => Response.json(value), "grants");
       },
     },
     {
@@ -884,7 +897,7 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
             actorUserId: actor.userId,
           });
         });
-        return finish(outcome, (value) => Response.json(value));
+        return finish(outcome, (value) => Response.json(value), "user-links");
       },
     },
     {

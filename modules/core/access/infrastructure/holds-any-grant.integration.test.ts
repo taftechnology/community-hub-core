@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 
+import { addMember } from "@community-hub/access/testing";
 import { applyProductMigrations, newId, withAppTransaction } from "@community-hub/db";
 import {
   createPlaintextAppSql,
@@ -88,6 +89,7 @@ describe("holdsAnyGrant", () => {
       // Populate organisation B grants
       await withRequest({ requestId: REQUEST_ID }, () =>
         withAppTransaction(app, { orgId: organisationB, communityId: communityB1 }, async (tx) => {
+          await addMember(tx, otherOrgUser);
           await tx`
             insert into app.community_role_grants (
               id, org_id, community_id, user_id, role_key, custom_role_id
@@ -116,6 +118,7 @@ describe("holdsAnyGrant", () => {
       // Populate organisation A, community A2 grants
       await withRequest({ requestId: REQUEST_ID }, () =>
         withAppTransaction(app, { orgId: organisationA, communityId: communityA2 }, async (tx) => {
+          await addMember(tx, otherCommunityUser);
           await tx`
             insert into app.community_role_grants (
               id, org_id, community_id, user_id, role_key, custom_role_id
@@ -135,6 +138,7 @@ describe("holdsAnyGrant", () => {
       await withRequest({ requestId: REQUEST_ID }, () =>
         withAppTransaction(app, { orgId: organisationA, communityId: communityA1 }, async (tx) => {
           // Organisation grant
+          await addMember(tx, orgGrantUser);
           await tx`
             insert into app.organisation_role_grants (
               id, org_id, user_id, role_key
@@ -147,6 +151,7 @@ describe("holdsAnyGrant", () => {
           `;
 
           // Community role grant
+          await addMember(tx, communityRoleUser);
           await tx`
             insert into app.community_role_grants (
               id, org_id, community_id, user_id, role_key, custom_role_id
@@ -161,6 +166,7 @@ describe("holdsAnyGrant", () => {
           `;
 
           // Member grant
+          await addMember(tx, memberUser);
           await tx`
             insert into app.community_role_grants (
               id, org_id, community_id, user_id, role_key, custom_role_id
@@ -175,6 +181,7 @@ describe("holdsAnyGrant", () => {
           `;
 
           // Custom role grant
+          await addMember(tx, customRoleUser);
           await tx`
             insert into app.custom_roles (id, org_id, community_id, key)
             values (

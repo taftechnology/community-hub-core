@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 
+import { addMember } from "@community-hub/access/testing";
 import {
   applyProductMigrations,
   newId,
@@ -109,6 +110,7 @@ describe("custom roles", () => {
       `;
       expect(audits).toEqual([{ target_ids: [created.customRoleId] }]);
 
+      await addMember(tx, member);
       const grant = await grantRole(tx, {
         now: NOW,
         userId: member,
@@ -227,6 +229,7 @@ describe("custom roles", () => {
         permissions: ["access.roles.manage", "access.users.view"],
         actorUserId: owner,
       });
+      await addMember(tx, clerk);
       await grantRole(tx, {
         now: NOW,
         userId: clerk,
@@ -234,6 +237,7 @@ describe("custom roles", () => {
         customRoleId: desk.customRoleId,
         actorUserId: owner,
       });
+      await addMember(tx, member);
       const granted = await grantRole(tx, {
         now: NOW,
         userId: member,

@@ -12,5 +12,5 @@
     "db/**/*.ts",
     "infrastructure/**/*.ts"
   ],
-  "exclude": ["**/*.test.ts"]
+  "exclude": ["**/*.test.ts", "infrastructure/testing.ts"]
 }

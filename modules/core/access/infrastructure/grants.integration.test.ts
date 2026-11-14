@@ -18,7 +18,10 @@ import {
 import { withRequest } from "@community-hub/kernel";
 import { createHousehold, createPerson } from "@community-hub/people";
 
+import { addMember } from "@community-hub/access/testing";
+
 import {
+  AccessError,
   bootstrapOwner,
   createCustomRole,
   findOwner,
@@ -95,6 +98,45 @@ async function withParish(
   } finally {
     await platform.end({ timeout: 1 });
     await app.end({ timeout: 1 });
+  }
+}
+
+async function withTwoParishes(
+  run: (env: {
+    app: ReturnType<typeof createPlaintextAppSql>;
+    direct: ReturnType<typeof createPlaintextDirectSql>;
+    kms: ReturnType<typeof createLocalKmsPort>;
+    orgA: { organisationId: string; communityId: string };
+    orgB: { organisationId: string; communityId: string };
+  }) => Promise<void>,
+): Promise<void> {
+  const runtime = loadRuntime();
+  const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+  const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+  const direct = createPlaintextDirectSql(runtime.productOnlyUrl);
+  const kms = createLocalKmsPort();
+  const orgA = { organisationId: newId(), communityId: newId() };
+  const orgB = { organisationId: newId(), communityId: newId() };
+  try {
+    await platform.begin(async (tx) => {
+      await tx`
+        insert into platform.organisations (id, slug, region, kind)
+        values
+          (${orgA.organisationId}, 'pin-org-a', 'au', 'implicit'),
+          (${orgB.organisationId}, 'pin-org-b', 'au', 'implicit')
+      `;
+      await tx`
+        insert into platform.communities (id, organisation_id, slug, region)
+        values
+          (${orgA.communityId}, ${orgA.organisationId}, 'pin-comm-a', 'au'),
+          (${orgB.communityId}, ${orgB.organisationId}, 'pin-comm-b', 'au')
+      `;
+    });
+    await run({ app, direct, kms, orgA, orgB });
+  } finally {
+    await platform.end({ timeout: 1 });
+    await app.end({ timeout: 1 });
+    await direct.end({ timeout: 1 });
   }
 }
 
@@ -266,6 +308,7 @@ describe("links, bootstrap, and grants", () => {
   it("finds the owner from an organisation-level grant alone", async () => {
     await withParish("grant-find-owner-org-only", async (tx) => {
       const owner = newId();
+      await addMember(tx, owner);
       await tx`
         insert into app.organisation_role_grants (id, org_id, user_id, role_key)
         values (
@@ -286,6 +329,7 @@ describe("links, bootstrap, and grants", () => {
   it("falls back to a community-level grant when no organisation-level grant exists", async () => {
     await withParish("grant-find-owner-community-only", async (tx) => {
       const owner = newId();
+      await addMember(tx, owner);
       await tx`
         insert into app.community_role_grants (
           id, org_id, community_id, user_id, role_key, custom_role_id
@@ -399,10 +443,12 @@ describe("links, bootstrap, and grants", () => {
       `;
       expect(linkAudits).toEqual([{ target_ids: [linked.linkId] }]);
 
+      const minorSubject = newId();
+      await addMember(tx, minorSubject);
       await expect(
         linkUser(tx, {
           now: NOW,
-          userId: newId(),
+          userId: minorSubject,
           personId: people.minorId,
           actorUserId: owner,
         }),
@@ -419,6 +465,7 @@ describe("links, bootstrap, and grants", () => {
       const owner = newId();
       const admin = newId();
       await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      await addMember(tx, admin);
       await grantRole(tx, {
         now: NOW,
         userId: admin,
@@ -456,6 +503,9 @@ describe("links, bootstrap, and grants", () => {
       const adminUser = newId();
       const target = newId();
       await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      await addMember(tx, staffUser);
+      await addMember(tx, adminUser);
+      await addMember(tx, target);
       const staff = await grantRole(tx, {
         now: NOW,
         userId: staffUser,
@@ -516,6 +566,10 @@ describe("links, bootstrap, and grants", () => {
       const customHolder = newId();
       const orgAdmin = newId();
       const boot = await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      await addMember(tx, second);
+      await addMember(tx, communityAdmin);
+      await addMember(tx, customHolder);
+      await addMember(tx, orgAdmin);
       const other = await grantRole(tx, {
         now: NOW,
         userId: second,
@@ -602,15 +656,16 @@ describe("links, bootstrap, and grants", () => {
           ),
         );
         const other = await withRequest({ requestId: REQUEST_ID }, () =>
-          withAppTransaction(app, scope, (tx) =>
-            grantRole(tx, {
+          withAppTransaction(app, scope, async (tx) => {
+            await addMember(tx, second);
+            return grantRole(tx, {
               now: NOW,
               userId: second,
               roleKey: "org_owner",
               customRoleId: null,
               actorUserId: first,
-            }),
-          ),
+            });
+          }),
         );
         await Promise.allSettled([
           revokeInTransaction(runtime, scope, other.grantId, first),
@@ -654,6 +709,7 @@ describe("links, bootstrap, and grants", () => {
       `;
       expect(kept).toEqual([{ id: boot.organisationGrantId }]);
 
+      await addMember(tx, secondUser);
       const second = await grantRole(tx, {
         now: NOW,
         userId: secondUser,
@@ -739,6 +795,8 @@ describe("links, bootstrap, and grants", () => {
       const coordinator = newId();
       const memberUser = newId();
       await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      await addMember(tx, coordinator);
+      await addMember(tx, memberUser);
       await grantRole(tx, {
         now: NOW,
         userId: coordinator,
@@ -759,19 +817,23 @@ describe("links, bootstrap, and grants", () => {
         permissions: ["access.users.view"],
         actorUserId: owner,
       });
+      const target1 = newId();
+      await addMember(tx, target1);
       await expect(
         grantRole(tx, {
           now: NOW,
-          userId: newId(),
+          userId: target1,
           roleKey: "member",
           customRoleId: null,
           actorUserId: coordinator,
         }),
       ).rejects.toMatchObject({ code: "forbidden" });
+      const target2 = newId();
+      await addMember(tx, target2);
       await expect(
         grantRole(tx, {
           now: NOW,
-          userId: newId(),
+          userId: target2,
           roleKey: null,
           customRoleId: viewers.customRoleId,
           actorUserId: coordinator,
@@ -807,6 +869,7 @@ describe("links, bootstrap, and grants", () => {
       const owner = newId();
       const holder = newId();
       await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      await addMember(tx, holder);
       const desk = await createCustomRole(tx, {
         now: NOW,
         key: "desk",
@@ -826,19 +889,23 @@ describe("links, bootstrap, and grants", () => {
         customRoleId: desk.customRoleId,
         actorUserId: owner,
       });
+      const target3 = newId();
+      await addMember(tx, target3);
       await expect(
         grantRole(tx, {
           now: NOW,
-          userId: newId(),
+          userId: target3,
           roleKey: "community_admin",
           customRoleId: null,
           actorUserId: holder,
         }),
       ).rejects.toMatchObject({ code: "forbidden" });
+      const target4 = newId();
+      await addMember(tx, target4);
       await expect(
         grantRole(tx, {
           now: NOW,
-          userId: newId(),
+          userId: target4,
           roleKey: null,
           customRoleId: viewers.customRoleId,
           actorUserId: holder,
@@ -860,6 +927,7 @@ describe("links, bootstrap, and grants", () => {
       const owner = newId();
       const subject = newId();
       await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      await addMember(tx, subject);
       const people = await householdWithPeople(tx, kms);
       await tx`
         insert into app.user_links (id, org_id, community_id, user_id, person_id)
@@ -888,6 +956,7 @@ describe("links, bootstrap, and grants", () => {
       const owner = newId();
       const subject = newId();
       await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      await addMember(tx, subject);
       const desk = await createCustomRole(tx, {
         now: NOW,
         key: "desk",
@@ -928,6 +997,7 @@ describe("links, bootstrap, and grants", () => {
       const owner = newId();
       const second = newId();
       await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      await addMember(tx, second);
       const granted = await grantRole(tx, {
         now: NOW,
         userId: second,
@@ -948,6 +1018,249 @@ describe("links, bootstrap, and grants", () => {
           and ${granted.grantId}::uuid = any(target_ids)
       `;
       expect(revoked).toEqual([{ target_ids: [granted.grantId] }]);
+    });
+  });
+
+  describe("membership enforcement (pins 7 to 11)", () => {
+    it("pins 7, 8, 9, 10: refuses non-members on grantRole, linkUser, grantCustomRole, and checks permission before membership", async () => {
+      await withTwoParishes(async ({ app, direct, kms, orgA, orgB }) => {
+        const ownerA = newId();
+        const ownerB = newId();
+        const memberB = newId();
+        const randomUser = newId();
+        const realUser = newId();
+
+        // Seed real user in identity.users
+        await direct`
+          insert into identity.users (id, region, email, email_bidx)
+          values (${realUser}, 'au', ${Buffer.from("real-user@example.test")}, ${Buffer.alloc(32)})
+        `;
+
+        // Bootstrap Org B and add memberB
+        await withRequest({ requestId: REQUEST_ID }, () =>
+          withAppTransaction(
+            app,
+            { orgId: orgB.organisationId, communityId: orgB.communityId },
+            async (tx) => {
+              await bootstrapOwner(tx, { now: NOW, userId: ownerB, actorUserId: ownerB });
+              await addMember(tx, memberB);
+            },
+          ),
+        );
+
+        // Bootstrap Org A, create custom role and adult person
+        let adultPersonA = "";
+        let customRoleA = "";
+        await withRequest({ requestId: REQUEST_ID }, () =>
+          withAppTransaction(
+            app,
+            { orgId: orgA.organisationId, communityId: orgA.communityId },
+            async (tx) => {
+              await bootstrapOwner(tx, { now: NOW, userId: ownerA, actorUserId: ownerA });
+              const people = await householdWithPeople(tx, kms);
+              adultPersonA = people.adultId;
+              const role = await createCustomRole(tx, {
+                now: NOW,
+                key: "choir_lead",
+                permissions: ["access.users.view"],
+                actorUserId: ownerA,
+              });
+              customRoleA = role.customRoleId;
+            },
+          ),
+        );
+
+        const candidates = [memberB, randomUser, realUser];
+
+        await withRequest({ requestId: REQUEST_ID }, () =>
+          withAppTransaction(
+            app,
+            { orgId: orgA.organisationId, communityId: orgA.communityId },
+            async (tx) => {
+              // Pin 7: built-in role grant refuses non-member
+              for (const candidate of candidates) {
+                const countBefore =
+                  (
+                    await tx<{ count: number }[]>`
+                select count(*)::int as count from app.audit_events
+                where action = 'access.permission.denied' and purpose = 'access.user.not_member'
+              `
+                  )[0]?.count ?? 0;
+
+                let error: unknown;
+                try {
+                  await grantRole(tx, {
+                    now: NOW,
+                    userId: candidate,
+                    roleKey: "member",
+                    customRoleId: null,
+                    actorUserId: ownerA,
+                  });
+                } catch (e) {
+                  error = e;
+                }
+                expect(error).toBeInstanceOf(AccessError);
+                expect((error as AccessError).code).toBe("not_member");
+
+                const grantRows = await tx<{ count: number }[]>`
+                select (
+                  (select count(*)::int from app.organisation_role_grants where org_id = current_setting('app.org_id')::uuid and user_id = ${candidate}::uuid) +
+                  (select count(*)::int from app.community_role_grants where org_id = current_setting('app.org_id')::uuid and user_id = ${candidate}::uuid)
+                )::int as count
+              `;
+                expect(grantRows[0]?.count).toBe(0);
+
+                const countAfter =
+                  (
+                    await tx<{ count: number }[]>`
+                select count(*)::int as count from app.audit_events
+                where action = 'access.permission.denied' and purpose = 'access.user.not_member'
+              `
+                  )[0]?.count ?? 0;
+                expect(countAfter).toBe(countBefore + 1);
+              }
+
+              // Pin 8: linkUser refuses non-member
+              for (const candidate of candidates) {
+                const countBefore =
+                  (
+                    await tx<{ count: number }[]>`
+                select count(*)::int as count from app.audit_events
+                where action = 'access.permission.denied' and purpose = 'access.user.not_member'
+              `
+                  )[0]?.count ?? 0;
+
+                let error: unknown;
+                try {
+                  await linkUser(tx, {
+                    now: NOW,
+                    userId: candidate,
+                    personId: adultPersonA,
+                    actorUserId: ownerA,
+                  });
+                } catch (e) {
+                  error = e;
+                }
+                expect(error).toBeInstanceOf(AccessError);
+                expect((error as AccessError).code).toBe("not_member");
+
+                const linkRows = await tx<{ count: number }[]>`
+                select count(*)::int as count from app.user_links
+                where org_id = current_setting('app.org_id')::uuid and user_id = ${candidate}::uuid
+              `;
+                expect(linkRows[0]?.count).toBe(0);
+
+                const countAfter =
+                  (
+                    await tx<{ count: number }[]>`
+                select count(*)::int as count from app.audit_events
+                where action = 'access.permission.denied' and purpose = 'access.user.not_member'
+              `
+                  )[0]?.count ?? 0;
+                expect(countAfter).toBe(countBefore + 1);
+              }
+
+              // Pin 9: custom role grant refuses non-member
+              for (const candidate of candidates) {
+                const countBefore =
+                  (
+                    await tx<{ count: number }[]>`
+                select count(*)::int as count from app.audit_events
+                where action = 'access.permission.denied' and purpose = 'access.user.not_member'
+              `
+                  )[0]?.count ?? 0;
+
+                let error: unknown;
+                try {
+                  await grantRole(tx, {
+                    now: NOW,
+                    userId: candidate,
+                    roleKey: null,
+                    customRoleId: customRoleA,
+                    actorUserId: ownerA,
+                  });
+                } catch (e) {
+                  error = e;
+                }
+                expect(error).toBeInstanceOf(AccessError);
+                expect((error as AccessError).code).toBe("not_member");
+
+                const customGrants = await tx<{ count: number }[]>`
+                select count(*)::int as count from app.community_role_grants
+                where org_id = current_setting('app.org_id')::uuid and user_id = ${candidate}::uuid
+              `;
+                expect(customGrants[0]?.count).toBe(0);
+
+                const countAfter =
+                  (
+                    await tx<{ count: number }[]>`
+                select count(*)::int as count from app.audit_events
+                where action = 'access.permission.denied' and purpose = 'access.user.not_member'
+              `
+                  )[0]?.count ?? 0;
+                expect(countAfter).toBe(countBefore + 1);
+              }
+
+              // Pin 10: permission check runs before membership check
+              const stranger = newId();
+              let error10a: unknown;
+              try {
+                await grantRole(tx, {
+                  now: NOW,
+                  userId: randomUser,
+                  roleKey: "member",
+                  customRoleId: null,
+                  actorUserId: stranger,
+                });
+              } catch (e) {
+                error10a = e;
+              }
+              expect(error10a).toBeInstanceOf(AccessError);
+              expect((error10a as AccessError).code).toBe("forbidden");
+
+              let error10b: unknown;
+              try {
+                await linkUser(tx, {
+                  now: NOW,
+                  userId: randomUser,
+                  personId: adultPersonA,
+                  actorUserId: stranger,
+                });
+              } catch (e) {
+                error10b = e;
+              }
+              expect(error10b).toBeInstanceOf(AccessError);
+              expect((error10b as AccessError).code).toBe("forbidden");
+            },
+          ),
+        );
+      });
+    });
+
+    it("pin 11: after bootstrapOwner, one provision membership exists for the owner, and granting that owner a second role succeeds", async () => {
+      await withParish("pin-11-bootstrap", async (tx) => {
+        const owner = newId();
+        await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+
+        const members = await tx<{ source: string; invitation_id: string | null }[]>`
+          select source, invitation_id::text as invitation_id
+          from app.organisation_members
+          where org_id = current_setting('app.org_id')::uuid
+            and user_id = ${owner}::uuid
+        `;
+        expect(members).toHaveLength(1);
+        expect(members[0]?.source).toBe("provision");
+        expect(members[0]?.invitation_id).toBeNull();
+
+        const secondRole = await grantRole(tx, {
+          now: NOW,
+          userId: owner,
+          roleKey: "org_admin",
+          customRoleId: null,
+          actorUserId: owner,
+        });
+        expect(secondRole.grantId).toBeDefined();
+      });
     });
   });
 });

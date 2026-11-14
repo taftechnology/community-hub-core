@@ -4,6 +4,7 @@ import { bundle, decide } from "@community-hub/policy";
 
 import { AccessError } from "../domain/error.js";
 import { COMMUNITY_ROLE_KEYS, ORGANISATION_ROLE_KEYS, parseUuid } from "../domain/role.js";
+import { insertMembership, isMember, lockOrganisation } from "./membership.js";
 
 const BOOTSTRAPPED = "access.owner.bootstrapped";
 const GRANTED = "access.role.granted";
@@ -167,12 +168,15 @@ async function countSettingRows(
   return rows[0]?.n ?? 0;
 }
 
-async function lockOrganisation(tx: AppTransaction): Promise<void> {
-  await tx`
-    select pg_advisory_xact_lock(
-      hashtextextended('access.org:' || current_setting('app.org_id'), 0)
-    )
-  `;
+async function denyNotMember(tx: AppTransaction, actorUserId: string): Promise<never> {
+  await appendAuditEvent(tx, {
+    actorKind: "user",
+    actorId: actorUserId,
+    action: DENIED,
+    purpose: "access.user.not_member",
+    targetIds: [actorUserId],
+  });
+  throw new AccessError("not_member");
 }
 
 export async function linkUser(tx: AppTransaction, input: LinkInput): Promise<{ linkId: string }> {
@@ -182,6 +186,9 @@ export async function linkUser(tx: AppTransaction, input: LinkInput): Promise<{ 
   const actor = await loadActor(tx, actorUserId);
   if (!allows(actor, USERS)) {
     await deny(tx, actorUserId, USERS);
+  }
+  if (!(await isMember(tx, userId))) {
+    await denyNotMember(tx, actorUserId);
   }
   const minor = await personIsMinor(tx, personId);
   if (minor === null) {
@@ -264,6 +271,11 @@ export async function bootstrapOwner(
   if (organisationGrants > 0 || communityGrants > 0) {
     throw new AccessError("already_bootstrapped");
   }
+  await insertMembership(tx, {
+    userId,
+    source: "provision",
+    now: input.now,
+  });
   const organisationGrantId = newId();
   const communityGrantId = newId();
   await tx`
@@ -375,6 +387,9 @@ async function grantCustomRole(
       await deny(tx, actorUserId);
     }
   }
+  if (!(await isMember(tx, userId))) {
+    await denyNotMember(tx, actorUserId);
+  }
   await assertGrantSubjectAdult(tx, userId);
   const grantId = newId();
   try {
@@ -441,6 +456,9 @@ export async function grantRole(
     if (!allows(actor, permission)) {
       await deny(tx, actorUserId);
     }
+  }
+  if (!(await isMember(tx, userId))) {
+    await denyNotMember(tx, actorUserId);
   }
   const linked = await tx<{ person_id: string }[]>`
     select person_id::text as person_id

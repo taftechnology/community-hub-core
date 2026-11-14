@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bootstrapOwner, grantRole } from "@community-hub/access";
+import { addMember } from "@community-hub/access/testing";
 import {
   insertSettings,
   setMode,
@@ -260,15 +261,16 @@ describe("billing flow (two organisations)", () => {
 
       // Grant member role in Org A
       await withRequest({ requestId: REQUEST_ID }, () =>
-        withAppTransaction(app, { orgId: orgAId, communityId: commAId }, (tx) =>
-          grantRole(tx, {
+        withAppTransaction(app, { orgId: orgAId, communityId: commAId }, async (tx) => {
+          await addMember(tx, memberA.userId);
+          await grantRole(tx, {
             now,
             userId: memberA.userId,
             roleKey: "member",
             customRoleId: null,
             actorUserId: ownerA.userId,
-          }),
-        ),
+          });
+        }),
       );
 
       // Bootstrap owner of Org B

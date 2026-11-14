@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bootstrapOwner, grantRole } from "@community-hub/access";
+import { addMember } from "@community-hub/access/testing";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import { applyProductMigrations, newId, withAppTransaction } from "@community-hub/db";
 import {
@@ -168,15 +169,16 @@ describe("entitlement flow", () => {
         ),
       );
       await withRequest({ requestId: REQUEST_ID }, () =>
-        withAppTransaction(app, { orgId: organisationId, communityId }, (tx) =>
-          grantRole(tx, {
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          await addMember(tx, staff.userId);
+          await grantRole(tx, {
             now,
             userId: staff.userId,
             roleKey: "staff",
             customRoleId: null,
             actorUserId: admin.userId,
-          }),
-        ),
+          });
+        }),
       );
 
       const listed = await call(
