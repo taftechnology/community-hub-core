@@ -367,3 +367,19 @@ Security-relevant settings the plan must pin, each with a weakening that makes i
   7. An invitation needs a role, a contact, or both.
   8. Identity crypto is reached through new `core/identity/public` exports, as `readUserEmails` is. There is no new kernel port.
   9. A failed send voids the invitation (create deletes the row; resend voids it). It is not retried or restored.
+
+## Amendments after approval
+
+Proposed 2026-11-14 from plan check 1 (Claude Opus 5.5). Each one needs the chunk owner's approval before the plan is approved.
+
+- **A1. Backfill scope test.** The backfill section says the test asserts `current_setting('app.org_id', true)` is empty after `0019`. That check cannot fail, because the settings revert when drizzle's single migration transaction commits. The test instead appends a probe migration (`0020_probe.sql`) to its temporary folder only. The probe raises an error if either setting is non-empty, so a missing reset fails the apply. The reset itself is unchanged.
+- **A2. Custom roles and closed invitations.**
+  - When an invitation leaves `pending`, `custom_role_id` is cleared as well, and it joins the column `UPDATE` grant.
+  - `deleteCustomRole` counts pending invitations that name the role, in addition to grants, and answers `role_in_use`.
+  - Without this, the `restrict` foreign key turns deleting a role named by any invitation, open or closed, into a 500 for up to 30 days.
+- **A3. Retention keeps accepted rows.**
+  - The users list finds members whose accepted invitation was to this community through `organisation_members.invitation_id` → `invitations`. Deleting accepted rows after 30 days would drop such members from the list and the picker.
+  - The purge therefore deletes revoked and void rows closed more than 30 days ago, and pending rows expired more than 30 days ago.
+  - Accepted rows are kept. They hold ids only, because the address, blind index, contact and custom role are cleared on acceptance.
+- **A4. Identity key read.** `sealInvitationEmail` and `openInvitationEmails` read the identity key row through the identity checkout, as `readUserEmails` does (`user-emails.ts:43-52`), and never create a key. "Issues no query" in Rules touched means it reads no `app` table and makes no query other than that key read.
+- **Clarification (no change): role rules at create and accept.** "The same rules as a grant" includes the bundle-subset rule: the inviter must hold every permission of the built-in role's bundle, or of the custom role (`grants.ts:366-377`, `:436-444`). It is stated here because the plan tests it separately.
