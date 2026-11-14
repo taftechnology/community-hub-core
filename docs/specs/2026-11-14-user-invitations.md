@@ -232,7 +232,7 @@ Out:
 - **Privileges:** `UPDATE` and `TRUNCATE` are revoked from `app`, then `UPDATE` is granted on `status, email, email_bidx, token_hash, expires_at, resend_count, last_sent_at, accepted_user_id, person_id, closed_at` only. `DELETE` stays, for the SES-failure path and retention.
 - Expiry is computed (`status = 'pending' AND expires_at > now()`), so there is no `expired` status.
 - **Rule 3 (§12.2.1):** nothing filters, sorts or aggregates on `email`. `email_bidx` is filtered by equality only (the duplicate check). `token_hash` is compared only on a row already selected by id.
-- **Retention:**
+- **Retention:** the address parts below are superseded by amendment A5 (the address moves to `identity.invitation_emails`, with expiry erasure and a region-wide bounded sweep). The `app.invitations` row rules stay as A3 says.
   - When an invitation leaves `pending` (accepted, revoked, void), `closed_at` is set and `email`, `email_bidx` and `person_id` are cleared.
   - Rows closed more than 30 days ago, and pending rows that expired more than 30 days ago, are deleted in the create and list transactions for that community.
   - A community that never opens invitations keeps expired rows, address included, until the sweep follow-up. See Owner decision O1.
@@ -383,3 +383,61 @@ Proposed 2026-11-14 from plan check 1 (Claude Opus 5.5). Approved by the chunk o
   - Accepted rows are kept. They hold ids only, because the address, blind index, contact and custom role are cleared on acceptance.
 - **A4. Identity key read.** `sealInvitationEmail` and `openInvitationEmails` read the identity key row through the identity checkout, as `readUserEmails` does (`user-emails.ts:43-52`), and never create a key. "Issues no query" in Rules touched means it reads no `app` table and makes no query other than that key read.
 - **Clarification (no change): role rules at create and accept.** "The same rules as a grant" includes the bundle-subset rule: the inviter must hold every permission of the built-in role's bundle, or of the custom role (`grants.ts:366-377`, `:436-444`). It is stated here because the plan tests it separately.
+- **A5 (proposed 2026-11-14, needs the chunk owner's approval). Invitation addresses live in identity, with region-wide erasure (project owner's O1 conditions, 2026-11-14).**
+  - **Why.** The project owner accepted O1 on three conditions:
+    1. expiry erases the stored address, as accept, revoke and void do;
+    2. clean-up of old rows runs region-wide, as one bounded statement in `core/identity`;
+    3. this section states the rule, with must-fail tests.
+
+    `app.invitations` is isolated per community under FORCE RLS, and the identity role has no `app` privileges (ADR 0004). So a region-wide clean-up of addresses is only possible if the address is held in `identity`, as `identity.users.email` is. Chosen by the chunk owner, 2026-11-14.
+
+  - **New table `identity.invitation_emails`.** It is region-scoped, with no `org_id` (§6.3). Privileges: the `identity` role may `SELECT`, `INSERT` and `DELETE`, and `UPDATE` only `email`, `email_bidx`, `dedupe_key`, `expires_at` and `closed_at`. No `TRUNCATE`. The `app` and `platform` roles get nothing.
+
+    | Column        | Type                             | Class                                                                                                                                                                    |
+    | ------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+    | invitation_id | uuid, primary key                | `internal`                                                                                                                                                               |
+    | region        | text, check `'au'`               | `internal`                                                                                                                                                               |
+    | email         | bytea null                       | `confidential-blind`. Identity key, AAD `{ tag: "chub/field-identity/v1", label: "identity.invitation_emails.email", rowId: <16 bytes of invitation_id>, region: "au" }` |
+    | email_bidx    | bytea null                       | `confidential-blind`. The same HMAC as `identity.users.email_bidx`                                                                                                       |
+    | dedupe_key    | bytea null, unique when not null | `confidential-blind`. HMAC of community id ‖ normalised address under the identity blind-index key, purpose `identity.invitation_emails.dedupe`                          |
+    | expires_at    | timestamptz                      | `internal`                                                                                                                                                               |
+    | closed_at     | timestamptz null                 | `internal`                                                                                                                                                               |
+    | created_at    | timestamptz                      | `internal`                                                                                                                                                               |
+
+    Checks:
+    - `email`, `email_bidx` and `dedupe_key` are all null or all set;
+    - `email_bidx` and `dedupe_key` are 32 bytes when set.
+
+  - **`app.invitations` loses `email` and `email_bidx`,** with their checks, the partial unique index and the column grants on them. It holds no address or address-derived value. Migration `0019` is regenerated: it is unmerged and has never been applied in any environment, and dropping the columns in a later migration would be destructive DDL in the same PR (AGENTS.md §7). The `0019` backfill is unchanged.
+  - **Retention (replaces the address parts of Data, Retention, and of A3):**
+    1. **Close erases at once.** Accept, revoke and void call identity `closeInvitationEmail` inside the app transaction's callback, before the app commit. It sets `email`, `email_bidx` and `dedupe_key` to null and `closed_at` to now. If the app transaction then rolls back, the invitation keeps no address: list shows "Address removed", and accept answers `invitation_invalid`. This is the privacy-first direction.
+    2. **Expiry erases at the next action anywhere in the region.** Every invitation action (create, list, resend, revoke, accept), in any community or organisation, first calls identity `sweepInvitationEmails(now)`. That is one SQL statement with two bounded parts:
+       - it erases up to 500 rows where `expires_at <= now` and `email` is not null;
+       - it deletes up to 500 rows whose `closed_at`, or whose `expires_at` if never closed, is more than 30 days old.
+    3. **No read returns an expired address,** even before a sweep. `openInvitationEmails` and the acceptance comparison select only rows with `closed_at is null`, `expires_at > now()` and `email` not null, in identity itself, whatever the caller passes.
+    4. **`app.invitations` rows,** which now hold ids only, keep A3's purge per community. Revoked and void rows closed more than 30 days ago, and pending rows expired more than 30 days ago, are deleted in create and list. Accepted rows are kept.
+    5. **A scheduled sweep** comes with the first regional scheduler chunk, calling the same `sweepInvitationEmails`. The roadmap records it.
+  - **Must-fail tests (identity integration, two organisations):**
+    - (a) An expired address in org A is erased by a list in org B.
+    - (b) With the sweep call removed, `openInvitationEmails` still returns nothing for an expired row, and accept does not match it.
+    - (c) A row closed 31 days ago in org A is deleted by an action in org B, while rows at 29 days stay.
+    - (d) Seeding 501 erasable rows, one action erases exactly 500.
+    - (e) Revoke, accept and void each leave `email`, `email_bidx` and `dedupe_key` null with `closed_at` set.
+    - (f) An address from one community never collides with the same address in another community, while a second pending invitation in the same community answers `already_invited`.
+  - **Identity boundary (replaces the three exports in Rules touched, and A4).** All take the identity checkout and return plain values.
+    - `createInvitationEmail`: normalises, encrypts and inserts. Before the insert, it erases any expired or closed row with the same `dedupe_key`. A unique violation answers `already_invited`. It is called from inside the app create transaction's callback, so `already_invited` rolls the app row back.
+    - `refreshInvitationEmail`: sets a new expiry, for resend.
+    - `openInvitationEmails(invitationIds)`: cap 100; unexpired and open rows only.
+    - `invitationAddressMatches(invitationId, userId)`: compares `identity.users.email_bidx` with the invitation's index, for unexpired and open rows only, and returns a boolean.
+    - `closeInvitationEmail(invitationId)`.
+    - `sweepInvitationEmails(now)`.
+
+    Callers pass only invitation ids read under RLS from `app.invitations`, as with `readUserEmails` (§11.1). Create still never reads `identity.users`.
+
+  - **Effect on the plan:**
+    - Task 2 gets a fix commit (regenerated `0019`, the identity table, privileges, manifest classes);
+    - Task 4 is rewritten for the six identity functions;
+    - Tasks 5 to 7 use them through injected dependencies;
+    - pins 15 to 18, 21 and 23 are revised, and the tests (a) to (f) are added.
+
+    The plan records this as amendment P1.

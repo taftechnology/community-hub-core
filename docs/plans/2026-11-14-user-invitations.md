@@ -670,4 +670,19 @@ This plan has no Terraform assert, so no scratch probe is needed (AGENTS.md §4)
 
 ## Amendments after approval
 
-None yet.
+- **P1 (proposed 2026-11-14, with spec A5; needs the chunk owner's approval). The invitation address moves to identity.**
+  - **Task 2 gets a fix commit before Task 4.** It:
+    - regenerates `0019`: `app.invitations` without `email` and `email_bidx`, their checks, the partial unique index and their grant columns; and the new `identity.invitation_emails` with its checks, unique `dedupe_key` index, `REVOKE`/`GRANT` for the `identity` role, and nothing for `app` or `platform`;
+    - updates the access and identity schema files, both manifests' `dataClasses` and their tests;
+    - extends the privileges tests to the identity table;
+    - keeps the backfill and pins 1 to 6.
+  - **Task 4 is rewritten** for the six identity functions in A5: `createInvitationEmail`, `refreshInvitationEmail`, `openInvitationEmails`, `invitationAddressMatches`, `closeInvitationEmail` and `sweepInvitationEmails`. `findCommunityById` stays. A5's must-fail tests (a) to (f) are added to Task 4.
+  - **Pins revised:**
+    - 15 binds the AAD to the invitation id in the identity table;
+    - 16 makes `invitationAddressMatches` agree with `identity.users.email_bidx`;
+    - 17 caps `openInvitationEmails` and filters out expired and closed rows;
+    - 18 means no key is ever created;
+    - 21 makes the duplicate check per community through `dedupe_key`;
+    - 23 means close erases in identity.
+  - **Tasks 5 to 7:** `createInvitation`, list, resend, revoke and accept call the identity functions through injected dependencies, inside the app transaction's callback (the users-list nested-checkout pattern). Every action calls `sweepInvitationEmails` first. `app.invitations` holds no address.
+  - **Unchanged:** Tasks 1 and 3, the token, and the accept order.
