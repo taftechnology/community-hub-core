@@ -1,6 +1,7 @@
 export { ImplicitOrganisationError } from "../domain/error.js";
 export {
   createImplicitOrganisation,
+  findCommunityById,
   findCommunityBySlug,
   findOrganisationBySlug,
 } from "../infrastructure/implicit-organisation.js";
