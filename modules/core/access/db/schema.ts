@@ -247,7 +247,7 @@ export function accessTables(
         id: uuid("id").notNull(),
         invitedBy: uuid("invited_by").notNull(),
         email: encryptedColumn("email", { label: "app.invitations.email" }),
-        emailBidx: blindIndexColumn("email_bidx", { purpose: "access.invitations.email" }),
+        emailBidx: blindIndexColumn("email_bidx", { purpose: "identity.users.email" }),
         tokenHash: bytea("token_hash").notNull(),
         roleKey: text("role_key"),
         customRoleId: uuid("custom_role_id"),

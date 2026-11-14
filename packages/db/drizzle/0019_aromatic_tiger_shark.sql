@@ -60,11 +60,11 @@ BEGIN
     INSERT INTO app.organisation_members (org_id, user_id, source, created_at)
     SELECT DISTINCT c.organisation_id, candidate.user_id, 'backfill', now()
     FROM (
-      SELECT user_id FROM app.organisation_role_grants
+      SELECT user_id FROM app.organisation_role_grants WHERE org_id = c.organisation_id
       UNION
-      SELECT user_id FROM app.community_role_grants
+      SELECT user_id FROM app.community_role_grants WHERE org_id = c.organisation_id AND community_id = c.id
       UNION
-      SELECT user_id FROM app.user_links
+      SELECT user_id FROM app.user_links WHERE org_id = c.organisation_id AND community_id = c.id
     ) candidate
     JOIN identity.users u ON u.id = candidate.user_id
     ON CONFLICT DO NOTHING;

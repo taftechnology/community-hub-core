@@ -56,9 +56,11 @@ describe("membership backfill migration", () => {
       // Step 2: Seed as migrator
       const orgA = newId();
       const orgB = newId();
+      const orgC = newId();
       const commA1 = newId();
       const commA2 = newId();
       const commB1 = newId();
+      const commB2 = newId();
 
       const user1 = newId();
       const user2 = newId();
@@ -73,13 +75,15 @@ describe("membership backfill migration", () => {
       await sql`
         insert into platform.organisations (id, slug, region, kind) values
           (${orgA}, ${`org-${orgA}`}, 'au', 'implicit'),
-          (${orgB}, ${`org-${orgB}`}, 'au', 'implicit')
+          (${orgB}, ${`org-${orgB}`}, 'au', 'implicit'),
+          (${orgC}, ${`org-${orgC}`}, 'au', 'implicit')
       `;
       await sql`
         insert into platform.communities (id, organisation_id, slug, region) values
           (${commA1}, ${orgA}, ${`comm-${commA1}`}, 'au'),
           (${commA2}, ${orgA}, ${`comm-${commA2}`}, 'au'),
-          (${commB1}, ${orgB}, ${`comm-${commB1}`}, 'au')
+          (${commB1}, ${orgB}, ${`comm-${commB1}`}, 'au'),
+          (${commB2}, ${orgB}, ${`comm-${commB2}`}, 'au')
       `;
 
       // Identity users: real rows for user1..user5, none for userNoIdentity (pin 5)
@@ -166,6 +170,18 @@ describe("membership backfill migration", () => {
         `;
       });
 
+      // Organisation C transaction (no community)
+      await sql.begin(async (tx) => {
+        await tx.unsafe("set role migrator");
+        await tx`select set_config('app.org_id', ${orgC}, true)`;
+
+        // user5: org role grant in org C
+        await tx`
+          insert into app.organisation_role_grants (id, org_id, user_id, role_key)
+          values (${newId()}, ${orgC}, ${user5}, 'org_admin')
+        `;
+      });
+
       await sql.unsafe("reset role");
 
       // Step 3: Copy full folder into folder2, add 0020_probe.sql and journal entry idx 20
@@ -221,6 +237,7 @@ describe("membership backfill migration", () => {
       ].sort((a, b) => (a.org_id + a.user_id).localeCompare(b.org_id + b.user_id));
 
       expect(memberships).toEqual(expected);
+      expect(memberships.some((m) => m.org_id === orgC)).toBe(false);
     } finally {
       await sql.end({ timeout: 1 });
       rmSync(folder1, { recursive: true, force: true });

@@ -265,7 +265,13 @@ describe("access grant tables", () => {
       /ALTER TABLE (?:app|"app")\.(?:invitations|"invitations") FORCE ROW LEVEL SECURITY/,
     );
 
-    expect(sql).not.toContain("ON DELETE CASCADE");
+    expect(sql).not.toMatch(/ON DELETE CASCADE/i);
+    expect(sql).toContain(
+      '"invitations_person_fk" FOREIGN KEY ("org_id","person_id") REFERENCES "app"."persons"("org_id","id") ON DELETE restrict',
+    );
+    expect(sql).toContain(
+      '"invitations_custom_role_fk" FOREIGN KEY ("org_id","custom_role_id") REFERENCES "app"."custom_roles"("org_id","id") ON DELETE restrict',
+    );
 
     const uniqueTargets = [
       ...sql.matchAll(/UNIQUE\(([^)]+)\)/g),
