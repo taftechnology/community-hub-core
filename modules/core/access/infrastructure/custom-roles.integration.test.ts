@@ -18,6 +18,7 @@ import {
 import { withRequest } from "@community-hub/kernel";
 
 import {
+  AccessError,
   bootstrapOwner,
   createCustomRole,
   deleteCustomRole,
@@ -322,5 +323,125 @@ describe("custom roles", () => {
       await platform.end({ timeout: 1 });
       await app.end({ timeout: 1 });
     }
+  });
+
+  it("pin 30: deletes custom roles with pending/expired/revoked invitations correctly", async () => {
+    await withParish("pin-30-roles", async (tx) => {
+      const owner = newId();
+      await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      const dummyHash = Buffer.alloc(32, 7);
+
+      // (a) unexpired pending invitation gives role_in_use
+      const roleA = await createCustomRole(tx, {
+        now: NOW,
+        key: "role_pending_unexpired",
+        permissions: ["access.users.view"],
+        actorUserId: owner,
+      });
+      const invA = newId();
+      await tx`
+        insert into app.invitations (
+          id, org_id, community_id, invited_by, token_hash, role_key, custom_role_id,
+          person_id, status, expires_at, resend_count, last_sent_at, accepted_user_id, closed_at, created_at
+        ) values (
+          ${invA}::uuid, current_setting('app.org_id')::uuid, current_setting('app.community_id')::uuid,
+          ${owner}::uuid, ${dummyHash}, null, ${roleA.customRoleId}::uuid,
+          null, 'pending', ${new Date(NOW.getTime() + 7 * 86400000)}, 0, ${NOW}, null, null, ${NOW}
+        )
+      `;
+      await expect(
+        deleteCustomRole(tx, {
+          now: NOW,
+          customRoleId: roleA.customRoleId,
+          actorUserId: owner,
+        }),
+      ).rejects.toThrow(new AccessError("role_in_use"));
+
+      // (b) role named only by expired pending invitation deletes; invitation becomes void with custom_role_id & person_id null, closed_at set, and audit voided row written
+      const roleB = await createCustomRole(tx, {
+        now: NOW,
+        key: "role_pending_expired",
+        permissions: ["access.users.view"],
+        actorUserId: owner,
+      });
+      const invB = newId();
+      await tx`
+        insert into app.invitations (
+          id, org_id, community_id, invited_by, token_hash, role_key, custom_role_id,
+          person_id, status, expires_at, resend_count, last_sent_at, accepted_user_id, closed_at, created_at
+        ) values (
+          ${invB}::uuid, current_setting('app.org_id')::uuid, current_setting('app.community_id')::uuid,
+          ${owner}::uuid, ${dummyHash}, null, ${roleB.customRoleId}::uuid,
+          null, 'pending', ${new Date(NOW.getTime() - 86400000)}, 0, ${NOW}, null, null, ${NOW}
+        )
+      `;
+      await deleteCustomRole(tx, {
+        now: NOW,
+        customRoleId: roleB.customRoleId,
+        actorUserId: owner,
+      });
+
+      const roleBRows = await tx<{ id: string }[]>`
+        select id::text as id from app.custom_roles where id = ${roleB.customRoleId}::uuid
+      `;
+      expect(roleBRows).toHaveLength(0);
+
+      const invBRows = await tx<
+        {
+          status: string;
+          custom_role_id: string | null;
+          person_id: string | null;
+          closed_at: Date | null;
+        }[]
+      >`
+        select status, custom_role_id::text as custom_role_id, person_id::text as person_id, closed_at
+        from app.invitations
+        where id = ${invB}::uuid
+      `;
+      expect(invBRows).toEqual([
+        {
+          status: "void",
+          custom_role_id: null,
+          person_id: null,
+          closed_at: NOW,
+        },
+      ]);
+
+      const voidAudit = await tx<{ target_ids: string[] }[]>`
+        select target_ids::text[] as target_ids
+        from app.audit_events
+        where action = 'access.invitation.voided'
+          and ${invB}::uuid = any(target_ids)
+      `;
+      expect(voidAudit).toEqual([{ target_ids: [invB] }]);
+
+      // (c) a role named only by a revoked invitation deletes
+      const roleC = await createCustomRole(tx, {
+        now: NOW,
+        key: "role_revoked",
+        permissions: ["access.users.view"],
+        actorUserId: owner,
+      });
+      const invC = newId();
+      await tx`
+        insert into app.invitations (
+          id, org_id, community_id, invited_by, token_hash, role_key, custom_role_id,
+          person_id, status, expires_at, resend_count, last_sent_at, accepted_user_id, closed_at, created_at
+        ) values (
+          ${invC}::uuid, current_setting('app.org_id')::uuid, current_setting('app.community_id')::uuid,
+          ${owner}::uuid, ${dummyHash}, null, null,
+          null, 'revoked', ${new Date(NOW.getTime() + 7 * 86400000)}, 0, ${NOW}, null, ${NOW}, ${NOW}
+        )
+      `;
+      await deleteCustomRole(tx, {
+        now: NOW,
+        customRoleId: roleC.customRoleId,
+        actorUserId: owner,
+      });
+      const roleCRows = await tx<{ id: string }[]>`
+        select id::text as id from app.custom_roles where id = ${roleC.customRoleId}::uuid
+      `;
+      expect(roleCRows).toHaveLength(0);
+    });
   });
 });

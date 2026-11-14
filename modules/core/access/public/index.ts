@@ -39,6 +39,13 @@ defineAuditPurpose("people.person.view");
 defineAuditPurpose("people.restricted.read");
 
 export { AccessError } from "../domain/error.js";
+export type { InvitationAddresses } from "../domain/invitation-addresses.js";
+export {
+  type InvitationMail,
+  InvitationMailUnavailable,
+  rejectingInvitationMail,
+} from "../domain/invitation-mail.js";
+export { buildInvitationToken, parseInvitationToken } from "../domain/invitation-token.js";
 export { createCustomRole, deleteCustomRole } from "../infrastructure/custom-roles.js";
 export {
   grantRole,
@@ -50,4 +57,18 @@ export {
 } from "../infrastructure/grants.js";
 export { holdsAnyGrant } from "../infrastructure/holds-any-grant.js";
 export { holdsPermission } from "../infrastructure/holds-permission.js";
+export {
+  createInvitation,
+  listInvitations,
+  resendInvitation,
+  revokeInvitation,
+  deleteInvitationAfterMailFailure,
+  voidInvitationAfterMailFailure,
+  type CreateInvitationInput,
+  type ListInvitationsInput,
+  type InvitationListItem,
+  type ResendInvitationInput,
+  type RevokeInvitationInput,
+  type MailFailureInput,
+} from "../infrastructure/invitations.js";
 export { readPersonForActor } from "../infrastructure/restricted-read.js";

@@ -26,7 +26,7 @@ function sourceFiles(dir: string): string[] {
 }
 
 describe("organisation lock pin", () => {
-  it("has exactly one advisory lock site in membership.ts, imported by grants.ts", () => {
+  it("has exactly one advisory lock site in membership.ts, imported by grants.ts and invitations.ts", () => {
     const hits: { file: string; line: number; text: string }[] = [];
     for (const file of sourceFiles(MODULE)) {
       const relative = path.relative(MODULE, file).replaceAll("\\", "/");
@@ -45,6 +45,14 @@ describe("organisation lock pin", () => {
 
     const grantsContent = readFileSync(path.join(MODULE, "infrastructure/grants.ts"), "utf8");
     expect(grantsContent).toMatch(
+      /import\s*\{[^}]*lockOrganisation[^}]*\}\s*from\s*["']\.\/membership(?:\.js)?["']/,
+    );
+
+    const invitationsContent = readFileSync(
+      path.join(MODULE, "infrastructure/invitations.ts"),
+      "utf8",
+    );
+    expect(invitationsContent).toMatch(
       /import\s*\{[^}]*lockOrganisation[^}]*\}\s*from\s*["']\.\/membership(?:\.js)?["']/,
     );
   });

@@ -77,6 +77,40 @@ function holdsOrgAdmin(actor: ActorGrants): boolean {
   return actor.organisationRoleKeys.includes("org_admin");
 }
 
+export type RoleToGrant =
+  | { kind: "builtin"; roleKey: string }
+  | { kind: "custom"; permissions: readonly string[] | string[] };
+
+export function roleGrantAllowed(actor: ActorGrants, role: RoleToGrant): boolean {
+  if (role.kind === "builtin") {
+    if (role.roleKey === "org_owner") {
+      if (!holdsOrgOwner(actor)) {
+        return false;
+      }
+    } else if (ORGANISATION_ROLES.has(role.roleKey)) {
+      if (!holdsOrgOwner(actor) && !holdsOrgAdmin(actor)) {
+        return false;
+      }
+    }
+    const permissions = bundle(role.roleKey);
+    if (permissions === null) {
+      return false;
+    }
+    for (const permission of permissions) {
+      if (!allows(actor, permission)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  for (const permission of role.permissions) {
+    if (!allows(actor, permission)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 async function assertMayGrantRole(
   tx: AppTransaction,
   actor: ActorGrants,
@@ -382,10 +416,13 @@ async function grantCustomRole(
       and org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
   `;
-  for (const row of permissionRows) {
-    if (!allows(actor, row.permission)) {
-      await deny(tx, actorUserId);
-    }
+  if (
+    !roleGrantAllowed(actor, {
+      kind: "custom",
+      permissions: permissionRows.map((row) => row.permission),
+    })
+  ) {
+    await deny(tx, actorUserId);
   }
   if (!(await isMember(tx, userId))) {
     await denyNotMember(tx, actorUserId);
@@ -447,15 +484,8 @@ export async function grantRole(
   if (!organisationRole && !communityRole) {
     throw new AccessError("invalid_role");
   }
-  await assertMayGrantRole(tx, actor, actorUserId, roleKey);
-  const permissions = bundle(roleKey);
-  if (permissions === null) {
-    throw new AccessError("invalid_role");
-  }
-  for (const permission of permissions) {
-    if (!allows(actor, permission)) {
-      await deny(tx, actorUserId);
-    }
+  if (!roleGrantAllowed(actor, { kind: "builtin", roleKey })) {
+    await deny(tx, actorUserId);
   }
   if (!(await isMember(tx, userId))) {
     await denyNotMember(tx, actorUserId);
