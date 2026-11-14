@@ -670,7 +670,7 @@ This plan has no Terraform assert, so no scratch probe is needed (AGENTS.md §4)
 
 ## Amendments after approval
 
-- **P1 (proposed 2026-11-14, with spec A5; needs the chunk owner's approval). The invitation address moves to identity.**
+- **P1 (approved 2026-11-14, Adnan Bin Hossen, with spec A5). The invitation address moves to identity.**
   - **Task 2 gets a fix commit before Task 4.** It:
     - regenerates `0019`: `app.invitations` without `email` and `email_bidx`, their checks, the partial unique index and their grant columns; and the new `identity.invitation_emails` with its checks, unique `dedupe_key` index, `REVOKE`/`GRANT` for the `identity` role, and nothing for `app` or `platform`;
     - updates the access and identity schema files, both manifests' `dataClasses` and their tests;

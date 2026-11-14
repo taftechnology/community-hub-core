@@ -383,7 +383,7 @@ Proposed 2026-11-14 from plan check 1 (Claude Opus 5.5). Approved by the chunk o
   - Accepted rows are kept. They hold ids only, because the address, blind index, contact and custom role are cleared on acceptance.
 - **A4. Identity key read.** `sealInvitationEmail` and `openInvitationEmails` read the identity key row through the identity checkout, as `readUserEmails` does (`user-emails.ts:43-52`), and never create a key. "Issues no query" in Rules touched means it reads no `app` table and makes no query other than that key read.
 - **Clarification (no change): role rules at create and accept.** "The same rules as a grant" includes the bundle-subset rule: the inviter must hold every permission of the built-in role's bundle, or of the custom role (`grants.ts:366-377`, `:436-444`). It is stated here because the plan tests it separately.
-- **A5 (proposed 2026-11-14, needs the chunk owner's approval). Invitation addresses live in identity, with region-wide erasure (project owner's O1 conditions, 2026-11-14).**
+- **A5 (approved 2026-11-14, Adnan Bin Hossen). Invitation addresses live in identity, with region-wide erasure (project owner's O1 conditions, 2026-11-14).**
   - **Why.** The project owner accepted O1 on three conditions:
     1. expiry erases the stored address, as accept, revoke and void do;
     2. clean-up of old rows runs region-wide, as one bounded statement in `core/identity`;
