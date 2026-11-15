@@ -1,4 +1,8 @@
 import { getRequestContext } from "@community-hub/kernel";
+// isAuditPurpose is exported only from the module entry. This route must call it so a denial
+// never writes an unregistered purpose such as people.view.
+// eslint-disable-next-line no-restricted-imports
+import { isAuditPurpose } from "@community-hub/kernel/module";
 import {
   appendAuditEvent,
   newId,
@@ -232,7 +236,7 @@ export function invitationRoutes(deps: InvitationRouteDeps): GateRoute[] {
               actorKind: "user",
               actorId: userId,
               action: "access.permission.denied",
-              purpose: perm,
+              purpose: isAuditPurpose(perm) ? perm : "access.users.manage",
               targetIds: [userId],
             });
             return false;

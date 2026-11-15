@@ -8,6 +8,9 @@ import {
   listInvitationsResponse,
 } from "@community-hub/contracts/access";
 import { withRequest } from "@community-hub/kernel";
+// The assertion must call the real registry, which is exported only from the module entry.
+// eslint-disable-next-line no-restricted-imports
+import { isAuditPurpose } from "@community-hub/kernel/module";
 
 const identity = vi.hoisted(() => ({
   readSession: vi.fn(),
@@ -1195,6 +1198,72 @@ describe("invitation routes", () => {
       expect(await res.text()).toBe("");
       expectOneDenial("access.users.manage");
       expect(access.revokeInvitation).not.toHaveBeenCalled();
+    });
+
+    it("every route denial writes a registered audit purpose", async () => {
+      const customRoleId = "00000000-0000-4000-8000-000000000013";
+      const cases: { path: string; body: Record<string, unknown>; missing: string }[] = [
+        {
+          path: "/v1/access/invitations/create",
+          body: { communitySlug: "parish", email: "user@example.test", roleKey: "staff" },
+          missing: "access.users.manage",
+        },
+        {
+          path: "/v1/access/invitations/create",
+          body: { communitySlug: "parish", email: "user@example.test", roleKey: "staff" },
+          missing: "access.roles.manage",
+        },
+        {
+          path: "/v1/access/invitations/create",
+          body: { communitySlug: "parish", email: "user@example.test", customRoleId },
+          missing: "access.roles.manage",
+        },
+        {
+          path: "/v1/access/invitations/create",
+          body: { communitySlug: "parish", email: "user@example.test", personId: PERSON_ID },
+          missing: "people.view",
+        },
+        {
+          path: "/v1/access/invitations/create",
+          body: { communitySlug: "parish", email: "user@example.test", personId: PERSON_ID },
+          missing: "access.users.manage",
+        },
+        {
+          path: "/v1/access/invitations/list",
+          body: { communitySlug: "parish" },
+          missing: "access.users.view",
+        },
+        {
+          path: "/v1/access/invitations/list",
+          body: { communitySlug: "parish" },
+          missing: "access.roles.view",
+        },
+        {
+          path: "/v1/access/invitations/resend",
+          body: { communitySlug: "parish", invitationId: INVITATION_ID },
+          missing: "access.users.manage",
+        },
+        {
+          path: "/v1/access/invitations/revoke",
+          body: { communitySlug: "parish", invitationId: INVITATION_ID },
+          missing: "access.users.manage",
+        },
+      ];
+
+      for (const item of cases) {
+        db.appendAuditEvent.mockClear();
+        access.holdsPermission.mockImplementation(
+          async (_tx: unknown, _userId: string, perm: string) => perm !== item.missing,
+        );
+        const res = await postInvitation(item.path, item.body);
+        expect(res.status).toBe(403);
+        expect(db.appendAuditEvent).toHaveBeenCalled();
+        for (const call of db.appendAuditEvent.mock.calls) {
+          const input = (call as unknown as [unknown, { purpose?: unknown }])[1];
+          expect(typeof input.purpose).toBe("string");
+          expect(isAuditPurpose(input.purpose as string)).toBe(true);
+        }
+      }
     });
 
     it("create with IdentityError invalid_email from create gives an empty 400", async () => {
