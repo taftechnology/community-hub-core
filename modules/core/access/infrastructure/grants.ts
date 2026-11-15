@@ -246,7 +246,7 @@ export async function writeUserLink(
     throw new AccessError("not_member");
   }
 
-  const minor = await personIsMinor(tx, personId);
+  const minor = await personIsMinor(tx, personId, { lock: "share" });
   if (minor === null) {
     throw new AccessError("not_found");
   }

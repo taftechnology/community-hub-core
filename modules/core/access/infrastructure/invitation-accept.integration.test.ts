@@ -1585,6 +1585,159 @@ describe("invitation accept repository integration (pins & behaviour)", () => {
     });
   });
 
+  it("pin 36 (d): a contact made a minor while accept runs gives invitation_void", async () => {
+    await withTwoOrgs(async ({ app, kms, orgA }) => {
+      const scope = { orgId: orgA.organisationId, communityId: orgA.community1Id };
+      const owner = newId();
+      await runInCommunity(app, scope, (tx) =>
+        bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner }),
+      );
+
+      const { adultId } = await runInCommunity(app, scope, (tx) => createAdultAndMinor(tx, kms));
+
+      const stub = new MemoryInvitationAddresses();
+      const invId = newId();
+      const address = "contact-race-minor-36d@example.test";
+      const created = await runInCommunity(app, scope, (tx) =>
+        createInvitation(tx, stub, {
+          invitationId: invId,
+          actorUserId: owner,
+          address,
+          personId: adultId,
+          roleKey: "member",
+          now: NOW,
+        }),
+      );
+
+      const acceptingUser = newId();
+      stub.userAddresses.set(acceptingUser, address);
+
+      const runtime = loadRuntime();
+      const holderDirect = createPlaintextDirectSql(runtime.productOnlyUrl);
+      const observerApp = createPlaintextAppSql(roleUrl(runtime, "app"));
+      let lockHeldResolve!: () => void;
+      const lockHeld = new Promise<void>((r) => {
+        lockHeldResolve = r;
+      });
+      let releaseLockResolve!: () => void;
+      const releaseLock = new Promise<void>((r) => {
+        releaseLockResolve = r;
+      });
+
+      let pendingAccept: Promise<unknown>;
+
+      const gate = holderDirect.begin(async (tx) => {
+        await tx`
+          update app.persons
+          set is_minor = true,
+              given_name_restricted = convert_to(given_name, 'UTF8'),
+              family_name_restricted = convert_to(family_name, 'UTF8'),
+              given_name = null,
+              family_name = null
+          where id = ${adultId}::uuid
+        `;
+        lockHeldResolve();
+        await releaseLock;
+      });
+
+      try {
+        await lockHeld;
+
+        let acceptSettled = false;
+        let acceptErr: unknown;
+        pendingAccept = runInCommunity(app, scope, async (tx) => {
+          try {
+            await acceptInvitation(tx, stub, {
+              token: created.token,
+              userId: acceptingUser,
+              now: NOW,
+            });
+          } catch (e) {
+            if (e instanceof AccessError && e.code === "invitation_void") {
+              acceptErr = e;
+              return;
+            }
+            throw e;
+          }
+        }).finally(() => {
+          acceptSettled = true;
+        });
+
+        let waited = false;
+        const started = Date.now();
+        while (Date.now() - started < 5_000) {
+          const waiting = await observerApp<{ n: number }[]>`
+            select count(*)::int as n
+            from pg_locks l
+            join pg_stat_activity a on a.pid = l.pid
+            where a.datname = current_database()
+              and l.locktype in ('transactionid', 'tuple')
+              and not l.granted
+              and a.query like '%app.persons%'
+          `;
+          if ((waiting[0]?.n ?? 0) >= 1) {
+            waited = true;
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+
+        expect(waited).toBe(true);
+        expect(acceptSettled).toBe(false);
+
+        releaseLockResolve();
+        await gate;
+        await pendingAccept;
+
+        expect(acceptErr).toBeInstanceOf(AccessError);
+        expect((acceptErr as AccessError).code).toBe("invitation_void");
+
+        await runInCommunity(app, scope, async (tx) => {
+          const rows = await tx<{ status: string }[]>`
+            select status from app.invitations where id = ${invId}::uuid
+          `;
+          expect(rows[0]!.status).toBe("void");
+
+          const links = await tx<{ count: number }[]>`
+            select count(*)::int as count
+            from app.user_links
+            where person_id = ${adultId}::uuid
+          `;
+          expect(links[0]!.count).toBe(0);
+
+          const members = await tx<{ count: number }[]>`
+            select count(*)::int as count
+            from app.organisation_members
+            where invitation_id = ${invId}::uuid
+          `;
+          expect(members[0]!.count).toBe(0);
+
+          const grants = await tx<{ count: number }[]>`
+            select count(*)::int as count
+            from app.community_role_grants
+            where user_id = ${acceptingUser}::uuid
+          `;
+          expect(grants[0]!.count).toBe(0);
+
+          const voidAudits = await tx<{ count: number }[]>`
+            select count(*)::int as count
+            from app.audit_events
+            where action = 'access.invitation.voided'
+              and target_ids[1] = ${invId}::uuid
+          `;
+          expect(voidAudits[0]!.count).toBe(1);
+
+          await assertNoSensitiveDataInAudit(tx, [address, created.token]);
+        });
+      } finally {
+        releaseLockResolve();
+        await gate.catch(() => undefined);
+        await holderDirect.end({ timeout: 1 });
+        await observerApp.end({ timeout: 1 });
+      }
+    });
+  }, 15_000);
+
   it("pin 37: step 7 failure rolls back savepoint and writes void", async () => {
     await withTwoOrgs(async ({ app, kms, orgA }) => {
       const scope = { orgId: orgA.organisationId, communityId: orgA.community1Id };
