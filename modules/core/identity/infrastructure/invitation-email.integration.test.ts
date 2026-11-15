@@ -511,6 +511,64 @@ describe("invitation-email integration tests", () => {
     });
   });
 
+  it("pin 56: seed 501 rows expired 31 to 40 days ago, sweep returns erased 1 deleted 500, remaining has nulls", async () => {
+    await withSql(async (sql) => {
+      const now = new Date();
+      const dayMs = 24 * 3600_000;
+      const dummyByte = new Uint8Array(32);
+      dummyByte.fill(1);
+
+      const rows = Array.from({ length: 501 }, (_, i) => {
+        const id = `00000000-0000-4000-9000-${String(i).padStart(12, "0")}`;
+        const dedupe = new Uint8Array(32);
+        new DataView(dedupe.buffer).setUint32(0, i);
+        const expiredDaysAgo = 31 + (i % 10);
+        return {
+          invitation_id: id,
+          region: "au",
+          email: dummyByte,
+          email_bidx: dummyByte,
+          dedupe_key: dedupe,
+          expires_at: new Date(now.getTime() - expiredDaysAgo * dayMs),
+          created_at: new Date(now.getTime() - 50 * dayMs),
+        };
+      });
+
+      await sql`
+        insert into identity.invitation_emails ${sql(
+          rows,
+          "invitation_id",
+          "region",
+          "email",
+          "email_bidx",
+          "dedupe_key",
+          "expires_at",
+          "created_at",
+        )}
+      `;
+
+      const result = await sweepInvitationEmails(sql, now);
+      expect(result).toEqual({ erased: 1, deleted: 500 });
+
+      const remaining = await sql<
+        {
+          invitation_id: string;
+          email: Uint8Array | null;
+          email_bidx: Uint8Array | null;
+          dedupe_key: Uint8Array | null;
+        }[]
+      >`
+        select invitation_id, email, email_bidx, dedupe_key
+        from identity.invitation_emails
+      `;
+
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0]!.email).toBeNull();
+      expect(remaining[0]!.email_bidx).toBeNull();
+      expect(remaining[0]!.dedupe_key).toBeNull();
+    });
+  }, 20_000);
+
   it("A5 test d: seeding 501 erasable rows, first sweep erases 500, second erases 1", async () => {
     await withSql(async (sql) => {
       const now = new Date();

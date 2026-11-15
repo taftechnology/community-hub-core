@@ -1723,4 +1723,178 @@ describe("invitations repository integration (pins & behaviour)", () => {
       });
     });
   });
+
+  it("pin 52: create without access.users.manage at pending cap gives forbidden, no sweep, keeps old revoked row", async () => {
+    await withTwoOrgs(async ({ app, orgA }) => {
+      const scopeA1 = { orgId: orgA.organisationId, communityId: orgA.community1Id };
+      const owner = newId();
+      const unprivileged = newId();
+
+      await runInCommunity(app, scopeA1, async (tx) => {
+        await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+        await addMember(tx, unprivileged);
+      });
+
+      const oldRevokedId = newId();
+      const dummyHash = Buffer.alloc(32, 1);
+      const fortyDaysAgo = new Date(NOW.getTime() - 40 * 86400000);
+      const thirtyFiveDaysAgo = new Date(NOW.getTime() - 35 * 86400000);
+
+      await runInCommunity(app, scopeA1, async (tx) => {
+        await tx`
+          insert into app.invitations (
+            id, org_id, community_id, invited_by, token_hash, role_key, custom_role_id,
+            person_id, status, expires_at, resend_count, last_sent_at, accepted_user_id, closed_at, created_at
+          ) values (
+            ${oldRevokedId}::uuid, current_setting('app.org_id')::uuid, current_setting('app.community_id')::uuid,
+            ${owner}::uuid, ${dummyHash}, 'member', null,
+            null, 'revoked', ${thirtyFiveDaysAgo}, 0, ${fortyDaysAgo}, null, ${thirtyFiveDaysAgo}, ${fortyDaysAgo}
+          )
+        `;
+
+        for (let i = 0; i < 100; i++) {
+          const invId = newId();
+          await tx`
+            insert into app.invitations (
+              id, org_id, community_id, invited_by, token_hash, role_key, custom_role_id,
+              person_id, status, expires_at, resend_count, last_sent_at, accepted_user_id, closed_at, created_at
+            ) values (
+              ${invId}::uuid, current_setting('app.org_id')::uuid, current_setting('app.community_id')::uuid,
+              ${owner}::uuid, ${dummyHash}, 'member', null,
+              null, 'pending', ${new Date(NOW.getTime() + 7 * 86400000)}, 0, ${NOW}, null, null, ${NOW}
+            )
+          `;
+        }
+      });
+
+      const stub = new MemoryInvitationAddresses();
+      const call = runInCommunity(app, scopeA1, (tx) =>
+        createInvitation(tx, stub, {
+          invitationId: newId(),
+          actorUserId: unprivileged,
+          address: "pin52@example.test",
+          roleKey: "member",
+          now: NOW,
+        }),
+      );
+
+      const err = await call.then(
+        () => "resolved" as const,
+        (e) => e,
+      );
+      expect(err).toBeInstanceOf(AccessError);
+      expect((err as AccessError).code).toBe("forbidden");
+      expect(stub.calls).toHaveLength(0);
+
+      await runInCommunity(app, scopeA1, async (tx) => {
+        const rows = await tx<{ id: string }[]>`
+          select id::text as id from app.invitations where id = ${oldRevokedId}::uuid
+        `;
+        expect(rows).toHaveLength(1);
+        await assertNoSensitiveDataInAudit(tx, ["pin52@example.test"]);
+      });
+    });
+  });
+
+  it("pin 55 a: deleteInvitationAfterMailFailure requires access.users.manage", async () => {
+    await withTwoOrgs(async ({ app, orgA }) => {
+      const scopeA1 = { orgId: orgA.organisationId, communityId: orgA.community1Id };
+      const owner = newId();
+      const unprivileged = newId();
+
+      await runInCommunity(app, scopeA1, async (tx) => {
+        await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+        await addMember(tx, unprivileged);
+      });
+
+      const invId = newId();
+      const stub = new MemoryInvitationAddresses();
+      await runInCommunity(app, scopeA1, (tx) =>
+        createInvitation(tx, stub, {
+          invitationId: invId,
+          actorUserId: owner,
+          address: "pin55a@example.test",
+          roleKey: "member",
+          now: NOW,
+        }),
+      );
+
+      stub.calls.length = 0;
+      const call = runInCommunity(app, scopeA1, (tx) =>
+        deleteInvitationAfterMailFailure(tx, stub, {
+          invitationId: invId,
+          actorUserId: unprivileged,
+          now: NOW,
+        }),
+      );
+
+      const err = await call.then(
+        () => "resolved" as const,
+        (e) => e,
+      );
+      expect(err).toBeInstanceOf(AccessError);
+      expect((err as AccessError).code).toBe("forbidden");
+      expect(stub.calls).toHaveLength(0);
+
+      await runInCommunity(app, scopeA1, async (tx) => {
+        const rows = await tx<{ id: string; status: string }[]>`
+          select id::text as id, status from app.invitations where id = ${invId}::uuid
+        `;
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.status).toBe("pending");
+        await assertNoSensitiveDataInAudit(tx, ["pin55a@example.test"]);
+      });
+    });
+  });
+
+  it("pin 55 b: voidInvitationAfterMailFailure requires access.users.manage", async () => {
+    await withTwoOrgs(async ({ app, orgA }) => {
+      const scopeA1 = { orgId: orgA.organisationId, communityId: orgA.community1Id };
+      const owner = newId();
+      const unprivileged = newId();
+
+      await runInCommunity(app, scopeA1, async (tx) => {
+        await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+        await addMember(tx, unprivileged);
+      });
+
+      const invId = newId();
+      const stub = new MemoryInvitationAddresses();
+      await runInCommunity(app, scopeA1, (tx) =>
+        createInvitation(tx, stub, {
+          invitationId: invId,
+          actorUserId: owner,
+          address: "pin55b@example.test",
+          roleKey: "member",
+          now: NOW,
+        }),
+      );
+
+      stub.calls.length = 0;
+      const call = runInCommunity(app, scopeA1, (tx) =>
+        voidInvitationAfterMailFailure(tx, stub, {
+          invitationId: invId,
+          actorUserId: unprivileged,
+          now: NOW,
+        }),
+      );
+
+      const err = await call.then(
+        () => "resolved" as const,
+        (e) => e,
+      );
+      expect(err).toBeInstanceOf(AccessError);
+      expect((err as AccessError).code).toBe("forbidden");
+      expect(stub.calls).toHaveLength(0);
+
+      await runInCommunity(app, scopeA1, async (tx) => {
+        const rows = await tx<{ id: string; status: string }[]>`
+          select id::text as id, status from app.invitations where id = ${invId}::uuid
+        `;
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.status).toBe("pending");
+        await assertNoSensitiveDataInAudit(tx, ["pin55b@example.test"]);
+      });
+    });
+  });
 });

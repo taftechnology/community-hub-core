@@ -220,23 +220,7 @@ export async function sweepInvitationEmails(
   now: Date,
 ): Promise<{ erased: number; deleted: number }> {
   const rows = await sql<{ erased: number; deleted: number }[]>`
-    with to_erase as (
-      select invitation_id
-      from identity.invitation_emails
-      where expires_at <= ${now}
-        and email is not null
-        and coalesce(closed_at, expires_at) >= ${now}::timestamptz - interval '30 days'
-      order by expires_at asc
-      limit 500
-      for update skip locked
-    ),
-    erased as (
-      update identity.invitation_emails
-      set email = null, email_bidx = null, dedupe_key = null
-      where invitation_id in (select invitation_id from to_erase)
-      returning 1
-    ),
-    to_delete as (
+    with to_delete as (
       select invitation_id
       from identity.invitation_emails
       where coalesce(closed_at, expires_at) < ${now}::timestamptz - interval '30 days'
@@ -247,6 +231,22 @@ export async function sweepInvitationEmails(
     deleted as (
       delete from identity.invitation_emails
       where invitation_id in (select invitation_id from to_delete)
+      returning 1
+    ),
+    to_erase as (
+      select invitation_id
+      from identity.invitation_emails
+      where expires_at <= ${now}
+        and email is not null
+        and invitation_id not in (select invitation_id from to_delete)
+      order by expires_at asc
+      limit 500
+      for update skip locked
+    ),
+    erased as (
+      update identity.invitation_emails
+      set email = null, email_bidx = null, dedupe_key = null
+      where invitation_id in (select invitation_id from to_erase)
       returning 1
     )
     select

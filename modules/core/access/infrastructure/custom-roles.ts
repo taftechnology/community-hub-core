@@ -113,13 +113,13 @@ export async function deleteCustomRole(
   tx: AppTransaction,
   input: { now: Date; customRoleId: string; actorUserId: string },
 ): Promise<void> {
-  await lockOrganisation(tx);
   const customRoleId = parseUuid(input.customRoleId);
   const actorUserId = parseUuid(input.actorUserId);
   const actor = await loadActor(tx, actorUserId);
   if (!allows(actor, MANAGE)) {
     await deny(tx, actorUserId);
   }
+  await lockOrganisation(tx);
   const roles = await tx<{ id: string }[]>`
     select id::text as id
     from app.custom_roles

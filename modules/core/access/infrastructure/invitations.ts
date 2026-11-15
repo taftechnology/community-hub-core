@@ -112,6 +112,17 @@ export async function createInvitation(
   const customRoleId = hasCustomRole ? parseUuid(input.customRoleId!) : null;
   const personId = hasPerson ? parseUuid(input.personId!) : null;
 
+  const actor = await loadActor(tx, actorUserId);
+  if (!allows(actor, "access.users.manage")) {
+    await deny(tx, actorUserId);
+  }
+  if ((hasRoleKey || hasCustomRole) && !allows(actor, "access.roles.manage")) {
+    await deny(tx, actorUserId);
+  }
+  if (hasPerson && !allows(actor, "people.view")) {
+    await deny(tx, actorUserId);
+  }
+
   await lockOrganisation(tx);
 
   const now = input.now ?? new Date();
@@ -142,17 +153,6 @@ export async function createInvitation(
   `;
   if ((recentRows[0]?.n ?? 0) >= 20) {
     throw new AccessError("too_many");
-  }
-
-  const actor = await loadActor(tx, actorUserId);
-  if (!allows(actor, "access.users.manage")) {
-    await deny(tx, actorUserId);
-  }
-  if ((hasRoleKey || hasCustomRole) && !allows(actor, "access.roles.manage")) {
-    await deny(tx, actorUserId);
-  }
-  if (hasPerson && !allows(actor, "people.view")) {
-    await deny(tx, actorUserId);
   }
 
   if (hasRoleKey) {
@@ -484,6 +484,10 @@ export async function deleteInvitationAfterMailFailure(
 ): Promise<void> {
   const invitationId = parseUuid(input.invitationId);
   const actorUserId = parseUuid(input.actorUserId);
+  const actor = await loadActor(tx, actorUserId);
+  if (!allows(actor, "access.users.manage")) {
+    await deny(tx, actorUserId);
+  }
   const now = input.now ?? new Date();
 
   await addresses.sweep(now);
@@ -519,6 +523,10 @@ export async function voidInvitationAfterMailFailure(
 ): Promise<void> {
   const invitationId = parseUuid(input.invitationId);
   const actorUserId = parseUuid(input.actorUserId);
+  const actor = await loadActor(tx, actorUserId);
+  if (!allows(actor, "access.users.manage")) {
+    await deny(tx, actorUserId);
+  }
   const now = input.now ?? new Date();
 
   await addresses.sweep(now);
@@ -659,8 +667,6 @@ export async function acceptInvitation(
   const userId = parseUuid(input.userId);
   const now = input.now ?? new Date();
 
-  await addresses.sweep(now);
-
   const rows = await tx<
     {
       id: string;
@@ -709,6 +715,8 @@ export async function acceptInvitation(
   if (row.status !== "pending" || row.expires_at <= now) {
     throw new AccessError("invitation_invalid");
   }
+
+  await addresses.sweep(now);
 
   const matched = await addresses.matches({
     invitationId: row.id,

@@ -2462,4 +2462,60 @@ describe("invitation accept repository integration (pins & behaviour)", () => {
       });
     });
   });
+
+  it("pin 54: accept with right invitation id and wrong secret gives invitation_invalid, stub records no sweep", async () => {
+    await withTwoOrgs(async ({ app, orgA }) => {
+      const scopeA1 = { orgId: orgA.organisationId, communityId: orgA.community1Id };
+      const owner = newId();
+      const user = newId();
+
+      await runInCommunity(app, scopeA1, async (tx) => {
+        await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+        await addMember(tx, user);
+      });
+
+      const invId = newId();
+      const stub = new MemoryInvitationAddresses();
+      const created = await runInCommunity(app, scopeA1, (tx) =>
+        createInvitation(tx, stub, {
+          invitationId: invId,
+          actorUserId: owner,
+          address: "pin54@example.test",
+          roleKey: "member",
+          now: NOW,
+        }),
+      );
+
+      stub.calls.length = 0;
+
+      const wrongSecret = Buffer.alloc(32, 9);
+      const wrongPayload = Buffer.concat([
+        Buffer.from(orgA.organisationId.replaceAll("-", ""), "hex"),
+        Buffer.from(orgA.community1Id.replaceAll("-", ""), "hex"),
+        Buffer.from(invId.replaceAll("-", ""), "hex"),
+        wrongSecret,
+      ]);
+      const wrongToken = "v1." + wrongPayload.toString("base64url");
+
+      const call = runInCommunity(app, scopeA1, (tx) =>
+        acceptInvitation(tx, stub, {
+          token: wrongToken,
+          userId: user,
+          now: NOW,
+        }),
+      );
+
+      const err = await call.then(
+        () => "resolved" as const,
+        (e) => e,
+      );
+      expect(err).toBeInstanceOf(AccessError);
+      expect((err as AccessError).code).toBe("invitation_invalid");
+      expect(stub.calls).toHaveLength(0);
+
+      await runInCommunity(app, scopeA1, async (tx) => {
+        await assertNoSensitiveDataInAudit(tx, ["pin54@example.test", created.token, wrongToken]);
+      });
+    });
+  });
 });

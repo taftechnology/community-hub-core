@@ -684,4 +684,101 @@ describe("custom roles", () => {
       await observerApp.end({ timeout: 1 });
     }
   }, 15_000);
+
+  it("pin 53: deleteCustomRole without access.roles.manage settles with forbidden while organisation lock is held", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const holderApp = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const runnerApp = createPlaintextAppSql(roleUrl(runtime, "app"));
+
+    const organisationId = newId();
+    const communityId = newId();
+    const scope = { orgId: organisationId, communityId };
+    const owner = newId();
+    const unprivileged = newId();
+
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, 'pin-53-org', 'au', 'implicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, 'pin-53-comm', 'au')
+        `;
+      });
+
+      let roleId = "";
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, scope, async (tx) => {
+          await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+          await addMember(tx, unprivileged);
+          const role = await createCustomRole(tx, {
+            now: NOW,
+            key: "pin53_role",
+            permissions: ["access.users.view"],
+            actorUserId: owner,
+          });
+          roleId = role.customRoleId;
+        }),
+      );
+
+      let lockHeldResolve!: () => void;
+      const lockHeld = new Promise<void>((r) => {
+        lockHeldResolve = r;
+      });
+      let releaseLockResolve!: () => void;
+      const releaseLock = new Promise<void>((r) => {
+        releaseLockResolve = r;
+      });
+
+      const holderPromise = withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(holderApp, scope, async (tx) => {
+          await tx`
+            select pg_advisory_xact_lock(
+              hashtextextended('access.org:' || current_setting('app.org_id'), 0)
+            )
+          `;
+          lockHeldResolve();
+          await releaseLock;
+        }),
+      );
+
+      await lockHeld;
+
+      const TIMEOUT_SENTINEL = Symbol("timeout");
+      const callPromise = withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(runnerApp, scope, async (tx) => {
+          await deleteCustomRole(tx, {
+            now: NOW,
+            customRoleId: roleId,
+            actorUserId: unprivileged,
+          });
+        }),
+      ).then(
+        () => "resolved" as const,
+        (err) => err,
+      );
+
+      const timerPromise = new Promise<typeof TIMEOUT_SENTINEL>((resolve) => {
+        setTimeout(() => resolve(TIMEOUT_SENTINEL), 2000);
+      });
+
+      const outcome = await Promise.race([callPromise, timerPromise]);
+
+      releaseLockResolve();
+      await holderPromise;
+
+      expect(outcome).not.toBe(TIMEOUT_SENTINEL);
+      expect(outcome).toBeInstanceOf(AccessError);
+      expect((outcome as AccessError).code).toBe("forbidden");
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+      await holderApp.end({ timeout: 1 });
+      await runnerApp.end({ timeout: 1 });
+    }
+  }, 10_000);
 });
