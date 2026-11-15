@@ -213,6 +213,98 @@ async function denyNotMember(tx: AppTransaction, actorUserId: string): Promise<n
   throw new AccessError("not_member");
 }
 
+export type WriteRoleGrantInput = {
+  readonly userId: string;
+  readonly roleKey: string;
+  readonly actorUserId: string;
+  readonly skipDuplicate?: boolean;
+};
+
+export type WriteCustomRoleGrantInput = {
+  readonly userId: string;
+  readonly customRoleId: string;
+  readonly actorUserId: string;
+  readonly skipDuplicate?: boolean;
+};
+
+export type WriteUserLinkInput = {
+  readonly userId: string;
+  readonly personId: string;
+  readonly actorUserId: string;
+  readonly skipDuplicate?: boolean;
+};
+
+export async function writeUserLink(
+  tx: AppTransaction,
+  input: WriteUserLinkInput,
+): Promise<{ linkId: string | null; skipped: boolean }> {
+  const userId = parseUuid(input.userId);
+  const personId = parseUuid(input.personId);
+  const actorUserId = parseUuid(input.actorUserId);
+
+  if (!(await isMember(tx, userId))) {
+    throw new AccessError("not_member");
+  }
+
+  if (input.skipDuplicate) {
+    const exact = await tx<{ id: string }[]>`
+      select id::text as id
+      from app.user_links
+      where org_id = current_setting('app.org_id')::uuid
+        and community_id = current_setting('app.community_id')::uuid
+        and user_id = ${userId}::uuid
+        and person_id = ${personId}::uuid
+    `;
+    if (exact.length > 0) {
+      return { linkId: exact[0]!.id, skipped: true };
+    }
+  }
+
+  const linkId = newId();
+  try {
+    await tx.savepoint("user_link", async (sp) => {
+      await sp`
+        insert into app.user_links (id, org_id, community_id, user_id, person_id)
+        values (
+          ${linkId}::uuid,
+          current_setting('app.org_id')::uuid,
+          current_setting('app.community_id')::uuid,
+          ${userId}::uuid,
+          ${personId}::uuid
+        )
+      `;
+    });
+  } catch (error) {
+    if (uniqueViolation(error, "user_links")) {
+      if (input.skipDuplicate) {
+        const recheck = await tx<{ id: string }[]>`
+          select id::text as id
+          from app.user_links
+          where org_id = current_setting('app.org_id')::uuid
+            and community_id = current_setting('app.community_id')::uuid
+            and user_id = ${userId}::uuid
+            and person_id = ${personId}::uuid
+        `;
+        if (recheck.length > 0) {
+          return { linkId: recheck[0]!.id, skipped: true };
+        }
+      }
+      throw new AccessError("duplicate_link");
+    }
+    throw error;
+  }
+
+  await appendAuditEvent(tx, {
+    actorKind: "user",
+    actorId: actorUserId,
+    action: LINKED,
+    purpose: LINKED,
+    targetIds: [linkId],
+  });
+
+  return { linkId, skipped: false };
+}
+
 export async function linkUser(tx: AppTransaction, input: LinkInput): Promise<{ linkId: string }> {
   const userId = parseUuid(input.userId);
   const personId = parseUuid(input.personId);
@@ -231,34 +323,13 @@ export async function linkUser(tx: AppTransaction, input: LinkInput): Promise<{ 
   if (minor) {
     throw new AccessError("minor_forbidden");
   }
-  const linkId = newId();
-  try {
-    await tx.savepoint("user_link", async (sp) => {
-      await sp`
-        insert into app.user_links (id, org_id, community_id, user_id, person_id)
-        values (
-          ${linkId}::uuid,
-          current_setting('app.org_id')::uuid,
-          current_setting('app.community_id')::uuid,
-          ${userId}::uuid,
-          ${personId}::uuid
-        )
-      `;
-    });
-  } catch (error) {
-    if (uniqueViolation(error, "user_links")) {
-      throw new AccessError("duplicate_link");
-    }
-    throw error;
-  }
-  await appendAuditEvent(tx, {
-    actorKind: "user",
-    actorId: actorUserId,
-    action: LINKED,
-    purpose: LINKED,
-    targetIds: [linkId],
+  const result = await writeUserLink(tx, {
+    userId,
+    personId,
+    actorUserId,
+    skipDuplicate: false,
   });
-  return { linkId };
+  return { linkId: result.linkId! };
 }
 
 export async function unlinkUser(
@@ -389,6 +460,71 @@ async function assertGrantSubjectAdult(tx: AppTransaction, userId: string): Prom
   }
 }
 
+export async function writeCustomRoleGrant(
+  tx: AppTransaction,
+  input: WriteCustomRoleGrantInput,
+): Promise<{ grantId: string | null; scope: "community"; skipped: boolean }> {
+  const userId = parseUuid(input.userId);
+  const customRoleId = parseUuid(input.customRoleId);
+  const actorUserId = parseUuid(input.actorUserId);
+
+  if (!(await isMember(tx, userId))) {
+    throw new AccessError("not_member");
+  }
+
+  await assertGrantSubjectAdult(tx, userId);
+
+  if (input.skipDuplicate) {
+    const existing = await tx<{ id: string }[]>`
+      select id::text as id
+      from app.community_role_grants
+      where org_id = current_setting('app.org_id')::uuid
+        and community_id = current_setting('app.community_id')::uuid
+        and user_id = ${userId}::uuid
+        and custom_role_id = ${customRoleId}::uuid
+    `;
+    if (existing.length > 0) {
+      return { grantId: existing[0]!.id, scope: "community", skipped: true };
+    }
+  }
+
+  const grantId = newId();
+  try {
+    await tx.savepoint("role_grant", async (sp) => {
+      await sp`
+        insert into app.community_role_grants (
+          id, org_id, community_id, user_id, role_key, custom_role_id
+        ) values (
+          ${grantId}::uuid,
+          current_setting('app.org_id')::uuid,
+          current_setting('app.community_id')::uuid,
+          ${userId}::uuid,
+          null,
+          ${customRoleId}::uuid
+        )
+      `;
+    });
+  } catch (error) {
+    if (uniqueViolation(error, "role_grant")) {
+      if (input.skipDuplicate) {
+        return { grantId: null, scope: "community", skipped: true };
+      }
+      throw new AccessError("duplicate_grant");
+    }
+    throw error;
+  }
+
+  await appendAuditEvent(tx, {
+    actorKind: "user",
+    actorId: actorUserId,
+    action: GRANTED,
+    purpose: GRANTED,
+    targetIds: [grantId],
+  });
+
+  return { grantId, scope: "community", skipped: false };
+}
+
 async function grantCustomRole(
   tx: AppTransaction,
   userId: string,
@@ -427,10 +563,78 @@ async function grantCustomRole(
   if (!(await isMember(tx, userId))) {
     await denyNotMember(tx, actorUserId);
   }
+  const result = await writeCustomRoleGrant(tx, {
+    userId,
+    customRoleId,
+    actorUserId,
+    skipDuplicate: false,
+  });
+  return { grantId: result.grantId!, scope: "community" };
+}
+
+export async function writeRoleGrant(
+  tx: AppTransaction,
+  input: WriteRoleGrantInput,
+): Promise<{ grantId: string | null; scope: "organisation" | "community"; skipped: boolean }> {
+  const userId = parseUuid(input.userId);
+  const actorUserId = parseUuid(input.actorUserId);
+  const roleKey = input.roleKey;
+  const organisationRole = ORGANISATION_ROLES.has(roleKey);
+  const communityRole = COMMUNITY_ROLES.has(roleKey);
+  if (!organisationRole && !communityRole) {
+    throw new AccessError("invalid_role");
+  }
+
+  if (!(await isMember(tx, userId))) {
+    throw new AccessError("not_member");
+  }
+
   await assertGrantSubjectAdult(tx, userId);
+
+  const scope = organisationRole ? "organisation" : "community";
+
+  if (input.skipDuplicate) {
+    if (scope === "organisation") {
+      const existing = await tx<{ id: string }[]>`
+        select id::text as id
+        from app.organisation_role_grants
+        where org_id = current_setting('app.org_id')::uuid
+          and user_id = ${userId}::uuid
+          and role_key = ${roleKey}
+      `;
+      if (existing.length > 0) {
+        return { grantId: existing[0]!.id, scope, skipped: true };
+      }
+    } else {
+      const existing = await tx<{ id: string }[]>`
+        select id::text as id
+        from app.community_role_grants
+        where org_id = current_setting('app.org_id')::uuid
+          and community_id = current_setting('app.community_id')::uuid
+          and user_id = ${userId}::uuid
+          and role_key = ${roleKey}
+      `;
+      if (existing.length > 0) {
+        return { grantId: existing[0]!.id, scope, skipped: true };
+      }
+    }
+  }
+
   const grantId = newId();
   try {
     await tx.savepoint("role_grant", async (sp) => {
+      if (scope === "organisation") {
+        await sp`
+          insert into app.organisation_role_grants (id, org_id, user_id, role_key)
+          values (
+            ${grantId}::uuid,
+            current_setting('app.org_id')::uuid,
+            ${userId}::uuid,
+            ${roleKey}
+          )
+        `;
+        return;
+      }
       await sp`
         insert into app.community_role_grants (
           id, org_id, community_id, user_id, role_key, custom_role_id
@@ -439,17 +643,21 @@ async function grantCustomRole(
           current_setting('app.org_id')::uuid,
           current_setting('app.community_id')::uuid,
           ${userId}::uuid,
-          null,
-          ${customRoleId}::uuid
+          ${roleKey},
+          null
         )
       `;
     });
   } catch (error) {
     if (uniqueViolation(error, "role_grant")) {
+      if (input.skipDuplicate) {
+        return { grantId: null, scope, skipped: true };
+      }
       throw new AccessError("duplicate_grant");
     }
     throw error;
   }
+
   await appendAuditEvent(tx, {
     actorKind: "user",
     actorId: actorUserId,
@@ -457,7 +665,8 @@ async function grantCustomRole(
     purpose: GRANTED,
     targetIds: [grantId],
   });
-  return { grantId, scope: "community" };
+
+  return { grantId, scope, skipped: false };
 }
 
 export async function grantRole(
@@ -490,66 +699,13 @@ export async function grantRole(
   if (!(await isMember(tx, userId))) {
     await denyNotMember(tx, actorUserId);
   }
-  const linked = await tx<{ person_id: string }[]>`
-    select person_id::text as person_id
-    from app.user_links
-    where user_id = ${userId}::uuid
-      and org_id = current_setting('app.org_id')::uuid
-      and community_id = current_setting('app.community_id')::uuid
-  `;
-  const personId = linked[0]?.person_id;
-  if (personId !== undefined) {
-    const minor = await personIsMinor(tx, personId);
-    if (minor === null) {
-      throw new AccessError("not_found");
-    }
-    if (minor) {
-      throw new AccessError("minor_forbidden");
-    }
-  }
-  const grantId = newId();
-  const scope = organisationRole ? "organisation" : "community";
-  try {
-    await tx.savepoint("role_grant", async (sp) => {
-      if (scope === "organisation") {
-        await sp`
-          insert into app.organisation_role_grants (id, org_id, user_id, role_key)
-          values (
-            ${grantId}::uuid,
-            current_setting('app.org_id')::uuid,
-            ${userId}::uuid,
-            ${roleKey}
-          )
-        `;
-        return;
-      }
-      await sp`
-        insert into app.community_role_grants (
-          id, org_id, community_id, user_id, role_key, custom_role_id
-        ) values (
-          ${grantId}::uuid,
-          current_setting('app.org_id')::uuid,
-          current_setting('app.community_id')::uuid,
-          ${userId}::uuid,
-          ${roleKey},
-          null
-        )
-      `;
-    });
-  } catch (error) {
-    if (uniqueViolation(error, "role_grant")) {
-      throw new AccessError("duplicate_grant");
-    }
-    throw error;
-  }
-  await appendAuditEvent(tx, {
-    actorKind: "user",
-    actorId: actorUserId,
-    action: GRANTED,
-    purpose: GRANTED,
-    targetIds: [grantId],
+  const result = await writeRoleGrant(tx, {
+    userId,
+    roleKey,
+    actorUserId,
+    skipDuplicate: false,
   });
-  return { grantId, scope };
+  return { grantId: result.grantId!, scope: result.scope };
 }
 
 export async function revokeRole(

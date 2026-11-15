@@ -1,12 +1,21 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { appendAuditEvent, type AppTransaction } from "@community-hub/db";
 import { personIsMinor } from "@community-hub/people";
 
 import { AccessError } from "../domain/error.js";
 import type { InvitationAddresses } from "../domain/invitation-addresses.js";
-import { buildInvitationToken } from "../domain/invitation-token.js";
+import { buildInvitationToken, parseInvitationToken } from "../domain/invitation-token.js";
 import { COMMUNITY_ROLE_KEYS, ORGANISATION_ROLE_KEYS, parseUuid } from "../domain/role.js";
-import { allows, deny, loadActor, roleGrantAllowed } from "./grants.js";
-import { lockOrganisation } from "./membership.js";
+import {
+  allows,
+  deny,
+  loadActor,
+  roleGrantAllowed,
+  writeCustomRoleGrant,
+  writeRoleGrant,
+  writeUserLink,
+} from "./grants.js";
+import { insertMembership, lockOrganisation } from "./membership.js";
 
 const ORGANISATION_ROLES = new Set<string>(ORGANISATION_ROLE_KEYS);
 const COMMUNITY_ROLES = new Set<string>(COMMUNITY_ROLE_KEYS);
@@ -14,6 +23,7 @@ const COMMUNITY_ROLES = new Set<string>(COMMUNITY_ROLE_KEYS);
 const INVITATION_CREATED = "access.invitation.created";
 const INVITATION_RESENT = "access.invitation.resent";
 const INVITATION_REVOKED = "access.invitation.revoked";
+const INVITATION_ACCEPTED = "access.invitation.accepted";
 const INVITATION_VOIDED = "access.invitation.voided";
 const INVITATIONS_LISTED = "access.invitations.listed";
 
@@ -24,6 +34,17 @@ export type CreateInvitationInput = {
   readonly roleKey?: string | null;
   readonly customRoleId?: string | null;
   readonly personId?: string | null;
+  readonly now?: Date;
+};
+
+export type ProveInvitationInput = {
+  readonly token: string;
+  readonly now?: Date;
+};
+
+export type AcceptInvitationInput = {
+  readonly token: string;
+  readonly userId: string;
   readonly now?: Date;
 };
 
@@ -528,4 +549,319 @@ export async function voidInvitationAfterMailFailure(
     purpose: INVITATION_VOIDED,
     targetIds: [invitationId],
   });
+}
+
+export async function proveInvitation(
+  tx: AppTransaction,
+  input: ProveInvitationInput,
+): Promise<"ok" | "invalid"> {
+  const parsed = parseInvitationToken(input.token);
+  if (parsed === "invalid") {
+    return "invalid";
+  }
+
+  const settings = await tx<{ org_id: string; community_id: string }[]>`
+    select
+      current_setting('app.org_id') as org_id,
+      current_setting('app.community_id') as community_id
+  `;
+  if (parsed.orgId !== settings[0]?.org_id || parsed.communityId !== settings[0]?.community_id) {
+    return "invalid";
+  }
+
+  const rows = await tx<
+    {
+      token_hash: Buffer | Uint8Array;
+      status: string;
+      expires_at: Date;
+    }[]
+  >`
+    select token_hash, status, expires_at
+    from app.invitations
+    where id = ${parsed.invitationId}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
+  `;
+  const row = rows[0];
+  if (!row) {
+    return "invalid";
+  }
+
+  const computedHash = createHash("sha256").update(parsed.secret).digest();
+  const storedHash = Buffer.from(row.token_hash);
+  if (storedHash.length !== computedHash.length) {
+    return "invalid";
+  }
+  if (!timingSafeEqual(storedHash, computedHash)) {
+    return "invalid";
+  }
+
+  const now = input.now ?? new Date();
+  if (row.status !== "pending" || row.expires_at <= now) {
+    return "invalid";
+  }
+
+  return "ok";
+}
+
+async function voidInvitation(
+  tx: AppTransaction,
+  addresses: Pick<InvitationAddresses, "close">,
+  invitationId: string,
+  actorUserId: string,
+  now: Date,
+): Promise<never> {
+  await tx`
+    update app.invitations
+    set status = 'void',
+        person_id = null,
+        custom_role_id = null,
+        closed_at = ${now}
+    where id = ${invitationId}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
+      and status = 'pending'
+  `;
+  await addresses.close(invitationId);
+  await appendAuditEvent(tx, {
+    actorKind: "user",
+    actorId: actorUserId,
+    action: INVITATION_VOIDED,
+    purpose: INVITATION_VOIDED,
+    targetIds: [invitationId],
+  });
+  throw new AccessError("invitation_void");
+}
+
+export async function acceptInvitation(
+  tx: AppTransaction,
+  addresses: Pick<InvitationAddresses, "sweep" | "matches" | "close">,
+  input: AcceptInvitationInput,
+): Promise<{ invitationId: string; communityId: string }> {
+  const parsed = parseInvitationToken(input.token);
+  if (parsed === "invalid") {
+    throw new AccessError("invitation_invalid");
+  }
+
+  const settings = await tx<{ org_id: string; community_id: string }[]>`
+    select
+      current_setting('app.org_id') as org_id,
+      current_setting('app.community_id') as community_id
+  `;
+  if (parsed.orgId !== settings[0]?.org_id || parsed.communityId !== settings[0]?.community_id) {
+    throw new AccessError("invitation_invalid");
+  }
+
+  const userId = parseUuid(input.userId);
+  const now = input.now ?? new Date();
+
+  await addresses.sweep(now);
+
+  const rows = await tx<
+    {
+      id: string;
+      org_id: string;
+      community_id: string;
+      invited_by: string;
+      token_hash: Buffer | Uint8Array;
+      role_key: string | null;
+      custom_role_id: string | null;
+      person_id: string | null;
+      status: string;
+      expires_at: Date;
+    }[]
+  >`
+    select
+      id::text as id,
+      org_id::text as org_id,
+      community_id::text as community_id,
+      invited_by::text as invited_by,
+      token_hash,
+      role_key,
+      custom_role_id::text as custom_role_id,
+      person_id::text as person_id,
+      status,
+      expires_at
+    from app.invitations
+    where id = ${parsed.invitationId}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
+    for update
+  `;
+  const row = rows[0];
+  if (!row) {
+    throw new AccessError("invitation_invalid");
+  }
+
+  const computedHash = createHash("sha256").update(parsed.secret).digest();
+  const storedHash = Buffer.from(row.token_hash);
+  if (storedHash.length !== computedHash.length) {
+    throw new AccessError("invitation_invalid");
+  }
+  if (!timingSafeEqual(storedHash, computedHash)) {
+    throw new AccessError("invitation_invalid");
+  }
+
+  if (row.status !== "pending" || row.expires_at <= now) {
+    throw new AccessError("invitation_invalid");
+  }
+
+  const matched = await addresses.matches({
+    invitationId: row.id,
+    userId,
+  });
+  if (!matched) {
+    throw new AccessError("wrong_address");
+  }
+
+  const inviter = await loadActor(tx, row.invited_by);
+  if (!allows(inviter, "access.users.manage")) {
+    await voidInvitation(tx, addresses, row.id, userId, now);
+  }
+
+  if (row.role_key !== null) {
+    if (!allows(inviter, "access.roles.manage")) {
+      await voidInvitation(tx, addresses, row.id, userId, now);
+    }
+    const roleExists = ORGANISATION_ROLES.has(row.role_key) || COMMUNITY_ROLES.has(row.role_key);
+    if (!roleExists) {
+      await voidInvitation(tx, addresses, row.id, userId, now);
+    }
+    if (!roleGrantAllowed(inviter, { kind: "builtin", roleKey: row.role_key })) {
+      await voidInvitation(tx, addresses, row.id, userId, now);
+    }
+  } else if (row.custom_role_id !== null) {
+    if (!allows(inviter, "access.roles.manage")) {
+      await voidInvitation(tx, addresses, row.id, userId, now);
+    }
+    const customRoles = await tx<{ id: string }[]>`
+      select id::text as id
+      from app.custom_roles
+      where id = ${row.custom_role_id}::uuid
+        and org_id = current_setting('app.org_id')::uuid
+        and community_id = current_setting('app.community_id')::uuid
+    `;
+    if (customRoles[0] === undefined) {
+      await voidInvitation(tx, addresses, row.id, userId, now);
+    }
+    const permRows = await tx<{ permission: string }[]>`
+      select permission
+      from app.custom_role_permissions
+      where custom_role_id = ${row.custom_role_id}::uuid
+        and org_id = current_setting('app.org_id')::uuid
+        and community_id = current_setting('app.community_id')::uuid
+    `;
+    const currentPerms = permRows.map((p) => p.permission);
+    if (!roleGrantAllowed(inviter, { kind: "custom", permissions: currentPerms })) {
+      await voidInvitation(tx, addresses, row.id, userId, now);
+    }
+  }
+
+  if (row.person_id !== null) {
+    if (!allows(inviter, "people.view")) {
+      await voidInvitation(tx, addresses, row.id, userId, now);
+    }
+    const minor = await personIsMinor(tx, row.person_id);
+    if (minor === null || minor === true) {
+      await voidInvitation(tx, addresses, row.id, userId, now);
+    }
+    const contactLinks = await tx<{ user_id: string }[]>`
+      select user_id::text as user_id
+      from app.user_links
+      where person_id = ${row.person_id}::uuid
+        and org_id = current_setting('app.org_id')::uuid
+        and community_id = current_setting('app.community_id')::uuid
+    `;
+    if (contactLinks.length > 0 && contactLinks[0]!.user_id !== userId) {
+      await voidInvitation(tx, addresses, row.id, userId, now);
+    }
+  }
+
+  const existingUserLinks = await tx<{ person_id: string }[]>`
+    select person_id::text as person_id
+    from app.user_links
+    where user_id = ${userId}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
+  `;
+  if (existingUserLinks.length > 0) {
+    const existingPersonId = existingUserLinks[0]!.person_id;
+    if (row.person_id !== null && existingPersonId !== row.person_id) {
+      await voidInvitation(tx, addresses, row.id, userId, now);
+    }
+    const existingMinor = await personIsMinor(tx, existingPersonId);
+    if (existingMinor === null || existingMinor === true) {
+      await voidInvitation(tx, addresses, row.id, userId, now);
+    }
+  }
+
+  try {
+    await tx.savepoint("invitation_accept", async (rawSp) => {
+      const sp = rawSp as AppTransaction;
+      await insertMembership(sp, {
+        userId,
+        source: "invitation",
+        invitationId: row.id,
+        now,
+      });
+
+      if (row.role_key !== null) {
+        await writeRoleGrant(sp, {
+          userId,
+          roleKey: row.role_key,
+          actorUserId: row.invited_by,
+          skipDuplicate: true,
+        });
+      } else if (row.custom_role_id !== null) {
+        await writeCustomRoleGrant(sp, {
+          userId,
+          customRoleId: row.custom_role_id,
+          actorUserId: row.invited_by,
+          skipDuplicate: true,
+        });
+      }
+
+      if (row.person_id !== null) {
+        await writeUserLink(sp, {
+          userId,
+          personId: row.person_id,
+          actorUserId: row.invited_by,
+          skipDuplicate: true,
+        });
+      }
+
+      await sp`
+        update app.invitations
+        set status = 'accepted',
+            accepted_user_id = ${userId}::uuid,
+            closed_at = ${now},
+            person_id = null,
+            custom_role_id = null
+        where id = ${row.id}::uuid
+          and org_id = current_setting('app.org_id')::uuid
+          and community_id = current_setting('app.community_id')::uuid
+          and status = 'pending'
+      `;
+
+      await addresses.close(row.id);
+
+      await appendAuditEvent(sp, {
+        actorKind: "user",
+        actorId: userId,
+        action: INVITATION_ACCEPTED,
+        purpose: INVITATION_ACCEPTED,
+        targetIds: [row.id, userId, row.community_id],
+      });
+    });
+  } catch (error) {
+    if (error instanceof AccessError) {
+      await voidInvitation(tx, addresses, row.id, userId, now);
+    }
+    throw error;
+  }
+
+  return {
+    invitationId: row.id,
+    communityId: row.community_id,
+  };
 }

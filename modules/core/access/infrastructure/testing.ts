@@ -26,7 +26,8 @@ export type RecordedAddressCall =
       input: { invitationId: string; expiresAt: Date };
     }
   | { method: "close"; invitationId: string }
-  | { method: "open"; invitationIds: readonly string[] };
+  | { method: "open"; invitationIds: readonly string[] }
+  | { method: "matches"; input: { invitationId: string; userId: string } };
 
 export class MemoryInvitationAddresses implements InvitationAddresses {
   readonly entries = new Map<
@@ -40,10 +41,12 @@ export class MemoryInvitationAddresses implements InvitationAddresses {
     }
   >();
 
+  readonly userAddresses = new Map<string, string>();
   readonly calls: RecordedAddressCall[] = [];
 
   createAnswer?: { ok: true } | { ok: false; reason: "already_invited" };
   refreshAnswer?: boolean;
+  matchesAnswer?: boolean;
 
   async sweep(now: Date): Promise<{ erased: number; deleted: number }> {
     this.calls.push({ method: "sweep", now });
@@ -122,5 +125,21 @@ export class MemoryInvitationAddresses implements InvitationAddresses {
       }
     }
     return result;
+  }
+
+  async matches(input: { invitationId: string; userId: string }): Promise<boolean> {
+    this.calls.push({ method: "matches", input });
+    if (this.matchesAnswer !== undefined) {
+      return this.matchesAnswer;
+    }
+    const entry = this.entries.get(input.invitationId);
+    if (!entry || entry.closed || entry.expiresAt <= new Date()) {
+      return false;
+    }
+    const userAddress = this.userAddresses.get(input.userId);
+    if (!userAddress) {
+      return false;
+    }
+    return entry.address.toLowerCase() === userAddress.toLowerCase();
   }
 }

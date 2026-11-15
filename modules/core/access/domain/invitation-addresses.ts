@@ -9,4 +9,5 @@ export interface InvitationAddresses {
   refresh(input: { invitationId: string; expiresAt: Date }): Promise<boolean>;
   close(invitationId: string): Promise<void>;
   open(invitationIds: readonly string[]): Promise<Map<string, string>>;
+  matches(input: { invitationId: string; userId: string }): Promise<boolean>;
 }
