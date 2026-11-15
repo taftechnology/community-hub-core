@@ -246,6 +246,14 @@ export async function writeUserLink(
     throw new AccessError("not_member");
   }
 
+  const minor = await personIsMinor(tx, personId);
+  if (minor === null) {
+    throw new AccessError("not_found");
+  }
+  if (minor) {
+    throw new AccessError("minor_forbidden");
+  }
+
   if (input.skipDuplicate) {
     const exact = await tx<{ id: string }[]>`
       select id::text as id
@@ -315,13 +323,6 @@ export async function linkUser(tx: AppTransaction, input: LinkInput): Promise<{ 
   }
   if (!(await isMember(tx, userId))) {
     await denyNotMember(tx, actorUserId);
-  }
-  const minor = await personIsMinor(tx, personId);
-  if (minor === null) {
-    throw new AccessError("not_found");
-  }
-  if (minor) {
-    throw new AccessError("minor_forbidden");
   }
   const result = await writeUserLink(tx, {
     userId,

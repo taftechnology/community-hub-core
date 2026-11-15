@@ -611,7 +611,7 @@ async function voidInvitation(
   actorUserId: string,
   now: Date,
 ): Promise<never> {
-  await tx`
+  const voided = await tx<{ id: string }[]>`
     update app.invitations
     set status = 'void',
         person_id = null,
@@ -621,7 +621,11 @@ async function voidInvitation(
       and org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
       and status = 'pending'
+    returning id::text as id
   `;
+  if (voided.length === 0) {
+    throw new AccessError("invitation_invalid");
+  }
   await addresses.close(invitationId);
   await appendAuditEvent(tx, {
     actorKind: "user",
@@ -830,7 +834,7 @@ export async function acceptInvitation(
         });
       }
 
-      await sp`
+      const updated = await sp<{ id: string }[]>`
         update app.invitations
         set status = 'accepted',
             accepted_user_id = ${userId}::uuid,
@@ -841,7 +845,11 @@ export async function acceptInvitation(
           and org_id = current_setting('app.org_id')::uuid
           and community_id = current_setting('app.community_id')::uuid
           and status = 'pending'
+        returning id::text as id
       `;
+      if (updated.length === 0) {
+        throw new AccessError("invitation_invalid");
+      }
 
       await addresses.close(row.id);
 
@@ -855,6 +863,9 @@ export async function acceptInvitation(
     });
   } catch (error) {
     if (error instanceof AccessError) {
+      if (error.code === "invitation_invalid") {
+        throw error;
+      }
       await voidInvitation(tx, addresses, row.id, userId, now);
     }
     throw error;

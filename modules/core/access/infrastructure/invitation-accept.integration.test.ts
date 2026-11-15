@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,7 +20,7 @@ import { withRequest } from "@community-hub/kernel";
 import { createHousehold, createPerson } from "@community-hub/people";
 import { catalogue } from "@community-hub/policy";
 
-import { buildInvitationToken } from "../domain/invitation-token.js";
+import { buildInvitationToken, parseInvitationToken } from "../domain/invitation-token.js";
 import {
   AccessError,
   bootstrapOwner,
@@ -27,6 +28,7 @@ import {
   grantRole,
   revokeRole,
 } from "../public/index.js";
+import { writeUserLink } from "./grants.js";
 import {
   acceptInvitation,
   createInvitation,
@@ -169,10 +171,25 @@ async function assertNoSensitiveDataInAudit(
     select to_jsonb(a) as payload
     from app.audit_events a
   `;
+  const targets: string[] = [];
+  for (const text of sensitiveTexts) {
+    if (!text) continue;
+    targets.push(text);
+    const parsed = parseInvitationToken(text);
+    if (parsed !== "invalid") {
+      const secret = Buffer.from(parsed.secret);
+      targets.push(secret.toString("base64url"));
+      targets.push(secret.toString("hex"));
+      const hash = createHash("sha256").update(secret).digest();
+      targets.push(hash.toString("hex"));
+      targets.push(hash.toString("base64"));
+    }
+  }
+
   for (const row of auditRows) {
     for (const [col, val] of Object.entries(row.payload)) {
       const serialized = typeof val === "string" ? val : JSON.stringify(val);
-      for (const text of sensitiveTexts) {
+      for (const text of targets) {
         if (text && serialized.includes(text)) {
           throw new Error(`Sensitive text matched audit event column: ${col}`);
         }
@@ -837,11 +854,40 @@ describe("invitation accept repository integration (pins & behaviour)", () => {
       expect(acceptErr).toBeInstanceOf(AccessError);
       expect((acceptErr as AccessError).code).toBe("invitation_invalid");
 
+      expect(stub.calls.filter((c) => c.method === "close")).toHaveLength(0);
+      expect(stub.calls.filter((c) => c.method === "matches")).toHaveLength(0);
+
       await runInCommunity(app, scope, async (tx) => {
         const auditCountAfter = (
           await tx<{ count: number }[]>`select count(*)::int as count from app.audit_events`
         )[0]!.count;
         expect(auditCountAfter).toBe(auditCountBefore);
+
+        const memberships = await tx<{ count: number }[]>`
+          select count(*)::int as count
+          from app.organisation_members
+          where invitation_id = ${invId}::uuid
+        `;
+        expect(memberships[0]!.count).toBe(0);
+
+        const grants = await tx<{ count: number }[]>`
+          select count(*)::int as count
+          from app.community_role_grants
+          where user_id = ${acceptingUser}::uuid
+        `;
+        expect(grants[0]!.count).toBe(0);
+
+        const links = await tx<{ count: number }[]>`
+          select count(*)::int as count
+          from app.user_links
+          where user_id = ${acceptingUser}::uuid
+        `;
+        expect(links[0]!.count).toBe(0);
+
+        const invRows = await tx<{ status: string }[]>`
+          select status from app.invitations where id = ${invId}::uuid
+        `;
+        expect(invRows[0]!.status).toBe("pending");
       });
     });
   });
@@ -890,6 +936,8 @@ describe("invitation accept repository integration (pins & behaviour)", () => {
         return res[0]!.count;
       });
 
+      stub.calls.length = 0;
+
       let acceptErr: unknown;
       try {
         await runInCommunity(app, scope, (tx) =>
@@ -905,11 +953,40 @@ describe("invitation accept repository integration (pins & behaviour)", () => {
       expect(acceptErr).toBeInstanceOf(AccessError);
       expect((acceptErr as AccessError).code).toBe("invitation_invalid");
 
+      expect(stub.calls.filter((c) => c.method === "close")).toHaveLength(0);
+      expect(stub.calls.filter((c) => c.method === "matches")).toHaveLength(0);
+
       await runInCommunity(app, scope, async (tx) => {
         const auditCountAfter = (
           await tx<{ count: number }[]>`select count(*)::int as count from app.audit_events`
         )[0]!.count;
         expect(auditCountAfter).toBe(auditCountBefore);
+
+        const memberships = await tx<{ count: number }[]>`
+          select count(*)::int as count
+          from app.organisation_members
+          where invitation_id = ${invId}::uuid
+        `;
+        expect(memberships[0]!.count).toBe(0);
+
+        const grants = await tx<{ count: number }[]>`
+          select count(*)::int as count
+          from app.community_role_grants
+          where user_id = ${acceptingUser}::uuid
+        `;
+        expect(grants[0]!.count).toBe(0);
+
+        const links = await tx<{ count: number }[]>`
+          select count(*)::int as count
+          from app.user_links
+          where user_id = ${acceptingUser}::uuid
+        `;
+        expect(links[0]!.count).toBe(0);
+
+        const invRows = await tx<{ status: string }[]>`
+          select status from app.invitations where id = ${invId}::uuid
+        `;
+        expect(invRows[0]!.status).toBe("revoked");
       });
     });
   });
@@ -1075,9 +1152,16 @@ describe("invitation accept repository integration (pins & behaviour)", () => {
         while (Date.now() - started < 5_000) {
           const waiting = await observerApp<{ n: number }[]>`
             select count(*)::int as n
-            from pg_locks
-            where locktype in ('transactionid', 'tuple')
-              and not granted
+            from pg_locks l
+            join pg_stat_activity a on a.pid = l.pid
+            where a.datname = current_database()
+              and l.locktype in ('transactionid', 'tuple')
+              and not l.granted
+              and (
+                a.query like '%app.invitations%'
+                or a.query like '%app.organisation_members%'
+                or a.query like '%app.community_role_grants%'
+              )
           `;
           if ((waiting[0]?.n ?? 0) >= 2) {
             waitedBoth = true;
@@ -1122,7 +1206,7 @@ describe("invitation accept repository integration (pins & behaviour)", () => {
         await observerApp.end({ timeout: 1 });
       }
     });
-  });
+  }, 15_000);
 
   it("pin 35 (a): inviter role revoked before accept gives invitation_void without denied audit", async () => {
     await withTwoOrgs(async ({ app, orgA }) => {
@@ -1461,6 +1545,46 @@ describe("invitation accept repository integration (pins & behaviour)", () => {
     });
   });
 
+  it("pin 36 (c): writeUserLink refuses a minor contact with minor_forbidden", async () => {
+    await withTwoOrgs(async ({ app, kms, orgA }) => {
+      const scope = { orgId: orgA.organisationId, communityId: orgA.community1Id };
+      const owner = newId();
+      await runInCommunity(app, scope, (tx) =>
+        bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner }),
+      );
+
+      const { minorId } = await runInCommunity(app, scope, (tx) => createAdultAndMinor(tx, kms));
+
+      const memberUser = newId();
+      await runInCommunity(app, scope, (tx) => addMember(tx, memberUser));
+
+      let err: unknown;
+      await runInCommunity(app, scope, async (tx) => {
+        try {
+          await writeUserLink(tx, {
+            userId: memberUser,
+            personId: minorId,
+            actorUserId: owner,
+          });
+        } catch (e) {
+          err = e;
+        }
+      });
+
+      expect(err).toBeInstanceOf(AccessError);
+      expect((err as AccessError).code).toBe("minor_forbidden");
+
+      await runInCommunity(app, scope, async (tx) => {
+        const links = await tx<{ count: number }[]>`
+          select count(*)::int as count
+          from app.user_links
+          where user_id = ${memberUser}::uuid
+        `;
+        expect(links[0]!.count).toBe(0);
+      });
+    });
+  });
+
   it("pin 37: step 7 failure rolls back savepoint and writes void", async () => {
     await withTwoOrgs(async ({ app, kms, orgA }) => {
       const scope = { orgId: orgA.organisationId, communityId: orgA.community1Id };
@@ -1549,9 +1673,12 @@ describe("invitation accept repository integration (pins & behaviour)", () => {
         while (Date.now() - started < 5_000) {
           const waiting = await observerApp<{ n: number }[]>`
             select count(*)::int as n
-            from pg_locks
-            where locktype in ('transactionid', 'tuple')
-              and not granted
+            from pg_locks l
+            join pg_stat_activity a on a.pid = l.pid
+            where a.datname = current_database()
+              and l.locktype in ('transactionid', 'tuple')
+              and not l.granted
+              and a.query like '%app.user_links%'
           `;
           if ((waiting[0]?.n ?? 0) >= 1) {
             waited = true;
@@ -1607,7 +1734,7 @@ describe("invitation accept repository integration (pins & behaviour)", () => {
         await observerApp.end({ timeout: 1 });
       }
     });
-  });
+  }, 15_000);
 
   it("pin 38: forged or invalid token writes no audit row", async () => {
     await withTwoOrgs(async ({ app, orgA }) => {
@@ -1710,6 +1837,109 @@ describe("invitation accept repository integration (pins & behaviour)", () => {
     });
   });
 
+  it("pin 38 (b): a token for org A used in a transaction scoped to org B gives invitation_invalid", async () => {
+    await withTwoOrgs(async ({ app, orgA, orgB }) => {
+      const scopeA = { orgId: orgA.organisationId, communityId: orgA.community1Id };
+      const scopeB = { orgId: orgB.organisationId, communityId: orgB.communityId };
+      const ownerA = newId();
+      await runInCommunity(app, scopeA, (tx) =>
+        bootstrapOwner(tx, { now: NOW, userId: ownerA, actorUserId: ownerA }),
+      );
+
+      const stub = new MemoryInvitationAddresses();
+      const invId = newId();
+      const address = "cross-org@example.test";
+      const created = await runInCommunity(app, scopeA, (tx) =>
+        createInvitation(tx, stub, {
+          invitationId: invId,
+          actorUserId: ownerA,
+          address,
+          roleKey: "member",
+          now: NOW,
+        }),
+      );
+
+      const auditCountBeforeA = await runInCommunity(app, scopeA, async (tx) => {
+        const res = await tx<
+          { count: number }[]
+        >`select count(*)::int as count from app.audit_events`;
+        return res[0]!.count;
+      });
+      const auditCountBeforeB = await runInCommunity(app, scopeB, async (tx) => {
+        const res = await tx<
+          { count: number }[]
+        >`select count(*)::int as count from app.audit_events`;
+        return res[0]!.count;
+      });
+
+      const userB = newId();
+      stub.userAddresses.set(userB, address);
+
+      const proveRes = await runInCommunity(app, scopeB, (tx) =>
+        proveInvitation(tx, { token: created.token, now: NOW }),
+      );
+      expect(proveRes).toBe("invalid");
+
+      let acceptErr: unknown;
+      try {
+        await runInCommunity(app, scopeB, (tx) =>
+          acceptInvitation(tx, stub, {
+            token: created.token,
+            userId: userB,
+            now: NOW,
+          }),
+        );
+      } catch (e) {
+        acceptErr = e;
+      }
+      expect(acceptErr).toBeInstanceOf(AccessError);
+      expect((acceptErr as AccessError).code).toBe("invitation_invalid");
+
+      const matchCalls = stub.calls.filter((c) => c.method === "matches");
+      expect(matchCalls).toHaveLength(0);
+
+      await runInCommunity(app, scopeA, async (tx) => {
+        const auditCountAfter = (
+          await tx<{ count: number }[]>`select count(*)::int as count from app.audit_events`
+        )[0]!.count;
+        expect(auditCountAfter).toBe(auditCountBeforeA);
+
+        const invRows = await tx<{ status: string }[]>`
+          select status from app.invitations where id = ${invId}::uuid
+        `;
+        expect(invRows[0]!.status).toBe("pending");
+      });
+
+      await runInCommunity(app, scopeB, async (tx) => {
+        const auditCountAfter = (
+          await tx<{ count: number }[]>`select count(*)::int as count from app.audit_events`
+        )[0]!.count;
+        expect(auditCountAfter).toBe(auditCountBeforeB);
+
+        const members = await tx<{ count: number }[]>`
+          select count(*)::int as count
+          from app.organisation_members
+          where user_id = ${userB}::uuid
+        `;
+        expect(members[0]!.count).toBe(0);
+
+        const grants = await tx<{ count: number }[]>`
+          select count(*)::int as count
+          from app.community_role_grants
+          where user_id = ${userB}::uuid
+        `;
+        expect(grants[0]!.count).toBe(0);
+
+        const links = await tx<{ count: number }[]>`
+          select count(*)::int as count
+          from app.user_links
+          where user_id = ${userB}::uuid
+        `;
+        expect(links[0]!.count).toBe(0);
+      });
+    });
+  });
+
   it("pin 48 (accept): sweep is the first recorded port call in accept", async () => {
     await withTwoOrgs(async ({ app, orgA }) => {
       const scope = { orgId: orgA.organisationId, communityId: orgA.community1Id };
@@ -1758,103 +1988,78 @@ describe("invitation accept repository integration (pins & behaviour)", () => {
     });
   });
 
-  it("plain: accepting with no role and no contact succeeds", async () => {
-    await withTwoOrgs(async ({ app, direct, orgA }) => {
+  it("plain: accepting an invitation with a contact only succeeds", async () => {
+    await withTwoOrgs(async ({ app, kms, orgA }) => {
       const scope = { orgId: orgA.organisationId, communityId: orgA.community1Id };
       const owner = newId();
       await runInCommunity(app, scope, (tx) =>
         bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner }),
       );
 
+      const { adultId } = await runInCommunity(app, scope, (tx) => createAdultAndMinor(tx, kms));
+
       const stub = new MemoryInvitationAddresses();
       const invId = newId();
-      const address = "norole-nocontact@example.test";
-
-      const { token, tokenHash } = buildInvitationToken({
-        orgId: orgA.organisationId,
-        communityId: orgA.community1Id,
-        invitationId: invId,
-      });
-
-      const expiresAt = new Date(NOW.getTime() + 7 * 86400000);
-      await direct`
-        alter table app.invitations
-        drop constraint if exists invitations_role_or_contact_while_pending
-      `;
-
-      try {
-        await runInCommunity(app, scope, async (tx) => {
-          await tx`
-            insert into app.invitations (
-              id, org_id, community_id, invited_by, token_hash, role_key, custom_role_id,
-              person_id, status, expires_at, resend_count, last_sent_at, accepted_user_id, closed_at, created_at
-            ) values (
-              ${invId}::uuid,
-              current_setting('app.org_id')::uuid,
-              current_setting('app.community_id')::uuid,
-              ${owner}::uuid,
-              ${tokenHash},
-              null,
-              null,
-              null,
-              'pending',
-              ${expiresAt},
-              0,
-              ${NOW},
-              null,
-              null,
-              ${NOW}
-            )
-          `;
-        });
-        await stub.create({
+      const address = "contact-only@example.test";
+      const created = await runInCommunity(app, scope, (tx) =>
+        createInvitation(tx, stub, {
           invitationId: invId,
-          communityId: orgA.community1Id,
+          actorUserId: owner,
           address,
-          expiresAt,
-        });
+          personId: adultId,
+          now: NOW,
+        }),
+      );
 
-        const acceptingUser = newId();
-        stub.userAddresses.set(acceptingUser, address);
+      const acceptingUser = newId();
+      stub.userAddresses.set(acceptingUser, address);
 
-        const res = await runInCommunity(app, scope, (tx) =>
-          acceptInvitation(tx, stub, {
-            token,
-            userId: acceptingUser,
-            now: NOW,
-          }),
-        );
-        expect(res.invitationId).toBe(invId);
-        expect(res.communityId).toBe(orgA.community1Id);
+      const res = await runInCommunity(app, scope, (tx) =>
+        acceptInvitation(tx, stub, {
+          token: created.token,
+          userId: acceptingUser,
+          now: NOW,
+        }),
+      );
+      expect(res.invitationId).toBe(invId);
+      expect(res.communityId).toBe(orgA.community1Id);
 
-        await runInCommunity(app, scope, async (tx) => {
-          const members = await tx<{ source: string; invitation_id: string | null }[]>`
-            select source, invitation_id::text as invitation_id
-            from app.organisation_members
-            where user_id = ${acceptingUser}::uuid
-          `;
-          expect(members).toHaveLength(1);
-          expect(members[0]!.source).toBe("invitation");
-          expect(members[0]!.invitation_id).toBe(invId);
-
-          const auditRows = await tx<{ target_ids: string[] }[]>`
-            select target_ids::text[] as target_ids
-            from app.audit_events
-            where action = 'access.invitation.accepted'
-              and target_ids[1] = ${invId}::uuid
-          `;
-          expect(auditRows).toHaveLength(1);
-          expect(auditRows[0]!.target_ids).toEqual([invId, acceptingUser, orgA.community1Id]);
-
-          await assertNoSensitiveDataInAudit(tx, [address, token]);
-        });
-      } finally {
-        await direct`
-          alter table app.invitations
-          add constraint invitations_role_or_contact_while_pending
-          check (status <> 'pending' or role_key is not null or custom_role_id is not null or person_id is not null)
+      await runInCommunity(app, scope, async (tx) => {
+        const members = await tx<{ source: string; invitation_id: string | null }[]>`
+          select source, invitation_id::text as invitation_id
+          from app.organisation_members
+          where user_id = ${acceptingUser}::uuid
         `;
-      }
+        expect(members).toHaveLength(1);
+        expect(members[0]!.source).toBe("invitation");
+        expect(members[0]!.invitation_id).toBe(invId);
+
+        const links = await tx<{ person_id: string }[]>`
+          select person_id::text as person_id
+          from app.user_links
+          where user_id = ${acceptingUser}::uuid
+        `;
+        expect(links).toHaveLength(1);
+        expect(links[0]!.person_id).toBe(adultId);
+
+        const grants = await tx<{ id: string }[]>`
+          select id::text as id
+          from app.community_role_grants
+          where user_id = ${acceptingUser}::uuid
+        `;
+        expect(grants).toHaveLength(0);
+
+        const auditRows = await tx<{ target_ids: string[] }[]>`
+          select target_ids::text[] as target_ids
+          from app.audit_events
+          where action = 'access.invitation.accepted'
+            and target_ids[1] = ${invId}::uuid
+        `;
+        expect(auditRows).toHaveLength(1);
+        expect(auditRows[0]!.target_ids).toEqual([invId, acceptingUser, orgA.community1Id]);
+
+        await assertNoSensitiveDataInAudit(tx, [address, created.token]);
+      });
     });
   });
 
@@ -2090,6 +2295,18 @@ describe("invitation accept repository integration (pins & behaviour)", () => {
       }
       expect(err).toBeInstanceOf(AccessError);
       expect((err as AccessError).code).toBe("invitation_invalid");
+    });
+  });
+
+  it("proves app role privilege on app.persons UPDATE is false", async () => {
+    await withTwoOrgs(async ({ app, orgA }) => {
+      const scope = { orgId: orgA.organisationId, communityId: orgA.community1Id };
+      await runInCommunity(app, scope, async (tx) => {
+        const rows = await tx<{ can_update: boolean }[]>`
+          select has_table_privilege('app', 'app.persons', 'UPDATE') as can_update
+        `;
+        expect(rows[0]!.can_update).toBe(false);
+      });
     });
   });
 });
