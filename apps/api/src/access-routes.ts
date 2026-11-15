@@ -569,6 +569,9 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
                   `;
 
             const userIds = memberRows.map((r) => r.user_id);
+            if (userIds.length > 500) {
+              throw new AccessError("too_many");
+            }
 
             const userToPersonId = new Map<string, string>();
             for (const link of directory.userLinks) {

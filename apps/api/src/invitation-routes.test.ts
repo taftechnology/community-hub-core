@@ -67,8 +67,7 @@ const db = vi.hoisted(() => ({
 vi.mock("@community-hub/identity", async () => {
   const actual =
     await vi.importActual<typeof import("@community-hub/identity")>("@community-hub/identity");
-  return {
-    ...actual,
+  const replacements: Record<string, unknown> = {
     readSession: identity.readSession,
     readUserEmails: identity.readUserEmails,
     findUserByEmail: identity.findUserByEmail,
@@ -80,6 +79,24 @@ vi.mock("@community-hub/identity", async () => {
     invitationAddressMatches: identity.invitationAddressMatches,
     sweepInvitationEmails: identity.sweepInvitationEmails,
   };
+  const wrapped: Record<string, unknown> = {};
+  for (const key of Object.keys(actual)) {
+    const value = actual[key as keyof typeof actual];
+    if (Object.prototype.hasOwnProperty.call(replacements, key)) {
+      wrapped[key] = replacements[key];
+      continue;
+    }
+    if (
+      typeof value === "function" &&
+      !/^\s*class\b/.test(Function.prototype.toString.call(value))
+    ) {
+      const fn = value as (...args: unknown[]) => unknown;
+      wrapped[key] = vi.fn((...args: unknown[]) => fn(...args));
+      continue;
+    }
+    wrapped[key] = value;
+  }
+  return wrapped;
 });
 
 vi.mock("@community-hub/tenancy", () => tenancy);
@@ -124,7 +141,41 @@ import {
   rejectingInvitationMail,
   type InvitationMail,
 } from "@community-hub/access";
+import * as identityModule from "@community-hub/identity";
 import { invitationRoutes, type InvitationRouteDeps } from "./invitation-routes.js";
+
+const CREATE_IDENTITY_ALLOW_LIST = [
+  "readSession",
+  "sweepInvitationEmails",
+  "createInvitationEmail",
+] as const;
+
+function calledIdentityExports(): string[] {
+  const names: string[] = [];
+  for (const [name, value] of Object.entries(identityModule)) {
+    if (vi.isMockFunction(value) && value.mock.calls.length > 0) {
+      names.push(name);
+    }
+  }
+  return names;
+}
+
+function clearIdentityExportCalls(): void {
+  for (const value of Object.values(identityModule)) {
+    if (vi.isMockFunction(value)) {
+      value.mockClear();
+    }
+  }
+}
+
+function expectCreateIdentityAllowList(): void {
+  const called = calledIdentityExports();
+  for (const name of called) {
+    expect(CREATE_IDENTITY_ALLOW_LIST).toContain(name);
+  }
+  expect(called).toContain("readSession");
+  expect(called).toContain("createInvitationEmail");
+}
 
 const API_HOSTNAME = "api.example.test";
 const ADMIN_ORIGIN = "https://admin.example.test";
@@ -140,6 +191,12 @@ const validSampleToken = buildInvitationToken({
   orgId: ORG,
   communityId: COMMUNITY,
   invitationId: INVITATION_ID,
+}).token;
+
+const forgedToken = buildInvitationToken({
+  orgId: "00000000-0000-4000-8000-0000000000a1",
+  communityId: "00000000-0000-4000-8000-0000000000a2",
+  invitationId: "00000000-0000-4000-8000-0000000000a3",
 }).token;
 
 function request(
@@ -204,6 +261,27 @@ describe("invitation routes", () => {
           pattern: (context.pattern as string) ?? found.pattern,
         }),
     };
+  }
+
+  async function postInvitation(
+    path: string,
+    body: unknown,
+    depsOverride?: InvitationRouteDeps,
+  ): Promise<Response> {
+    return withRequest({ requestId: REQUEST_ID }, () =>
+      route(path, depsOverride).handle(request(path, API_HOSTNAME, body, `Bearer ${TOKEN}`)),
+    );
+  }
+
+  function expectOneDenial(purpose: string): void {
+    expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
+    expect(db.appendAuditEvent).toHaveBeenCalledWith(expect.anything(), {
+      actorKind: "user",
+      actorId: USER,
+      action: "access.permission.denied",
+      purpose,
+      targetIds: [USER],
+    });
   }
 
   beforeEach(() => {
@@ -311,6 +389,8 @@ describe("invitation routes", () => {
       );
       expect(resWithAccount.status).toBe(201);
       const dataWithAccount = createInvitationResponse.parse(await resWithAccount.json());
+      expectCreateIdentityAllowList();
+      clearIdentityExportCalls();
 
       const resWithoutAccount = await withRequest({ requestId: REQUEST_ID }, () =>
         route("/v1/access/invitations/create").handle(
@@ -332,19 +412,11 @@ describe("invitation routes", () => {
       const dataWithoutAccount = createInvitationResponse.parse(await resWithoutAccount.json());
 
       expect(Object.keys(dataWithAccount)).toEqual(Object.keys(dataWithoutAccount));
-
-      // Assert no identity.users readers were called
-      expect(identity.findUserByEmail).not.toHaveBeenCalled();
-      expect(identity.readUserEmails).not.toHaveBeenCalled();
-      expect(identity.invitationAddressMatches).not.toHaveBeenCalled();
-
-      // Allowed calls
-      expect(identity.readSession).toHaveBeenCalled();
-      expect(identity.createInvitationEmail).toHaveBeenCalled();
+      expectCreateIdentityAllowList();
     });
 
     it("pin 40 (a): accept proves the token before findCommunityById", async () => {
-      const forgedToken = "v1.forged_token_that_fails_parsing_or_proof";
+      access.proveInvitation.mockResolvedValueOnce("invalid");
       const res = await withRequest({ requestId: REQUEST_ID }, () =>
         route("/v1/invitations/accept").handle(
           request(
@@ -363,11 +435,14 @@ describe("invitation routes", () => {
       );
       expect(res.status).toBe(404);
       expect(accessErrorBody.parse(await res.json())).toEqual({ error: "invitation_invalid" });
+      expect(access.proveInvitation).toHaveBeenCalledTimes(1);
       expect(tenancy.findCommunityById).not.toHaveBeenCalled();
+      expect(billing.assertWritable).not.toHaveBeenCalled();
+      expect(access.acceptInvitation).not.toHaveBeenCalled();
     });
 
     it("pin 40 (b): accept proves the token before assertWritable", async () => {
-      const forgedToken = "v1.forged_token_that_fails_parsing_or_proof";
+      access.proveInvitation.mockResolvedValueOnce("invalid");
       const res = await withRequest({ requestId: REQUEST_ID }, () =>
         route("/v1/invitations/accept").handle(
           request(
@@ -386,7 +461,33 @@ describe("invitation routes", () => {
       );
       expect(res.status).toBe(404);
       expect(accessErrorBody.parse(await res.json())).toEqual({ error: "invitation_invalid" });
+      expect(access.proveInvitation).toHaveBeenCalledTimes(1);
+      expect(tenancy.findCommunityById).not.toHaveBeenCalled();
       expect(billing.assertWritable).not.toHaveBeenCalled();
+      expect(access.acceptInvitation).not.toHaveBeenCalled();
+    });
+
+    it("accept: an unparsable token answers 404 with no SQL and no proveInvitation call", async () => {
+      const res = await withRequest({ requestId: REQUEST_ID }, () =>
+        route("/v1/invitations/accept").handle(
+          request(
+            "/v1/invitations/accept",
+            API_HOSTNAME,
+            { token: "v1.forged_token_that_fails_parsing_or_proof" },
+            `Bearer ${TOKEN}`,
+          ),
+          {
+            method: "POST",
+            pattern: "/v1/invitations/accept",
+            surface: "tenant",
+            billing: "exempt",
+          },
+        ),
+      );
+      expect(res.status).toBe(404);
+      expect(accessErrorBody.parse(await res.json())).toEqual({ error: "invitation_invalid" });
+      expect(db.withAppTransaction).not.toHaveBeenCalled();
+      expect(access.proveInvitation).not.toHaveBeenCalled();
     });
 
     it("pin 41 (a): create with a role without access.roles.manage gives 403 with no repository call", async () => {
@@ -1046,6 +1147,213 @@ describe("invitation routes", () => {
       );
       expect(res.status).toBe(403);
       expect(accessErrorBody.parse(await res.json())).toEqual({ error: "wrong_address" });
+    });
+
+    it("create: a 403 appends exactly one access.permission.denied event and the repository is not called", async () => {
+      access.holdsPermission.mockResolvedValue(false);
+      const res = await postInvitation("/v1/access/invitations/create", {
+        communitySlug: "parish",
+        email: "user@example.test",
+        roleKey: "staff",
+      });
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+      expectOneDenial("access.users.manage");
+      expect(access.createInvitation).not.toHaveBeenCalled();
+    });
+
+    it("list: a 403 appends exactly one access.permission.denied event and the repository is not called", async () => {
+      access.holdsPermission.mockResolvedValue(false);
+      const res = await postInvitation("/v1/access/invitations/list", {
+        communitySlug: "parish",
+      });
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+      expectOneDenial("access.users.view");
+      expect(access.listInvitations).not.toHaveBeenCalled();
+    });
+
+    it("resend: a 403 appends exactly one access.permission.denied event and the repository is not called", async () => {
+      access.holdsPermission.mockResolvedValue(false);
+      const res = await postInvitation("/v1/access/invitations/resend", {
+        communitySlug: "parish",
+        invitationId: INVITATION_ID,
+      });
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+      expectOneDenial("access.users.manage");
+      expect(access.resendInvitation).not.toHaveBeenCalled();
+    });
+
+    it("revoke: a 403 appends exactly one access.permission.denied event and the repository is not called", async () => {
+      access.holdsPermission.mockResolvedValue(false);
+      const res = await postInvitation("/v1/access/invitations/revoke", {
+        communitySlug: "parish",
+        invitationId: INVITATION_ID,
+      });
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+      expectOneDenial("access.users.manage");
+      expect(access.revokeInvitation).not.toHaveBeenCalled();
+    });
+
+    it("create with IdentityError invalid_email from create gives an empty 400", async () => {
+      identity.createInvitationEmail.mockRejectedValueOnce(
+        new identityModule.IdentityError("invalid_email"),
+      );
+      const res = await postInvitation("/v1/access/invitations/create", {
+        communitySlug: "parish",
+        email: "not-valid@example.test",
+        roleKey: "staff",
+      });
+      expect(res.status).toBe(400);
+      expect(await res.text()).toBe("");
+    });
+
+    it("list returns email null for a row with no open address", async () => {
+      access.listInvitations.mockResolvedValueOnce([
+        {
+          id: INVITATION_ID,
+          email: null,
+          roleKey: "staff",
+          customRoleId: null,
+          linksContact: false,
+          expiresAt: new Date("2026-11-22T00:00:00.000Z"),
+        },
+      ]);
+      const res = await postInvitation("/v1/access/invitations/list", {
+        communitySlug: "parish",
+      });
+      expect(res.status).toBe(200);
+      const data = listInvitationsResponse.parse(await res.json());
+      expect(data.invitations[0]?.email).toBe(null);
+    });
+
+    it("create and resend mail failure logs contain neither the address nor the token", async () => {
+      const createAddress = "new-user@example.test";
+      mail.send = vi.fn(async () => {
+        throw new Error("SES send rejected");
+      });
+      const created = await postInvitation("/v1/access/invitations/create", {
+        communitySlug: "parish",
+        email: createAddress,
+        roleKey: "staff",
+      });
+      expect(created.status).toBe(503);
+      expect(await created.text()).toBe("");
+      for (const call of logCalls) {
+        const rendered = util.inspect(call, { depth: null });
+        expect(rendered).not.toContain(createAddress);
+        expect(rendered).not.toContain(validSampleToken);
+      }
+
+      logCalls = [];
+      const resendAddress = "invitee@example.test";
+      const resent = await postInvitation("/v1/access/invitations/resend", {
+        communitySlug: "parish",
+        invitationId: INVITATION_ID,
+      });
+      expect(resent.status).toBe(503);
+      expect(await resent.text()).toBe("");
+      for (const call of logCalls) {
+        const rendered = util.inspect(call, { depth: null });
+        expect(rendered).not.toContain(resendAddress);
+        expect(rendered).not.toContain(validSampleToken);
+      }
+    });
+
+    it("resend invitation_not_found rolls back the fake transaction", async () => {
+      access.resendInvitation.mockRejectedValueOnce(new access.AccessError("invitation_not_found"));
+      const res = await postInvitation("/v1/access/invitations/resend", {
+        communitySlug: "parish",
+        invitationId: INVITATION_ID,
+      });
+      expect(res.status).toBe(404);
+      expect(accessErrorBody.parse(await res.json())).toEqual({ error: "invitation_not_found" });
+      expect(lastTx().rolledBack).toBe(true);
+    });
+
+    it("create and resend give an empty 503 when ADMIN_ORIGIN is unset, and revoke still gives 204", async () => {
+      const unsetOrigin = makeDeps({ adminOrigin: undefined });
+      const created = await postInvitation(
+        "/v1/access/invitations/create",
+        { communitySlug: "parish", email: "user@example.test", roleKey: "staff" },
+        unsetOrigin,
+      );
+      expect(created.status).toBe(503);
+      expect(await created.text()).toBe("");
+
+      const resent = await postInvitation(
+        "/v1/access/invitations/resend",
+        { communitySlug: "parish", invitationId: INVITATION_ID },
+        unsetOrigin,
+      );
+      expect(resent.status).toBe(503);
+      expect(await resent.text()).toBe("");
+
+      const revoked = await postInvitation(
+        "/v1/access/invitations/revoke",
+        { communitySlug: "parish", invitationId: INVITATION_ID },
+        unsetOrigin,
+      );
+      expect(revoked.status).toBe(204);
+    });
+
+    it("accept gives 404 invitation_invalid when findCommunityById finds no community or one in another org", async () => {
+      tenancy.findCommunityById.mockResolvedValueOnce(null);
+      const missing = await postInvitation("/v1/invitations/accept", {
+        token: validSampleToken,
+      });
+      expect(missing.status).toBe(404);
+      expect(accessErrorBody.parse(await missing.json())).toEqual({ error: "invitation_invalid" });
+      expect(access.acceptInvitation).not.toHaveBeenCalled();
+
+      tenancy.findCommunityById.mockResolvedValueOnce({
+        id: COMMUNITY,
+        organisationId: "00000000-0000-4000-8000-0000000000ee",
+        slug: "other-parish",
+      });
+      const otherOrg = await postInvitation("/v1/invitations/accept", {
+        token: validSampleToken,
+      });
+      expect(otherOrg.status).toBe(404);
+      expect(accessErrorBody.parse(await otherOrg.json())).toEqual({
+        error: "invitation_invalid",
+      });
+      expect(access.acceptInvitation).not.toHaveBeenCalled();
+    });
+
+    it("resend: open throws after commit, the void path is called, and the answer is 503", async () => {
+      identity.openInvitationEmails.mockRejectedValueOnce(new Error("open failed"));
+      const res = await postInvitation("/v1/access/invitations/resend", {
+        communitySlug: "parish",
+        invitationId: INVITATION_ID,
+      });
+      expect(res.status).toBe(503);
+      expect(await res.text()).toBe("");
+      expect(access.voidInvitationAfterMailFailure).toHaveBeenCalledTimes(1);
+    });
+
+    it("an unmapped AccessError gives an empty 500 and one log line with errorClass and no address or token", async () => {
+      const fixtureEmail = "unmapped@example.test";
+      access.createInvitation.mockRejectedValueOnce(new access.AccessError("not_found"));
+      const res = await postInvitation("/v1/access/invitations/create", {
+        communitySlug: "parish",
+        email: fixtureEmail,
+        roleKey: "staff",
+      });
+      expect(res.status).toBe(500);
+      expect(await res.text()).toBe("");
+      expect(logCalls).toHaveLength(1);
+      expect(logCalls[0]?.fields).toMatchObject({
+        path: "/v1/access/invitations/create",
+        status: 500,
+        requestId: REQUEST_ID,
+        errorClass: "AccessError",
+      });
+      const rendered = util.inspect(logCalls, { depth: null });
+      expect(rendered).not.toContain(fixtureEmail);
+      expect(rendered).not.toContain(validSampleToken);
     });
   });
 });

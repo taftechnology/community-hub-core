@@ -152,6 +152,10 @@ describe("createSesInvitationMail", () => {
   it("pin 42 (ses): an SES error carrying the address is never logged", async () => {
     const infoCalls: SesInfoFields[] = [];
     const sensitiveMessage = `SES rejected destination address ${to}`;
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const consoleInfo = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     class DetailedError extends Error {
       constructor() {
@@ -173,13 +177,24 @@ describe("createSesInvitationMail", () => {
       info: (fields) => infoCalls.push(fields),
     });
 
-    await expect(mail.send({ to, communitySlug, link, expiresAt })).rejects.toBeInstanceOf(
-      InvitationMailUnavailable,
-    );
+    try {
+      await expect(mail.send({ to, communitySlug, link, expiresAt })).rejects.toBeInstanceOf(
+        InvitationMailUnavailable,
+      );
 
-    expect(infoCalls).toHaveLength(0);
-    const serialized = JSON.stringify(infoCalls);
-    expect(serialized).not.toContain(to);
-    expect(serialized).not.toContain(sensitiveMessage);
+      expect(infoCalls).toHaveLength(0);
+      const serialized = JSON.stringify(infoCalls);
+      expect(serialized).not.toContain(to);
+      expect(serialized).not.toContain(sensitiveMessage);
+      expect(consoleLog).not.toHaveBeenCalled();
+      expect(consoleInfo).not.toHaveBeenCalled();
+      expect(consoleWarn).not.toHaveBeenCalled();
+      expect(consoleError).not.toHaveBeenCalled();
+    } finally {
+      consoleLog.mockRestore();
+      consoleInfo.mockRestore();
+      consoleWarn.mockRestore();
+      consoleError.mockRestore();
+    }
   });
 });

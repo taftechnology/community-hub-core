@@ -136,6 +136,7 @@ let customCommunityGrants:
     }[]
   | undefined;
 let customMembers: { user_id: string }[] | undefined;
+let invitationOnlyMember: string | undefined;
 
 function fakeTx(strings: TemplateStringsArray): unknown[] {
   const text = strings.join(" ");
@@ -160,6 +161,9 @@ function fakeTx(strings: TemplateStringsArray): unknown[] {
       for (const g of customOrgGrants ?? []) ids.add(g.user_id);
       for (const g of customCommunityGrants ?? []) ids.add(g.user_id);
       for (const l of userLinks) ids.add(l.user_id);
+      if (invitationOnlyMember !== undefined) {
+        ids.add(invitationOnlyMember);
+      }
       return Array.from(ids).map((userId) => ({ user_id: userId }));
     }
     return [{ user_id: USER }];
@@ -268,6 +272,7 @@ describe("access routes", () => {
     customOrgGrants = undefined;
     customCommunityGrants = undefined;
     customMembers = undefined;
+    invitationOnlyMember = undefined;
     people.readLinkedContacts.mockReset();
     identity.readUserEmails.mockReset();
     people.readLinkedContacts.mockResolvedValue(new Map());
@@ -1332,6 +1337,32 @@ describe("access routes", () => {
       expect(exactly500.headers.get("cache-control")).toBe("no-store");
       const body = listUsersResponse.parse(await exactly500.json());
       expect(body.users).toHaveLength(500);
+    });
+
+    it("500 directory users plus one accepted-invitation member gives 409 with no readUserEmails call and no audit row", async () => {
+      const makeUsers = (count: number) => {
+        const grants = [];
+        for (let i = 0; i < count; i += 1) {
+          const hex = i.toString(16).padStart(12, "0");
+          grants.push({
+            grant_id: `00000000-0000-4000-8000-${hex}`,
+            user_id: `00000000-0000-4000-8000-${hex}`,
+            role_key: i === 0 ? "org_owner" : "member",
+          });
+        }
+        return grants;
+      };
+
+      customOrgGrants = makeUsers(500);
+      invitationOnlyMember = "00000000-0000-4000-8000-0000000001f4";
+      db.appendAuditEvent.mockClear();
+      identity.readUserEmails.mockClear();
+
+      const res = await callUsersList({ communitySlug: "parish" });
+      expect(res.status).toBe(409);
+      expect(await res.text()).toBe("");
+      expect(identity.readUserEmails).not.toHaveBeenCalled();
+      expect(db.appendAuditEvent).not.toHaveBeenCalled();
     });
 
     it("Pin 12: every response carries cache-control: no-store, empty bodies on non-200, grants/list 200 untouched", async () => {

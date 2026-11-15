@@ -1,5 +1,10 @@
 import { getRequestContext } from "@community-hub/kernel";
-import { newId, withAppTransaction, type AppTransaction } from "@community-hub/db";
+import {
+  appendAuditEvent,
+  newId,
+  withAppTransaction,
+  type AppTransaction,
+} from "@community-hub/db";
 import {
   acceptInvitation,
   AccessError,
@@ -204,6 +209,15 @@ export function invitationRoutes(deps: InvitationRouteDeps): GateRoute[] {
     );
   }
 
+  function logInternalError(request: Request, error: unknown): void {
+    deps.log("request", {
+      path: new URL(request.url).pathname,
+      status: 500,
+      requestId: getRequestContext().requestId,
+      errorClass: errorClassFor(error),
+    });
+  }
+
   async function checkActorPermissions(
     scope: Scope,
     userId: string,
@@ -214,6 +228,13 @@ export function invitationRoutes(deps: InvitationRouteDeps): GateRoute[] {
         for (const perm of permissions) {
           const has = await holdsPermission(tx, userId, perm);
           if (!has) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: userId,
+              action: "access.permission.denied",
+              purpose: perm,
+              targetIds: [userId],
+            });
             return false;
           }
         }
@@ -348,7 +369,12 @@ export function invitationRoutes(deps: InvitationRouteDeps): GateRoute[] {
                 });
               }
             }
-            return invitationStatus(outcome) ?? empty(500);
+            const mapped = invitationStatus(outcome);
+            if (mapped !== undefined) {
+              return mapped;
+            }
+            logInternalError(request, outcome);
+            return empty(500);
           }
 
           const link = `${deps.adminOrigin}/#invite=${outcome.token}`;
@@ -467,7 +493,11 @@ export function invitationRoutes(deps: InvitationRouteDeps): GateRoute[] {
 
           if (outcome instanceof AccessError) {
             const mapped = invitationStatus(outcome);
-            return noStore(mapped ?? empty(500));
+            if (mapped !== undefined) {
+              return noStore(mapped);
+            }
+            logInternalError(request, outcome);
+            return noStore(empty(500));
           }
 
           const items = outcome.map((item) => ({
@@ -555,34 +585,21 @@ export function invitationRoutes(deps: InvitationRouteDeps): GateRoute[] {
           );
 
           if (outcome instanceof AccessError) {
-            return invitationStatus(outcome) ?? empty(500);
-          }
-
-          const openMap = await baseAddresses.open([invitationId]);
-          const to = openMap.get(invitationId);
-          if (to === undefined) {
-            try {
-              await deps.checkout("app", (sql) =>
-                withAppTransaction(sql, scope, (tx) =>
-                  voidInvitationAfterMailFailure(tx, baseAddresses, {
-                    invitationId,
-                    actorUserId: actor.userId,
-                    now: deps.now(),
-                  }),
-                ),
-              );
-            } catch (cleanupErr) {
-              deps.log("mail_cleanup", {
-                route: "invitations.resend",
-                errorClass: errorClassFor(cleanupErr),
-                requestId: getRequestContext().requestId,
-              });
+            const mapped = invitationStatus(outcome);
+            if (mapped !== undefined) {
+              return mapped;
             }
-            return empty(503);
+            logInternalError(request, outcome);
+            return empty(500);
           }
 
           const link = `${deps.adminOrigin}/#invite=${outcome.token}`;
           try {
+            const openMap = await baseAddresses.open([invitationId]);
+            const to = openMap.get(invitationId);
+            if (to === undefined) {
+              throw new Error("invitation address unavailable");
+            }
             await deps.mail.send({
               to,
               communitySlug,
@@ -682,7 +699,12 @@ export function invitationRoutes(deps: InvitationRouteDeps): GateRoute[] {
           );
 
           if (outcome instanceof AccessError) {
-            return invitationStatus(outcome) ?? empty(500);
+            const mapped = invitationStatus(outcome);
+            if (mapped !== undefined) {
+              return mapped;
+            }
+            logInternalError(request, outcome);
+            return empty(500);
           }
 
           return empty(204);
@@ -751,7 +773,7 @@ export function invitationRoutes(deps: InvitationRouteDeps): GateRoute[] {
             }),
           );
 
-          if (community === null) {
+          if (community === null || community.organisationId !== parsed.orgId) {
             return jsonError(404, "invitation_invalid");
           }
 
@@ -782,7 +804,12 @@ export function invitationRoutes(deps: InvitationRouteDeps): GateRoute[] {
           );
 
           if (outcome instanceof AccessError) {
-            return invitationStatus(outcome) ?? empty(500);
+            const mapped = invitationStatus(outcome);
+            if (mapped !== undefined) {
+              return mapped;
+            }
+            logInternalError(request, outcome);
+            return empty(500);
           }
 
           return Response.json({ communitySlug: community.slug });

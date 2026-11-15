@@ -162,7 +162,7 @@ type Fixture = {
 };
 
 describe("billing guard against a real database", () => {
-  const now = new Date();
+  const now = new Date("2026-10-19T12:00:00.000Z");
   let runtime: Runtime;
   let identity: ReturnType<typeof createPlaintextIdentitySql>;
   let platform: ReturnType<typeof createPlaintextPlatformSql>;
@@ -193,6 +193,14 @@ describe("billing guard against a real database", () => {
     if (session === null) {
       throw new Error("Failed to sign in");
     }
+    // Invitation routes read this session with a wall clock, because identity's
+    // invitation functions compare expires_at with the database clock. The token
+    // was issued on the suite's fixed clock, so keep it valid for both.
+    await identity`
+      update identity.sessions
+      set access_expires_at = now() + interval '1 day'
+      where user_id = ${session.userId}::uuid
+    `;
     userIds.push(session.userId);
     return session;
   }
@@ -655,6 +663,7 @@ describe("billing guard against a real database", () => {
       "POST /v1/access/invitations/create",
       {
         path: "/v1/access/invitations/create",
+        // Identity's invitation functions compare against the database clock.
         prepare: async (setup) => {
           counter += 1;
           return {
@@ -672,6 +681,7 @@ describe("billing guard against a real database", () => {
       "POST /v1/access/invitations/resend",
       {
         path: "/v1/access/invitations/resend",
+        // Identity's invitation functions compare against the database clock.
         prepare: async (setup) => {
           counter += 1;
           const invitationId = newId();
@@ -687,7 +697,7 @@ describe("billing guard against a real database", () => {
                   actorUserId: setup.ownerUserId,
                   address,
                   roleKey: "member",
-                  now: setup.now,
+                  now: new Date(),
                 });
               },
             ),
@@ -706,6 +716,7 @@ describe("billing guard against a real database", () => {
       "POST /v1/access/invitations/revoke",
       {
         path: "/v1/access/invitations/revoke",
+        // Identity's invitation functions compare against the database clock.
         prepare: async (setup) => {
           counter += 1;
           const invitationId = newId();
@@ -721,7 +732,7 @@ describe("billing guard against a real database", () => {
                   actorUserId: setup.ownerUserId,
                   address,
                   roleKey: "member",
-                  now: setup.now,
+                  now: new Date(),
                 });
               },
             ),
@@ -1240,7 +1251,8 @@ describe("billing guard against a real database", () => {
         checkout,
         kms,
         keyArn: KEY_ARN,
-        now: () => now,
+        // Identity's invitation functions compare against the database clock.
+        now: () => new Date(),
         apiHostname: API_HOSTNAME,
         adminOrigin: "https://admin.example.test",
         mail: {
