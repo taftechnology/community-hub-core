@@ -196,7 +196,7 @@ export type ListInvitationsBody = z.infer<typeof listInvitationsBody>;
 const invitationListItem = z
   .object({
     id: uuid,
-    email: z.string(),
+    email: z.string().nullable(),
     roleKey: z.string().nullable(),
     customRoleId: uuid.nullable(),
     linksContact: z.boolean(),

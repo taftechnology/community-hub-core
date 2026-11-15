@@ -532,16 +532,43 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
               return deny(tx, actor.userId, "access.users.view");
             }
 
-            const userIds = Array.from(
+            const directoryUserIds = Array.from(
               new Set([
                 ...directory.grants.map((g) => g.userId),
                 ...directory.userLinks.map((l) => l.userId),
               ]),
             );
 
-            if (userIds.length > 500) {
+            if (directoryUserIds.length > 500) {
               throw new AccessError("too_many");
             }
+
+            const memberRows =
+              directoryUserIds.length > 0
+                ? await tx<{ user_id: string }[]>`
+                    select distinct m.user_id::text as user_id
+                    from app.organisation_members m
+                    left join app.invitations i
+                      on i.id = m.invitation_id
+                     and i.org_id = m.org_id
+                     and i.community_id = current_setting('app.community_id')::uuid
+                    where m.org_id = current_setting('app.org_id')::uuid
+                      and (
+                        m.user_id = any(${directoryUserIds}::uuid[])
+                        or i.id is not null
+                      )
+                  `
+                : await tx<{ user_id: string }[]>`
+                    select distinct m.user_id::text as user_id
+                    from app.organisation_members m
+                    join app.invitations i
+                      on i.id = m.invitation_id
+                     and i.org_id = m.org_id
+                     and i.community_id = current_setting('app.community_id')::uuid
+                    where m.org_id = current_setting('app.org_id')::uuid
+                  `;
+
+            const userIds = memberRows.map((r) => r.user_id);
 
             const userToPersonId = new Map<string, string>();
             for (const link of directory.userLinks) {

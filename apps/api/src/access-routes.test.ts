@@ -135,6 +135,7 @@ let customCommunityGrants:
       custom_role_key: string | null;
     }[]
   | undefined;
+let customMembers: { user_id: string }[] | undefined;
 
 function fakeTx(strings: TemplateStringsArray): unknown[] {
   const text = strings.join(" ");
@@ -146,6 +147,22 @@ function fakeTx(strings: TemplateStringsArray): unknown[] {
   }
   if (text.includes("from app.user_links")) {
     return userLinks;
+  }
+  if (customMembers !== undefined && text.includes("app.organisation_members")) {
+    if (!text.includes("community_id")) {
+      return [...customMembers, { user_id: "00000000-0000-4000-8000-000000000060" }];
+    }
+    return customMembers;
+  }
+  if (text.includes("app.organisation_members")) {
+    if (customOrgGrants !== undefined || customCommunityGrants !== undefined) {
+      const ids = new Set<string>();
+      for (const g of customOrgGrants ?? []) ids.add(g.user_id);
+      for (const g of customCommunityGrants ?? []) ids.add(g.user_id);
+      for (const l of userLinks) ids.add(l.user_id);
+      return Array.from(ids).map((userId) => ({ user_id: userId }));
+    }
+    return [{ user_id: USER }];
   }
   if (customOrgGrants !== undefined && text.includes("app.organisation_role_grants")) {
     return customOrgGrants;
@@ -250,6 +267,7 @@ describe("access routes", () => {
     userLinks = [];
     customOrgGrants = undefined;
     customCommunityGrants = undefined;
+    customMembers = undefined;
     people.readLinkedContacts.mockReset();
     identity.readUserEmails.mockReset();
     people.readLinkedContacts.mockResolvedValue(new Map());
@@ -1451,6 +1469,43 @@ describe("access routes", () => {
         "00000000-0000-4000-8000-000000000003",
         "00000000-0000-4000-8000-000000000004",
       ]);
+    });
+
+    it("pin 43 (unit a): users list excludes directory users who have no organisation membership", async () => {
+      const nonMemberUser = "00000000-0000-4000-8000-000000000050";
+      customOrgGrants = [
+        { grant_id: ORG_GRANT, user_id: USER, role_key: "org_owner" },
+        {
+          grant_id: "00000000-0000-4000-8000-000000000051",
+          user_id: nonMemberUser,
+          role_key: "member",
+        },
+      ];
+      // Only USER is an organisation member
+      customMembers = [{ user_id: USER }];
+
+      const res = await callUsersList({ communitySlug: "parish" });
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as { users: { userId: string }[] };
+      const returnedIds = data.users.map((u) => u.userId);
+      expect(returnedIds).toContain(USER);
+      expect(returnedIds).not.toContain(nonMemberUser);
+    });
+
+    it("pin 43 (unit b): users list excludes organisation members who belong only to a sibling community", async () => {
+      const siblingMemberUser = "00000000-0000-4000-8000-000000000060";
+      const acceptedInviteUser = "00000000-0000-4000-8000-000000000070";
+      customOrgGrants = [{ grant_id: ORG_GRANT, user_id: USER, role_key: "org_owner" }];
+      // Membership query with community filter answers only USER and the accepted-invite member for this community
+      customMembers = [{ user_id: USER }, { user_id: acceptedInviteUser }];
+
+      const res = await callUsersList({ communitySlug: "parish" });
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as { users: { userId: string }[] };
+      const returnedIds = data.users.map((u) => u.userId);
+      expect(returnedIds).toContain(USER);
+      expect(returnedIds).toContain(acceptedInviteUser);
+      expect(returnedIds).not.toContain(siblingMemberUser);
     });
   });
 });

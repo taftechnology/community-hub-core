@@ -2,7 +2,13 @@ import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { bootstrapOwner, createCustomRole, grantRole, linkUser } from "@community-hub/access";
+import {
+  bootstrapOwner,
+  createCustomRole,
+  createInvitation,
+  grantRole,
+  linkUser,
+} from "@community-hub/access";
 import { addMember } from "@community-hub/access/testing";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import { applyProductMigrations, newId, withAppTransaction } from "@community-hub/db";
@@ -45,6 +51,8 @@ import { entitlementRoutes } from "./entitlement-routes.js";
 import { householdRoutes } from "./household-routes.js";
 import { lifeEventRoutes } from "./life-event-routes.js";
 import { peopleRoutes } from "./people-routes.js";
+import { invitationRoutes } from "./invitation-routes.js";
+import { identityInvitationAddresses } from "./invitation-addresses.js";
 import { readServiceEnv, type ServiceEnv } from "./env.js";
 import { productionRoutes } from "./index.js";
 import { startServer } from "./server.js";
@@ -154,7 +162,7 @@ type Fixture = {
 };
 
 describe("billing guard against a real database", () => {
-  const now = new Date("2026-10-19T12:00:00.000Z");
+  const now = new Date();
   let runtime: Runtime;
   let identity: ReturnType<typeof createPlaintextIdentitySql>;
   let platform: ReturnType<typeof createPlaintextPlatformSql>;
@@ -273,6 +281,50 @@ describe("billing guard against a real database", () => {
         const rows = await tx<{ n: number }[]>`
           select count(*)::int as n
           from app.custom_roles
+        `;
+        return rows[0]!.n;
+      },
+    );
+  }
+
+  async function countInvitations(setup: OrgSetup): Promise<number> {
+    return withAppTransaction(
+      app,
+      { orgId: setup.orgId, communityId: setup.communityId },
+      async (tx) => {
+        const rows = await tx<{ n: number }[]>`
+          select count(*)::int as n
+          from app.invitations
+        `;
+        return rows[0]!.n;
+      },
+    );
+  }
+
+  async function invitationResendCount(setup: OrgSetup, invitationId: string): Promise<number> {
+    return withAppTransaction(
+      app,
+      { orgId: setup.orgId, communityId: setup.communityId },
+      async (tx) => {
+        const rows = await tx<{ resend_count: number }[]>`
+          select resend_count
+          from app.invitations
+          where id = ${invitationId}::uuid
+        `;
+        return rows[0]?.resend_count ?? 0;
+      },
+    );
+  }
+
+  async function countPendingInvitations(setup: OrgSetup): Promise<number> {
+    return withAppTransaction(
+      app,
+      { orgId: setup.orgId, communityId: setup.communityId },
+      async (tx) => {
+        const rows = await tx<{ n: number }[]>`
+          select count(*)::int as n
+          from app.invitations
+          where status = 'pending'
         `;
         return rows[0]!.n;
       },
@@ -595,6 +647,91 @@ describe("billing guard against a real database", () => {
               userId: unlinkUserId,
             },
             count: () => countUserLinks(setup),
+          };
+        },
+      },
+    ],
+    [
+      "POST /v1/access/invitations/create",
+      {
+        path: "/v1/access/invitations/create",
+        prepare: async (setup) => {
+          counter += 1;
+          return {
+            body: {
+              communitySlug: setup.slug,
+              email: `invited_${counter}_${newId().slice(0, 8)}@example.test`,
+              roleKey: "member",
+            },
+            count: () => countInvitations(setup),
+          };
+        },
+      },
+    ],
+    [
+      "POST /v1/access/invitations/resend",
+      {
+        path: "/v1/access/invitations/resend",
+        prepare: async (setup) => {
+          counter += 1;
+          const invitationId = newId();
+          const address = `resend_${counter}_${newId().slice(0, 8)}@example.test`;
+          const addresses = identityInvitationAddresses({ checkout, kms, keyArn: KEY_ARN });
+          await withRequest({ requestId: REQUEST_ID }, () =>
+            withAppTransaction(
+              app,
+              { orgId: setup.orgId, communityId: setup.communityId },
+              async (tx) => {
+                await createInvitation(tx, addresses, {
+                  invitationId,
+                  actorUserId: setup.ownerUserId,
+                  address,
+                  roleKey: "member",
+                  now: setup.now,
+                });
+              },
+            ),
+          );
+          return {
+            body: {
+              communitySlug: setup.slug,
+              invitationId,
+            },
+            count: () => invitationResendCount(setup, invitationId),
+          };
+        },
+      },
+    ],
+    [
+      "POST /v1/access/invitations/revoke",
+      {
+        path: "/v1/access/invitations/revoke",
+        prepare: async (setup) => {
+          counter += 1;
+          const invitationId = newId();
+          const address = `revoke_${counter}_${newId().slice(0, 8)}@example.test`;
+          const addresses = identityInvitationAddresses({ checkout, kms, keyArn: KEY_ARN });
+          await withRequest({ requestId: REQUEST_ID }, () =>
+            withAppTransaction(
+              app,
+              { orgId: setup.orgId, communityId: setup.communityId },
+              async (tx) => {
+                await createInvitation(tx, addresses, {
+                  invitationId,
+                  actorUserId: setup.ownerUserId,
+                  address,
+                  roleKey: "member",
+                  now: setup.now,
+                });
+              },
+            ),
+          );
+          return {
+            body: {
+              communitySlug: setup.slug,
+              invitationId,
+            },
+            count: () => countPendingInvitations(setup),
           };
         },
       },
@@ -1096,6 +1233,19 @@ describe("billing guard against a real database", () => {
         keyArn: KEY_ARN,
         now: () => now,
         apiHostname: API_HOSTNAME,
+        log: () => undefined,
+        guardLog: () => undefined,
+      }),
+      ...invitationRoutes({
+        checkout,
+        kms,
+        keyArn: KEY_ARN,
+        now: () => now,
+        apiHostname: API_HOSTNAME,
+        adminOrigin: "https://admin.example.test",
+        mail: {
+          send: async () => {},
+        },
         log: () => undefined,
         guardLog: () => undefined,
       }),

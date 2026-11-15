@@ -638,7 +638,7 @@ describe("access bodies", () => {
         expiresAt: "2026-11-21T00:00:00.000Z",
       };
 
-      it("parses valid response with items", () => {
+      it("parses valid response with items including nullable email", () => {
         expect(
           listInvitationsResponse.safeParse({
             invitations: [
@@ -648,6 +648,14 @@ describe("access bodies", () => {
                 email: "sam@example.test",
                 roleKey: null,
                 customRoleId: CUSTOM,
+                linksContact: false,
+                expiresAt: "2026-11-21T00:00:00.000Z",
+              },
+              {
+                id: "00000000-0000-4000-8000-000000000012",
+                email: null,
+                roleKey: null,
+                customRoleId: null,
                 linksContact: false,
                 expiresAt: "2026-11-21T00:00:00.000Z",
               },

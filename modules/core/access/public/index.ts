@@ -62,6 +62,8 @@ export {
   listInvitations,
   resendInvitation,
   revokeInvitation,
+  proveInvitation,
+  acceptInvitation,
   deleteInvitationAfterMailFailure,
   voidInvitationAfterMailFailure,
   type CreateInvitationInput,
@@ -69,6 +71,8 @@ export {
   type InvitationListItem,
   type ResendInvitationInput,
   type RevokeInvitationInput,
+  type ProveInvitationInput,
+  type AcceptInvitationInput,
   type MailFailureInput,
 } from "../infrastructure/invitations.js";
 export { readPersonForActor } from "../infrastructure/restricted-read.js";
