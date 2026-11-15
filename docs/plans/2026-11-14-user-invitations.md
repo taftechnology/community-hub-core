@@ -719,3 +719,18 @@ This plan has no Terraform assert, so no scratch probe is needed (AGENTS.md §4)
     - **50:** resend with an erased or expired address. The stub's `refresh` answers `false`; resend gives `invitation_not_found` and writes no audit row, and `token_hash` is unchanged. The weakening ignores the result of `refresh`.
     - **51 (Task 7):** the route compensates. With `createInvitationEmail` succeeding and the app transaction then failing (a forced audit failure), `closeInvitationEmail` is called with the same id. The weakening removes the compensation.
   - **Unchanged:** the token, caps, permissions, the contact rules, the purge (A3), and Task 6's accept order.
+
+- **P3 (approved 2026-11-15, Adnan Bin Hossen, with spec A7). One fix commit after Task 6.**
+  - **Files:**
+    - `modules/core/access/infrastructure/invitations.ts` and `custom-roles.ts`, with their integration tests;
+    - `modules/core/identity/infrastructure/invitation-email.ts`, with its integration test.
+  - **Pins added:**
+    - **52:** create without `access.users.manage`, with the community already at the pending cap, gives `forbidden`, not `too_many`. The stub records no `sweep`, and old rows are not purged. The weakening moves the permission check back after the caps.
+    - **53:** `deleteCustomRole` without `access.roles.manage` takes no advisory lock. The test holds the organisation lock and confirms the caller gets `forbidden` without waiting. The weakening takes the lock first.
+    - **54:** accept with a bad hash records no `sweep`. The weakening sweeps before the hash check.
+    - **55:** each mail-failure path, called by a member without `access.users.manage`, gives `forbidden` and leaves the row unchanged. There are two weakenings, one per path.
+    - **56:** with 501 rows expired more than 30 days ago that still hold an address, one sweep deletes 500 and erases the remaining one. No row is both erased and deleted. The weakening restores the 30-day limit on the erase part.
+  - **Pins revised:**
+    - **48:** sweep is the first identity call in every action. In accept, it comes after the hash and status checks.
+    - **Task 4b's 30-day pin:** its weakening becomes "drop the `to_delete` exclusion from the erase part".
+  - **Task 7 (from the same check, L5):** the accept route must catch `AccessError` inside `withAppTransaction`, as `access-routes.ts:422-431` does, so the void and its audit row commit. Task 8 adds a route test: an `invitation_void` answer leaves the invitation `void` with one `voided` row.

@@ -481,3 +481,24 @@ Proposed 2026-11-14 from plan check 1 (Claude Opus 5.5). Approved by the chunk o
       The `restrict` foreign key then never turns the delete into a 500.
 
     - Their addresses are already erased by expiry, or are erased by the next sweep.
+
+- **A7 (approved 2026-11-15, Adnan Bin Hossen). Permission before lock, and narrower sweeps (checkpoint 1 owner check).**
+  - **Why.** The owner check on Tasks 1 to 6 found that create checked caps before permission. A signed-in user with no grant could therefore learn whether a community is at a cap (`too_many` instead of `forbidden`), hold the organisation lock, and trigger the sweep and the purge.
+  - **Create order (replaces the create order in A6).**
+    1. Parse the input.
+    2. Load the actor and check the permissions: `access.users.manage`, then `access.roles.manage` with a role, then `people.view` with a contact. These are plain reads and need no lock.
+    3. Take the lock.
+    4. Sweep.
+    5. Purge.
+    6. Check the caps.
+    7. Check the role, including `roleGrantAllowed`, and the contact.
+    8. Insert the app row.
+    9. Write `access.invitation.created`.
+    10. Last, call `createInvitationEmail`.
+
+    A caller without permission gets `forbidden` before any lock, sweep, purge or cap count.
+
+  - **Custom-role delete** checks `access.roles.manage` before it takes the organisation lock. The lock still comes before the role select and the invitation count, so the A6 serialisation with create is unchanged.
+  - **Accept sweeps after the token is proven.** The sweep runs after spec steps 1 to 3 (select, hash, pending and unexpired) and before the address match. A token that fails those steps causes no write anywhere, identity included. This narrows A5's "every action first calls `sweepInvitationEmails`" for accept only. Sweep is still the first identity call in every action.
+  - **The mail-failure paths require `access.users.manage`.** `deleteInvitationAfterMailFailure` and `voidInvitationAfterMailFailure` check that the actor holds it. Without it they give `forbidden` and write nothing.
+  - **The sweep never leaves an old address behind.** The erase part no longer stops at 30 days. It erases any expired row that still holds an address, except a row the delete part chose in the same statement. So a backlog of more than 500 old rows cannot keep an address past expiry.
