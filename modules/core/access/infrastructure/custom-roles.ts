@@ -8,6 +8,7 @@ import {
   parseUuid,
 } from "../domain/role.js";
 import { allows, deny, loadActor } from "./grants.js";
+import { lockOrganisation } from "./membership.js";
 
 const CREATED = "access.custom_role.created";
 const DELETED = "access.custom_role.deleted";
@@ -112,6 +113,7 @@ export async function deleteCustomRole(
   tx: AppTransaction,
   input: { now: Date; customRoleId: string; actorUserId: string },
 ): Promise<void> {
+  await lockOrganisation(tx);
   const customRoleId = parseUuid(input.customRoleId);
   const actorUserId = parseUuid(input.actorUserId);
   const actor = await loadActor(tx, actorUserId);

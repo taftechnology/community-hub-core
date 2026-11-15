@@ -28,7 +28,7 @@ import {
   voidInvitationAfterMailFailure,
 } from "./invitations.js";
 import { lockOrganisation } from "./membership.js";
-import { MemoryInvitationAddresses } from "./testing.js";
+import { addMember, MemoryInvitationAddresses } from "./testing.js";
 
 type Runtime = {
   productOnlyUrl: string;
@@ -160,15 +160,17 @@ async function assertNoSensitiveDataInAudit(
   tx: AppTransaction,
   sensitiveTexts: string[],
 ): Promise<void> {
-  const auditRows = await tx<{ action: string; purpose: string; target_ids: string[] }[]>`
-    select action, purpose, target_ids::text[] as target_ids
-    from app.audit_events
+  const auditRows = await tx<{ payload: Record<string, unknown> }[]>`
+    select to_jsonb(a) as payload
+    from app.audit_events a
   `;
   for (const row of auditRows) {
-    const serialized = JSON.stringify(row);
-    for (const text of sensitiveTexts) {
-      if (text && serialized.includes(text)) {
-        throw new Error(`Sensitive text found in audit event: ${text}`);
+    for (const [col, val] of Object.entries(row.payload)) {
+      const serialized = typeof val === "string" ? val : JSON.stringify(val);
+      for (const text of sensitiveTexts) {
+        if (text && serialized.includes(text)) {
+          throw new Error(`Sensitive text matched audit event column: ${col}`);
+        }
       }
     }
   }
@@ -228,42 +230,54 @@ describe("invitations repository integration (pins & behaviour)", () => {
         const stub1 = new MemoryInvitationAddresses();
         const stub2 = new MemoryInvitationAddresses();
 
-        pendingCreates = Promise.allSettled([
-          runInCommunity(app, scopeA1, (tx) =>
-            createInvitation(tx, stub1, {
-              invitationId: newId(),
-              actorUserId: owner,
-              address: "user1@example.test",
-              roleKey: "member",
-              now: NOW,
-            }),
-          ),
-          runInCommunity(app, scopeA1, (tx) =>
-            createInvitation(tx, stub2, {
-              invitationId: newId(),
-              actorUserId: owner,
-              address: "user2@example.test",
-              roleKey: "member",
-              now: NOW,
-            }),
-          ),
-        ]);
+        let create1Settled = false;
+        let create2Settled = false;
 
+        const p1 = runInCommunity(app, scopeA1, (tx) =>
+          createInvitation(tx, stub1, {
+            invitationId: newId(),
+            actorUserId: owner,
+            address: "user1@example.test",
+            roleKey: "member",
+            now: NOW,
+          }),
+        ).finally(() => {
+          create1Settled = true;
+        });
+
+        const p2 = runInCommunity(app, scopeA1, (tx) =>
+          createInvitation(tx, stub2, {
+            invitationId: newId(),
+            actorUserId: owner,
+            address: "user2@example.test",
+            roleKey: "member",
+            now: NOW,
+          }),
+        ).finally(() => {
+          create2Settled = true;
+        });
+
+        pendingCreates = Promise.allSettled([p1, p2]);
+
+        let waitedBoth = false;
         const started = Date.now();
         while (Date.now() - started < 5_000) {
           const waiting = await observerApp<{ n: number }[]>`
             select count(*)::int as n
-            from pg_stat_activity
-            where datname = current_database()
-              and state = 'active'
-              and wait_event_type = 'Lock'
-              and query like '%pg_advisory_xact_lock%'
+            from pg_locks
+            where locktype = 'advisory'
+              and not granted
           `;
           if ((waiting[0]?.n ?? 0) >= 2) {
+            waitedBoth = true;
             break;
           }
           await new Promise((resolve) => setTimeout(resolve, 20));
         }
+
+        expect(waitedBoth).toBe(true);
+        expect(create1Settled).toBe(false);
+        expect(create2Settled).toBe(false);
 
         releaseLockResolve();
         await gate;
@@ -277,6 +291,16 @@ describe("invitations repository integration (pins & behaviour)", () => {
         const err = (rejected[0] as PromiseRejectedResult).reason;
         expect(err).toBeInstanceOf(AccessError);
         expect((err as AccessError).code).toBe("too_many");
+
+        const successfulToken = (fulfilled[0] as PromiseFulfilledResult<{ token: string }>).value
+          .token;
+        await runInCommunity(app, scopeA1, (tx) =>
+          assertNoSensitiveDataInAudit(tx, [
+            "user1@example.test",
+            "user2@example.test",
+            successfulToken,
+          ]),
+        );
       } finally {
         releaseLockResolve();
         await gate.catch(() => undefined);
@@ -325,6 +349,9 @@ describe("invitations repository integration (pins & behaviour)", () => {
         }),
       );
       expect(created.token).toMatch(/^v1\./);
+      await runInCommunity(app, scopeA1, (tx) =>
+        assertNoSensitiveDataInAudit(tx, ["comm1@example.test", created.token]),
+      );
     });
   });
 
@@ -426,7 +453,7 @@ describe("invitations repository integration (pins & behaviour)", () => {
     });
   });
 
-  it("pin 22 b: 100 expired pending rows, created more than an hour ago; create succeeds", async () => {
+  it("pin 22 b: 100 expired pending rows, created more than an hour ago, and 20 expired pending rows in the past hour; create succeeds", async () => {
     await withTwoOrgs(async ({ app, orgA }) => {
       const scope = { orgId: orgA.organisationId, communityId: orgA.community1Id };
       const owner = newId();
@@ -454,6 +481,26 @@ describe("invitations repository integration (pins & behaviour)", () => {
         }
       });
 
+      // Seed 20 expired pending rows created within the past hour (A6: expired pending rows count toward no cap)
+      await runInCommunity(app, scope, async (tx) => {
+        const dummyHash = Buffer.alloc(32, 3);
+        const tenMinutesAgo = new Date(NOW.getTime() - 10 * 60_000);
+        const fiveMinutesAgo = new Date(NOW.getTime() - 5 * 60_000);
+        for (let i = 0; i < 20; i++) {
+          const invId = newId();
+          await tx`
+            insert into app.invitations (
+              id, org_id, community_id, invited_by, token_hash, role_key, custom_role_id,
+              person_id, status, expires_at, resend_count, last_sent_at, accepted_user_id, closed_at, created_at
+            ) values (
+              ${invId}::uuid, current_setting('app.org_id')::uuid, current_setting('app.community_id')::uuid,
+              ${owner}::uuid, ${dummyHash}, 'member', null,
+              null, 'pending', ${fiveMinutesAgo}, 0, ${tenMinutesAgo}, null, null, ${tenMinutesAgo}
+            )
+          `;
+        }
+      });
+
       const stub = new MemoryInvitationAddresses();
       const created = await runInCommunity(app, scope, (tx) =>
         createInvitation(tx, stub, {
@@ -465,6 +512,10 @@ describe("invitations repository integration (pins & behaviour)", () => {
         }),
       );
       expect(created.token).toMatch(/^v1\./);
+
+      await runInCommunity(app, scope, (tx) =>
+        assertNoSensitiveDataInAudit(tx, ["success-with-100-expired@example.test", created.token]),
+      );
     });
   });
 
@@ -529,6 +580,13 @@ describe("invitations repository integration (pins & behaviour)", () => {
         });
 
         expect(stub.calls.some((c) => c.method === "close" && c.invitationId === invId)).toBe(true);
+
+        const revokedAudits = await tx<{ action: string }[]>`
+          select action from app.audit_events
+          where action = 'access.invitation.revoked'
+            and ${invId}::uuid = any(target_ids)
+        `;
+        expect(revokedAudits).toHaveLength(1);
 
         await assertNoSensitiveDataInAudit(tx, [address, created.token]);
       });
@@ -646,6 +704,8 @@ describe("invitations repository integration (pins & behaviour)", () => {
             and ${expiredPendingId}::uuid = any(target_ids)
         `;
         expect(audit).toHaveLength(1);
+
+        await assertNoSensitiveDataInAudit(tx, []);
       });
     });
   });
@@ -663,23 +723,38 @@ describe("invitations repository integration (pins & behaviour)", () => {
       const stub = new MemoryInvitationAddresses();
       const invId = newId();
 
-      await expect(
-        runInCommunity(app, scope, (tx) =>
-          createInvitation(tx, stub, {
-            invitationId: invId,
-            actorUserId: owner,
-            address: "minor-refusal@example.test",
-            personId: minorId,
-            now: NOW,
-          }),
-        ),
-      ).rejects.toThrow(new AccessError("person_minor"));
+      const auditCountBefore = await runInCommunity(app, scope, async (tx) => {
+        const rows = await tx<{ n: number }[]>`select count(*)::int as n from app.audit_events`;
+        return rows[0]!.n;
+      });
+
+      const res = await runInCommunity(app, scope, (tx) =>
+        createInvitation(tx, stub, {
+          invitationId: invId,
+          actorUserId: owner,
+          address: "minor-refusal@example.test",
+          personId: minorId,
+          now: NOW,
+        }),
+      ).then(
+        () => "resolved",
+        (e) => e,
+      );
+      expect(res).toBeInstanceOf(AccessError);
+      expect((res as AccessError).code).toBe("person_minor");
 
       await runInCommunity(app, scope, async (tx) => {
         const rows = await tx<{ id: string }[]>`
           select id::text as id from app.invitations where id = ${invId}::uuid
         `;
         expect(rows).toHaveLength(0);
+
+        const auditCountAfter = (
+          await tx<{ n: number }[]>`select count(*)::int as n from app.audit_events`
+        )[0]!.n;
+        expect(auditCountAfter).toBe(auditCountBefore);
+
+        await assertNoSensitiveDataInAudit(tx, ["minor-refusal@example.test"]);
       });
     });
   });
@@ -724,23 +799,27 @@ describe("invitations repository integration (pins & behaviour)", () => {
       const stub = new MemoryInvitationAddresses();
       const invId = newId();
 
-      await expect(
-        runInCommunity(app, scope, (tx) =>
-          createInvitation(tx, stub, {
-            invitationId: invId,
-            actorUserId: inviter,
-            address: "forbidden-bundle@example.test",
-            roleKey: "community_admin",
-            now: NOW,
-          }),
-        ),
-      ).rejects.toThrow(new AccessError("forbidden"));
+      const res = await runInCommunity(app, scope, (tx) =>
+        createInvitation(tx, stub, {
+          invitationId: invId,
+          actorUserId: inviter,
+          address: "forbidden-bundle@example.test",
+          roleKey: "community_admin",
+          now: NOW,
+        }),
+      ).then(
+        () => "resolved",
+        (e) => e,
+      );
+      expect(res).toBeInstanceOf(AccessError);
+      expect((res as AccessError).code).toBe("forbidden");
 
       await runInCommunity(app, scope, async (tx) => {
         const rows = await tx<{ id: string }[]>`
           select id::text as id from app.invitations where id = ${invId}::uuid
         `;
         expect(rows).toHaveLength(0);
+        await assertNoSensitiveDataInAudit(tx, ["forbidden-bundle@example.test"]);
       });
     });
   });
@@ -792,23 +871,27 @@ describe("invitations repository integration (pins & behaviour)", () => {
       const stub = new MemoryInvitationAddresses();
       const invId = newId();
 
-      await expect(
-        runInCommunity(app, scope, (tx) =>
-          createInvitation(tx, stub, {
-            invitationId: invId,
-            actorUserId: inviter,
-            address: "forbidden-custom-perm@example.test",
-            customRoleId: targetRole.customRoleId,
-            now: NOW,
-          }),
-        ),
-      ).rejects.toThrow(new AccessError("forbidden"));
+      const res = await runInCommunity(app, scope, (tx) =>
+        createInvitation(tx, stub, {
+          invitationId: invId,
+          actorUserId: inviter,
+          address: "forbidden-custom-perm@example.test",
+          customRoleId: targetRole.customRoleId,
+          now: NOW,
+        }),
+      ).then(
+        () => "resolved",
+        (e) => e,
+      );
+      expect(res).toBeInstanceOf(AccessError);
+      expect((res as AccessError).code).toBe("forbidden");
 
       await runInCommunity(app, scope, async (tx) => {
         const rows = await tx<{ id: string }[]>`
           select id::text as id from app.invitations where id = ${invId}::uuid
         `;
         expect(rows).toHaveLength(0);
+        await assertNoSensitiveDataInAudit(tx, ["forbidden-custom-perm@example.test"]);
       });
     });
   });
@@ -836,17 +919,20 @@ describe("invitations repository integration (pins & behaviour)", () => {
         );
       }
 
-      await expect(
-        runInCommunity(app, scope, (tx) =>
-          createInvitation(tx, stub, {
-            invitationId: newId(),
-            actorUserId: owner,
-            address: "hourly-21@example.test",
-            roleKey: "member",
-            now: NOW,
-          }),
-        ),
-      ).rejects.toThrow(new AccessError("too_many"));
+      const resA = await runInCommunity(app, scope, (tx) =>
+        createInvitation(tx, stub, {
+          invitationId: newId(),
+          actorUserId: owner,
+          address: "hourly-21@example.test",
+          roleKey: "member",
+          now: NOW,
+        }),
+      ).then(
+        () => "resolved",
+        (e) => e,
+      );
+      expect(resA).toBeInstanceOf(AccessError);
+      expect((resA as AccessError).code).toBe("too_many");
 
       // Clean up for part (b)
       await runInCommunity(app, scope, async (tx) => {
@@ -872,17 +958,20 @@ describe("invitations repository integration (pins & behaviour)", () => {
         }
       });
 
-      await expect(
-        runInCommunity(app, scope, (tx) =>
-          createInvitation(tx, stub, {
-            invitationId: newId(),
-            actorUserId: owner,
-            address: "pending-101@example.test",
-            roleKey: "member",
-            now: NOW,
-          }),
-        ),
-      ).rejects.toThrow(new AccessError("too_many"));
+      const resB = await runInCommunity(app, scope, (tx) =>
+        createInvitation(tx, stub, {
+          invitationId: newId(),
+          actorUserId: owner,
+          address: "pending-101@example.test",
+          roleKey: "member",
+          now: NOW,
+        }),
+      ).then(
+        () => "resolved",
+        (e) => e,
+      );
+      expect(resB).toBeInstanceOf(AccessError);
+      expect((resB as AccessError).code).toBe("too_many");
 
       // Clean up for parts (c) and (d)
       await runInCommunity(app, scope, async (tx) => {
@@ -914,15 +1003,18 @@ describe("invitations repository integration (pins & behaviour)", () => {
       }
 
       // 4th resend gives too_many
-      await expect(
-        runInCommunity(app, scope, (tx) =>
-          resendInvitation(tx, stub, {
-            invitationId: resendInvId,
-            actorUserId: owner,
-            now: new Date(NOW.getTime() + 4000),
-          }),
-        ),
-      ).rejects.toThrow(new AccessError("too_many"));
+      const resC = await runInCommunity(app, scope, (tx) =>
+        resendInvitation(tx, stub, {
+          invitationId: resendInvId,
+          actorUserId: owner,
+          now: new Date(NOW.getTime() + 4000),
+        }),
+      ).then(
+        () => "resolved",
+        (e) => e,
+      );
+      expect(resC).toBeInstanceOf(AccessError);
+      expect((resC as AccessError).code).toBe("too_many");
 
       // (d) with last_sent_at moved 25 hours back, resend succeeds and resend_count becomes 1
       const past25h = new Date(NOW.getTime() - 25 * 3600_000);
@@ -948,6 +1040,8 @@ describe("invitations repository integration (pins & behaviour)", () => {
           select resend_count from app.invitations where id = ${resendInvId}::uuid
         `;
         expect(rows[0]!.resend_count).toBe(1);
+
+        await assertNoSensitiveDataInAudit(tx, ["resend-cap@example.test", resent.token]);
       });
     });
   });
@@ -1020,6 +1114,8 @@ describe("invitations repository integration (pins & behaviour)", () => {
         expect(ids.has(idPending29)).toBe(true);
         expect(ids.has(idPendingFuture)).toBe(true);
         expect(ids.has(idAccepted31)).toBe(true);
+
+        await assertNoSensitiveDataInAudit(tx, []);
       });
     });
   });
@@ -1074,6 +1170,10 @@ describe("invitations repository integration (pins & behaviour)", () => {
         }),
       );
       expect(stubRevoke.calls[0]?.method).toBe("sweep");
+
+      await runInCommunity(app, scope, (tx) =>
+        assertNoSensitiveDataInAudit(tx, ["sweep-first@example.test"]),
+      );
     });
   });
 
@@ -1089,17 +1189,20 @@ describe("invitations repository integration (pins & behaviour)", () => {
       stub.createAnswer = { ok: false, reason: "already_invited" };
       const invId = newId();
 
-      await expect(
-        runInCommunity(app, scope, (tx) =>
-          createInvitation(tx, stub, {
-            invitationId: invId,
-            actorUserId: owner,
-            address: "already-invited@example.test",
-            roleKey: "member",
-            now: NOW,
-          }),
-        ),
-      ).rejects.toThrow(new AccessError("already_invited"));
+      const res = await runInCommunity(app, scope, (tx) =>
+        createInvitation(tx, stub, {
+          invitationId: invId,
+          actorUserId: owner,
+          address: "already-invited@example.test",
+          roleKey: "member",
+          now: NOW,
+        }),
+      ).then(
+        () => "resolved",
+        (e) => e,
+      );
+      expect(res).toBeInstanceOf(AccessError);
+      expect((res as AccessError).code).toBe("already_invited");
 
       await runInCommunity(app, scope, async (tx) => {
         const rows = await tx<{ id: string }[]>`
@@ -1113,6 +1216,8 @@ describe("invitations repository integration (pins & behaviour)", () => {
             and ${invId}::uuid = any(target_ids)
         `;
         expect(audit).toHaveLength(0);
+
+        await assertNoSensitiveDataInAudit(tx, ["already-invited@example.test"]);
       });
     });
   });
@@ -1144,18 +1249,26 @@ describe("invitations repository integration (pins & behaviour)", () => {
         return rows[0]!;
       });
 
+      const auditCountBefore = await runInCommunity(app, scope, async (tx) => {
+        const rows = await tx<{ n: number }[]>`select count(*)::int as n from app.audit_events`;
+        return rows[0]!.n;
+      });
+
       // Stub refresh returns false
       stub.refreshAnswer = false;
 
-      await expect(
-        runInCommunity(app, scope, (tx) =>
-          resendInvitation(tx, stub, {
-            invitationId: invId,
-            actorUserId: owner,
-            now: new Date(NOW.getTime() + 1000),
-          }),
-        ),
-      ).rejects.toThrow(new AccessError("invitation_not_found"));
+      const res = await runInCommunity(app, scope, (tx) =>
+        resendInvitation(tx, stub, {
+          invitationId: invId,
+          actorUserId: owner,
+          now: new Date(NOW.getTime() + 1000),
+        }),
+      ).then(
+        () => "resolved",
+        (e) => e,
+      );
+      expect(res).toBeInstanceOf(AccessError);
+      expect((res as AccessError).code).toBe("invitation_not_found");
 
       await runInCommunity(app, scope, async (tx) => {
         const rowAfter = await tx<{ token_hash: Buffer }[]>`
@@ -1163,11 +1276,12 @@ describe("invitations repository integration (pins & behaviour)", () => {
         `;
         expect(Buffer.from(rowAfter[0]!.token_hash).equals(rowBefore.token_hash)).toBe(true);
 
-        const audit = await tx<{ id: string }[]>`
-          select id::text as id from app.audit_events
-          where action = 'access.invitation.resent'
-        `;
-        expect(audit).toHaveLength(0);
+        const auditCountAfter = (
+          await tx<{ n: number }[]>`select count(*)::int as n from app.audit_events`
+        )[0]!.n;
+        expect(auditCountAfter).toBe(auditCountBefore);
+
+        await assertNoSensitiveDataInAudit(tx, ["refresh-false@example.test"]);
       });
     });
   });
@@ -1186,21 +1300,30 @@ describe("invitations repository integration (pins & behaviour)", () => {
       // 1. Happy path create with contact
       const { adultId } = await runInCommunity(app, scopeA1, (tx) => createAdultAndMinor(tx, kms));
       const invWithContact = newId();
+      const testNow = new Date();
       const createdContact = await runInCommunity(app, scopeA1, (tx) =>
         createInvitation(tx, stub, {
           invitationId: invWithContact,
           actorUserId: owner,
           address: "contact-invite@example.test",
           personId: adultId,
-          now: NOW,
+          now: testNow,
         }),
       );
       expect(createdContact.token).toMatch(/^v1\./);
 
-      // 2. listInvitations: returns email null when stub has no address
+      // 2. listInvitations: returns non-null email from stub, or email null when stub has no address
+      const listBeforeClear = await runInCommunity(app, scopeA1, (tx) =>
+        listInvitations(tx, stub, { actorUserId: owner, now: testNow }),
+      );
+      const happyItem = listBeforeClear.find((i) => i.id === invWithContact);
+      expect(happyItem).toBeDefined();
+      expect(happyItem?.email).toBe("contact-invite@example.test");
+      expect(happyItem?.linksContact).toBe(true);
+
       stub.entries.clear(); // Stub has no entry for this invitation
       const listResult = await runInCommunity(app, scopeA1, (tx) =>
-        listInvitations(tx, stub, { actorUserId: owner, now: NOW }),
+        listInvitations(tx, stub, { actorUserId: owner, now: testNow }),
       );
       const foundItem = listResult.find((i) => i.id === invWithContact);
       expect(foundItem).toBeDefined();
@@ -1217,17 +1340,20 @@ describe("invitations repository integration (pins & behaviour)", () => {
         }),
       );
 
-      await expect(
-        runInCommunity(app, scopeA1, (tx) =>
-          createInvitation(tx, stub, {
-            invitationId: newId(),
-            actorUserId: owner,
-            address: "comm2-role@example.test",
-            customRoleId: roleInComm2.customRoleId,
-            now: NOW,
-          }),
-        ),
-      ).rejects.toThrow(new AccessError("role_not_found"));
+      const res3 = await runInCommunity(app, scopeA1, (tx) =>
+        createInvitation(tx, stub, {
+          invitationId: newId(),
+          actorUserId: owner,
+          address: "comm2-role@example.test",
+          customRoleId: roleInComm2.customRoleId,
+          now: NOW,
+        }),
+      ).then(
+        () => "resolved",
+        (e) => e,
+      );
+      expect(res3).toBeInstanceOf(AccessError);
+      expect((res3 as AccessError).code).toBe("role_not_found");
 
       // 4. already linked contact gives person_linked
       const userToLink = newId();
@@ -1238,32 +1364,39 @@ describe("invitations repository integration (pins & behaviour)", () => {
         `;
       });
 
-      await expect(
-        runInCommunity(app, scopeA1, (tx) =>
-          createInvitation(tx, stub, {
-            invitationId: newId(),
-            actorUserId: owner,
-            address: "already-linked@example.test",
-            personId: adultId,
-            now: NOW,
-          }),
-        ),
-      ).rejects.toThrow(new AccessError("person_linked"));
+      const res4 = await runInCommunity(app, scopeA1, (tx) =>
+        createInvitation(tx, stub, {
+          invitationId: newId(),
+          actorUserId: owner,
+          address: "already-linked@example.test",
+          personId: adultId,
+          now: NOW,
+        }),
+      ).then(
+        () => "resolved",
+        (e) => e,
+      );
+      expect(res4).toBeInstanceOf(AccessError);
+      expect((res4 as AccessError).code).toBe("person_linked");
 
       // 5. unreadable contact gives person_not_found
-      await expect(
-        runInCommunity(app, scopeA1, (tx) =>
-          createInvitation(tx, stub, {
-            invitationId: newId(),
-            actorUserId: owner,
-            address: "unreadable-person@example.test",
-            personId: newId(),
-            now: NOW,
-          }),
-        ),
-      ).rejects.toThrow(new AccessError("person_not_found"));
+      const res5 = await runInCommunity(app, scopeA1, (tx) =>
+        createInvitation(tx, stub, {
+          invitationId: newId(),
+          actorUserId: owner,
+          address: "unreadable-person@example.test",
+          personId: newId(),
+          now: NOW,
+        }),
+      ).then(
+        () => "resolved",
+        (e) => e,
+      );
+      expect(res5).toBeInstanceOf(AccessError);
+      expect((res5 as AccessError).code).toBe("person_not_found");
 
-      // 6. Permission re-checks: caller without access.users.manage, without access.roles.manage, without people.view
+      // 6. Permission re-checks in create & list:
+      // (a) caller without access.users.manage
       const plainUser = newId();
       await runInCommunity(app, scopeA1, async (tx) => {
         await tx`
@@ -1272,19 +1405,146 @@ describe("invitations repository integration (pins & behaviour)", () => {
         `;
       });
 
-      await expect(
-        runInCommunity(app, scopeA1, (tx) =>
-          createInvitation(tx, stub, {
-            invitationId: newId(),
-            actorUserId: plainUser,
-            address: "no-users-manage@example.test",
-            roleKey: "member",
-            now: NOW,
-          }),
-        ),
-      ).rejects.toThrow(new AccessError("forbidden"));
+      const invNoUsersManage = newId();
+      const resNoUsers = await runInCommunity(app, scopeA1, (tx) =>
+        createInvitation(tx, stub, {
+          invitationId: invNoUsersManage,
+          actorUserId: plainUser,
+          address: "no-users-manage@example.test",
+          roleKey: "member",
+          now: NOW,
+        }),
+      ).then(
+        () => "resolved",
+        (e) => e,
+      );
+      expect(resNoUsers).toBeInstanceOf(AccessError);
+      expect((resNoUsers as AccessError).code).toBe("forbidden");
+      await runInCommunity(app, scopeA1, async (tx) => {
+        const rows = await tx<{ id: string }[]>`
+          select id::text as id from app.invitations where id = ${invNoUsersManage}::uuid
+        `;
+        expect(rows).toHaveLength(0);
+      });
+
+      // (b) caller without access.roles.manage inviting with a role gives forbidden and no row
+      const roleUsersOnly = await runInCommunity(app, scopeA1, (tx) =>
+        createCustomRole(tx, {
+          now: NOW,
+          key: "users_manage_only",
+          permissions: ["access.users.manage", "access.users.view"],
+          actorUserId: owner,
+        }),
+      );
+      const userUsersOnly = newId();
+      await runInCommunity(app, scopeA1, async (tx) => {
+        await addMember(tx, userUsersOnly);
+        await grantRole(tx, {
+          now: NOW,
+          userId: userUsersOnly,
+          roleKey: null,
+          customRoleId: roleUsersOnly.customRoleId,
+          actorUserId: owner,
+        });
+      });
+      const invNoRolesManage = newId();
+      const resNoRoles = await runInCommunity(app, scopeA1, (tx) =>
+        createInvitation(tx, stub, {
+          invitationId: invNoRolesManage,
+          actorUserId: userUsersOnly,
+          address: "no-roles-manage@example.test",
+          roleKey: "member",
+          now: NOW,
+        }),
+      ).then(
+        () => "resolved",
+        (e) => e,
+      );
+      expect(resNoRoles).toBeInstanceOf(AccessError);
+      expect((resNoRoles as AccessError).code).toBe("forbidden");
+      await runInCommunity(app, scopeA1, async (tx) => {
+        const rows = await tx<{ id: string }[]>`
+          select id::text as id from app.invitations where id = ${invNoRolesManage}::uuid
+        `;
+        expect(rows).toHaveLength(0);
+      });
+
+      // (c) caller without people.view inviting with a contact gives forbidden and no row
+      const roleNoPeopleView = await runInCommunity(app, scopeA1, (tx) =>
+        createCustomRole(tx, {
+          now: NOW,
+          key: "users_roles_manage",
+          permissions: ["access.users.manage", "access.roles.manage"],
+          actorUserId: owner,
+        }),
+      );
+      const userNoPeopleView = newId();
+      await runInCommunity(app, scopeA1, async (tx) => {
+        await addMember(tx, userNoPeopleView);
+        await grantRole(tx, {
+          now: NOW,
+          userId: userNoPeopleView,
+          roleKey: null,
+          customRoleId: roleNoPeopleView.customRoleId,
+          actorUserId: owner,
+        });
+      });
+      const invNoPeopleView = newId();
+      const resNoPeople = await runInCommunity(app, scopeA1, (tx) =>
+        createInvitation(tx, stub, {
+          invitationId: invNoPeopleView,
+          actorUserId: userNoPeopleView,
+          address: "no-people-view@example.test",
+          personId: adultId,
+          now: NOW,
+        }),
+      ).then(
+        () => "resolved",
+        (e) => e,
+      );
+      expect(resNoPeople).toBeInstanceOf(AccessError);
+      expect((resNoPeople as AccessError).code).toBe("forbidden");
+      await runInCommunity(app, scopeA1, async (tx) => {
+        const rows = await tx<{ id: string }[]>`
+          select id::text as id from app.invitations where id = ${invNoPeopleView}::uuid
+        `;
+        expect(rows).toHaveLength(0);
+      });
+
+      // (d) caller without access.roles.view calling list gives forbidden
+      const roleUsersViewOnly = await runInCommunity(app, scopeA1, (tx) =>
+        createCustomRole(tx, {
+          now: NOW,
+          key: "users_view_only",
+          permissions: ["access.users.view"],
+          actorUserId: owner,
+        }),
+      );
+      const userUsersViewOnly = newId();
+      await runInCommunity(app, scopeA1, async (tx) => {
+        await addMember(tx, userUsersViewOnly);
+        await grantRole(tx, {
+          now: NOW,
+          userId: userUsersViewOnly,
+          roleKey: null,
+          customRoleId: roleUsersViewOnly.customRoleId,
+          actorUserId: owner,
+        });
+      });
+      const resNoRolesView = await runInCommunity(app, scopeA1, (tx) =>
+        listInvitations(tx, stub, {
+          actorUserId: userUsersViewOnly,
+          now: NOW,
+        }),
+      ).then(
+        () => "resolved",
+        (e) => e,
+      );
+      expect(resNoRolesView).toBeInstanceOf(AccessError);
+      expect((resNoRolesView as AccessError).code).toBe("forbidden");
 
       // 7. Mail failure paths: deleteInvitationAfterMailFailure and voidInvitationAfterMailFailure
+      // Close pins on matched pending rows
       const deleteFailId = newId();
       await runInCommunity(app, scopeA1, (tx) =>
         createInvitation(tx, stub, {
@@ -1296,6 +1556,7 @@ describe("invitations repository integration (pins & behaviour)", () => {
         }),
       );
 
+      stub.calls.length = 0;
       await runInCommunity(app, scopeA1, (tx) =>
         deleteInvitationAfterMailFailure(tx, stub, {
           invitationId: deleteFailId,
@@ -1309,6 +1570,9 @@ describe("invitations repository integration (pins & behaviour)", () => {
           select id::text as id from app.invitations where id = ${deleteFailId}::uuid
         `;
         expect(rows).toHaveLength(0);
+        expect(
+          stub.calls.some((c) => c.method === "close" && c.invitationId === deleteFailId),
+        ).toBe(true);
         const audit = await tx<{ action: string }[]>`
           select action from app.audit_events
           where action = 'access.invitation.voided'
@@ -1328,6 +1592,7 @@ describe("invitations repository integration (pins & behaviour)", () => {
         }),
       );
 
+      stub.calls.length = 0;
       await runInCommunity(app, scopeA1, (tx) =>
         voidInvitationAfterMailFailure(tx, stub, {
           invitationId: voidFailId,
@@ -1342,12 +1607,119 @@ describe("invitations repository integration (pins & behaviour)", () => {
         `;
         expect(rows[0]!.status).toBe("void");
         expect(rows[0]!.closed_at).not.toBeNull();
+        expect(stub.calls.some((c) => c.method === "close" && c.invitationId === voidFailId)).toBe(
+          true,
+        );
         const audit = await tx<{ action: string }[]>`
           select action from app.audit_events
           where action = 'access.invitation.voided'
             and ${voidFailId}::uuid = any(target_ids)
         `;
         expect(audit).toHaveLength(1);
+      });
+
+      // Mail failure on accepted row leaves accepted row unchanged, calls no close, writes no voided audit
+      const acceptedMailFailId = newId();
+      const dummyHash = Buffer.alloc(32, 8);
+      await runInCommunity(app, scopeA1, async (tx) => {
+        await tx`
+          insert into app.invitations (
+            id, org_id, community_id, invited_by, token_hash, role_key, custom_role_id,
+            person_id, status, expires_at, resend_count, last_sent_at, accepted_user_id, closed_at, created_at
+          ) values (
+            ${acceptedMailFailId}::uuid, current_setting('app.org_id')::uuid, current_setting('app.community_id')::uuid,
+            ${owner}::uuid, ${dummyHash}, 'member', null,
+            null, 'accepted', ${new Date(NOW.getTime() + 7 * 86400000)}, 0, ${NOW}, ${owner}::uuid, ${NOW}, ${NOW}
+          )
+        `;
+      });
+
+      stub.calls.length = 0;
+      await runInCommunity(app, scopeA1, (tx) =>
+        deleteInvitationAfterMailFailure(tx, stub, {
+          invitationId: acceptedMailFailId,
+          actorUserId: owner,
+          now: NOW,
+        }),
+      );
+
+      await runInCommunity(app, scopeA1, (tx) =>
+        voidInvitationAfterMailFailure(tx, stub, {
+          invitationId: acceptedMailFailId,
+          actorUserId: owner,
+          now: NOW,
+        }),
+      );
+
+      await runInCommunity(app, scopeA1, async (tx) => {
+        const rows = await tx<{ status: string; closed_at: Date | null }[]>`
+          select status, closed_at from app.invitations where id = ${acceptedMailFailId}::uuid
+        `;
+        expect(rows[0]!.status).toBe("accepted");
+        expect(
+          stub.calls.filter((c) => c.method === "close" && c.invitationId === acceptedMailFailId),
+        ).toHaveLength(0);
+        const audit = await tx<{ action: string }[]>`
+          select action from app.audit_events
+          where action = 'access.invitation.voided'
+            and ${acceptedMailFailId}::uuid = any(target_ids)
+        `;
+        expect(audit).toHaveLength(0);
+      });
+
+      // Mail failure on another community's id leaves that row unchanged, calls no close, writes no audit
+      const comm2MailFailId = newId();
+      await runInCommunity(app, scopeA2, (tx) =>
+        createInvitation(tx, stub, {
+          invitationId: comm2MailFailId,
+          actorUserId: owner,
+          address: "comm2-mail-fail@example.test",
+          roleKey: "member",
+          now: NOW,
+        }),
+      );
+
+      stub.calls.length = 0;
+      await runInCommunity(app, scopeA1, (tx) =>
+        deleteInvitationAfterMailFailure(tx, stub, {
+          invitationId: comm2MailFailId,
+          actorUserId: owner,
+          now: NOW,
+        }),
+      );
+
+      await runInCommunity(app, scopeA1, (tx) =>
+        voidInvitationAfterMailFailure(tx, stub, {
+          invitationId: comm2MailFailId,
+          actorUserId: owner,
+          now: NOW,
+        }),
+      );
+
+      await runInCommunity(app, scopeA2, async (tx) => {
+        const rows = await tx<{ status: string }[]>`
+          select status from app.invitations where id = ${comm2MailFailId}::uuid
+        `;
+        expect(rows[0]!.status).toBe("pending");
+      });
+
+      expect(
+        stub.calls.filter((c) => c.method === "close" && c.invitationId === comm2MailFailId),
+      ).toHaveLength(0);
+
+      await runInCommunity(app, scopeA1, async (tx) => {
+        const audit = await tx<{ action: string }[]>`
+          select action from app.audit_events
+          where action = 'access.invitation.voided'
+            and ${comm2MailFailId}::uuid = any(target_ids)
+        `;
+        expect(audit).toHaveLength(0);
+
+        await assertNoSensitiveDataInAudit(tx, [
+          "contact-invite@example.test",
+          "delete-fail@example.test",
+          "void-fail@example.test",
+        ]);
       });
     });
   });

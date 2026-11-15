@@ -467,13 +467,18 @@ export async function deleteInvitationAfterMailFailure(
 
   await addresses.sweep(now);
 
-  await tx`
+  const deleted = await tx<{ id: string }[]>`
     delete from app.invitations
     where id = ${invitationId}::uuid
       and org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
       and status = 'pending'
+    returning id::text as id
   `;
+
+  if (deleted.length === 0) {
+    return;
+  }
 
   await addresses.close(invitationId);
 
@@ -497,7 +502,7 @@ export async function voidInvitationAfterMailFailure(
 
   await addresses.sweep(now);
 
-  await tx`
+  const voided = await tx<{ id: string }[]>`
     update app.invitations
     set status = 'void',
         person_id = null,
@@ -506,7 +511,13 @@ export async function voidInvitationAfterMailFailure(
     where id = ${invitationId}::uuid
       and org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
+      and status = 'pending'
+    returning id::text as id
   `;
+
+  if (voided.length === 0) {
+    return;
+  }
 
   await addresses.close(invitationId);
 
