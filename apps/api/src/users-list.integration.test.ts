@@ -2,7 +2,13 @@ import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { bootstrapOwner, linkUser } from "@community-hub/access";
+import {
+  acceptInvitation,
+  bootstrapOwner,
+  createInvitation,
+  linkUser,
+  revokeRole,
+} from "@community-hub/access";
 import { addMember } from "@community-hub/access/testing";
 import { listUsersResponse, type ListUsersResponse } from "@community-hub/contracts/access";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
@@ -15,11 +21,13 @@ import {
 } from "@community-hub/db/plaintext";
 import { assignPlan, upsertPlan } from "@community-hub/entitlements";
 import type { OtpMail } from "@community-hub/identity";
+import * as identityApi from "@community-hub/identity";
 import { withRequest } from "@community-hub/kernel";
 import { createHousehold, createPerson } from "@community-hub/people";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { accessRoutes } from "./access-routes.js";
+import { identityInvitationAddresses } from "./invitation-addresses.js";
 import { authRoutes } from "./auth-routes.js";
 import type { Role } from "./checkout.js";
 import { readServiceEnv, type ServiceEnv } from "./env.js";
@@ -211,6 +219,10 @@ describe("users list integration", () => {
 
   function uniqueEmail(prefix: string): string {
     return `${uniqueSlug(prefix)}@example.com`;
+  }
+
+  function exampleTestEmail(prefix: string): string {
+    return `${uniqueSlug(prefix)}@example.test`;
   }
 
   async function createTenant(planKeyPrefix = "plan") {
@@ -1278,5 +1290,188 @@ describe("users list integration", () => {
     } finally {
       await direct.end({ timeout: 1 });
     }
+  });
+
+  it("pin 43 (a): a user granted by raw SQL with no membership is absent and never decrypted", async () => {
+    const tenant = await createTenant();
+    const owner = await setupOwner(tenant);
+    const outsider = await createSession(exampleTestEmail("rawgrant"));
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(
+        app,
+        { orgId: tenant.organisationId, communityId: tenant.communityId },
+        async (tx) => {
+          await tx`
+            insert into app.community_role_grants (
+              id, org_id, community_id, user_id, role_key, custom_role_id
+            ) values (
+              ${newId()}::uuid,
+              current_setting('app.org_id')::uuid,
+              current_setting('app.community_id')::uuid,
+              ${outsider.userId}::uuid,
+              'member',
+              null
+            )
+          `;
+          const grants = await tx<{ n: number }[]>`
+            select count(*)::int as n
+            from app.community_role_grants
+            where user_id = ${outsider.userId}::uuid
+          `;
+          const members = await tx<{ n: number }[]>`
+            select count(*)::int as n
+            from app.organisation_members
+            where user_id = ${outsider.userId}::uuid
+          `;
+          expect(grants[0]!.n).toBe(1);
+          expect(members[0]!.n).toBe(0);
+        },
+      ),
+    );
+
+    const spy = vi.spyOn(identityApi, "readUserEmails");
+    spy.mockClear();
+    try {
+      const res = await post(
+        API_HOSTNAME,
+        "/v1/access/users/list",
+        { communitySlug: tenant.slug },
+        owner.bearer,
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as ListUsersResponse;
+      const ids = body.users.map((user) => user.userId);
+      expect(ids).toContain(owner.userId);
+      expect(ids).not.toContain(outsider.userId);
+      const seen = spy.mock.calls.flatMap((call) => [...(call[3] as readonly string[])]);
+      expect(seen).toContain(owner.userId);
+      expect(seen).not.toContain(outsider.userId);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("pin 43 (b): a member granted only in community 2 is absent from community 1 and never decrypted", async () => {
+    const tenant = await createTenant();
+    const owner = await setupOwner(tenant);
+    const community2 = await createCommunity(tenant.organisationId);
+    const member = await createSession(exampleTestEmail("community2"));
+    await makeMember(
+      { organisationId: tenant.organisationId, communityId: community2.communityId },
+      member.userId,
+    );
+    const granted = await post(
+      API_HOSTNAME,
+      "/v1/access/grants",
+      { communitySlug: community2.slug, userId: member.userId, roleKey: "member" },
+      owner.bearer,
+    );
+    expect(granted.status).toBe(200);
+
+    const spy = vi.spyOn(identityApi, "readUserEmails");
+    spy.mockClear();
+    try {
+      const res = await post(
+        API_HOSTNAME,
+        "/v1/access/users/list",
+        { communitySlug: tenant.slug },
+        owner.bearer,
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as ListUsersResponse;
+      const ids = body.users.map((user) => user.userId);
+      expect(ids).toContain(owner.userId);
+      expect(ids).not.toContain(member.userId);
+      const seen = spy.mock.calls.flatMap((call) => [...(call[3] as readonly string[])]);
+      expect(seen).toContain(owner.userId);
+      expect(seen).not.toContain(member.userId);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("pin 43 (c): a member whose accepted invitation was to community 1, with no grant, is listed there", async () => {
+    const tenant = await createTenant();
+    const owner = await setupOwner(tenant);
+    const inviteeEmail = exampleTestEmail("accepted");
+    const invitee = await createSession(inviteeEmail);
+    const wall = new Date();
+    const scope = { orgId: tenant.organisationId, communityId: tenant.communityId };
+    const addresses = identityInvitationAddresses({
+      checkout,
+      kms,
+      keyArn: KEY_ARN,
+    });
+    const invitationId = newId();
+    const created = await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, scope, (tx) =>
+        createInvitation(tx, addresses, {
+          invitationId,
+          actorUserId: owner.userId,
+          address: inviteeEmail,
+          roleKey: "member",
+          now: wall,
+        }),
+      ),
+    );
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, scope, (tx) =>
+        acceptInvitation(tx, addresses, {
+          token: created.token,
+          userId: invitee.userId,
+          now: wall,
+        }),
+      ),
+    );
+    const grantRows = await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(
+        app,
+        scope,
+        (tx) =>
+          tx<{ id: string }[]>`
+          select id::text as id
+          from app.community_role_grants
+          where user_id = ${invitee.userId}::uuid
+        `,
+      ),
+    );
+    expect(grantRows).toHaveLength(1);
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, scope, (tx) =>
+        revokeRole(tx, {
+          now,
+          grantId: grantRows[0]!.id,
+          scope: "community",
+          actorUserId: owner.userId,
+        }),
+      ),
+    );
+    const remaining = await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(
+        app,
+        scope,
+        (tx) =>
+          tx<{ n: number }[]>`
+          select count(*)::int as n
+          from app.community_role_grants
+          where user_id = ${invitee.userId}::uuid
+        `,
+      ),
+    );
+    expect(remaining[0]!.n).toBe(0);
+
+    const res = await post(
+      API_HOSTNAME,
+      "/v1/access/users/list",
+      { communitySlug: tenant.slug },
+      owner.bearer,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ListUsersResponse;
+    expect(body.users).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ userId: invitee.userId, email: inviteeEmail }),
+      ]),
+    );
   });
 });
