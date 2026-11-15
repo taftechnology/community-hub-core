@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { isAuditPurpose } from "@community-hub/kernel/module";
 
 import accessModule from "../module.manifest.js";
+import "../public/index.js";
 
 describe("core.access manifest", () => {
   it("declares the access module and every grant column", () => {
@@ -65,5 +67,12 @@ describe("core.access manifest", () => {
     });
     expect(accessModule).not.toHaveProperty("website");
     expect(accessModule).not.toHaveProperty("entitlement");
+  });
+
+  it("the invitation route denial purposes are registered audit purposes", () => {
+    expect(isAuditPurpose("access.users.manage")).toBe(true);
+    expect(isAuditPurpose("access.users.view")).toBe(true);
+    expect(isAuditPurpose("access.roles.manage")).toBe(true);
+    expect(isAuditPurpose("access.roles.view")).toBe(true);
   });
 });

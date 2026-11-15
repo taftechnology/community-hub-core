@@ -8,9 +8,6 @@ import {
   listInvitationsResponse,
 } from "@community-hub/contracts/access";
 import { withRequest } from "@community-hub/kernel";
-// The assertion must call the real registry, which is exported only from the module entry.
-// eslint-disable-next-line no-restricted-imports
-import { isAuditPurpose } from "@community-hub/kernel/module";
 
 const identity = vi.hoisted(() => ({
   readSession: vi.fn(),
@@ -1201,6 +1198,12 @@ describe("invitation routes", () => {
     });
 
     it("every route denial writes a registered audit purpose", async () => {
+      const denialPurposes = new Set([
+        "access.users.manage",
+        "access.users.view",
+        "access.roles.manage",
+        "access.roles.view",
+      ]);
       const customRoleId = "00000000-0000-4000-8000-000000000013";
       const cases: { path: string; body: Record<string, unknown>; missing: string }[] = [
         {
@@ -1261,7 +1264,10 @@ describe("invitation routes", () => {
         for (const call of db.appendAuditEvent.mock.calls) {
           const input = (call as unknown as [unknown, { purpose?: unknown }])[1];
           expect(typeof input.purpose).toBe("string");
-          expect(isAuditPurpose(input.purpose as string)).toBe(true);
+          expect(denialPurposes.has(input.purpose as string)).toBe(true);
+          if (item.missing === "people.view") {
+            expect(input.purpose).toBe("access.users.manage");
+          }
         }
       }
     });

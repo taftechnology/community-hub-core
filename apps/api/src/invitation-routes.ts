@@ -1,8 +1,4 @@
 import { getRequestContext } from "@community-hub/kernel";
-// isAuditPurpose is exported only from the module entry. This route must call it so a denial
-// never writes an unregistered purpose such as people.view.
-// eslint-disable-next-line no-restricted-imports
-import { isAuditPurpose } from "@community-hub/kernel/module";
 import {
   appendAuditEvent,
   newId,
@@ -41,6 +37,13 @@ import type { GateRoute, RouteContext } from "./gate.js";
 import type { BillingLogFields } from "./index.js";
 import { guardWrite } from "./billing-guard.js";
 import { identityInvitationAddresses } from "./invitation-addresses.js";
+
+const DENIAL_PURPOSES = new Set([
+  "access.users.manage",
+  "access.users.view",
+  "access.roles.manage",
+  "access.roles.view",
+]);
 
 type Scope = { orgId: string; communityId: string };
 
@@ -236,7 +239,7 @@ export function invitationRoutes(deps: InvitationRouteDeps): GateRoute[] {
               actorKind: "user",
               actorId: userId,
               action: "access.permission.denied",
-              purpose: isAuditPurpose(perm) ? perm : "access.users.manage",
+              purpose: DENIAL_PURPOSES.has(perm) ? perm : "access.users.manage",
               targetIds: [userId],
             });
             return false;
