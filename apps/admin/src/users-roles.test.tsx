@@ -739,13 +739,13 @@ it("calls users/list again after a grant change through the form", async () => {
   });
   fireEvent.click(screen.getByRole("button", { name: "Set" }));
 
-  expect(await screen.findByText("Morgan Finch")).toBeTruthy();
+  expect(await screen.findAllByText("Morgan Finch")).not.toHaveLength(0);
   expect(usersCalls).toBe(1);
 
   const revokeButton = screen.getByRole("button", { name: "Revoke" });
   fireEvent.click(revokeButton);
 
-  expect(await screen.findByText("Morgan Finch-Lee")).toBeTruthy();
+  expect(await screen.findAllByText("Morgan Finch-Lee")).not.toHaveLength(0);
   expect(usersCalls).toBe(2);
 });
 
@@ -2122,4 +2122,267 @@ it("gives each list item flex flex-wrap items-center gap-2 across all four lists
     expect(li.className).toContain("items-center");
     expect(li.className).toContain("gap-2");
   }
+});
+
+it("pin 46: grant and link forms have no text input named User and the select lists the users", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  const named = "00000000-0000-4000-8000-0000000000a1";
+  const emailed = "00000000-0000-4000-8000-0000000000a2";
+  const bare = "00000000-0000-4000-8000-0000000000a3";
+  urlKeyedFetch({
+    grants: () =>
+      new Response(
+        JSON.stringify(
+          directory(
+            0,
+            [],
+            ["access.users.view", "access.roles.manage", "access.users.manage", "people.view"],
+          ),
+        ),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    users: () =>
+      new Response(
+        JSON.stringify(
+          usersListResponse(
+            [
+              {
+                userId: named,
+                personId: null,
+                name: { given: "Morgan", family: "Finch" },
+                email: "morgan.finch@example.test",
+                phone: null,
+                minor: false,
+              },
+              {
+                userId: emailed,
+                personId: null,
+                name: null,
+                email: "second.user@example.test",
+                phone: null,
+                minor: false,
+              },
+              {
+                userId: bare,
+                personId: null,
+                name: null,
+                email: null,
+                phone: null,
+                minor: false,
+              },
+            ],
+            false,
+          ),
+        ),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  });
+
+  await showUsers();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  expect(await screen.findAllByRole("option", { name: "Morgan Finch" })).toHaveLength(2);
+  const selects = screen.getAllByRole("combobox", { name: "User" });
+  expect(selects).toHaveLength(2);
+  const labels = ["Morgan Finch", "second.user@example.test", "User without details · 00a3"];
+  const values = [named, emailed, bare];
+  for (const select of selects) {
+    const options = within(select).getAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual(labels);
+    expect(options.map((option) => (option as HTMLOptionElement).value)).toEqual(values);
+    expect((select as HTMLSelectElement).disabled).toBe(false);
+  }
+  expect(screen.queryByRole("textbox", { name: "User" })).toBeNull();
+  expect(document.querySelector("input[name='User']")).toBeNull();
+  expect(document.querySelector("input[aria-label='User']")).toBeNull();
+});
+
+it("shows Invite someone first and disables the user select when the users list is empty", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  urlKeyedFetch({
+    grants: () =>
+      new Response(
+        JSON.stringify(
+          directory(0, [], ["access.users.view", "access.roles.manage", "access.users.manage"]),
+        ),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    users: () =>
+      new Response(JSON.stringify(usersListResponse([], false)), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+  });
+
+  await showUsers();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  const links = await screen.findAllByRole("link", { name: "Invite someone first" });
+  expect(links).toHaveLength(2);
+  for (const link of links) {
+    expect(link.getAttribute("href")).toBe("#invite-user");
+  }
+  const selects = screen.getAllByRole("combobox", { name: "User" });
+  expect(selects).toHaveLength(2);
+  for (const select of selects) {
+    expect((select as HTMLSelectElement).disabled).toBe(true);
+  }
+});
+
+it("sends the selected user id in the grant body", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  const second = "00000000-0000-4000-8000-0000000000b2";
+  let grantBody: unknown;
+  urlKeyedFetch({
+    grants: () =>
+      new Response(JSON.stringify(directory(0, [], ["access.users.view", "access.roles.manage"])), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    users: () =>
+      new Response(
+        JSON.stringify(
+          usersListResponse(
+            [
+              defaultUserDetail,
+              {
+                userId: second,
+                personId: null,
+                name: null,
+                email: "second.user@example.test",
+                phone: null,
+                minor: false,
+              },
+            ],
+            false,
+          ),
+        ),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    other: (url, init) => {
+      if (url.includes("/v1/access/grants")) {
+        grantBody = JSON.parse(String(init?.body));
+        return new Response(
+          JSON.stringify(directory(0, [], ["access.users.view", "access.roles.manage"])),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(null, { status: 404 });
+    },
+  });
+
+  await showUsers();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  expect(await screen.findByRole("option", { name: "second.user@example.test" })).toBeTruthy();
+  fireEvent.change(screen.getByRole("combobox", { name: "User" }), { target: { value: second } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Role" }), { target: { value: "staff" } });
+  fireEvent.click(screen.getByRole("button", { name: "Grant" }));
+
+  await vi.waitFor(() => {
+    expect(grantBody).toEqual({ communitySlug: "parish", userId: second, roleKey: "staff" });
+  });
+});
+
+it("sends the selected user id and contact in the link body", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  const second = "00000000-0000-4000-8000-0000000000b2";
+  const personId = "00000000-0000-4000-8000-0000000000d1";
+  let linkBody: unknown;
+  urlKeyedFetch({
+    grants: () =>
+      new Response(
+        JSON.stringify(
+          directory(0, [], ["access.users.view", "access.users.manage", "people.view"]),
+        ),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    users: () =>
+      new Response(
+        JSON.stringify(
+          usersListResponse(
+            [
+              defaultUserDetail,
+              {
+                userId: second,
+                personId: null,
+                name: null,
+                email: "second.user@example.test",
+                phone: null,
+                minor: false,
+              },
+            ],
+            false,
+          ),
+        ),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    other: (url, init) => {
+      if (url.includes("/v1/people/list")) {
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                id: personId,
+                personId,
+                givenName: "Nia",
+                familyName: "Parish",
+                isMinor: false,
+              },
+            ],
+            nextCursor: null,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.includes("/v1/access/user-links") && !url.includes("delete")) {
+        linkBody = JSON.parse(String(init?.body));
+        return new Response(
+          JSON.stringify(
+            directory(0, [], ["access.users.view", "access.users.manage", "people.view"]),
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(null, { status: 404 });
+    },
+  });
+
+  await showUsers();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  const linkButton = await screen.findByRole("button", { name: "Link" });
+  const form = linkButton.closest("form");
+  if (form === null) {
+    throw new Error("link form missing");
+  }
+  expect(
+    await within(form).findByRole("option", { name: "second.user@example.test" }),
+  ).toBeTruthy();
+  fireEvent.change(within(form).getByRole("combobox", { name: "User" }), {
+    target: { value: second },
+  });
+  fireEvent.change(within(form).getByRole("textbox", { name: "Contact" }), {
+    target: { value: "Nia" },
+  });
+  fireEvent.click(within(form).getByRole("button", { name: "Search" }));
+  fireEvent.click(await within(form).findByRole("button", { name: "Nia Parish" }));
+  fireEvent.click(within(form).getByRole("button", { name: "Link" }));
+
+  await vi.waitFor(() => {
+    expect(linkBody).toEqual({ communitySlug: "parish", userId: second, personId });
+  });
+  expect(form.textContent).not.toContain(personId);
 });

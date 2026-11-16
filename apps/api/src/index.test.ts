@@ -811,7 +811,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
         (route as { billing?: string }).billing,
       ]),
     );
-    expect(routes).toHaveLength(52);
+    expect(routes).toHaveLength(57);
     expect(markings).toEqual(
       new Map([
         ["GET /health", "exempt"],
@@ -828,9 +828,11 @@ describe("api boot wiring of the billing adapter and logger", () => {
         ["POST /v1/billing/status", "exempt"],
         ["POST /v1/billing/plans", "exempt"],
         ["POST /v1/stripe/webhook", "exempt"],
+        ["POST /v1/invitations/accept", "exempt"],
         ["POST /v1/access/grants/list", "read"],
         ["POST /v1/access/users/list", "read"],
         ["POST /v1/access/capabilities", "read"],
+        ["POST /v1/access/invitations/list", "read"],
         ["POST /v1/people/list", "read"],
         ["POST /v1/people/read", "read"],
         ["POST /v1/people/life-events/list", "read"],
@@ -844,6 +846,9 @@ describe("api boot wiring of the billing adapter and logger", () => {
         ["POST /v1/access/custom-roles/delete", "write"],
         ["POST /v1/access/user-links", "write"],
         ["POST /v1/access/user-links/delete", "write"],
+        ["POST /v1/access/invitations/create", "write"],
+        ["POST /v1/access/invitations/resend", "write"],
+        ["POST /v1/access/invitations/revoke", "write"],
         ["POST /v1/people/create", "write"],
         ["POST /v1/people/update", "write"],
         ["POST /v1/people/life-events/create", "write"],

@@ -99,3 +99,29 @@ export async function findCommunityBySlug(
     region: row.region,
   };
 }
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function findCommunityById(
+  sql: Sql,
+  input: { organisationId: string; communityId: string },
+): Promise<{ id: string; organisationId: string; slug: string } | null> {
+  if (!UUID_REGEX.test(input.organisationId) || !UUID_REGEX.test(input.communityId)) {
+    return null;
+  }
+  const rows = await sql<{ id: string; organisation_id: string; slug: string }[]>`
+    select id, organisation_id, slug
+    from platform.communities
+    where id = ${input.communityId} and organisation_id = ${input.organisationId}
+    limit 1
+  `;
+  const row = rows[0];
+  if (row === undefined) {
+    return null;
+  }
+  return {
+    id: row.id,
+    organisationId: row.organisation_id,
+    slug: row.slug,
+  };
+}

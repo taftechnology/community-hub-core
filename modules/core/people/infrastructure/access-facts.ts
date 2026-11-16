@@ -1,13 +1,27 @@
 import type { AppTransaction } from "@community-hub/db";
 
-export async function personIsMinor(tx: AppTransaction, personId: string): Promise<boolean | null> {
-  const rows = await tx<{ is_minor: boolean }[]>`
-    select is_minor
-    from app.persons
-    where id = ${personId}::uuid
-      and org_id = current_setting('app.org_id')::uuid
-      and community_id = current_setting('app.community_id')::uuid
-  `;
+export async function personIsMinor(
+  tx: AppTransaction,
+  personId: string,
+  options?: { lock?: "share" },
+): Promise<boolean | null> {
+  const rows =
+    options?.lock === "share"
+      ? await tx<{ is_minor: boolean }[]>`
+          select is_minor
+          from app.persons
+          where id = ${personId}::uuid
+            and org_id = current_setting('app.org_id')::uuid
+            and community_id = current_setting('app.community_id')::uuid
+          for share
+        `
+      : await tx<{ is_minor: boolean }[]>`
+          select is_minor
+          from app.persons
+          where id = ${personId}::uuid
+            and org_id = current_setting('app.org_id')::uuid
+            and community_id = current_setting('app.community_id')::uuid
+        `;
   const row = rows[0];
   return row === undefined ? null : row.is_minor;
 }

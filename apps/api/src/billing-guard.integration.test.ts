@@ -2,7 +2,14 @@ import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { bootstrapOwner, createCustomRole, grantRole, linkUser } from "@community-hub/access";
+import {
+  bootstrapOwner,
+  createCustomRole,
+  createInvitation,
+  grantRole,
+  linkUser,
+} from "@community-hub/access";
+import { addMember } from "@community-hub/access/testing";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import { applyProductMigrations, newId, withAppTransaction } from "@community-hub/db";
 import {
@@ -44,6 +51,8 @@ import { entitlementRoutes } from "./entitlement-routes.js";
 import { householdRoutes } from "./household-routes.js";
 import { lifeEventRoutes } from "./life-event-routes.js";
 import { peopleRoutes } from "./people-routes.js";
+import { invitationRoutes } from "./invitation-routes.js";
+import { identityInvitationAddresses } from "./invitation-addresses.js";
 import { readServiceEnv, type ServiceEnv } from "./env.js";
 import { productionRoutes } from "./index.js";
 import { startServer } from "./server.js";
@@ -184,6 +193,14 @@ describe("billing guard against a real database", () => {
     if (session === null) {
       throw new Error("Failed to sign in");
     }
+    // Invitation routes read this session with a wall clock, because identity's
+    // invitation functions compare expires_at with the database clock. The token
+    // was issued on the suite's fixed clock, so keep it valid for both.
+    await identity`
+      update identity.sessions
+      set access_expires_at = now() + interval '1 day'
+      where user_id = ${session.userId}::uuid
+    `;
     userIds.push(session.userId);
     return session;
   }
@@ -272,6 +289,50 @@ describe("billing guard against a real database", () => {
         const rows = await tx<{ n: number }[]>`
           select count(*)::int as n
           from app.custom_roles
+        `;
+        return rows[0]!.n;
+      },
+    );
+  }
+
+  async function countInvitations(setup: OrgSetup): Promise<number> {
+    return withAppTransaction(
+      app,
+      { orgId: setup.orgId, communityId: setup.communityId },
+      async (tx) => {
+        const rows = await tx<{ n: number }[]>`
+          select count(*)::int as n
+          from app.invitations
+        `;
+        return rows[0]!.n;
+      },
+    );
+  }
+
+  async function invitationResendCount(setup: OrgSetup, invitationId: string): Promise<number> {
+    return withAppTransaction(
+      app,
+      { orgId: setup.orgId, communityId: setup.communityId },
+      async (tx) => {
+        const rows = await tx<{ resend_count: number }[]>`
+          select resend_count
+          from app.invitations
+          where id = ${invitationId}::uuid
+        `;
+        return rows[0]?.resend_count ?? 0;
+      },
+    );
+  }
+
+  async function countPendingInvitations(setup: OrgSetup): Promise<number> {
+    return withAppTransaction(
+      app,
+      { orgId: setup.orgId, communityId: setup.communityId },
+      async (tx) => {
+        const rows = await tx<{ n: number }[]>`
+          select count(*)::int as n
+          from app.invitations
+          where status = 'pending'
         `;
         return rows[0]!.n;
       },
@@ -423,6 +484,11 @@ describe("billing guard against a real database", () => {
         path: "/v1/access/grants",
         prepare: async (setup) => {
           const subjectUserId = newId();
+          await withRequest({ requestId: REQUEST_ID }, () =>
+            withAppTransaction(app, { orgId: setup.orgId, communityId: setup.communityId }, (tx) =>
+              addMember(tx, subjectUserId),
+            ),
+          );
           return {
             body: {
               communitySlug: setup.slug,
@@ -441,14 +507,19 @@ describe("billing guard against a real database", () => {
         prepare: async (setup) => {
           const subjectUserId = newId();
           const grant = await withRequest({ requestId: REQUEST_ID }, () =>
-            withAppTransaction(app, { orgId: setup.orgId, communityId: setup.communityId }, (tx) =>
-              grantRole(tx, {
-                now: setup.now,
-                userId: subjectUserId,
-                roleKey: "member",
-                customRoleId: null,
-                actorUserId: setup.ownerUserId,
-              }),
+            withAppTransaction(
+              app,
+              { orgId: setup.orgId, communityId: setup.communityId },
+              async (tx) => {
+                await addMember(tx, subjectUserId);
+                return grantRole(tx, {
+                  now: setup.now,
+                  userId: subjectUserId,
+                  roleKey: "member",
+                  customRoleId: null,
+                  actorUserId: setup.ownerUserId,
+                });
+              },
             ),
           );
           return {
@@ -518,6 +589,7 @@ describe("billing guard against a real database", () => {
             app,
             { orgId: setup.orgId, communityId: setup.communityId },
             async (tx) => {
+              await addMember(tx, linkUserId);
               await tx`
                 insert into app.persons (id, org_id, community_id, is_minor, age_basis, given_name, family_name)
                 values (
@@ -555,6 +627,7 @@ describe("billing guard against a real database", () => {
               app,
               { orgId: setup.orgId, communityId: setup.communityId },
               async (tx) => {
+                await addMember(tx, unlinkUserId);
                 await tx`
                   insert into app.persons (id, org_id, community_id, is_minor, age_basis, given_name, family_name)
                   values (
@@ -582,6 +655,94 @@ describe("billing guard against a real database", () => {
               userId: unlinkUserId,
             },
             count: () => countUserLinks(setup),
+          };
+        },
+      },
+    ],
+    [
+      "POST /v1/access/invitations/create",
+      {
+        path: "/v1/access/invitations/create",
+        // Identity's invitation functions compare against the database clock.
+        prepare: async (setup) => {
+          counter += 1;
+          return {
+            body: {
+              communitySlug: setup.slug,
+              email: `invited_${counter}_${newId().slice(0, 8)}@example.test`,
+              roleKey: "member",
+            },
+            count: () => countInvitations(setup),
+          };
+        },
+      },
+    ],
+    [
+      "POST /v1/access/invitations/resend",
+      {
+        path: "/v1/access/invitations/resend",
+        // Identity's invitation functions compare against the database clock.
+        prepare: async (setup) => {
+          counter += 1;
+          const invitationId = newId();
+          const address = `resend_${counter}_${newId().slice(0, 8)}@example.test`;
+          const addresses = identityInvitationAddresses({ checkout, kms, keyArn: KEY_ARN });
+          await withRequest({ requestId: REQUEST_ID }, () =>
+            withAppTransaction(
+              app,
+              { orgId: setup.orgId, communityId: setup.communityId },
+              async (tx) => {
+                await createInvitation(tx, addresses, {
+                  invitationId,
+                  actorUserId: setup.ownerUserId,
+                  address,
+                  roleKey: "member",
+                  now: new Date(),
+                });
+              },
+            ),
+          );
+          return {
+            body: {
+              communitySlug: setup.slug,
+              invitationId,
+            },
+            count: () => invitationResendCount(setup, invitationId),
+          };
+        },
+      },
+    ],
+    [
+      "POST /v1/access/invitations/revoke",
+      {
+        path: "/v1/access/invitations/revoke",
+        // Identity's invitation functions compare against the database clock.
+        prepare: async (setup) => {
+          counter += 1;
+          const invitationId = newId();
+          const address = `revoke_${counter}_${newId().slice(0, 8)}@example.test`;
+          const addresses = identityInvitationAddresses({ checkout, kms, keyArn: KEY_ARN });
+          await withRequest({ requestId: REQUEST_ID }, () =>
+            withAppTransaction(
+              app,
+              { orgId: setup.orgId, communityId: setup.communityId },
+              async (tx) => {
+                await createInvitation(tx, addresses, {
+                  invitationId,
+                  actorUserId: setup.ownerUserId,
+                  address,
+                  roleKey: "member",
+                  now: new Date(),
+                });
+              },
+            ),
+          );
+          return {
+            body: {
+              communitySlug: setup.slug,
+              invitationId,
+            },
+            count: () => countPendingInvitations(setup),
           };
         },
       },
@@ -1086,6 +1247,20 @@ describe("billing guard against a real database", () => {
         log: () => undefined,
         guardLog: () => undefined,
       }),
+      ...invitationRoutes({
+        checkout,
+        kms,
+        keyArn: KEY_ARN,
+        // Identity's invitation functions compare against the database clock.
+        now: () => new Date(),
+        apiHostname: API_HOSTNAME,
+        adminOrigin: "https://admin.example.test",
+        mail: {
+          send: async () => {},
+        },
+        log: () => undefined,
+        guardLog: () => undefined,
+      }),
       ...entitlementRoutes({
         checkout,
         kms,
@@ -1222,9 +1397,15 @@ describe("billing guard against a real database", () => {
       expect(await resAA.text()).toBe("");
 
       // Grant-holder of B writing to B -> 200
+      const subjectB = newId();
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: setupB.orgId, communityId: setupB.communityId }, (tx) =>
+          addMember(tx, subjectB),
+        ),
+      );
       const resBB = await post(
         "/v1/access/grants",
-        { communitySlug: setupB.slug, userId: newId(), roleKey: "member" },
+        { communitySlug: setupB.slug, userId: subjectB, roleKey: "member" },
         setupB.token,
       );
       expect(resBB.status).toBe(200);
@@ -1254,9 +1435,15 @@ describe("billing guard against a real database", () => {
       const setupB = await createFreshSetup("read_only");
 
       // Grant-holder of A writing to A -> 200
+      const subjectA = newId();
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: setupA.orgId, communityId: setupA.communityId }, (tx) =>
+          addMember(tx, subjectA),
+        ),
+      );
       const resAA = await post(
         "/v1/access/grants",
-        { communitySlug: setupA.slug, userId: newId(), roleKey: "member" },
+        { communitySlug: setupA.slug, userId: subjectA, roleKey: "member" },
         setupA.token,
       );
       expect(resAA.status).toBe(200);

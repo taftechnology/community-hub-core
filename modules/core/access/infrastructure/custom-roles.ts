@@ -8,9 +8,11 @@ import {
   parseUuid,
 } from "../domain/role.js";
 import { allows, deny, loadActor } from "./grants.js";
+import { lockOrganisation } from "./membership.js";
 
 const CREATED = "access.custom_role.created";
 const DELETED = "access.custom_role.deleted";
+const INVITATION_VOIDED = "access.invitation.voided";
 const MANAGE = "access.roles.manage";
 
 type CreateInput = {
@@ -117,6 +119,7 @@ export async function deleteCustomRole(
   if (!allows(actor, MANAGE)) {
     await deny(tx, actorUserId);
   }
+  await lockOrganisation(tx);
   const roles = await tx<{ id: string }[]>`
     select id::text as id
     from app.custom_roles
@@ -136,6 +139,40 @@ export async function deleteCustomRole(
   `;
   if ((grants[0]?.n ?? 0) > 0) {
     throw new AccessError("role_in_use");
+  }
+  const pendingInvitations = await tx<{ n: number }[]>`
+    select count(*)::int as n
+    from app.invitations
+    where custom_role_id = ${customRoleId}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
+      and status = 'pending'
+      and expires_at > ${input.now}
+  `;
+  if ((pendingInvitations[0]?.n ?? 0) > 0) {
+    throw new AccessError("role_in_use");
+  }
+  const closedExpired = await tx<{ id: string }[]>`
+    update app.invitations
+    set status = 'void',
+        person_id = null,
+        custom_role_id = null,
+        closed_at = ${input.now}
+    where custom_role_id = ${customRoleId}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
+      and status = 'pending'
+      and expires_at <= ${input.now}
+    returning id::text as id
+  `;
+  for (const row of closedExpired) {
+    await appendAuditEvent(tx, {
+      actorKind: "user",
+      actorId: actorUserId,
+      action: INVITATION_VOIDED,
+      purpose: INVITATION_VOIDED,
+      targetIds: [row.id],
+    });
   }
   await tx`
     delete from app.custom_role_permissions

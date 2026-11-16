@@ -22,10 +22,30 @@ defineAuditPurpose("access.users.manage");
 defineAuditAction("access.users.listed");
 defineAuditPurpose("access.users.listed");
 defineAuditPurpose("access.users.view");
+defineAuditAction("access.invitation.created");
+defineAuditPurpose("access.invitation.created");
+defineAuditAction("access.invitation.resent");
+defineAuditPurpose("access.invitation.resent");
+defineAuditAction("access.invitation.revoked");
+defineAuditPurpose("access.invitation.revoked");
+defineAuditAction("access.invitation.accepted");
+defineAuditPurpose("access.invitation.accepted");
+defineAuditAction("access.invitation.voided");
+defineAuditPurpose("access.invitation.voided");
+defineAuditAction("access.invitations.listed");
+defineAuditPurpose("access.invitations.listed");
+defineAuditPurpose("access.user.not_member");
 defineAuditPurpose("people.person.view");
 defineAuditPurpose("people.restricted.read");
 
 export { AccessError } from "../domain/error.js";
+export type { InvitationAddresses } from "../domain/invitation-addresses.js";
+export {
+  type InvitationMail,
+  InvitationMailUnavailable,
+  rejectingInvitationMail,
+} from "../domain/invitation-mail.js";
+export { buildInvitationToken, parseInvitationToken } from "../domain/invitation-token.js";
 export { createCustomRole, deleteCustomRole } from "../infrastructure/custom-roles.js";
 export {
   grantRole,
@@ -37,4 +57,22 @@ export {
 } from "../infrastructure/grants.js";
 export { holdsAnyGrant } from "../infrastructure/holds-any-grant.js";
 export { holdsPermission } from "../infrastructure/holds-permission.js";
+export {
+  createInvitation,
+  listInvitations,
+  resendInvitation,
+  revokeInvitation,
+  proveInvitation,
+  acceptInvitation,
+  deleteInvitationAfterMailFailure,
+  voidInvitationAfterMailFailure,
+  type CreateInvitationInput,
+  type ListInvitationsInput,
+  type InvitationListItem,
+  type ResendInvitationInput,
+  type RevokeInvitationInput,
+  type ProveInvitationInput,
+  type AcceptInvitationInput,
+  type MailFailureInput,
+} from "../infrastructure/invitations.js";
 export { readPersonForActor } from "../infrastructure/restricted-read.js";

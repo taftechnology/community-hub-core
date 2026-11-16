@@ -129,4 +129,122 @@ describe("identity key and email", () => {
       await platform.end({ timeout: 1 });
     }
   });
+
+  it("enforces table and column privileges on invitation_emails (pin 2b)", async () => {
+    const runtime = loadRuntime();
+    const direct = createPlaintextDirectSql(runtime.productOnlyUrl);
+    try {
+      const [tablePrivs] = await direct<
+        {
+          can_select: boolean;
+          can_insert: boolean;
+          can_delete: boolean;
+          can_update: boolean;
+          can_truncate: boolean;
+        }[]
+      >`
+        select
+          has_table_privilege('identity', 'identity.invitation_emails', 'SELECT') as can_select,
+          has_table_privilege('identity', 'identity.invitation_emails', 'INSERT') as can_insert,
+          has_table_privilege('identity', 'identity.invitation_emails', 'DELETE') as can_delete,
+          has_table_privilege('identity', 'identity.invitation_emails', 'UPDATE') as can_update,
+          has_table_privilege('identity', 'identity.invitation_emails', 'TRUNCATE') as can_truncate
+      `;
+      expect(tablePrivs).toEqual({
+        can_select: true,
+        can_insert: true,
+        can_delete: true,
+        can_update: false,
+        can_truncate: false,
+      });
+
+      const allowedColumns = [
+        "email",
+        "email_bidx",
+        "dedupe_key",
+        "expires_at",
+        "closed_at",
+      ] as const;
+
+      const forbiddenColumns = ["invitation_id", "region", "created_at"] as const;
+
+      for (const col of allowedColumns) {
+        const [row] = await direct<{ granted: boolean }[]>`
+          select has_column_privilege('identity', 'identity.invitation_emails', ${col}, 'UPDATE') as granted
+        `;
+        expect(
+          row?.granted,
+          `expected column invitation_emails.${col} to be updatable by identity`,
+        ).toBe(true);
+      }
+
+      for (const col of forbiddenColumns) {
+        const [row] = await direct<{ granted: boolean }[]>`
+          select has_column_privilege('identity', 'identity.invitation_emails', ${col}, 'UPDATE') as granted
+        `;
+        expect(
+          row?.granted,
+          `expected column invitation_emails.${col} NOT to be updatable by identity`,
+        ).toBe(false);
+      }
+
+      const updatableRows = await direct<{ attname: string }[]>`
+        select attname
+        from pg_attribute
+        where attrelid = 'identity.invitation_emails'::regclass
+          and attnum > 0
+          and not attisdropped
+          and has_column_privilege('identity', 'identity.invitation_emails', attname, 'UPDATE')
+        order by attname
+      `;
+      const updatableColumns = updatableRows.map((r) => r.attname);
+      expect(updatableColumns).toEqual([...allowedColumns].sort());
+
+      for (const role of ["app", "platform"] as const) {
+        const [privs] = await direct<
+          {
+            can_select: boolean;
+            can_insert: boolean;
+            can_update: boolean;
+            can_delete: boolean;
+            can_truncate: boolean;
+          }[]
+        >`
+          select
+            has_table_privilege(${role}, 'identity.invitation_emails', 'SELECT') as can_select,
+            has_table_privilege(${role}, 'identity.invitation_emails', 'INSERT') as can_insert,
+            has_table_privilege(${role}, 'identity.invitation_emails', 'UPDATE') as can_update,
+            has_table_privilege(${role}, 'identity.invitation_emails', 'DELETE') as can_delete,
+            has_table_privilege(${role}, 'identity.invitation_emails', 'TRUNCATE') as can_truncate
+        `;
+        expect(privs).toEqual({
+          can_select: false,
+          can_insert: false,
+          can_update: false,
+          can_delete: false,
+          can_truncate: false,
+        });
+      }
+    } finally {
+      await direct.end({ timeout: 1 });
+    }
+
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    try {
+      await expect(app`select * from identity.invitation_emails`).rejects.toMatchObject({
+        code: "42501",
+      });
+    } finally {
+      await app.end({ timeout: 1 });
+    }
+
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    try {
+      await expect(platform`select * from identity.invitation_emails`).rejects.toMatchObject({
+        code: "42501",
+      });
+    } finally {
+      await platform.end({ timeout: 1 });
+    }
+  });
 });

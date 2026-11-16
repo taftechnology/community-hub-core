@@ -135,6 +135,8 @@ let customCommunityGrants:
       custom_role_key: string | null;
     }[]
   | undefined;
+let customMembers: { user_id: string }[] | undefined;
+let invitationOnlyMember: string | undefined;
 
 function fakeTx(strings: TemplateStringsArray): unknown[] {
   const text = strings.join(" ");
@@ -146,6 +148,25 @@ function fakeTx(strings: TemplateStringsArray): unknown[] {
   }
   if (text.includes("from app.user_links")) {
     return userLinks;
+  }
+  if (customMembers !== undefined && text.includes("app.organisation_members")) {
+    if (!text.includes("community_id")) {
+      return [...customMembers, { user_id: "00000000-0000-4000-8000-000000000060" }];
+    }
+    return customMembers;
+  }
+  if (text.includes("app.organisation_members")) {
+    if (customOrgGrants !== undefined || customCommunityGrants !== undefined) {
+      const ids = new Set<string>();
+      for (const g of customOrgGrants ?? []) ids.add(g.user_id);
+      for (const g of customCommunityGrants ?? []) ids.add(g.user_id);
+      for (const l of userLinks) ids.add(l.user_id);
+      if (invitationOnlyMember !== undefined) {
+        ids.add(invitationOnlyMember);
+      }
+      return Array.from(ids).map((userId) => ({ user_id: userId }));
+    }
+    return [{ user_id: USER }];
   }
   if (customOrgGrants !== undefined && text.includes("app.organisation_role_grants")) {
     return customOrgGrants;
@@ -250,6 +271,8 @@ describe("access routes", () => {
     userLinks = [];
     customOrgGrants = undefined;
     customCommunityGrants = undefined;
+    customMembers = undefined;
+    invitationOnlyMember = undefined;
     people.readLinkedContacts.mockReset();
     identity.readUserEmails.mockReset();
     people.readLinkedContacts.mockResolvedValue(new Map());
@@ -507,6 +530,41 @@ describe("access routes", () => {
     );
     expect(planted.status).toBe(400);
     expect(access.grantRole).not.toHaveBeenCalled();
+  });
+
+  it("maps not_member to 422 with json error on POST /v1/access/grants and /v1/access/user-links", async () => {
+    const subject = "00000000-0000-4000-8000-000000000030";
+    access.grantRole.mockReset();
+    access.grantRole.mockRejectedValue(new access.AccessError("not_member"));
+    const grantRes = await route("/v1/access/grants").handle(
+      request(
+        "/v1/access/grants",
+        API_HOSTNAME,
+        { communitySlug: "parish", userId: subject, roleKey: "member" },
+        `Bearer ${TOKEN}`,
+      ),
+    );
+    expect(grantRes.status).toBe(422);
+    expect(grantRes.headers.get("content-type")).toBe("application/json");
+    expect(await grantRes.text()).toBe('{"error":"user_not_member"}');
+
+    access.linkUser.mockReset();
+    access.linkUser.mockRejectedValue(new access.AccessError("not_member"));
+    const linkRes = await route("/v1/access/user-links").handle(
+      request(
+        "/v1/access/user-links",
+        API_HOSTNAME,
+        {
+          communitySlug: "parish",
+          userId: subject,
+          personId: "00000000-0000-4000-8000-000000000031",
+        },
+        `Bearer ${TOKEN}`,
+      ),
+    );
+    expect(linkRes.status).toBe(422);
+    expect(linkRes.headers.get("content-type")).toBe("application/json");
+    expect(await linkRes.text()).toBe('{"error":"user_not_member"}');
   });
 
   it("a member without access.roles.manage gets 402 on POST /v1/access/grants in read_only and 403 in ok", async () => {
@@ -1281,6 +1339,32 @@ describe("access routes", () => {
       expect(body.users).toHaveLength(500);
     });
 
+    it("500 directory users plus one accepted-invitation member gives 409 with no readUserEmails call and no audit row", async () => {
+      const makeUsers = (count: number) => {
+        const grants = [];
+        for (let i = 0; i < count; i += 1) {
+          const hex = i.toString(16).padStart(12, "0");
+          grants.push({
+            grant_id: `00000000-0000-4000-8000-${hex}`,
+            user_id: `00000000-0000-4000-8000-${hex}`,
+            role_key: i === 0 ? "org_owner" : "member",
+          });
+        }
+        return grants;
+      };
+
+      customOrgGrants = makeUsers(500);
+      invitationOnlyMember = "00000000-0000-4000-8000-0000000001f4";
+      db.appendAuditEvent.mockClear();
+      identity.readUserEmails.mockClear();
+
+      const res = await callUsersList({ communitySlug: "parish" });
+      expect(res.status).toBe(409);
+      expect(await res.text()).toBe("");
+      expect(identity.readUserEmails).not.toHaveBeenCalled();
+      expect(db.appendAuditEvent).not.toHaveBeenCalled();
+    });
+
     it("Pin 12: every response carries cache-control: no-store, empty bodies on non-200, grants/list 200 untouched", async () => {
       const ok = await callUsersList({ communitySlug: "parish" });
       expect(ok.status).toBe(200);
@@ -1416,6 +1500,43 @@ describe("access routes", () => {
         "00000000-0000-4000-8000-000000000003",
         "00000000-0000-4000-8000-000000000004",
       ]);
+    });
+
+    it("pin 43 (unit a): users list excludes directory users who have no organisation membership", async () => {
+      const nonMemberUser = "00000000-0000-4000-8000-000000000050";
+      customOrgGrants = [
+        { grant_id: ORG_GRANT, user_id: USER, role_key: "org_owner" },
+        {
+          grant_id: "00000000-0000-4000-8000-000000000051",
+          user_id: nonMemberUser,
+          role_key: "member",
+        },
+      ];
+      // Only USER is an organisation member
+      customMembers = [{ user_id: USER }];
+
+      const res = await callUsersList({ communitySlug: "parish" });
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as { users: { userId: string }[] };
+      const returnedIds = data.users.map((u) => u.userId);
+      expect(returnedIds).toContain(USER);
+      expect(returnedIds).not.toContain(nonMemberUser);
+    });
+
+    it("pin 43 (unit b): users list excludes organisation members who belong only to a sibling community", async () => {
+      const siblingMemberUser = "00000000-0000-4000-8000-000000000060";
+      const acceptedInviteUser = "00000000-0000-4000-8000-000000000070";
+      customOrgGrants = [{ grant_id: ORG_GRANT, user_id: USER, role_key: "org_owner" }];
+      // Membership query with community filter answers only USER and the accepted-invite member for this community
+      customMembers = [{ user_id: USER }, { user_id: acceptedInviteUser }];
+
+      const res = await callUsersList({ communitySlug: "parish" });
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as { users: { userId: string }[] };
+      const returnedIds = data.users.map((u) => u.userId);
+      expect(returnedIds).toContain(USER);
+      expect(returnedIds).toContain(acceptedInviteUser);
+      expect(returnedIds).not.toContain(siblingMemberUser);
     });
   });
 });

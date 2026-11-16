@@ -166,7 +166,8 @@ export function isTestFile(filename) {
   return (
     /\.test\.ts$/.test(normalized) ||
     /\/tests?\//.test(normalized) ||
-    /\/src\/testing\.ts$/.test(normalized)
+    /\/src\/testing\.ts$/.test(normalized) ||
+    /\/modules\/core\/access\/infrastructure\/testing\.ts$/.test(normalized)
   );
 }
 

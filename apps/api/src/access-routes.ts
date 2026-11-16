@@ -206,7 +206,16 @@ function bearer(request: Request): string | undefined {
   return match?.[1];
 }
 
-function statusFor(error: AccessError): Response | undefined {
+function statusFor(error: AccessError, route?: "grants" | "user-links"): Response | undefined {
+  if (error.code === "not_member") {
+    if (route === "grants" || route === "user-links") {
+      return new Response(JSON.stringify({ error: "user_not_member" }), {
+        status: 422,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return undefined;
+  }
   if (error.code === "forbidden") {
     return empty(403);
   }
@@ -423,9 +432,13 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
     );
   }
 
-  function finish<T>(outcome: T | AccessError, ok: (value: T) => Response): Response {
+  function finish<T>(
+    outcome: T | AccessError,
+    ok: (value: T) => Response,
+    route?: "grants" | "user-links",
+  ): Response {
     if (outcome instanceof AccessError) {
-      const response = statusFor(outcome);
+      const response = statusFor(outcome, route);
       if (response !== undefined) {
         return response;
       }
@@ -519,13 +532,43 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
               return deny(tx, actor.userId, "access.users.view");
             }
 
-            const userIds = Array.from(
+            const directoryUserIds = Array.from(
               new Set([
                 ...directory.grants.map((g) => g.userId),
                 ...directory.userLinks.map((l) => l.userId),
               ]),
             );
 
+            if (directoryUserIds.length > 500) {
+              throw new AccessError("too_many");
+            }
+
+            const memberRows =
+              directoryUserIds.length > 0
+                ? await tx<{ user_id: string }[]>`
+                    select distinct m.user_id::text as user_id
+                    from app.organisation_members m
+                    left join app.invitations i
+                      on i.id = m.invitation_id
+                     and i.org_id = m.org_id
+                     and i.community_id = current_setting('app.community_id')::uuid
+                    where m.org_id = current_setting('app.org_id')::uuid
+                      and (
+                        m.user_id = any(${directoryUserIds}::uuid[])
+                        or i.id is not null
+                      )
+                  `
+                : await tx<{ user_id: string }[]>`
+                    select distinct m.user_id::text as user_id
+                    from app.organisation_members m
+                    join app.invitations i
+                      on i.id = m.invitation_id
+                     and i.org_id = m.org_id
+                     and i.community_id = current_setting('app.community_id')::uuid
+                    where m.org_id = current_setting('app.org_id')::uuid
+                  `;
+
+            const userIds = memberRows.map((r) => r.user_id);
             if (userIds.length > 500) {
               throw new AccessError("too_many");
             }
@@ -737,7 +780,7 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
             actorUserId: actor.userId,
           }),
         );
-        return finish(outcome, (value) => Response.json(value));
+        return finish(outcome, (value) => Response.json(value), "grants");
       },
     },
     {
@@ -884,7 +927,7 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
             actorUserId: actor.userId,
           });
         });
-        return finish(outcome, (value) => Response.json(value));
+        return finish(outcome, (value) => Response.json(value), "user-links");
       },
     },
     {

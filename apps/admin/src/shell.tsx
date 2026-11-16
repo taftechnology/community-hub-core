@@ -1,9 +1,12 @@
 import { Button, Logo } from "@community-hub/ui";
-import { useEffect } from "react";
-import { createBrowserRouter, RouterProvider } from "react-router";
+import { useEffect, useState } from "react";
+import { createBrowserRouter, Navigate, RouterProvider } from "react-router";
 
+import { AcceptInvitation } from "./accept-invitation";
 import { BillingStatusProvider } from "./billing-status";
 import { CommunityProvider } from "./community";
+import { readAccessToken } from "./directory";
+import { getInviteToken } from "./invite-token";
 import { labels } from "./labels";
 import { PeopleAccessProvider } from "./people-access";
 import { ScreenTitle } from "./screen-title";
@@ -36,7 +39,22 @@ function DashboardPage() {
   );
 }
 
+function IndexPage() {
+  // Decided once, when the screen mounts: the token is cleared after the final answer, and the
+  // accept screen must keep showing that answer.
+  const [accepting] = useState(() => getInviteToken() !== undefined);
+  if (!accepting) {
+    return <DashboardPage />;
+  }
+  if (readAccessToken() === null) {
+    return <Navigate to="/sign-in" replace />;
+  }
+  return <AcceptInvitation />;
+}
+
 export function SignInLayout() {
+  const [invited] = useState(() => getInviteToken() !== undefined);
+
   useEffect(() => {
     document.title = "Sign in · Community Hub";
   }, []);
@@ -48,7 +66,7 @@ export function SignInLayout() {
           <Logo variant="outline-teal" />
         </div>
         <h1 className="text-[22px] leading-[28px] font-bold text-foreground text-center">
-          Sign in
+          {invited ? "Sign in with the address this invitation was sent to" : "Sign in"}
         </h1>
         <SignInPage />
       </div>
@@ -65,7 +83,7 @@ export const router = createBrowserRouter([
     path: "/",
     element: <ShellLayout />,
     children: [
-      { index: true, element: <DashboardPage /> },
+      { index: true, element: <IndexPage /> },
       { path: "settings/general", element: <GeneralSettingsPage /> },
       { path: "settings/users", element: <UsersRolesPage /> },
       { path: "settings/modules", element: <ModuleTogglesPage /> },

@@ -62,5 +62,13 @@ export default defineModule({
     "operator_events.role_key": "internal",
     "operator_events.request_id": "internal",
     "operator_events.occurred_at": "internal",
+    "invitation_emails.invitation_id": "internal",
+    "invitation_emails.region": "internal",
+    "invitation_emails.email": "confidential-blind",
+    "invitation_emails.email_bidx": "confidential-blind",
+    "invitation_emails.dedupe_key": "confidential-blind",
+    "invitation_emails.expires_at": "internal",
+    "invitation_emails.closed_at": "internal",
+    "invitation_emails.created_at": "internal",
   },
 });

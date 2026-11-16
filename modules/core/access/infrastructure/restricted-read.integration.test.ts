@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 
+import { addMember } from "@community-hub/access/testing";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import {
   applyProductMigrations,
@@ -158,6 +159,7 @@ describe("restricted read for an actor", () => {
       const owner = newId();
       const officer = newId();
       await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      await addMember(tx, officer);
       await grantRole(tx, {
         now: NOW,
         userId: officer,
@@ -195,6 +197,7 @@ describe("restricted read for an actor", () => {
       const owner = newId();
       const member = newId();
       await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      await addMember(tx, member);
       await grantRole(tx, {
         now: NOW,
         userId: member,
@@ -249,6 +252,7 @@ describe("restricted read for an actor", () => {
       });
       const childId = await createMinor(tx, kms, household.householdId, "Ned");
       const otherId = await createMinor(tx, kms, household.householdId, "Kim");
+      await addMember(tx, guardianUser);
       await linkUser(tx, {
         now: NOW,
         userId: guardianUser,
@@ -296,6 +300,7 @@ describe("restricted read for an actor", () => {
         permissions: ["people.view"],
         actorUserId: owner,
       });
+      await addMember(tx, viewer);
       await grantRole(tx, {
         now: NOW,
         userId: viewer,
@@ -303,6 +308,7 @@ describe("restricted read for an actor", () => {
         customRoleId: createdRole.customRoleId,
         actorUserId: owner,
       });
+      await addMember(tx, officer);
       await grantRole(tx, {
         now: NOW,
         userId: officer,
@@ -375,6 +381,7 @@ describe("restricted read for an actor", () => {
       const member = newId();
       const staffUser = newId();
       await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      await addMember(tx, member);
       await grantRole(tx, {
         now: NOW,
         userId: member,
@@ -382,6 +389,7 @@ describe("restricted read for an actor", () => {
         customRoleId: null,
         actorUserId: owner,
       });
+      await addMember(tx, staffUser);
       await grantRole(tx, {
         now: NOW,
         userId: staffUser,
@@ -478,6 +486,7 @@ describe("restricted read for an actor", () => {
           permissions: ["people.view"],
           actorUserId: owner,
         });
+        await addMember(tx1, viewer);
         await grantRole(tx1, {
           now: NOW,
           userId: viewer,

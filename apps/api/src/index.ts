@@ -32,6 +32,9 @@ import { readServiceEnv, IMAGE_CERT_PATH, type ServiceEnv } from "./env.js";
 import { RoutesRejected, type GateRoute } from "./gate.js";
 import { createAwsKmsPort } from "./kms/aws-kms-adapter.js";
 import { createSesOtpMail } from "./mail/ses-otp-mail.js";
+import { createSesInvitationMail } from "./mail/ses-invitation-mail.js";
+import { rejectingInvitationMail, type InvitationMail } from "@community-hub/access";
+import { invitationRoutes, type InvitationRouteDeps } from "./invitation-routes.js";
 import { loadOpsStatic, StaticRejected } from "./ops-static.js";
 import { DEFAULT_OPS_PERMISSIONS, opsRoutes, type OpsDeps } from "./ops-routes.js";
 import { secretsManagerReader } from "./secrets.js";
@@ -154,6 +157,7 @@ export function bindServices(
   entitlements: EntitlementDeps;
   billing: BillingDeps;
   ops: OpsDeps;
+  invitations: InvitationRouteDeps;
 } {
   const readSecret = secretsManagerReader(
     new SecretsManagerClient({ region: env.AWS_REGION }) as Parameters<
@@ -214,6 +218,21 @@ export function bindServices(
           },
         })
       : rejectingOtpMail;
+
+  const invitationMail: InvitationMail =
+    env.MAIL_FROM_ADDRESS !== undefined && env.SES_CONFIGURATION_SET !== undefined
+      ? createSesInvitationMail({
+          client: () => {
+            sesClient ??= new SESv2Client({ region: env.AWS_REGION, maxAttempts: 1 });
+            return sesClient;
+          },
+          from: env.MAIL_FROM_ADDRESS,
+          configurationSet: env.SES_CONFIGURATION_SET,
+          info: (fields) => {
+            logger.info("mail", fields);
+          },
+        })
+      : rejectingInvitationMail;
 
   let billingSecretInstance: BillingSecret | undefined;
   let billingPort: StripeBilling | undefined;
@@ -359,6 +378,21 @@ export function bindServices(
         logger.info(message);
       },
     },
+    invitations: {
+      checkout: shared.checkout,
+      get kms() {
+        return shared.kms;
+      },
+      keyArn: shared.keyArn,
+      now: shared.now,
+      apiHostname: env.API_HOSTNAME,
+      adminOrigin: env.ADMIN_ORIGIN,
+      mail: invitationMail,
+      log: shared.log,
+      guardLog: (message: string, fields: BillingLogFields) => {
+        logger.info(message, fields);
+      },
+    },
   };
 }
 
@@ -369,6 +403,7 @@ export function productionRoutes(env: ServiceEnv, pem: string): readonly GateRou
     healthRoute,
     ...authRoutes(bound.auth),
     ...accessRoutes(bound.access),
+    ...invitationRoutes(bound.invitations),
     ...peopleRoutes(bound.people),
     ...householdRoutes(bound.households),
     ...lifeEventRoutes(bound.lifeEvents),

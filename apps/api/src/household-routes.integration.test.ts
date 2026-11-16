@@ -3,6 +3,7 @@ import type { Server } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bootstrapOwner, createCustomRole, grantRole } from "@community-hub/access";
+import { addMember } from "@community-hub/access/testing";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import { applyProductMigrations, newId, withAppTransaction } from "@community-hub/db";
 import {
@@ -319,6 +320,7 @@ describe("household routes real-database integration (finding 4)", () => {
           permissions: ["people.view"],
           actorUserId: ownerA1Session.userId,
         });
+        await addMember(tx, viewOnlySession.userId);
         await grantRole(tx, {
           now,
           userId: viewOnlySession.userId,
@@ -342,6 +344,7 @@ describe("household routes real-database integration (finding 4)", () => {
           permissions: ["people.restricted.read"],
           actorUserId: ownerA1Session.userId,
         });
+        await addMember(tx, restrictedOnlySession.userId);
         await grantRole(tx, {
           now,
           userId: restrictedOnlySession.userId,
@@ -363,6 +366,7 @@ describe("household routes real-database integration (finding 4)", () => {
           permissions: ["people.view", "people.manage"],
           actorUserId: ownerA1Session.userId,
         });
+        await addMember(tx, manageOnlySession.userId);
         await grantRole(tx, {
           now,
           userId: manageOnlySession.userId,
@@ -377,15 +381,16 @@ describe("household routes real-database integration (finding 4)", () => {
     const ownerA2Session = await signIn(`owner-a2-${orgIdA.slice(0, 8)}@example.test`);
     ownerA2Token = ownerA2Session.accessToken;
     await withRequest({ requestId: REQUEST_ID }, () =>
-      withAppTransaction(app, { orgId: orgIdA, communityId: communityIdA2 }, (tx) =>
-        grantRole(tx, {
+      withAppTransaction(app, { orgId: orgIdA, communityId: communityIdA2 }, async (tx) => {
+        await addMember(tx, ownerA2Session.userId);
+        await grantRole(tx, {
           now,
           userId: ownerA2Session.userId,
           roleKey: "community_admin",
           customRoleId: null,
           actorUserId: ownerA1Session.userId,
-        }),
-      ),
+        });
+      }),
     );
 
     // Owner B1

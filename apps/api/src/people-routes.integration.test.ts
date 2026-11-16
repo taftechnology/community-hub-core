@@ -3,6 +3,7 @@ import type { Server } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bootstrapOwner, createCustomRole, grantRole } from "@community-hub/access";
+import { addMember } from "@community-hub/access/testing";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import { applyProductMigrations, newId, withAppTransaction } from "@community-hub/db";
 import {
@@ -311,6 +312,7 @@ describe("people routes real-database integration (finding 3)", () => {
           permissions: ["people.view"],
           actorUserId: ownerASession.userId,
         });
+        await addMember(tx, customRoleSession.userId);
         await grantRole(tx, {
           now,
           userId: customRoleSession.userId,
@@ -330,6 +332,7 @@ describe("people routes real-database integration (finding 3)", () => {
           permissions: ["people.manage"],
           actorUserId: ownerASession.userId,
         });
+        await addMember(tx, manageRoleSession.userId);
         await grantRole(tx, {
           now,
           userId: manageRoleSession.userId,
@@ -351,6 +354,7 @@ describe("people routes real-database integration (finding 3)", () => {
           permissions: ["people.restricted.read"],
           actorUserId: ownerASession.userId,
         });
+        await addMember(tx, restrictedRoleSession.userId);
         await grantRole(tx, {
           now,
           userId: restrictedRoleSession.userId,
@@ -364,6 +368,7 @@ describe("people routes real-database integration (finding 3)", () => {
     const memberSession = await signIn(`member-${orgIdA.slice(0, 8)}@example.test`);
     await withRequest({ requestId: REQUEST_ID }, () =>
       withAppTransaction(app, { orgId: orgIdA, communityId: communityIdA }, async (tx) => {
+        await addMember(tx, memberSession.userId);
         await grantRole(tx, {
           now,
           userId: memberSession.userId,

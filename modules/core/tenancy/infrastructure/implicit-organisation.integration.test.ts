@@ -15,6 +15,7 @@ import type { Sql } from "postgres";
 
 import {
   createImplicitOrganisation,
+  findCommunityById,
   findCommunityBySlug,
   findOrganisationBySlug,
 } from "../public/index.js";
@@ -314,6 +315,49 @@ describe("implicit organisation", () => {
       await findCommunityBySlug(sql, "parser-parish");
       expect({ ...sql.options.parsers }).toEqual(parsers);
     } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("findCommunityById checks the organisation (pin 19)", async () => {
+    const runtime = loadRuntime();
+    const sql = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    try {
+      const org1 = await createImplicitOrganisation(sql, {
+        organisationSlug: "pin19-org1",
+        communitySlug: "pin19-comm1",
+      });
+      const org2 = await createImplicitOrganisation(sql, {
+        organisationSlug: "pin19-org2",
+        communitySlug: "pin19-comm2",
+      });
+
+      const found = await findCommunityById(sql, {
+        organisationId: org1.organisationId,
+        communityId: org1.communityId,
+      });
+      expect(found).toEqual({
+        id: org1.communityId,
+        organisationId: org1.organisationId,
+        slug: "pin19-comm1",
+      });
+
+      // Paired with another organisation's id returns null
+      const mismatched = await findCommunityById(sql, {
+        organisationId: org2.organisationId,
+        communityId: org1.communityId,
+      });
+      expect(mismatched).toBeNull();
+
+      // Non-existent community id returns null
+      const missing = await findCommunityById(sql, {
+        organisationId: org1.organisationId,
+        communityId: "00000000-0000-4000-8000-000000000099",
+      });
+      expect(missing).toBeNull();
+    } finally {
+      await sql`delete from platform.communities where slug in ('pin19-comm1', 'pin19-comm2')`;
+      await sql`delete from platform.organisations where slug in ('pin19-org1', 'pin19-org2')`;
       await sql.end({ timeout: 1 });
     }
   });

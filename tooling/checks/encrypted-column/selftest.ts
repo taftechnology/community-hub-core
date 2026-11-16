@@ -65,6 +65,7 @@ const mustFail: { file: string; ruleId: string; count: number }[] = [
   { file: "fail/apps/api/src/probe.ts", ruleId: QUERY, count: 1 },
   { file: "fail/packages/db/src/kms-destructure.ts", ruleId: KMS, count: 1 },
   { file: "fail/packages/db/src/testing-import.ts", ruleId: TESTING, count: 1 },
+  { file: "fail/packages/db/src/access-testing-import.ts", ruleId: TESTING, count: 1 },
   { file: "fail/packages/db/src/plaintext-alias.ts", ruleId: PLAINTEXT, count: 1 },
   { file: "fail/packages/db/src/plaintext-js.ts", ruleId: PLAINTEXT, count: 1 },
   { file: "fail/packages/db/src/plaintext-no-extension.ts", ruleId: PLAINTEXT, count: 1 },
@@ -105,6 +106,7 @@ const mustPass = [
   "pass/apps/api/src/probe.ts",
   "pass/event-allowed.ts",
   "pass/event-imported-ids.ts",
+  "pass/packages/access/test/testing-import.ts",
 ] as const;
 
 let eslint: ESLint;

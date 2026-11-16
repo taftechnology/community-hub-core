@@ -160,4 +160,64 @@ describe("access facts", () => {
       await app.end({ timeout: 1 });
     }
   });
+
+  it("personIsMinor with lock: share returns expected values and succeeds as app", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const organisationId = newId();
+    const communityId = newId();
+    const kms = createLocalKmsPort();
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, 'access-facts-share-parish', 'au', 'implicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, 'access-facts-share-parish', 'au')
+        `;
+      });
+
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const household = await createHousehold(tx, kms, KEY_ARN, {
+            now: NOW,
+            label: null,
+            actorUserId: null,
+          });
+          const adult = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId: household.householdId,
+            dateOfBirth: "1990-01-01",
+            givenName: "Ada",
+            familyName: "Example",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          const minor = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId: household.householdId,
+            dateOfBirth: null,
+            givenName: "Ned",
+            familyName: "Example",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+
+          expect(await personIsMinor(tx, adult.personId, { lock: "share" })).toBe(false);
+          expect(await personIsMinor(tx, minor.personId, { lock: "share" })).toBe(true);
+          expect(await personIsMinor(tx, newId(), { lock: "share" })).toBeNull();
+        }),
+      );
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
 });

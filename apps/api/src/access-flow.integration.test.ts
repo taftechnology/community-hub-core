@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bootstrapOwner } from "@community-hub/access";
+import { addMember } from "@community-hub/access/testing";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import { applyProductMigrations, newId, withAppTransaction } from "@community-hub/db";
 import {
@@ -250,6 +251,11 @@ describe("access flow", () => {
       };
       memberUserId = memberSession.userId;
       const memberBearer = `Bearer ${memberSession.accessToken}`;
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, (tx) =>
+          addMember(tx, memberUserId),
+        ),
+      );
       const memberGranted = await post(
         API_HOSTNAME,
         "/v1/access/grants",
@@ -266,6 +272,11 @@ describe("access flow", () => {
       expect(listed.status).toBe(200);
       const directory = (await listed.json()) as { permissions: string[] };
       expect(directory.permissions).toContain("access.roles.manage");
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, (tx) =>
+          addMember(tx, subject),
+        ),
+      );
       const granted = await post(
         API_HOSTNAME,
         "/v1/access/grants",

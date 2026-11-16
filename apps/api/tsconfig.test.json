@@ -4,6 +4,7 @@
     "composite": false,
     "noEmit": true,
     "paths": {
+      "@community-hub/access/testing": ["../../modules/core/access/infrastructure/testing.ts"],
       "@community-hub/crypto/testing": ["../../packages/crypto/src/testing.ts"],
       "@community-hub/db/plaintext": ["../../packages/db/src/plaintext.ts"]
     }

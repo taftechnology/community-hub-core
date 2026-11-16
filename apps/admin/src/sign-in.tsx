@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from "react-router";
 
 import { useCommunity } from "./community";
 import { directoryOrigins, storeAccessToken, storeSignOutHandle } from "./directory";
+import { getInviteToken } from "./invite-token";
 
 async function accessToken(response: Response): Promise<string | undefined> {
   try {
@@ -72,7 +73,8 @@ export function SignInPage() {
     storeAccessToken(token);
     storeSignOutHandle(token);
     refresh();
-    await navigate("/settings/users");
+    // A person holding an invitation token goes to the accept screen, which is the index route.
+    await navigate(getInviteToken() === undefined ? "/settings/users" : "/");
   }
 
   return (

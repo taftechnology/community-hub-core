@@ -1,10 +1,14 @@
 import { isTestFile } from "../lib/ast.js";
 
-const TESTING = "@community-hub/crypto/testing";
+const BANNED = new Set(["@community-hub/crypto/testing", "@community-hub/access/testing"]);
 
 function checkSource(node, context) {
-  if (node.type === "Literal" && node.value === TESTING) {
-    context.report({ node, messageId: "testing" });
+  if (node.type === "Literal" && BANNED.has(node.value)) {
+    context.report({
+      node,
+      messageId: "testing",
+      data: { module: node.value },
+    });
   }
 }
 
@@ -12,11 +16,12 @@ export default {
   meta: {
     type: "problem",
     docs: {
-      description: "Ban @community-hub/crypto/testing imports from non-test source",
+      description:
+        "Ban @community-hub/crypto/testing and @community-hub/access/testing imports from non-test source",
     },
     schema: [],
     messages: {
-      testing: "@community-hub/crypto/testing is test-only and cannot be imported from src.",
+      testing: "{{module}} is test-only and cannot be imported from src.",
     },
   },
   create(context) {

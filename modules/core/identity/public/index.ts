@@ -5,6 +5,14 @@ export { ensureIdentityKey } from "../infrastructure/identity-key.js";
 export { findOrCreateUserByEmail, findUserByEmail } from "../infrastructure/email-lookup.js";
 export { readUserEmails } from "../infrastructure/user-emails.js";
 export {
+  closeInvitationEmail,
+  createInvitationEmail,
+  invitationAddressMatches,
+  openInvitationEmails,
+  refreshInvitationEmail,
+  sweepInvitationEmails,
+} from "../infrastructure/invitation-email.js";
+export {
   beginPasskeyAuthentication,
   beginPasskeyRegistration,
   finishPasskeyAuthentication,
