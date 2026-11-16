@@ -114,13 +114,13 @@ export async function createInvitation(
 
   const actor = await loadActor(tx, actorUserId);
   if (!allows(actor, "access.users.manage")) {
-    await deny(tx, actorUserId);
+    await deny(tx, actorUserId, "access.users.manage");
   }
   if ((hasRoleKey || hasCustomRole) && !allows(actor, "access.roles.manage")) {
-    await deny(tx, actorUserId);
+    await deny(tx, actorUserId, "access.roles.manage");
   }
   if (hasPerson && !allows(actor, "people.view")) {
-    await deny(tx, actorUserId);
+    await deny(tx, actorUserId, "people.person.view");
   }
 
   await lockOrganisation(tx);
@@ -161,7 +161,7 @@ export async function createInvitation(
       throw new AccessError("role_not_found");
     }
     if (!roleGrantAllowed(actor, { kind: "builtin", roleKey })) {
-      await deny(tx, actorUserId);
+      await deny(tx, actorUserId, "access.roles.manage");
     }
   }
 
@@ -189,7 +189,7 @@ export async function createInvitation(
         permissions: perms.map((p) => p.permission),
       })
     ) {
-      await deny(tx, actorUserId);
+      await deny(tx, actorUserId, "access.roles.manage");
     }
   }
 
@@ -287,8 +287,11 @@ export async function listInvitations(
   await addresses.sweep(now);
 
   const actor = await loadActor(tx, actorUserId);
-  if (!allows(actor, "access.users.view") || !allows(actor, "access.roles.view")) {
-    await deny(tx, actorUserId);
+  if (!allows(actor, "access.users.view")) {
+    await deny(tx, actorUserId, "access.users.view");
+  }
+  if (!allows(actor, "access.roles.view")) {
+    await deny(tx, actorUserId, "access.roles.view");
   }
 
   await purgeOldInvitations(tx, now);
@@ -353,7 +356,7 @@ export async function resendInvitation(
 
   const actor = await loadActor(tx, actorUserId);
   if (!allows(actor, "access.users.manage")) {
-    await deny(tx, actorUserId);
+    await deny(tx, actorUserId, "access.users.manage");
   }
 
   const rows = await tx<
@@ -438,7 +441,7 @@ export async function revokeInvitation(
 
   const actor = await loadActor(tx, actorUserId);
   if (!allows(actor, "access.users.manage")) {
-    await deny(tx, actorUserId);
+    await deny(tx, actorUserId, "access.users.manage");
   }
 
   const rows = await tx<{ id: string }[]>`
@@ -486,7 +489,7 @@ export async function deleteInvitationAfterMailFailure(
   const actorUserId = parseUuid(input.actorUserId);
   const actor = await loadActor(tx, actorUserId);
   if (!allows(actor, "access.users.manage")) {
-    await deny(tx, actorUserId);
+    await deny(tx, actorUserId, "access.users.manage");
   }
   const now = input.now ?? new Date();
 
@@ -525,7 +528,7 @@ export async function voidInvitationAfterMailFailure(
   const actorUserId = parseUuid(input.actorUserId);
   const actor = await loadActor(tx, actorUserId);
   if (!allows(actor, "access.users.manage")) {
-    await deny(tx, actorUserId);
+    await deny(tx, actorUserId, "access.users.manage");
   }
   const now = input.now ?? new Date();
 

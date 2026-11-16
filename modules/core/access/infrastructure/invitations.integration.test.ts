@@ -1900,3 +1900,596 @@ describe("invitations repository integration (pins & behaviour)", () => {
     });
   });
 });
+
+describe("denial purposes", () => {
+  it("create without users.manage", async () => {
+    await withTwoOrgs(async ({ app, orgA }) => {
+      const scopeA1 = { orgId: orgA.organisationId, communityId: orgA.community1Id };
+      const owner = newId();
+      await runInCommunity(app, scopeA1, (tx) =>
+        bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner }),
+      );
+
+      const roleRolesOnly = await runInCommunity(app, scopeA1, (tx) =>
+        createCustomRole(tx, {
+          now: NOW,
+          key: "roles_manage_only",
+          permissions: ["access.roles.manage"],
+          actorUserId: owner,
+        }),
+      );
+      const actorUserId = newId();
+      await runInCommunity(app, scopeA1, async (tx) => {
+        await addMember(tx, actorUserId);
+        await grantRole(tx, {
+          now: NOW,
+          userId: actorUserId,
+          roleKey: null,
+          customRoleId: roleRolesOnly.customRoleId,
+          actorUserId: owner,
+        });
+      });
+
+      const stub = new MemoryInvitationAddresses();
+      await runInCommunity(app, scopeA1, async (tx) => {
+        let err: unknown;
+        try {
+          await createInvitation(tx, stub, {
+            invitationId: newId(),
+            actorUserId,
+            address: "user@example.test",
+            roleKey: "member",
+            now: NOW,
+          });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeInstanceOf(AccessError);
+        expect((err as AccessError).code).toBe("forbidden");
+
+        const rows = await tx<{ purpose: string }[]>`
+          select purpose
+          from app.audit_events
+          where action = 'access.permission.denied'
+            and actor_id = ${actorUserId}::uuid
+        `;
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.purpose).toBe("access.users.manage");
+      });
+    });
+  });
+
+  it("create with a role without roles.manage", async () => {
+    await withTwoOrgs(async ({ app, orgA }) => {
+      const scopeA1 = { orgId: orgA.organisationId, communityId: orgA.community1Id };
+      const owner = newId();
+      await runInCommunity(app, scopeA1, (tx) =>
+        bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner }),
+      );
+
+      const roleUsersOnly = await runInCommunity(app, scopeA1, (tx) =>
+        createCustomRole(tx, {
+          now: NOW,
+          key: "users_manage_only",
+          permissions: ["access.users.manage"],
+          actorUserId: owner,
+        }),
+      );
+      const actorUserId = newId();
+      await runInCommunity(app, scopeA1, async (tx) => {
+        await addMember(tx, actorUserId);
+        await grantRole(tx, {
+          now: NOW,
+          userId: actorUserId,
+          roleKey: null,
+          customRoleId: roleUsersOnly.customRoleId,
+          actorUserId: owner,
+        });
+      });
+
+      const stub = new MemoryInvitationAddresses();
+      await runInCommunity(app, scopeA1, async (tx) => {
+        let err: unknown;
+        try {
+          await createInvitation(tx, stub, {
+            invitationId: newId(),
+            actorUserId,
+            address: "user@example.test",
+            roleKey: "member",
+            now: NOW,
+          });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeInstanceOf(AccessError);
+        expect((err as AccessError).code).toBe("forbidden");
+
+        const rows = await tx<{ purpose: string }[]>`
+          select purpose
+          from app.audit_events
+          where action = 'access.permission.denied'
+            and actor_id = ${actorUserId}::uuid
+        `;
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.purpose).toBe("access.roles.manage");
+      });
+    });
+  });
+
+  it("create with a contact without people.view", async () => {
+    await withTwoOrgs(async ({ app, orgA }) => {
+      const scopeA1 = { orgId: orgA.organisationId, communityId: orgA.community1Id };
+      const owner = newId();
+      await runInCommunity(app, scopeA1, (tx) =>
+        bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner }),
+      );
+
+      const roleUsersOnly = await runInCommunity(app, scopeA1, (tx) =>
+        createCustomRole(tx, {
+          now: NOW,
+          key: "users_manage_only",
+          permissions: ["access.users.manage"],
+          actorUserId: owner,
+        }),
+      );
+      const actorUserId = newId();
+      await runInCommunity(app, scopeA1, async (tx) => {
+        await addMember(tx, actorUserId);
+        await grantRole(tx, {
+          now: NOW,
+          userId: actorUserId,
+          roleKey: null,
+          customRoleId: roleUsersOnly.customRoleId,
+          actorUserId: owner,
+        });
+      });
+
+      const stub = new MemoryInvitationAddresses();
+      await runInCommunity(app, scopeA1, async (tx) => {
+        let err: unknown;
+        try {
+          await createInvitation(tx, stub, {
+            invitationId: newId(),
+            actorUserId,
+            address: "user@example.test",
+            personId: newId(),
+            now: NOW,
+          });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeInstanceOf(AccessError);
+        expect((err as AccessError).code).toBe("forbidden");
+
+        const rows = await tx<{ purpose: string }[]>`
+          select purpose
+          from app.audit_events
+          where action = 'access.permission.denied'
+            and actor_id = ${actorUserId}::uuid
+        `;
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.purpose).toBe("people.person.view");
+      });
+    });
+  });
+
+  it("list without users.view", async () => {
+    await withTwoOrgs(async ({ app, orgA }) => {
+      const scopeA1 = { orgId: orgA.organisationId, communityId: orgA.community1Id };
+      const owner = newId();
+      await runInCommunity(app, scopeA1, (tx) =>
+        bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner }),
+      );
+
+      const roleRolesViewOnly = await runInCommunity(app, scopeA1, (tx) =>
+        createCustomRole(tx, {
+          now: NOW,
+          key: "roles_view_only",
+          permissions: ["access.roles.view"],
+          actorUserId: owner,
+        }),
+      );
+      const actorUserId = newId();
+      await runInCommunity(app, scopeA1, async (tx) => {
+        await addMember(tx, actorUserId);
+        await grantRole(tx, {
+          now: NOW,
+          userId: actorUserId,
+          roleKey: null,
+          customRoleId: roleRolesViewOnly.customRoleId,
+          actorUserId: owner,
+        });
+      });
+
+      const stub = new MemoryInvitationAddresses();
+      await runInCommunity(app, scopeA1, async (tx) => {
+        let err: unknown;
+        try {
+          await listInvitations(tx, stub, {
+            actorUserId,
+            now: NOW,
+          });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeInstanceOf(AccessError);
+        expect((err as AccessError).code).toBe("forbidden");
+
+        const rows = await tx<{ purpose: string }[]>`
+          select purpose
+          from app.audit_events
+          where action = 'access.permission.denied'
+            and actor_id = ${actorUserId}::uuid
+        `;
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.purpose).toBe("access.users.view");
+      });
+    });
+  });
+
+  it("list without roles.view", async () => {
+    await withTwoOrgs(async ({ app, orgA }) => {
+      const scopeA1 = { orgId: orgA.organisationId, communityId: orgA.community1Id };
+      const owner = newId();
+      await runInCommunity(app, scopeA1, (tx) =>
+        bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner }),
+      );
+
+      const roleUsersViewOnly = await runInCommunity(app, scopeA1, (tx) =>
+        createCustomRole(tx, {
+          now: NOW,
+          key: "users_view_only",
+          permissions: ["access.users.view"],
+          actorUserId: owner,
+        }),
+      );
+      const actorUserId = newId();
+      await runInCommunity(app, scopeA1, async (tx) => {
+        await addMember(tx, actorUserId);
+        await grantRole(tx, {
+          now: NOW,
+          userId: actorUserId,
+          roleKey: null,
+          customRoleId: roleUsersViewOnly.customRoleId,
+          actorUserId: owner,
+        });
+      });
+
+      const stub = new MemoryInvitationAddresses();
+      await runInCommunity(app, scopeA1, async (tx) => {
+        let err: unknown;
+        try {
+          await listInvitations(tx, stub, {
+            actorUserId,
+            now: NOW,
+          });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeInstanceOf(AccessError);
+        expect((err as AccessError).code).toBe("forbidden");
+
+        const rows = await tx<{ purpose: string }[]>`
+          select purpose
+          from app.audit_events
+          where action = 'access.permission.denied'
+            and actor_id = ${actorUserId}::uuid
+        `;
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.purpose).toBe("access.roles.view");
+      });
+    });
+  });
+
+  it("list without either view permission", async () => {
+    await withTwoOrgs(async ({ app, orgA }) => {
+      const scopeA1 = { orgId: orgA.organisationId, communityId: orgA.community1Id };
+      const owner = newId();
+      await runInCommunity(app, scopeA1, (tx) =>
+        bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner }),
+      );
+
+      const actorUserId = newId();
+      await runInCommunity(app, scopeA1, (tx) => addMember(tx, actorUserId));
+
+      const stub = new MemoryInvitationAddresses();
+      await runInCommunity(app, scopeA1, async (tx) => {
+        let err: unknown;
+        try {
+          await listInvitations(tx, stub, {
+            actorUserId,
+            now: NOW,
+          });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeInstanceOf(AccessError);
+        expect((err as AccessError).code).toBe("forbidden");
+
+        const rows = await tx<{ purpose: string }[]>`
+          select purpose
+          from app.audit_events
+          where action = 'access.permission.denied'
+            and actor_id = ${actorUserId}::uuid
+        `;
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.purpose).toBe("access.users.view");
+      });
+    });
+  });
+
+  it("resend without users.manage", async () => {
+    await withTwoOrgs(async ({ app, orgA }) => {
+      const scopeA1 = { orgId: orgA.organisationId, communityId: orgA.community1Id };
+      const owner = newId();
+      await runInCommunity(app, scopeA1, (tx) =>
+        bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner }),
+      );
+
+      const actorUserId = newId();
+      await runInCommunity(app, scopeA1, (tx) => addMember(tx, actorUserId));
+
+      const stub = new MemoryInvitationAddresses();
+      await runInCommunity(app, scopeA1, async (tx) => {
+        let err: unknown;
+        try {
+          await resendInvitation(tx, stub, {
+            invitationId: newId(),
+            actorUserId,
+            now: NOW,
+          });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeInstanceOf(AccessError);
+        expect((err as AccessError).code).toBe("forbidden");
+
+        const rows = await tx<{ purpose: string }[]>`
+          select purpose
+          from app.audit_events
+          where action = 'access.permission.denied'
+            and actor_id = ${actorUserId}::uuid
+        `;
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.purpose).toBe("access.users.manage");
+      });
+    });
+  });
+
+  it("revoke without users.manage", async () => {
+    await withTwoOrgs(async ({ app, orgA }) => {
+      const scopeA1 = { orgId: orgA.organisationId, communityId: orgA.community1Id };
+      const owner = newId();
+      await runInCommunity(app, scopeA1, (tx) =>
+        bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner }),
+      );
+
+      const actorUserId = newId();
+      await runInCommunity(app, scopeA1, (tx) => addMember(tx, actorUserId));
+
+      const stub = new MemoryInvitationAddresses();
+      await runInCommunity(app, scopeA1, async (tx) => {
+        let err: unknown;
+        try {
+          await revokeInvitation(tx, stub, {
+            invitationId: newId(),
+            actorUserId,
+            now: NOW,
+          });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeInstanceOf(AccessError);
+        expect((err as AccessError).code).toBe("forbidden");
+
+        const rows = await tx<{ purpose: string }[]>`
+          select purpose
+          from app.audit_events
+          where action = 'access.permission.denied'
+            and actor_id = ${actorUserId}::uuid
+        `;
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.purpose).toBe("access.users.manage");
+      });
+    });
+  });
+
+  it("delete after mail failure without users.manage", async () => {
+    await withTwoOrgs(async ({ app, orgA }) => {
+      const scopeA1 = { orgId: orgA.organisationId, communityId: orgA.community1Id };
+      const owner = newId();
+      await runInCommunity(app, scopeA1, (tx) =>
+        bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner }),
+      );
+
+      const actorUserId = newId();
+      await runInCommunity(app, scopeA1, (tx) => addMember(tx, actorUserId));
+
+      const stub = new MemoryInvitationAddresses();
+      await runInCommunity(app, scopeA1, async (tx) => {
+        let err: unknown;
+        try {
+          await deleteInvitationAfterMailFailure(tx, stub, {
+            invitationId: newId(),
+            actorUserId,
+            now: NOW,
+          });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeInstanceOf(AccessError);
+        expect((err as AccessError).code).toBe("forbidden");
+
+        const rows = await tx<{ purpose: string }[]>`
+          select purpose
+          from app.audit_events
+          where action = 'access.permission.denied'
+            and actor_id = ${actorUserId}::uuid
+        `;
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.purpose).toBe("access.users.manage");
+      });
+    });
+  });
+
+  it("void after mail failure without users.manage", async () => {
+    await withTwoOrgs(async ({ app, orgA }) => {
+      const scopeA1 = { orgId: orgA.organisationId, communityId: orgA.community1Id };
+      const owner = newId();
+      await runInCommunity(app, scopeA1, (tx) =>
+        bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner }),
+      );
+
+      const actorUserId = newId();
+      await runInCommunity(app, scopeA1, (tx) => addMember(tx, actorUserId));
+
+      const stub = new MemoryInvitationAddresses();
+      await runInCommunity(app, scopeA1, async (tx) => {
+        let err: unknown;
+        try {
+          await voidInvitationAfterMailFailure(tx, stub, {
+            invitationId: newId(),
+            actorUserId,
+            now: NOW,
+          });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeInstanceOf(AccessError);
+        expect((err as AccessError).code).toBe("forbidden");
+
+        const rows = await tx<{ purpose: string }[]>`
+          select purpose
+          from app.audit_events
+          where action = 'access.permission.denied'
+            and actor_id = ${actorUserId}::uuid
+        `;
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.purpose).toBe("access.users.manage");
+      });
+    });
+  });
+
+  it("create with a built-in role above the inviter keeps roles.manage", async () => {
+    await withTwoOrgs(async ({ app, orgA }) => {
+      const scopeA1 = { orgId: orgA.organisationId, communityId: orgA.community1Id };
+      const owner = newId();
+      await runInCommunity(app, scopeA1, (tx) =>
+        bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner }),
+      );
+
+      const customRole = await runInCommunity(app, scopeA1, (tx) =>
+        createCustomRole(tx, {
+          now: NOW,
+          key: "users_and_roles_manage",
+          permissions: ["access.users.manage", "access.roles.manage"],
+          actorUserId: owner,
+        }),
+      );
+      const actorUserId = newId();
+      await runInCommunity(app, scopeA1, async (tx) => {
+        await addMember(tx, actorUserId);
+        await grantRole(tx, {
+          now: NOW,
+          userId: actorUserId,
+          roleKey: null,
+          customRoleId: customRole.customRoleId,
+          actorUserId: owner,
+        });
+      });
+
+      const stub = new MemoryInvitationAddresses();
+      await runInCommunity(app, scopeA1, async (tx) => {
+        let err: unknown;
+        try {
+          await createInvitation(tx, stub, {
+            invitationId: newId(),
+            actorUserId,
+            address: "user@example.test",
+            roleKey: "org_owner",
+            now: NOW,
+          });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeInstanceOf(AccessError);
+        expect((err as AccessError).code).toBe("forbidden");
+
+        const rows = await tx<{ purpose: string }[]>`
+          select purpose
+          from app.audit_events
+          where action = 'access.permission.denied'
+            and actor_id = ${actorUserId}::uuid
+        `;
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.purpose).toBe("access.roles.manage");
+      });
+    });
+  });
+
+  it("create with a custom role above the inviter keeps roles.manage", async () => {
+    await withTwoOrgs(async ({ app, orgA }) => {
+      const scopeA1 = { orgId: orgA.organisationId, communityId: orgA.community1Id };
+      const owner = newId();
+      await runInCommunity(app, scopeA1, (tx) =>
+        bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner }),
+      );
+
+      const targetRole = await runInCommunity(app, scopeA1, (tx) =>
+        createCustomRole(tx, {
+          now: NOW,
+          key: "target_higher_role",
+          permissions: ["access.users.manage", "access.roles.manage", "access.roles.view"],
+          actorUserId: owner,
+        }),
+      );
+
+      const customRole = await runInCommunity(app, scopeA1, (tx) =>
+        createCustomRole(tx, {
+          now: NOW,
+          key: "inviter_role",
+          permissions: ["access.users.manage", "access.roles.manage"],
+          actorUserId: owner,
+        }),
+      );
+      const actorUserId = newId();
+      await runInCommunity(app, scopeA1, async (tx) => {
+        await addMember(tx, actorUserId);
+        await grantRole(tx, {
+          now: NOW,
+          userId: actorUserId,
+          roleKey: null,
+          customRoleId: customRole.customRoleId,
+          actorUserId: owner,
+        });
+      });
+
+      const stub = new MemoryInvitationAddresses();
+      await runInCommunity(app, scopeA1, async (tx) => {
+        let err: unknown;
+        try {
+          await createInvitation(tx, stub, {
+            invitationId: newId(),
+            actorUserId,
+            address: "user@example.test",
+            customRoleId: targetRole.customRoleId,
+            now: NOW,
+          });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeInstanceOf(AccessError);
+        expect((err as AccessError).code).toBe("forbidden");
+
+        const rows = await tx<{ purpose: string }[]>`
+          select purpose
+          from app.audit_events
+          where action = 'access.permission.denied'
+            and actor_id = ${actorUserId}::uuid
+        `;
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.purpose).toBe("access.roles.manage");
+      });
+    });
+  });
+});

@@ -898,7 +898,7 @@ describe("invitations and members-only access", () => {
         select count(*)::int as n
         from app.audit_events
         where action = 'access.permission.denied'
-          and purpose = 'access.users.manage'
+          and purpose = 'people.person.view'
       `,
     );
     expect(createDenied[0]!.n).toBe(1);

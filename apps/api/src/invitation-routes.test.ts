@@ -1203,6 +1203,7 @@ describe("invitation routes", () => {
         "access.users.view",
         "access.roles.manage",
         "access.roles.view",
+        "people.person.view",
       ]);
       const customRoleId = "00000000-0000-4000-8000-000000000013";
       const cases: { path: string; body: Record<string, unknown>; missing: string }[] = [
@@ -1266,7 +1267,7 @@ describe("invitation routes", () => {
           expect(typeof input.purpose).toBe("string");
           expect(denialPurposes.has(input.purpose as string)).toBe(true);
           if (item.missing === "people.view") {
-            expect(input.purpose).toBe("access.users.manage");
+            expect(input.purpose).toBe("people.person.view");
           }
         }
       }

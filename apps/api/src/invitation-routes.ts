@@ -38,12 +38,15 @@ import type { BillingLogFields } from "./index.js";
 import { guardWrite } from "./billing-guard.js";
 import { identityInvitationAddresses } from "./invitation-addresses.js";
 
-const DENIAL_PURPOSES = new Set([
-  "access.users.manage",
-  "access.users.view",
-  "access.roles.manage",
-  "access.roles.view",
-]);
+const DENIAL_PURPOSES = {
+  "access.users.manage": "access.users.manage",
+  "access.users.view": "access.users.view",
+  "access.roles.manage": "access.roles.manage",
+  "access.roles.view": "access.roles.view",
+  "people.view": "people.person.view",
+} as const satisfies Record<string, string>;
+
+type InvitationPermission = keyof typeof DENIAL_PURPOSES;
 
 type Scope = { orgId: string; communityId: string };
 
@@ -228,18 +231,22 @@ export function invitationRoutes(deps: InvitationRouteDeps): GateRoute[] {
   async function checkActorPermissions(
     scope: Scope,
     userId: string,
-    permissions: string[],
+    permissions: readonly InvitationPermission[],
   ): Promise<boolean> {
     return deps.checkout("app", (sql) =>
       withAppTransaction(sql, scope, async (tx) => {
         for (const perm of permissions) {
           const has = await holdsPermission(tx, userId, perm);
           if (!has) {
+            const purpose = DENIAL_PURPOSES[perm];
+            if (purpose === undefined) {
+              throw new Error("unmapped invitation permission");
+            }
             await appendAuditEvent(tx, {
               actorKind: "user",
               actorId: userId,
               action: "access.permission.denied",
-              purpose: DENIAL_PURPOSES.has(perm) ? perm : "access.users.manage",
+              purpose,
               targetIds: [userId],
             });
             return false;
@@ -321,7 +328,7 @@ export function invitationRoutes(deps: InvitationRouteDeps): GateRoute[] {
             return scope;
           }
 
-          const requiredPerms = ["access.users.manage"];
+          const requiredPerms: InvitationPermission[] = ["access.users.manage"];
           if (roleKey !== undefined || customRoleId !== undefined) {
             requiredPerms.push("access.roles.manage");
           }
