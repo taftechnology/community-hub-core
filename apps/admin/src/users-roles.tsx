@@ -1,4 +1,4 @@
-import { Alert, Button, Checkbox, Field, Input, Panel } from "@community-hub/ui";
+import { Alert, Button, Checkbox, Field, Input, Panel, Select } from "@community-hub/ui";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 
@@ -6,6 +6,7 @@ import { post } from "./api";
 import { useBillingStatus } from "./billing-status";
 import { useCommunity } from "./community";
 import { directoryOrigins, readAccessToken } from "./directory";
+import { CommunityEpochContext, ContactPicker, InvitationsSection } from "./invitations";
 import { roleLabel } from "./role-labels";
 import { ScreenTitle } from "./screen-title";
 
@@ -247,6 +248,57 @@ function renderUserDetails(
   );
 }
 
+function userOptionLabel(user: UserDetailView): string {
+  if (!user.minor && user.name) {
+    const name = `${user.name.given} ${user.name.family}`.trim();
+    if (name.length > 0) {
+      return name;
+    }
+  }
+  if (!user.minor && user.email) {
+    return user.email;
+  }
+  return `User without details · ${user.userId.slice(-4)}`;
+}
+
+function UserSelect({
+  rows,
+  value,
+  onChange,
+}: {
+  rows: readonly UserDetailView[] | undefined;
+  value: string;
+  onChange: (userId: string) => void;
+}) {
+  const options = rows ?? [];
+  const emptyList = rows !== undefined && rows.length === 0;
+  return (
+    <>
+      <Field label="User">
+        <Select
+          value={options.length === 0 ? "" : value}
+          disabled={options.length === 0}
+          onChange={(event) => {
+            onChange(event.target.value);
+          }}
+        >
+          {options.length === 0 ? <option value=""> </option> : null}
+          {options.map((user) => (
+            <option key={user.userId} value={user.userId}>
+              {userOptionLabel(user)}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      {emptyList ? (
+        <p>
+          <a href="#invite-user">Invite someone first</a>
+        </p>
+      ) : null}
+    </>
+  );
+}
+
 function grantLine(grant: GrantView): string {
   const role = roleLabel(grant.roleKey ?? grant.customRoleKey ?? "");
   return `${grant.userId} ${role}`.trim();
@@ -285,13 +337,20 @@ export function UsersRolesPage() {
   const [users, setUsers] = useState<UsersView | undefined>(undefined);
   const [notice, setNotice] = useState<Notice | undefined>(undefined);
   const [usersMessage, setUsersMessage] = useState<string | undefined>(undefined);
-  const [userId, setUserId] = useState("");
+  const [grantUserId, setGrantUserId] = useState("");
+  const [linkUserId, setLinkUserId] = useState("");
+  const [linkPersonId, setLinkPersonId] = useState<string | null>(null);
   const [role, setRole] = useState("");
-  const [personId, setPersonId] = useState("");
   const [customKey, setCustomKey] = useState("");
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const origins = directoryOrigins();
   const generation = useRef(0);
+  const epoch = useRef(0);
+  const seenCommunity = useRef({ slug, version });
+  if (seenCommunity.current.slug !== slug || seenCommunity.current.version !== version) {
+    seenCommunity.current = { slug, version };
+    epoch.current += 1;
+  }
 
   const isReadOnly = status?.state === "none" || status?.state === "read_only" || readOnlyBlocked;
   const hideWrites = readiness === "loading" || isReadOnly;
@@ -476,230 +535,251 @@ export function UsersRolesPage() {
   const usersById = new Map((users?.users ?? []).map((user) => [user.userId, user]));
   const phoneVisible = users?.phoneVisible ?? false;
 
+  const userRows = users?.users;
+  const selectableUsers = userRows ?? [];
+  const grantSelectId = selectableUsers.some((user) => user.userId === grantUserId)
+    ? grantUserId
+    : (selectableUsers[0]?.userId ?? "");
+  const linkSelectId = selectableUsers.some((user) => user.userId === linkUserId)
+    ? linkUserId
+    : (selectableUsers[0]?.userId ?? "");
+  const canPickContact = directory?.permissions.includes("people.view") ?? false;
+
   return (
-    <>
-      <ScreenTitle>Users & Roles</ScreenTitle>
-      {isReadOnly ? (
-        <Alert live="polite">
-          <span>Read-only until billing is settled</span>{" "}
-          <Link to="/settings/general">General Settings</Link>
-        </Alert>
-      ) : null}
-      {notice === "forbidden" ? <p>You cannot manage roles</p> : null}
-      {notice === "conflict" ? <p>That change was rejected</p> : null}
-      {notice === "unavailable" ? <p>Directory unavailable</p> : null}
-      {usersMessage ? <p role="status">{usersMessage}</p> : null}
-      {directory === undefined ? null : (
-        <>
-          {directory.grants.length === 0 ? (
-            <Panel>
-              <p>No role grants</p>
-            </Panel>
-          ) : (
-            <Panel>
-              <ul>
-                {directory.grants.map((grant) => {
-                  const user = usersById.get(grant.userId);
-                  const roleText = roleLabel(grant.roleKey ?? grant.customRoleKey ?? "");
-                  return (
-                    <li key={grant.grantId} className="flex flex-wrap items-center gap-2">
-                      {user ? (
-                        <>
-                          {renderUserDetails(grant.userId, user, phoneVisible)}
-                          <span>{roleText}</span>
-                        </>
-                      ) : (
-                        <span>{grantLine(grant)}</span>
-                      )}
+    <CommunityEpochContext.Provider value={epoch}>
+      <>
+        <ScreenTitle>Users & Roles</ScreenTitle>
+        {isReadOnly ? (
+          <Alert live="polite">
+            <span>Read-only until billing is settled</span>{" "}
+            <Link to="/settings/general">General Settings</Link>
+          </Alert>
+        ) : null}
+        {notice === "forbidden" ? <p>You cannot manage roles</p> : null}
+        {notice === "conflict" ? <p>That change was rejected</p> : null}
+        {notice === "unavailable" ? <p>Directory unavailable</p> : null}
+        {usersMessage ? <p role="status">{usersMessage}</p> : null}
+        <InvitationsSection
+          permissions={directory?.permissions ?? []}
+          hideWrites={hideWrites}
+          builtIn={directory?.builtIn ?? []}
+          customRoles={directory?.customRoles ?? []}
+        />
+        {directory === undefined ? null : (
+          <>
+            {directory.grants.length === 0 ? (
+              <Panel>
+                <p>No role grants</p>
+              </Panel>
+            ) : (
+              <Panel>
+                <ul>
+                  {directory.grants.map((grant) => {
+                    const user = usersById.get(grant.userId);
+                    const roleText = roleLabel(grant.roleKey ?? grant.customRoleKey ?? "");
+                    return (
+                      <li key={grant.grantId} className="flex flex-wrap items-center gap-2">
+                        {user ? (
+                          <>
+                            {renderUserDetails(grant.userId, user, phoneVisible)}
+                            <span>{roleText}</span>
+                          </>
+                        ) : (
+                          <span>{grantLine(grant)}</span>
+                        )}
+                        {canManageRoles && !hideWrites ? (
+                          <Button
+                            type="button"
+                            onClick={() => {
+                              void mutate("/v1/access/grants/revoke", {
+                                communitySlug: slug,
+                                grantId: grant.grantId,
+                                scope: grant.scope === "community" ? "community" : "organisation",
+                              });
+                            }}
+                          >
+                            Revoke
+                          </Button>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </Panel>
+            )}
+            {directory.customRoles.length === 0 ? null : (
+              <Panel>
+                <ul>
+                  {directory.customRoles.map((customRole) => (
+                    <li key={customRole.customRoleId} className="flex flex-wrap items-center gap-2">
+                      <span>
+                        {customRole.key} {customRole.permissions.join(" ")}
+                      </span>
                       {canManageRoles && !hideWrites ? (
                         <Button
                           type="button"
                           onClick={() => {
-                            void mutate("/v1/access/grants/revoke", {
+                            void mutate("/v1/access/custom-roles/delete", {
                               communitySlug: slug,
-                              grantId: grant.grantId,
-                              scope: grant.scope === "community" ? "community" : "organisation",
+                              customRoleId: customRole.customRoleId,
                             });
                           }}
                         >
-                          Revoke
+                          Delete custom role
                         </Button>
                       ) : null}
                     </li>
-                  );
-                })}
-              </ul>
-            </Panel>
-          )}
-          {directory.customRoles.length === 0 ? null : (
-            <Panel>
-              <ul>
-                {directory.customRoles.map((customRole) => (
-                  <li key={customRole.customRoleId} className="flex flex-wrap items-center gap-2">
-                    <span>
-                      {customRole.key} {customRole.permissions.join(" ")}
-                    </span>
-                    {canManageRoles && !hideWrites ? (
-                      <Button
-                        type="button"
-                        onClick={() => {
-                          void mutate("/v1/access/custom-roles/delete", {
-                            communitySlug: slug,
-                            customRoleId: customRole.customRoleId,
-                          });
-                        }}
-                      >
-                        Delete custom role
-                      </Button>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            </Panel>
-          )}
-          {directory.builtIn.length === 0 ? null : (
-            <Panel>
-              <ul>
-                {directory.builtIn.map((builtIn) => (
-                  <li key={builtIn.roleKey} className="flex flex-wrap items-center gap-2">
-                    {roleLabel(builtIn.roleKey)} {builtIn.permissions.join(" ")}
-                  </li>
-                ))}
-              </ul>
-            </Panel>
-          )}
-          {directory.userLinks.length === 0 ? null : (
-            <Panel>
-              <ul>
-                {directory.userLinks.map((link) => {
-                  const user = usersById.get(link.userId);
-                  return (
-                    <li key={link.userId} className="flex flex-wrap items-center gap-2">
-                      {user ? (
-                        renderUserDetails(link.userId, user, phoneVisible)
-                      ) : (
-                        <>
-                          {link.userId} {link.personId}
-                        </>
-                      )}
+                  ))}
+                </ul>
+              </Panel>
+            )}
+            {directory.builtIn.length === 0 ? null : (
+              <Panel>
+                <ul>
+                  {directory.builtIn.map((builtIn) => (
+                    <li key={builtIn.roleKey} className="flex flex-wrap items-center gap-2">
+                      {roleLabel(builtIn.roleKey)} {builtIn.permissions.join(" ")}
                     </li>
-                  );
-                })}
-              </ul>
-            </Panel>
-          )}
-          {limitReached ? <p>Custom role limit reached</p> : null}
-          {limitReached || !canManageRoles || hideWrites ? null : (
-            <Panel>
-              <form
-                className="grid gap-4"
-                onSubmit={(event: FormEvent<HTMLFormElement>) => {
-                  event.preventDefault();
-                  void mutate("/v1/access/custom-roles", {
-                    communitySlug: slug,
-                    key: customKey,
-                    permissions: [...selected],
-                  });
-                }}
-              >
-                <Field label="Custom role key">
-                  <Input
-                    value={customKey}
-                    onChange={(event) => {
-                      setCustomKey(event.target.value);
-                    }}
-                  />
-                </Field>
-                {directory.catalogue.map((permission) => (
-                  <Checkbox
-                    key={permission}
-                    label={permission}
-                    checked={selected.has(permission)}
-                    onChange={() => {
-                      toggle(permission);
-                    }}
-                  />
-                ))}
-                <Button className="justify-self-start" type="submit">
-                  Create custom role
-                </Button>
-              </form>
-            </Panel>
-          )}
-          {canManageRoles && !hideWrites ? (
-            <Panel>
-              <form
-                className="grid gap-4"
-                onSubmit={(event: FormEvent<HTMLFormElement>) => {
-                  event.preventDefault();
-                  const custom = directory.customRoles.find((item) => item.key === role);
-                  void mutate(
-                    "/v1/access/grants",
-                    custom === undefined
-                      ? { communitySlug: slug, userId, roleKey: role }
-                      : { communitySlug: slug, userId, customRoleId: custom.customRoleId },
-                  );
-                }}
-              >
-                <Field label="User">
-                  <Input
-                    value={userId}
-                    onChange={(event) => {
-                      setUserId(event.target.value);
-                    }}
-                  />
-                </Field>
-                <Field label="Role">
-                  <Input
-                    value={role}
-                    onChange={(event) => {
-                      setRole(event.target.value);
-                    }}
-                  />
-                </Field>
-                <Button className="justify-self-start" type="submit">
-                  Grant
-                </Button>
-              </form>
-            </Panel>
-          ) : null}
-          {canManageUsers && !hideWrites ? (
-            <Panel>
-              <form
-                className="grid gap-4"
-                onSubmit={(event: FormEvent<HTMLFormElement>) => {
-                  event.preventDefault();
-                  void mutate("/v1/access/user-links", {
-                    communitySlug: slug,
-                    userId,
-                    personId,
-                  });
-                }}
-              >
-                <Field label="Person">
-                  <Input
-                    value={personId}
-                    onChange={(event) => {
-                      setPersonId(event.target.value);
-                    }}
-                  />
-                </Field>
-                <div className="flex flex-wrap gap-2">
-                  <Button type="submit">Link</Button>
-                  <Button
-                    type="button"
-                    onClick={() => {
-                      void mutate("/v1/access/user-links/delete", { communitySlug: slug, userId });
-                    }}
-                  >
-                    Unlink
+                  ))}
+                </ul>
+              </Panel>
+            )}
+            {directory.userLinks.length === 0 ? null : (
+              <Panel>
+                <ul>
+                  {directory.userLinks.map((link) => {
+                    const user = usersById.get(link.userId);
+                    return (
+                      <li key={link.userId} className="flex flex-wrap items-center gap-2">
+                        {user ? (
+                          renderUserDetails(link.userId, user, phoneVisible)
+                        ) : (
+                          <>
+                            {link.userId} {link.personId}
+                          </>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </Panel>
+            )}
+            {limitReached ? <p>Custom role limit reached</p> : null}
+            {limitReached || !canManageRoles || hideWrites ? null : (
+              <Panel>
+                <form
+                  className="grid gap-4"
+                  onSubmit={(event: FormEvent<HTMLFormElement>) => {
+                    event.preventDefault();
+                    void mutate("/v1/access/custom-roles", {
+                      communitySlug: slug,
+                      key: customKey,
+                      permissions: [...selected],
+                    });
+                  }}
+                >
+                  <Field label="Custom role key">
+                    <Input
+                      value={customKey}
+                      onChange={(event) => {
+                        setCustomKey(event.target.value);
+                      }}
+                    />
+                  </Field>
+                  {directory.catalogue.map((permission) => (
+                    <Checkbox
+                      key={permission}
+                      label={permission}
+                      checked={selected.has(permission)}
+                      onChange={() => {
+                        toggle(permission);
+                      }}
+                    />
+                  ))}
+                  <Button className="justify-self-start" type="submit">
+                    Create custom role
                   </Button>
-                </div>
-              </form>
-            </Panel>
-          ) : null}
-        </>
-      )}
-    </>
+                </form>
+              </Panel>
+            )}
+            {canManageRoles && !hideWrites ? (
+              <Panel>
+                <form
+                  className="grid gap-4"
+                  onSubmit={(event: FormEvent<HTMLFormElement>) => {
+                    event.preventDefault();
+                    if (!grantSelectId) {
+                      return;
+                    }
+                    const custom = directory.customRoles.find((item) => item.key === role);
+                    void mutate(
+                      "/v1/access/grants",
+                      custom === undefined
+                        ? { communitySlug: slug, userId: grantSelectId, roleKey: role }
+                        : {
+                            communitySlug: slug,
+                            userId: grantSelectId,
+                            customRoleId: custom.customRoleId,
+                          },
+                    );
+                  }}
+                >
+                  <UserSelect rows={userRows} value={grantSelectId} onChange={setGrantUserId} />
+                  <Field label="Role">
+                    <Input
+                      value={role}
+                      onChange={(event) => {
+                        setRole(event.target.value);
+                      }}
+                    />
+                  </Field>
+                  <Button className="justify-self-start" type="submit">
+                    Grant
+                  </Button>
+                </form>
+              </Panel>
+            ) : null}
+            {canManageUsers && !hideWrites ? (
+              <Panel>
+                <form
+                  className="grid gap-4"
+                  onSubmit={(event: FormEvent<HTMLFormElement>) => {
+                    event.preventDefault();
+                    if (!linkSelectId || !linkPersonId) {
+                      return;
+                    }
+                    void mutate("/v1/access/user-links", {
+                      communitySlug: slug,
+                      userId: linkSelectId,
+                      personId: linkPersonId,
+                    });
+                  }}
+                >
+                  <UserSelect rows={userRows} value={linkSelectId} onChange={setLinkUserId} />
+                  {canPickContact ? <ContactPicker onSelect={setLinkPersonId} /> : null}
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="submit">Link</Button>
+                    <Button
+                      type="button"
+                      onClick={() => {
+                        if (!linkSelectId) {
+                          return;
+                        }
+                        void mutate("/v1/access/user-links/delete", {
+                          communitySlug: slug,
+                          userId: linkSelectId,
+                        });
+                      }}
+                    >
+                      Unlink
+                    </Button>
+                  </div>
+                </form>
+              </Panel>
+            ) : null}
+          </>
+        )}
+      </>
+    </CommunityEpochContext.Provider>
   );
 }
