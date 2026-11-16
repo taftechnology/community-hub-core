@@ -264,9 +264,11 @@ describe("invitations repository integration (pins & behaviour)", () => {
         while (Date.now() - started < 5_000) {
           const waiting = await observerApp<{ n: number }[]>`
             select count(*)::int as n
-            from pg_locks
-            where locktype = 'advisory'
-              and not granted
+            from pg_locks l
+            join pg_stat_activity a on a.pid = l.pid
+            where a.datname = current_database()
+              and l.locktype = 'advisory'
+              and not l.granted
           `;
           if ((waiting[0]?.n ?? 0) >= 2) {
             waitedBoth = true;

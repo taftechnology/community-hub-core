@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   acceptInvitationBody,
   acceptInvitationResponse,
+  ACCESS_ERROR_CODES,
   accessErrorBody,
   bootstrapOwnerBody,
   CAPABILITIES_ALLOW_LIST,
@@ -703,6 +704,30 @@ describe("access bodies", () => {
             invitations: [withoutLinksContact],
           }).success,
         ).toBe(false);
+
+        const { email: omittedEmail, ...withoutEmail } = validItem;
+        void omittedEmail;
+        expect(
+          listInvitationsResponse.safeParse({
+            invitations: [withoutEmail],
+          }).success,
+        ).toBe(false);
+
+        const { roleKey: omittedRoleKey, ...withoutRoleKey } = validItem;
+        void omittedRoleKey;
+        expect(
+          listInvitationsResponse.safeParse({
+            invitations: [withoutRoleKey],
+          }).success,
+        ).toBe(false);
+
+        const { customRoleId: omittedCustomRoleId, ...withoutCustomRoleId } = validItem;
+        void omittedCustomRoleId;
+        expect(
+          listInvitationsResponse.safeParse({
+            invitations: [withoutCustomRoleId],
+          }).success,
+        ).toBe(false);
       });
     });
 
@@ -802,6 +827,11 @@ describe("access bodies", () => {
         for (const code of allowedCodes) {
           expect(accessErrorBody.safeParse({ error: code }).success).toBe(true);
         }
+      });
+
+      it("has exactly the plan's codes", () => {
+        expect([...ACCESS_ERROR_CODES].sort()).toEqual([...allowedCodes].sort());
+        expect([...accessErrorBody.shape.error.options].sort()).toEqual([...allowedCodes].sort());
       });
 
       it("strictly rejects extra keys", () => {

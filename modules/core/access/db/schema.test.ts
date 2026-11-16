@@ -266,6 +266,7 @@ describe("access grant tables", () => {
     );
 
     expect(sql).not.toMatch(/ON DELETE CASCADE/i);
+    expect(createBody(sql, "invitations")).not.toMatch(/email|bidx|dedupe/);
     expect(sql).toContain(
       '"invitations_person_fk" FOREIGN KEY ("org_id","person_id") REFERENCES "app"."persons"("org_id","id") ON DELETE restrict',
     );

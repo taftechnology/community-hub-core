@@ -188,18 +188,26 @@ describe("identity tables", () => {
       // Columns
       expect(body).toContain('"invitation_id" uuid PRIMARY KEY NOT NULL');
       expect(body).toContain('"region" text NOT NULL');
-      expect(body).toContain('"email" "bytea"');
-      expect(body).toContain('"email_bidx" "bytea"');
-      expect(body).toContain('"dedupe_key" "bytea"');
+      expect(body).toContain('"email" "bytea",');
+      expect(body).toContain('"email_bidx" "bytea",');
+      expect(body).toContain('"dedupe_key" "bytea",');
       expect(body).toContain('"expires_at" timestamp with time zone NOT NULL');
-      expect(body).toContain('"closed_at" timestamp with time zone');
+      expect(body).toContain('"closed_at" timestamp with time zone,');
       expect(body).toContain('"created_at" timestamp with time zone NOT NULL');
 
       // Checks
-      expect(body).toContain("invitation_emails_region_au");
-      expect(body).toContain("invitation_emails_payload_set");
-      expect(body).toContain("invitation_emails_email_bidx_len");
-      expect(body).toContain("invitation_emails_dedupe_key_len");
+      expect(body).toContain(
+        `CONSTRAINT "invitation_emails_region_au" CHECK ("identity"."invitation_emails"."region" = 'au')`,
+      );
+      expect(body).toContain(
+        `CONSTRAINT "invitation_emails_payload_set" CHECK (("identity"."invitation_emails"."email" is null and "identity"."invitation_emails"."email_bidx" is null and "identity"."invitation_emails"."dedupe_key" is null) or ("identity"."invitation_emails"."email" is not null and "identity"."invitation_emails"."email_bidx" is not null and "identity"."invitation_emails"."dedupe_key" is not null))`,
+      );
+      expect(body).toContain(
+        `CONSTRAINT "invitation_emails_email_bidx_len" CHECK ("identity"."invitation_emails"."email_bidx" is null or octet_length("identity"."invitation_emails"."email_bidx") = 32)`,
+      );
+      expect(body).toContain(
+        `CONSTRAINT "invitation_emails_dedupe_key_len" CHECK ("identity"."invitation_emails"."dedupe_key" is null or octet_length("identity"."invitation_emails"."dedupe_key") = 32)`,
+      );
 
       // Unique index on dedupe_key
       expect(sql).toContain(
