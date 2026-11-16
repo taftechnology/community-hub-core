@@ -883,6 +883,67 @@ it("shows the pending sentence when revoke answers 404 invitation_not_found", as
   expect(alert.textContent ?? "").not.toContain("invitation_not_found");
 });
 
+it("submits the typed email when the form appears with the list reset still pending", async () => {
+  let releaseBilling!: (value: Response) => void;
+  const billingHeld = new Promise<Response>((resolve) => {
+    releaseBilling = resolve;
+  });
+  let releaseGrants!: (value: Response) => void;
+  const grantsHeld = new Promise<Response>((resolve) => {
+    releaseGrants = resolve;
+  });
+  const { calls } = start({
+    permissions: FULL,
+    on: (url) => {
+      if (url.includes("/v1/billing/status")) {
+        return billingHeld;
+      }
+      if (url.includes("/v1/access/grants/list")) {
+        return grantsHeld;
+      }
+      if (url.includes("/v1/access/invitations/create")) {
+        return jsonResponse({ invitationId: INVITE_ID }, 201);
+      }
+      return undefined;
+    },
+  });
+  await mount();
+  await act(async () => {
+    releaseBilling(billingResponse("ok"));
+  });
+  expect(screen.queryByRole("textbox", { name: "Email" })).toBeNull();
+
+  const actGlobal = globalThis as unknown as {
+    IS_REACT_ACT_ENVIRONMENT: boolean | undefined;
+  };
+  const previousAct = actGlobal.IS_REACT_ACT_ENVIRONMENT;
+  actGlobal.IS_REACT_ACT_ENVIRONMENT = false;
+  try {
+    releaseGrants(jsonResponse(directory(FULL)));
+    // Stop on the turn the form appears. The next turn would be the list effect.
+    for (let i = 0; i < 20 && screen.queryByRole("textbox", { name: "Email" }) === null; i += 1) {
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
+    }
+  } finally {
+    actGlobal.IS_REACT_ACT_ENVIRONMENT = previousAct;
+  }
+
+  fireEvent.change(screen.getByRole("textbox", { name: "Email" }), {
+    target: { value: GUEST },
+  });
+  fireEvent.change(screen.getByRole("combobox", { name: "Role" }), {
+    target: { value: "role:staff" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send invitation" }));
+
+  expect(within(invitePanel()).queryByRole("alert")?.textContent ?? "").not.toBe(SENTENCE.email);
+  expect(await screen.findByText(`Invitation sent to ${GUEST}`)).toBeTruthy();
+  const create = calls.find((call) => call.url.includes("/v1/access/invitations/create"));
+  expect(create?.body).toEqual({ communitySlug: "parish", email: GUEST, roleKey: "staff" });
+});
+
 it("sends a create body with a role only", async () => {
   const { calls } = start({
     permissions: FULL,

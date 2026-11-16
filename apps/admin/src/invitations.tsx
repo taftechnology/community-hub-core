@@ -344,6 +344,21 @@ export function InvitationsSection({
   const showInvite = permissions.includes("access.users.manage");
   const showPending =
     permissions.includes("access.users.view") && permissions.includes("access.roles.view");
+  const listKey = `${slug}|${version}|${showPending ? "1" : "0"}`;
+  const [seenListKey, setSeenListKey] = useState(listKey);
+  // Clear during render. The list effect used to do this, and the first change
+  // event then lost the typed email to that pending reset.
+  if (seenListKey !== listKey) {
+    setSeenListKey(listKey);
+    setInvitations([]);
+    setListError(undefined);
+    setInviteError(undefined);
+    setInviteSuccess(undefined);
+    setActionError(undefined);
+    setEmail("");
+    setRoleValue("");
+    setPersonId(null);
+  }
   const canChooseRole = permissions.includes("access.roles.manage");
   const canPickContact = permissions.includes("people.view");
   const canManageInvites = permissions.includes("access.users.manage");
@@ -428,14 +443,6 @@ export function InvitationsSection({
       return;
     }
     listLoadedKey.current = key;
-    setInvitations([]);
-    setListError(undefined);
-    setInviteError(undefined);
-    setInviteSuccess(undefined);
-    setActionError(undefined);
-    setEmail("");
-    setRoleValue("");
-    setPersonId(null);
     if (!slug || !showPending) {
       listGen.current += 1;
       return;
