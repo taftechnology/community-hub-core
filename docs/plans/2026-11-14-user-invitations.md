@@ -662,7 +662,7 @@ For the chunk owner, answered once at plan approval:
 4. **Deviation policy:** extra attempts, actor changes and fix commits are recorded as deviations in the PR, and cosmetic nits as PR notes.
 5. **Next chunk after this one:** `Add Adult create`.
 
-For the project owner: **O1** (spec, privacy retention) is still pending. Spec A3 narrows it: accepted rows are kept with ids only. If he chooses the sweep job, the spec gets an amendment and this plan gets a task before Task 11.
+For the project owner: **O1** (spec, privacy retention) was accepted on 2026-11-14 on three conditions, and spec amendment A5 carries them out (addresses held in identity, region-wide erasure). Spec A3 still keeps accepted rows with ids only.
 
 ## Probe record
 

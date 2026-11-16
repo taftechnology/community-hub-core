@@ -235,7 +235,7 @@ Out:
 - **Retention:** the address parts below are superseded by amendment A5 (the address moves to `identity.invitation_emails`, with expiry erasure and a region-wide bounded sweep). The `app.invitations` row rules stay as A3 says.
   - When an invitation leaves `pending` (accepted, revoked, void), `closed_at` is set and `email`, `email_bidx` and `person_id` are cleared.
   - Rows closed more than 30 days ago, and pending rows that expired more than 30 days ago, are deleted in the create and list transactions for that community.
-  - A community that never opens invitations keeps expired rows, address included, until the sweep follow-up. See Owner decision O1.
+  - A community that never opens invitations keeps expired rows, address included, until the sweep follow-up. See Owner decision O1. (Superseded by A5: the address is erased at the next invitation action anywhere in the region, so an idle community no longer keeps an expired address. Only the scheduled sweep for an idle region is still a follow-up.)
   - Offboarding an organisation must delete its invitation rows. The address is identity-keyed, so destroying the organisation's key does not erase it. §12.2.1 records this.
 - **Backfill (in `0019`).**
   - It is a `DO` block that loops over `platform.communities`. For each community it calls `set_config('app.org_id', …, true)` and `set_config('app.community_id', …, true)`.
@@ -345,9 +345,9 @@ Security-relevant settings the plan must pin, each with a weakening that makes i
 - **Cost:** no new billed resource. SES charges per message, which is negligible.
 - **Second review:** required (sensitive chunk). The reviewer agent runs on Claude Opus 5.5. The owner's checks and the second review must run on a different model (not Opus 5.5, not Gemini/Antigravity). The PR records both.
 - **Owner decisions (project owner, AGENTS.md §12):**
-  - **O1. Privacy: storing an invitee's address before they consent. Accepted by the project owner on 2026-11-14: lazy deletion in create and list, no sweep job in this chunk.**
+  - **O1. Privacy: storing an invitee's address before they consent. Accepted by the project owner on 2026-11-14: lazy deletion in create and list, no sweep job in this chunk. (Superseded by A5: the project owner accepted O1 on three conditions, and erasure of the address is now region-wide, at the next invitation action anywhere. The lazy deletion in create and list stays for `app.invitations` rows only.)**
     - The address is held encrypted while the invitation is pending, and cleared when it is accepted, revoked or voided.
-    - Rows are deleted 30 days after closing or expiring, the next time that community creates or lists invitations.
+    - Rows are deleted 30 days after closing or expiring, the next time that community creates or lists invitations. (A5: the address rows in `identity.invitation_emails` are deleted by the region-wide sweep instead.)
     - The alternative was a regional sweep job in this chunk, which would have added a scheduled task and its ECS schedule (Terraform). It was not chosen.
 - **Decided without the project owner:**
   - **O2. Architecture record: no ADR (chunk owner, 2026-11-14).**
@@ -502,3 +502,4 @@ Proposed 2026-11-14 from plan check 1 (Claude Opus 5.5). Approved by the chunk o
   - **Accept sweeps after the token is proven.** The sweep runs after spec steps 1 to 3 (select, hash, pending and unexpired) and before the address match. A token that fails those steps causes no write anywhere, identity included. This narrows A5's "every action first calls `sweepInvitationEmails`" for accept only. Sweep is still the first identity call in every action.
   - **The mail-failure paths require `access.users.manage`.** `deleteInvitationAfterMailFailure` and `voidInvitationAfterMailFailure` check that the actor holds it. Without it they give `forbidden` and write nothing.
   - **The sweep never leaves an old address behind.** The erase part no longer stops at 30 days. It erases any expired row that still holds an address, except a row the delete part chose in the same statement. So a backlog of more than 500 old rows cannot keep an address past expiry.
+- **A8 (approved 2026-11-15, Adnan Bin Hossen). Retry after a rolled-back accept.** If an accept fails after `closeInvitationEmail` has already erased the address (for example, the audit append or the app commit fails), the invitation stays pending with no address in identity. A retry then answers `wrong_address`, not the `invitation_invalid` that A5 retention point 1 describes, because `matches` cannot tell a missing address from a different one. Nothing leaks, and the invitation expires as usual. Accepted by the chunk owner (checkpoint review of Task 6, finding L2).
