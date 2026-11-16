@@ -1187,6 +1187,18 @@ describe("invitations and members-only access", () => {
       `,
     );
     expect(voided[0]!.n).toBe(1);
+
+    const resent = await inScope(
+      scopeOf(org),
+      (tx) =>
+        tx<{ n: number }[]>`
+        select count(*)::int as n
+        from app.audit_events
+        where action = 'access.invitation.resent'
+          and target_ids @> array[${created.invitationId}::uuid]
+      `,
+    );
+    expect(resent[0]!.n).toBe(0);
   }, 60_000);
 
   it("a lost resend acknowledgement still erases the address and voids the invitation", async () => {
@@ -1245,6 +1257,18 @@ describe("invitations and members-only access", () => {
       `,
     );
     expect(voided[0]!.n).toBe(1);
+
+    const resent = await inScope(
+      scopeOf(org),
+      (tx) =>
+        tx<{ n: number }[]>`
+        select count(*)::int as n
+        from app.audit_events
+        where action = 'access.invitation.resent'
+          and target_ids @> array[${created.invitationId}::uuid]
+      `,
+    );
+    expect(resent[0]!.n).toBe(1);
   }, 60_000);
 
   it("a resend of another organisation's invitation leaves its address alone", async () => {

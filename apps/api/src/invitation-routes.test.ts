@@ -1457,6 +1457,7 @@ describe("invitation routes", () => {
         expect.objectContaining({
           invitationId: INVITATION_ID,
           actorUserId: USER,
+          now: expect.any(Date),
         }),
       );
       const lastTxCall =
@@ -1512,6 +1513,7 @@ describe("invitation routes", () => {
         expect.objectContaining({
           invitationId: INVITATION_ID,
           actorUserId: USER,
+          now: expect.any(Date),
         }),
       );
     });
@@ -1684,6 +1686,7 @@ describe("invitation routes", () => {
         depsWithFailingLog,
       );
       expect(res.status).toBe(500);
+      expect(requestLogThrown).toBe(true);
       expect(identity.closeInvitationEmail).toHaveBeenCalledTimes(1);
       expect(access.voidInvitationAfterMailFailure).toHaveBeenCalledTimes(1);
     });
@@ -1725,6 +1728,53 @@ describe("invitation routes", () => {
         expect(call.fields).not.toHaveProperty("sql");
         expect(call.fields).not.toHaveProperty("stack");
       }
+    });
+
+    it("resend does not compensate after a clean commit", async () => {
+      access.resendInvitation.mockImplementationOnce(async (_tx, addresses, input) => {
+        await addresses.refresh({
+          invitationId: input.invitationId,
+          expiresAt: new Date("2026-11-22T00:00:00.000Z"),
+        });
+        return {
+          token: validSampleToken,
+          expiresAt: new Date("2026-11-22T00:00:00.000Z"),
+        };
+      });
+      const res = await postInvitation("/v1/access/invitations/resend", {
+        communitySlug: "parish",
+        invitationId: INVITATION_ID,
+      });
+      expect(res.status).toBe(204);
+      expect(identity.closeInvitationEmail).not.toHaveBeenCalled();
+      expect(access.voidInvitationAfterMailFailure).not.toHaveBeenCalled();
+      const compensationLogs = logCalls.filter((c) => c.message === "compensation");
+      expect(compensationLogs).toHaveLength(0);
+    });
+
+    it("resend does not compensate when mail fails after a clean commit", async () => {
+      access.resendInvitation.mockImplementationOnce(async (_tx, addresses, input) => {
+        await addresses.refresh({
+          invitationId: input.invitationId,
+          expiresAt: new Date("2026-11-22T00:00:00.000Z"),
+        });
+        return {
+          token: validSampleToken,
+          expiresAt: new Date("2026-11-22T00:00:00.000Z"),
+        };
+      });
+      mail.send = vi.fn(async () => {
+        throw new Error("SES send rejected");
+      });
+      const res = await postInvitation("/v1/access/invitations/resend", {
+        communitySlug: "parish",
+        invitationId: INVITATION_ID,
+      });
+      expect(res.status).toBe(503);
+      expect(identity.closeInvitationEmail).not.toHaveBeenCalled();
+      expect(access.voidInvitationAfterMailFailure).toHaveBeenCalledTimes(1);
+      const compensationLogs = logCalls.filter((c) => c.message === "compensation");
+      expect(compensationLogs).toHaveLength(0);
     });
   });
 });
