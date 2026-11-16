@@ -23,7 +23,7 @@ import type { OtpMail } from "@community-hub/identity";
 import * as identity from "@community-hub/identity";
 import { withRequest } from "@community-hub/kernel";
 import { createPerson } from "@community-hub/people";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { accessRoutes } from "./access-routes.js";
 import { authRoutes } from "./auth-routes.js";
@@ -213,14 +213,53 @@ describe("invitations and members-only access", () => {
     error: console.error,
   };
 
+  const fault = { mode: "off" as "off" | "rollback" | "after_commit", identitySeen: false };
+
+  afterEach(() => {
+    fault.mode = "off";
+    fault.identitySeen = false;
+  });
+
+  const appProxy: typeof app = new Proxy(app, {
+    get(target, prop, receiver) {
+      if (prop === "begin") {
+        return (...args: [unknown, unknown?]) => {
+          const fn = (typeof args[0] === "function" ? args[0] : args[1]) as (
+            tx: unknown,
+          ) => Promise<unknown>;
+          const wrapped = async (tx: unknown) => {
+            fault.identitySeen = false;
+            const res = await fn(tx);
+            if (fault.mode === "rollback" && fault.identitySeen) {
+              fault.mode = "off";
+              throw new Error("injected rollback");
+            }
+            return res;
+          };
+          if (typeof args[0] === "function") {
+            return target.begin(wrapped);
+          }
+          return Reflect.apply(target.begin, target, [args[0], wrapped]);
+        };
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+
   const checkout = async <T>(role: Role, run: (sql: never) => Promise<T>): Promise<T> => {
     if (role === "identity") {
+      fault.identitySeen = true;
       return run(identitySql as never);
     }
     if (role === "platform") {
       return run(platform as never);
     }
-    return run(app as never);
+    const result = await run(appProxy as never);
+    if (fault.mode === "after_commit" && fault.identitySeen) {
+      fault.mode = "off";
+      throw new Error("injected lost acknowledgement");
+    }
+    return result;
   };
 
   function capture(args: unknown[]): void {
@@ -1090,6 +1129,182 @@ describe("invitations and members-only access", () => {
       `,
     );
     expect(voided).toEqual([{ status: "void" }]);
+  }, 60_000);
+
+  it("a failed resend transaction erases the address and voids the invitation", async () => {
+    const org = await createOrg(1);
+    extraScopes.push(scopeOf(org));
+    const owner = await setupOwner(org);
+    const slug = org.communities[0]!.slug;
+    const inviteeEmail = uniqueEmail("resend-rb");
+    const created = await invite(org, owner.bearer, inviteeEmail, { roleKey: "member" });
+
+    fault.mode = "rollback";
+    const res = await api(
+      "/v1/access/invitations/resend",
+      { communitySlug: slug, invitationId: created.invitationId },
+      owner.bearer,
+    );
+    expect(res.status).toBe(500);
+    expect(res.text).toBe("");
+    expect(fault.mode).toBe("off");
+
+    const address = await identitySql<
+      {
+        closed_at: Date | null;
+        email: Uint8Array | null;
+        email_bidx: Uint8Array | null;
+        dedupe_key: Uint8Array | null;
+      }[]
+    >`
+      select closed_at, email, email_bidx, dedupe_key
+      from identity.invitation_emails
+      where invitation_id = ${created.invitationId}::uuid
+    `;
+    expect(address).toHaveLength(1);
+    expect(address[0]!.email).toBeNull();
+    expect(address[0]!.email_bidx).toBeNull();
+    expect(address[0]!.dedupe_key).toBeNull();
+    expect(address[0]!.closed_at).not.toBeNull();
+
+    const rows = await inScope(
+      scopeOf(org),
+      (tx) =>
+        tx<{ status: string }[]>`
+        select status from app.invitations where id = ${created.invitationId}::uuid
+      `,
+    );
+    expect(rows).toEqual([{ status: "void" }]);
+
+    const voided = await inScope(
+      scopeOf(org),
+      (tx) =>
+        tx<{ n: number }[]>`
+        select count(*)::int as n
+        from app.audit_events
+        where action = 'access.invitation.voided'
+          and target_ids @> array[${created.invitationId}::uuid]
+      `,
+    );
+    expect(voided[0]!.n).toBe(1);
+  }, 60_000);
+
+  it("a lost resend acknowledgement still erases the address and voids the invitation", async () => {
+    const org = await createOrg(1);
+    extraScopes.push(scopeOf(org));
+    const owner = await setupOwner(org);
+    const slug = org.communities[0]!.slug;
+    const inviteeEmail = uniqueEmail("resend-ack");
+    const created = await invite(org, owner.bearer, inviteeEmail, { roleKey: "member" });
+
+    fault.mode = "after_commit";
+    const res = await api(
+      "/v1/access/invitations/resend",
+      { communitySlug: slug, invitationId: created.invitationId },
+      owner.bearer,
+    );
+    expect(res.status).toBe(500);
+    expect(res.text).toBe("");
+    expect(fault.mode).toBe("off");
+
+    const address = await identitySql<
+      {
+        closed_at: Date | null;
+        email: Uint8Array | null;
+        email_bidx: Uint8Array | null;
+        dedupe_key: Uint8Array | null;
+      }[]
+    >`
+      select closed_at, email, email_bidx, dedupe_key
+      from identity.invitation_emails
+      where invitation_id = ${created.invitationId}::uuid
+    `;
+    expect(address).toHaveLength(1);
+    expect(address[0]!.email).toBeNull();
+    expect(address[0]!.email_bidx).toBeNull();
+    expect(address[0]!.dedupe_key).toBeNull();
+    expect(address[0]!.closed_at).not.toBeNull();
+
+    const rows = await inScope(
+      scopeOf(org),
+      (tx) =>
+        tx<{ status: string }[]>`
+        select status from app.invitations where id = ${created.invitationId}::uuid
+      `,
+    );
+    expect(rows).toEqual([{ status: "void" }]);
+
+    const voided = await inScope(
+      scopeOf(org),
+      (tx) =>
+        tx<{ n: number }[]>`
+        select count(*)::int as n
+        from app.audit_events
+        where action = 'access.invitation.voided'
+          and target_ids @> array[${created.invitationId}::uuid]
+      `,
+    );
+    expect(voided[0]!.n).toBe(1);
+  }, 60_000);
+
+  it("a resend of another organisation's invitation leaves its address alone", async () => {
+    const orgA = await createOrg(1);
+    extraScopes.push(scopeOf(orgA));
+    const ownerA = await setupOwner(orgA);
+    const emailA = uniqueEmail("orga-leave");
+    const createdA = await invite(orgA, ownerA.bearer, emailA, { roleKey: "member" });
+
+    const orgB = await createOrg(1);
+    extraScopes.push(scopeOf(orgB));
+    const ownerB = await setupOwner(orgB);
+    const slugB = orgB.communities[0]!.slug;
+
+    const res = await api(
+      "/v1/access/invitations/resend",
+      { communitySlug: slugB, invitationId: createdA.invitationId },
+      ownerB.bearer,
+    );
+    expect(res.status).toBe(404);
+    expect(JSON.parse(res.text)).toEqual({ error: "invitation_not_found" });
+
+    const addressA = await identitySql<
+      {
+        closed_at: Date | null;
+        email: Uint8Array | null;
+        email_bidx: Uint8Array | null;
+        dedupe_key: Uint8Array | null;
+      }[]
+    >`
+      select closed_at, email, email_bidx, dedupe_key
+      from identity.invitation_emails
+      where invitation_id = ${createdA.invitationId}::uuid
+    `;
+    expect(addressA).toHaveLength(1);
+    expect(addressA[0]!.email).not.toBeNull();
+    expect(addressA[0]!.email_bidx).not.toBeNull();
+    expect(addressA[0]!.dedupe_key).not.toBeNull();
+    expect(addressA[0]!.closed_at).toBeNull();
+
+    const rowsA = await inScope(
+      scopeOf(orgA),
+      (tx) =>
+        tx<{ status: string }[]>`
+        select status from app.invitations where id = ${createdA.invitationId}::uuid
+      `,
+    );
+    expect(rowsA).toEqual([{ status: "pending" }]);
+
+    const voidedA = await inScope(
+      scopeOf(orgA),
+      (tx) =>
+        tx<{ n: number }[]>`
+        select count(*)::int as n
+        from app.audit_events
+        where action = 'access.invitation.voided'
+          and target_ids @> array[${createdA.invitationId}::uuid]
+      `,
+    );
+    expect(voidedA[0]!.n).toBe(0);
   }, 60_000);
 
   it("no leaks: no log line and no audit row contains a fixture address or an issued token", async () => {

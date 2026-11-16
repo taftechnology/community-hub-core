@@ -1266,9 +1266,9 @@ describe("invitation routes", () => {
           const input = (call as unknown as [unknown, { purpose?: unknown }])[1];
           expect(typeof input.purpose).toBe("string");
           expect(denialPurposes.has(input.purpose as string)).toBe(true);
-          if (item.missing === "people.view") {
-            expect(input.purpose).toBe("people.person.view");
-          }
+          expect(input.purpose).toBe(
+            item.missing === "people.view" ? "people.person.view" : item.missing,
+          );
         }
       }
     });
@@ -1430,6 +1430,301 @@ describe("invitation routes", () => {
       const rendered = util.inspect(logCalls, { depth: null });
       expect(rendered).not.toContain(fixtureEmail);
       expect(rendered).not.toContain(validSampleToken);
+    });
+  });
+
+  describe("resend compensation", () => {
+    it("resend compensates when refresh succeeded and the transaction then failed", async () => {
+      access.resendInvitation.mockImplementationOnce(async (_tx, addresses, input) => {
+        await addresses.refresh({
+          invitationId: input.invitationId,
+          expiresAt: new Date("2026-11-22T00:00:00.000Z"),
+        });
+        throw new Error("app transaction failed");
+      });
+      const res = await postInvitation("/v1/access/invitations/resend", {
+        communitySlug: "parish",
+        invitationId: INVITATION_ID,
+      });
+      expect(res.status).toBe(500);
+      expect(await res.text()).toBe("");
+      expect(identity.closeInvitationEmail).toHaveBeenCalledTimes(1);
+      expect(identity.closeInvitationEmail).toHaveBeenCalledWith(expect.anything(), INVITATION_ID);
+      expect(access.voidInvitationAfterMailFailure).toHaveBeenCalledTimes(1);
+      expect(access.voidInvitationAfterMailFailure).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({
+          invitationId: INVITATION_ID,
+          actorUserId: USER,
+        }),
+      );
+      const lastTxCall =
+        db.withAppTransaction.mock.calls[db.withAppTransaction.mock.calls.length - 1];
+      expect(lastTxCall?.[1]).toEqual({ orgId: ORG, communityId: COMMUNITY });
+    });
+
+    it("resend compensation closes before it voids", async () => {
+      access.resendInvitation.mockImplementationOnce(async (_tx, addresses, input) => {
+        await addresses.refresh({
+          invitationId: input.invitationId,
+          expiresAt: new Date("2026-11-22T00:00:00.000Z"),
+        });
+        throw new Error("app transaction failed");
+      });
+      const res = await postInvitation("/v1/access/invitations/resend", {
+        communitySlug: "parish",
+        invitationId: INVITATION_ID,
+      });
+      expect(res.status).toBe(500);
+      expect(identity.closeInvitationEmail).toHaveBeenCalledTimes(1);
+      expect(access.voidInvitationAfterMailFailure).toHaveBeenCalledTimes(1);
+      const closeOrder = identity.closeInvitationEmail.mock.invocationCallOrder[0] ?? 0;
+      const voidOrder = access.voidInvitationAfterMailFailure.mock.invocationCallOrder[0] ?? 0;
+      expect(closeOrder).toBeGreaterThan(0);
+      expect(closeOrder).toBeLessThan(voidOrder);
+    });
+
+    it("resend compensates when refresh threw", async () => {
+      identity.refreshInvitationEmail.mockRejectedValueOnce(new Error("refresh threw"));
+      access.resendInvitation.mockImplementationOnce(async (_tx, addresses, input) => {
+        await addresses.refresh({
+          invitationId: input.invitationId,
+          expiresAt: new Date("2026-11-22T00:00:00.000Z"),
+        });
+        return {
+          token: validSampleToken,
+          expiresAt: new Date("2026-11-22T00:00:00.000Z"),
+        };
+      });
+      const res = await postInvitation("/v1/access/invitations/resend", {
+        communitySlug: "parish",
+        invitationId: INVITATION_ID,
+      });
+      expect(res.status).toBe(500);
+      expect(await res.text()).toBe("");
+      expect(identity.closeInvitationEmail).toHaveBeenCalledTimes(1);
+      expect(identity.closeInvitationEmail).toHaveBeenCalledWith(expect.anything(), INVITATION_ID);
+      expect(access.voidInvitationAfterMailFailure).toHaveBeenCalledTimes(1);
+      expect(access.voidInvitationAfterMailFailure).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({
+          invitationId: INVITATION_ID,
+          actorUserId: USER,
+        }),
+      );
+    });
+
+    it("resend compensates after a rejected commit", async () => {
+      access.resendInvitation.mockImplementationOnce(async (_tx, addresses, input) => {
+        await addresses.refresh({
+          invitationId: input.invitationId,
+          expiresAt: new Date("2026-11-22T00:00:00.000Z"),
+        });
+        return {
+          token: validSampleToken,
+          expiresAt: new Date("2026-11-22T00:00:00.000Z"),
+        };
+      });
+      let refreshed = false;
+      identity.refreshInvitationEmail.mockImplementation(async () => {
+        refreshed = true;
+        return true;
+      });
+      db.withAppTransaction.mockImplementation(async (_sql, _scope, callback) => {
+        const result = await callback({} as never);
+        if (refreshed && access.voidInvitationAfterMailFailure.mock.calls.length === 0) {
+          throw new Error("commit rejected");
+        }
+        return result;
+      });
+      const res = await postInvitation("/v1/access/invitations/resend", {
+        communitySlug: "parish",
+        invitationId: INVITATION_ID,
+      });
+      expect(res.status).toBe(500);
+      expect(await res.text()).toBe("");
+      expect(identity.closeInvitationEmail).toHaveBeenCalledTimes(1);
+      expect(access.voidInvitationAfterMailFailure).toHaveBeenCalledTimes(1);
+    });
+
+    it("resend compensates on a mapped error after refresh", async () => {
+      access.resendInvitation.mockImplementationOnce(async (_tx, addresses, input) => {
+        await addresses.refresh({
+          invitationId: input.invitationId,
+          expiresAt: new Date("2026-11-22T00:00:00.000Z"),
+        });
+        throw new access.AccessError("invitation_not_found");
+      });
+      const resNotFound = await postInvitation("/v1/access/invitations/resend", {
+        communitySlug: "parish",
+        invitationId: INVITATION_ID,
+      });
+      expect(resNotFound.status).toBe(404);
+      expect(identity.closeInvitationEmail).toHaveBeenCalledTimes(1);
+      expect(access.voidInvitationAfterMailFailure).toHaveBeenCalledTimes(1);
+
+      identity.closeInvitationEmail.mockClear();
+      access.voidInvitationAfterMailFailure.mockClear();
+
+      access.resendInvitation.mockImplementationOnce(async (_tx, addresses, input) => {
+        await addresses.refresh({
+          invitationId: input.invitationId,
+          expiresAt: new Date("2026-11-22T00:00:00.000Z"),
+        });
+        throw new access.AccessError("forbidden");
+      });
+      const resForbidden = await postInvitation("/v1/access/invitations/resend", {
+        communitySlug: "parish",
+        invitationId: INVITATION_ID,
+      });
+      expect(resForbidden.status).toBe(403);
+      expect(identity.closeInvitationEmail).toHaveBeenCalledTimes(1);
+      expect(access.voidInvitationAfterMailFailure).toHaveBeenCalledTimes(1);
+    });
+
+    it("resend does not compensate when refresh returned false", async () => {
+      identity.refreshInvitationEmail.mockResolvedValueOnce(false);
+      access.resendInvitation.mockImplementationOnce(async (_tx, addresses, input) => {
+        const refreshed = await addresses.refresh({
+          invitationId: input.invitationId,
+          expiresAt: new Date("2026-11-22T00:00:00.000Z"),
+        });
+        if (!refreshed) {
+          throw new access.AccessError("invitation_not_found");
+        }
+        return {
+          token: validSampleToken,
+          expiresAt: new Date("2026-11-22T00:00:00.000Z"),
+        };
+      });
+      const res = await postInvitation("/v1/access/invitations/resend", {
+        communitySlug: "parish",
+        invitationId: INVITATION_ID,
+      });
+      expect(res.status).toBe(404);
+      expect(identity.closeInvitationEmail).not.toHaveBeenCalled();
+      expect(access.voidInvitationAfterMailFailure).not.toHaveBeenCalled();
+    });
+
+    it("resend with an unknown invitation does not compensate", async () => {
+      access.resendInvitation.mockRejectedValueOnce(new access.AccessError("invitation_not_found"));
+      const res = await postInvitation("/v1/access/invitations/resend", {
+        communitySlug: "parish",
+        invitationId: INVITATION_ID,
+      });
+      expect(res.status).toBe(404);
+      expect(identity.closeInvitationEmail).not.toHaveBeenCalled();
+      expect(access.voidInvitationAfterMailFailure).not.toHaveBeenCalled();
+    });
+
+    it("resend compensation still closes when the void fails", async () => {
+      access.voidInvitationAfterMailFailure.mockRejectedValueOnce(new Error("void failed"));
+      access.resendInvitation.mockImplementationOnce(async (_tx, addresses, input) => {
+        await addresses.refresh({
+          invitationId: input.invitationId,
+          expiresAt: new Date("2026-11-22T00:00:00.000Z"),
+        });
+        throw new Error("resend failure");
+      });
+      const res = await postInvitation("/v1/access/invitations/resend", {
+        communitySlug: "parish",
+        invitationId: INVITATION_ID,
+      });
+      expect(res.status).toBe(500);
+      expect(await res.text()).toBe("");
+      expect(identity.closeInvitationEmail).toHaveBeenCalledTimes(1);
+      expect(access.voidInvitationAfterMailFailure).toHaveBeenCalledTimes(1);
+    });
+
+    it("resend compensation still voids when the close fails", async () => {
+      identity.closeInvitationEmail.mockRejectedValueOnce(new Error("close failed"));
+      access.resendInvitation.mockImplementationOnce(async (_tx, addresses, input) => {
+        await addresses.refresh({
+          invitationId: input.invitationId,
+          expiresAt: new Date("2026-11-22T00:00:00.000Z"),
+        });
+        throw new Error("resend failure");
+      });
+      const res = await postInvitation("/v1/access/invitations/resend", {
+        communitySlug: "parish",
+        invitationId: INVITATION_ID,
+      });
+      expect(res.status).toBe(500);
+      expect(await res.text()).toBe("");
+      expect(identity.closeInvitationEmail).toHaveBeenCalledTimes(1);
+      expect(access.voidInvitationAfterMailFailure).toHaveBeenCalledTimes(1);
+    });
+
+    it("resend compensation runs once", async () => {
+      access.resendInvitation.mockImplementationOnce(async (_tx, addresses, input) => {
+        await addresses.refresh({
+          invitationId: input.invitationId,
+          expiresAt: new Date("2026-11-22T00:00:00.000Z"),
+        });
+        throw new access.AccessError("invalid_role");
+      });
+      let requestLogThrown = false;
+      const depsWithFailingLog = makeDeps({
+        log: (message, fields) => {
+          if (message === "request" && !requestLogThrown) {
+            requestLogThrown = true;
+            throw new Error("log failure");
+          }
+          logCalls.push({ message, fields });
+        },
+      });
+      const res = await postInvitation(
+        "/v1/access/invitations/resend",
+        {
+          communitySlug: "parish",
+          invitationId: INVITATION_ID,
+        },
+        depsWithFailingLog,
+      );
+      expect(res.status).toBe(500);
+      expect(identity.closeInvitationEmail).toHaveBeenCalledTimes(1);
+      expect(access.voidInvitationAfterMailFailure).toHaveBeenCalledTimes(1);
+    });
+
+    it("resend compensation logs only route, step, error class and request id", async () => {
+      identity.closeInvitationEmail.mockRejectedValueOnce(new Error("close failed"));
+      access.voidInvitationAfterMailFailure.mockRejectedValueOnce(new TypeError("void failed"));
+      access.resendInvitation.mockImplementationOnce(async (_tx, addresses, input) => {
+        await addresses.refresh({
+          invitationId: input.invitationId,
+          expiresAt: new Date("2026-11-22T00:00:00.000Z"),
+        });
+        throw new Error("resend failure");
+      });
+      const res = await postInvitation("/v1/access/invitations/resend", {
+        communitySlug: "parish",
+        invitationId: INVITATION_ID,
+      });
+      expect(res.status).toBe(500);
+      const compensationLogs = logCalls.filter((c) => c.message === "compensation");
+      expect(compensationLogs).toHaveLength(2);
+      expect(compensationLogs[0]?.fields).toEqual({
+        route: "invitations.resend",
+        step: "close",
+        errorClass: "Error",
+        requestId: REQUEST_ID,
+      });
+      expect(compensationLogs[1]?.fields).toEqual({
+        route: "invitations.resend",
+        step: "void",
+        errorClass: "TypeError",
+        requestId: REQUEST_ID,
+      });
+      for (const call of compensationLogs) {
+        expect(Object.keys(call.fields ?? {}).sort()).toEqual(
+          ["errorClass", "requestId", "route", "step"].sort(),
+        );
+        expect(call.fields).not.toHaveProperty("message");
+        expect(call.fields).not.toHaveProperty("sql");
+        expect(call.fields).not.toHaveProperty("stack");
+      }
     });
   });
 });
