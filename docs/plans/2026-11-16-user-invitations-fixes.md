@@ -3,7 +3,7 @@ Spec: docs/specs/2026-11-16-user-invitations-fixes.md
 # User invitations fixes Implementation Plan
 
 Slug: user-invitations-fixes
-Status: draft
+Status: approved (2026-11-16, Adnan Bin Hossen)
 
 > **For agentic workers:** use superpowers:subagent-driven-development, test-driven-development inside each task, and verification-before-completion before reporting. One task = one commit. Reports go to `.superpowers/sdd/task-N-report.md`, never `docs/plans/` and never a commit.
 
@@ -40,7 +40,7 @@ Status: draft
 
 ## Global constraints
 
-- **Branch:** `fix/2026-11-16-user-invitations-fixes`, created from `origin/main` at `290cc67` (PR #86 merged). The spec is its first commit (`0b98e2f`), and this plan is its second. The plan stays `Status: draft` until the chunk owner approves it.
+- **Branch:** `fix/2026-11-16-user-invitations-fixes`, created from `origin/main` at `290cc67` (PR #86 merged). The spec is its first commit (`0b98e2f`), and this plan is its second. The chunk owner approved the plan with owner decisions 1 to 4 at their defaults.
 - **Untouched:** migrations and every `packages/db/drizzle` file; `packages/contracts`; identity and tenancy source; Terraform, workflows, `infra/`, the Dockerfile; `grants.ts` and its `deny` default; every route other than the five invitation routes. Staging stays parked.
 - **Dependencies:** none added. **Workspace packages:** none added.
 - **Never disabled to get green:** a check, a lint rule (no `eslint-disable` of any kind), an axe rule, RLS, a test or a CI gate. No `@ts-ignore` or `@ts-expect-error`.
