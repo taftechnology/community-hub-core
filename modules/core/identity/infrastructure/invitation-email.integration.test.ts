@@ -618,8 +618,10 @@ describe("invitation-email integration tests", () => {
       let statementCount = 0;
       const statementSpy = ((strings: TemplateStringsArray, ...values: unknown[]) => {
         statementCount += 1;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return (sql as any)(strings, ...values);
+        return (sql as unknown as (strings: TemplateStringsArray, ...values: unknown[]) => unknown)(
+          strings,
+          ...values,
+        );
       }) as unknown as Sql;
 
       await sweepInvitationEmails(statementSpy, new Date());
