@@ -4,6 +4,7 @@ import { useNavigate } from "react-router";
 
 import { post } from "./api";
 import { useCommunity } from "./community";
+import { readAccessToken } from "./directory";
 import { clearInviteToken, getInviteToken } from "./invite-token";
 import { ScreenTitle } from "./screen-title";
 import { signOut } from "./sign-out";
@@ -93,6 +94,13 @@ export function AcceptInvitation() {
     if (token === undefined) {
       return;
     }
+    if (readAccessToken() === null) {
+      if (alive.current) {
+        setPhase("idle");
+      }
+      await navigate("/sign-in", { replace: true });
+      return;
+    }
     inFlight.current = true;
     setPhase("sending");
     try {
@@ -101,6 +109,13 @@ export function AcceptInvitation() {
         if (alive.current) {
           setPhase("failed");
         }
+        return;
+      }
+      if (response.status === 401) {
+        if (alive.current) {
+          setPhase("idle");
+        }
+        await navigate("/sign-in", { replace: true });
         return;
       }
       const outcome = await readOutcome(response);
