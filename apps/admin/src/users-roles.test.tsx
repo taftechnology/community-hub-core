@@ -1209,7 +1209,13 @@ it("hides Grant, Revoke, and Delete without access.roles.manage", async () => {
   urlKeyedFetch({
     grants: () =>
       new Response(
-        JSON.stringify(directory(1, [ownerGrant], ["access.users.view", "access.users.manage"])),
+        JSON.stringify(
+          directory(
+            1,
+            [ownerGrant],
+            ["access.users.view", "access.roles.view", "access.users.manage"],
+          ),
+        ),
         { status: 200, headers: { "content-type": "application/json" } },
       ),
   });
@@ -1230,7 +1236,13 @@ it("hides the create custom role form without access.roles.manage", async () => 
   urlKeyedFetch({
     grants: () =>
       new Response(
-        JSON.stringify(directory(1, [ownerGrant], ["access.users.view", "access.users.manage"])),
+        JSON.stringify(
+          directory(
+            1,
+            [ownerGrant],
+            ["access.users.view", "access.roles.view", "access.users.manage"],
+          ),
+        ),
         { status: 200, headers: { "content-type": "application/json" } },
       ),
   });
@@ -1249,7 +1261,13 @@ it("hides Link without access.users.manage", async () => {
   sessionStorage.setItem("community-hub.access-token", TOKEN);
   vi.spyOn(globalThis, "fetch").mockResolvedValue(
     new Response(
-      JSON.stringify(directory(1, [ownerGrant], ["access.roles.view", "access.roles.manage"])),
+      JSON.stringify(
+        directory(
+          1,
+          [ownerGrant],
+          ["access.users.view", "access.roles.view", "access.roles.manage"],
+        ),
+      ),
       { status: 200, headers: { "content-type": "application/json" } },
     ),
   );
@@ -1262,6 +1280,104 @@ it("hides Link without access.users.manage", async () => {
   expect(screen.getByRole("button", { name: "Revoke" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Delete custom role" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Link" })).toBeNull();
+});
+
+it("hides the grant form without access.users.view", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  urlKeyedFetch({
+    grants: () =>
+      new Response(
+        JSON.stringify(
+          directory(
+            1,
+            [ownerGrant],
+            ["access.roles.manage", "access.roles.view", "access.users.manage"],
+          ),
+        ),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  });
+  await showUsers();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+  expect(await screen.findByRole("button", { name: "Revoke" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Grant" })).toBeNull();
+});
+
+it("hides the grant form without access.roles.view", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  urlKeyedFetch({
+    grants: () =>
+      new Response(
+        JSON.stringify(
+          directory(
+            1,
+            [ownerGrant],
+            ["access.roles.manage", "access.users.view", "access.users.manage"],
+          ),
+        ),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  });
+  await showUsers();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+  expect(await screen.findByRole("button", { name: "Revoke" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Grant" })).toBeNull();
+});
+
+it("hides the link form without access.users.view", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  urlKeyedFetch({
+    grants: () =>
+      new Response(
+        JSON.stringify(
+          directory(
+            1,
+            [ownerGrant],
+            ["access.users.manage", "access.roles.view", "access.roles.manage"],
+          ),
+        ),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  });
+  await showUsers();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+  expect(await screen.findByRole("button", { name: "Revoke" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Link" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Unlink" })).toBeNull();
+});
+
+it("hides the link form without access.roles.view", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  urlKeyedFetch({
+    grants: () =>
+      new Response(
+        JSON.stringify(
+          directory(
+            1,
+            [ownerGrant],
+            ["access.users.manage", "access.users.view", "access.roles.manage"],
+          ),
+        ),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  });
+  await showUsers();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+  expect(await screen.findByRole("button", { name: "Revoke" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Link" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Unlink" })).toBeNull();
 });
 
 it("shows the role errors for 403 and 409", async () => {
@@ -1306,7 +1422,16 @@ it("clears rows and write controls when switching to a community that answers 40
       return Promise.resolve(
         new Response(
           JSON.stringify(
-            directory(1, [ownerGrant], ["access.roles.manage", "access.users.manage"]),
+            directory(
+              1,
+              [ownerGrant],
+              [
+                "access.users.view",
+                "access.roles.view",
+                "access.roles.manage",
+                "access.users.manage",
+              ],
+            ),
           ),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
@@ -1440,7 +1565,16 @@ it("ignores a write that finishes after switching to a forbidden community", asy
       return Promise.resolve(
         new Response(
           JSON.stringify(
-            directory(1, [ownerGrant], ["access.roles.manage", "access.users.manage"]),
+            directory(
+              1,
+              [ownerGrant],
+              [
+                "access.users.view",
+                "access.roles.view",
+                "access.roles.manage",
+                "access.users.manage",
+              ],
+            ),
           ),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
@@ -1500,7 +1634,16 @@ it("ignores a write that finishes with 401 after switching to a forbidden commun
         return Promise.resolve(
           new Response(
             JSON.stringify(
-              directory(1, [ownerGrant], ["access.roles.manage", "access.users.manage"]),
+              directory(
+                1,
+                [ownerGrant],
+                [
+                  "access.users.view",
+                  "access.roles.view",
+                  "access.roles.manage",
+                  "access.users.manage",
+                ],
+              ),
             ),
             { status: 200, headers: { "content-type": "application/json" } },
           ),
@@ -1644,7 +1787,16 @@ it.each(["none", "read_only"])(
         return Promise.resolve(
           new Response(
             JSON.stringify(
-              directory(1, [ownerGrant], ["access.roles.manage", "access.users.manage"]),
+              directory(
+                1,
+                [ownerGrant],
+                [
+                  "access.users.view",
+                  "access.roles.view",
+                  "access.roles.manage",
+                  "access.users.manage",
+                ],
+              ),
             ),
             { status: 200, headers: { "content-type": "application/json" } },
           ),
@@ -1698,7 +1850,16 @@ it.each(["grace", "retrying", "ok", "invoiced"])(
         return Promise.resolve(
           new Response(
             JSON.stringify(
-              directory(1, [ownerGrant], ["access.roles.manage", "access.users.manage"]),
+              directory(
+                1,
+                [ownerGrant],
+                [
+                  "access.users.view",
+                  "access.roles.view",
+                  "access.roles.manage",
+                  "access.users.manage",
+                ],
+              ),
             ),
             { status: 200, headers: { "content-type": "application/json" } },
           ),
@@ -1734,7 +1895,16 @@ it("keeps write controls visible and hides read-only alert when billing status i
       return Promise.resolve(
         new Response(
           JSON.stringify(
-            directory(1, [ownerGrant], ["access.roles.manage", "access.users.manage"]),
+            directory(
+              1,
+              [ownerGrant],
+              [
+                "access.users.view",
+                "access.roles.view",
+                "access.roles.manage",
+                "access.users.manage",
+              ],
+            ),
           ),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
@@ -1776,7 +1946,16 @@ it("hides Grant while status is loading after switching to a read_only community
       return Promise.resolve(
         new Response(
           JSON.stringify(
-            directory(1, [ownerGrant], ["access.roles.manage", "access.users.manage"]),
+            directory(
+              1,
+              [ownerGrant],
+              [
+                "access.users.view",
+                "access.roles.view",
+                "access.roles.manage",
+                "access.users.manage",
+              ],
+            ),
           ),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
@@ -1824,7 +2003,16 @@ it("handles 402 on mutation by showing read-only alert, hiding write controls, a
       return Promise.resolve(
         new Response(
           JSON.stringify(
-            directory(1, [ownerGrant], ["access.roles.manage", "access.users.manage"]),
+            directory(
+              1,
+              [ownerGrant],
+              [
+                "access.users.view",
+                "access.roles.view",
+                "access.roles.manage",
+                "access.users.manage",
+              ],
+            ),
           ),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
@@ -1882,7 +2070,16 @@ it("ignores a 402 mutation response that arrives after switching community", asy
       return Promise.resolve(
         new Response(
           JSON.stringify(
-            directory(1, [ownerGrant], ["access.roles.manage", "access.users.manage"]),
+            directory(
+              1,
+              [ownerGrant],
+              [
+                "access.users.view",
+                "access.roles.view",
+                "access.roles.manage",
+                "access.users.manage",
+              ],
+            ),
           ),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
@@ -1942,7 +2139,16 @@ it("resets read-only blocked state when switching community after a 402 write", 
       return Promise.resolve(
         new Response(
           JSON.stringify(
-            directory(1, [ownerGrant], ["access.roles.manage", "access.users.manage"]),
+            directory(
+              1,
+              [ownerGrant],
+              [
+                "access.users.view",
+                "access.roles.view",
+                "access.roles.manage",
+                "access.users.manage",
+              ],
+            ),
           ),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
@@ -2011,7 +2217,16 @@ it("renders Users & Roles in StrictMode cleanly", async () => {
       return Promise.resolve(
         new Response(
           JSON.stringify(
-            directory(1, [ownerGrant], ["access.roles.manage", "access.users.manage"]),
+            directory(
+              1,
+              [ownerGrant],
+              [
+                "access.users.view",
+                "access.roles.view",
+                "access.roles.manage",
+                "access.users.manage",
+              ],
+            ),
           ),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
@@ -2136,7 +2351,13 @@ it("pin 46: grant and link forms have no text input named User and the select li
           directory(
             0,
             [],
-            ["access.users.view", "access.roles.manage", "access.users.manage", "people.view"],
+            [
+              "access.users.view",
+              "access.roles.view",
+              "access.roles.manage",
+              "access.users.manage",
+              "people.view",
+            ],
           ),
         ),
         { status: 200, headers: { "content-type": "application/json" } },
@@ -2206,7 +2427,16 @@ it("shows Invite someone first and disables the user select when the users list 
     grants: () =>
       new Response(
         JSON.stringify(
-          directory(0, [], ["access.users.view", "access.roles.manage", "access.users.manage"]),
+          directory(
+            0,
+            [],
+            [
+              "access.users.view",
+              "access.roles.view",
+              "access.roles.manage",
+              "access.users.manage",
+            ],
+          ),
         ),
         { status: 200, headers: { "content-type": "application/json" } },
       ),
@@ -2241,10 +2471,15 @@ it("sends the selected user id in the grant body", async () => {
   let grantBody: unknown;
   urlKeyedFetch({
     grants: () =>
-      new Response(JSON.stringify(directory(0, [], ["access.users.view", "access.roles.manage"])), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
+      new Response(
+        JSON.stringify(
+          directory(0, [], ["access.users.view", "access.roles.view", "access.roles.manage"]),
+        ),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
     users: () =>
       new Response(
         JSON.stringify(
@@ -2269,7 +2504,9 @@ it("sends the selected user id in the grant body", async () => {
       if (url.includes("/v1/access/grants")) {
         grantBody = JSON.parse(String(init?.body));
         return new Response(
-          JSON.stringify(directory(0, [], ["access.users.view", "access.roles.manage"])),
+          JSON.stringify(
+            directory(0, [], ["access.users.view", "access.roles.view", "access.roles.manage"]),
+          ),
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
@@ -2302,7 +2539,11 @@ it("sends the selected user id and contact in the link body", async () => {
     grants: () =>
       new Response(
         JSON.stringify(
-          directory(0, [], ["access.users.view", "access.users.manage", "people.view"]),
+          directory(
+            0,
+            [],
+            ["access.users.view", "access.roles.view", "access.users.manage", "people.view"],
+          ),
         ),
         { status: 200, headers: { "content-type": "application/json" } },
       ),
@@ -2348,7 +2589,11 @@ it("sends the selected user id and contact in the link body", async () => {
         linkBody = JSON.parse(String(init?.body));
         return new Response(
           JSON.stringify(
-            directory(0, [], ["access.users.view", "access.users.manage", "people.view"]),
+            directory(
+              0,
+              [],
+              ["access.users.view", "access.roles.view", "access.users.manage", "people.view"],
+            ),
           ),
           { status: 200, headers: { "content-type": "application/json" } },
         );

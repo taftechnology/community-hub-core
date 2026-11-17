@@ -654,7 +654,7 @@ it("hides the pending panel without access.roles.view", async () => {
 it("hides the pending panel without access.users.view", async () => {
   start({ permissions: ["access.roles.view", "access.roles.manage"] });
   await mount();
-  expect(await screen.findByRole("button", { name: "Grant" })).toBeTruthy();
+  expect(await screen.findByRole("button", { name: "Create custom role" })).toBeTruthy();
   expect(screen.queryByRole("heading", { name: "Pending invitations" })).toBeNull();
 });
 
