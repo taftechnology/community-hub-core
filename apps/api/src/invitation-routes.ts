@@ -560,6 +560,14 @@ export function invitationRoutes(deps: InvitationRouteDeps): GateRoute[] {
           keyArn: deps.keyArn,
         });
 
+        const logCompensation = (fields: Record<string, unknown>) => {
+          try {
+            deps.log("compensation", fields);
+          } catch {
+            // Keep compensation running even if the logger throws.
+          }
+        };
+
         const compensate = async () => {
           if (!refreshed || compensated) {
             return;
@@ -572,7 +580,7 @@ export function invitationRoutes(deps: InvitationRouteDeps): GateRoute[] {
           try {
             await baseAddresses.close(validatedInvitationId);
           } catch (e) {
-            deps.log("compensation", {
+            logCompensation({
               route: "invitations.resend",
               step: "close",
               errorClass: errorClassFor(e),
@@ -595,7 +603,7 @@ export function invitationRoutes(deps: InvitationRouteDeps): GateRoute[] {
                 ),
               );
             } catch (e) {
-              deps.log("compensation", {
+              logCompensation({
                 route: "invitations.resend",
                 step: "void",
                 errorClass: errorClassFor(e),

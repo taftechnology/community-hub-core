@@ -1659,6 +1659,36 @@ describe("invitation routes", () => {
       expect(access.voidInvitationAfterMailFailure).toHaveBeenCalledTimes(1);
     });
 
+    it("resend compensation still voids when the compensation log throws", async () => {
+      identity.closeInvitationEmail.mockRejectedValueOnce(new Error("close failed"));
+      access.resendInvitation.mockImplementationOnce(async (_tx, addresses, input) => {
+        await addresses.refresh({
+          invitationId: input.invitationId,
+          expiresAt: new Date("2026-11-22T00:00:00.000Z"),
+        });
+        throw new Error("resend failure");
+      });
+      const depsWithFailingCompensationLog = makeDeps({
+        log: (message, fields) => {
+          if (message === "compensation") {
+            throw new Error("log failure");
+          }
+          logCalls.push({ message, fields });
+        },
+      });
+      const res = await postInvitation(
+        "/v1/access/invitations/resend",
+        {
+          communitySlug: "parish",
+          invitationId: INVITATION_ID,
+        },
+        depsWithFailingCompensationLog,
+      );
+      expect(res.status).toBe(500);
+      expect(await res.text()).toBe("");
+      expect(access.voidInvitationAfterMailFailure).toHaveBeenCalledTimes(1);
+    });
+
     it("resend compensation runs once", async () => {
       access.resendInvitation.mockImplementationOnce(async (_tx, addresses, input) => {
         await addresses.refresh({

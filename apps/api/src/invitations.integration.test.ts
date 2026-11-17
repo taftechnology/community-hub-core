@@ -254,6 +254,7 @@ describe("invitations and members-only access", () => {
     if (role === "platform") {
       return run(platform as never);
     }
+    fault.identitySeen = false;
     const result = await run(appProxy as never);
     if (fault.mode === "after_commit" && fault.identitySeen) {
       fault.mode = "off";
