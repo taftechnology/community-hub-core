@@ -1331,6 +1331,125 @@ describe("invitations and members-only access", () => {
     expect(voidedA[0]!.n).toBe(0);
   }, 60_000);
 
+  it("a list in org B erases org A's expired address", async () => {
+    const orgA = await createOrg(1);
+    extraScopes.push(scopeOf(orgA));
+    const ownerA = await setupOwner(orgA);
+    const emailA = uniqueEmail("orga-exp");
+    const createdA = await invite(orgA, ownerA.bearer, emailA, { roleKey: "member" });
+
+    const orgB = await createOrg(1);
+    extraScopes.push(scopeOf(orgB));
+    const ownerB = await setupOwner(orgB);
+    const slugB = orgB.communities[0]!.slug;
+
+    // Age the identity rows last; every invitation action sweeps region-wide.
+    const expiredAt = new Date(Date.now() - 60 * 60 * 1000);
+    await identitySql`
+      update identity.invitation_emails
+      set expires_at = ${expiredAt}
+      where invitation_id = ${createdA.invitationId}::uuid
+    `;
+
+    // Exactly one invitation request: every invitation action sweeps region-wide.
+    const listed = await api(
+      "/v1/access/invitations/list",
+      { communitySlug: slugB },
+      ownerB.bearer,
+    );
+    expect(listed.status).toBe(200);
+
+    const addressA = await identitySql<
+      {
+        closed_at: Date | null;
+        email: Uint8Array | null;
+        email_bidx: Uint8Array | null;
+        dedupe_key: Uint8Array | null;
+      }[]
+    >`
+      select closed_at, email, email_bidx, dedupe_key
+      from identity.invitation_emails
+      where invitation_id = ${createdA.invitationId}::uuid
+    `;
+    expect(addressA).toHaveLength(1);
+    expect(addressA[0]!.email).toBeNull();
+    expect(addressA[0]!.email_bidx).toBeNull();
+    expect(addressA[0]!.dedupe_key).toBeNull();
+    expect(addressA[0]!.closed_at).toBeNull();
+  }, 60_000);
+
+  it("a create in org B deletes org A's 31-day-old row", async () => {
+    const orgA = await createOrg(1);
+    extraScopes.push(scopeOf(orgA));
+    const ownerA = await setupOwner(orgA);
+    const slugA = orgA.communities[0]!.slug;
+    const emailA1 = uniqueEmail("orga-c31");
+    const emailA2 = uniqueEmail("orga-c29");
+    const createdA1 = await invite(orgA, ownerA.bearer, emailA1, { roleKey: "member" });
+    const createdA2 = await invite(orgA, ownerA.bearer, emailA2, { roleKey: "member" });
+
+    const revoked1 = await api(
+      "/v1/access/invitations/revoke",
+      { communitySlug: slugA, invitationId: createdA1.invitationId },
+      ownerA.bearer,
+    );
+    expect(revoked1.status).toBe(204);
+
+    const revoked2 = await api(
+      "/v1/access/invitations/revoke",
+      { communitySlug: slugA, invitationId: createdA2.invitationId },
+      ownerA.bearer,
+    );
+    expect(revoked2.status).toBe(204);
+
+    const orgB = await createOrg(1);
+    extraScopes.push(scopeOf(orgB));
+    const ownerB = await setupOwner(orgB);
+    const slugB = orgB.communities[0]!.slug;
+    const emailB = uniqueEmail("orgb-create");
+
+    // Age the identity rows last; every invitation action sweeps region-wide.
+    const nowMs = Date.now();
+    const closed31DaysAgo = new Date(nowMs - 31 * 24 * 60 * 60 * 1000);
+    const closed29DaysAgo = new Date(nowMs - 29 * 24 * 60 * 60 * 1000);
+    await identitySql`
+      update identity.invitation_emails
+      set closed_at = ${closed31DaysAgo}
+      where invitation_id = ${createdA1.invitationId}::uuid
+    `;
+    await identitySql`
+      update identity.invitation_emails
+      set closed_at = ${closed29DaysAgo}
+      where invitation_id = ${createdA2.invitationId}::uuid
+    `;
+
+    // Exactly one invitation request: every invitation action sweeps region-wide.
+    const createdB = await api(
+      "/v1/access/invitations/create",
+      {
+        communitySlug: slugB,
+        email: emailB,
+        roleKey: "member",
+      },
+      ownerB.bearer,
+    );
+    expect(createdB.status).toBe(201);
+
+    const remainingA1 = await identitySql<{ invitation_id: string }[]>`
+      select invitation_id::text
+      from identity.invitation_emails
+      where invitation_id = ${createdA1.invitationId}::uuid
+    `;
+    expect(remainingA1).toHaveLength(0);
+
+    const remainingA2 = await identitySql<{ invitation_id: string }[]>`
+      select invitation_id::text
+      from identity.invitation_emails
+      where invitation_id = ${createdA2.invitationId}::uuid
+    `;
+    expect(remainingA2).toHaveLength(1);
+  }, 60_000);
+
   it("no leaks: no log line and no audit row contains a fixture address or an issued token", async () => {
     expect(secrets.length).toBeGreaterThan(0);
     const direct = createPlaintextDirectSql(runtime.productOnlyUrl);
