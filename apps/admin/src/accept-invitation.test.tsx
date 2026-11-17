@@ -505,6 +505,129 @@ describe("the token after an answer", () => {
   });
 });
 
+describe("signed out", () => {
+  async function fillSignInOnScreen(): Promise<void> {
+    fireEvent.change(await screen.findByRole("textbox", { name: "Email" }), {
+      target: { value: ADDRESS },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Code" }), { target: { value: CODE } });
+    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+  }
+
+  it("a 401 sends the person to sign in and keeps the invitation", async () => {
+    const store = new Map<string, string>();
+    const local = {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        store.set(key, String(value));
+      },
+      removeItem: (key: string) => {
+        store.delete(key);
+      },
+      clear: () => {
+        store.clear();
+      },
+      key: (index: number) => Array.from(store.keys())[index] ?? null,
+      get length() {
+        return store.size;
+      },
+    };
+    const localSetItem = vi.spyOn(local, "setItem");
+    vi.stubGlobal("localStorage", local);
+    const sessionSetItem = vi.spyOn(Object.getPrototypeOf(window.sessionStorage), "setItem");
+    installFetch({ accept: () => new Response(null, { status: 401 }) });
+    await mountAccept();
+    await clickAccept();
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/sign-in");
+    });
+    expect(router.state.historyAction).toBe("REPLACE");
+    expect(await screen.findByRole("heading", { level: 1, name: SENTENCE.signIn })).toBeTruthy();
+    expect(getInviteToken()).toBe(INVITE);
+    expect(window.location.hash).toBe("");
+    expect(JSON.stringify(window.history.state)).not.toContain(INVITE);
+    for (const args of [...sessionSetItem.mock.calls, ...localSetItem.mock.calls]) {
+      for (const value of args) {
+        expect(String(value)).not.toContain(INVITE);
+      }
+    }
+  });
+
+  it("with no session it goes to sign in without sending", async () => {
+    const calls = installFetch({ accept: () => json({ communitySlug: "parish" }) });
+    await mountAccept();
+    sessionStorage.removeItem("community-hub.access-token");
+    await clickAccept();
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/sign-in");
+    });
+    expect(router.state.historyAction).toBe("REPLACE");
+    expect(await screen.findByRole("heading", { level: 1, name: SENTENCE.signIn })).toBeTruthy();
+    expect(acceptCalls(calls)).toHaveLength(0);
+    expect(getInviteToken()).toBe(INVITE);
+  });
+
+  it("after a failed attempt, a lost session goes to sign in without sending", async () => {
+    const calls = installFetch({
+      accept: () => {
+        throw new TypeError("network down");
+      },
+    });
+    await mountAccept();
+    await clickAccept();
+    await screen.findByText(SENTENCE.generic);
+    expect(getInviteToken()).toBe(INVITE);
+
+    sessionStorage.removeItem("community-hub.access-token");
+    await clickAccept();
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/sign-in");
+    });
+    expect(acceptCalls(calls)).toHaveLength(1);
+    expect(getInviteToken()).toBe(INVITE);
+  });
+
+  it("after a 401 and sign-in the person can accept", async () => {
+    let answers = 0;
+    const calls = installFetch({
+      accept: () => {
+        answers += 1;
+        return answers === 1
+          ? new Response(null, { status: 401 })
+          : json({ communitySlug: "parish" });
+      },
+    });
+    await mountAccept();
+    await clickAccept();
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/sign-in");
+    });
+    expect(await screen.findByRole("heading", { level: 1, name: SENTENCE.signIn })).toBeTruthy();
+
+    await fillSignInOnScreen();
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/");
+    });
+    expect(await screen.findByRole("button", { name: SENTENCE.heading })).toBeTruthy();
+
+    await clickAccept();
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/settings/users");
+    });
+    const sent = acceptCalls(calls);
+    expect(sent).toHaveLength(2);
+    expect(JSON.parse(sent[0]?.body ?? "null")).toEqual({ token: INVITE });
+    expect(JSON.parse(sent[1]?.body ?? "null")).toEqual({ token: INVITE });
+    expect(getInviteToken()).toBeUndefined();
+  });
+});
+
 describe("one request per click", () => {
   it("sends one accept request per click under StrictMode", async () => {
     const calls = installFetch({ accept: () => json({ error: "invitation_invalid" }, 404) });

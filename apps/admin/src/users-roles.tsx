@@ -526,11 +526,14 @@ export function UsersRolesPage() {
     );
   }
 
+  const permissions = directory?.permissions ?? [];
   const limitReached = directory !== undefined && directory.customRoles.length >= 20;
   const canManageRoles =
     directory !== undefined && directory.permissions.includes("access.roles.manage");
   const canManageUsers =
     directory !== undefined && directory.permissions.includes("access.users.manage");
+  const canViewUsersAndRoles =
+    permissions.includes("access.users.view") && permissions.includes("access.roles.view");
 
   const usersById = new Map((users?.users ?? []).map((user) => [user.userId, user]));
   const phoneVisible = users?.phoneVisible ?? false;
@@ -702,7 +705,7 @@ export function UsersRolesPage() {
                 </form>
               </Panel>
             )}
-            {canManageRoles && !hideWrites ? (
+            {canManageRoles && canViewUsersAndRoles && !hideWrites ? (
               <Panel>
                 <form
                   className="grid gap-4"
@@ -739,7 +742,7 @@ export function UsersRolesPage() {
                 </form>
               </Panel>
             ) : null}
-            {canManageUsers && !hideWrites ? (
+            {canManageUsers && canViewUsersAndRoles && !hideWrites ? (
               <Panel>
                 <form
                   className="grid gap-4"

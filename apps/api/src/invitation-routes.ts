@@ -38,12 +38,15 @@ import type { BillingLogFields } from "./index.js";
 import { guardWrite } from "./billing-guard.js";
 import { identityInvitationAddresses } from "./invitation-addresses.js";
 
-const DENIAL_PURPOSES = new Set([
-  "access.users.manage",
-  "access.users.view",
-  "access.roles.manage",
-  "access.roles.view",
-]);
+const DENIAL_PURPOSES = {
+  "access.users.manage": "access.users.manage",
+  "access.users.view": "access.users.view",
+  "access.roles.manage": "access.roles.manage",
+  "access.roles.view": "access.roles.view",
+  "people.view": "people.person.view",
+} as const satisfies Record<string, string>;
+
+type InvitationPermission = keyof typeof DENIAL_PURPOSES;
 
 type Scope = { orgId: string; communityId: string };
 
@@ -228,18 +231,22 @@ export function invitationRoutes(deps: InvitationRouteDeps): GateRoute[] {
   async function checkActorPermissions(
     scope: Scope,
     userId: string,
-    permissions: string[],
+    permissions: readonly InvitationPermission[],
   ): Promise<boolean> {
     return deps.checkout("app", (sql) =>
       withAppTransaction(sql, scope, async (tx) => {
         for (const perm of permissions) {
           const has = await holdsPermission(tx, userId, perm);
           if (!has) {
+            const purpose = DENIAL_PURPOSES[perm];
+            if (purpose === undefined) {
+              throw new Error("unmapped invitation permission");
+            }
             await appendAuditEvent(tx, {
               actorKind: "user",
               actorId: userId,
               action: "access.permission.denied",
-              purpose: DENIAL_PURPOSES.has(perm) ? perm : "access.users.manage",
+              purpose,
               targetIds: [userId],
             });
             return false;
@@ -321,7 +328,7 @@ export function invitationRoutes(deps: InvitationRouteDeps): GateRoute[] {
             return scope;
           }
 
-          const requiredPerms = ["access.users.manage"];
+          const requiredPerms: InvitationPermission[] = ["access.users.manage"];
           if (roleKey !== undefined || customRoleId !== undefined) {
             requiredPerms.push("access.roles.manage");
           }
@@ -541,6 +548,71 @@ export function invitationRoutes(deps: InvitationRouteDeps): GateRoute[] {
       surface: "tenant",
       billing: "write",
       handle: async (request, context) => {
+        let scope: Scope | undefined;
+        let actorId: string | undefined;
+        let validatedInvitationId: string | undefined;
+        let refreshed = false;
+        let compensated = false;
+
+        const baseAddresses = identityInvitationAddresses({
+          checkout: deps.checkout,
+          kms: deps.kms,
+          keyArn: deps.keyArn,
+        });
+
+        const logCompensation = (fields: Record<string, unknown>) => {
+          try {
+            deps.log("compensation", fields);
+          } catch {
+            // Keep compensation running even if the logger throws.
+          }
+        };
+
+        const compensate = async () => {
+          if (!refreshed || compensated) {
+            return;
+          }
+          compensated = true;
+          if (validatedInvitationId === undefined) {
+            return;
+          }
+
+          try {
+            await baseAddresses.close(validatedInvitationId);
+          } catch (e) {
+            logCompensation({
+              route: "invitations.resend",
+              step: "close",
+              errorClass: errorClassFor(e),
+              requestId: getRequestContext().requestId,
+            });
+          }
+
+          if (scope !== undefined && actorId !== undefined) {
+            const targetScope = scope;
+            const targetActorId = actorId;
+            const targetInvitationId = validatedInvitationId;
+            try {
+              await deps.checkout("app", (sql) =>
+                withAppTransaction(sql, targetScope, (tx) =>
+                  voidInvitationAfterMailFailure(tx, baseAddresses, {
+                    invitationId: targetInvitationId,
+                    actorUserId: targetActorId,
+                    now: deps.now(),
+                  }),
+                ),
+              );
+            } catch (e) {
+              logCompensation({
+                route: "invitations.resend",
+                step: "void",
+                errorClass: errorClassFor(e),
+                requestId: getRequestContext().requestId,
+              });
+            }
+          }
+        };
+
         try {
           const hidden = foreignHost(request);
           if (hidden !== undefined) {
@@ -552,21 +624,25 @@ export function invitationRoutes(deps: InvitationRouteDeps): GateRoute[] {
             return empty(400);
           }
           const { communitySlug, invitationId } = body;
+          validatedInvitationId = invitationId;
 
           const actor = await sessionUser(request);
           if (actor instanceof Response) {
             return actor;
           }
+          actorId = actor.userId;
 
-          const scope = await communityScope(communitySlug, context, actor.userId);
-          if (scope === null) {
+          const scopeOutcome = await communityScope(communitySlug, context, actor.userId);
+          if (scopeOutcome === null) {
             return empty(403);
           }
-          if (scope instanceof Response) {
-            return scope;
+          if (scopeOutcome instanceof Response) {
+            return scopeOutcome;
           }
+          const activeScope = scopeOutcome;
+          scope = activeScope;
 
-          const hasPerms = await checkActorPermissions(scope, actor.userId, [
+          const hasPerms = await checkActorPermissions(activeScope, actor.userId, [
             "access.users.manage",
           ]);
           if (!hasPerms) {
@@ -577,14 +653,24 @@ export function invitationRoutes(deps: InvitationRouteDeps): GateRoute[] {
             return empty(503);
           }
 
-          const baseAddresses = identityInvitationAddresses({
-            checkout: deps.checkout,
-            kms: deps.kms,
-            keyArn: deps.keyArn,
-          });
+          const addresses: InvitationAddresses = {
+            ...baseAddresses,
+            async refresh(input) {
+              try {
+                const res = await baseAddresses.refresh(input);
+                if (res) {
+                  refreshed = true;
+                }
+                return res;
+              } catch (e) {
+                refreshed = true;
+                throw e;
+              }
+            },
+          };
 
-          const outcome = await transactInvitation(scope, (tx) =>
-            resendInvitation(tx, baseAddresses, {
+          const outcome = await transactInvitation(activeScope, (tx) =>
+            resendInvitation(tx, addresses, {
               invitationId,
               actorUserId: actor.userId,
               now: deps.now(),
@@ -592,6 +678,7 @@ export function invitationRoutes(deps: InvitationRouteDeps): GateRoute[] {
           );
 
           if (outcome instanceof AccessError) {
+            await compensate();
             const mapped = invitationStatus(outcome);
             if (mapped !== undefined) {
               return mapped;
@@ -616,7 +703,7 @@ export function invitationRoutes(deps: InvitationRouteDeps): GateRoute[] {
           } catch {
             try {
               await deps.checkout("app", (sql) =>
-                withAppTransaction(sql, scope, (tx) =>
+                withAppTransaction(sql, activeScope, (tx) =>
                   voidInvitationAfterMailFailure(tx, baseAddresses, {
                     invitationId,
                     actorUserId: actor.userId,
@@ -636,6 +723,7 @@ export function invitationRoutes(deps: InvitationRouteDeps): GateRoute[] {
 
           return empty(204);
         } catch (error) {
+          await compensate();
           if (error instanceof AccessError) {
             const mapped = invitationStatus(error);
             if (mapped !== undefined) {

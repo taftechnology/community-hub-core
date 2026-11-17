@@ -74,5 +74,6 @@ describe("core.access manifest", () => {
     expect(isAuditPurpose("access.users.view")).toBe(true);
     expect(isAuditPurpose("access.roles.manage")).toBe(true);
     expect(isAuditPurpose("access.roles.view")).toBe(true);
+    expect(isAuditPurpose("people.person.view")).toBe(true);
   });
 });
