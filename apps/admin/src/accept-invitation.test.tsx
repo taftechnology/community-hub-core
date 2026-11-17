@@ -542,6 +542,7 @@ describe("signed out", () => {
     await waitFor(() => {
       expect(router.state.location.pathname).toBe("/sign-in");
     });
+    expect(router.state.historyAction).toBe("REPLACE");
     expect(await screen.findByRole("heading", { level: 1, name: SENTENCE.signIn })).toBeTruthy();
     expect(getInviteToken()).toBe(INVITE);
     expect(window.location.hash).toBe("");
@@ -562,8 +563,30 @@ describe("signed out", () => {
     await waitFor(() => {
       expect(router.state.location.pathname).toBe("/sign-in");
     });
+    expect(router.state.historyAction).toBe("REPLACE");
     expect(await screen.findByRole("heading", { level: 1, name: SENTENCE.signIn })).toBeTruthy();
     expect(acceptCalls(calls)).toHaveLength(0);
+    expect(getInviteToken()).toBe(INVITE);
+  });
+
+  it("after a failed attempt, a lost session goes to sign in without sending", async () => {
+    const calls = installFetch({
+      accept: () => {
+        throw new TypeError("network down");
+      },
+    });
+    await mountAccept();
+    await clickAccept();
+    await screen.findByText(SENTENCE.generic);
+    expect(getInviteToken()).toBe(INVITE);
+
+    sessionStorage.removeItem("community-hub.access-token");
+    await clickAccept();
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/sign-in");
+    });
+    expect(acceptCalls(calls)).toHaveLength(1);
     expect(getInviteToken()).toBe(INVITE);
   });
 
