@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { email, phone } from "./people.js";
+
 const slug = z.string().min(1);
 const uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
 const name = z.string().trim().min(1).max(100);
@@ -72,6 +74,18 @@ export const addMinorBody = z
   })
   .strict();
 
+export const addAdultBody = z
+  .object({
+    communitySlug: slug,
+    householdId: uuid,
+    givenName: name,
+    familyName: name,
+    email: email.nullable().optional(),
+    phone: phone.nullable().optional(),
+    dateOfBirth: dateOfBirth.nullable().optional(),
+  })
+  .strict();
+
 export const linkGuardianBody = z
   .object({
     communitySlug: slug,
@@ -97,6 +111,7 @@ export type CreateHouseholdBody = z.infer<typeof createHouseholdBody>;
 export type RenameHouseholdBody = z.infer<typeof renameHouseholdBody>;
 export type MoveAdultBody = z.infer<typeof moveAdultBody>;
 export type AddMinorBody = z.infer<typeof addMinorBody>;
+export type AddAdultBody = z.infer<typeof addAdultBody>;
 export type LinkGuardianBody = z.infer<typeof linkGuardianBody>;
 export type UnlinkGuardianBody = z.infer<typeof unlinkGuardianBody>;
 

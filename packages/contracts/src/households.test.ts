@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  addAdultBody,
   addMinorBody,
   createHouseholdBody,
   linkGuardianBody,
@@ -457,5 +458,132 @@ describe("household contract schemas (pin 10)", () => {
         version: -1,
       }).success,
     ).toBe(false);
+  });
+
+  it("addAdultBody refuses isMinor, declaredAdult, orgId, communityId, personId and version", () => {
+    const validBase = {
+      communitySlug: "parish-au",
+      householdId: VALID_UUID,
+      givenName: "Jane",
+      familyName: "Doe",
+    };
+    expect(addAdultBody.safeParse(validBase).success).toBe(true);
+
+    expect(addAdultBody.safeParse({ ...validBase, isMinor: false }).success).toBe(false);
+    expect(addAdultBody.safeParse({ ...validBase, isMinor: true }).success).toBe(false);
+    expect(addAdultBody.safeParse({ ...validBase, declaredAdult: true }).success).toBe(false);
+    expect(addAdultBody.safeParse({ ...validBase, orgId: VALID_UUID }).success).toBe(false);
+    expect(addAdultBody.safeParse({ ...validBase, communityId: VALID_UUID }).success).toBe(false);
+    expect(addAdultBody.safeParse({ ...validBase, personId: VALID_UUID }).success).toBe(false);
+    expect(addAdultBody.safeParse({ ...validBase, version: 1 }).success).toBe(false);
+    expect(addAdultBody.safeParse({ ...validBase, extra: "forbidden" }).success).toBe(false);
+  });
+
+  it("addAdultBody requires a non-null householdId", () => {
+    const validBase = {
+      communitySlug: "parish-au",
+      givenName: "Jane",
+      familyName: "Doe",
+    };
+    expect(addAdultBody.safeParse({ ...validBase }).success).toBe(false);
+    expect(addAdultBody.safeParse({ ...validBase, householdId: null }).success).toBe(false);
+    expect(addAdultBody.safeParse({ ...validBase, householdId: undefined }).success).toBe(false);
+    expect(addAdultBody.safeParse({ ...validBase, householdId: "" }).success).toBe(false);
+    expect(addAdultBody.safeParse({ ...validBase, householdId: "not-a-valid-uuid" }).success).toBe(
+      false,
+    );
+    expect(addAdultBody.safeParse({ ...validBase, householdId: VALID_UUID }).success).toBe(true);
+  });
+
+  it("addAdultBody accepts a body with only the required fields", () => {
+    const result = addAdultBody.safeParse({
+      communitySlug: "parish-au",
+      householdId: VALID_UUID,
+      givenName: "Jane",
+      familyName: "Doe",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toEqual({
+        communitySlug: "parish-au",
+        householdId: VALID_UUID,
+        givenName: "Jane",
+        familyName: "Doe",
+      });
+    }
+  });
+
+  it("addAdultBody accepts null and omitted optional fields", () => {
+    const base = {
+      communitySlug: "parish-au",
+      householdId: VALID_UUID,
+      givenName: "Jane",
+      familyName: "Doe",
+    };
+
+    expect(addAdultBody.safeParse(base).success).toBe(true);
+
+    expect(
+      addAdultBody.safeParse({
+        ...base,
+        email: null,
+        phone: null,
+        dateOfBirth: null,
+      }).success,
+    ).toBe(true);
+
+    expect(
+      addAdultBody.safeParse({
+        ...base,
+        email: "jane@example.test",
+        phone: "+61 400 000 000",
+        dateOfBirth: "1990-01-01",
+      }).success,
+    ).toBe(true);
+
+    expect(
+      addAdultBody.safeParse({
+        ...base,
+        email: "jane@example.test",
+        phone: null,
+      }).success,
+    ).toBe(true);
+
+    expect(
+      addAdultBody.safeParse({
+        ...base,
+        email: "not-an-email",
+      }).success,
+    ).toBe(false);
+
+    expect(
+      addAdultBody.safeParse({
+        ...base,
+        phone: "",
+      }).success,
+    ).toBe(false);
+
+    expect(
+      addAdultBody.safeParse({
+        ...base,
+        dateOfBirth: "not-a-date",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("addAdultBody refuses an empty given or family name", () => {
+    const base = {
+      communitySlug: "parish-au",
+      householdId: VALID_UUID,
+      givenName: "Jane",
+      familyName: "Doe",
+    };
+
+    expect(addAdultBody.safeParse({ ...base, givenName: "" }).success).toBe(false);
+    expect(addAdultBody.safeParse({ ...base, givenName: "   " }).success).toBe(false);
+    expect(addAdultBody.safeParse({ ...base, familyName: "" }).success).toBe(false);
+    expect(addAdultBody.safeParse({ ...base, familyName: "   " }).success).toBe(false);
+    expect(addAdultBody.safeParse({ ...base, givenName: null }).success).toBe(false);
+    expect(addAdultBody.safeParse({ ...base, familyName: null }).success).toBe(false);
   });
 });
