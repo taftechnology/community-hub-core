@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import {
@@ -18,6 +18,7 @@ import {
 import { withRequest } from "@community-hub/kernel";
 
 import {
+  addAdult,
   addMinor,
   createHousehold,
   createPerson,
@@ -1183,5 +1184,569 @@ describe("household members: add minor", () => {
       expect(stringified).not.toContain("SecretMinorFamily");
       expect(stringified).not.toContain("ConfidentialFamilyLabel");
     });
+  });
+});
+
+describe("household members: add adult", () => {
+  it("addAdult: a foreign household with an under-18 date of birth throws not_found", async () => {
+    await withTenant("foreign-dob", async (tx, kms) => {
+      const foreignHouseholdId = newId();
+      await expect(
+        addAdult(tx, kms, KEY_ARN, {
+          now: NOW,
+          householdId: foreignHouseholdId,
+          givenName: "Foreign",
+          familyName: "Person",
+          email: null,
+          phone: null,
+          dateOfBirth: "2016-01-01",
+          actorUserId: null,
+        }),
+      ).rejects.toMatchObject({ code: "not_found" });
+    });
+  });
+
+  it("addAdult: a household in another community of the same organisation throws not_found, no row", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const kms = createLocalKmsPort();
+    const org = newId();
+    const comm1 = newId();
+    const comm2 = newId();
+
+    try {
+      await platform.begin(async (tx) => {
+        await tx`insert into platform.organisations (id, slug, region, kind) values (${org}, ${`org-aa-same-${org.slice(0, 8)}`}, 'au', 'implicit')`;
+        await tx`insert into platform.communities (id, organisation_id, slug, region) values (${comm1}, ${org}, ${`comm-aa-1-${comm1.slice(0, 8)}`}, 'au')`;
+        await tx`insert into platform.communities (id, organisation_id, slug, region) values (${comm2}, ${org}, ${`comm-aa-2-${comm2.slice(0, 8)}`}, 'au')`;
+      });
+
+      let homeComm2Id!: string;
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: org, communityId: comm2 }, async (tx) => {
+          const home = await createHousehold(tx, kms, KEY_ARN, {
+            now: NOW,
+            label: null,
+            actorUserId: null,
+          });
+          homeComm2Id = home.householdId;
+        }),
+      );
+
+      // Attempting to add adult into homeComm2Id from comm1 scope -> not_found, no row
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: org, communityId: comm1 }, async (tx) => {
+          await expect(
+            addAdult(tx, kms, KEY_ARN, {
+              now: NOW,
+              householdId: homeComm2Id,
+              givenName: "Cross",
+              familyName: "Community",
+              email: null,
+              phone: null,
+              dateOfBirth: "1990-01-01",
+              actorUserId: null,
+            }),
+          ).rejects.toMatchObject({ code: "not_found" });
+
+          const persons = await tx<{ count: number }[]>`
+            select count(*)::int as count from app.persons
+          `;
+          expect(persons[0]!.count).toBe(0);
+        }),
+      );
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
+
+  it("addAdult: a household in another organisation throws not_found, no row", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const kms = createLocalKmsPort();
+    const orgA = newId();
+    const commA = newId();
+    const orgB = newId();
+    const commB = newId();
+
+    try {
+      await platform.begin(async (tx) => {
+        await tx`insert into platform.organisations (id, slug, region, kind) values (${orgA}, ${`org-a-diff-${orgA.slice(0, 8)}`}, 'au', 'implicit')`;
+        await tx`insert into platform.communities (id, organisation_id, slug, region) values (${commA}, ${orgA}, ${`comm-a-diff-${commA.slice(0, 8)}`}, 'au')`;
+        await tx`insert into platform.organisations (id, slug, region, kind) values (${orgB}, ${`org-b-diff-${orgB.slice(0, 8)}`}, 'au', 'implicit')`;
+        await tx`insert into platform.communities (id, organisation_id, slug, region) values (${commB}, ${orgB}, ${`comm-b-diff-${commB.slice(0, 8)}`}, 'au')`;
+      });
+
+      let homeBId!: string;
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: orgB, communityId: commB }, async (tx) => {
+          const home = await createHousehold(tx, kms, KEY_ARN, {
+            now: NOW,
+            label: null,
+            actorUserId: null,
+          });
+          homeBId = home.householdId;
+        }),
+      );
+
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: orgA, communityId: commA }, async (tx) => {
+          await expect(
+            addAdult(tx, kms, KEY_ARN, {
+              now: NOW,
+              householdId: homeBId,
+              givenName: "Cross",
+              familyName: "Org",
+              email: null,
+              phone: null,
+              dateOfBirth: "1990-01-01",
+              actorUserId: null,
+            }),
+          ).rejects.toMatchObject({ code: "not_found" });
+
+          const persons = await tx<{ count: number }[]>`
+            select count(*)::int as count from app.persons
+          `;
+          expect(persons[0]!.count).toBe(0);
+        }),
+      );
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
+
+  it("addAdult: an under-18 date of birth throws invalid_declaration and writes nothing", async () => {
+    await withTenant("under-18-dob", async (tx, kms) => {
+      const home = await createHousehold(tx, kms, KEY_ARN, {
+        now: NOW,
+        label: null,
+        actorUserId: null,
+      });
+
+      await expect(
+        addAdult(tx, kms, KEY_ARN, {
+          now: NOW,
+          householdId: home.householdId,
+          givenName: "Young",
+          familyName: "Person",
+          email: null,
+          phone: null,
+          dateOfBirth: "2016-01-01",
+          actorUserId: null,
+        }),
+      ).rejects.toMatchObject({ code: "invalid_declaration" });
+
+      const persons = await tx<{ count: number }[]>`
+        select count(*)::int as count from app.persons
+      `;
+      expect(persons[0]!.count).toBe(0);
+    });
+  });
+
+  it("addAdult: no date of birth stores a declared adult under the community key", async () => {
+    await withTenant("no-dob-declared", async (tx, kms) => {
+      const home = await createHousehold(tx, kms, KEY_ARN, {
+        now: NOW,
+        label: null,
+        actorUserId: null,
+      });
+
+      const result = await addAdult(tx, kms, KEY_ARN, {
+        now: NOW,
+        householdId: home.householdId,
+        givenName: "Declared",
+        familyName: "Adult",
+        email: null,
+        phone: null,
+        dateOfBirth: null,
+        actorUserId: null,
+      });
+
+      expect(result.personId).toBeDefined();
+
+      const stored = await tx<{ is_minor: boolean; age_basis: string; household_id: string }[]>`
+        select is_minor, age_basis, household_id::text as household_id
+        from app.persons
+        where id = ${result.personId}::uuid
+      `;
+      expect(stored[0]!.is_minor).toBe(false);
+      expect(stored[0]!.age_basis).toBe("declared_adult");
+      expect(stored[0]!.household_id).toBe(home.householdId);
+    });
+  });
+
+  it("addAdult: appends person.created then person.household_moved with ids only", async () => {
+    await withTenant("audit-ids-only", async (tx, kms) => {
+      const home = await createHousehold(tx, kms, KEY_ARN, {
+        now: NOW,
+        label: "ConfidentialFamilyLabel",
+        actorUserId: null,
+      });
+
+      const actorUserId = "55555555-5555-4555-8555-555555555555";
+      const result = await addAdult(tx, kms, KEY_ARN, {
+        now: NOW,
+        householdId: home.householdId,
+        givenName: "SecretAdultGiven",
+        familyName: "SecretAdultFamily",
+        email: null,
+        phone: null,
+        dateOfBirth: null,
+        actorUserId,
+      });
+
+      const audits = await tx<{ action: string; target_ids: string[]; actor_id: string | null }[]>`
+        select action, target_ids, actor_id
+        from app.audit_events
+        order by occurred_at asc
+      `;
+
+      const createdAudit = audits.find((a) => a.action === "people.person.created");
+      expect(createdAudit).toBeDefined();
+      expect(createdAudit!.target_ids).toEqual([result.personId]);
+
+      const movedAudit = audits.find((a) => a.action === "people.person.household_moved");
+      expect(movedAudit).toBeDefined();
+      expect(movedAudit!.target_ids).toEqual([result.personId, home.householdId]);
+      expect(movedAudit!.actor_id).toBe(actorUserId);
+
+      const allAudits = await tx<{ action: string }[]>`
+        select action from app.audit_events
+      `;
+      const stringified = JSON.stringify(allAudits);
+      expect(stringified).not.toContain("SecretAdultGiven");
+      expect(stringified).not.toContain("SecretAdultFamily");
+      expect(stringified).not.toContain("ConfidentialFamilyLabel");
+    });
+  });
+
+  it("addAdult: a householdId that is not a UUID throws invalid_input before any SQL", async () => {
+    const kms = createLocalKmsPort();
+    const stubTx = vi.fn() as unknown as AppTransaction;
+
+    await expect(
+      addAdult(stubTx, kms, KEY_ARN, {
+        now: NOW,
+        householdId: "not-a-uuid",
+        givenName: "Jane",
+        familyName: "Doe",
+        email: null,
+        phone: null,
+        dateOfBirth: null,
+        actorUserId: null,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_input" });
+
+    expect(stubTx).not.toHaveBeenCalled();
+  });
+
+  it("addAdult: the household select filters by org and community explicitly", async () => {
+    const kms = createLocalKmsPort();
+    const sqlCalls: string[] = [];
+    const stubTx = vi.fn((strings: TemplateStringsArray) => {
+      sqlCalls.push(strings.join("?"));
+      return Promise.resolve([]);
+    }) as unknown as AppTransaction;
+
+    await expect(
+      addAdult(stubTx, kms, KEY_ARN, {
+        now: NOW,
+        householdId: "11111111-1111-4111-8111-111111111111",
+        givenName: "Jane",
+        familyName: "Doe",
+        email: null,
+        phone: null,
+        dateOfBirth: null,
+        actorUserId: null,
+      }),
+    ).rejects.toMatchObject({ code: "not_found" });
+
+    expect(sqlCalls.length).toBeGreaterThan(0);
+    expect(sqlCalls[0]).toContain("current_setting('app.org_id')");
+    expect(sqlCalls[0]).toContain("current_setting('app.community_id')");
+  });
+
+  it("addAdult: stores an adult with a date of birth under the community key with clear names", async () => {
+    await withTenant("adult-dob-clear-names", async (tx, kms) => {
+      const home = await createHousehold(tx, kms, KEY_ARN, {
+        now: NOW,
+        label: "Home 1",
+        actorUserId: null,
+      });
+
+      const result = await addAdult(tx, kms, KEY_ARN, {
+        now: NOW,
+        householdId: home.householdId,
+        givenName: "Alice",
+        familyName: "Smith",
+        email: "alice.smith@example.test",
+        phone: "+61412345678",
+        dateOfBirth: "1990-05-15",
+        actorUserId: "66666666-6666-4666-8666-666666666666",
+      });
+
+      expect(result.personId).toBeDefined();
+
+      const person = (
+        await tx<
+          {
+            is_minor: boolean;
+            age_basis: string;
+            household_id: string;
+            version: number;
+            given_name: string | null;
+            family_name: string | null;
+            given_name_restricted: unknown;
+            family_name_restricted: unknown;
+          }[]
+        >`
+          select
+            is_minor,
+            age_basis,
+            household_id::text as household_id,
+            version,
+            given_name,
+            family_name,
+            given_name_restricted,
+            family_name_restricted
+          from app.persons
+          where id = ${result.personId}::uuid
+        `
+      )[0]!;
+
+      expect(person.is_minor).toBe(false);
+      expect(person.age_basis).toBe("date_of_birth");
+      expect(person.household_id).toBe(home.householdId);
+      expect(person.version).toBe(1);
+      expect(person.given_name).toBe("Alice");
+      expect(person.family_name).toBe("Smith");
+      expect(person.given_name_restricted).toBeNull();
+      expect(person.family_name_restricted).toBeNull();
+
+      const activity = await tx<{ kind: string; person_id: string }[]>`
+        select kind, person_id::text as person_id
+        from app.person_activity
+        where person_id = ${result.personId}::uuid
+      `;
+      expect(activity).toHaveLength(1);
+      expect(activity[0]!.kind).toBe("created");
+      expect(activity[0]!.person_id).toBe(result.personId);
+
+      const usage = await tx<{ count: number }[]>`
+        select coalesce(sum(success_count), 0)::int as count
+        from app.usage_facts_daily
+        where feature_key = 'people.directory'
+      `;
+      expect(usage[0]!.count).toBe(1);
+    });
+  });
+
+  it("addAdult: a duplicate email or phone throws duplicate_email or duplicate_phone and writes nothing", async () => {
+    await withTenant("duplicate-email-phone", async (tx, kms) => {
+      const home = await createHousehold(tx, kms, KEY_ARN, {
+        now: NOW,
+        label: null,
+        actorUserId: null,
+      });
+
+      await addAdult(tx, kms, KEY_ARN, {
+        now: NOW,
+        householdId: home.householdId,
+        givenName: "First",
+        familyName: "Person",
+        email: "shared@example.test",
+        phone: "+61411112222",
+        dateOfBirth: null,
+        actorUserId: null,
+      });
+
+      const countAfterFirst = (
+        await tx<{ count: number }[]>`select count(*)::int as count from app.persons`
+      )[0]!.count;
+      expect(countAfterFirst).toBe(1);
+
+      // Duplicate email
+      await expect(
+        addAdult(tx, kms, KEY_ARN, {
+          now: NOW,
+          householdId: home.householdId,
+          givenName: "Second",
+          familyName: "Person",
+          email: "shared@example.test",
+          phone: "+61499998888",
+          dateOfBirth: null,
+          actorUserId: null,
+        }),
+      ).rejects.toMatchObject({ code: "duplicate_email" });
+
+      const countAfterDupEmail = (
+        await tx<{ count: number }[]>`select count(*)::int as count from app.persons`
+      )[0]!.count;
+      expect(countAfterDupEmail).toBe(1);
+
+      // Duplicate phone
+      await expect(
+        addAdult(tx, kms, KEY_ARN, {
+          now: NOW,
+          householdId: home.householdId,
+          givenName: "Third",
+          familyName: "Person",
+          email: "other@example.test",
+          phone: "+61411112222",
+          dateOfBirth: null,
+          actorUserId: null,
+        }),
+      ).rejects.toMatchObject({ code: "duplicate_phone" });
+
+      const countAfterDupPhone = (
+        await tx<{ count: number }[]>`select count(*)::int as count from app.persons`
+      )[0]!.count;
+      expect(countAfterDupPhone).toBe(1);
+    });
+  });
+
+  it("addAdult: a duplicate email with an under-18 date of birth throws invalid_declaration", async () => {
+    await withTenant("dup-email-under-18", async (tx, kms) => {
+      const home = await createHousehold(tx, kms, KEY_ARN, {
+        now: NOW,
+        label: null,
+        actorUserId: null,
+      });
+
+      await addAdult(tx, kms, KEY_ARN, {
+        now: NOW,
+        householdId: home.householdId,
+        givenName: "Existing",
+        familyName: "Person",
+        email: "existing@example.test",
+        phone: null,
+        dateOfBirth: null,
+        actorUserId: null,
+      });
+
+      // Calling addAdult with the duplicate email BUT an under-18 DOB throws invalid_declaration, NOT duplicate_email
+      await expect(
+        addAdult(tx, kms, KEY_ARN, {
+          now: NOW,
+          householdId: home.householdId,
+          givenName: "Young",
+          familyName: "Person",
+          email: "existing@example.test",
+          phone: null,
+          dateOfBirth: "2016-01-01",
+          actorUserId: null,
+        }),
+      ).rejects.toMatchObject({ code: "invalid_declaration" });
+    });
+  });
+
+  it("addAdult: an 81-character name throws invalid_name", async () => {
+    await withTenant("name-too-long", async (tx, kms) => {
+      const home = await createHousehold(tx, kms, KEY_ARN, {
+        now: NOW,
+        label: null,
+        actorUserId: null,
+      });
+
+      await expect(
+        addAdult(tx, kms, KEY_ARN, {
+          now: NOW,
+          householdId: home.householdId,
+          givenName: "A".repeat(81),
+          familyName: "Person",
+          email: null,
+          phone: null,
+          dateOfBirth: null,
+          actorUserId: null,
+        }),
+      ).rejects.toMatchObject({ code: "invalid_name" });
+
+      await expect(
+        addAdult(tx, kms, KEY_ARN, {
+          now: NOW,
+          householdId: home.householdId,
+          givenName: "Person",
+          familyName: "B".repeat(81),
+          email: null,
+          phone: null,
+          dateOfBirth: null,
+          actorUserId: null,
+        }),
+      ).rejects.toMatchObject({ code: "invalid_name" });
+    });
+  });
+
+  it("addAdult: a future date of birth throws invalid_date and writes nothing", async () => {
+    await withTenant("future-dob", async (tx, kms) => {
+      const home = await createHousehold(tx, kms, KEY_ARN, {
+        now: NOW,
+        label: null,
+        actorUserId: null,
+      });
+
+      await expect(
+        addAdult(tx, kms, KEY_ARN, {
+          now: NOW,
+          householdId: home.householdId,
+          givenName: "Future",
+          familyName: "Person",
+          email: null,
+          phone: null,
+          dateOfBirth: "2099-01-01",
+          actorUserId: null,
+        }),
+      ).rejects.toMatchObject({ code: "invalid_date" });
+
+      const persons = await tx<{ count: number }[]>`
+        select count(*)::int as count from app.persons
+      `;
+      expect(persons[0]!.count).toBe(0);
+    });
+  });
+
+  it("addAdult: undefined optional fields throw invalid_input", async () => {
+    const kms = createLocalKmsPort();
+    const stubTx = vi.fn() as unknown as AppTransaction;
+
+    const base = {
+      now: NOW,
+      householdId: "11111111-1111-4111-8111-111111111111",
+      givenName: "Jane",
+      familyName: "Doe",
+      actorUserId: null,
+    };
+
+    await expect(
+      addAdult(stubTx, kms, KEY_ARN, {
+        ...base,
+        email: undefined as unknown as null,
+        phone: null,
+        dateOfBirth: null,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_input" });
+
+    await expect(
+      addAdult(stubTx, kms, KEY_ARN, {
+        ...base,
+        email: null,
+        phone: undefined as unknown as null,
+        dateOfBirth: null,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_input" });
+
+    await expect(
+      addAdult(stubTx, kms, KEY_ARN, {
+        ...base,
+        email: null,
+        phone: null,
+        dateOfBirth: undefined as unknown as null,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_input" });
+
+    expect(stubTx).not.toHaveBeenCalled();
   });
 });

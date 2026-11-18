@@ -68,8 +68,10 @@ export { hasGuardianView, personIsMinor } from "../infrastructure/access-facts.j
 export {
   moveAdult,
   addMinor,
+  addAdult,
   type MoveAdultInput,
   type AddMinorInput,
+  type AddAdultInput,
 } from "../infrastructure/household-members.js";
 export {
   linkGuardian,
