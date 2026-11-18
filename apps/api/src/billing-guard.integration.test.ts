@@ -1051,6 +1051,38 @@ describe("billing guard against a real database", () => {
       },
     ],
     [
+      "POST /v1/households/members/add-adult",
+      {
+        path: "/v1/households/members/add-adult",
+        prepare: async (setup) => {
+          let householdId!: string;
+          await withRequest({ requestId: REQUEST_ID }, () =>
+            withAppTransaction(
+              app,
+              { orgId: setup.orgId, communityId: setup.communityId },
+              async (tx) => {
+                const h = await createHousehold(tx, kms, KEY_ARN, {
+                  now: setup.now,
+                  label: "Household Add Adult",
+                  actorUserId: setup.ownerUserId,
+                });
+                householdId = h.householdId;
+              },
+            ),
+          );
+          return {
+            body: {
+              communitySlug: setup.slug,
+              householdId,
+              givenName: "Adult",
+              familyName: "Member",
+            },
+            count: () => countPersons(setup),
+          };
+        },
+      },
+    ],
+    [
       "POST /v1/households/guardians/link",
       {
         path: "/v1/households/guardians/link",

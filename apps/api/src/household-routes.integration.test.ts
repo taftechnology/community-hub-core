@@ -1320,4 +1320,196 @@ describe("household routes real-database integration (finding 4)", () => {
       manage: false,
     });
   });
+
+  it("add-adult: a household in another organisation or community answers 404 and writes no person", async () => {
+    const scopeA2 = { orgId: orgIdA, communityId: communityIdA2 };
+    const countPersonsA2 = async () =>
+      withAppTransaction(secondApp, scopeA2, async (tx) => {
+        const [row] = await tx<{ count: number }[]>`select count(*)::int as count from app.persons`;
+        return row!.count;
+      });
+    const beforeA2 = await countPersonsA2();
+
+    // Cross-community: Community A2 owner tries to add an adult to householdA1Id (which is in Community A1)
+    const resCrossComm = await post(
+      "/v1/households/members/add-adult",
+      {
+        communitySlug: slugA2,
+        householdId: householdA1Id,
+        givenName: "CrossComm",
+        familyName: "Person",
+      },
+      ownerA2Token,
+    );
+    expect(resCrossComm.status).toBe(404);
+    expect(await resCrossComm.text()).toBe("");
+
+    // Cross-organisation: Org B owner tries to add an adult to householdA1Id (which is in Org A)
+    const scopeB1 = { orgId: orgIdB, communityId: communityIdB1 };
+    const countPersonsB1 = async () =>
+      withAppTransaction(secondApp, scopeB1, async (tx) => {
+        const [row] = await tx<{ count: number }[]>`select count(*)::int as count from app.persons`;
+        return row!.count;
+      });
+    const beforeB1 = await countPersonsB1();
+
+    const resCrossOrg = await post(
+      "/v1/households/members/add-adult",
+      {
+        communitySlug: slugB1,
+        householdId: householdA1Id,
+        givenName: "CrossOrg",
+        familyName: "Person",
+      },
+      ownerB1Token,
+    );
+    expect(resCrossOrg.status).toBe(404);
+    expect(await resCrossOrg.text()).toBe("");
+
+    expect(await countPersonsA2()).toBe(beforeA2);
+    expect(await countPersonsB1()).toBe(beforeB1);
+  });
+
+  it("add-adult: creates an adult in the household with clear names, version 1 and two audit rows", async () => {
+    const scopeA1 = { orgId: orgIdA, communityId: communityIdA1 };
+    const res = await post(
+      "/v1/households/members/add-adult",
+      {
+        communitySlug: slugA1,
+        householdId: householdA1Id,
+        givenName: "Diana",
+        familyName: "Prince",
+        email: "diana.prince@example.test",
+        phone: "+61412555123",
+        dateOfBirth: "1990-05-15",
+      },
+      ownerA1Token,
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { personId: string };
+    expect(typeof body.personId).toBe("string");
+
+    await withAppTransaction(secondApp, scopeA1, async (tx) => {
+      const [person] = await tx<
+        {
+          given_name: string;
+          family_name: string;
+          age_basis: string;
+          is_minor: boolean;
+          household_id: string;
+          version: number;
+        }[]
+      >`
+        select given_name, family_name, age_basis, is_minor, household_id::text, version
+        from app.persons
+        where id = ${body.personId}::uuid
+      `;
+      expect(person).toBeDefined();
+      expect(person!.given_name).toBe("Diana");
+      expect(person!.family_name).toBe("Prince");
+      expect(person!.age_basis).toBe("date_of_birth");
+      expect(person!.is_minor).toBe(false);
+      expect(person!.household_id).toBe(householdA1Id);
+      expect(person!.version).toBe(1);
+
+      const audits = await tx<{ action: string; target_ids: string[] }[]>`
+        select action, target_ids::text[] as target_ids
+        from app.audit_events
+        where ${body.personId}::uuid = any(target_ids)
+        order by occurred_at asc
+      `;
+      expect(audits.map((a) => a.action)).toEqual([
+        "people.person.created",
+        "people.person.household_moved",
+      ]);
+      const movedAudit = audits.find((a) => a.action === "people.person.household_moved");
+      expect(movedAudit?.target_ids).toContain(body.personId);
+      expect(movedAudit?.target_ids).toContain(householdA1Id);
+    });
+  });
+
+  it("add-adult: an under-18 date of birth answers 400 and writes no person", async () => {
+    const scopeA1 = { orgId: orgIdA, communityId: communityIdA1 };
+    const countPersonsA1 = async () =>
+      withAppTransaction(secondApp, scopeA1, async (tx) => {
+        const [row] = await tx<{ count: number }[]>`select count(*)::int as count from app.persons`;
+        return row!.count;
+      });
+    const beforeA1 = await countPersonsA1();
+
+    const res = await post(
+      "/v1/households/members/add-adult",
+      {
+        communitySlug: slugA1,
+        householdId: householdA1Id,
+        givenName: "Young",
+        familyName: "Person",
+        dateOfBirth: "2015-06-01",
+      },
+      ownerA1Token,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("");
+    expect(await countPersonsA1()).toBe(beforeA1);
+  });
+
+  it("add-adult: an 81-character name answers 400", async () => {
+    const res = await post(
+      "/v1/households/members/add-adult",
+      {
+        communitySlug: slugA1,
+        householdId: householdA1Id,
+        givenName: "A".repeat(81),
+        familyName: "Person",
+      },
+      ownerA1Token,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("");
+  });
+
+  it("add-adult: a caller without people.restricted.read answers 403 and the denial is audited in the database", async () => {
+    const scopeA1 = { orgId: orgIdA, communityId: communityIdA1 };
+    const beforeDenied = await withAppTransaction(secondApp, scopeA1, async (tx) => {
+      const [persons] = await tx<
+        { count: number }[]
+      >`select count(*)::int as count from app.persons`;
+      const [audit] = await tx<
+        { count: number }[]
+      >`select count(*)::int as count from app.audit_events`;
+      return { persons: persons!.count, audit: audit!.count };
+    });
+
+    const res = await post(
+      "/v1/households/members/add-adult",
+      {
+        communitySlug: slugA1,
+        householdId: householdA1Id,
+        givenName: "Denied",
+        familyName: "Caller",
+      },
+      manageOnlyToken,
+    );
+    expect(res.status).toBe(403);
+    expect(await res.text()).toBe("");
+
+    const afterDenied = await withAppTransaction(secondApp, scopeA1, async (tx) => {
+      const [persons] = await tx<
+        { count: number }[]
+      >`select count(*)::int as count from app.persons`;
+      const [audit] = await tx<
+        { count: number }[]
+      >`select count(*)::int as count from app.audit_events`;
+      const [latest] = await tx<{ action: string; purpose: string }[]>`
+        select action, purpose from app.audit_events
+        order by occurred_at desc limit 1
+      `;
+      return { persons: persons!.count, audit: audit!.count, latest: latest! };
+    });
+
+    expect(afterDenied.persons).toBe(beforeDenied.persons);
+    expect(afterDenied.audit).toBe(beforeDenied.audit + 1);
+    expect(afterDenied.latest.action).toBe("people.permission.denied");
+    expect(afterDenied.latest.purpose).toBe("people.restricted.read");
+  });
 });
