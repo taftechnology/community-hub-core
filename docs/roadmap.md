@@ -346,6 +346,8 @@ The editor chat/Run input can send a command to a different shell than the one h
 
 The parked-state tests (pins 1a and 1b) are presence regexes, so a comment holding the parked values can pass them while the tree is unparked; Task 4 closed the gap for this chunk with a byte-equality check against `origin/main`, but the tests themselves were not changed.
 
+The dependency audit ignores `GHSA-fc5q-39xc-vjpf` (picomatch ReDoS, high, `<=4.0.7`, no patched version on 2026-11-18) through `pnpm.auditConfig.ignoreGhsas` in `package.json`, approved by the project owner on 2026-11-18. picomatch 4.0.7 reaches the tree only through build and lint tools (`apps/admin > vite`, `typescript-eslint`); it never runs in the API service or the shipped admin bundle, and the ReDoS needs an attacker-supplied glob pattern. Remove the entry once a patched picomatch is released.
+
 SES production access is still pending (account in the sandbox, 200 a day, verified recipients only).
 
 `unpaid` and `grace` billing states were not proven live.
