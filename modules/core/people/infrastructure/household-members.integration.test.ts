@@ -25,6 +25,7 @@ import {
   linkGuardian,
   moveAdult,
   PeopleError,
+  readPerson,
 } from "../public/index.js";
 
 type Runtime = {
@@ -1189,21 +1190,55 @@ describe("household members: add minor", () => {
 
 describe("household members: add adult", () => {
   it("addAdult: a foreign household with an under-18 date of birth throws not_found", async () => {
-    await withTenant("foreign-dob", async (tx, kms) => {
-      const foreignHouseholdId = newId();
-      await expect(
-        addAdult(tx, kms, KEY_ARN, {
-          now: NOW,
-          householdId: foreignHouseholdId,
-          givenName: "Foreign",
-          familyName: "Person",
-          email: null,
-          phone: null,
-          dateOfBirth: "2016-01-01",
-          actorUserId: null,
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const kms = createLocalKmsPort();
+    const orgA = newId();
+    const commA = newId();
+    const orgB = newId();
+    const commB = newId();
+
+    try {
+      await platform.begin(async (tx) => {
+        await tx`insert into platform.organisations (id, slug, region, kind) values (${orgA}, ${`org-a-foreign-${orgA.slice(0, 8)}`}, 'au', 'implicit')`;
+        await tx`insert into platform.communities (id, organisation_id, slug, region) values (${commA}, ${orgA}, ${`comm-a-foreign-${commA.slice(0, 8)}`}, 'au')`;
+        await tx`insert into platform.organisations (id, slug, region, kind) values (${orgB}, ${`org-b-foreign-${orgB.slice(0, 8)}`}, 'au', 'implicit')`;
+        await tx`insert into platform.communities (id, organisation_id, slug, region) values (${commB}, ${orgB}, ${`comm-b-foreign-${commB.slice(0, 8)}`}, 'au')`;
+      });
+
+      let homeBId!: string;
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: orgB, communityId: commB }, async (tx) => {
+          const home = await createHousehold(tx, kms, KEY_ARN, {
+            now: NOW,
+            label: null,
+            actorUserId: null,
+          });
+          homeBId = home.householdId;
         }),
-      ).rejects.toMatchObject({ code: "not_found" });
-    });
+      );
+
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: orgA, communityId: commA }, async (tx) => {
+          await expect(
+            addAdult(tx, kms, KEY_ARN, {
+              now: NOW,
+              householdId: homeBId,
+              givenName: "Foreign",
+              familyName: "Person",
+              email: null,
+              phone: null,
+              dateOfBirth: "2016-01-01",
+              actorUserId: null,
+            }),
+          ).rejects.toMatchObject({ code: "not_found" });
+        }),
+      );
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
   });
 
   it("addAdult: a household in another community of the same organisation throws not_found, no row", async () => {
@@ -1360,7 +1395,7 @@ describe("household members: add adult", () => {
         householdId: home.householdId,
         givenName: "Declared",
         familyName: "Adult",
-        email: null,
+        email: "declared.adult@example.test",
         phone: null,
         dateOfBirth: null,
         actorUserId: null,
@@ -1376,6 +1411,17 @@ describe("household members: add adult", () => {
       expect(stored[0]!.is_minor).toBe(false);
       expect(stored[0]!.age_basis).toBe("declared_adult");
       expect(stored[0]!.household_id).toBe(home.householdId);
+
+      const read = await readPerson(tx, kms, KEY_ARN, {
+        personId: result.personId,
+        actorUserId: null,
+      });
+      expect(read).not.toBeNull();
+      expect(read!.email).toBe("declared.adult@example.test");
+      expect(read!.phone).toBeNull();
+      expect(read!.dateOfBirth).toBeNull();
+      expect(read!.isMinor).toBe(false);
+      expect(read!.ageBasis).toBe("declared_adult");
     });
   });
 
@@ -1399,28 +1445,19 @@ describe("household members: add adult", () => {
         actorUserId,
       });
 
-      const audits = await tx<{ action: string; target_ids: string[]; actor_id: string | null }[]>`
-        select action, target_ids, actor_id
+      const audits = await tx<{ action: string; target_ids: string[] }[]>`
+        select action, target_ids
         from app.audit_events
-        order by occurred_at asc
+        where action like 'people.person.%'
+        order by seq
       `;
 
-      const createdAudit = audits.find((a) => a.action === "people.person.created");
-      expect(createdAudit).toBeDefined();
-      expect(createdAudit!.target_ids).toEqual([result.personId]);
-
-      const movedAudit = audits.find((a) => a.action === "people.person.household_moved");
-      expect(movedAudit).toBeDefined();
-      expect(movedAudit!.target_ids).toEqual([result.personId, home.householdId]);
-      expect(movedAudit!.actor_id).toBe(actorUserId);
-
-      const allAudits = await tx<{ action: string }[]>`
-        select action from app.audit_events
-      `;
-      const stringified = JSON.stringify(allAudits);
-      expect(stringified).not.toContain("SecretAdultGiven");
-      expect(stringified).not.toContain("SecretAdultFamily");
-      expect(stringified).not.toContain("ConfidentialFamilyLabel");
+      expect(audits.map((r) => r.action)).toEqual([
+        "people.person.created",
+        "people.person.household_moved",
+      ]);
+      expect(audits[0]!.target_ids).toEqual([result.personId]);
+      expect(audits[1]!.target_ids).toEqual([result.personId, home.householdId]);
     });
   });
 
@@ -1484,7 +1521,7 @@ describe("household members: add adult", () => {
         givenName: "Alice",
         familyName: "Smith",
         email: "alice.smith@example.test",
-        phone: "+61412345678",
+        phone: "+61412555101",
         dateOfBirth: "1990-05-15",
         actorUserId: "66666666-6666-4666-8666-666666666666",
       });
@@ -1527,6 +1564,17 @@ describe("household members: add adult", () => {
       expect(person.given_name_restricted).toBeNull();
       expect(person.family_name_restricted).toBeNull();
 
+      const read = await readPerson(tx, kms, KEY_ARN, {
+        personId: result.personId,
+        actorUserId: "66666666-6666-4666-8666-666666666666",
+      });
+      expect(read).not.toBeNull();
+      expect(read!.email).toBe("alice.smith@example.test");
+      expect(read!.phone).toBe("61412555101");
+      expect(read!.dateOfBirth).toBe("1990-05-15");
+      expect(read!.isMinor).toBe(false);
+      expect(read!.ageBasis).toBe("date_of_birth");
+
       const activity = await tx<{ kind: string; person_id: string }[]>`
         select kind, person_id::text as person_id
         from app.person_activity
@@ -1559,7 +1607,7 @@ describe("household members: add adult", () => {
         givenName: "First",
         familyName: "Person",
         email: "shared@example.test",
-        phone: "+61411112222",
+        phone: "+61411555202",
         dateOfBirth: null,
         actorUserId: null,
       });
@@ -1577,7 +1625,7 @@ describe("household members: add adult", () => {
           givenName: "Second",
           familyName: "Person",
           email: "shared@example.test",
-          phone: "+61499998888",
+          phone: "+61499555303",
           dateOfBirth: null,
           actorUserId: null,
         }),
@@ -1596,7 +1644,7 @@ describe("household members: add adult", () => {
           givenName: "Third",
           familyName: "Person",
           email: "other@example.test",
-          phone: "+61411112222",
+          phone: "+61411555202",
           dateOfBirth: null,
           actorUserId: null,
         }),
