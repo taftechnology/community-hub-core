@@ -22,9 +22,11 @@ import { post } from "./api";
 import { useBillingStatus } from "./billing-status";
 import { useCommunity } from "./community";
 import { readAccessToken } from "./directory";
+import { type ContactFormData, ContactFields, initialFormData } from "./contact-fields";
 import { LifeEventsPanel } from "./life-events";
 import { type PeopleAccess, usePeopleAccess } from "./people-access";
 import { ScreenTitle } from "./screen-title";
+import { isUnder18OnSydneyDate } from "./sydney-age";
 
 type HouseholdItem = {
   householdId: string;
@@ -83,6 +85,7 @@ type ViewMode =
   | "rename"
   | "move-adult"
   | "add-adult"
+  | "add-adult-new"
   | "add-minor"
   | "link-guardian";
 
@@ -518,6 +521,12 @@ export function FamilyRecordsPage() {
   const [adultSearchNotice, setAdultSearchNotice] = useState<string | null>(null);
   const adultSearchGeneration = useRef(0);
 
+  // Create new adult
+  const [newAdultForm, setNewAdultForm] = useState<ContactFormData>(initialFormData);
+  const [newAdultNotice, setNewAdultNotice] = useState<string | null>(null);
+  const [newAdultNotFound, setNewAdultNotFound] = useState(false);
+  const submittingRef = useRef(false);
+
   // Add minor
   const [minorGivenName, setMinorGivenName] = useState("");
   const [minorFamilyName, setMinorFamilyName] = useState("");
@@ -543,6 +552,7 @@ export function FamilyRecordsPage() {
   const renameHeadingRef = useRef<HTMLHeadingElement>(null);
   const moveAdultHeadingRef = useRef<HTMLHeadingElement>(null);
   const addAdultHeadingRef = useRef<HTMLHeadingElement>(null);
+  const newAdultHeadingRef = useRef<HTMLHeadingElement>(null);
   const addMinorHeadingRef = useRef<HTMLHeadingElement>(null);
   const linkGuardianHeadingRef = useRef<HTMLHeadingElement>(null);
 
@@ -551,6 +561,7 @@ export function FamilyRecordsPage() {
   const renameAlertRef = useRef<HTMLDivElement>(null);
   const moveAlertRef = useRef<HTMLDivElement>(null);
   const addAdultAlertRef = useRef<HTMLDivElement>(null);
+  const newAdultAlertRef = useRef<HTMLDivElement>(null);
   const addMinorAlertRef = useRef<HTMLDivElement>(null);
   const linkAlertRef = useRef<HTMLDivElement>(null);
   const unlinkAlertRef = useRef<HTMLDivElement>(null);
@@ -568,6 +579,8 @@ export function FamilyRecordsPage() {
       moveAdultHeadingRef.current?.focus();
     } else if (view === "add-adult") {
       addAdultHeadingRef.current?.focus();
+    } else if (view === "add-adult-new") {
+      newAdultHeadingRef.current?.focus();
     } else if (view === "add-minor") {
       addMinorHeadingRef.current?.focus();
     } else if (view === "link-guardian") {
@@ -598,6 +611,12 @@ export function FamilyRecordsPage() {
       addAdultAlertRef.current?.focus();
     }
   }, [adultSearchNotice]);
+
+  useEffect(() => {
+    if (newAdultNotice) {
+      newAdultAlertRef.current?.focus();
+    }
+  }, [newAdultNotice]);
 
   useEffect(() => {
     if (addMinorNotice) {
@@ -758,6 +777,9 @@ export function FamilyRecordsPage() {
     setAdultSearchError(false);
     setAdultSearchNotice(null);
     adultSearchGeneration.current += 1;
+    setNewAdultForm(initialFormData);
+    setNewAdultNotice(null);
+    setNewAdultNotFound(false);
     setMinorGivenName("");
     setMinorFamilyName("");
     setMinorDob("");
@@ -871,6 +893,22 @@ export function FamilyRecordsPage() {
 
   function openAddAdult() {
     clearAdultSearch();
+    setView("add-adult");
+  }
+
+  function resetNewAdultForm() {
+    setNewAdultForm(initialFormData);
+    setNewAdultNotice(null);
+    setNewAdultNotFound(false);
+  }
+
+  function openNewAdult() {
+    resetNewAdultForm();
+    setView("add-adult-new");
+  }
+
+  function cancelNewAdult() {
+    resetNewAdultForm();
     setView("add-adult");
   }
 
@@ -1107,6 +1145,86 @@ export function FamilyRecordsPage() {
 
       setAdultSearchNotice("Unable to move adult");
     } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleNewAdultSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submittingRef.current || submitting || !slug || !detailHousehold || !canAddAdult) {
+      return;
+    }
+    const givenName = newAdultForm.givenName.trim();
+    const familyName = newAdultForm.familyName.trim();
+    const email = newAdultForm.email.trim();
+    const phone = newAdultForm.phone.trim();
+    const dateOfBirth = newAdultForm.dateOfBirth.trim();
+
+    if (dateOfBirth !== "" && isUnder18OnSydneyDate(dateOfBirth, new Date())) {
+      setNewAdultNotice("This person is under 18. Use Add minor instead.");
+      return;
+    }
+
+    submittingRef.current = true;
+    setSubmitting(true);
+    setNewAdultNotice(null);
+    setNewAdultNotFound(false);
+
+    try {
+      const response = await post("/v1/households/members/add-adult", {
+        communitySlug: slug,
+        householdId: detailHousehold.householdId,
+        givenName,
+        familyName,
+        ...(email !== "" ? { email } : {}),
+        ...(phone !== "" ? { phone } : {}),
+        ...(dateOfBirth !== "" ? { dateOfBirth } : {}),
+      });
+
+      if (response === "unavailable") {
+        setNewAdultNotice("Unable to add this adult. Try again.");
+        return;
+      }
+
+      if (response.status === 201) {
+        resetNewAdultForm();
+        clearAdultSearch();
+        setView("detail");
+        reloadDetail();
+        return;
+      }
+
+      if (response.status === 409) {
+        setNewAdultNotice(
+          "A contact with this email or phone already exists. Search for them instead.",
+        );
+        return;
+      }
+
+      if (response.status === 400) {
+        setNewAdultNotice("Check the details and try again.");
+        return;
+      }
+
+      if (response.status === 404) {
+        setNewAdultNotFound(true);
+        setNewAdultNotice("Household not found");
+        return;
+      }
+
+      if (response.status === 402) {
+        setPaymentRequired(true);
+        void refreshBilling();
+        resetNewAdultForm();
+        clearAdultSearch();
+        setAdultSearchNotice("Read-only until billing is settled");
+        setView("add-adult");
+        return;
+      }
+
+      setNewAdultNotice("Unable to add this adult. Try again.");
+    } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }
@@ -1572,7 +1690,7 @@ export function FamilyRecordsPage() {
     },
   ];
 
-  if (view === "add-adult") {
+  if (view === "add-adult" || (view === "add-adult-new" && !canAddAdult)) {
     return (
       <>
         <ScreenTitle>Family Records</ScreenTitle>
@@ -1587,6 +1705,14 @@ export function FamilyRecordsPage() {
             <Alert variant="destructive" live="assertive">
               <span>Failed to search adults</span>
             </Alert>
+          ) : null}
+
+          {canAddAdult ? (
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="secondary" onClick={openNewAdult}>
+                Create new adult
+              </Button>
+            </div>
           ) : null}
 
           <FilterBar
@@ -1635,6 +1761,49 @@ export function FamilyRecordsPage() {
               ) : null}
             </>
           ) : null}
+        </Panel>
+      </>
+    );
+  }
+
+  if (view === "add-adult-new") {
+    return (
+      <>
+        <ScreenTitle>Family Records</ScreenTitle>
+        <Panel
+          title="New adult in this household"
+          level={2}
+          headingRef={newAdultHeadingRef}
+          headingTabIndex={-1}
+        >
+          {newAdultNotice ? (
+            <Alert ref={newAdultAlertRef} tabIndex={-1} variant="destructive" role="alert">
+              <span>{newAdultNotice}</span>
+              {newAdultNotFound ? (
+                <Button type="button" onClick={backToList}>
+                  Back to list
+                </Button>
+              ) : null}
+            </Alert>
+          ) : null}
+
+          <form onSubmit={handleNewAdultSubmit} className="grid gap-4">
+            <ContactFields
+              prefix="add-adult"
+              data={newAdultForm}
+              onChange={setNewAdultForm}
+              dobHelp="Under 18? Use Add minor instead."
+            />
+
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" disabled={submitting}>
+                Save adult
+              </Button>
+              <Button type="button" variant="outline" onClick={cancelNewAdult}>
+                Cancel
+              </Button>
+            </div>
+          </form>
         </Panel>
       </>
     );
