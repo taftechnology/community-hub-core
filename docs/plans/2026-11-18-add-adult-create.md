@@ -228,6 +228,25 @@ The implementer stops and reports, without improvising, when:
 
 **Pins:** 20c, 21, 22, 22b, 23.
 
+### Task 4c: Register people.person.manage for household denials (spec amendment A1)
+
+**Commit:** `fix(api): audit a missing people.manage on household routes`
+
+**Files:**
+
+- `modules/core/people/public/index.ts`: `defineAuditPurpose("people.person.manage")` beside the other people purposes (`:4-32`).
+- `apps/api/src/household-routes.ts`: a `MANAGE_DENIAL_PURPOSE = "people.person.manage"` constant; every denial purpose that today is `MANAGE` (`:361`, and `!canManage ? MANAGE : RESTRICTED` at `:405, 450, 495, 544, 593` and the add-adult handler) uses it. `MANAGE` stays the permission key passed to `holdsPermission`.
+- `apps/api/src/household-routes.test.ts`: the nine `purpose: "people.manage"` expectations become `"people.person.manage"`.
+- `apps/api/src/household-routes.integration.test.ts`: "household write routes: a caller without people.manage answers 403 and the denial is audited as people.person.manage" — one `it` that, for each of the seven routes with a valid body, expects 403, an empty body, no change in the row it would write, and exactly one new `people.permission.denied` row with purpose `people.person.manage`.
+
+**Test first:** the integration test (RED: 500 and no denial row), then the source.
+
+**Rule it must not break:** a missing `people.restricted.read` still records `people.restricted.read`; every status and success path unchanged.
+
+**Pins:** 4c-1 (weakening: `MANAGE_DENIAL_PURPOSE = "people.manage"`; test: the new integration test; must fail on an assertion).
+
+Order: Task 4b (test-only) commits first, without its add-adult `people.manage` denial test, which this task's seven-route test replaces. Task 4c commits second.
+
 ### Task 5: Shared contact fields (refactor, no behaviour change)
 
 **Commit:** `refactor(admin): share the contact fields between screens`
@@ -303,6 +322,12 @@ For the chunk owner, answered at plan approval:
 4. **Deviation policy:** extra attempts, implementer changes and fix commits are recorded as deviations in the PR; cosmetic nits as PR notes.
 
 Nothing here needs the project owner.
+
+## Amendments during implementation
+
+- **Implementer change (2026-11-18, chunk owner):** from Task 4c on, the implementer is Claude Sonnet 5.5 (a subagent with its own brief), not Antigravity. The second review must then avoid Sonnet as well as Opus and Gemini 3.8 Flash (GPT, Grok or Fable 5.2).
+- **Task 4c** added by spec amendment A1.
+- The local gate runs `turbo ... --concurrency=2` from Task 2 on (same coverage; this machine ran out of resources at full parallelism).
 
 ## Spec pointer corrections
 

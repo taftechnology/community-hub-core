@@ -161,3 +161,11 @@ Chunk owner (Adnan Bin Hossen), accepted 2026-11-18 as proposed:
 4. **Entry point.** Create new adult is always shown in Add Adult when allowed, not only after a search finds nothing.
 5. **Staging stays parked.** Verified by tests; the staging check is an open item for the next proof chunk.
 6. **Laravel parity.** Laravel's behaviour for adding a new adult to a family is not confirmed in the repo. This design stands unless it turns out to differ.
+
+## Amendments
+
+**A1 (2026-11-18, approved by the chunk owner, Adnan Bin Hossen; option A).** Found in Task 4b: every household write route records a missing `people.manage` denial with audit purpose `people.manage` (`apps/api/src/household-routes.ts:361, 405, 450, 495, 544, 593`, and the new add-adult route). Audit purposes must be registered three-part names (kernel `AUDIT_NAME_RE`, database check on `app.audit_events.purpose`), so `appendAuditEvent` throws: the caller gets 500 instead of 403, and the denial row is lost when the transaction rolls back. The bug has been on `main` since Family Records (2026-11-01). Unit tests mock the audit write, and the database test covers only a missing `people.restricted.read`.
+
+- In scope now: a registered purpose `people.person.manage` (in `modules/core/people/public/index.ts`, as PR #87 registered `people.person.view`), used by all seven household write routes for a missing `people.manage`. A missing `people.restricted.read` keeps `people.restricted.read`. Statuses stay 403 with an empty body; nothing else changes.
+- Tests: one database test that calls each of the seven routes as a caller holding `people.restricted.read` but not `people.manage` and expects 403, an empty body, no write, and one `people.permission.denied` row with purpose `people.person.manage`; the unit-test expectations of `"people.manage"` become `"people.person.manage"`.
+- The project owner is informed (AGENTS.md §12, a bug on `main`).
