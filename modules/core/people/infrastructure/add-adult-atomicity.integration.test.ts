@@ -135,7 +135,7 @@ describe("household members: add adult atomicity (pin 10)", () => {
                 givenName: "FailAudit",
                 familyName: "Person",
                 email: "fail.audit@example.test",
-                phone: "+61412345678",
+                phone: "+61412555138",
                 dateOfBirth: "1990-01-01",
                 actorUserId: null,
               });

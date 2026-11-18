@@ -1775,25 +1775,32 @@ describe("household read routes (Task 9: list and read)", () => {
         entitlements.readSnapshot
           .mockResolvedValueOnce(createSnapshot())
           .mockRejectedValueOnce(new Error("entitlement storage offline"));
+        billing.assertWritable.mockRejectedValueOnce(new BillingReadOnly("read_only"));
         const guardLog = vi.fn();
 
-        const res = await call(
-          "/v1/households/members/add-adult",
-          {
-            communitySlug: SLUG,
-            householdId: HOUSEHOLD_ID,
-            givenName: "Alice",
-            familyName: "Smith",
-          },
-          undefined,
-          API_HOSTNAME,
-          makeDeps({ guardLog }),
-        );
+        try {
+          const res = await call(
+            "/v1/households/members/add-adult",
+            {
+              communitySlug: SLUG,
+              householdId: HOUSEHOLD_ID,
+              givenName: "Alice",
+              familyName: "Smith",
+            },
+            undefined,
+            API_HOSTNAME,
+            makeDeps({ guardLog }),
+          );
 
-        expect(res.status).toBe(403);
-        expect(await res.text()).toBe("");
-        expect(people.addAdult).not.toHaveBeenCalled();
-        expect(guardLog).not.toHaveBeenCalledWith("billing_write_blocked", expect.anything());
+          expect(res.status).toBe(403);
+          expect(await res.text()).toBe("");
+          expect(people.addAdult).not.toHaveBeenCalled();
+          expect(guardLog).toHaveBeenCalledWith("entitlement_guard_failed", expect.anything());
+          expect(guardLog).not.toHaveBeenCalledWith("billing_write_blocked", expect.anything());
+        } finally {
+          billing.assertWritable.mockReset();
+          billing.assertWritable.mockResolvedValue("ok");
+        }
       });
 
       it("add-adult: requires BOTH people.manage AND people.restricted.read", async () => {
@@ -1818,9 +1825,11 @@ describe("household read routes (Task 9: list and read)", () => {
           async (_tx, _u, perm) => perm === "people.manage",
         );
         db.appendAuditEvent.mockClear();
+        people.addAdult.mockClear();
         const resManageOnly = await call("/v1/households/members/add-adult", body);
         expect(resManageOnly.status).toBe(403);
         expect(await resManageOnly.text()).toBe("");
+        expect(people.addAdult).not.toHaveBeenCalled();
         expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
         expect(db.appendAuditEvent).toHaveBeenCalledWith(
           expect.anything(),
@@ -1838,8 +1847,11 @@ describe("household read routes (Task 9: list and read)", () => {
           async (_tx, _u, perm) => perm === "people.restricted.read",
         );
         db.appendAuditEvent.mockClear();
+        people.addAdult.mockClear();
         const resRestrictedOnly = await call("/v1/households/members/add-adult", body);
         expect(resRestrictedOnly.status).toBe(403);
+        expect(await resRestrictedOnly.text()).toBe("");
+        expect(people.addAdult).not.toHaveBeenCalled();
         expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
         expect(db.appendAuditEvent).toHaveBeenCalledWith(
           expect.anything(),
@@ -1857,9 +1869,35 @@ describe("household read routes (Task 9: list and read)", () => {
           async (_tx, _u, perm) => perm === "people.manage" || perm === "people.restricted.read",
         );
         db.appendAuditEvent.mockClear();
+        people.addAdult.mockClear();
         const resBoth = await call("/v1/households/members/add-adult", body);
         expect(resBoth.status).toBe(201);
         expect(db.appendAuditEvent).not.toHaveBeenCalled();
+      });
+
+      it("add-adult: the 201 body is exactly the personId", async () => {
+        const directorySnapshot = createSnapshot({
+          planEntitlements: [
+            { key: "people.households", limit: null },
+            { key: "people.directory", limit: null },
+          ],
+          allocations: ["people.households", "people.directory"],
+        });
+        entitlements.readSnapshot.mockResolvedValue(directorySnapshot);
+        access.holdsPermission.mockResolvedValue(true);
+
+        const res = await call("/v1/households/members/add-adult", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          givenName: "Diana",
+          familyName: "Prince",
+          email: "diana@example.test",
+          phone: "+61412555123",
+          dateOfBirth: "1990-01-01",
+        });
+
+        expect(res.status).toBe(201);
+        expect(await res.json()).toEqual({ personId: PERSON_ID });
       });
 
       it("add-adult: maps duplicate email and phone to 409 and invalid email, phone and name to 400", async () => {

@@ -1416,15 +1416,14 @@ describe("household routes real-database integration (finding 4)", () => {
         select action, target_ids::text[] as target_ids
         from app.audit_events
         where ${body.personId}::uuid = any(target_ids)
-        order by occurred_at asc
+        order by seq asc
       `;
       expect(audits.map((a) => a.action)).toEqual([
         "people.person.created",
         "people.person.household_moved",
       ]);
-      const movedAudit = audits.find((a) => a.action === "people.person.household_moved");
-      expect(movedAudit?.target_ids).toContain(body.personId);
-      expect(movedAudit?.target_ids).toContain(householdA1Id);
+      expect(audits[0]!.target_ids).toEqual([body.personId]);
+      expect(audits[1]!.target_ids).toEqual([body.personId, householdA1Id]);
     });
   });
 
@@ -1511,5 +1510,46 @@ describe("household routes real-database integration (finding 4)", () => {
     expect(afterDenied.audit).toBe(beforeDenied.audit + 1);
     expect(afterDenied.latest.action).toBe("people.permission.denied");
     expect(afterDenied.latest.purpose).toBe("people.restricted.read");
+  });
+
+  it("add-adult: a duplicate email answers 409 with an empty body and writes no second person", async () => {
+    const scopeA1 = { orgId: orgIdA, communityId: communityIdA1 };
+    const countPersonsA1 = async () =>
+      withAppTransaction(secondApp, scopeA1, async (tx) => {
+        const [row] = await tx<{ count: number }[]>`select count(*)::int as count from app.persons`;
+        return row!.count;
+      });
+
+    const email = "duplicate.adult@example.test";
+    const res1 = await post(
+      "/v1/households/members/add-adult",
+      {
+        communitySlug: slugA1,
+        householdId: householdA1Id,
+        givenName: "First",
+        familyName: "Person",
+        email,
+      },
+      ownerA1Token,
+    );
+    expect(res1.status).toBe(201);
+    const countAfterFirst = await countPersonsA1();
+
+    const res2 = await post(
+      "/v1/households/members/add-adult",
+      {
+        communitySlug: slugA1,
+        householdId: householdA1Id,
+        givenName: "Second",
+        familyName: "Different",
+        email,
+      },
+      ownerA1Token,
+    );
+    expect(res2.status).toBe(409);
+    expect(await res2.text()).toBe("");
+
+    const countAfterSecond = await countPersonsA1();
+    expect(countAfterSecond).toBe(countAfterFirst);
   });
 });

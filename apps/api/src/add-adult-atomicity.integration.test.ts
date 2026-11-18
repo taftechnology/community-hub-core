@@ -325,6 +325,31 @@ describe("household routes atomicity (finding IA)", () => {
       });
     };
 
+    // Positive control: successful add-adult answers 201 and its person row exists
+    const controlRes = await post(
+      "/v1/households/members/add-adult",
+      {
+        communitySlug: slug,
+        householdId: homeId,
+        givenName: "Control",
+        familyName: "Adult",
+        email: "control.adult@example.test",
+        phone: "+61412555111",
+        dateOfBirth: "1988-02-02",
+      },
+      ownerToken,
+    );
+    expect(controlRes.status).toBe(201);
+    const controlBody = (await controlRes.json()) as { personId: string };
+    expect(controlBody.personId).toBeDefined();
+
+    await withAppTransaction(secondApp, scope, async (tx) => {
+      const [row] = await tx<
+        { count: number }[]
+      >`select count(*)::int as count from app.persons where id = ${controlBody.personId}::uuid`;
+      expect(row!.count).toBe(1);
+    });
+
     const initial = await getCounts();
     armed.value = true;
     try {
