@@ -728,6 +728,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
         { method: "POST", pattern: "/v1/households/rename", billing: "write" },
         { method: "POST", pattern: "/v1/households/members/move-adult", billing: "write" },
         { method: "POST", pattern: "/v1/households/members/add-minor", billing: "write" },
+        { method: "POST", pattern: "/v1/households/members/add-adult", billing: "write" },
         { method: "POST", pattern: "/v1/households/guardians/link", billing: "write" },
         { method: "POST", pattern: "/v1/households/guardians/unlink", billing: "write" },
       ];
@@ -811,7 +812,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
         (route as { billing?: string }).billing,
       ]),
     );
-    expect(routes).toHaveLength(57);
+    expect(routes).toHaveLength(58);
     expect(markings).toEqual(
       new Map([
         ["GET /health", "exempt"],
@@ -857,6 +858,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
         ["POST /v1/households/rename", "write"],
         ["POST /v1/households/members/move-adult", "write"],
         ["POST /v1/households/members/add-minor", "write"],
+        ["POST /v1/households/members/add-adult", "write"],
         ["POST /v1/households/guardians/link", "write"],
         ["POST /v1/households/guardians/unlink", "write"],
         ["POST /v1/engagement/service-times/save", "write"],
