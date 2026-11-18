@@ -6540,6 +6540,11 @@ describe("Family Records - Create new adult", () => {
   it("opens Create new adult and returns to the search on Cancel without a request", async () => {
     const { calls } = await openNewAdultForm();
 
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("heading", { name: "New adult in this household" }),
+      ),
+    );
     expect(screen.queryByRole("textbox", { name: "Search adults" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
@@ -6658,6 +6663,26 @@ describe("Family Records - Create new adult", () => {
     expect(await screen.findByText("Household not found")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Back to list" }));
     expect(await screen.findByRole("table", { name: "Households" })).toBeTruthy();
+  });
+
+  it("does not show Back to list on an under-18 refusal after a 404", async () => {
+    const { calls } = await openNewAdultForm({ addAdultResult: 404 });
+
+    fillNames();
+    save();
+    expect(await screen.findByText("Household not found")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Back to list" })).toBeTruthy();
+    expect(addAdultCalls(calls)).toHaveLength(1);
+
+    fireEvent.change(screen.getByLabelText("Date of birth"), {
+      target: { value: `${new Date().getUTCFullYear() - 10}-06-15` },
+    });
+    save();
+
+    expect(await screen.findByText("This person is under 18. Use Add minor instead.")).toBeTruthy();
+    expect(screen.queryByText("Household not found")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Back to list" })).toBeNull();
+    expect(addAdultCalls(calls)).toHaveLength(1);
   });
 
   it("shows the duplicate message on 409 and keeps the entered values", async () => {

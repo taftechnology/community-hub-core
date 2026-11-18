@@ -1160,6 +1160,7 @@ export function FamilyRecordsPage() {
     const phone = newAdultForm.phone.trim();
     const dateOfBirth = newAdultForm.dateOfBirth.trim();
 
+    setNewAdultNotFound(false);
     if (dateOfBirth !== "" && isUnder18OnSydneyDate(dateOfBirth, new Date())) {
       setNewAdultNotice("This person is under 18. Use Add minor instead.");
       return;
