@@ -333,6 +333,9 @@ Nothing here needs the project owner.
 
 - Spec Rules touched → Atomicity names "a partial mock of `@community-hub/db`" in the route integration suite. `apps/api` loads the built people package, so that mock cannot reach `addAdult`'s audit call there. The plan pins atomicity twice instead: in the people module with the `@community-hub/db` mock (DA, pin 10) and at the route with a `@community-hub/people` mock (IA, pin 23). The spec's weakening (catch inside the transaction) is pin 23.
 - The spec says the atomicity test sits "beside its existing no-orphan-row cases". A file-wide mock cannot share that file, so both atomicity tests get their own files.
+- Spec Admin screen, 401: `post` clears the stored token and the app shows its existing 'Sign in required' view, as move-adult does; the add-adult form does not show the generic message. Task 6 tests the real behaviour.
+- The people `module.manifest.ts` has no audit purpose list, so spec amendment A1 registers `people.person.manage` in `public/index.ts` and pins it in `domain/manifest.test.ts`; `module.manifest.ts` is unchanged.
+- Task 6 split the plan's test 'shows the generic message on 401, 403, 503, 500 and network failure and keeps the values' into one for 403, 503, 500 and network failure and one for 401 (the sign-in view).
 
 ## Probe record
 
