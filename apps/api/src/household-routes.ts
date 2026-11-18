@@ -38,6 +38,8 @@ type HouseholdSql = Parameters<typeof readSession>[0];
 const DENIED = "people.permission.denied";
 const VIEW = "people.view";
 const MANAGE = "people.manage";
+// Audit purposes are registered three-part names; "people.manage" is only the permission key.
+const MANAGE_DENIAL_PURPOSE = "people.person.manage";
 const RESTRICTED = "people.restricted.read";
 const HOUSEHOLDS_ENTITLEMENT = "people.households";
 const DIRECTORY_ENTITLEMENT = "people.directory";
@@ -358,7 +360,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
               actorKind: "user",
               actorId: actor.userId,
               action: DENIED,
-              purpose: MANAGE,
+              purpose: MANAGE_DENIAL_PURPOSE,
               targetIds: [scope.orgId, scope.communityId],
             });
             return finish(request, empty(403));
@@ -402,7 +404,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
               actorKind: "user",
               actorId: actor.userId,
               action: DENIED,
-              purpose: !canManage ? MANAGE : RESTRICTED,
+              purpose: !canManage ? MANAGE_DENIAL_PURPOSE : RESTRICTED,
               targetIds: [scope.orgId, scope.communityId],
             });
             return finish(request, empty(403));
@@ -447,7 +449,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
               actorKind: "user",
               actorId: actor.userId,
               action: DENIED,
-              purpose: !canManage ? MANAGE : RESTRICTED,
+              purpose: !canManage ? MANAGE_DENIAL_PURPOSE : RESTRICTED,
               targetIds: [scope.orgId, scope.communityId],
             });
             return finish(request, empty(403));
@@ -492,7 +494,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
               actorKind: "user",
               actorId: actor.userId,
               action: DENIED,
-              purpose: !canManage ? MANAGE : RESTRICTED,
+              purpose: !canManage ? MANAGE_DENIAL_PURPOSE : RESTRICTED,
               targetIds: [scope.orgId, scope.communityId],
             });
             return finish(request, empty(403));
@@ -541,7 +543,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
               actorKind: "user",
               actorId: actor.userId,
               action: DENIED,
-              purpose: !canManage ? MANAGE : RESTRICTED,
+              purpose: !canManage ? MANAGE_DENIAL_PURPOSE : RESTRICTED,
               targetIds: [scope.orgId, scope.communityId],
             });
             return finish(request, empty(403));
@@ -590,7 +592,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
               actorKind: "user",
               actorId: actor.userId,
               action: DENIED,
-              purpose: !canManage ? MANAGE : RESTRICTED,
+              purpose: !canManage ? MANAGE_DENIAL_PURPOSE : RESTRICTED,
               targetIds: [scope.orgId, scope.communityId],
             });
             return finish(request, empty(403));
@@ -652,7 +654,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
               actorKind: "user",
               actorId: actor.userId,
               action: DENIED,
-              purpose: !canManage ? MANAGE : RESTRICTED,
+              purpose: !canManage ? MANAGE_DENIAL_PURPOSE : RESTRICTED,
               targetIds: [scope.orgId, scope.communityId],
             });
             return finish(request, empty(403));

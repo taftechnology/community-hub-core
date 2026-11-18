@@ -831,7 +831,7 @@ describe("household read routes (Task 9: list and read)", () => {
             actorKind: "user",
             actorId: USER,
             action: "people.permission.denied",
-            purpose: "people.manage",
+            purpose: "people.person.manage",
             targetIds: [ORG, COMMUNITY],
           }),
         );
@@ -851,7 +851,7 @@ describe("household read routes (Task 9: list and read)", () => {
             actorKind: "user",
             actorId: USER,
             action: "people.permission.denied",
-            purpose: "people.manage",
+            purpose: "people.person.manage",
             targetIds: [ORG, COMMUNITY],
           }),
         );
@@ -885,7 +885,7 @@ describe("household read routes (Task 9: list and read)", () => {
             actorKind: "user",
             actorId: USER,
             action: "people.permission.denied",
-            purpose: "people.manage",
+            purpose: "people.person.manage",
             targetIds: [ORG, COMMUNITY],
           }),
         );
@@ -910,7 +910,7 @@ describe("household read routes (Task 9: list and read)", () => {
             actorKind: "user",
             actorId: USER,
             action: "people.permission.denied",
-            purpose: "people.manage",
+            purpose: "people.person.manage",
             targetIds: [ORG, COMMUNITY],
           }),
         );
@@ -1000,7 +1000,7 @@ describe("household read routes (Task 9: list and read)", () => {
             actorKind: "user",
             actorId: USER,
             action: "people.permission.denied",
-            purpose: "people.manage",
+            purpose: "people.person.manage",
             targetIds: [ORG, COMMUNITY],
           }),
         );
@@ -1069,7 +1069,7 @@ describe("household read routes (Task 9: list and read)", () => {
             actorKind: "user",
             actorId: USER,
             action: "people.permission.denied",
-            purpose: "people.manage",
+            purpose: "people.person.manage",
             targetIds: [ORG, COMMUNITY],
           }),
         );
@@ -1141,7 +1141,7 @@ describe("household read routes (Task 9: list and read)", () => {
             actorKind: "user",
             actorId: USER,
             action: "people.permission.denied",
-            purpose: "people.manage",
+            purpose: "people.person.manage",
             targetIds: [ORG, COMMUNITY],
           }),
         );
@@ -1225,7 +1225,7 @@ describe("household read routes (Task 9: list and read)", () => {
             actorKind: "user",
             actorId: USER,
             action: "people.permission.denied",
-            purpose: "people.manage",
+            purpose: "people.person.manage",
             targetIds: [ORG, COMMUNITY],
           }),
         );
@@ -1859,7 +1859,7 @@ describe("household read routes (Task 9: list and read)", () => {
             actorKind: "user",
             actorId: USER,
             action: "people.permission.denied",
-            purpose: "people.manage",
+            purpose: "people.person.manage",
             targetIds: [ORG, COMMUNITY],
           }),
         );

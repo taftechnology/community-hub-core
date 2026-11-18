@@ -1552,4 +1552,109 @@ describe("household routes real-database integration (finding 4)", () => {
     const countAfterSecond = await countPersonsA1();
     expect(countAfterSecond).toBe(countAfterFirst);
   });
+
+  it("household write routes: a caller without people.manage answers 403 and the denial is audited as people.person.manage", async () => {
+    const scopeA1 = { orgId: orgIdA, communityId: communityIdA1 };
+    const snapshot = async () =>
+      withAppTransaction(secondApp, scopeA1, async (tx) => {
+        const [persons] = await tx<
+          { count: number }[]
+        >`select count(*)::int as count from app.persons`;
+        const [households] = await tx<
+          { count: number }[]
+        >`select count(*)::int as count from app.households`;
+        const [links] = await tx<
+          { count: number }[]
+        >`select count(*)::int as count from app.guardian_links`;
+        const [activity] = await tx<
+          { count: number }[]
+        >`select count(*)::int as count from app.person_activity`;
+        const [household] = await tx<{ label: Uint8Array | null; version: number }[]>`
+          select label, version from app.households where id = ${householdA1Id}::uuid
+        `;
+        const [alice] = await tx<{ household_id: string | null; version: number }[]>`
+          select household_id, version from app.persons where id = ${adultAliceId}::uuid
+        `;
+        const [audit] = await tx<
+          { count: number }[]
+        >`select count(*)::int as count from app.audit_events`;
+        return {
+          rows: {
+            persons: persons!.count,
+            households: households!.count,
+            links: links!.count,
+            activity: activity!.count,
+            household: household!,
+            alice: alice!,
+          },
+          audit: audit!.count,
+        };
+      });
+    const latestAudit = async () =>
+      withAppTransaction(secondApp, scopeA1, async (tx) => {
+        const [row] = await tx<{ action: string; purpose: string }[]>`
+          select action, purpose from app.audit_events order by seq desc limit 1
+        `;
+        return row!;
+      });
+
+    const requests: { path: string; body: Record<string, unknown> }[] = [
+      { path: "/v1/households/create", body: { communitySlug: slugA1, label: "Denied" } },
+      {
+        path: "/v1/households/rename",
+        body: { communitySlug: slugA1, householdId: householdA1Id, version: 1, label: "Denied" },
+      },
+      {
+        path: "/v1/households/members/move-adult",
+        body: { communitySlug: slugA1, householdId: null, personId: adultAliceId, version: 1 },
+      },
+      {
+        path: "/v1/households/members/add-minor",
+        body: {
+          communitySlug: slugA1,
+          householdId: householdA1Id,
+          givenName: "DeniedMinor",
+          familyName: "Smith",
+          dateOfBirth: "2020-01-01",
+          guardianId: adultAliceId,
+        },
+      },
+      {
+        path: "/v1/households/members/add-adult",
+        body: {
+          communitySlug: slugA1,
+          householdId: householdA1Id,
+          givenName: "DeniedAdult",
+          familyName: "Caller",
+        },
+      },
+      {
+        path: "/v1/households/guardians/link",
+        body: {
+          communitySlug: slugA1,
+          householdId: householdA1Id,
+          guardianId: adultAliceId,
+          childId: minorDaisyId,
+        },
+      },
+      {
+        path: "/v1/households/guardians/unlink",
+        body: { communitySlug: slugA1, householdId: householdA1Id, linkId: guardianLinkId },
+      },
+    ];
+
+    for (const { path, body } of requests) {
+      const before = await snapshot();
+      const res = await post(path, body, restrictedOnlyToken);
+      expect(res.status, path).toBe(403);
+      expect(await res.text(), path).toBe("");
+      const after = await snapshot();
+      expect(after.rows, path).toEqual(before.rows);
+      expect(after.audit, path).toBe(before.audit + 1);
+      expect(await latestAudit(), path).toEqual({
+        action: "people.permission.denied",
+        purpose: "people.person.manage",
+      });
+    }
+  });
 });

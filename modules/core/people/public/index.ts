@@ -24,6 +24,7 @@ defineAuditAction("people.person.updated");
 defineAuditPurpose("people.person.updated");
 defineAuditAction("people.permission.denied");
 defineAuditPurpose("people.permission.denied");
+defineAuditPurpose("people.person.manage");
 defineAuditAction("people.life_event.listed");
 defineAuditPurpose("people.life_event.listed");
 defineAuditAction("people.life_event.created");
