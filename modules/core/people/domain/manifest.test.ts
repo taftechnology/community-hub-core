@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { isAuditPurpose } from "@community-hub/kernel/module";
 
 import peopleModule from "../module.manifest.js";
+import "../public/index.js";
 
 describe("core.people manifest", () => {
   it("declares every people column and nothing else", () => {
@@ -91,5 +93,9 @@ describe("core.people manifest", () => {
     });
     expect(peopleModule).not.toHaveProperty("website");
     expect(peopleModule).not.toHaveProperty("entitlement");
+  });
+
+  it("the household denial purposes are registered audit purposes", () => {
+    expect(isAuditPurpose("people.person.manage")).toBe(true);
   });
 });

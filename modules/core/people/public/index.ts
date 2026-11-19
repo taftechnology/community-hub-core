@@ -24,6 +24,7 @@ defineAuditAction("people.person.updated");
 defineAuditPurpose("people.person.updated");
 defineAuditAction("people.permission.denied");
 defineAuditPurpose("people.permission.denied");
+defineAuditPurpose("people.person.manage");
 defineAuditAction("people.life_event.listed");
 defineAuditPurpose("people.life_event.listed");
 defineAuditAction("people.life_event.created");
@@ -68,8 +69,10 @@ export { hasGuardianView, personIsMinor } from "../infrastructure/access-facts.j
 export {
   moveAdult,
   addMinor,
+  addAdult,
   type MoveAdultInput,
   type AddMinorInput,
+  type AddAdultInput,
 } from "../infrastructure/household-members.js";
 export {
   linkGuardian,

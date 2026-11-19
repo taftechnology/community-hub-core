@@ -5,9 +5,7 @@ import {
   DataTable,
   DescriptionList,
   EmptyState,
-  Field,
   FilterBar,
-  Input,
   Pagination,
   Panel,
   Skeleton,
@@ -20,6 +18,7 @@ import { useBillingStatus } from "./billing-status";
 import { useCommunity } from "./community";
 import { readAccessToken } from "./directory";
 import { usePeopleAccess } from "./people-access";
+import { type ContactFormData, ContactFields, initialFormData } from "./contact-fields";
 import { ScreenTitle } from "./screen-title";
 
 type ContactItem = {
@@ -43,22 +42,6 @@ type PersonDetail = {
   phone: string | null;
   dateOfBirth: string | null;
   version: number;
-};
-
-type ContactFormData = {
-  givenName: string;
-  familyName: string;
-  email: string;
-  phone: string;
-  dateOfBirth: string;
-};
-
-const initialFormData: ContactFormData = {
-  givenName: "",
-  familyName: "",
-  email: "",
-  phone: "",
-  dateOfBirth: "",
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -106,61 +89,6 @@ function parsePersonDetail(value: unknown): PersonDetail | null {
     dateOfBirth: typeof value.dateOfBirth === "string" ? value.dateOfBirth : null,
     version: typeof value.version === "number" ? value.version : 1,
   };
-}
-
-function ContactFields({
-  prefix,
-  data,
-  onChange,
-}: {
-  prefix: "add" | "edit";
-  data: ContactFormData;
-  onChange: (data: ContactFormData) => void;
-}) {
-  return (
-    <>
-      <Field label="Given name">
-        <Input
-          id={`${prefix}-given-name`}
-          value={data.givenName}
-          onChange={(e) => onChange({ ...data, givenName: e.target.value })}
-          required
-        />
-      </Field>
-      <Field label="Family name">
-        <Input
-          id={`${prefix}-family-name`}
-          value={data.familyName}
-          onChange={(e) => onChange({ ...data, familyName: e.target.value })}
-          required
-        />
-      </Field>
-      <Field label="Email">
-        <Input
-          id={`${prefix}-email`}
-          type="email"
-          value={data.email}
-          onChange={(e) => onChange({ ...data, email: e.target.value })}
-        />
-      </Field>
-      <Field label="Phone">
-        <Input
-          id={`${prefix}-phone`}
-          type="tel"
-          value={data.phone}
-          onChange={(e) => onChange({ ...data, phone: e.target.value })}
-        />
-      </Field>
-      <Field label="Date of birth">
-        <Input
-          id={`${prefix}-dob`}
-          type="date"
-          value={data.dateOfBirth}
-          onChange={(e) => onChange({ ...data, dateOfBirth: e.target.value })}
-        />
-      </Field>
-    </>
-  );
 }
 
 export function AllContactsPage() {

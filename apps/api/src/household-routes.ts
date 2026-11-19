@@ -1,5 +1,6 @@
 import { holdsPermission } from "@community-hub/access";
 import {
+  addAdultBody,
   addMinorBody,
   createHouseholdBody,
   linkGuardianBody,
@@ -13,6 +14,7 @@ import { appendAuditEvent, withAppTransaction } from "@community-hub/db";
 import { readSession } from "@community-hub/identity";
 import { getRequestContext } from "@community-hub/kernel";
 import {
+  addAdult,
   addMinor,
   createHousehold,
   linkGuardian,
@@ -36,8 +38,11 @@ type HouseholdSql = Parameters<typeof readSession>[0];
 const DENIED = "people.permission.denied";
 const VIEW = "people.view";
 const MANAGE = "people.manage";
+// Audit purposes are registered three-part names; "people.manage" is only the permission key.
+const MANAGE_DENIAL_PURPOSE = "people.person.manage";
 const RESTRICTED = "people.restricted.read";
 const HOUSEHOLDS_ENTITLEMENT = "people.households";
+const DIRECTORY_ENTITLEMENT = "people.directory";
 
 type Scope = { orgId: string; communityId: string };
 
@@ -62,7 +67,9 @@ export function statusForHouseholds(error: PeopleError): Response | undefined {
     error.code === "conflict" ||
     error.code === "duplicate_guardian_link" ||
     error.code === "last_guardian" ||
-    error.code === "adult_cannot_move_with_links"
+    error.code === "adult_cannot_move_with_links" ||
+    error.code === "duplicate_email" ||
+    error.code === "duplicate_phone"
   ) {
     return empty(409);
   }
@@ -76,7 +83,9 @@ export function statusForHouseholds(error: PeopleError): Response | undefined {
     error.code === "invalid_date" ||
     error.code === "invalid_name" ||
     error.code === "invalid_declaration" ||
-    error.code === "household_required"
+    error.code === "household_required" ||
+    error.code === "invalid_email" ||
+    error.code === "invalid_phone"
   ) {
     return empty(400);
   }
@@ -163,6 +172,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
     slug: string,
     context: RouteContext,
     userId: string,
+    extraEntitlements: readonly string[] = [],
   ): Promise<Scope | Response | null> {
     const found = await deps.checkout("platform", (sql) => findCommunityBySlug(sql, slug));
     if (found === null) {
@@ -177,6 +187,17 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
     );
     if (blockedEntitlement !== null) {
       return blockedEntitlement;
+    }
+
+    for (const key of extraEntitlements) {
+      const blocked = await guardEntitlement(
+        { checkout: deps.checkout, now: deps.now, guardLog: deps.guardLog },
+        scope,
+        key,
+      );
+      if (blocked !== null) {
+        return blocked;
+      }
     }
 
     const blockedBilling = await guardWrite(
@@ -203,6 +224,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
     request: Request,
     context: RouteContext,
     schema: { safeParse(data: unknown): { success: true; data: T } | { success: false } },
+    extraEntitlements: readonly string[] = [],
   ): Promise<Prepared<T>> {
     const hidden = foreignHost(request);
     if (hidden !== undefined) {
@@ -216,7 +238,12 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
     if (actor instanceof Response) {
       return { ok: false, response: finish(request, actor) };
     }
-    const scope = await communityScope(body.communitySlug, context, actor.userId);
+    const scope = await communityScope(
+      body.communitySlug,
+      context,
+      actor.userId,
+      extraEntitlements,
+    );
     if (scope === null) {
       return { ok: false, response: finish(request, empty(403)) };
     }
@@ -333,7 +360,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
               actorKind: "user",
               actorId: actor.userId,
               action: DENIED,
-              purpose: MANAGE,
+              purpose: MANAGE_DENIAL_PURPOSE,
               targetIds: [scope.orgId, scope.communityId],
             });
             return finish(request, empty(403));
@@ -377,7 +404,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
               actorKind: "user",
               actorId: actor.userId,
               action: DENIED,
-              purpose: !canManage ? MANAGE : RESTRICTED,
+              purpose: !canManage ? MANAGE_DENIAL_PURPOSE : RESTRICTED,
               targetIds: [scope.orgId, scope.communityId],
             });
             return finish(request, empty(403));
@@ -422,7 +449,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
               actorKind: "user",
               actorId: actor.userId,
               action: DENIED,
-              purpose: !canManage ? MANAGE : RESTRICTED,
+              purpose: !canManage ? MANAGE_DENIAL_PURPOSE : RESTRICTED,
               targetIds: [scope.orgId, scope.communityId],
             });
             return finish(request, empty(403));
@@ -467,7 +494,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
               actorKind: "user",
               actorId: actor.userId,
               action: DENIED,
-              purpose: !canManage ? MANAGE : RESTRICTED,
+              purpose: !canManage ? MANAGE_DENIAL_PURPOSE : RESTRICTED,
               targetIds: [scope.orgId, scope.communityId],
             });
             return finish(request, empty(403));
@@ -481,6 +508,55 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
             dateOfBirth: body.dateOfBirth,
             guardianId: body.guardianId,
             ...(body.rights !== undefined ? { rights: body.rights } : {}),
+            actorUserId: actor.userId,
+          });
+          return finish(request, Response.json(result, { status: 201 }));
+        }),
+      );
+    } catch (error) {
+      if (error instanceof PeopleError) {
+        const mapped = statusForHouseholds(error);
+        if (mapped !== undefined) {
+          return finish(request, mapped);
+        }
+      }
+      return finish(request, empty(500));
+    }
+  }
+
+  async function addAdultMember(request: Request, context: RouteContext): Promise<Response> {
+    const prep = await prepare(request, context, addAdultBody, [DIRECTORY_ENTITLEMENT]);
+    if (!prep.ok) {
+      return prep.response;
+    }
+    const { body, actor, scope } = prep;
+
+    try {
+      return await deps.checkout("app", (sql) =>
+        withAppTransaction(sql, scope, async (tx) => {
+          const [canManage, canRestricted] = await Promise.all([
+            holdsPermission(tx, actor.userId, MANAGE),
+            holdsPermission(tx, actor.userId, RESTRICTED),
+          ]);
+          if (!canManage || !canRestricted) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: DENIED,
+              purpose: !canManage ? MANAGE_DENIAL_PURPOSE : RESTRICTED,
+              targetIds: [scope.orgId, scope.communityId],
+            });
+            return finish(request, empty(403));
+          }
+
+          const result = await addAdult(tx, deps.kms, deps.keyArn, {
+            now: deps.now(),
+            householdId: body.householdId,
+            givenName: body.givenName,
+            familyName: body.familyName,
+            email: body.email ?? null,
+            phone: body.phone ?? null,
+            dateOfBirth: body.dateOfBirth ?? null,
             actorUserId: actor.userId,
           });
           return finish(request, Response.json(result, { status: 201 }));
@@ -516,7 +592,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
               actorKind: "user",
               actorId: actor.userId,
               action: DENIED,
-              purpose: !canManage ? MANAGE : RESTRICTED,
+              purpose: !canManage ? MANAGE_DENIAL_PURPOSE : RESTRICTED,
               targetIds: [scope.orgId, scope.communityId],
             });
             return finish(request, empty(403));
@@ -578,7 +654,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
               actorKind: "user",
               actorId: actor.userId,
               action: DENIED,
-              purpose: !canManage ? MANAGE : RESTRICTED,
+              purpose: !canManage ? MANAGE_DENIAL_PURPOSE : RESTRICTED,
               targetIds: [scope.orgId, scope.communityId],
             });
             return finish(request, empty(403));
@@ -646,6 +722,13 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
       surface: "tenant",
       billing: "write",
       handle: (request, context) => addMinorMember(request, context),
+    },
+    {
+      method: "POST",
+      pattern: "/v1/households/members/add-adult",
+      surface: "tenant",
+      billing: "write",
+      handle: (request, context) => addAdultMember(request, context),
     },
     {
       method: "POST",

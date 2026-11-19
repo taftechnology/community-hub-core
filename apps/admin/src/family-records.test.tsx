@@ -77,6 +77,7 @@ type MockApiOptions = {
   createResult?: unknown | number;
   renameResult?: unknown | number;
   moveAdultResult?: unknown | number;
+  addAdultResult?: unknown | number | "network";
   addMinorResult?: unknown | number;
   linkGuardianResult?: unknown | number;
   unlinkGuardianResult?: unknown | number;
@@ -93,6 +94,7 @@ function mockApi({
   createResult,
   renameResult,
   moveAdultResult,
+  addAdultResult,
   addMinorResult,
   linkGuardianResult,
   unlinkGuardianResult,
@@ -177,6 +179,20 @@ function mockApi({
         status: 200,
         headers: { "content-type": "application/json" },
       });
+    }
+
+    if (path === "/v1/households/members/add-adult") {
+      if (onPost) onPost(path, body);
+      if (addAdultResult === "network") {
+        throw new TypeError("network down");
+      }
+      if (typeof addAdultResult === "number") {
+        return new Response(null, { status: addAdultResult });
+      }
+      return new Response(
+        JSON.stringify(addAdultResult ?? { personId: "00000000-0000-4000-8000-000000000066" }),
+        { status: 201, headers: { "content-type": "application/json" } },
+      );
     }
 
     if (path === "/v1/households/members/add-minor") {
@@ -6381,5 +6397,438 @@ describe("Family forms restyle & security pins (Task 10)", () => {
     for (const btn of searchButtons) {
       expect(btn.className).toContain("h-(--ch-size-control-sm)");
     }
+  });
+});
+
+describe("Family Records - Create new adult", () => {
+  const sampleDetail = {
+    householdId: "00000000-0000-4000-8000-000000000001",
+    version: 1,
+    label: "Clarke Family",
+    adults: [
+      {
+        personId: "00000000-0000-4000-8000-000000000010",
+        givenName: "Arthur",
+        familyName: "Clarke",
+        version: 1,
+      },
+    ],
+    minors: [],
+    guardians: [],
+  };
+
+  const listResult = {
+    items: [
+      {
+        householdId: sampleDetail.householdId,
+        version: 1,
+        label: sampleDetail.label,
+        adultCount: 1,
+      },
+    ],
+    nextCursor: null,
+  };
+
+  const fullAccess: PeopleAccess = {
+    permissions: {
+      "people.view": true,
+      "people.manage": true,
+      "people.restricted.read": true,
+      "service_times.manage": false,
+    },
+    entitlements: {
+      "people.directory": true,
+      "people.households": true,
+      "module.engagement": false,
+    },
+  };
+
+  type Recorded = Array<{ path: string; body: unknown }>;
+
+  function addAdultCalls(calls: Recorded): Recorded {
+    return calls.filter((c) => c.path === "/v1/households/members/add-adult");
+  }
+
+  async function openAddAdultView(options: MockApiOptions = {}): Promise<{
+    calls: Recorded;
+    container: HTMLElement;
+  }> {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const calls: Recorded = [];
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult,
+      detailResult: sampleDetail,
+      onPost: (path, body) => calls.push({ path, body }),
+      ...options,
+    });
+    const container = await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+    fireEvent.click(await screen.findByRole("button", { name: "View Clarke Family" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add adult" }));
+    expect(await screen.findByRole("heading", { name: "Add Adult" })).toBeTruthy();
+    return { calls, container };
+  }
+
+  async function openNewAdultForm(options: MockApiOptions = {}) {
+    const opened = await openAddAdultView(options);
+    fireEvent.click(await screen.findByRole("button", { name: "Create new adult" }));
+    expect(
+      await screen.findByRole("heading", { name: "New adult in this household" }),
+    ).toBeTruthy();
+    return opened;
+  }
+
+  function fillNames() {
+    fireEvent.change(screen.getByLabelText("Given name"), { target: { value: "Beatrice" } });
+    fireEvent.change(screen.getByLabelText("Family name"), { target: { value: "Webb" } });
+  }
+
+  function save() {
+    fireEvent.click(screen.getByRole("button", { name: "Save adult" }));
+  }
+
+  it("hides 'Create new adult' when people.manage, people.restricted.read or people.directory is removed", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    sessionStorage.setItem("community-hub.community", SLUG);
+    mockApi({
+      access: { householdsEnabled: true, canView: true, canManage: true, canReadMinors: true },
+      listResult,
+      detailResult: sampleDetail,
+    });
+
+    function tree(access: PeopleAccess) {
+      return (
+        <PeopleAccessContext.Provider value={{ access }}>
+          <CommunityProvider>
+            <BillingStatusProvider>
+              <MemoryRouter initialEntries={["/family-records"]}>
+                <FamilyRecordsPage />
+              </MemoryRouter>
+            </BillingStatusProvider>
+          </CommunityProvider>
+        </PeopleAccessContext.Provider>
+      );
+    }
+
+    const { rerender } = render(tree(fullAccess));
+    fireEvent.click(await screen.findByRole("button", { name: "View Clarke Family" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add adult" }));
+    expect(await screen.findByRole("heading", { name: "Add Adult" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Create new adult" })).toBeTruthy();
+
+    const withoutRights: PeopleAccess[] = [
+      { ...fullAccess, permissions: { ...fullAccess.permissions, "people.manage": false } },
+      {
+        ...fullAccess,
+        permissions: { ...fullAccess.permissions, "people.restricted.read": false },
+      },
+      { ...fullAccess, entitlements: { ...fullAccess.entitlements, "people.directory": false } },
+    ];
+    for (const reduced of withoutRights) {
+      rerender(tree(reduced));
+      expect(screen.getByRole("heading", { name: "Add Adult" })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Create new adult" })).toBeNull();
+      rerender(tree(fullAccess));
+      expect(screen.getByRole("button", { name: "Create new adult" })).toBeTruthy();
+    }
+  });
+
+  it("opens Create new adult and returns to the search on Cancel without a request", async () => {
+    const { calls } = await openNewAdultForm();
+
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("heading", { name: "New adult in this household" }),
+      ),
+    );
+    expect(screen.queryByRole("textbox", { name: "Search adults" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(await screen.findByRole("heading", { name: "Add Adult" })).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Search adults" })).toBeTruthy();
+    expect(addAdultCalls(calls)).toHaveLength(0);
+  });
+
+  it("refuses an under-18 date of birth before sending", async () => {
+    const { calls } = await openNewAdultForm();
+
+    fillNames();
+    fireEvent.change(screen.getByLabelText("Date of birth"), {
+      target: { value: `${new Date().getUTCFullYear() - 10}-06-15` },
+    });
+    save();
+
+    expect(await screen.findByText("This person is under 18. Use Add minor instead.")).toBeTruthy();
+    expect(addAdultCalls(calls)).toHaveLength(0);
+    expect(screen.getByRole("heading", { name: "New adult in this household" })).toBeTruthy();
+  });
+
+  it("posts add-adult with the household id and omits empty optional fields", async () => {
+    const { calls } = await openNewAdultForm();
+
+    fireEvent.change(screen.getByLabelText("Given name"), { target: { value: "  Beatrice " } });
+    fireEvent.change(screen.getByLabelText("Family name"), { target: { value: " Webb  " } });
+    save();
+
+    await waitFor(() => expect(addAdultCalls(calls)).toHaveLength(1));
+    expect(addAdultCalls(calls)[0]!.body).toEqual({
+      communitySlug: SLUG,
+      householdId: sampleDetail.householdId,
+      givenName: "Beatrice",
+      familyName: "Webb",
+    });
+
+    // Back on Household Details after the 201; a second form with every field filled.
+    fireEvent.click(await screen.findByRole("button", { name: "Add adult" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Create new adult" }));
+    expect(screen.getByLabelText<HTMLInputElement>("Given name").value).toBe("");
+    fillNames();
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "bea@example.test" } });
+    fireEvent.change(screen.getByLabelText("Phone"), { target: { value: "+61412555138" } });
+    fireEvent.change(screen.getByLabelText("Date of birth"), { target: { value: "1985-03-04" } });
+    save();
+
+    await waitFor(() => expect(addAdultCalls(calls)).toHaveLength(2));
+    expect(addAdultCalls(calls)[1]!.body).toEqual({
+      communitySlug: SLUG,
+      householdId: sampleDetail.householdId,
+      givenName: "Beatrice",
+      familyName: "Webb",
+      email: "bea@example.test",
+      phone: "+61412555138",
+      dateOfBirth: "1985-03-04",
+    });
+  });
+
+  it("adds the new adult and reloads Household Details on 201 with focus on the heading", async () => {
+    let detailLoads = 0;
+    const { calls } = await openAddAdultView();
+    const fetchSpy = vi.mocked(globalThis.fetch);
+    const originalImpl = fetchSpy.getMockImplementation()!;
+    fetchSpy.mockImplementation(async (info, init) => {
+      const path = String(info).replace(/^https?:\/\/[^/]+/, "");
+      if (path === "/v1/households/read") {
+        detailLoads++;
+        return new Response(
+          JSON.stringify({
+            ...sampleDetail,
+            adults: [
+              ...sampleDetail.adults,
+              {
+                personId: "00000000-0000-4000-8000-000000000066",
+                givenName: "Beatrice",
+                familyName: "Webb",
+                version: 1,
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return originalImpl(info, init);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Create new adult" }));
+    fillNames();
+    save();
+
+    const heading = await screen.findByRole("heading", { name: "Household Details" });
+    expect(await screen.findByText("Beatrice")).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+    expect(detailLoads).toBe(1);
+    expect(addAdultCalls(calls)).toHaveLength(1);
+  });
+
+  it("shows 'Check the details and try again.' on 400", async () => {
+    const { calls } = await openNewAdultForm({ addAdultResult: 400 });
+
+    fillNames();
+    save();
+
+    expect(await screen.findByText("Check the details and try again.")).toBeTruthy();
+    expect(addAdultCalls(calls)).toHaveLength(1);
+    expect(screen.getByLabelText<HTMLInputElement>("Given name").value).toBe("Beatrice");
+  });
+
+  it("shows 'Household not found' on 404 with the back button", async () => {
+    await openNewAdultForm({ addAdultResult: 404 });
+
+    fillNames();
+    save();
+
+    expect(await screen.findByText("Household not found")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Back to list" }));
+    expect(await screen.findByRole("table", { name: "Households" })).toBeTruthy();
+  });
+
+  it("does not show Back to list on an under-18 refusal after a 404", async () => {
+    const { calls } = await openNewAdultForm({ addAdultResult: 404 });
+
+    fillNames();
+    save();
+    expect(await screen.findByText("Household not found")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Back to list" })).toBeTruthy();
+    expect(addAdultCalls(calls)).toHaveLength(1);
+
+    fireEvent.change(screen.getByLabelText("Date of birth"), {
+      target: { value: `${new Date().getUTCFullYear() - 10}-06-15` },
+    });
+    save();
+
+    expect(await screen.findByText("This person is under 18. Use Add minor instead.")).toBeTruthy();
+    expect(screen.queryByText("Household not found")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Back to list" })).toBeNull();
+    expect(addAdultCalls(calls)).toHaveLength(1);
+  });
+
+  it("shows the duplicate message on 409 and keeps the entered values", async () => {
+    const { calls } = await openNewAdultForm({ addAdultResult: 409 });
+
+    fillNames();
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "bea@example.test" } });
+    fireEvent.change(screen.getByLabelText("Phone"), { target: { value: "+61412555138" } });
+    fireEvent.change(screen.getByLabelText("Date of birth"), { target: { value: "1985-03-04" } });
+    save();
+
+    expect(
+      await screen.findByText(
+        "A contact with this email or phone already exists. Search for them instead.",
+      ),
+    ).toBeTruthy();
+    expect(addAdultCalls(calls)).toHaveLength(1);
+    expect(screen.getByLabelText<HTMLInputElement>("Given name").value).toBe("Beatrice");
+    expect(screen.getByLabelText<HTMLInputElement>("Family name").value).toBe("Webb");
+    expect(screen.getByLabelText<HTMLInputElement>("Email").value).toBe("bea@example.test");
+    expect(screen.getByLabelText<HTMLInputElement>("Phone").value).toBe("+61412555138");
+    expect(screen.getByLabelText<HTMLInputElement>("Date of birth").value).toBe("1985-03-04");
+  });
+
+  it("shows the generic message on 403, 503, 500 and network failure and keeps the values", async () => {
+    const failures: Array<number | "network"> = [403, 503, 500, "network"];
+    for (const failure of failures) {
+      const { calls } = await openNewAdultForm({ addAdultResult: failure });
+
+      fillNames();
+      save();
+
+      expect(await screen.findByText("Unable to add this adult. Try again.")).toBeTruthy();
+      expect(addAdultCalls(calls)).toHaveLength(1);
+      expect(screen.getByLabelText<HTMLInputElement>("Given name").value).toBe("Beatrice");
+      expect(screen.getByLabelText<HTMLInputElement>("Family name").value).toBe("Webb");
+
+      cleanup();
+      sessionStorage.clear();
+      vi.restoreAllMocks();
+      await router.navigate("/");
+    }
+  });
+
+  it("on 401 sends once, and the screen falls back to sign-in because api.post cleared the token", async () => {
+    const { calls } = await openNewAdultForm({ addAdultResult: 401 });
+
+    fillNames();
+    save();
+
+    await waitFor(() => expect(addAdultCalls(calls)).toHaveLength(1));
+    expect(await screen.findByText("Sign in required")).toBeTruthy();
+    expect(sessionStorage.getItem("community-hub.access-token")).toBeNull();
+  });
+
+  it("guards Create new adult against double submission", async () => {
+    let release: (response: Response) => void = () => {};
+    const { calls } = await openNewAdultForm();
+    const fetchSpy = vi.mocked(globalThis.fetch);
+    const originalImpl = fetchSpy.getMockImplementation()!;
+    fetchSpy.mockImplementation(async (info, init) => {
+      const path = String(info).replace(/^https?:\/\/[^/]+/, "");
+      if (path === "/v1/households/members/add-adult") {
+        const body: unknown = JSON.parse(String(init?.body));
+        calls.push({ path, body });
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      }
+      return originalImpl(info, init);
+    });
+
+    fillNames();
+    const saveButton = screen.getByRole("button", { name: "Save adult" });
+    act(() => {
+      fireEvent.click(saveButton);
+      fireEvent.click(saveButton);
+    });
+
+    await waitFor(() => expect(addAdultCalls(calls)).toHaveLength(1));
+    await act(async () => {
+      release(
+        new Response(JSON.stringify({ personId: "00000000-0000-4000-8000-000000000066" }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    await screen.findByRole("heading", { name: "Household Details" });
+    expect(addAdultCalls(calls)).toHaveLength(1);
+  });
+
+  it("returns to Add Adult with the read-only notice and no Create new adult button after a 402", async () => {
+    const { calls } = await openNewAdultForm({ addAdultResult: 402 });
+
+    fillNames();
+    save();
+
+    expect(await screen.findByText("Read-only until billing is settled")).toBeTruthy();
+    expect(addAdultCalls(calls)).toHaveLength(1);
+    expect(screen.getByRole("heading", { name: "Add Adult" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "New adult in this household" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Create new adult" })).toBeNull();
+  });
+
+  it("clears the new adult form on community switch", async () => {
+    await openNewAdultForm();
+
+    fillNames();
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "bea@example.test" } });
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: "other-community" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+    expect(screen.queryByRole("heading", { name: "New adult in this household" })).toBeNull();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+    fireEvent.click(await screen.findByRole("button", { name: "View Clarke Family" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add adult" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Create new adult" }));
+
+    expect(screen.getByLabelText<HTMLInputElement>("Given name").value).toBe("");
+    expect(screen.getByLabelText<HTMLInputElement>("Email").value).toBe("");
+  });
+
+  it("passes axe scan on the new adult form and ties the date of birth help by aria-describedby", async () => {
+    const { container } = await openNewAdultForm();
+
+    const dob = screen.getByLabelText("Date of birth");
+    const describedBy = dob.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    const help = document.getElementById(describedBy!);
+    expect(help?.textContent).toBe("Under 18? Use Add minor instead.");
+
+    const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    expect(resultIds(results, "violations")).toEqual([]);
+
+    fillNames();
+    fireEvent.change(dob, { target: { value: `${new Date().getUTCFullYear() - 10}-06-15` } });
+    save();
+    expect(await screen.findByText("This person is under 18. Use Add minor instead.")).toBeTruthy();
+    const after = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    expect(resultIds(after, "violations")).toEqual([]);
   });
 });

@@ -227,3 +227,67 @@ export async function addMinor(
 
   return { personId: created.personId, linkId: linked.linkId };
 }
+
+export type AddAdultInput = {
+  now: Date;
+  householdId: string;
+  givenName: string;
+  familyName: string;
+  email: string | null;
+  phone: string | null;
+  dateOfBirth: string | null;
+  actorUserId: string | null;
+};
+
+export async function addAdult(
+  tx: AppTransaction,
+  kms: KmsPort,
+  keyArn: string,
+  input: AddAdultInput,
+): Promise<{ personId: string }> {
+  if (
+    typeof input.householdId !== "string" ||
+    !UUID_RE.test(input.householdId) ||
+    typeof input.givenName !== "string" ||
+    typeof input.familyName !== "string" ||
+    (input.email !== null && typeof input.email !== "string") ||
+    (input.phone !== null && typeof input.phone !== "string") ||
+    (input.dateOfBirth !== null && typeof input.dateOfBirth !== "string")
+  ) {
+    throw new PeopleError("invalid_input");
+  }
+
+  const households = await tx<{ id: string }[]>`
+    select id::text as id
+    from app.households
+    where id = ${input.householdId}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
+  `;
+  if (households[0] === undefined) {
+    throw new PeopleError("not_found");
+  }
+
+  const created = await createPerson(tx, kms, keyArn, {
+    now: input.now,
+    declaredAdult: true,
+    householdId: input.householdId,
+    dateOfBirth: input.dateOfBirth,
+    givenName: input.givenName,
+    familyName: input.familyName,
+    email: input.email,
+    phone: input.phone,
+    actorUserId: input.actorUserId,
+  });
+
+  const recorded = actor(input.actorUserId);
+  await appendAuditEvent(tx, {
+    actorKind: recorded.actorKind,
+    actorId: recorded.actorId,
+    action: PERSON_HOUSEHOLD_MOVED,
+    purpose: PERSON_HOUSEHOLD_MOVED,
+    targetIds: [created.personId, input.householdId],
+  });
+
+  return { personId: created.personId };
+}
