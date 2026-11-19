@@ -874,7 +874,11 @@ describe("service times integration", () => {
           const serialised = JSON.stringify(allAudits);
           expect(serialised).not.toContain("Confidential-Mass-Timings-Text");
           expect(serialised).not.toContain(secretContent);
-          expect(serialised).not.toContain(String(secretContent.length));
+          // Uuids and timestamps are random; mask them so a length match is real
+          const withoutIdsOrTimes = serialised
+            .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "<id>")
+            .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g, "<time>");
+          expect(withoutIdsOrTimes).not.toContain(String(secretContent.length));
 
           // A rejected save (e.g. version conflict) appends NO audit event
           await expect(
