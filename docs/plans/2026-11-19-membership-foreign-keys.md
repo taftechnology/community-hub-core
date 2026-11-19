@@ -168,7 +168,8 @@ These tests pass on the first run, because Task 1 added the keys. The report say
 1. Task 1 (Docker). Reviewer review and pins 1d, 3a–3e.
 2. Task 2 (Docker). Reviewer review and pins 1a–1c, 2a–2c.
 3. Checkpoint: the owner's check of the Task 2 diff.
-4. Task 3.
+4. Task 2b (amendment A2, Docker). Reviewer review.
+5. Task 3.
 
 ## Definition of done (AGENTS.md §8)
 
@@ -198,3 +199,4 @@ This plan has no Terraform assert, so no scratch probe is needed (AGENTS.md §4)
 ## Amendments during implementation
 
 - **A1 (2026-11-19, chunk owner), from Task 1's first run.** The generated `0020` failed with `22P02` on every database: adding a validated foreign key under FORCE RLS runs Postgres's whole-table check under the policies with no tenant scope. Spec amendment A1 adds the keys `NOT VALID`. Changed here: Architecture line, Global constraints (`0020` hand edit), Decision 2, pins 3a–3e and their notes, Stop and ask, Task 1 step 2. The first run's uncommitted work stays in the worktree; Task 1 resumes from it.
+- **A2 (2026-11-19, chunk owner), from the checkpoint check.** `@community-hub/tenancy#test` failed once in the Task 2 gate with `expected 2 to be 1` and passed alone. `modules/core/tenancy/infrastructure/implicit-organisation.integration.test.ts:122-125` and `:137-140` count every row of `platform.organisations` in the shared `hub_product_only` database and expect `1`, so any package creating an organisation at the same time fails it. Those lines are unchanged on `fe8f496`; this chunk's new tests create organisations and make the failure more likely. AGENTS.md §10 says a flaky test is fixed in the same PR, so a new **Task 2b** (`test(tenancy): count only this test's organisations`) scopes both counts to the slugs that test tries to create (`'example-parish'`, `'second-parish'`, `'Example'`, `'example'`), keeping the expected `1`. That file is the only change; the "Untouched" rule for tenancy source still holds. No pin: the test pins no setting the spec names.
