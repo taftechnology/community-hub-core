@@ -1360,6 +1360,7 @@ describe("invitations repository integration (pins & behaviour)", () => {
       // 4. already linked contact gives person_linked
       const userToLink = newId();
       await runInCommunity(app, scopeA1, async (tx) => {
+        await addMember(tx, userToLink);
         await tx`
           insert into app.user_links (id, org_id, community_id, user_id, person_id)
           values (${newId()}::uuid, current_setting('app.org_id')::uuid, current_setting('app.community_id')::uuid, ${userToLink}::uuid, ${adultId}::uuid)

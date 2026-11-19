@@ -21,6 +21,7 @@
     "test/schema-test.ts",
     "test/plaintext.integration.test.ts",
     "test/tls.integration.test.ts",
-    "test/plaintext-dist.test.ts"
+    "test/plaintext-dist.test.ts",
+    "test/membership-keys-migration.integration.test.ts"
   ]
 }

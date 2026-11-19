@@ -66,6 +66,11 @@ export function accessTables(app: PgSchema) {
       (t) => [
         primaryKey({ columns: [t.orgId, t.id] }),
         unique("organisation_role_grants_user_role_unique").on(t.orgId, t.userId, t.roleKey),
+        foreignKey({
+          columns: [t.orgId, t.userId],
+          foreignColumns: [organisationMembers.orgId, organisationMembers.userId],
+          name: "organisation_role_grants_member_fk",
+        }).onDelete("restrict"),
         check(
           "organisation_role_grants_role_key",
           sql`${t.roleKey} in ('org_owner', 'org_admin', 'org_billing', 'org_auditor')`,
@@ -127,6 +132,11 @@ export function accessTables(app: PgSchema) {
           columns: [t.orgId, t.customRoleId],
           foreignColumns: [customRoles.orgId, customRoles.id],
           name: "community_role_grants_custom_role_fk",
+        }).onDelete("restrict"),
+        foreignKey({
+          columns: [t.orgId, t.userId],
+          foreignColumns: [organisationMembers.orgId, organisationMembers.userId],
+          name: "community_role_grants_member_fk",
         }).onDelete("restrict"),
         check(
           "community_role_grants_role_key",
@@ -192,6 +202,11 @@ export function accessTables(app: PgSchema) {
           columns: [t.orgId, t.personId],
           foreignColumns: [persons.orgId, persons.id],
           name: "user_links_person_fk",
+        }).onDelete("restrict"),
+        foreignKey({
+          columns: [t.orgId, t.userId],
+          foreignColumns: [organisationMembers.orgId, organisationMembers.userId],
+          name: "user_links_member_fk",
         }).onDelete("restrict"),
         pgPolicy("community_isolation", {
           for: "all",

@@ -31,7 +31,7 @@ function accessSql(): string {
   const files = readdirSync(DRIZZLE).filter((name) => name.endsWith(".sql"));
   const matches = files.filter((name) => {
     const text = readFileSync(path.join(DRIZZLE, name), "utf8");
-    return text.includes('"app"."user_links"');
+    return text.includes('CREATE TABLE "app"."user_links"');
   });
   expect(matches).toHaveLength(1);
   return readFileSync(path.join(DRIZZLE, matches[0] ?? ""), "utf8");
