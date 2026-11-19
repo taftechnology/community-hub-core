@@ -120,7 +120,7 @@ describe("implicit organisation", () => {
         }),
       ).rejects.toMatchObject({ code: "duplicate_community_slug" });
       const organisationCount = await sql<{ n: number }[]>`
-        select count(*)::int as n from platform.organisations
+        select count(*)::int as n from platform.organisations where slug in ('example-parish', 'second-parish', 'Example', 'example')
       `;
       expect(Number(organisationCount[0]?.n)).toBe(1);
       const secondParish = await sql<{ n: number }[]>`
@@ -135,7 +135,7 @@ describe("implicit organisation", () => {
         }),
       ).rejects.toMatchObject({ code: "invalid_slug" });
       const afterInvalid = await sql<{ n: number }[]>`
-        select count(*)::int as n from platform.organisations
+        select count(*)::int as n from platform.organisations where slug in ('example-parish', 'second-parish', 'Example', 'example')
       `;
       expect(Number(afterInvalid[0]?.n)).toBe(1);
     } finally {

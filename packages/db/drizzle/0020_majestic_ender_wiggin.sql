@@ -1,0 +1,3 @@
+ALTER TABLE "app"."community_role_grants" ADD CONSTRAINT "community_role_grants_member_fk" FOREIGN KEY ("org_id","user_id") REFERENCES "app"."organisation_members"("org_id","user_id") ON DELETE restrict ON UPDATE no action NOT VALID;--> statement-breakpoint
+ALTER TABLE "app"."organisation_role_grants" ADD CONSTRAINT "organisation_role_grants_member_fk" FOREIGN KEY ("org_id","user_id") REFERENCES "app"."organisation_members"("org_id","user_id") ON DELETE restrict ON UPDATE no action NOT VALID;--> statement-breakpoint
+ALTER TABLE "app"."user_links" ADD CONSTRAINT "user_links_member_fk" FOREIGN KEY ("org_id","user_id") REFERENCES "app"."organisation_members"("org_id","user_id") ON DELETE restrict ON UPDATE no action NOT VALID;

@@ -134,6 +134,19 @@ async function cleanIdentity(sql: ReturnType<typeof createPlaintextIdentitySql>)
   await sql`delete from identity.identity_keys`;
 }
 
+function findPostgresError(error: unknown): { code?: string; constraint_name?: string } | null {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  while (typeof current === "object" && current !== null && !seen.has(current)) {
+    seen.add(current);
+    if ("code" in current && typeof (current as { code?: unknown }).code === "string") {
+      return current as { code?: string; constraint_name?: string };
+    }
+    current = "cause" in current ? (current as { cause?: unknown }).cause : undefined;
+  }
+  return null;
+}
+
 beforeAll(async () => {
   const migration = createPlaintextDirectSql(loadRuntime().productOnlyUrl);
   try {
@@ -1292,63 +1305,39 @@ describe("users list integration", () => {
     }
   });
 
-  it("pin 43 (a): a user granted by raw SQL with no membership is absent and never decrypted", async () => {
+  it("pin 43 (a): a raw-SQL community grant for a user with no membership is refused by the key", async () => {
     const tenant = await createTenant();
-    const owner = await setupOwner(tenant);
+    await setupOwner(tenant);
     const outsider = await createSession(exampleTestEmail("rawgrant"));
-    await withRequest({ requestId: REQUEST_ID }, () =>
-      withAppTransaction(
-        app,
-        { orgId: tenant.organisationId, communityId: tenant.communityId },
-        async (tx) => {
-          await tx`
-            insert into app.community_role_grants (
-              id, org_id, community_id, user_id, role_key, custom_role_id
-            ) values (
-              ${newId()}::uuid,
-              current_setting('app.org_id')::uuid,
-              current_setting('app.community_id')::uuid,
-              ${outsider.userId}::uuid,
-              'member',
-              null
-            )
-          `;
-          const grants = await tx<{ n: number }[]>`
-            select count(*)::int as n
-            from app.community_role_grants
-            where user_id = ${outsider.userId}::uuid
-          `;
-          const members = await tx<{ n: number }[]>`
-            select count(*)::int as n
-            from app.organisation_members
-            where user_id = ${outsider.userId}::uuid
-          `;
-          expect(grants[0]!.n).toBe(1);
-          expect(members[0]!.n).toBe(0);
-        },
-      ),
-    );
-
-    const spy = vi.spyOn(identityApi, "readUserEmails");
-    spy.mockClear();
+    let error: unknown = null;
     try {
-      const res = await post(
-        API_HOSTNAME,
-        "/v1/access/users/list",
-        { communitySlug: tenant.slug },
-        owner.bearer,
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(
+          app,
+          { orgId: tenant.organisationId, communityId: tenant.communityId },
+          async (tx) => {
+            await tx`
+              insert into app.community_role_grants (
+                id, org_id, community_id, user_id, role_key, custom_role_id
+              ) values (
+                ${newId()}::uuid,
+                current_setting('app.org_id')::uuid,
+                current_setting('app.community_id')::uuid,
+                ${outsider.userId}::uuid,
+                'member',
+                null
+              )
+            `;
+          },
+        ),
       );
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as ListUsersResponse;
-      const ids = body.users.map((user) => user.userId);
-      expect(ids).toContain(owner.userId);
-      expect(ids).not.toContain(outsider.userId);
-      const seen = spy.mock.calls.flatMap((call) => [...(call[3] as readonly string[])]);
-      expect(seen).toContain(owner.userId);
-      expect(seen).not.toContain(outsider.userId);
-    } finally {
-      spy.mockRestore();
+    } catch (err) {
+      error = err;
     }
+
+    const pgError = findPostgresError(error);
+    expect(pgError?.code).toBe("23503");
+    expect(pgError?.constraint_name).toBe("community_role_grants_member_fk");
   });
 
   it("pin 43 (b): a member granted only in community 2 is absent from community 1 and never decrypted", async () => {

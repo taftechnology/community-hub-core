@@ -199,6 +199,7 @@ describe("membership backfill migration", () => {
           breakpoints: boolean;
         }[];
       };
+      journal2.entries = journal2.entries.filter((entry) => entry.idx <= 19);
       const entry0019 = journal2.entries.find((e) => e.idx === 19);
       expect(entry0019).toBeDefined();
 

@@ -141,6 +141,13 @@
       "when": 1794643859423,
       "tag": "0019_spotty_cloak",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1795061942962,
+      "tag": "0020_majestic_ender_wiggin",
+      "breakpoints": true
     }
   ]
 }
