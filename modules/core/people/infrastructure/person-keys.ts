@@ -4,7 +4,7 @@ import { deriveKeys, unwrapKey, type KmsPort } from "@community-hub/crypto";
 import { appendAuditEvent, type AppTransaction } from "@community-hub/db";
 
 import { PeopleError } from "../domain/error.js";
-import { openCommunityHkdf } from "./keys.js";
+import { openCommunityHkdf, openExistingCommunityHkdf } from "./keys.js";
 
 export type PersonFieldKeys = {
   enc: webcrypto.CryptoKey;
@@ -35,6 +35,32 @@ export async function communityFieldKeys(
   keyArn: string,
 ): Promise<PersonFieldKeys> {
   const { hkdf, keyId } = await communityRoot(tx, kms, keyArn);
+  const { enc, bidx } = await deriveKeys(hkdf);
+  return { enc, bidx, keyId };
+}
+
+export async function existingCommunityFieldKeys(
+  tx: AppTransaction,
+  kms: KmsPort,
+  keyArn: string,
+): Promise<PersonFieldKeys | null> {
+  const orgKeys = await tx<{ id: string }[]>`
+    select id::text as id
+    from app.organisation_keys
+    where org_id = current_setting('app.org_id')::uuid
+  `;
+  if (orgKeys[0] === undefined) {
+    return null;
+  }
+  const commKeys = await tx<{ id: string }[]>`
+    select id::text as id
+    from app.community_keys
+    where community_id = current_setting('app.community_id')::uuid
+  `;
+  if (commKeys[0] === undefined) {
+    return null;
+  }
+  const { hkdf, keyId } = await openExistingCommunityHkdf(tx, kms, keyArn);
   const { enc, bidx } = await deriveKeys(hkdf);
   return { enc, bidx, keyId };
 }
