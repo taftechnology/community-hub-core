@@ -165,13 +165,15 @@ describe("persons status, source and created_at migration 0021", () => {
     rawJournal.entries = rawJournal.entries.filter((entry) => entry.idx <= 21);
     writeFileSync(path.join(folder, "meta/_journal.json"), JSON.stringify(rawJournal, null, 2));
 
-    beforeMigrationTime = new Date();
+    const [beforeDb] = await sql<{ now: Date }[]>`select now() as now`;
+    beforeMigrationTime = new Date(beforeDb.now);
     await applyMigrations({
       sql,
       folder,
       table: "__drizzle_migrations",
     });
-    afterMigrationTime = new Date();
+    const [afterDb] = await sql<{ now: Date }[]>`select now() as now`;
+    afterMigrationTime = new Date(afterDb.now);
   }, 180_000);
 
   afterAll(async () => {

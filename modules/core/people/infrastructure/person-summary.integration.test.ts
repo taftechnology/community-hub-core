@@ -524,4 +524,173 @@ describe("summarisePersons", () => {
       await directSql.end({ timeout: 1 });
     }
   });
+
+  it("summarisePersons: counts an adult whose created_at equals addedSince", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const kms = createLocalKmsPort();
+    const scope = await createScope(platform);
+
+    try {
+      const boundaryDate = new Date("2026-10-01T00:00:00.000Z");
+      await withAppTransaction(
+        app,
+        { orgId: scope.orgId, communityId: scope.communityId },
+        async (tx) => {
+          await withRequest({ requestId: REQUEST_ID }, async () => {
+            await createPerson(tx, kms, KEY_ARN, {
+              now: boundaryDate,
+              declaredAdult: true,
+              householdId: null,
+              dateOfBirth: null,
+              givenName: "BoundaryAdult",
+              familyName: "Person",
+              email: "boundary@example.test",
+              phone: "+61411111199",
+              actorUserId: null,
+            });
+
+            const summary = await summarisePersons(tx, {
+              addedSince: boundaryDate,
+            });
+
+            expect(summary.total).toBe(1);
+            expect(summary.addedSince).toBe(1);
+          });
+        },
+      );
+    } finally {
+      await cleanScope(directSql, scope);
+      await app.end({ timeout: 1 });
+      await platform.end({ timeout: 1 });
+      await directSql.end({ timeout: 1 });
+    }
+  });
+
+  it("summarisePersons: adults in another organisation are not counted", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const kms = createLocalKmsPort();
+    const scopeA = await createScope(platform);
+    const scopeB = await createScope(platform);
+
+    try {
+      // Scope A: 2 adults
+      await withAppTransaction(
+        app,
+        { orgId: scopeA.orgId, communityId: scopeA.communityId },
+        async (tx) => {
+          await withRequest({ requestId: REQUEST_ID }, async () => {
+            const now = new Date("2026-10-15T00:00:00Z");
+            await createPerson(tx, kms, KEY_ARN, {
+              now,
+              declaredAdult: true,
+              householdId: null,
+              dateOfBirth: null,
+              givenName: "OrgA1",
+              familyName: "User",
+              email: "orga1@example.test",
+              phone: "+61411111111",
+              actorUserId: null,
+            });
+            await createPerson(tx, kms, KEY_ARN, {
+              now,
+              declaredAdult: true,
+              householdId: null,
+              dateOfBirth: null,
+              givenName: "OrgA2",
+              familyName: "User",
+              email: "orga2@example.test",
+              phone: "+61411111112",
+              actorUserId: null,
+            });
+          });
+        },
+      );
+
+      // Scope B: 3 adults
+      await withAppTransaction(
+        app,
+        { orgId: scopeB.orgId, communityId: scopeB.communityId },
+        async (tx) => {
+          await withRequest({ requestId: REQUEST_ID }, async () => {
+            const now = new Date("2026-10-15T00:00:00Z");
+            await createPerson(tx, kms, KEY_ARN, {
+              now,
+              declaredAdult: true,
+              householdId: null,
+              dateOfBirth: null,
+              givenName: "OrgB1",
+              familyName: "User",
+              email: "orgb1@example.test",
+              phone: "+61422222221",
+              actorUserId: null,
+            });
+            await createPerson(tx, kms, KEY_ARN, {
+              now,
+              declaredAdult: true,
+              householdId: null,
+              dateOfBirth: null,
+              givenName: "OrgB2",
+              familyName: "User",
+              email: "orgb2@example.test",
+              phone: "+61422222222",
+              actorUserId: null,
+            });
+            await createPerson(tx, kms, KEY_ARN, {
+              now,
+              declaredAdult: true,
+              householdId: null,
+              dateOfBirth: null,
+              givenName: "OrgB3",
+              familyName: "User",
+              email: "orgb3@example.test",
+              phone: "+61422222223",
+              actorUserId: null,
+            });
+          });
+        },
+      );
+
+      // Check Scope A summary
+      await withAppTransaction(
+        app,
+        { orgId: scopeA.orgId, communityId: scopeA.communityId },
+        async (tx) => {
+          await withRequest({ requestId: REQUEST_ID }, async () => {
+            const summaryA = await summarisePersons(tx, {
+              addedSince: new Date("2026-10-01T00:00:00Z"),
+            });
+            expect(summaryA.total).toBe(2);
+            expect(summaryA.active).toBe(2);
+          });
+        },
+      );
+
+      // Check Scope B summary
+      await withAppTransaction(
+        app,
+        { orgId: scopeB.orgId, communityId: scopeB.communityId },
+        async (tx) => {
+          await withRequest({ requestId: REQUEST_ID }, async () => {
+            const summaryB = await summarisePersons(tx, {
+              addedSince: new Date("2026-10-01T00:00:00Z"),
+            });
+            expect(summaryB.total).toBe(3);
+            expect(summaryB.active).toBe(3);
+          });
+        },
+      );
+    } finally {
+      await cleanScope(directSql, scopeA);
+      await cleanScope(directSql, scopeB);
+      await app.end({ timeout: 1 });
+      await platform.end({ timeout: 1 });
+      await directSql.end({ timeout: 1 });
+    }
+  });
 });

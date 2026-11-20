@@ -1089,7 +1089,7 @@ describe("person create and read", () => {
             email: null,
             phone: null,
             actorUserId: null,
-            source: "manual",
+            source: "family_records",
           });
           const minor = await createPerson(tx, kms, KEY_ARN, {
             now: NOW,
@@ -1115,7 +1115,7 @@ describe("person create and read", () => {
           expect(adultRead).not.toBeNull();
           expect(adultRead?.isMinor).toBe(false);
           expect((adultRead as { status?: unknown })?.status).toBe("active");
-          expect((adultRead as { source?: unknown })?.source).toBe("manual");
+          expect((adultRead as { source?: unknown })?.source).toBe("family_records");
 
           expect(minorRead).not.toBeNull();
           expect(minorRead?.isMinor).toBe(true);

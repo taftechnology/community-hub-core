@@ -1057,4 +1057,63 @@ describe("updatePerson", () => {
       await directSql.end({ timeout: 1 });
     }
   });
+
+  it("updatePerson: refuses a source outside manual and family_records with invalid_input", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const scope = await createScope(platform);
+    const kms = createLocalKmsPort();
+    const actorUserId = newId();
+
+    try {
+      let personId = "";
+      await withAppTransaction(
+        app,
+        { orgId: scope.orgId, communityId: scope.communityId },
+        async (tx) => {
+          await withRequest({ requestId: REQUEST_ID }, async () => {
+            const created = await createPerson(tx, kms, KEY_ARN, {
+              now: NOW,
+              declaredAdult: true,
+              householdId: null,
+              dateOfBirth: null,
+              givenName: "InvalidSource",
+              familyName: "Check",
+              email: null,
+              phone: null,
+              actorUserId,
+            });
+            personId = created.personId;
+          });
+        },
+      );
+
+      await withAppTransaction(
+        app,
+        { orgId: scope.orgId, communityId: scope.communityId },
+        async (tx) => {
+          await withRequest({ requestId: REQUEST_ID }, async () => {
+            await expect(
+              updatePerson(tx, kms, KEY_ARN, {
+                personId,
+                version: 1,
+                changes: {
+                  source: "website" as unknown as "manual",
+                },
+                actorUserId,
+                now: NOW,
+              }),
+            ).rejects.toMatchObject({ code: "invalid_input" });
+          });
+        },
+      );
+    } finally {
+      await cleanScope(directSql, scope);
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+      await directSql.end({ timeout: 1 });
+    }
+  });
 });
