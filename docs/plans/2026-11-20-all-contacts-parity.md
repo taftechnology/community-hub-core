@@ -329,3 +329,22 @@ Tasks 1 to 9 in order, one run each. Checkpoints after Tasks 5, 7 and 8.
 - Full local gate green apart from the allowed Windows failures; CI green on the pull request.
 - Browser check screenshots in the pull request; staging stays parked, recorded as an open item.
 - Reviewer sign-off and the second review line in the pull request; no `docs/plans/*-report.md`; nothing under `.superpowers/` staged.
+
+## Amendments during implementation
+
+### A1 (2026-11-20, after checkpoint 1): test strength for Tasks 2, 3 and 5
+
+Source: the reviewer's checkpoint pin run (pin 17 failed weakened on `OperationError: decryption failed`, not an assertion) and the checkpoint 1 owner's check (Claude Sonnet, APPROVE WITH NOTES, 0 High, 3 Medium, 9 Low). No source change; tests only, in one `test(people)` commit.
+
+- Pin 17: the filtered group also holds a minor with no email, phone or date of birth; the test asserts by name that no minor appears, so the weakening fails on an assertion.
+- New pins (file **L**):
+
+| #   | Setting                                         | Weakening                                                           | Test that must fail (exact `it` title)                                                                    |
+| --- | ----------------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| 18b | The audit lists only the returned page          | `targetIds` from all fetched rows (`limit + 1`) instead of the page | listPersons: a page smaller than the community audits exactly the returned ids                            |
+| 20b | No-keys search is an empty page, not everyone   | The email branch sets no search clause when keys are `null`         | listPersons: an email or phone search in a keyless community with a name-only adult returns an empty page |
+| 20c | A community without its own key row has no keys | Delete the community key row check in `existingCommunityFieldKeys`  | listPersons: a search in a keyless community of an organisation that has a key returns an empty page      |
+| 20d | No derive when the page holds no ciphertext     | `hasCiphertext` replaced by `pageRows.length > 0`                   | listPersons: a page of name-only adults makes no KMS call and does not throw without keys                 |
+
+- Tests with no pin claim: `createdAt` equals the stored value (a `now` different from the list's); `readPerson` returns `family_records` for an adult created with it; `updatePerson` and `listPersons` refuse a source outside their sets with `invalid_input`; the summary counts an adult whose `created_at` equals `addedSince`, and a two-organisation summary; a stub-`tx` SQL-text test that the adult list query filters by `community_id` explicitly; the migration test compares the `now()` fallback with `select now()` from the same database.
+- Not acted on: `ageOn` throwing for a future date of birth (unreachable, creation refuses it; recorded for the pull request); a thrown-error weakening (W15); `example.com` fixtures.
