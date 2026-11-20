@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { createPersonBody, listPeopleBody, readPersonBody, updatePersonBody } from "./people.js";
+import {
+  createPersonBody,
+  listPeopleBody,
+  peopleSummaryBody,
+  peopleSummaryResponse,
+  personStatusBody,
+  personStatusResponse,
+  PERSON_SOURCES,
+  readPersonBody,
+  updatePersonBody,
+} from "./people.js";
 
 const VALID_UUID = "00000000-0000-4000-8000-000000000001";
 
@@ -170,5 +180,440 @@ describe("people contract schemas (pin 2)", () => {
     expect(updatePersonBody.safeParse(maxUpdateBody).success).toBe(true);
     const serializedUpdate = JSON.stringify(maxUpdateBody);
     expect(Buffer.byteLength(serializedUpdate, "utf8")).toBeLessThan(4096);
+  });
+
+  it("listPeopleBody refuses status, source and groupId with kind minors", () => {
+    // With kind minors, status, source and groupId are each refused
+    expect(
+      listPeopleBody.safeParse({
+        communitySlug: "slug",
+        kind: "minors",
+        status: "active",
+      }).success,
+    ).toBe(false);
+
+    expect(
+      listPeopleBody.safeParse({
+        communitySlug: "slug",
+        kind: "minors",
+        source: "manual",
+      }).success,
+    ).toBe(false);
+
+    expect(
+      listPeopleBody.safeParse({
+        communitySlug: "slug",
+        kind: "minors",
+        groupId: VALID_UUID,
+      }).success,
+    ).toBe(false);
+
+    // Without kind: "minors", status, source and groupId are accepted
+    expect(
+      listPeopleBody.safeParse({
+        communitySlug: "slug",
+        kind: "adults",
+        status: "active",
+        source: "manual",
+        groupId: VALID_UUID,
+      }).success,
+    ).toBe(true);
+
+    expect(
+      listPeopleBody.safeParse({
+        communitySlug: "slug",
+        status: "inactive",
+        source: "family_records",
+      }).success,
+    ).toBe(true);
+
+    // Kind minors without those filters is accepted
+    expect(
+      listPeopleBody.safeParse({
+        communitySlug: "slug",
+        kind: "minors",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("createPersonBody and updatePersonBody accept only manual and family_records as source", () => {
+    // createPersonBody accepts manual and family_records
+    expect(
+      createPersonBody.safeParse({
+        communitySlug: "slug",
+        givenName: "Jane",
+        familyName: "Doe",
+        source: "manual",
+      }).success,
+    ).toBe(true);
+
+    expect(
+      createPersonBody.safeParse({
+        communitySlug: "slug",
+        givenName: "Jane",
+        familyName: "Doe",
+        source: "family_records",
+      }).success,
+    ).toBe(true);
+
+    expect(
+      createPersonBody.safeParse({
+        communitySlug: "slug",
+        givenName: "Jane",
+        familyName: "Doe",
+      }).success,
+    ).toBe(true);
+
+    // updatePersonBody accepts manual and family_records
+    expect(
+      updatePersonBody.safeParse({
+        communitySlug: "slug",
+        personId: VALID_UUID,
+        version: 1,
+        source: "manual",
+      }).success,
+    ).toBe(true);
+
+    expect(
+      updatePersonBody.safeParse({
+        communitySlug: "slug",
+        personId: VALID_UUID,
+        version: 1,
+        source: "family_records",
+      }).success,
+    ).toBe(true);
+
+    expect(
+      updatePersonBody.safeParse({
+        communitySlug: "slug",
+        personId: VALID_UUID,
+        version: 1,
+      }).success,
+    ).toBe(true);
+
+    // Both reject other sources from PERSON_SOURCES or arbitrary strings
+    for (const source of [
+      "website",
+      "form",
+      "donation",
+      "event_rsvp",
+      "event_booking",
+      "volunteer_application",
+      "mobile_app",
+      "mobile_app_family",
+      "auto",
+      "other",
+    ]) {
+      expect(
+        createPersonBody.safeParse({
+          communitySlug: "slug",
+          givenName: "Jane",
+          familyName: "Doe",
+          source,
+        }).success,
+      ).toBe(false);
+
+      expect(
+        updatePersonBody.safeParse({
+          communitySlug: "slug",
+          personId: VALID_UUID,
+          version: 1,
+          source,
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("PERSON_SOURCES lists the eleven keys in order", () => {
+    expect(PERSON_SOURCES).toEqual([
+      "manual",
+      "family_records",
+      "website",
+      "form",
+      "donation",
+      "event_rsvp",
+      "event_booking",
+      "volunteer_application",
+      "mobile_app",
+      "mobile_app_family",
+      "auto",
+    ]);
+  });
+
+  it("peopleSummaryBody refuses an addedSince without an offset", () => {
+    // Rejects naive datetime without timezone offset
+    expect(
+      peopleSummaryBody.safeParse({
+        communitySlug: "parish-au",
+        addedSince: "2026-10-01T00:00:00",
+      }).success,
+    ).toBe(false);
+
+    // Rejects date-only string
+    expect(
+      peopleSummaryBody.safeParse({
+        communitySlug: "parish-au",
+        addedSince: "2026-10-01",
+      }).success,
+    ).toBe(false);
+
+    // Accepts ISO 8601 instants with UTC offset Z
+    expect(
+      peopleSummaryBody.safeParse({
+        communitySlug: "parish-au",
+        addedSince: "2026-10-01T00:00:00Z",
+      }).success,
+    ).toBe(true);
+
+    // Accepts ISO 8601 instants with numeric positive offset
+    expect(
+      peopleSummaryBody.safeParse({
+        communitySlug: "parish-au",
+        addedSince: "2026-10-01T00:00:00+11:00",
+      }).success,
+    ).toBe(true);
+
+    // Accepts ISO 8601 instants with numeric negative offset
+    expect(
+      peopleSummaryBody.safeParse({
+        communitySlug: "parish-au",
+        addedSince: "2026-10-01T00:00:00-05:00",
+      }).success,
+    ).toBe(true);
+
+    // Accepts ISO 8601 instants with fractional seconds
+    expect(
+      peopleSummaryBody.safeParse({
+        communitySlug: "parish-au",
+        addedSince: "2026-10-01T00:00:00.123+11:00",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("personStatusBody parses valid bodies and strictly rejects invalid or extra fields", () => {
+    expect(
+      personStatusBody.safeParse({
+        communitySlug: "parish-au",
+        personId: VALID_UUID,
+        version: 1,
+        status: "active",
+      }).success,
+    ).toBe(true);
+
+    expect(
+      personStatusBody.safeParse({
+        communitySlug: "parish-au",
+        personId: VALID_UUID,
+        version: 2,
+        status: "inactive",
+      }).success,
+    ).toBe(true);
+
+    // Rejects invalid status
+    expect(
+      personStatusBody.safeParse({
+        communitySlug: "parish-au",
+        personId: VALID_UUID,
+        version: 1,
+        status: "unknown",
+      }).success,
+    ).toBe(false);
+
+    // Rejects non-positive or non-integer version
+    expect(
+      personStatusBody.safeParse({
+        communitySlug: "parish-au",
+        personId: VALID_UUID,
+        version: 0,
+        status: "active",
+      }).success,
+    ).toBe(false);
+
+    expect(
+      personStatusBody.safeParse({
+        communitySlug: "parish-au",
+        personId: VALID_UUID,
+        version: 1.5,
+        status: "active",
+      }).success,
+    ).toBe(false);
+
+    // Rejects non-UUID personId
+    expect(
+      personStatusBody.safeParse({
+        communitySlug: "parish-au",
+        personId: "not-a-uuid",
+        version: 1,
+        status: "active",
+      }).success,
+    ).toBe(false);
+
+    // Strictly rejects extra fields
+    expect(
+      personStatusBody.safeParse({
+        communitySlug: "parish-au",
+        personId: VALID_UUID,
+        version: 1,
+        status: "active",
+        extra: "forbidden",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("personStatusResponse parses valid responses and strictly rejects invalid or extra fields", () => {
+    expect(
+      personStatusResponse.safeParse({
+        version: 1,
+        status: "active",
+      }).success,
+    ).toBe(true);
+
+    expect(
+      personStatusResponse.safeParse({
+        version: 5,
+        status: "inactive",
+      }).success,
+    ).toBe(true);
+
+    // Rejects invalid status
+    expect(
+      personStatusResponse.safeParse({
+        version: 1,
+        status: "other",
+      }).success,
+    ).toBe(false);
+
+    // Rejects non-positive version
+    expect(
+      personStatusResponse.safeParse({
+        version: 0,
+        status: "active",
+      }).success,
+    ).toBe(false);
+
+    // Strictly rejects extra fields
+    expect(
+      personStatusResponse.safeParse({
+        version: 1,
+        status: "active",
+        extra: "forbidden",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("peopleSummaryBody parses valid bodies and strictly rejects invalid or extra fields", () => {
+    expect(
+      peopleSummaryBody.safeParse({
+        communitySlug: "parish-au",
+        addedSince: "2026-10-01T00:00:00Z",
+      }).success,
+    ).toBe(true);
+
+    // Missing addedSince
+    expect(
+      peopleSummaryBody.safeParse({
+        communitySlug: "parish-au",
+      }).success,
+    ).toBe(false);
+
+    // Missing communitySlug
+    expect(
+      peopleSummaryBody.safeParse({
+        addedSince: "2026-10-01T00:00:00Z",
+      }).success,
+    ).toBe(false);
+
+    // Empty communitySlug
+    expect(
+      peopleSummaryBody.safeParse({
+        communitySlug: "",
+        addedSince: "2026-10-01T00:00:00Z",
+      }).success,
+    ).toBe(false);
+
+    // Strictly rejects extra fields
+    expect(
+      peopleSummaryBody.safeParse({
+        communitySlug: "parish-au",
+        addedSince: "2026-10-01T00:00:00Z",
+        extra: "forbidden",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("peopleSummaryResponse parses valid responses and strictly rejects invalid or extra fields", () => {
+    expect(
+      peopleSummaryResponse.safeParse({
+        total: 10,
+        active: 8,
+        inactive: 2,
+        addedSince: 3,
+      }).success,
+    ).toBe(true);
+
+    expect(
+      peopleSummaryResponse.safeParse({
+        total: 10,
+        active: 8,
+        inactive: 2,
+        addedSince: 3,
+        groups: [
+          { id: VALID_UUID, name: "Choir" },
+          { id: "00000000-0000-4000-8000-000000000002", name: "Youth" },
+        ],
+      }).success,
+    ).toBe(true);
+
+    expect(
+      peopleSummaryResponse.safeParse({
+        total: 0,
+        active: 0,
+        inactive: 0,
+        addedSince: 0,
+        groups: [],
+      }).success,
+    ).toBe(true);
+
+    // Rejects negative counts
+    expect(
+      peopleSummaryResponse.safeParse({
+        total: -1,
+        active: 0,
+        inactive: 0,
+        addedSince: 0,
+      }).success,
+    ).toBe(false);
+
+    // Rejects non-integer counts
+    expect(
+      peopleSummaryResponse.safeParse({
+        total: 1.5,
+        active: 0,
+        inactive: 0,
+        addedSince: 0,
+      }).success,
+    ).toBe(false);
+
+    // Rejects invalid group in groups array
+    expect(
+      peopleSummaryResponse.safeParse({
+        total: 1,
+        active: 1,
+        inactive: 0,
+        addedSince: 1,
+        groups: [{ id: "not-a-uuid", name: "Choir" }],
+      }).success,
+    ).toBe(false);
+
+    // Strictly rejects extra fields
+    expect(
+      peopleSummaryResponse.safeParse({
+        total: 1,
+        active: 1,
+        inactive: 0,
+        addedSince: 1,
+        extra: "forbidden",
+      }).success,
+    ).toBe(false);
   });
 });
