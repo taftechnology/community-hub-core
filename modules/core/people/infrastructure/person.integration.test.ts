@@ -207,6 +207,8 @@ describe("person create and read", () => {
             phone: "61412345678",
             dateOfBirth: "2008-10-11",
             version: 1,
+            status: "active",
+            source: "manual",
           });
           const createdAudit = await tx<{ n: number }[]>`
             select count(*)::int as n
@@ -956,6 +958,169 @@ describe("person create and read", () => {
             actorUserId: null,
           });
           expect(decrypts).toBe(1);
+        }),
+      );
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
+
+  it("createPerson: writes created_at from now", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const organisationId = newId();
+    const communityId = newId();
+    const kms = createLocalKmsPort();
+    const createdInstant = new Date("2026-05-04T12:00:00.000Z");
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, 'person-created-at-org', 'au', 'implicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, 'person-created-at-comm', 'au')
+        `;
+      });
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const created = await createPerson(tx, kms, KEY_ARN, {
+            now: createdInstant,
+            declaredAdult: true,
+            householdId: null,
+            dateOfBirth: null,
+            givenName: "Created",
+            familyName: "Tester",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          const rows = await tx<{ created_at: Date }[]>`
+            select created_at from app.persons where id = ${created.personId}::uuid
+          `;
+          expect(new Date(rows[0]!.created_at).toISOString()).toBe(createdInstant.toISOString());
+        }),
+      );
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
+
+  it("createPerson: stores source family_records when given", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const organisationId = newId();
+    const communityId = newId();
+    const kms = createLocalKmsPort();
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, 'person-source-org', 'au', 'implicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, 'person-source-comm', 'au')
+        `;
+      });
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const created = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: true,
+            householdId: null,
+            dateOfBirth: null,
+            givenName: "Sourced",
+            familyName: "Tester",
+            email: null,
+            phone: null,
+            actorUserId: null,
+            source: "family_records",
+          });
+          const rows = await tx<{ source: string }[]>`
+            select source from app.persons where id = ${created.personId}::uuid
+          `;
+          expect(rows[0]?.source).toBe("family_records");
+        }),
+      );
+    } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
+
+  it("readPerson: returns status and source for an adult and neither for a minor", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const organisationId = newId();
+    const communityId = newId();
+    const kms = createLocalKmsPort();
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, 'person-pin39-org', 'au', 'implicit')
+        `;
+        await tx`
+          insert into platform.communities (id, organisation_id, slug, region)
+          values (${communityId}, ${organisationId}, 'person-pin39-comm', 'au')
+        `;
+      });
+      await withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const household = await createHousehold(tx, kms, KEY_ARN, {
+            now: NOW,
+            label: "Pin 39 Home",
+            actorUserId: null,
+          });
+          const adult = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: true,
+            householdId: household.householdId,
+            dateOfBirth: null,
+            givenName: "Adult",
+            familyName: "Person",
+            email: null,
+            phone: null,
+            actorUserId: null,
+            source: "manual",
+          });
+          const minor = await createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult: false,
+            householdId: household.householdId,
+            dateOfBirth: "2015-01-01",
+            givenName: "Minor",
+            familyName: "Person",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+
+          const adultRead = await readPerson(tx, kms, KEY_ARN, {
+            personId: adult.personId,
+            actorUserId: null,
+          });
+          const minorRead = await readPerson(tx, kms, KEY_ARN, {
+            personId: minor.personId,
+            actorUserId: null,
+          });
+
+          expect(adultRead).not.toBeNull();
+          expect(adultRead?.isMinor).toBe(false);
+          expect((adultRead as { status?: unknown })?.status).toBe("active");
+          expect((adultRead as { source?: unknown })?.source).toBe("manual");
+
+          expect(minorRead).not.toBeNull();
+          expect(minorRead?.isMinor).toBe(true);
+          expect("status" in (minorRead ?? {})).toBe(false);
+          expect("source" in (minorRead ?? {})).toBe(false);
         }),
       );
     } finally {

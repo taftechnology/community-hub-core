@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 
+import type { KmsPort } from "@community-hub/crypto";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import { applyProductMigrations, newId, withAppTransaction } from "@community-hub/db";
 import {
@@ -845,6 +846,215 @@ describe("updatePerson", () => {
       await directSql.end({ timeout: 1 });
       await platform.end({ timeout: 1 });
       await app.end({ timeout: 1 });
+    }
+  });
+
+  it("updatePerson: an update without source leaves an automatic source unchanged", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const scope = await createScope(platform);
+    const kms = createLocalKmsPort();
+    const actorUserId = newId();
+
+    try {
+      let personId = "";
+      await withAppTransaction(
+        app,
+        { orgId: scope.orgId, communityId: scope.communityId },
+        async (tx) => {
+          await withRequest({ requestId: REQUEST_ID }, async () => {
+            const created = await createPerson(tx, kms, KEY_ARN, {
+              now: NOW,
+              declaredAdult: true,
+              householdId: null,
+              dateOfBirth: null,
+              givenName: "Auto",
+              familyName: "Source",
+              email: "auto@example.com",
+              phone: null,
+              actorUserId,
+            });
+            personId = created.personId;
+            // Set source to 'auto' directly in app.persons to simulate an imported or auto-generated source
+            await tx`
+              update app.persons
+              set source = 'auto'
+              where id = ${personId}::uuid
+            `;
+          });
+        },
+      );
+
+      await withAppTransaction(
+        app,
+        { orgId: scope.orgId, communityId: scope.communityId },
+        async (tx) => {
+          await withRequest({ requestId: REQUEST_ID }, async () => {
+            // Update without source
+            const res = await updatePerson(tx, kms, KEY_ARN, {
+              personId,
+              version: 1,
+              changes: {
+                givenName: "UpdatedAuto",
+              },
+              actorUserId,
+              now: NOW,
+            });
+            expect(res.version).toBe(2);
+
+            const row = (
+              await tx<{ source: string }[]>`
+                select source from app.persons where id = ${personId}::uuid
+              `
+            )[0];
+            expect(row?.source).toBe("auto");
+          });
+        },
+      );
+    } finally {
+      await cleanScope(directSql, scope);
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+      await directSql.end({ timeout: 1 });
+    }
+  });
+
+  it("updatePerson: a source-only update makes no KMS call", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const scope = await createScope(platform);
+    const baseKms = createLocalKmsPort();
+    const actorUserId = newId();
+
+    try {
+      let personId = "";
+      await withAppTransaction(
+        app,
+        { orgId: scope.orgId, communityId: scope.communityId },
+        async (tx) => {
+          await withRequest({ requestId: REQUEST_ID }, async () => {
+            const created = await createPerson(tx, baseKms, KEY_ARN, {
+              now: NOW,
+              declaredAdult: true,
+              householdId: null,
+              dateOfBirth: null,
+              givenName: "Kms",
+              familyName: "Check",
+              email: null,
+              phone: null,
+              actorUserId,
+            });
+            personId = created.personId;
+          });
+        },
+      );
+
+      await withAppTransaction(
+        app,
+        { orgId: scope.orgId, communityId: scope.communityId },
+        async (tx) => {
+          await withRequest({ requestId: REQUEST_ID }, async () => {
+            let kmsCalls = 0;
+            const countingKms: KmsPort = {
+              generateDataKey: async (...args) => {
+                kmsCalls += 1;
+                return baseKms.generateDataKey(...args);
+              },
+              decrypt: async (...args) => {
+                kmsCalls += 1;
+                return baseKms.decrypt(...args);
+              },
+            };
+
+            const res = await updatePerson(tx, countingKms, KEY_ARN, {
+              personId,
+              version: 1,
+              changes: {
+                source: "family_records",
+              },
+              actorUserId,
+              now: NOW,
+            });
+            expect(res.version).toBe(2);
+            expect(kmsCalls).toBe(0);
+          });
+        },
+      );
+    } finally {
+      await cleanScope(directSql, scope);
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+      await directSql.end({ timeout: 1 });
+    }
+  });
+
+  it("updatePerson: a source change bumps version", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const scope = await createScope(platform);
+    const kms = createLocalKmsPort();
+    const actorUserId = newId();
+
+    try {
+      let personId = "";
+      await withAppTransaction(
+        app,
+        { orgId: scope.orgId, communityId: scope.communityId },
+        async (tx) => {
+          await withRequest({ requestId: REQUEST_ID }, async () => {
+            const created = await createPerson(tx, kms, KEY_ARN, {
+              now: NOW,
+              declaredAdult: true,
+              householdId: null,
+              dateOfBirth: null,
+              givenName: "Version",
+              familyName: "Check",
+              email: null,
+              phone: null,
+              actorUserId,
+            });
+            personId = created.personId;
+          });
+        },
+      );
+
+      await withAppTransaction(
+        app,
+        { orgId: scope.orgId, communityId: scope.communityId },
+        async (tx) => {
+          await withRequest({ requestId: REQUEST_ID }, async () => {
+            const res = await updatePerson(tx, kms, KEY_ARN, {
+              personId,
+              version: 1,
+              changes: {
+                source: "family_records",
+              },
+              actorUserId,
+              now: NOW,
+            });
+            expect(res.version).toBe(2);
+
+            const row = (
+              await tx<{ version: number; source: string }[]>`
+                select version, source from app.persons where id = ${personId}::uuid
+              `
+            )[0];
+            expect(row?.version).toBe(2);
+            expect(row?.source).toBe("family_records");
+          });
+        },
+      );
+    } finally {
+      await cleanScope(directSql, scope);
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+      await directSql.end({ timeout: 1 });
     }
   });
 });

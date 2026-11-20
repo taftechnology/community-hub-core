@@ -203,6 +203,7 @@ export async function addMinor(
     email: null,
     phone: null,
     actorUserId: input.actorUserId,
+    source: "family_records",
   });
 
   // Pin 7: Link guardian inside the same transaction; rights default view and consent
@@ -278,6 +279,7 @@ export async function addAdult(
     email: input.email,
     phone: input.phone,
     actorUserId: input.actorUserId,
+    source: "family_records",
   });
 
   const recorded = actor(input.actorUserId);
