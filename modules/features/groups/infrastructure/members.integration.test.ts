@@ -1,8 +1,13 @@
 import { readFileSync } from "node:fs";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { KmsPort } from "@community-hub/crypto";
-import { applyProductMigrations, newId, withAppTransaction } from "@community-hub/db";
+import {
+  applyProductMigrations,
+  newId,
+  withAppTransaction,
+  type AppTransaction,
+} from "@community-hub/db";
 import {
   createPlaintextAppSql,
   createPlaintextDirectSql,
@@ -12,12 +17,14 @@ import { withRequest } from "@community-hub/kernel";
 import { createHousehold, createPerson } from "@community-hub/people";
 
 import {
+  activeGroupsForPersons,
   addMember,
   archiveGroup,
   createGroup,
   groupLeaderFact,
   GroupsError,
   listMembers,
+  personIdsInGroup,
   removeMember,
   setMemberRole,
 } from "../public/index.js";
@@ -1616,5 +1623,323 @@ describe("group members and leader fact", () => {
       await platform.end({ timeout: 1 });
       await app.end({ timeout: 1 });
     }
+  });
+
+  describe("personIdsInGroup and activeGroupsForPersons", () => {
+    it("personIdsInGroup: an archived group returns no ids", async () => {
+      const runtime = loadRuntime();
+      const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+      const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+      const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+      const kms = createTestKms();
+      const scope = await createTestScope(platform);
+      const actorUserId = newId();
+
+      try {
+        await withRequest({ requestId: REQUEST_ID }, async () => {
+          await withAppTransaction(app, scope, async (tx) => {
+            const group = await createGroup(tx, {
+              name: "Youth Ministry",
+              kind: "ministry",
+              now: NOW,
+              actorUserId,
+            });
+
+            const person = await createPerson(tx, kms, KEY_ARN, {
+              now: NOW,
+              declaredAdult: true,
+              householdId: null,
+              dateOfBirth: null,
+              givenName: "Youth",
+              familyName: "Leader",
+              email: null,
+              phone: null,
+              actorUserId,
+            });
+
+            await addMember(tx, kms, KEY_ARN, {
+              groupId: group.id,
+              personId: person.personId,
+              now: NOW,
+              actorUserId,
+            });
+
+            await archiveGroup(tx, group.id, {
+              now: NOW,
+              actorUserId,
+            });
+
+            const ids = await personIdsInGroup(tx, group.id);
+            expect(ids).toEqual([]);
+          });
+        });
+      } finally {
+        await cleanScope(directSql, scope);
+        await directSql.end({ timeout: 1 });
+        await platform.end({ timeout: 1 });
+        await app.end({ timeout: 1 });
+      }
+    });
+
+    it("personIdsInGroup and activeGroupsForPersons filter by org and community explicitly", async () => {
+      const sqlCalls: string[] = [];
+      const stubTx = vi.fn((strings: TemplateStringsArray) => {
+        sqlCalls.push(strings.join("?"));
+        return Promise.resolve([]);
+      }) as unknown as AppTransaction;
+
+      await personIdsInGroup(stubTx, "11111111-1111-4111-8111-111111111111");
+      await activeGroupsForPersons(stubTx, ["22222222-2222-4222-8222-222222222222"]);
+
+      expect(sqlCalls.length).toBe(2);
+      for (const sql of sqlCalls) {
+        expect(sql).toContain("current_setting('app.org_id')");
+        expect(sql).toContain("current_setting('app.community_id')");
+      }
+    });
+
+    it("activeGroupsForPersons: returns only active groups by name", async () => {
+      const runtime = loadRuntime();
+      const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+      const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+      const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+      const kms = createTestKms();
+      const scope = await createTestScope(platform);
+      const actorUserId = newId();
+
+      try {
+        await withRequest({ requestId: REQUEST_ID }, async () => {
+          await withAppTransaction(app, scope, async (tx) => {
+            const gYouth = await createGroup(tx, {
+              name: "Youth Group",
+              kind: "group",
+              now: NOW,
+              actorUserId,
+            });
+            const gChoir = await createGroup(tx, {
+              name: "Adult Choir",
+              kind: "ministry",
+              now: NOW,
+              actorUserId,
+            });
+            const gBible = await createGroup(tx, {
+              name: "Bible Study",
+              kind: "group",
+              now: NOW,
+              actorUserId,
+            });
+            const gArchived = await createGroup(tx, {
+              name: "Archived Group",
+              kind: "group",
+              now: NOW,
+              actorUserId,
+            });
+
+            const p1 = await createPerson(tx, kms, KEY_ARN, {
+              now: NOW,
+              declaredAdult: true,
+              householdId: null,
+              dateOfBirth: null,
+              givenName: "Person",
+              familyName: "One",
+              email: null,
+              phone: null,
+              actorUserId,
+            });
+            const p2 = await createPerson(tx, kms, KEY_ARN, {
+              now: NOW,
+              declaredAdult: true,
+              householdId: null,
+              dateOfBirth: null,
+              givenName: "Person",
+              familyName: "Two",
+              email: null,
+              phone: null,
+              actorUserId,
+            });
+            const p3 = await createPerson(tx, kms, KEY_ARN, {
+              now: NOW,
+              declaredAdult: true,
+              householdId: null,
+              dateOfBirth: null,
+              givenName: "Person",
+              familyName: "Three",
+              email: null,
+              phone: null,
+              actorUserId,
+            });
+
+            await addMember(tx, kms, KEY_ARN, {
+              groupId: gYouth.id,
+              personId: p1.personId,
+              now: NOW,
+              actorUserId,
+            });
+            await addMember(tx, kms, KEY_ARN, {
+              groupId: gBible.id,
+              personId: p1.personId,
+              now: NOW,
+              actorUserId,
+            });
+            await addMember(tx, kms, KEY_ARN, {
+              groupId: gArchived.id,
+              personId: p1.personId,
+              now: NOW,
+              actorUserId,
+            });
+
+            await addMember(tx, kms, KEY_ARN, {
+              groupId: gChoir.id,
+              personId: p2.personId,
+              now: NOW,
+              actorUserId,
+            });
+
+            await archiveGroup(tx, gArchived.id, {
+              now: NOW,
+              actorUserId,
+            });
+
+            const map = await activeGroupsForPersons(tx, [p1.personId, p2.personId, p3.personId]);
+
+            expect(map.get(p1.personId)).toEqual([
+              { id: gBible.id, name: "Bible Study" },
+              { id: gYouth.id, name: "Youth Group" },
+            ]);
+            expect(map.get(p2.personId)).toEqual([{ id: gChoir.id, name: "Adult Choir" }]);
+            expect(map.get(p3.personId)).toEqual([]);
+          });
+        });
+      } finally {
+        await cleanScope(directSql, scope);
+        await directSql.end({ timeout: 1 });
+        await platform.end({ timeout: 1 });
+        await app.end({ timeout: 1 });
+      }
+    });
+
+    it("personIdsInGroup: a group in another community of the same organisation returns no ids", async () => {
+      const runtime = loadRuntime();
+      const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+      const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+      const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+      const kms = createTestKms();
+
+      const scope1 = await createTestScope(platform);
+      const comm2Id = await createCommunityInOrg(platform, scope1.orgId);
+      const scope2 = { orgId: scope1.orgId, communityId: comm2Id };
+      const actorUserId = newId();
+
+      try {
+        await withRequest({ requestId: REQUEST_ID }, async () => {
+          let comm2GroupId = "";
+
+          await withAppTransaction(app, scope2, async (tx) => {
+            const group = await createGroup(tx, {
+              name: "Comm2 Group",
+              kind: "group",
+              now: NOW,
+              actorUserId,
+            });
+            comm2GroupId = group.id;
+
+            const person = await createPerson(tx, kms, KEY_ARN, {
+              now: NOW,
+              declaredAdult: true,
+              householdId: null,
+              dateOfBirth: null,
+              givenName: "Comm2",
+              familyName: "Member",
+              email: null,
+              phone: null,
+              actorUserId,
+            });
+
+            await addMember(tx, kms, KEY_ARN, {
+              groupId: comm2GroupId,
+              personId: person.personId,
+              now: NOW,
+              actorUserId,
+            });
+          });
+
+          await withAppTransaction(app, scope1, async (tx) => {
+            const ids = await personIdsInGroup(tx, comm2GroupId);
+            expect(ids).toEqual([]);
+          });
+        });
+      } finally {
+        await cleanScope(directSql, scope1);
+        await cleanScope(directSql, scope2);
+        await directSql.end({ timeout: 1 });
+        await platform.end({ timeout: 1 });
+        await app.end({ timeout: 1 });
+      }
+    });
+
+    it("personIdsInGroup: a group in another organisation returns no ids", async () => {
+      const runtime = loadRuntime();
+      const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+      const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+      const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+      const kms = createTestKms();
+
+      const scope1 = await createTestScope(platform);
+      const scope2 = await createTestScope(platform);
+      const actorUserId = newId();
+
+      try {
+        await withRequest({ requestId: REQUEST_ID }, async () => {
+          let org2GroupId = "";
+
+          await withAppTransaction(app, scope2, async (tx) => {
+            const group = await createGroup(tx, {
+              name: "Org2 Group",
+              kind: "group",
+              now: NOW,
+              actorUserId,
+            });
+            org2GroupId = group.id;
+
+            const person = await createPerson(tx, kms, KEY_ARN, {
+              now: NOW,
+              declaredAdult: true,
+              householdId: null,
+              dateOfBirth: null,
+              givenName: "Org2",
+              familyName: "Member",
+              email: null,
+              phone: null,
+              actorUserId,
+            });
+
+            await addMember(tx, kms, KEY_ARN, {
+              groupId: org2GroupId,
+              personId: person.personId,
+              now: NOW,
+              actorUserId,
+            });
+          });
+
+          await withAppTransaction(app, scope1, async (tx) => {
+            const ids = await personIdsInGroup(tx, org2GroupId);
+            expect(ids).toEqual([]);
+          });
+        });
+      } finally {
+        await cleanScope(directSql, scope1);
+        await cleanScope(directSql, scope2);
+        await directSql.end({ timeout: 1 });
+        await platform.end({ timeout: 1 });
+        await app.end({ timeout: 1 });
+      }
+    });
+
+    it("activeGroupsForPersons: empty input makes no query", async () => {
+      const stubTx = vi.fn() as unknown as AppTransaction;
+      const result = await activeGroupsForPersons(stubTx, []);
+      expect(result.size).toBe(0);
+      expect(stubTx).not.toHaveBeenCalled();
+    });
   });
 });
