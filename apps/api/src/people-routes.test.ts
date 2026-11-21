@@ -27,6 +27,14 @@ const people = vi.hoisted(() => ({
   listPersons: vi.fn(),
   createPerson: vi.fn(),
   updatePerson: vi.fn(),
+  setPersonStatus: vi.fn(),
+  summarisePersons: vi.fn(),
+}));
+
+const groups = vi.hoisted(() => ({
+  activeGroupsForPersons: vi.fn(),
+  personIdsInGroup: vi.fn(),
+  listGroups: vi.fn(),
 }));
 
 const entitlements = vi.hoisted(() => ({
@@ -74,8 +82,16 @@ vi.mock("@community-hub/people", async () => {
     listPersons: people.listPersons,
     createPerson: people.createPerson,
     updatePerson: people.updatePerson,
+    setPersonStatus: people.setPersonStatus,
+    summarisePersons: people.summarisePersons,
   };
 });
+
+vi.mock("@community-hub/groups", () => ({
+  activeGroupsForPersons: groups.activeGroupsForPersons,
+  personIdsInGroup: groups.personIdsInGroup,
+  listGroups: groups.listGroups,
+}));
 
 vi.mock("@community-hub/entitlements", () => ({
   readSnapshot: entitlements.readSnapshot,
@@ -126,6 +142,16 @@ function createSnapshot(overrides: Partial<EntitlementSnapshot> = {}): Entitleme
     flags: [],
     ...overrides,
   };
+}
+
+function createSnapshotWithGroups(): EntitlementSnapshot {
+  return createSnapshot({
+    planEntitlements: [
+      { key: "people.directory", limit: null },
+      { key: "groups.basic", limit: null },
+    ],
+    allocations: ["people.directory", "groups.basic"],
+  });
 }
 
 describe("people routes (list and read)", () => {
@@ -198,6 +224,11 @@ describe("people routes (list and read)", () => {
     people.listPersons.mockReset();
     people.createPerson.mockReset();
     people.updatePerson.mockReset();
+    people.setPersonStatus.mockReset();
+    people.summarisePersons.mockReset();
+    groups.activeGroupsForPersons.mockReset();
+    groups.personIdsInGroup.mockReset();
+    groups.listGroups.mockReset();
     entitlements.readSnapshot.mockReset();
     db.withAppTransaction.mockReset();
     db.appendAuditEvent.mockReset();
@@ -210,6 +241,9 @@ describe("people routes (list and read)", () => {
       region: "au",
     });
     entitlements.readSnapshot.mockResolvedValue(createSnapshot());
+    groups.activeGroupsForPersons.mockResolvedValue(new Map());
+    groups.personIdsInGroup.mockResolvedValue([]);
+    groups.listGroups.mockResolvedValue([]);
     db.withAppTransaction.mockImplementation(
       async (_sql: unknown, _scope: unknown, fn: (tx: unknown) => Promise<unknown>) => fn({}),
     );
@@ -506,6 +540,7 @@ describe("people routes (list and read)", () => {
           cursor: null,
           includeRestricted: false,
           actorUserId: USER,
+          now: FIXED_NOW,
         },
       );
     });
@@ -652,6 +687,7 @@ describe("people routes (list and read)", () => {
           limit: 25,
           includeRestricted: false,
           actorUserId: USER,
+          now: FIXED_NOW,
         },
       );
     });
@@ -1107,6 +1143,437 @@ describe("people routes (list and read)", () => {
       );
       const res = await gate({ request: req, remoteAddress: "127.0.0.1" });
       expect(res.status).toBe(404);
+    });
+  });
+
+  describe("status, summary, list filters, groups, and source (Task 7)", () => {
+    it("POST /v1/people/status: a caller with only people.view gets 403 and no update", async () => {
+      access.holdsPermission.mockImplementation(
+        async (_tx, _userId, perm) => perm === "people.view",
+      );
+
+      const res = await call("/v1/people/status", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+        version: 1,
+        status: "inactive",
+      });
+
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+      expect(people.setPersonStatus).not.toHaveBeenCalled();
+    });
+
+    it("POST /v1/people/summary: a caller without people.view gets 403", async () => {
+      access.holdsPermission.mockResolvedValue(false);
+
+      const res = await call("/v1/people/summary", {
+        communitySlug: "parish",
+        addedSince: "2026-10-01T00:00:00+10:00",
+      });
+
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+      expect(people.summarisePersons).not.toHaveBeenCalled();
+    });
+
+    it("POST /v1/people/list: groupId without groups.basic gets 403", async () => {
+      // default snapshot has people.directory but not groups.basic
+      const res = await call("/v1/people/list", {
+        communitySlug: "parish",
+        groupId: "00000000-0000-4000-8000-000000000099",
+      });
+
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+      expect(people.listPersons).not.toHaveBeenCalled();
+    });
+
+    it("POST /v1/people/list and summary: no groups key without groups.basic", async () => {
+      // default snapshot has people.directory but not groups.basic
+      people.listPersons.mockResolvedValueOnce({
+        items: [
+          {
+            id: PERSON_ID,
+            personId: PERSON_ID,
+            isMinor: false,
+            givenName: "Arthur",
+            familyName: "Dent",
+            version: 1,
+            email: null,
+            phone: null,
+            age: 42,
+            createdAt: "2026-10-01T00:00:00.000Z",
+            status: "active",
+            source: "manual",
+          },
+        ],
+        nextCursor: null,
+      });
+      people.summarisePersons.mockResolvedValueOnce({
+        total: 1,
+        active: 1,
+        inactive: 0,
+        addedSince: 1,
+      });
+
+      const resList = await call("/v1/people/list", { communitySlug: "parish" });
+      expect(resList.status).toBe(200);
+      const listData = (await resList.json()) as { items: Array<Record<string, unknown>> };
+      expect(listData.items[0]).toBeDefined();
+      expect("groups" in listData.items[0]!).toBe(false);
+
+      const resSummary = await call("/v1/people/summary", {
+        communitySlug: "parish",
+        addedSince: "2026-10-01T00:00:00+10:00",
+      });
+      expect(resSummary.status).toBe(200);
+      const summaryData = (await resSummary.json()) as Record<string, unknown>;
+      expect("groups" in summaryData).toBe(false);
+    });
+
+    it("POST /v1/people/list, read and summary send cache-control no-store", async () => {
+      people.listPersons.mockResolvedValueOnce({ items: [], nextCursor: null });
+      access.readPersonForActor.mockResolvedValueOnce({
+        id: PERSON_ID,
+        personId: PERSON_ID,
+        isMinor: false,
+        givenName: "Arthur",
+        familyName: "Dent",
+        version: 1,
+        status: "active",
+        source: "manual",
+      });
+      people.summarisePersons.mockResolvedValueOnce({
+        total: 0,
+        active: 0,
+        inactive: 0,
+        addedSince: 0,
+      });
+
+      const resList = await call("/v1/people/list", { communitySlug: "parish" });
+      expect(resList.headers.get("cache-control")).toBe("no-store");
+
+      const resRead = await call("/v1/people/read", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+      });
+      expect(resRead.headers.get("cache-control")).toBe("no-store");
+
+      const resSummary = await call("/v1/people/summary", {
+        communitySlug: "parish",
+        addedSince: "2026-10-01T00:00:00+10:00",
+      });
+      expect(resSummary.headers.get("cache-control")).toBe("no-store");
+    });
+
+    it("POST /v1/people/status and summary without people.directory get 403", async () => {
+      entitlements.readSnapshot.mockResolvedValue(
+        createSnapshot({ planEntitlements: [], allocations: [] }),
+      );
+
+      const resStatus = await call("/v1/people/status", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+        version: 1,
+        status: "inactive",
+      });
+      expect(resStatus.status).toBe(403);
+      expect(await resStatus.text()).toBe("");
+      expect(people.setPersonStatus).not.toHaveBeenCalled();
+
+      const resSummary = await call("/v1/people/summary", {
+        communitySlug: "parish",
+        addedSince: "2026-10-01T00:00:00+10:00",
+      });
+      expect(resSummary.status).toBe(403);
+      expect(await resSummary.text()).toBe("");
+      expect(people.summarisePersons).not.toHaveBeenCalled();
+    });
+
+    it("POST /v1/people/status: returns 200 with new version and status on change", async () => {
+      people.setPersonStatus.mockResolvedValueOnce({ version: 2, status: "inactive" });
+
+      const res = await call("/v1/people/status", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+        version: 1,
+        status: "inactive",
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ version: 2, status: "inactive" });
+      expect(people.setPersonStatus).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          personId: PERSON_ID,
+          version: 1,
+          status: "inactive",
+          actorUserId: USER,
+          now: FIXED_NOW,
+        }),
+      );
+    });
+
+    it("POST /v1/people/status: returns 200 with unchanged version and status on no-op", async () => {
+      people.setPersonStatus.mockResolvedValueOnce({ version: 1, status: "active" });
+
+      const res = await call("/v1/people/status", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+        version: 1,
+        status: "active",
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ version: 1, status: "active" });
+    });
+
+    it("POST /v1/people/status: returns 400 with empty body on invalid input", async () => {
+      people.setPersonStatus.mockRejectedValueOnce(new PeopleError("invalid_input"));
+
+      const res = await call("/v1/people/status", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+        version: 1,
+        status: "inactive",
+      });
+      expect(res.status).toBe(400);
+      expect(await res.text()).toBe("");
+    });
+
+    it("POST /v1/people/status: returns 400 with empty body on schema parse error", async () => {
+      const res = await call("/v1/people/status", {
+        communitySlug: "parish",
+        personId: "not-a-uuid",
+        version: 1,
+        status: "inactive",
+      });
+      expect(res.status).toBe(400);
+      expect(await res.text()).toBe("");
+    });
+
+    it("POST /v1/people/status: returns 401 with empty body when unauthenticated", async () => {
+      const res = await call(
+        "/v1/people/status",
+        {
+          communitySlug: "parish",
+          personId: PERSON_ID,
+          version: 1,
+          status: "inactive",
+        },
+        "",
+      );
+      expect(res.status).toBe(401);
+      expect(await res.text()).toBe("");
+    });
+
+    it("POST /v1/people/status: returns 403 with empty body when community slug unknown", async () => {
+      tenancy.findCommunityBySlug.mockResolvedValueOnce(null);
+
+      const res = await call("/v1/people/status", {
+        communitySlug: "unknown-parish",
+        personId: PERSON_ID,
+        version: 1,
+        status: "inactive",
+      });
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+    });
+
+    it("POST /v1/people/status: returns 404 with empty body when person not found", async () => {
+      people.setPersonStatus.mockRejectedValueOnce(new PeopleError("not_found"));
+
+      const res = await call("/v1/people/status", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+        version: 1,
+        status: "inactive",
+      });
+      expect(res.status).toBe(404);
+      expect(await res.text()).toBe("");
+    });
+
+    it("POST /v1/people/status: returns 409 with empty body on version conflict", async () => {
+      people.setPersonStatus.mockRejectedValueOnce(new PeopleError("conflict"));
+
+      const res = await call("/v1/people/status", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+        version: 1,
+        status: "inactive",
+      });
+      expect(res.status).toBe(409);
+      expect(await res.text()).toBe("");
+    });
+
+    it("POST /v1/people/summary: returns 200 with counts and groups when groups.basic is enabled", async () => {
+      entitlements.readSnapshot.mockResolvedValue(createSnapshotWithGroups());
+      people.summarisePersons.mockResolvedValueOnce({
+        total: 10,
+        active: 8,
+        inactive: 2,
+        addedSince: 3,
+      });
+      groups.listGroups.mockResolvedValueOnce([
+        { id: "00000000-0000-4000-8000-000000000001", name: "Choir" },
+      ]);
+
+      const res = await call("/v1/people/summary", {
+        communitySlug: "parish",
+        addedSince: "2026-10-01T00:00:00+10:00",
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        total: 10,
+        active: 8,
+        inactive: 2,
+        addedSince: 3,
+        groups: [{ id: "00000000-0000-4000-8000-000000000001", name: "Choir" }],
+      });
+      expect(people.summarisePersons).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          addedSince: new Date("2026-10-01T00:00:00+10:00"),
+        }),
+      );
+    });
+
+    it("POST /v1/people/summary: returns 400 with empty body on invalid addedSince date", async () => {
+      const res = await call("/v1/people/summary", {
+        communitySlug: "parish",
+        addedSince: "not-a-date",
+      });
+      expect(res.status).toBe(400);
+      expect(await res.text()).toBe("");
+    });
+
+    it("POST /v1/people/summary: returns 401 with empty body when unauthenticated", async () => {
+      const res = await call(
+        "/v1/people/summary",
+        {
+          communitySlug: "parish",
+          addedSince: "2026-10-01T00:00:00+10:00",
+        },
+        "",
+      );
+      expect(res.status).toBe(401);
+      expect(await res.text()).toBe("");
+    });
+
+    it("POST /v1/people/summary: returns 403 with empty body when community slug unknown", async () => {
+      tenancy.findCommunityBySlug.mockResolvedValueOnce(null);
+
+      const res = await call("/v1/people/summary", {
+        communitySlug: "unknown-parish",
+        addedSince: "2026-10-01T00:00:00+10:00",
+      });
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+    });
+
+    it("POST /v1/people/list: passes status, source, groupId and now to listPersons", async () => {
+      entitlements.readSnapshot.mockResolvedValue(createSnapshotWithGroups());
+      groups.personIdsInGroup.mockResolvedValueOnce(["00000000-0000-4000-8000-000000000002"]);
+      people.listPersons.mockResolvedValueOnce({ items: [], nextCursor: null });
+
+      const res = await call("/v1/people/list", {
+        communitySlug: "parish",
+        status: "active",
+        source: "family_records",
+        groupId: "00000000-0000-4000-8000-000000000099",
+      });
+      expect(res.status).toBe(200);
+      expect(groups.personIdsInGroup).toHaveBeenCalledWith(
+        expect.anything(),
+        "00000000-0000-4000-8000-000000000099",
+      );
+      expect(people.listPersons).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        KEY_ARN,
+        expect.objectContaining({
+          status: "active",
+          source: "family_records",
+          personIds: ["00000000-0000-4000-8000-000000000002"],
+          now: FIXED_NOW,
+        }),
+      );
+    });
+
+    it("POST /v1/people/list: attaches groups to adult items when groups.basic is enabled", async () => {
+      entitlements.readSnapshot.mockResolvedValue(createSnapshotWithGroups());
+      people.listPersons.mockResolvedValueOnce({
+        items: [
+          {
+            id: PERSON_ID,
+            personId: PERSON_ID,
+            isMinor: false,
+            givenName: "Arthur",
+            familyName: "Dent",
+            version: 1,
+            email: null,
+            phone: null,
+            age: 42,
+            createdAt: "2026-10-01T00:00:00.000Z",
+            status: "active",
+            source: "manual",
+          },
+        ],
+        nextCursor: null,
+      });
+      groups.activeGroupsForPersons.mockResolvedValueOnce(
+        new Map([[PERSON_ID, [{ id: "00000000-0000-4000-8000-000000000001", name: "Choir" }]]]),
+      );
+
+      const res = await call("/v1/people/list", { communitySlug: "parish" });
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as {
+        items: Array<{ groups?: Array<{ id: string; name: string }> }>;
+      };
+      expect(data.items[0]?.groups).toEqual([
+        { id: "00000000-0000-4000-8000-000000000001", name: "Choir" },
+      ]);
+    });
+
+    it("POST /v1/people/create: passes source when provided", async () => {
+      people.createPerson.mockResolvedValueOnce({ personId: PERSON_ID });
+
+      const res = await call("/v1/people/create", {
+        communitySlug: "parish",
+        givenName: "Arthur",
+        familyName: "Dent",
+        source: "family_records",
+      });
+      expect(res.status).toBe(201);
+      expect(people.createPerson).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        KEY_ARN,
+        expect.objectContaining({
+          source: "family_records",
+        }),
+      );
+    });
+
+    it("POST /v1/people/update: passes source in changes when provided", async () => {
+      people.updatePerson.mockResolvedValueOnce({ version: 2 });
+
+      const res = await call("/v1/people/update", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+        version: 1,
+        source: "family_records",
+      });
+      expect(res.status).toBe(200);
+      expect(people.updatePerson).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        KEY_ARN,
+        expect.objectContaining({
+          changes: expect.objectContaining({
+            source: "family_records",
+          }),
+        }),
+      );
     });
   });
 });

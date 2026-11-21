@@ -2,16 +2,23 @@ import { AccessError, holdsPermission, readPersonForActor } from "@community-hub
 import {
   createPersonBody,
   listPeopleBody,
+  peopleSummaryBody,
+  type PeopleSummaryResponse,
+  type PersonListItem,
+  personStatusBody,
   readPersonBody,
   updatePersonBody,
 } from "@community-hub/contracts/people";
 import { appendAuditEvent, withAppTransaction } from "@community-hub/db";
+import { activeGroupsForPersons, listGroups, personIdsInGroup } from "@community-hub/groups";
 import { readSession } from "@community-hub/identity";
 import { getRequestContext } from "@community-hub/kernel";
 import {
   createPerson,
   listPersons,
   PeopleError,
+  setPersonStatus,
+  summarisePersons,
   updatePerson,
   type UpdatePersonChanges,
 } from "@community-hub/people";
@@ -19,7 +26,7 @@ import { findCommunityBySlug } from "@community-hub/tenancy";
 
 import { guardWrite } from "./billing-guard.js";
 import type { Checkout } from "./checkout.js";
-import { guardEntitlement } from "./entitlement-guard.js";
+import { checkEntitlement, guardEntitlement } from "./entitlement-guard.js";
 import type { GateRoute, RouteContext } from "./gate.js";
 import type { BillingLogFields } from "./index.js";
 
@@ -31,6 +38,7 @@ const MANAGE = "people.manage";
 const RESTRICTED = "people.restricted.read";
 const ADULT_VIEW_PURPOSE = "people.person.view";
 const DIRECTORY_ENTITLEMENT = "people.directory";
+const GROUPS_BASIC_ENTITLEMENT = "groups.basic";
 
 type Scope = { orgId: string; communityId: string };
 
@@ -48,6 +56,21 @@ export type PeopleDeps = {
 
 export function empty(status: number): Response {
   return new Response(null, { status });
+}
+
+function noStore(response: Response): Response {
+  response.headers.set("cache-control", "no-store");
+  return response;
+}
+
+const ERROR_CLASS = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+
+function errorClassFor(error: unknown): string {
+  if (error instanceof Error) {
+    const name: unknown = error.name;
+    return typeof name === "string" && ERROR_CLASS.test(name) ? name : "Error";
+  }
+  return "NonError";
 }
 
 export function statusForPeople(error: PeopleError): Response | undefined {
@@ -120,11 +143,12 @@ function bearer(request: Request): string | undefined {
 }
 
 export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
-  function finish(request: Request, response: Response): Response {
+  function finish(request: Request, response: Response, extra?: Record<string, unknown>): Response {
     deps.log("request", {
       path: new URL(request.url).pathname,
       status: response.status,
       requestId: getRequestContext().requestId,
+      ...extra,
     });
     return response;
   }
@@ -227,6 +251,15 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
     }
     const { body, actor, scope } = prep;
 
+    const hasGroups = await checkEntitlement(
+      { checkout: deps.checkout, now: deps.now, guardLog: deps.guardLog },
+      scope,
+      GROUPS_BASIC_ENTITLEMENT,
+    );
+    if (body.groupId !== undefined && !hasGroups) {
+      return finish(request, noStore(empty(403)));
+    }
+
     return deps.checkout("app", (sql) =>
       withAppTransaction(sql, scope, async (tx) => {
         try {
@@ -241,7 +274,7 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
                 purpose: RESTRICTED,
                 targetIds: [scope.orgId, scope.communityId],
               });
-              return finish(request, empty(403));
+              return finish(request, noStore(empty(403)));
             }
             const result = await listPersons(tx, deps.kms, deps.keyArn, {
               kind: "minors",
@@ -250,7 +283,7 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
               includeRestricted: true,
               actorUserId: actor.userId,
             });
-            return finish(request, Response.json(result));
+            return finish(request, noStore(Response.json(result)));
           }
 
           const allowed = await holdsPermission(tx, actor.userId, VIEW);
@@ -262,7 +295,12 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
               purpose: ADULT_VIEW_PURPOSE,
               targetIds: [scope.orgId, scope.communityId],
             });
-            return finish(request, empty(403));
+            return finish(request, noStore(empty(403)));
+          }
+
+          let personIds: string[] | undefined;
+          if (body.groupId !== undefined) {
+            personIds = await personIdsInGroup(tx, body.groupId);
           }
 
           const result = await listPersons(tx, deps.kms, deps.keyArn, {
@@ -272,16 +310,39 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
             ...(body.limit !== undefined ? { limit: body.limit } : {}),
             includeRestricted: false,
             actorUserId: actor.userId,
+            now: deps.now(),
+            ...(body.status !== undefined ? { status: body.status } : {}),
+            ...(body.source !== undefined ? { source: body.source } : {}),
+            ...(personIds !== undefined ? { personIds } : {}),
           });
-          return finish(request, Response.json(result));
+
+          let items: PersonListItem[] = result.items;
+          if (hasGroups) {
+            const adultIds = result.items
+              .filter((item) => !item.isMinor)
+              .map((item) => item.personId);
+            const groupsMap = await activeGroupsForPersons(tx, adultIds);
+            items = result.items.map((item): PersonListItem => {
+              if (item.isMinor) {
+                return item;
+              }
+              return {
+                ...item,
+                groups: groupsMap.get(item.personId) ?? [],
+              };
+            });
+          }
+
+          return finish(request, noStore(Response.json({ items, nextCursor: result.nextCursor })));
         } catch (error) {
           if (error instanceof PeopleError) {
             const mapped = statusForPeople(error);
             if (mapped !== undefined) {
-              return finish(request, mapped);
+              return finish(request, noStore(mapped));
             }
           }
-          throw error;
+          const errorClass = errorClassFor(error);
+          return finish(request, noStore(empty(500)), { errorClass });
         }
       }),
     );
@@ -306,7 +367,7 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
             purpose: ADULT_VIEW_PURPOSE,
             targetIds: [scope.orgId, scope.communityId],
           });
-          return finish(request, empty(403));
+          return finish(request, noStore(empty(403)));
         }
 
         try {
@@ -314,13 +375,69 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
             personId: body.personId,
             actorUserId: actor.userId,
           });
-          return finish(request, Response.json(person));
+          return finish(request, noStore(Response.json(person)));
         } catch (error) {
           if (error instanceof AccessError && error.code === "forbidden") {
-            return finish(request, empty(404));
+            return finish(request, noStore(empty(404)));
           }
           if (error instanceof AccessError && error.code === "not_found") {
-            return finish(request, empty(404));
+            return finish(request, noStore(empty(404)));
+          }
+          throw error;
+        }
+      }),
+    );
+  }
+
+  async function summary(request: Request, context: RouteContext): Promise<Response> {
+    const prep = await prepare(request, context, peopleSummaryBody);
+    if (!prep.ok) {
+      return prep.response;
+    }
+    const { body, actor, scope } = prep;
+
+    const hasGroups = await checkEntitlement(
+      { checkout: deps.checkout, now: deps.now, guardLog: deps.guardLog },
+      scope,
+      GROUPS_BASIC_ENTITLEMENT,
+    );
+
+    return deps.checkout("app", (sql) =>
+      withAppTransaction(sql, scope, async (tx) => {
+        const allowed = await holdsPermission(tx, actor.userId, VIEW);
+        if (!allowed) {
+          await appendAuditEvent(tx, {
+            actorKind: "user",
+            actorId: actor.userId,
+            action: DENIED,
+            purpose: ADULT_VIEW_PURPOSE,
+            targetIds: [scope.orgId, scope.communityId],
+          });
+          return finish(request, noStore(empty(403)));
+        }
+
+        try {
+          const counts = await summarisePersons(tx, {
+            addedSince: new Date(body.addedSince),
+          });
+
+          let groups: { id: string; name: string }[] | undefined;
+          if (hasGroups) {
+            const records = await listGroups(tx);
+            groups = records.map((g) => ({ id: g.id, name: g.name }));
+          }
+
+          const responsePayload: PeopleSummaryResponse = {
+            ...counts,
+            ...(groups !== undefined ? { groups } : {}),
+          };
+          return finish(request, noStore(Response.json(responsePayload)));
+        } catch (error) {
+          if (error instanceof PeopleError) {
+            const mapped = statusForPeople(error);
+            if (mapped !== undefined) {
+              return finish(request, noStore(mapped));
+            }
           }
           throw error;
         }
@@ -360,6 +477,7 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
             email: body.email ?? null,
             phone: body.phone ?? null,
             actorUserId: actor.userId,
+            ...(body.source !== undefined ? { source: body.source } : {}),
           });
           return finish(request, Response.json({ personId: result.personId }, { status: 201 }));
         } catch (error) {
@@ -412,6 +530,9 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
         if (body.dateOfBirth !== undefined) {
           changes.dateOfBirth = body.dateOfBirth;
         }
+        if (body.source !== undefined) {
+          changes.source = body.source;
+        }
 
         try {
           const result = await updatePerson(tx, deps.kms, deps.keyArn, {
@@ -422,6 +543,49 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
             now: deps.now(),
           });
           return finish(request, Response.json({ version: result.version }));
+        } catch (error) {
+          if (error instanceof PeopleError) {
+            const mapped = statusForPeople(error);
+            if (mapped !== undefined) {
+              return finish(request, mapped);
+            }
+          }
+          throw error;
+        }
+      }),
+    );
+  }
+
+  async function status(request: Request, context: RouteContext): Promise<Response> {
+    const prep = await prepare(request, context, personStatusBody);
+    if (!prep.ok) {
+      return prep.response;
+    }
+    const { body, actor, scope } = prep;
+
+    return deps.checkout("app", (sql) =>
+      withAppTransaction(sql, scope, async (tx) => {
+        const allowed = await holdsPermission(tx, actor.userId, MANAGE);
+        if (!allowed) {
+          await appendAuditEvent(tx, {
+            actorKind: "user",
+            actorId: actor.userId,
+            action: DENIED,
+            purpose: DENIED,
+            targetIds: [scope.orgId, scope.communityId],
+          });
+          return finish(request, empty(403));
+        }
+
+        try {
+          const result = await setPersonStatus(tx, {
+            personId: body.personId,
+            version: body.version,
+            status: body.status,
+            actorUserId: actor.userId,
+            now: deps.now(),
+          });
+          return finish(request, Response.json(result));
         } catch (error) {
           if (error instanceof PeopleError) {
             const mapped = statusForPeople(error);
@@ -452,6 +616,13 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
     },
     {
       method: "POST",
+      pattern: "/v1/people/summary",
+      surface: "tenant",
+      billing: "read",
+      handle: summary,
+    },
+    {
+      method: "POST",
       pattern: "/v1/people/create",
       surface: "tenant",
       billing: "write",
@@ -463,6 +634,13 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
       surface: "tenant",
       billing: "write",
       handle: update,
+    },
+    {
+      method: "POST",
+      pattern: "/v1/people/status",
+      surface: "tenant",
+      billing: "write",
+      handle: status,
     },
   ];
 }
