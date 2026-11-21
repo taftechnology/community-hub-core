@@ -3,12 +3,17 @@ import {
   Avatar,
   Button,
   DataTable,
+  type DataTableColumn,
   DescriptionList,
   EmptyState,
+  Field,
   FilterBar,
   Pagination,
   Panel,
+  Select,
   Skeleton,
+  StatusBadge,
+  Switch,
 } from "@community-hub/ui";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
@@ -21,15 +26,61 @@ import { usePeopleAccess } from "./people-access";
 import { type ContactFormData, ContactFields, initialFormData } from "./contact-fields";
 import { ScreenTitle } from "./screen-title";
 
+export const PERSON_SOURCES = [
+  "manual",
+  "family_records",
+  "website",
+  "form",
+  "donation",
+  "event_rsvp",
+  "event_booking",
+  "volunteer_application",
+  "mobile_app",
+  "mobile_app_family",
+  "auto",
+] as const;
+
+export type PersonSource = (typeof PERSON_SOURCES)[number];
+
+export const PERSON_SOURCE_LABELS: Record<string, string> = {
+  manual: "Manual",
+  family_records: "Family Records",
+  website: "Website",
+  form: "Form",
+  donation: "Donation",
+  event_rsvp: "Event RSVP",
+  event_booking: "Event Booking",
+  volunteer_application: "Volunteer Application",
+  mobile_app: "Mobile App",
+  mobile_app_family: "Mobile App Family",
+  auto: "Auto",
+};
+
 type ContactItem = {
   id: string;
   givenName: string;
   familyName: string;
+  version: number;
+  email: string | null;
+  phone: string | null;
+  age: number | null;
+  createdAt: string;
+  status: "active" | "inactive";
+  source: string;
+  groups?: { id: string; name: string }[] | undefined;
 };
 
 type ListResponse = {
   items: ContactItem[];
   nextCursor: string | null;
+};
+
+type SummaryData = {
+  total: number;
+  active: number;
+  inactive: number;
+  addedSince: number;
+  groups?: { id: string; name: string }[] | undefined;
 };
 
 type PersonDetail = {
@@ -42,6 +93,8 @@ type PersonDetail = {
   phone: string | null;
   dateOfBirth: string | null;
   version: number;
+  status: "active" | "inactive";
+  source: string;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -56,6 +109,22 @@ function parseContactItem(item: unknown): ContactItem | null {
     id: item.id,
     givenName: typeof item.givenName === "string" ? item.givenName : "",
     familyName: typeof item.familyName === "string" ? item.familyName : "",
+    version: typeof item.version === "number" ? item.version : 1,
+    email: typeof item.email === "string" ? item.email : null,
+    phone: typeof item.phone === "string" ? item.phone : null,
+    age: typeof item.age === "number" ? item.age : null,
+    createdAt: typeof item.createdAt === "string" ? item.createdAt : "",
+    status: item.status === "inactive" ? "inactive" : "active",
+    source: typeof item.source === "string" ? item.source : "manual",
+    groups: Array.isArray(item.groups)
+      ? item.groups
+          .filter(isRecord)
+          .map((g) => ({
+            id: typeof g.id === "string" ? g.id : "",
+            name: typeof g.name === "string" ? g.name : "",
+          }))
+          .filter((g) => g.id && g.name)
+      : undefined,
   };
 }
 
@@ -88,7 +157,68 @@ function parsePersonDetail(value: unknown): PersonDetail | null {
     phone: typeof value.phone === "string" ? value.phone : null,
     dateOfBirth: typeof value.dateOfBirth === "string" ? value.dateOfBirth : null,
     version: typeof value.version === "number" ? value.version : 1,
+    status: value.status === "inactive" ? "inactive" : "active",
+    source: typeof value.source === "string" ? value.source : "manual",
   };
+}
+
+function parseSummary(data: unknown): SummaryData | null {
+  if (!isRecord(data)) {
+    return null;
+  }
+  if (
+    typeof data.total !== "number" ||
+    typeof data.active !== "number" ||
+    typeof data.inactive !== "number" ||
+    typeof data.addedSince !== "number"
+  ) {
+    return null;
+  }
+  const result: SummaryData = {
+    total: data.total,
+    active: data.active,
+    inactive: data.inactive,
+    addedSince: data.addedSince,
+  };
+  if (Array.isArray(data.groups)) {
+    result.groups = data.groups
+      .filter(isRecord)
+      .map((g) => ({
+        id: typeof g.id === "string" ? g.id : "",
+        name: typeof g.name === "string" ? g.name : "",
+      }))
+      .filter((g) => g.id && g.name);
+  }
+  return result;
+}
+
+function getBrowserMonthStartIso(): string {
+  const now = new Date();
+  const d = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
+  const offsetMin = -d.getTimezoneOffset();
+  const sign = offsetMin >= 0 ? "+" : "-";
+  const pad = (n: number) => String(Math.floor(Math.abs(n))).padStart(2, "0");
+  const offsetStr = `${sign}${pad(offsetMin / 60)}:${pad(offsetMin % 60)}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-01T00:00:00${offsetStr}`;
+}
+
+function formatDate(dateString: string): string {
+  if (!dateString) {
+    return "None";
+  }
+  try {
+    const d = new Date(dateString);
+    if (isNaN(d.getTime())) {
+      return "None";
+    }
+    return new Intl.DateTimeFormat("en-AU", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    }).format(d);
+  } catch {
+    return "None";
+  }
 }
 
 export function AllContactsPage() {
@@ -100,6 +230,9 @@ export function AllContactsPage() {
   const [activeTab, setActiveTab] = useState<"adults" | "minors">("adults");
   const [searchDraft, setSearchDraft] = useState("");
   const [submittedSearch, setSubmittedSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [sourceFilter, setSourceFilter] = useState("");
+  const [groupFilter, setGroupFilter] = useState("");
   const [cursor, setCursor] = useState<string | undefined>(undefined);
 
   const [items, setItems] = useState<ContactItem[] | null>(null);
@@ -107,6 +240,15 @@ export function AllContactsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
   const [paymentRequired, setPaymentRequired] = useState(false);
+
+  // Summary state
+  const [summary, setSummary] = useState<SummaryData | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState(false);
+
+  // Status toggle state
+  const [savingStatusId, setSavingStatusId] = useState<string | null>(null);
+  const [statusAlert, setStatusAlert] = useState<string | null>(null);
 
   // View state: "list" | "detail" | "add" | "edit"
   const [view, setView] = useState<"list" | "detail" | "add" | "edit">("list");
@@ -118,9 +260,11 @@ export function AllContactsPage() {
 
   // Add & Edit form fields
   const [addForm, setAddForm] = useState<ContactFormData>(initialFormData);
+  const [addSource, setAddSource] = useState("manual");
   const [addNotice, setAddNotice] = useState<string | null>(null);
 
   const [editForm, setEditForm] = useState<ContactFormData>(initialFormData);
+  const [editSource, setEditSource] = useState("manual");
   const [editConflict, setEditConflict] = useState(false);
   const [editNotice, setEditNotice] = useState<string | null>(null);
 
@@ -168,6 +312,9 @@ export function AllContactsPage() {
       communitySlug: string,
       kind: "adults" | "minors",
       searchTerm: string,
+      statusVal: string,
+      sourceVal: string,
+      groupVal: string,
       cursorToken: string | undefined,
       isCurrent: () => boolean,
     ) => {
@@ -177,8 +324,19 @@ export function AllContactsPage() {
         communitySlug,
         kind,
       };
-      if (kind === "adults" && searchTerm) {
-        body.search = searchTerm;
+      if (kind === "adults") {
+        if (searchTerm) {
+          body.search = searchTerm;
+        }
+        if (statusVal) {
+          body.status = statusVal;
+        }
+        if (sourceVal) {
+          body.source = sourceVal;
+        }
+        if (groupVal) {
+          body.groupId = groupVal;
+        }
       }
       if (cursorToken) {
         body.cursor = cursorToken;
@@ -226,8 +384,45 @@ export function AllContactsPage() {
         setError(true);
       }
     },
-    [],
+    [refreshBilling],
   );
+
+  const fetchSummary = useCallback(async (communitySlug: string, isCurrent: () => boolean) => {
+    setSummaryLoading(true);
+    const addedSince = getBrowserMonthStartIso();
+    const response = await post("/v1/people/summary", { communitySlug, addedSince });
+    if (!isCurrent()) {
+      return;
+    }
+    setSummaryLoading(false);
+
+    if (response === "unavailable" || response.status !== 200) {
+      setSummaryError(true);
+      setSummary(null);
+      return;
+    }
+
+    try {
+      const data: unknown = await response.json();
+      if (!isCurrent()) {
+        return;
+      }
+      const parsed = parseSummary(data);
+      if (parsed === null) {
+        setSummaryError(true);
+        setSummary(null);
+        return;
+      }
+      setSummary(parsed);
+      setSummaryError(false);
+    } catch {
+      if (!isCurrent()) {
+        return;
+      }
+      setSummaryError(true);
+      setSummary(null);
+    }
+  }, []);
 
   const reload = useCallback(() => {
     const mine = ++generation.current;
@@ -235,13 +430,29 @@ export function AllContactsPage() {
       return;
     }
     setError(false);
-    void fetchContacts(slug, activeTab, submittedSearch, cursor, () => generation.current === mine);
+    void fetchContacts(
+      slug,
+      activeTab,
+      submittedSearch,
+      statusFilter,
+      sourceFilter,
+      groupFilter,
+      cursor,
+      () => generation.current === mine,
+    );
+    if (activeTab === "adults") {
+      void fetchSummary(slug, () => generation.current === mine);
+    }
   }, [
     slug,
     activeTab,
     submittedSearch,
+    statusFilter,
+    sourceFilter,
+    groupFilter,
     cursor,
     fetchContacts,
+    fetchSummary,
     access.entitlements["people.directory"],
     access.permissions["people.view"],
   ]);
@@ -257,9 +468,15 @@ export function AllContactsPage() {
       setActiveTab("adults");
       setSearchDraft("");
       setSubmittedSearch("");
+      setStatusFilter("");
+      setSourceFilter("");
+      setGroupFilter("");
       setCursor(undefined);
       setNextCursor(null);
       setItems(null);
+      setSummary(null);
+      setSummaryError(false);
+      setStatusAlert(null);
       setView("list");
       setSelectedPersonId(null);
       setDetailPerson(null);
@@ -267,8 +484,10 @@ export function AllContactsPage() {
       setDetailNotFound(false);
       setDetailError(false);
       setAddForm(initialFormData);
+      setAddSource("manual");
       setAddNotice(null);
       setEditForm(initialFormData);
+      setEditSource("manual");
       setEditConflict(false);
       setEditNotice(null);
       setPaymentRequired(false);
@@ -277,7 +496,17 @@ export function AllContactsPage() {
       setSubmitting(false);
       if (slug && access.entitlements["people.directory"] && access.permissions["people.view"]) {
         const mine = ++generation.current;
-        void fetchContacts(slug, "adults", "", undefined, () => generation.current === mine);
+        void fetchContacts(
+          slug,
+          "adults",
+          "",
+          "",
+          "",
+          "",
+          undefined,
+          () => generation.current === mine,
+        );
+        void fetchSummary(slug, () => generation.current === mine);
       }
       return;
     }
@@ -292,6 +521,7 @@ export function AllContactsPage() {
     access.entitlements["people.directory"],
     access.permissions["people.view"],
     fetchContacts,
+    fetchSummary,
   ]);
 
   const loadPersonDetail = useCallback(
@@ -345,6 +575,11 @@ export function AllContactsPage() {
             phone: parsed.phone || "",
             dateOfBirth: parsed.dateOfBirth || "",
           });
+          if (parsed.source === "manual" || parsed.source === "family_records") {
+            setEditSource(parsed.source);
+          } else {
+            setEditSource("keep");
+          }
           setEditConflict(false);
           setView("edit");
         }
@@ -383,6 +618,8 @@ export function AllContactsPage() {
 
   function openAdd() {
     setAddNotice(null);
+    setAddForm(initialFormData);
+    setAddSource("manual");
     setView("add");
   }
 
@@ -394,6 +631,11 @@ export function AllContactsPage() {
       phone: person.phone || "",
       dateOfBirth: person.dateOfBirth || "",
     });
+    if (person.source === "manual" || person.source === "family_records") {
+      setEditSource(person.source);
+    } else {
+      setEditSource("keep");
+    }
     setEditConflict(false);
     setEditNotice(null);
     setView("edit");
@@ -401,11 +643,78 @@ export function AllContactsPage() {
 
   function backToList() {
     setAddForm(initialFormData);
+    setAddSource("manual");
     setEditForm(initialFormData);
+    setEditSource("manual");
     setView("list");
     setSelectedPersonId(null);
     setDetailPerson(null);
     reload();
+  }
+
+  async function handleStatusToggle(person: ContactItem) {
+    if (savingStatusId !== null || !slug) {
+      return;
+    }
+    const newStatus = person.status === "active" ? "inactive" : "active";
+    setSavingStatusId(person.id);
+    setStatusAlert(null);
+
+    try {
+      const response = await post("/v1/people/status", {
+        communitySlug: slug,
+        personId: person.id,
+        version: person.version,
+        status: newStatus,
+      });
+
+      if (response === "unavailable") {
+        setStatusAlert("Unable to update contact status");
+        return;
+      }
+
+      if (response.status === 409) {
+        setStatusAlert(
+          "This contact was changed by someone else. Reloading to see the latest details.",
+        );
+        reload();
+        return;
+      }
+
+      if (response.status !== 200) {
+        setStatusAlert("Unable to update contact status");
+        return;
+      }
+
+      try {
+        const data: unknown = await response.json();
+        if (isRecord(data) && typeof data.version === "number" && typeof data.status === "string") {
+          setItems((prev) =>
+            prev
+              ? prev.map((item) =>
+                  item.id === person.id
+                    ? {
+                        ...item,
+                        version: data.version as number,
+                        status: data.status === "inactive" ? "inactive" : "active",
+                      }
+                    : item,
+                )
+              : null,
+          );
+          if (slug) {
+            const mine = generation.current;
+            void fetchSummary(slug, () => generation.current === mine);
+          }
+        } else {
+          setStatusAlert("Unable to update contact status");
+        }
+      } catch {
+        setStatusAlert("Unable to update contact status");
+      }
+    } finally {
+      setSavingStatusId(null);
+    }
   }
 
   async function handleAddSubmit(event: FormEvent<HTMLFormElement>) {
@@ -422,6 +731,7 @@ export function AllContactsPage() {
         communitySlug: slug,
         givenName: addForm.givenName.trim(),
         familyName: addForm.familyName.trim(),
+        source: addSource,
       };
       if (addForm.email.trim()) {
         body.email = addForm.email.trim();
@@ -476,6 +786,9 @@ export function AllContactsPage() {
         phone: editForm.phone.trim() || null,
         dateOfBirth: editForm.dateOfBirth.trim() || null,
       };
+      if (editSource === "manual" || editSource === "family_records") {
+        body.source = editSource;
+      }
 
       const response = await post("/v1/people/update", body);
       if (response === "unavailable") {
@@ -514,12 +827,38 @@ export function AllContactsPage() {
     setCursor(undefined);
     setSearchDraft("");
     setSubmittedSearch("");
+    setStatusFilter("");
+    setSourceFilter("");
+    setGroupFilter("");
     setItems(null);
+    setStatusAlert(null);
   }
 
   function handleSearchSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmittedSearch(searchDraft.trim());
+    setCursor(undefined);
+  }
+
+  function handleStatusFilterChange(val: string) {
+    setStatusFilter(val);
+    setCursor(undefined);
+  }
+
+  function handleSourceFilterChange(val: string) {
+    setSourceFilter(val);
+    setCursor(undefined);
+  }
+
+  function handleGroupFilterChange(val: string) {
+    setGroupFilter(val);
+    setCursor(undefined);
+  }
+
+  function clearFilters() {
+    setStatusFilter("");
+    setSourceFilter("");
+    setGroupFilter("");
     setCursor(undefined);
   }
 
@@ -641,7 +980,19 @@ export function AllContactsPage() {
           ) : null}
 
           <form onSubmit={handleAddSubmit} className="grid gap-4">
-            <ContactFields prefix="add" data={addForm} onChange={setAddForm} />
+            <ContactFields
+              prefix="add"
+              data={addForm}
+              onChange={setAddForm}
+              source={{
+                value: addSource,
+                onChange: setAddSource,
+                options: [
+                  { value: "manual", label: "Manual" },
+                  { value: "family_records", label: "Family Records" },
+                ],
+              }}
+            />
 
             <div className="flex flex-wrap gap-2">
               <Button type="submit" disabled={submitting}>
@@ -658,6 +1009,21 @@ export function AllContactsPage() {
   }
 
   if (view === "edit") {
+    const editSourceOptions =
+      detailPerson?.source === "manual" || detailPerson?.source === "family_records"
+        ? [
+            { value: "manual", label: "Manual" },
+            { value: "family_records", label: "Family Records" },
+          ]
+        : [
+            {
+              value: "keep",
+              label: `Keep current (${PERSON_SOURCE_LABELS[detailPerson?.source ?? ""] ?? detailPerson?.source})`,
+            },
+            { value: "manual", label: "Manual" },
+            { value: "family_records", label: "Family Records" },
+          ];
+
     return (
       <>
         <ScreenTitle>All Contacts</ScreenTitle>
@@ -681,7 +1047,16 @@ export function AllContactsPage() {
           ) : null}
 
           <form onSubmit={handleEditSubmit} className="grid gap-4">
-            <ContactFields prefix="edit" data={editForm} onChange={setEditForm} />
+            <ContactFields
+              prefix="edit"
+              data={editForm}
+              onChange={setEditForm}
+              source={{
+                value: editSource,
+                onChange: setEditSource,
+                options: editSourceOptions,
+              }}
+            />
 
             <div className="flex flex-wrap gap-2">
               <Button type="submit" disabled={submitting}>
@@ -696,6 +1071,138 @@ export function AllContactsPage() {
       </>
     );
   }
+
+  const hasFilters = Boolean(statusFilter || sourceFilter || groupFilter);
+
+  const adultColumns: DataTableColumn<ContactItem>[] = [
+    {
+      key: "name",
+      header: "Name",
+      primary: true,
+      render: (person) => (
+        <span className="flex items-center gap-2">
+          <Avatar name={`${person.givenName} ${person.familyName}`} />
+          <span>
+            <span className="block font-semibold">
+              <span>{person.givenName}</span> <span>{person.familyName}</span>
+            </span>
+            {person.age !== null ? (
+              <span className="block text-sm text-muted-foreground font-normal">
+                {`${person.age} years old`}
+              </span>
+            ) : null}
+          </span>
+        </span>
+      ),
+    },
+    {
+      key: "email",
+      header: "Email",
+      render: (person) =>
+        person.email ? person.email : <span className="text-muted-foreground">None</span>,
+    },
+    {
+      key: "phone",
+      header: "Phone",
+      render: (person) =>
+        person.phone ? person.phone : <span className="text-muted-foreground">None</span>,
+    },
+    {
+      key: "date",
+      header: "Date",
+      render: (person) => <span className="whitespace-nowrap">{formatDate(person.createdAt)}</span>,
+    },
+    ...(summary?.groups !== undefined
+      ? [
+          {
+            key: "groups",
+            header: "Groups",
+            render: (person: ContactItem) =>
+              person.groups && person.groups.length > 0 ? (
+                <span className="inline-flex flex-wrap gap-1">
+                  {person.groups.map((grp) => (
+                    <span
+                      key={grp.id}
+                      className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-muted text-foreground border border-border"
+                    >
+                      {grp.name}
+                    </span>
+                  ))}
+                </span>
+              ) : (
+                <span className="text-muted-foreground">None</span>
+              ),
+          },
+        ]
+      : []),
+    {
+      key: "source",
+      header: "Source",
+      render: (person) => PERSON_SOURCE_LABELS[person.source] ?? person.source,
+    },
+    {
+      key: "status",
+      header: "Status",
+      render: (person) =>
+        access.permissions["people.manage"] && !hideWrites ? (
+          <Switch
+            label="Active"
+            aria-label={`Active status for ${person.givenName} ${person.familyName}`}
+            checked={person.status === "active"}
+            disabled={savingStatusId === person.id}
+            onChange={() => void handleStatusToggle(person)}
+          />
+        ) : (
+          <StatusBadge tone={person.status === "active" ? "success" : "neutral"}>
+            {person.status === "active" ? "Active" : "Inactive"}
+          </StatusBadge>
+        ),
+    },
+    {
+      key: "actions",
+      header: "Actions",
+      render: (person) => (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          aria-label={`View ${person.givenName} ${person.familyName}`}
+          onClick={() => openDetail(person.id)}
+        >
+          View
+        </Button>
+      ),
+    },
+  ];
+
+  const minorColumns: DataTableColumn<ContactItem>[] = [
+    {
+      key: "givenName",
+      header: "Given name",
+      primary: true,
+      render: (person) => person.givenName,
+    },
+    {
+      key: "familyName",
+      header: "Family name",
+      render: (person) => person.familyName,
+    },
+    {
+      key: "actions",
+      header: "Actions",
+      render: (person) => (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          aria-label={`View ${person.givenName} ${person.familyName}`}
+          onClick={() => openDetail(person.id)}
+        >
+          View
+        </Button>
+      ),
+    },
+  ];
 
   return (
     <>
@@ -737,7 +1244,8 @@ export function AllContactsPage() {
           access.permissions["people.manage"] &&
           !hideWrites &&
           activeTab === "adults" &&
-          (!submittedSearch || items.length > 0) ? (
+          (!submittedSearch || items.length > 0) &&
+          (!hasFilters || items.length > 0) ? (
             <Button type="button" onClick={openAdd}>
               Add contact
             </Button>
@@ -749,14 +1257,104 @@ export function AllContactsPage() {
           ) : undefined
         }
       >
+        {statusAlert ? (
+          <Alert variant="destructive" role="alert" className="mb-4">
+            <span>{statusAlert}</span>
+          </Alert>
+        ) : null}
+
         {activeTab === "adults" ? (
-          <FilterBar
-            label="Search contacts"
-            inputId="contact-search-input"
-            value={searchDraft}
-            onValueChange={setSearchDraft}
-            onSubmit={handleSearchSubmit}
-          />
+          summaryLoading && summary === null ? (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
+              <Skeleton className="h-20" />
+              <Skeleton className="h-20" />
+              <Skeleton className="h-20" />
+              <Skeleton className="h-20" />
+            </div>
+          ) : summaryError ? (
+            <Alert live="polite" className="mb-4">
+              <span>Counts unavailable</span>
+            </Alert>
+          ) : summary !== null ? (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
+              <div className="bg-card border border-border rounded-lg p-4">
+                <div className="text-sm text-muted-foreground font-medium">Total contacts</div>
+                <div className="text-2xl font-semibold text-foreground mt-1">{summary.total}</div>
+              </div>
+              <div className="bg-card border border-border rounded-lg p-4">
+                <div className="text-sm text-muted-foreground font-medium">Active</div>
+                <div className="text-2xl font-semibold text-foreground mt-1">{summary.active}</div>
+              </div>
+              <div className="bg-card border border-border rounded-lg p-4">
+                <div className="text-sm text-muted-foreground font-medium">Inactive</div>
+                <div className="text-2xl font-semibold text-foreground mt-1">
+                  {summary.inactive}
+                </div>
+              </div>
+              <div className="bg-card border border-border rounded-lg p-4">
+                <div className="text-sm text-muted-foreground font-medium">Added this month</div>
+                <div className="text-2xl font-semibold text-foreground mt-1">
+                  {summary.addedSince}
+                </div>
+              </div>
+            </div>
+          ) : null
+        ) : null}
+
+        {activeTab === "adults" ? (
+          <div className="flex flex-wrap gap-4 items-end mb-4">
+            <FilterBar
+              label="Search contacts"
+              inputId="contact-search-input"
+              value={searchDraft}
+              onValueChange={setSearchDraft}
+              onSubmit={handleSearchSubmit}
+              className="flex-1 min-w-[200px]"
+            />
+            <div className="flex flex-wrap gap-2 items-end">
+              <Field label="Status">
+                <Select
+                  id="contact-status-filter"
+                  value={statusFilter}
+                  onChange={(e) => handleStatusFilterChange(e.target.value)}
+                >
+                  <option value="">All statuses</option>
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                </Select>
+              </Field>
+              <Field label="Source">
+                <Select
+                  id="contact-source-filter"
+                  value={sourceFilter}
+                  onChange={(e) => handleSourceFilterChange(e.target.value)}
+                >
+                  <option value="">All sources</option>
+                  {PERSON_SOURCES.map((src) => (
+                    <option key={src} value={src}>
+                      {PERSON_SOURCE_LABELS[src]}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              {summary?.groups !== undefined ? (
+                <Field label="Group">
+                  <Select
+                    id="contact-group-filter"
+                    value={groupFilter}
+                    onChange={(e) => handleGroupFilterChange(e.target.value)}
+                  >
+                    <option value="">All groups</option>
+                    {summary.groups.map((grp) => (
+                      <option key={grp.id} value={grp.id}>
+                        {grp.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              ) : null}
+            </div>
+          </div>
         ) : null}
 
         {error ? (
@@ -772,47 +1370,21 @@ export function AllContactsPage() {
 
         {!loading && !error && items !== null ? (
           items.length === 0 ? (
-            <EmptyState message={submittedSearch ? "No contacts match" : "No contacts yet"} />
+            hasFilters ? (
+              <div className="grid justify-items-center gap-2 py-4">
+                <EmptyState message="No contacts match these filters" />
+                <Button type="button" variant="outline" onClick={clearFilters}>
+                  Clear filters
+                </Button>
+              </div>
+            ) : (
+              <EmptyState message={submittedSearch ? "No contacts match" : "No contacts yet"} />
+            )
           ) : (
             <DataTable
               aria-label="Contacts"
               rowKey={(person) => person.id}
-              columns={[
-                {
-                  key: "givenName",
-                  header: "Given name",
-                  primary: true,
-                  render: (person) =>
-                    activeTab === "adults" ? (
-                      <span className="flex items-center gap-2">
-                        <Avatar name={`${person.givenName} ${person.familyName}`} />
-                        <span>{person.givenName}</span>
-                      </span>
-                    ) : (
-                      person.givenName
-                    ),
-                },
-                {
-                  key: "familyName",
-                  header: "Family name",
-                  render: (person) => person.familyName,
-                },
-                {
-                  key: "actions",
-                  header: "Actions",
-                  render: (person) => (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      aria-label={`View ${person.givenName} ${person.familyName}`}
-                      onClick={() => openDetail(person.id)}
-                    >
-                      View
-                    </Button>
-                  ),
-                },
-              ]}
+              columns={activeTab === "adults" ? adultColumns : minorColumns}
               rows={items}
             />
           )
