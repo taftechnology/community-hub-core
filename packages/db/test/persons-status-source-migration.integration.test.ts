@@ -373,4 +373,14 @@ describe("persons status, source and created_at migration 0021", () => {
     expect(pgError?.code).toBe("23514");
     expect(pgError?.constraint_name).toBe("persons_source_check");
   });
+
+  it("migration 0021: leaves no tenant setting on the session", async () => {
+    const [row] = await sql<{ org_id: string | null; community_id: string | null }[]>`
+      select
+        current_setting('app.org_id', true) as org_id,
+        current_setting('app.community_id', true) as community_id
+    `;
+    expect(row.org_id ?? "").toBe("");
+    expect(row.community_id ?? "").toBe("");
+  });
 });

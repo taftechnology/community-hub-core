@@ -2237,4 +2237,127 @@ describe("listPersons", () => {
     expect(selectCall).toContain("current_setting('app.org_id')");
     expect(selectCall).toContain("is_minor = false");
   });
+
+  it("listPersons: age is computed on the injected now, across a birthday", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const kms = createLocalKmsPort();
+    const scope = await createScope(platform);
+    const actorUserId = newId();
+
+    try {
+      const createdNow = new Date("2026-01-01T12:00:00.000Z");
+      // Choose DOB 1990-05-15 and injected listNow 2026-05-14 (day before birthday).
+      // On 2026-05-14 the age is 35, whereas on today's real date (after May 15, 2026) the age is 36+.
+      const listNow = new Date("2026-05-14T12:00:00.000Z");
+      await withAppTransaction(
+        app,
+        { orgId: scope.orgId, communityId: scope.communityId },
+        async (tx) => {
+          await withRequest({ requestId: REQUEST_ID }, async () => {
+            await createPerson(tx, kms, KEY_ARN, {
+              now: createdNow,
+              declaredAdult: true,
+              householdId: null,
+              dateOfBirth: "1990-05-15",
+              givenName: "BirthdayTest",
+              familyName: "Person",
+              email: "birthday@example.test",
+              phone: null,
+              actorUserId,
+            });
+          });
+        },
+      );
+
+      await withAppTransaction(
+        app,
+        { orgId: scope.orgId, communityId: scope.communityId },
+        async (tx) => {
+          await withRequest({ requestId: REQUEST_ID }, async () => {
+            const res = await listPersons(tx, kms, KEY_ARN, {
+              kind: "adults",
+              now: listNow,
+              actorUserId,
+            });
+            expect(res.items).toHaveLength(1);
+            const itm = res.items[0];
+            if (!itm || itm.isMinor) {
+              throw new Error("expected adult item");
+            }
+            expect(itm.age).toBe(35);
+          });
+        },
+      );
+    } finally {
+      await cleanScope(directSql, scope);
+      await directSql.end({ timeout: 1 });
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
+
+  it("listPersons: a community key row without an organisation key row gives no keys", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const baseKms = createLocalKmsPort();
+    const scope = await createScope(platform);
+    const actorUserId = newId();
+
+    try {
+      // Seed a community key row directly, leaving organisation_keys completely empty
+      await withAppTransaction(
+        app,
+        { orgId: scope.orgId, communityId: scope.communityId },
+        async (tx) => {
+          await tx`
+            insert into app.community_keys (
+              id, org_id, community_id, wrapped, key_version, parent_key_id
+            ) values (
+              ${newId()}::uuid,
+              ${scope.orgId}::uuid,
+              ${scope.communityId}::uuid,
+              ${Buffer.from("dummy-wrapped-bytes-for-test")}::bytea,
+              '1',
+              ${newId()}::uuid
+            )
+          `;
+        },
+      );
+
+      const countingKms = createCountingKms(baseKms);
+      await withAppTransaction(
+        app,
+        { orgId: scope.orgId, communityId: scope.communityId },
+        async (tx) => {
+          await withRequest({ requestId: REQUEST_ID }, async () => {
+            let listError: unknown = null;
+            let res: Awaited<ReturnType<typeof listPersons>> | null = null;
+            try {
+              res = await listPersons(tx, countingKms.kms, KEY_ARN, {
+                kind: "adults",
+                search: "nobody@example.test",
+                actorUserId,
+              });
+            } catch (err) {
+              listError = err;
+            }
+            expect(listError).toBeNull();
+            expect(res?.items).toEqual([]);
+            expect(res?.nextCursor).toBeNull();
+            expect(countingKms.decryptCalls()).toBe(0);
+          });
+        },
+      );
+    } finally {
+      await cleanScope(directSql, scope);
+      await directSql.end({ timeout: 1 });
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
 });

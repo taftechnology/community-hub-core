@@ -1195,6 +1195,79 @@ describe("people routes real-database integration (finding 3)", () => {
     expect(await resOk.json()).toEqual({ version: 2, status: "inactive" });
   });
 
+  it("people status: a change returns the new version, and the old version then gets 409", async () => {
+    const org = await createOrgAndCommunity("stat-vers");
+    let adultId = "";
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: org.orgId, communityId: org.communityId }, async (tx) => {
+        const a = await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: true,
+          householdId: null,
+          dateOfBirth: null,
+          givenName: "StatusAdult",
+          familyName: "VersionTest",
+          email: null,
+          phone: null,
+          actorUserId: org.ownerSession.userId,
+        });
+        adultId = a.personId;
+      }),
+    );
+
+    const res1 = await post(
+      "/v1/people/status",
+      {
+        communitySlug: org.slug,
+        personId: adultId,
+        version: 1,
+        status: "inactive",
+      },
+      org.ownerSession.accessToken,
+    );
+    expect(res1.status).toBe(200);
+    expect(await res1.json()).toEqual({ version: 2, status: "inactive" });
+
+    const res2 = await post(
+      "/v1/people/status",
+      {
+        communitySlug: org.slug,
+        personId: adultId,
+        version: 1,
+        status: "inactive",
+      },
+      org.ownerSession.accessToken,
+    );
+    expect(res2.status).toBe(409);
+    expect(await res2.text()).toBe("");
+
+    const res3 = await post(
+      "/v1/people/status",
+      {
+        communitySlug: org.slug,
+        personId: adultId,
+        version: 2,
+        status: "active",
+      },
+      org.ownerSession.accessToken,
+    );
+    expect(res3.status).toBe(200);
+    expect(await res3.json()).toEqual({ version: 3, status: "active" });
+
+    const res4 = await post(
+      "/v1/people/status",
+      {
+        communitySlug: org.slug,
+        personId: adultId,
+        version: 2,
+        status: "active",
+      },
+      org.ownerSession.accessToken,
+    );
+    expect(res4.status).toBe(409);
+    expect(await res4.text()).toBe("");
+  });
+
   it("people summary: counts only the caller's community", async () => {
     const org = await createOrgAndCommunity("sum-comm");
     const comm2 = await addCommunityToOrg(org.orgId, "sum-comm2");

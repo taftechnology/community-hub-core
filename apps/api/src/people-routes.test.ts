@@ -1402,6 +1402,26 @@ describe("people routes (list and read)", () => {
       );
     });
 
+    it("POST /v1/people/status: forwards the request's version and status", async () => {
+      people.setPersonStatus.mockResolvedValueOnce({ version: 8, status: "active" });
+
+      const res = await call("/v1/people/status", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+        version: 7,
+        status: "active",
+      });
+      expect(res.status).toBe(200);
+      expect(people.setPersonStatus).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          personId: PERSON_ID,
+          version: 7,
+          status: "active",
+        }),
+      );
+    });
+
     it("POST /v1/people/status: returns 200 with unchanged version and status on no-op", async () => {
       people.setPersonStatus.mockResolvedValueOnce({ version: 1, status: "active" });
 
