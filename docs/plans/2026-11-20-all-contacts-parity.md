@@ -368,3 +368,29 @@ Source: the reviewer's checkpoint 2 pin run (pins 26 and 44 crashed weakened on 
 - Pins 26 and 44: the mocks return a valid result, so the weakened run fails on the status assertion, not on serialisation.
 - Tests with no pin claim: an entitled adult in no active group carries `groups: []`; `listPeopleBody` refuses a non-UUID `groupId` and an unknown `status`.
 - Not acted on, recorded for the pull request: `no-store` is absent on refusals made before the transaction (empty bodies; 400, 401, 402, 403, 404); an `addedSince` of year 0000 passes the contract and fails in PostgreSQL (rollback, no data).
+
+### A3 (2026-11-21, after checkpoint 3): All Contacts screen fixes and test strength
+
+Source: the checkpoint 3 owner's check (Claude Sonnet, APPROVE WITH NOTES, 0 High, 2 Medium, 7 Low) and the reviewer's browser check (stub API, Brave, 1280px and 375px, light and dark; axe 0 violations, no sideways scroll, switch tap area 79×44). One `fix(admin)` commit in `apps/admin/src/all-contacts.tsx` and its tests.
+
+- **Source fixes:**
+  - M1: the summary is fetched on mount, on a community change and after a successful status change, not on page or filter changes. When the group filter is hidden (no `groups` key, or a summary failure), `groupFilter` is cleared so the list is never filtered by a control the user cannot see.
+  - B1 (browser): the switch's visible label shows the contact's current status, "Active" or "Inactive"; its accessible name still includes the contact's name.
+  - B2 (browser): phone and date cells do not wrap mid-value.
+  - B3 (browser): "Add contact" stays available when a filter matches nothing, for a caller who may add.
+  - L1: a 402 on the switch is handled as the add form handles it (payment-required state, billing refreshed).
+  - L2: the switch's in-flight guard is a ref, as the other handlers use.
+  - L3: an adult item or read without `source` does not default to `manual`; the edit form then sends no source.
+  - L4: the adults tab drops any item with `isMinor: true` (defence in depth; the API already excludes minors).
+- **Tests (apps/admin), new pins (file A):**
+
+| #   | Setting                                     | Weakening                                          | Test that must fail (exact `it` title)                                                  |
+| --- | ------------------------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| 47  | The status request carries the right values | Always send `status: "inactive"`                   | All Contacts: the switch sends the new status and the row's version, in both directions |
+| 48  | Create sends the picked source              | Always send `source: "manual"` on create           | All Contacts: the add form sends the picked source                                      |
+| 49  | `addedSince` is the browser's month start   | Send a constant `addedSince`                       | All Contacts: the summary asks for the browser's month start with its offset            |
+| 50  | A hidden group filter is not applied        | Keep `groupFilter` when the group select is hidden | All Contacts: a summary failure after a group is picked clears the group filter         |
+| 51  | The switch label shows the current status   | Always label the switch "Active"                   | All Contacts: an inactive contact's switch is off and labelled Inactive                 |
+
+- Tests with no pin claim (M2's list): the cursor resets on each of the three filters separately; the Minors tab makes no summary call; a row shows its group chips (two groups), email and phone text, the en-AU date and the source label; an inactive row's badge reads Inactive; a successful toggle updates the row and its version, and the counts; a second click while saving sends nothing; "No contacts match these filters" for the group and source filters too; exact fetch call counts in the 409 and add/edit tests (L5); axe in the add and edit forms, the empty-filter state, the badge state and "Counts unavailable"; a 402 on the switch (L1); an `isMinor: true` item on the adults tab is not shown (L4); an item without `source` sends no source on edit (L3).
+- Not acted on, recorded for the pull request: the alert after a 409 stays until the next action (L6); a toggled row stays in a status-filtered list until the next reload (L7).
