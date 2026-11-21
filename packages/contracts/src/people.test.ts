@@ -234,6 +234,21 @@ describe("people contract schemas (pin 2)", () => {
         kind: "minors",
       }).success,
     ).toBe(true);
+
+    // Negative cases: non-UUID groupId and unknown status
+    expect(
+      listPeopleBody.safeParse({
+        communitySlug: "slug",
+        groupId: "not-a-uuid",
+      }).success,
+    ).toBe(false);
+
+    expect(
+      listPeopleBody.safeParse({
+        communitySlug: "slug",
+        status: "unknown-status",
+      }).success,
+    ).toBe(false);
   });
 
   it("createPersonBody and updatePersonBody accept only manual and family_records as source", () => {

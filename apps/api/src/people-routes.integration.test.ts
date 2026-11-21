@@ -15,7 +15,7 @@ import {
 import { assignPlan, upsertPlan } from "@community-hub/entitlements";
 import type { OtpMail } from "@community-hub/identity";
 import { startEmailOtp, verifyEmailOtp } from "@community-hub/identity";
-import { withRequest } from "@community-hub/kernel";
+import { createRequestHandler, type RequestLogFields, withRequest } from "@community-hub/kernel";
 import { createHousehold, createPerson, setPersonStatus } from "@community-hub/people";
 import { addMember as addGroupMember, createGroup } from "@community-hub/groups";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -888,11 +888,10 @@ describe("people routes real-database integration (finding 3)", () => {
 
   it("people list: a tampered ciphertext gives 500 with an empty body and no value in the log", async () => {
     const org = await createOrgAndCommunity("pin43");
-    let adultId = "";
     const SECRET_EMAIL = "tamper-route@example.test";
     await withRequest({ requestId: REQUEST_ID }, () =>
       withAppTransaction(app, { orgId: org.orgId, communityId: org.communityId }, async (tx) => {
-        const a = await createPerson(tx, kms, KEY_ARN, {
+        await createPerson(tx, kms, KEY_ARN, {
           now,
           declaredAdult: true,
           householdId: null,
@@ -903,32 +902,72 @@ describe("people routes real-database integration (finding 3)", () => {
           phone: null,
           actorUserId: org.ownerSession.userId,
         });
-        adultId = a.personId;
-
-        const rows = await tx<{ email: Uint8Array | null }[]>`
-          select email from app.persons where id = ${adultId}::uuid
-        `;
-        const tampered = new Uint8Array(rows[0]!.email!);
-        tampered[0] = tampered[0]! ^ 0xff;
-        await tx`
-          update app.persons set email = ${tampered} where id = ${adultId}::uuid
-        `;
       }),
     );
 
-    capturedLogs.length = 0;
-    const res = await post(
-      "/v1/people/list",
-      { communitySlug: org.slug },
-      org.ownerSession.accessToken,
+    const plantedError = new Error(`decryption failed with secret ${SECRET_EMAIL}`);
+    plantedError.name = "TamperDecryptError";
+
+    const throwingKms: typeof kms = {
+      ...kms,
+      decrypt: async () => {
+        throw plantedError;
+      },
+    };
+
+    const kernelLogs: RequestLogFields[] = [];
+    const routes = peopleRoutes({
+      checkout,
+      kms: throwingKms,
+      keyArn: KEY_ARN,
+      now: () => now,
+      apiHostname: API_HOSTNAME,
+      log,
+      guardLog,
+    });
+    const match = (request: Request) =>
+      routes.find(
+        (route) =>
+          route.method === request.method && route.pattern === new URL(request.url).pathname,
+      );
+
+    const handler = createRequestHandler(
+      {
+        info: (fields: RequestLogFields) => {
+          kernelLogs.push(fields);
+        },
+        pathFor: (request) => match(request)?.pattern ?? "unmatched",
+        acceptInboundRequestId: false,
+      },
+      (request) => {
+        const route = match(request);
+        if (route === undefined) {
+          return new Response(null, { status: 404 });
+        }
+        return route.handle(request, { billing: route.billing, pattern: route.pattern });
+      },
     );
+
+    capturedLogs.length = 0;
+    const req = new Request(`http://${API_HOSTNAME}/v1/people/list`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-community-hub-hostname": API_HOSTNAME,
+        authorization: `Bearer ${org.ownerSession.accessToken}`,
+      },
+      body: JSON.stringify({ communitySlug: org.slug }),
+    });
+
+    const res = await handler(req);
     expect(res.status).toBe(500);
     expect(await res.text()).toBe("");
 
-    const errorLog = capturedLogs.find((l) => l.fields?.["errorClass"] !== undefined);
+    const errorLog = kernelLogs.find((l) => l.errorClass !== undefined);
     expect(errorLog).toBeDefined();
-    expect(typeof errorLog?.fields?.["errorClass"]).toBe("string");
-    const allLogText = JSON.stringify(capturedLogs);
+    expect(errorLog?.errorClass).toMatch(/^[A-Za-z][A-Za-z0-9_]{0,63}$/);
+    expect(errorLog?.errorClass).toBe("TamperDecryptError");
+    const allLogText = JSON.stringify({ kernelLogs, capturedLogs });
     expect(allLogText).not.toContain(SECRET_EMAIL);
     expect(allLogText).not.toContain("TamperAdult");
   });
@@ -1271,5 +1310,55 @@ describe("people routes real-database integration (finding 3)", () => {
     expect(body.items[0]!.isMinor).toBe(false);
     expect(body.items[0]!.groups).toEqual([{ id: groupId, name: "Youth Fellowship" }]);
     expect(body.items.some((i) => i.personId === minorId)).toBe(false);
+  });
+
+  it("people list: a decrypt failure leaves no listed audit row", async () => {
+    const org = await createOrgAndCommunity("pin43b");
+    let adultId = "";
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: org.orgId, communityId: org.communityId }, async (tx) => {
+        const a = await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: true,
+          householdId: null,
+          dateOfBirth: null,
+          givenName: "AuditRollbackAdult",
+          familyName: "Person",
+          email: "tamper-rollback@example.test",
+          phone: null,
+          actorUserId: org.ownerSession.userId,
+        });
+        adultId = a.personId;
+
+        const rows = await tx<{ email: Uint8Array | null }[]>`
+          select email from app.persons where id = ${adultId}::uuid
+        `;
+        const tampered = new Uint8Array(rows[0]!.email!);
+        tampered[0] = tampered[0]! ^ 0xff;
+        await tx`
+          update app.persons set email = ${tampered} where id = ${adultId}::uuid
+        `;
+      }),
+    );
+
+    const res = await post(
+      "/v1/people/list",
+      { communitySlug: org.slug },
+      org.ownerSession.accessToken,
+    );
+    expect(res.status).toBe(500);
+    expect(await res.text()).toBe("");
+
+    const auditRows = await withAppTransaction(
+      app,
+      { orgId: org.orgId, communityId: org.communityId },
+      (tx) => tx<{ count: string }[]>`
+        select count(*)::text as count
+        from app.audit_events
+        where org_id = ${org.orgId}::uuid
+          and action = 'people.person.listed'
+      `,
+    );
+    expect(Number(auditRows[0]?.count ?? "0")).toBe(0);
   });
 });

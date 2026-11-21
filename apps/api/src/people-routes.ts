@@ -63,16 +63,6 @@ function noStore(response: Response): Response {
   return response;
 }
 
-const ERROR_CLASS = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
-
-function errorClassFor(error: unknown): string {
-  if (error instanceof Error) {
-    const name: unknown = error.name;
-    return typeof name === "string" && ERROR_CLASS.test(name) ? name : "Error";
-  }
-  return "NonError";
-}
-
 export function statusForPeople(error: PeopleError): Response | undefined {
   if (
     error.code === "duplicate_email" ||
@@ -143,12 +133,11 @@ function bearer(request: Request): string | undefined {
 }
 
 export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
-  function finish(request: Request, response: Response, extra?: Record<string, unknown>): Response {
+  function finish(request: Request, response: Response): Response {
     deps.log("request", {
       path: new URL(request.url).pathname,
       status: response.status,
       requestId: getRequestContext().requestId,
-      ...extra,
     });
     return response;
   }
@@ -341,8 +330,7 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
               return finish(request, noStore(mapped));
             }
           }
-          const errorClass = errorClassFor(error);
-          return finish(request, noStore(empty(500)), { errorClass });
+          throw error;
         }
       }),
     );

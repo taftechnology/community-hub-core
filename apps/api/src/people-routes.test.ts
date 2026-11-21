@@ -1148,6 +1148,7 @@ describe("people routes (list and read)", () => {
 
   describe("status, summary, list filters, groups, and source (Task 7)", () => {
     it("POST /v1/people/status: a caller with only people.view gets 403 and no update", async () => {
+      people.setPersonStatus.mockResolvedValue({ version: 2, status: "inactive" });
       access.holdsPermission.mockImplementation(
         async (_tx, _userId, perm) => perm === "people.view",
       );
@@ -1164,6 +1165,46 @@ describe("people routes (list and read)", () => {
       expect(people.setPersonStatus).not.toHaveBeenCalled();
     });
 
+    it("POST /v1/people/status: asks for people.manage and nothing else", async () => {
+      people.setPersonStatus.mockResolvedValueOnce({ version: 2, status: "inactive" });
+      access.holdsPermission.mockImplementation(
+        async (_tx, _userId, perm) => perm === "people.manage",
+      );
+
+      const res = await call("/v1/people/status", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+        version: 1,
+        status: "inactive",
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ version: 2, status: "inactive" });
+      expect(access.holdsPermission).toHaveBeenCalledWith(expect.anything(), USER, "people.manage");
+    });
+
+    it("POST /v1/people/status: a denial appends permission.denied with the scope ids", async () => {
+      access.holdsPermission.mockResolvedValue(false);
+
+      const res = await call("/v1/people/status", {
+        communitySlug: "parish",
+        personId: PERSON_ID,
+        version: 1,
+        status: "inactive",
+      });
+
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+      expect(people.setPersonStatus).not.toHaveBeenCalled();
+      expect(db.appendAuditEvent).toHaveBeenCalledWith(expect.anything(), {
+        actorKind: "user",
+        actorId: USER,
+        action: "people.permission.denied",
+        purpose: "people.permission.denied",
+        targetIds: [ORG, COMMUNITY],
+      });
+    });
+
     it("POST /v1/people/summary: a caller without people.view gets 403", async () => {
       access.holdsPermission.mockResolvedValue(false);
 
@@ -1175,6 +1216,46 @@ describe("people routes (list and read)", () => {
       expect(res.status).toBe(403);
       expect(await res.text()).toBe("");
       expect(people.summarisePersons).not.toHaveBeenCalled();
+    });
+
+    it("POST /v1/people/summary: asks for people.view and nothing else", async () => {
+      people.summarisePersons.mockResolvedValueOnce({
+        total: 1,
+        active: 1,
+        inactive: 0,
+        addedSince: 1,
+      });
+      access.holdsPermission.mockImplementation(
+        async (_tx, _userId, perm) => perm === "people.view",
+      );
+
+      const res = await call("/v1/people/summary", {
+        communitySlug: "parish",
+        addedSince: "2026-10-01T00:00:00+10:00",
+      });
+
+      expect(res.status).toBe(200);
+      expect(access.holdsPermission).toHaveBeenCalledWith(expect.anything(), USER, "people.view");
+    });
+
+    it("POST /v1/people/summary: a denial appends permission.denied with purpose people.person.view", async () => {
+      access.holdsPermission.mockResolvedValue(false);
+
+      const res = await call("/v1/people/summary", {
+        communitySlug: "parish",
+        addedSince: "2026-10-01T00:00:00+10:00",
+      });
+
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+      expect(people.summarisePersons).not.toHaveBeenCalled();
+      expect(db.appendAuditEvent).toHaveBeenCalledWith(expect.anything(), {
+        actorKind: "user",
+        actorId: USER,
+        action: "people.permission.denied",
+        purpose: "people.person.view",
+        targetIds: [ORG, COMMUNITY],
+      });
     });
 
     it("POST /v1/people/list: groupId without groups.basic gets 403", async () => {
@@ -1268,6 +1349,13 @@ describe("people routes (list and read)", () => {
     });
 
     it("POST /v1/people/status and summary without people.directory get 403", async () => {
+      people.setPersonStatus.mockResolvedValue({ version: 2, status: "inactive" });
+      people.summarisePersons.mockResolvedValue({
+        total: 1,
+        active: 1,
+        inactive: 0,
+        addedSince: 1,
+      });
       entitlements.readSnapshot.mockResolvedValue(
         createSnapshot({ planEntitlements: [], allocations: [] }),
       );
@@ -1517,6 +1605,20 @@ describe("people routes (list and read)", () => {
             status: "active",
             source: "manual",
           },
+          {
+            id: "00000000-0000-4000-8000-000000000098",
+            personId: "00000000-0000-4000-8000-000000000098",
+            isMinor: false,
+            givenName: "Ford",
+            familyName: "Prefect",
+            version: 1,
+            email: null,
+            phone: null,
+            age: 40,
+            createdAt: "2026-10-01T00:00:00.000Z",
+            status: "active",
+            source: "manual",
+          },
         ],
         nextCursor: null,
       });
@@ -1532,6 +1634,7 @@ describe("people routes (list and read)", () => {
       expect(data.items[0]?.groups).toEqual([
         { id: "00000000-0000-4000-8000-000000000001", name: "Choir" },
       ]);
+      expect(data.items[1]?.groups).toEqual([]);
     });
 
     it("POST /v1/people/create: passes source when provided", async () => {
