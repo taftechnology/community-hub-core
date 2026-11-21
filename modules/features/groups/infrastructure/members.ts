@@ -360,3 +360,68 @@ export async function groupLeaderFact(
   `;
   return rows.length > 0;
 }
+
+export async function personIdsInGroup(tx: AppTransaction, groupId: string): Promise<string[]> {
+  if (typeof groupId !== "string" || !UUID_RE.test(groupId)) {
+    return [];
+  }
+
+  const rows = await tx<{ person_id: string }[]>`
+    select gm.person_id::text as person_id
+    from app.group_members gm
+    inner join app.groups g
+      on g.id = gm.group_id
+      and g.org_id = gm.org_id
+      and g.community_id = gm.community_id
+    where gm.group_id = ${groupId}::uuid
+      and gm.org_id = current_setting('app.org_id')::uuid
+      and gm.community_id = current_setting('app.community_id')::uuid
+      and g.status = 'active'
+    order by gm.added_at asc, gm.person_id asc
+  `;
+
+  return rows.map((r) => r.person_id);
+}
+
+export async function activeGroupsForPersons(
+  tx: AppTransaction,
+  personIds: string[],
+): Promise<Map<string, { id: string; name: string }[]>> {
+  if (!Array.isArray(personIds) || personIds.length === 0) {
+    return new Map();
+  }
+
+  const validIds = personIds.filter((id) => typeof id === "string" && UUID_RE.test(id));
+  if (validIds.length === 0) {
+    return new Map();
+  }
+
+  const ids = [...new Set(validIds)];
+  const result = new Map<string, { id: string; name: string }[]>();
+  for (const id of ids) {
+    result.set(id, []);
+  }
+
+  const rows = await tx<{ person_id: string; id: string; name: string }[]>`
+    select
+      gm.person_id::text as person_id,
+      g.id::text as id,
+      g.name
+    from app.group_members gm
+    inner join app.groups g
+      on g.id = gm.group_id
+      and g.org_id = gm.org_id
+      and g.community_id = gm.community_id
+    where gm.person_id = any(${ids}::uuid[])
+      and gm.org_id = current_setting('app.org_id')::uuid
+      and gm.community_id = current_setting('app.community_id')::uuid
+      and g.status = 'active'
+    order by g.name_key asc, g.id asc
+  `;
+
+  for (const row of rows) {
+    result.get(row.person_id)?.push({ id: row.id, name: row.name });
+  }
+
+  return result;
+}

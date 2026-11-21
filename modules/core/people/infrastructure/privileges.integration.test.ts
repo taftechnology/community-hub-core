@@ -162,6 +162,8 @@ describe("people table privileges", () => {
         "age_basis",
         "version",
         "household_id",
+        "status",
+        "source",
       ] as const;
       const forbiddenColumns = [
         "id",
@@ -170,6 +172,7 @@ describe("people table privileges", () => {
         "community_id",
         "given_name_restricted",
         "family_name_restricted",
+        "created_at",
       ] as const;
 
       for (const col of allowedColumns) {

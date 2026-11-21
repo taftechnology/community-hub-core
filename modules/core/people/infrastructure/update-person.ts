@@ -21,6 +21,7 @@ export type UpdatePersonChanges = {
   email?: string | null;
   phone?: string | null;
   dateOfBirth?: string | null;
+  source?: "manual" | "family_records";
 };
 
 export type UpdatePersonInput = {
@@ -206,11 +207,20 @@ export async function updatePerson(
   }
 
   if (
+    changes.source !== undefined &&
+    changes.source !== "manual" &&
+    changes.source !== "family_records"
+  ) {
+    throw new PeopleError("invalid_input");
+  }
+
+  if (
     givenName === undefined &&
     familyName === undefined &&
     email === undefined &&
     phone === undefined &&
-    dobDate === undefined
+    dobDate === undefined &&
+    changes.source === undefined
   ) {
     throw new PeopleError("invalid_input");
   }
@@ -289,6 +299,7 @@ export async function updatePerson(
         dobDate !== undefined
           ? sp`, ${sp("date_of_birth")} = ${dobBytes ?? null}, birthday_md = ${monthDay ?? null}, age_basis = ${ageBasis ?? null}`
           : sp``;
+      const sourceClause = changes.source !== undefined ? sp`, source = ${changes.source}` : sp``;
 
       const updated = await sp<{ version: number }[]>`
         update app.persons
@@ -299,6 +310,7 @@ export async function updatePerson(
           ${emailClause}
           ${phoneClause}
           ${dobClause}
+          ${sourceClause}
         where id = ${input.personId}::uuid
           and org_id = current_setting('app.org_id')::uuid
           and community_id = current_setting('app.community_id')::uuid

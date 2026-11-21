@@ -1,4 +1,4 @@
-import { Field, Input } from "@community-hub/ui";
+import { Field, Input, Select } from "@community-hub/ui";
 
 export type ContactFormData = {
   givenName: string;
@@ -6,6 +6,12 @@ export type ContactFormData = {
   email: string;
   phone: string;
   dateOfBirth: string;
+};
+
+export type ContactSourceProp = {
+  value: string;
+  onChange: (value: string) => void;
+  options: { value: string; label: string }[];
 };
 
 export const initialFormData: ContactFormData = {
@@ -21,11 +27,13 @@ export function ContactFields({
   data,
   onChange,
   dobHelp,
+  source,
 }: {
   prefix: string;
   data: ContactFormData;
   onChange: (data: ContactFormData) => void;
   dobHelp?: string;
+  source?: ContactSourceProp;
 }) {
   return (
     <>
@@ -69,6 +77,21 @@ export function ContactFields({
           onChange={(e) => onChange({ ...data, dateOfBirth: e.target.value })}
         />
       </Field>
+      {source ? (
+        <Field label="Source">
+          <Select
+            id={`${prefix}-source`}
+            value={source.value}
+            onChange={(e) => source.onChange(e.target.value)}
+          >
+            {source.options.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      ) : null}
     </>
   );
 }

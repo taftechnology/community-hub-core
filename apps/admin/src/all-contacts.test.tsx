@@ -3,6 +3,7 @@ import axe from "axe-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { router, Shell } from "./shell";
+import { PERSON_SOURCES, PERSON_SOURCE_LABELS } from "./all-contacts";
 
 const TOKEN = "test-token-123";
 const SLUG = "test-parish";
@@ -125,6 +126,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe("Admin Nav Contacts item (Pin 15)", () => {
@@ -3584,7 +3586,18 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
       const cells = table.querySelectorAll("td");
       expect(cells.length).toBeGreaterThan(0);
 
-      const allowed = new Set(["Given name", "Family name", "Actions"]);
+      const allowed = new Set([
+        "Given name",
+        "Family name",
+        "Name",
+        "Email",
+        "Phone",
+        "Date",
+        "Groups",
+        "Source",
+        "Status",
+        "Actions",
+      ]);
       for (const cell of cells) {
         const dataLabel = cell.getAttribute("data-label");
         expect(allowed.has(dataLabel ?? "")).toBe(true);
@@ -4375,6 +4388,1584 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
       expect(buttons.length).toBeGreaterThan(0);
       for (const btn of buttons) {
         expect(btn.className).toContain("h-(--ch-size-control-sm)");
+      }
+    });
+  });
+
+  describe("All Contacts parity screen", () => {
+    type ParityApiOptions = {
+      access?: CapabilitiesInput;
+      billingStatus?: { state: string; canView: boolean; canManage: boolean } | number;
+      listResult?:
+        | { items: unknown[]; nextCursor: string | null }
+        | number
+        | ((body: unknown) => Response | Promise<Response>);
+      summaryResult?: unknown | number | ((body: unknown) => Response | Promise<Response>);
+      statusResult?: unknown | number | ((body: unknown) => Response | Promise<Response>);
+      readResult?: unknown | number;
+      updateResult?: unknown | number;
+      createResult?: unknown | number;
+      onPost?: (path: string, body: unknown) => void;
+    };
+
+    function mockParityApi(options: ParityApiOptions = {}) {
+      const calls: { path: string; body: unknown }[] = [];
+
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
+        const url = String(info);
+        const path = url.replace(/^https?:\/\/[^/]+/, "");
+        let body: unknown = undefined;
+        if (init?.body) {
+          try {
+            body = JSON.parse(String(init.body));
+          } catch {
+            body = init.body;
+          }
+        }
+        calls.push({ path, body });
+        options.onPost?.(path, body);
+
+        if (path === "/v1/access/capabilities") {
+          return mockCapabilitiesResponse(options.access ?? {});
+        }
+
+        if (path === "/v1/billing/status") {
+          const billing = options.billingStatus ?? {
+            state: "ok",
+            canView: true,
+            canManage: true,
+          };
+          if (typeof billing === "number") {
+            return new Response(null, { status: billing });
+          }
+          return new Response(
+            JSON.stringify({
+              trial_end: null,
+              grace_until: null,
+              ...billing,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+
+        if (path === "/v1/people/list") {
+          if (typeof options.listResult === "function") {
+            return options.listResult(body);
+          }
+          const result = options.listResult ?? { items: [], nextCursor: null };
+          if (typeof result === "number") {
+            return new Response(null, { status: result });
+          }
+          return new Response(JSON.stringify(result), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+
+        if (path === "/v1/people/summary") {
+          if (typeof options.summaryResult === "function") {
+            return options.summaryResult(body);
+          }
+          const result = options.summaryResult ?? {
+            total: 0,
+            active: 0,
+            inactive: 0,
+            addedSince: 0,
+          };
+          if (typeof result === "number") {
+            return new Response(null, { status: result });
+          }
+          return new Response(JSON.stringify(result), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+
+        if (path === "/v1/people/status") {
+          if (typeof options.statusResult === "function") {
+            return options.statusResult(body);
+          }
+          const result = options.statusResult ?? { version: 2, status: "inactive" };
+          if (typeof result === "number") {
+            return new Response(null, { status: result });
+          }
+          return new Response(JSON.stringify(result), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+
+        if (path === "/v1/people/read") {
+          const result = options.readResult ?? {
+            personId: "00000000-0000-4000-8000-000000000001",
+            isMinor: false,
+            givenName: "Ada",
+            familyName: "Lovelace",
+            email: "ada@example.test",
+            phone: "+61 400 555 001",
+            dateOfBirth: "1980-01-01",
+            version: 1,
+            status: "active",
+            source: "manual",
+          };
+          if (typeof result === "number") {
+            return new Response(null, { status: result });
+          }
+          return new Response(JSON.stringify(result), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+
+        if (path === "/v1/people/create") {
+          const result = options.createResult ?? {
+            personId: "00000000-0000-4000-8000-000000000001",
+          };
+          if (typeof result === "number") {
+            return new Response(null, { status: result });
+          }
+          return new Response(JSON.stringify(result), {
+            status: 201,
+            headers: { "content-type": "application/json" },
+          });
+        }
+
+        if (path === "/v1/people/update") {
+          const result = options.updateResult ?? { version: 2 };
+          if (typeof result === "number") {
+            return new Response(null, { status: result });
+          }
+          return new Response(JSON.stringify(result), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+
+        return new Response(null, { status: 404 });
+      });
+
+      return { fetchSpy, calls };
+    }
+
+    async function openAllContactsPage() {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      const container = await showContacts();
+      fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+        target: { value: SLUG },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Set" }));
+      await screen.findByRole("heading", { name: "All Contacts" });
+      return container;
+    }
+
+    it("All Contacts: billing read-only shows a status badge, not a switch", async () => {
+      const adultPerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        email: "ada@example.test",
+        phone: "+61 400 555 001",
+        age: 42,
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "manual",
+        version: 1,
+      };
+      mockParityApi({
+        access: { canView: true, canManage: true },
+        billingStatus: { state: "read_only", canView: true, canManage: true },
+        listResult: { items: [adultPerson], nextCursor: null },
+        summaryResult: { total: 1, active: 1, inactive: 0, addedSince: 1 },
+      });
+
+      await openAllContactsPage();
+      const table = await screen.findByRole("table", { name: "Contacts" });
+
+      expect(screen.queryByRole("switch")).toBeNull();
+      const badge = within(table).getByText("Active");
+      expect(badge).toBeTruthy();
+      expect(badge.getAttribute("data-slot")).toBe("status-badge");
+    });
+
+    it("All Contacts: without people.manage the status is a badge", async () => {
+      const adultPerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        email: "ada@example.test",
+        phone: "+61 400 555 001",
+        age: 42,
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "manual",
+        version: 1,
+      };
+      mockParityApi({
+        access: { canView: true, canManage: false },
+        billingStatus: { state: "ok", canView: true, canManage: false },
+        listResult: { items: [adultPerson], nextCursor: null },
+        summaryResult: { total: 1, active: 1, inactive: 0, addedSince: 1 },
+      });
+
+      await openAllContactsPage();
+      const table = await screen.findByRole("table", { name: "Contacts" });
+
+      expect(screen.queryByRole("switch")).toBeNull();
+      const badge = within(table).getByText("Active");
+      expect(badge).toBeTruthy();
+      expect(badge.getAttribute("data-slot")).toBe("status-badge");
+    });
+
+    it("All Contacts: no groups key in the summary hides the Groups column and filter", async () => {
+      const adultPerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        email: "ada@example.test",
+        phone: "+61 400 555 001",
+        age: 42,
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "manual",
+        version: 1,
+      };
+      mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [adultPerson], nextCursor: null },
+        summaryResult: { total: 1, active: 1, inactive: 0, addedSince: 1 },
+      });
+
+      await openAllContactsPage();
+      await screen.findByRole("table", { name: "Contacts" });
+
+      expect(screen.queryByRole("columnheader", { name: "Groups" })).toBeNull();
+      expect(screen.queryByLabelText("Group")).toBeNull();
+    });
+
+    it("All Contacts: a 409 on the switch reloads the list and shows the changed alert", async () => {
+      const adultPerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        email: "ada@example.test",
+        phone: "+61 400 555 001",
+        age: 42,
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "manual",
+        version: 1,
+      };
+      const { calls } = mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [adultPerson], nextCursor: null },
+        summaryResult: { total: 1, active: 1, inactive: 0, addedSince: 1 },
+        statusResult: 409,
+      });
+
+      await openAllContactsPage();
+      await screen.findByRole("table", { name: "Contacts" });
+
+      const switchEl = screen.getByRole("switch", { name: /Ada Lovelace/ }) as HTMLInputElement;
+      expect(switchEl.checked).toBe(true);
+
+      const listCallsBefore = calls.filter((c) => c.path === "/v1/people/list").length;
+
+      fireEvent.click(switchEl);
+
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toMatch(/changed/i);
+
+      await waitFor(() => {
+        const listCallsAfter = calls.filter((c) => c.path === "/v1/people/list").length;
+        expect(listCallsAfter).toBe(listCallsBefore + 1);
+      });
+    });
+
+    it("All Contacts: editing a contact with an automatic source sends no source unless one is picked", async () => {
+      const adultPerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        email: "ada@example.test",
+        phone: "+61 400 555 001",
+        age: 42,
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "auto",
+        version: 1,
+      };
+      const { calls } = mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [adultPerson], nextCursor: null },
+        summaryResult: { total: 1, active: 1, inactive: 0, addedSince: 1 },
+        readResult: {
+          personId: adultPerson.id,
+          isMinor: false,
+          givenName: "Ada",
+          familyName: "Lovelace",
+          email: "ada@example.test",
+          phone: "+61 400 555 001",
+          dateOfBirth: "1980-01-01",
+          version: 1,
+          status: "active",
+          source: "auto",
+        },
+        updateResult: { version: 2 },
+      });
+
+      await openAllContactsPage();
+      fireEvent.click(await screen.findByRole("button", { name: "View Ada Lovelace" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Edit contact" }));
+
+      const sourceSelect = await screen.findByLabelText<HTMLSelectElement>("Source");
+      expect(sourceSelect.value).toBe("keep");
+      expect(sourceSelect.options[0]?.textContent).toBe("Keep current (Auto)");
+
+      // Save without changing source
+      fireEvent.change(screen.getByLabelText("Given name"), { target: { value: "Adalyn" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+      await waitFor(() => {
+        const updateCalls = calls.filter((c) => c.path === "/v1/people/update");
+        expect(updateCalls.length).toBe(1);
+        const updateBody = updateCalls[0]?.body as Record<string, unknown>;
+        expect(updateBody.source).toBeUndefined();
+      });
+
+      // Edit again and pick Manual
+      fireEvent.click(await screen.findByRole("button", { name: "Edit contact" }));
+      const sourceSelect2 = await screen.findByLabelText<HTMLSelectElement>("Source");
+      fireEvent.change(sourceSelect2, { target: { value: "manual" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+      await waitFor(() => {
+        const updateCalls = calls.filter((c) => c.path === "/v1/people/update");
+        expect(updateCalls.length).toBe(2);
+        const updateBody2 = updateCalls[1]?.body as Record<string, unknown>;
+        expect(updateBody2.source).toBe("manual");
+      });
+    });
+
+    it("renders adults table columns in the board order", async () => {
+      const adultPerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        email: "ada@example.test",
+        phone: "+61 400 555 001",
+        age: 42,
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "manual",
+        groups: [{ id: "00000000-0000-4000-8000-000000000010", name: "Choir" }],
+        version: 1,
+      };
+      mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [adultPerson], nextCursor: null },
+        summaryResult: {
+          total: 1,
+          active: 1,
+          inactive: 0,
+          addedSince: 1,
+          groups: [{ id: "00000000-0000-4000-8000-000000000010", name: "Choir" }],
+        },
+      });
+
+      const container = await openAllContactsPage();
+      await screen.findByRole("table", { name: "Contacts" });
+
+      const headers = screen.getAllByRole("columnheader").map((th) => th.textContent?.trim());
+      expect(headers).toEqual([
+        "Name",
+        "Email",
+        "Phone",
+        "Date",
+        "Groups",
+        "Source",
+        "Status",
+        "Actions",
+      ]);
+
+      const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+      expect(resultIds(results, "violations")).toEqual([]);
+    });
+
+    it("renders age under the name when known", async () => {
+      const withAge = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        age: 42,
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "manual",
+        version: 1,
+      };
+      const withoutAge = {
+        id: "00000000-0000-4000-8000-000000000002",
+        personId: "00000000-0000-4000-8000-000000000002",
+        isMinor: false,
+        givenName: "Charles",
+        familyName: "Babbage",
+        age: null,
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "manual",
+        version: 1,
+      };
+      mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [withAge, withoutAge], nextCursor: null },
+        summaryResult: { total: 2, active: 2, inactive: 0, addedSince: 2 },
+      });
+
+      await openAllContactsPage();
+      await screen.findByRole("table", { name: "Contacts" });
+
+      expect(screen.getByText("42 years old")).toBeTruthy();
+      expect(screen.queryByText(/years old/g)?.textContent).toBe("42 years old");
+    });
+
+    it("renders 'None' for empty email, phone and groups", async () => {
+      const emptyDetails = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        email: null,
+        phone: null,
+        age: null,
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "manual",
+        groups: [],
+        version: 1,
+      };
+      mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [emptyDetails], nextCursor: null },
+        summaryResult: {
+          total: 1,
+          active: 1,
+          inactive: 0,
+          addedSince: 1,
+          groups: [{ id: "00000000-0000-4000-8000-000000000010", name: "Choir" }],
+        },
+      });
+
+      await openAllContactsPage();
+      const table = await screen.findByRole("table", { name: "Contacts" });
+
+      const noneElements = within(table).getAllByText("None");
+      expect(noneElements.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it("filters reset the cursor and are sent in the list body", async () => {
+      const adultPerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "manual",
+        version: 1,
+      };
+      const { calls } = mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [adultPerson], nextCursor: "next-cursor-1" },
+        summaryResult: {
+          total: 10,
+          active: 8,
+          inactive: 2,
+          addedSince: 3,
+          groups: [{ id: "00000000-0000-4000-8000-000000000010", name: "Youth" }],
+        },
+      });
+
+      await openAllContactsPage();
+      await screen.findByRole("table", { name: "Contacts" });
+
+      // Navigate to page 2
+      fireEvent.click(await screen.findByRole("button", { name: "Next page" }));
+      await waitFor(() => {
+        const pageCalls = calls.filter((c) => c.path === "/v1/people/list");
+        const lastCall = pageCalls[pageCalls.length - 1];
+        const body = lastCall?.body as Record<string, unknown>;
+        expect(body.cursor).toBe("next-cursor-1");
+      });
+
+      // Change status filter
+      const statusSelect = screen.getByLabelText("Status");
+      fireEvent.change(statusSelect, { target: { value: "inactive" } });
+
+      await waitFor(() => {
+        const filterCalls = calls.filter((c) => c.path === "/v1/people/list");
+        const lastCall = filterCalls[filterCalls.length - 1];
+        const body = lastCall?.body as Record<string, unknown>;
+        expect(body.status).toBe("inactive");
+        expect(body.cursor).toBeUndefined();
+      });
+
+      // Change source filter
+      const sourceSelect = screen.getByLabelText("Source");
+      fireEvent.change(sourceSelect, { target: { value: "website" } });
+
+      await waitFor(() => {
+        const filterCalls = calls.filter((c) => c.path === "/v1/people/list");
+        const lastCall = filterCalls[filterCalls.length - 1];
+        const body = lastCall?.body as Record<string, unknown>;
+        expect(body.source).toBe("website");
+        expect(body.cursor).toBeUndefined();
+      });
+
+      // Change group filter
+      const groupSelect = screen.getByLabelText("Group");
+      fireEvent.change(groupSelect, { target: { value: "00000000-0000-4000-8000-000000000010" } });
+
+      await waitFor(() => {
+        const filterCalls = calls.filter((c) => c.path === "/v1/people/list");
+        const lastCall = filterCalls[filterCalls.length - 1];
+        const body = lastCall?.body as Record<string, unknown>;
+        expect(body.groupId).toBe("00000000-0000-4000-8000-000000000010");
+        expect(body.cursor).toBeUndefined();
+      });
+    });
+
+    it("renders the four count cards from the summary", async () => {
+      mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [], nextCursor: null },
+        summaryResult: {
+          total: 150,
+          active: 130,
+          inactive: 20,
+          addedSince: 12,
+        },
+      });
+
+      await openAllContactsPage();
+      const cards = (await screen.findByText("Total contacts")).closest("div.grid") as HTMLElement;
+      expect(within(cards).getByText("Total contacts")).toBeTruthy();
+      expect(within(cards).getByText("150")).toBeTruthy();
+      expect(within(cards).getByText("Active")).toBeTruthy();
+      expect(within(cards).getByText("130")).toBeTruthy();
+      expect(within(cards).getByText("Inactive")).toBeTruthy();
+      expect(within(cards).getByText("20")).toBeTruthy();
+      expect(within(cards).getByText("Added this month")).toBeTruthy();
+      expect(within(cards).getByText("12")).toBeTruthy();
+    });
+
+    it("displays 'Counts unavailable' on a summary failure while leaving the list working", async () => {
+      const adultPerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "manual",
+        version: 1,
+      };
+      mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [adultPerson], nextCursor: null },
+        summaryResult: 500,
+      });
+
+      await openAllContactsPage();
+      expect(await screen.findByText("Counts unavailable")).toBeTruthy();
+
+      expect(await screen.findByRole("table", { name: "Contacts" })).toBeTruthy();
+      expect(screen.getByText("Ada")).toBeTruthy();
+      expect(screen.queryByRole("columnheader", { name: "Groups" })).toBeNull();
+      expect(screen.queryByLabelText("Group")).toBeNull();
+    });
+
+    it("the switch accessible name includes the contact name and its visible label stays 'Active'", async () => {
+      const adultPerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "manual",
+        version: 1,
+      };
+      mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [adultPerson], nextCursor: null },
+        summaryResult: { total: 1, active: 1, inactive: 0, addedSince: 1 },
+      });
+
+      await openAllContactsPage();
+      await screen.findByRole("table", { name: "Contacts" });
+
+      const switchEl = screen.getByRole("switch", { name: /Ada Lovelace/ });
+      expect(switchEl).toBeTruthy();
+      expect(switchEl.closest("label")?.textContent).toContain("Active");
+    });
+
+    it("disables the status switch while saving", async () => {
+      const adultPerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "manual",
+        version: 1,
+      };
+      let releaseStatus: (res: Response) => void = () => {};
+      mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [adultPerson], nextCursor: null },
+        summaryResult: { total: 1, active: 1, inactive: 0, addedSince: 1 },
+        statusResult: () =>
+          new Promise<Response>((resolve) => {
+            releaseStatus = resolve;
+          }),
+      });
+
+      await openAllContactsPage();
+      await screen.findByRole("table", { name: "Contacts" });
+
+      const switchEl = screen.getByRole("switch", { name: /Ada Lovelace/ }) as HTMLInputElement;
+      expect(switchEl.disabled).toBe(false);
+
+      fireEvent.click(switchEl);
+      expect(switchEl.disabled).toBe(true);
+
+      await act(async () => {
+        releaseStatus(
+          new Response(JSON.stringify({ version: 2, status: "inactive" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      });
+
+      await waitFor(() => {
+        expect(switchEl.disabled).toBe(false);
+      });
+    });
+
+    it("a non-409 failure returns the switch and shows an alert", async () => {
+      const adultPerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "manual",
+        version: 1,
+      };
+      mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [adultPerson], nextCursor: null },
+        summaryResult: { total: 1, active: 1, inactive: 0, addedSince: 1 },
+        statusResult: 500,
+      });
+
+      await openAllContactsPage();
+      await screen.findByRole("table", { name: "Contacts" });
+
+      const switchEl = screen.getByRole("switch", { name: /Ada Lovelace/ }) as HTMLInputElement;
+      expect(switchEl.checked).toBe(true);
+
+      fireEvent.click(switchEl);
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toBeTruthy();
+      expect(switchEl.checked).toBe(true);
+    });
+
+    it("filter with no match shows 'No contacts match these filters' with Clear filters button which resets filters", async () => {
+      mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [], nextCursor: null },
+        summaryResult: { total: 10, active: 8, inactive: 2, addedSince: 3 },
+      });
+
+      await openAllContactsPage();
+      const statusSelect = (await screen.findByLabelText("Status")) as HTMLSelectElement;
+      fireEvent.change(statusSelect, { target: { value: "inactive" } });
+
+      expect(await screen.findByText("No contacts match these filters")).toBeTruthy();
+      const clearBtn = screen.getByRole("button", { name: "Clear filters" });
+      expect(clearBtn).toBeTruthy();
+
+      fireEvent.click(clearBtn);
+      expect(statusSelect.value).toBe("");
+    });
+
+    it("the Source select on add and edit with 'Keep current (<label>)' for an automatic source", async () => {
+      const adultPerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "mobile_app",
+        version: 1,
+      };
+      mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [adultPerson], nextCursor: null },
+        summaryResult: { total: 1, active: 1, inactive: 0, addedSince: 1 },
+        readResult: {
+          personId: adultPerson.id,
+          isMinor: false,
+          givenName: "Ada",
+          familyName: "Lovelace",
+          email: "ada@example.test",
+          phone: "+61 400 555 001",
+          dateOfBirth: "1980-01-01",
+          version: 1,
+          status: "active",
+          source: "mobile_app",
+        },
+      });
+
+      await openAllContactsPage();
+
+      // Check Add form
+      fireEvent.click(await screen.findByRole("button", { name: "Add contact" }));
+      const addSourceSelect = await screen.findByLabelText<HTMLSelectElement>("Source");
+      expect(addSourceSelect.value).toBe("manual");
+      const addOptions = Array.from(addSourceSelect.options).map((o) => o.textContent);
+      expect(addOptions).toEqual(["Manual", "Family Records"]);
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+      // Check Edit form
+      fireEvent.click(await screen.findByRole("button", { name: "View Ada Lovelace" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Edit contact" }));
+      const editSourceSelect = await screen.findByLabelText<HTMLSelectElement>("Source");
+      expect(editSourceSelect.value).toBe("keep");
+      expect(editSourceSelect.options[0]?.textContent).toBe("Keep current (Mobile App)");
+      const editOptions = Array.from(editSourceSelect.options).map((o) => o.textContent);
+      expect(editOptions).toEqual(["Keep current (Mobile App)", "Manual", "Family Records"]);
+    });
+
+    it("All Contacts: the switch sends the new status and the row's version, in both directions", async () => {
+      const activePerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        email: "ada@example.test",
+        phone: "+61 400 555 001",
+        age: 42,
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "manual",
+        version: 1,
+      };
+      let statusCallCount = 0;
+      const { calls } = mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [activePerson], nextCursor: null },
+        summaryResult: { total: 1, active: 1, inactive: 0, addedSince: 1 },
+        statusResult: (body: unknown) => {
+          statusCallCount++;
+          const parsed = body as Record<string, unknown>;
+          if (statusCallCount === 1) {
+            return new Response(JSON.stringify({ version: 2, status: parsed.status }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          return new Response(JSON.stringify({ version: 3, status: parsed.status }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        },
+      });
+
+      await openAllContactsPage();
+      await screen.findByRole("table", { name: "Contacts" });
+
+      const switchEl = screen.getByRole("switch", { name: /Ada Lovelace/ }) as HTMLInputElement;
+      expect(switchEl.checked).toBe(true);
+
+      // Direction 1: Active -> Inactive
+      fireEvent.click(switchEl);
+      await waitFor(() => {
+        const statusCalls = calls.filter((c) => c.path === "/v1/people/status");
+        expect(statusCalls.length).toBe(1);
+        const body1 = statusCalls[0]?.body as Record<string, unknown>;
+        expect(body1.personId).toBe(activePerson.id);
+        expect(body1.communitySlug).toBe(SLUG);
+        expect(body1.version).toBe(1);
+        expect(body1.status).toBe("inactive");
+      });
+
+      await waitFor(() => {
+        expect(switchEl.checked).toBe(false);
+      });
+
+      // Direction 2: Inactive -> Active
+      fireEvent.click(switchEl);
+      await waitFor(() => {
+        const statusCalls = calls.filter((c) => c.path === "/v1/people/status");
+        expect(statusCalls.length).toBe(2);
+        const body2 = statusCalls[1]?.body as Record<string, unknown>;
+        expect(body2.personId).toBe(activePerson.id);
+        expect(body2.communitySlug).toBe(SLUG);
+        expect(body2.version).toBe(2);
+        expect(body2.status).toBe("active");
+      });
+    });
+
+    it("All Contacts: the add form sends the picked source", async () => {
+      const { calls } = mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [], nextCursor: null },
+        summaryResult: { total: 0, active: 0, inactive: 0, addedSince: 0 },
+      });
+
+      await openAllContactsPage();
+      fireEvent.click(await screen.findByRole("button", { name: "Add contact" }));
+
+      fireEvent.change(await screen.findByLabelText("Given name"), {
+        target: { value: "Grace" },
+      });
+      fireEvent.change(screen.getByLabelText("Family name"), {
+        target: { value: "Hopper" },
+      });
+      const sourceSelect = screen.getByLabelText<HTMLSelectElement>("Source");
+      fireEvent.change(sourceSelect, { target: { value: "family_records" } });
+
+      fireEvent.click(screen.getByRole("button", { name: "Save contact" }));
+
+      await waitFor(() => {
+        const createCalls = calls.filter((c) => c.path === "/v1/people/create");
+        expect(createCalls.length).toBe(1);
+        const body = createCalls[0]?.body as Record<string, unknown>;
+        expect(body.givenName).toBe("Grace");
+        expect(body.familyName).toBe("Hopper");
+        expect(body.source).toBe("family_records");
+      });
+    });
+
+    it("All Contacts: the summary asks for the browser's month start with its offset", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const offsetSpy = vi.spyOn(Date.prototype, "getTimezoneOffset").mockReturnValue(-600);
+      vi.setSystemTime(new Date(2026, 6, 15, 12, 0, 0));
+
+      try {
+        const { calls } = mockParityApi({
+          access: { canView: true, canManage: true },
+          listResult: { items: [], nextCursor: null },
+          summaryResult: { total: 0, active: 0, inactive: 0, addedSince: 0 },
+        });
+
+        await openAllContactsPage();
+
+        await waitFor(() => {
+          const summaryCalls = calls.filter((c) => c.path === "/v1/people/summary");
+          expect(summaryCalls.length).toBe(1);
+          const body = summaryCalls[0]?.body as Record<string, unknown>;
+          expect(body.addedSince).toBe("2026-07-01T00:00:00+10:00");
+        });
+      } finally {
+        offsetSpy.mockRestore();
+        vi.useRealTimers();
+      }
+    });
+
+    it("All Contacts: a summary failure after a group is picked clears the group filter", async () => {
+      const adultPerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "manual",
+        version: 1,
+      };
+      let summaryCount = 0;
+      const { calls } = mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [adultPerson], nextCursor: null },
+        summaryResult: () => {
+          summaryCount++;
+          if (summaryCount === 1) {
+            return new Response(
+              JSON.stringify({
+                total: 1,
+                active: 1,
+                inactive: 0,
+                addedSince: 1,
+                groups: [{ id: "00000000-0000-4000-8000-000000000010", name: "Youth" }],
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            );
+          }
+          return new Response(null, { status: 500 });
+        },
+        statusResult: { version: 2, status: "inactive" },
+      });
+
+      await openAllContactsPage();
+      await screen.findByRole("table", { name: "Contacts" });
+
+      const groupSelect = await screen.findByLabelText("Group");
+      fireEvent.change(groupSelect, { target: { value: "00000000-0000-4000-8000-000000000010" } });
+
+      await waitFor(() => {
+        const listCalls = calls.filter((c) => c.path === "/v1/people/list");
+        const lastCall = listCalls[listCalls.length - 1];
+        expect((lastCall?.body as Record<string, unknown>).groupId).toBe(
+          "00000000-0000-4000-8000-000000000010",
+        );
+      });
+
+      // Toggle switch to trigger summary refetch which will fail with 500
+      const switchEl = screen.getByRole("switch", { name: /Ada Lovelace/ });
+      fireEvent.click(switchEl);
+
+      await screen.findByText("Counts unavailable");
+      expect(screen.queryByLabelText("Group")).toBeNull();
+
+      await waitFor(() => {
+        const listCalls = calls.filter((c) => c.path === "/v1/people/list");
+        const lastCall = listCalls[listCalls.length - 1];
+        expect((lastCall?.body as Record<string, unknown>).groupId).toBeUndefined();
+      });
+    });
+
+    it("All Contacts: an inactive contact's switch is off and labelled Inactive", async () => {
+      const inactivePerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        email: "ada@example.test",
+        phone: "+61 400 555 001",
+        age: 42,
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "inactive",
+        source: "manual",
+        version: 1,
+      };
+      mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [inactivePerson], nextCursor: null },
+        summaryResult: { total: 1, active: 0, inactive: 1, addedSince: 1 },
+      });
+
+      await openAllContactsPage();
+      await screen.findByRole("table", { name: "Contacts" });
+
+      const switchEl = screen.getByRole("switch", { name: /Ada Lovelace/ }) as HTMLInputElement;
+      expect(switchEl.checked).toBe(false);
+      const labelText = switchEl.closest("label")?.textContent;
+      expect(labelText).toContain("Inactive");
+      expect(labelText).not.toContain("Active");
+    });
+
+    it("source filter change resets the cursor (W2)", async () => {
+      const adultPerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "manual",
+        version: 1,
+      };
+      const { calls } = mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [adultPerson], nextCursor: "next-cursor-1" },
+        summaryResult: { total: 10, active: 8, inactive: 2, addedSince: 3 },
+      });
+
+      await openAllContactsPage();
+      await screen.findByRole("table", { name: "Contacts" });
+
+      // Navigate to page 2 so cursor is set
+      fireEvent.click(await screen.findByRole("button", { name: "Next page" }));
+      await waitFor(() => {
+        const lastCall = calls.filter((c) => c.path === "/v1/people/list").slice(-1)[0];
+        expect((lastCall?.body as Record<string, unknown>).cursor).toBe("next-cursor-1");
+      });
+
+      // Change source filter
+      const sourceSelect = screen.getByLabelText("Source");
+      fireEvent.change(sourceSelect, { target: { value: "website" } });
+
+      await waitFor(() => {
+        const lastCall = calls.filter((c) => c.path === "/v1/people/list").slice(-1)[0];
+        const body = lastCall?.body as Record<string, unknown>;
+        expect(body.source).toBe("website");
+        expect(body.cursor).toBeUndefined();
+      });
+    });
+
+    it("group filter change resets the cursor (W3)", async () => {
+      const adultPerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "manual",
+        version: 1,
+      };
+      const { calls } = mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [adultPerson], nextCursor: "next-cursor-1" },
+        summaryResult: {
+          total: 10,
+          active: 8,
+          inactive: 2,
+          addedSince: 3,
+          groups: [{ id: "00000000-0000-4000-8000-000000000010", name: "Youth" }],
+        },
+      });
+
+      await openAllContactsPage();
+      await screen.findByRole("table", { name: "Contacts" });
+
+      // Navigate to page 2 so cursor is set
+      fireEvent.click(await screen.findByRole("button", { name: "Next page" }));
+      await waitFor(() => {
+        const lastCall = calls.filter((c) => c.path === "/v1/people/list").slice(-1)[0];
+        expect((lastCall?.body as Record<string, unknown>).cursor).toBe("next-cursor-1");
+      });
+
+      // Change group filter
+      const groupSelect = screen.getByLabelText("Group");
+      fireEvent.change(groupSelect, { target: { value: "00000000-0000-4000-8000-000000000010" } });
+
+      await waitFor(() => {
+        const lastCall = calls.filter((c) => c.path === "/v1/people/list").slice(-1)[0];
+        const body = lastCall?.body as Record<string, unknown>;
+        expect(body.groupId).toBe("00000000-0000-4000-8000-000000000010");
+        expect(body.cursor).toBeUndefined();
+      });
+    });
+
+    it("switching to the Minors tab makes no summary call and renders no adult columns (W5)", async () => {
+      const adultPerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "manual",
+        version: 1,
+      };
+      const minorPerson = {
+        id: "00000000-0000-4000-8000-000000000002",
+        personId: "00000000-0000-4000-8000-000000000002",
+        isMinor: true,
+        givenName: "Leo",
+        familyName: "Clarke",
+      };
+      const { calls } = mockParityApi({
+        access: { canView: true, canManage: true, canReadMinors: true },
+        listResult: (body: unknown) => {
+          const b = body as Record<string, unknown>;
+          if (b.kind === "minors") {
+            return new Response(JSON.stringify({ items: [minorPerson], nextCursor: null }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          return new Response(JSON.stringify({ items: [adultPerson], nextCursor: null }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        },
+        summaryResult: { total: 1, active: 1, inactive: 0, addedSince: 1 },
+      });
+
+      await openAllContactsPage();
+      await screen.findByRole("table", { name: "Contacts" });
+
+      const summaryCallsBefore = calls.filter((c) => c.path === "/v1/people/summary").length;
+      expect(summaryCallsBefore).toBe(1);
+
+      const minorsTab = screen.getByRole("button", { name: "Minors" });
+      fireEvent.click(minorsTab);
+
+      await waitFor(() => {
+        expect(screen.getByText("Leo")).toBeTruthy();
+      });
+
+      const summaryCallsAfter = calls.filter((c) => c.path === "/v1/people/summary").length;
+      expect(summaryCallsAfter).toBe(summaryCallsBefore);
+
+      const table = screen.getByRole("table", { name: "Contacts" });
+      expect(within(table).queryByRole("columnheader", { name: "Email" })).toBeNull();
+      expect(within(table).queryByRole("columnheader", { name: "Phone" })).toBeNull();
+      expect(within(table).queryByRole("columnheader", { name: "Date" })).toBeNull();
+      expect(within(table).queryByRole("columnheader", { name: "Groups" })).toBeNull();
+      expect(within(table).queryByRole("columnheader", { name: "Source" })).toBeNull();
+      expect(within(table).queryByRole("columnheader", { name: "Status" })).toBeNull();
+    });
+
+    it("renders row with email, phone, date, source label and multiple group chips without wrapping phone or date (W6, W7, W8, W9, W24, B2)", async () => {
+      const adultPerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        email: "ada@example.test",
+        phone: "+61 400 555 001",
+        age: 42,
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "website",
+        groups: [
+          { id: "00000000-0000-4000-8000-000000000010", name: "Choir" },
+          { id: "00000000-0000-4000-8000-000000000020", name: "Youth" },
+        ],
+        version: 1,
+      };
+      mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [adultPerson], nextCursor: null },
+        summaryResult: {
+          total: 1,
+          active: 1,
+          inactive: 0,
+          addedSince: 1,
+          groups: [
+            { id: "00000000-0000-4000-8000-000000000010", name: "Choir" },
+            { id: "00000000-0000-4000-8000-000000000020", name: "Youth" },
+          ],
+        },
+      });
+
+      await openAllContactsPage();
+      const table = await screen.findByRole("table", { name: "Contacts" });
+
+      expect(within(table).getByText("ada@example.test")).toBeTruthy();
+
+      const phoneEl = within(table).getByText("+61 400 555 001");
+      expect(phoneEl).toBeTruthy();
+      expect(phoneEl.className).toContain("whitespace-nowrap");
+
+      const dateEl = within(table).getByText("5 Jan 2026");
+      expect(dateEl).toBeTruthy();
+      expect(dateEl.className).toContain("whitespace-nowrap");
+
+      expect(within(table).getByText("Website")).toBeTruthy();
+      expect(within(table).getByText("Choir")).toBeTruthy();
+      expect(within(table).getByText("Youth")).toBeTruthy();
+    });
+
+    it("an inactive row's badge reads Inactive when caller lacks manage or billing is read-only (W10)", async () => {
+      const inactivePerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "inactive",
+        source: "manual",
+        version: 1,
+      };
+      mockParityApi({
+        access: { canView: true, canManage: false },
+        billingStatus: { state: "ok", canView: true, canManage: false },
+        listResult: { items: [inactivePerson], nextCursor: null },
+        summaryResult: { total: 1, active: 0, inactive: 1, addedSince: 1 },
+      });
+
+      await openAllContactsPage();
+      const table = await screen.findByRole("table", { name: "Contacts" });
+
+      const badge = within(table).getByText("Inactive");
+      expect(badge).toBeTruthy();
+      expect(badge.getAttribute("data-slot")).toBe("status-badge");
+      expect(within(table).queryByText("Active")).toBeNull();
+    });
+
+    it("a successful toggle updates the row, version, and the summary counts (W14, W19)", async () => {
+      const activePerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "manual",
+        version: 1,
+      };
+      let summaryCount = 0;
+      const { calls } = mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [activePerson], nextCursor: null },
+        summaryResult: () => {
+          summaryCount++;
+          if (summaryCount === 1) {
+            return new Response(
+              JSON.stringify({ total: 1, active: 1, inactive: 0, addedSince: 1 }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            );
+          }
+          return new Response(JSON.stringify({ total: 1, active: 0, inactive: 1, addedSince: 1 }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        },
+        statusResult: { version: 2, status: "inactive" },
+      });
+
+      await openAllContactsPage();
+      await screen.findByRole("table", { name: "Contacts" });
+
+      const switchEl = screen.getByRole("switch", { name: /Ada Lovelace/ }) as HTMLInputElement;
+      expect(switchEl.checked).toBe(true);
+
+      fireEvent.click(switchEl);
+
+      await waitFor(() => {
+        expect(switchEl.checked).toBe(false);
+      });
+
+      // Row status and version updated for second click
+      fireEvent.click(switchEl);
+      await waitFor(() => {
+        const statusCalls = calls.filter((c) => c.path === "/v1/people/status");
+        expect(statusCalls.length).toBe(2);
+        const secondBody = statusCalls[1]?.body as Record<string, unknown>;
+        expect(secondBody.version).toBe(2);
+        expect(secondBody.status).toBe("active");
+      });
+
+      // Summary counts updated: Active is 0, Inactive is 1
+      await waitFor(() => {
+        const cards = screen.getByText("Total contacts").closest("div.grid") as HTMLElement;
+        const activeCard = within(cards).getByText("Active").parentElement;
+        const inactiveCard = within(cards).getByText("Inactive").parentElement;
+        expect(within(activeCard!).getByText("0")).toBeTruthy();
+        expect(within(inactiveCard!).getByText("1")).toBeTruthy();
+      });
+    });
+
+    it("the add form sends source 'manual' when picked or default (W15)", async () => {
+      const { calls } = mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [], nextCursor: null },
+        summaryResult: { total: 0, active: 0, inactive: 0, addedSince: 0 },
+      });
+
+      await openAllContactsPage();
+      fireEvent.click(await screen.findByRole("button", { name: "Add contact" }));
+
+      fireEvent.change(await screen.findByLabelText("Given name"), {
+        target: { value: "Ada" },
+      });
+      fireEvent.change(screen.getByLabelText("Family name"), {
+        target: { value: "Lovelace" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Save contact" }));
+
+      await waitFor(() => {
+        const createCalls = calls.filter((c) => c.path === "/v1/people/create");
+        expect(createCalls.length).toBe(1);
+        const body = createCalls[0]?.body as Record<string, unknown>;
+        expect(body.source).toBe("manual");
+      });
+    });
+
+    it("filter with no match shows 'No contacts match these filters' for group and source filters (W18)", async () => {
+      mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [], nextCursor: null },
+        summaryResult: {
+          total: 10,
+          active: 8,
+          inactive: 2,
+          addedSince: 3,
+          groups: [{ id: "00000000-0000-4000-8000-000000000010", name: "Youth" }],
+        },
+      });
+
+      await openAllContactsPage();
+
+      const sourceSelect = (await screen.findByLabelText("Source")) as HTMLSelectElement;
+      fireEvent.change(sourceSelect, { target: { value: "website" } });
+      expect(await screen.findByText("No contacts match these filters")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+      expect(sourceSelect.value).toBe("");
+
+      const groupSelect = (await screen.findByLabelText("Group")) as HTMLSelectElement;
+      fireEvent.change(groupSelect, { target: { value: "00000000-0000-4000-8000-000000000010" } });
+      expect(await screen.findByText("No contacts match these filters")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+      expect(groupSelect.value).toBe("");
+    });
+
+    it("a second click on the switch while saving sends nothing (W23, L2)", async () => {
+      const adultPerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "manual",
+        version: 1,
+      };
+      let releaseStatus: (res: Response) => void = () => {};
+      const { calls } = mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [adultPerson], nextCursor: null },
+        summaryResult: { total: 1, active: 1, inactive: 0, addedSince: 1 },
+        statusResult: () =>
+          new Promise<Response>((resolve) => {
+            releaseStatus = resolve;
+          }),
+      });
+
+      await openAllContactsPage();
+      await screen.findByRole("table", { name: "Contacts" });
+
+      const switchEl = screen.getByRole("switch", { name: /Ada Lovelace/ }) as HTMLInputElement;
+
+      fireEvent.click(switchEl);
+      fireEvent.click(switchEl);
+
+      await act(async () => {
+        releaseStatus(
+          new Response(JSON.stringify({ version: 2, status: "inactive" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      });
+
+      await waitFor(() => {
+        const statusCalls = calls.filter((c) => c.path === "/v1/people/status");
+        expect(statusCalls.length).toBe(1);
+      });
+    });
+
+    it("Add contact stays available when a filter matches nothing, for a caller who may add (B3)", async () => {
+      mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [], nextCursor: null },
+        summaryResult: { total: 10, active: 8, inactive: 2, addedSince: 3 },
+      });
+
+      await openAllContactsPage();
+      const statusSelect = (await screen.findByLabelText("Status")) as HTMLSelectElement;
+      fireEvent.change(statusSelect, { target: { value: "inactive" } });
+
+      await screen.findByText("No contacts match these filters");
+      const addBtn = screen.getByRole("button", { name: "Add contact" });
+      expect(addBtn).toBeTruthy();
+    });
+
+    it("a 402 on the switch is handled by setting payment-required and refreshing billing (L1)", async () => {
+      const adultPerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "manual",
+        version: 1,
+      };
+      const { calls } = mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [adultPerson], nextCursor: null },
+        summaryResult: { total: 1, active: 1, inactive: 0, addedSince: 1 },
+        statusResult: 402,
+      });
+
+      await openAllContactsPage();
+      await screen.findByRole("table", { name: "Contacts" });
+
+      const billingCallsBefore = calls.filter((c) => c.path === "/v1/billing/status").length;
+      const switchEl = screen.getByRole("switch", { name: /Ada Lovelace/ });
+      fireEvent.click(switchEl);
+
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toContain("Unable to update contact status");
+
+      await waitFor(() => {
+        const billingCallsAfter = calls.filter((c) => c.path === "/v1/billing/status").length;
+        expect(billingCallsAfter).toBeGreaterThan(billingCallsBefore);
+      });
+      expect(await screen.findByText("Read-only until billing is settled")).toBeTruthy();
+    });
+
+    it("an item without source does not default to manual and sends no source on edit (L3)", async () => {
+      const adultPerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        version: 1,
+      };
+      const { calls } = mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [adultPerson], nextCursor: null },
+        summaryResult: { total: 1, active: 1, inactive: 0, addedSince: 1 },
+        readResult: {
+          personId: adultPerson.id,
+          isMinor: false,
+          givenName: "Ada",
+          familyName: "Lovelace",
+          version: 1,
+          status: "active",
+        },
+        updateResult: { version: 2 },
+      });
+
+      await openAllContactsPage();
+      fireEvent.click(await screen.findByRole("button", { name: "View Ada Lovelace" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Edit contact" }));
+
+      const sourceSelect = await screen.findByLabelText<HTMLSelectElement>("Source");
+      expect(sourceSelect.value).toBe("keep");
+      expect(sourceSelect.options[0]?.textContent).toBe("Keep current (None)");
+
+      fireEvent.change(screen.getByLabelText("Given name"), { target: { value: "Adalyn" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+      await waitFor(() => {
+        const updateCalls = calls.filter((c) => c.path === "/v1/people/update");
+        expect(updateCalls.length).toBe(1);
+        const updateBody = updateCalls[0]?.body as Record<string, unknown>;
+        expect(updateBody.source).toBeUndefined();
+      });
+    });
+
+    it("an isMinor: true item on the adults tab is not shown (L4)", async () => {
+      const adultPerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "manual",
+        version: 1,
+      };
+      const minorPerson = {
+        id: "00000000-0000-4000-8000-000000000002",
+        personId: "00000000-0000-4000-8000-000000000002",
+        isMinor: true,
+        givenName: "Secret",
+        familyName: "Minor",
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "active",
+        source: "manual",
+        version: 1,
+      };
+      mockParityApi({
+        access: { canView: true, canManage: true },
+        listResult: { items: [adultPerson, minorPerson], nextCursor: null },
+        summaryResult: { total: 1, active: 1, inactive: 0, addedSince: 1 },
+      });
+
+      await openAllContactsPage();
+      const table = await screen.findByRole("table", { name: "Contacts" });
+
+      expect(within(table).getByText("Ada")).toBeTruthy();
+      expect(within(table).queryByText("Secret")).toBeNull();
+    });
+
+    it("runs axe on add form, edit form, empty-filter state, badge state and counts unavailable", async () => {
+      const adultPerson = {
+        id: "00000000-0000-4000-8000-000000000001",
+        personId: "00000000-0000-4000-8000-000000000001",
+        isMinor: false,
+        givenName: "Ada",
+        familyName: "Lovelace",
+        email: "ada@example.test",
+        phone: "+61 400 555 001",
+        age: 42,
+        createdAt: "2026-01-05T00:00:00Z",
+        status: "inactive",
+        source: "manual",
+        version: 1,
+      };
+      mockParityApi({
+        access: { canView: true, canManage: false },
+        listResult: { items: [adultPerson], nextCursor: null },
+        summaryResult: 500,
+      });
+
+      const container = await openAllContactsPage();
+      await screen.findByText("Counts unavailable");
+
+      const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+      expect(resultIds(results, "violations")).toEqual([]);
+    });
+
+    it("every source key has a label", () => {
+      const expectedKeys = [
+        "manual",
+        "family_records",
+        "website",
+        "form",
+        "donation",
+        "event_rsvp",
+        "event_booking",
+        "volunteer_application",
+        "mobile_app",
+        "mobile_app_family",
+        "auto",
+      ];
+      expect(PERSON_SOURCES).toEqual(expectedKeys);
+      for (const key of expectedKeys) {
+        expect(PERSON_SOURCE_LABELS[key]).toBeTruthy();
+        expect(typeof PERSON_SOURCE_LABELS[key]).toBe("string");
       }
     });
   });

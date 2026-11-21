@@ -18,10 +18,14 @@ defineAuditAction("people.person.created");
 defineAuditPurpose("people.person.created");
 defineAuditAction("people.person.read");
 defineAuditPurpose("people.person.read");
+defineAuditAction("people.person.listed");
+defineAuditPurpose("people.person.listed");
 defineAuditAction("people.person.listed_minors");
 defineAuditPurpose("people.person.listed_minors");
 defineAuditAction("people.person.updated");
 defineAuditPurpose("people.person.updated");
+defineAuditAction("people.person.status_changed");
+defineAuditPurpose("people.person.status_changed");
 defineAuditAction("people.permission.denied");
 defineAuditPurpose("people.permission.denied");
 defineAuditPurpose("people.person.manage");
@@ -53,6 +57,16 @@ export {
   type ListHouseholdsResult,
 } from "../infrastructure/household-list.js";
 export { createPerson, readPerson } from "../infrastructure/person.js";
+export {
+  setPersonStatus,
+  type SetPersonStatusInput,
+  type SetPersonStatusResult,
+} from "../infrastructure/person-status.js";
+export {
+  summarisePersons,
+  type SummarisePersonsInput,
+  type SummarisePersonsResult,
+} from "../infrastructure/person-summary.js";
 export {
   updatePerson,
   type UpdatePersonChanges,

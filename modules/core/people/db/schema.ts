@@ -154,6 +154,9 @@ export function peopleTables(
         communityId: uuid("community_id").notNull(),
         householdId: uuid("household_id"),
         version: integer("version").notNull().default(1),
+        status: text("status").notNull().default("active"),
+        source: text("source").notNull().default("manual"),
+        createdAt: tz("created_at").notNull().defaultNow(),
         isMinor: boolean("is_minor").notNull(),
         ageBasis: text("age_basis").notNull(),
         birthdayMd: smallint("birthday_md"),
@@ -193,6 +196,11 @@ export function peopleTables(
         check(
           "persons_age_basis",
           sql`${t.ageBasis} in ('date_of_birth', 'declared_adult', 'unknown')`,
+        ),
+        check("persons_status_check", sql`${t.status} in ('active', 'inactive')`),
+        check(
+          "persons_source_check",
+          sql`${t.source} in ('manual', 'family_records', 'website', 'form', 'donation', 'event_rsvp', 'event_booking', 'volunteer_application', 'mobile_app', 'mobile_app_family', 'auto')`,
         ),
         check(
           "persons_age_basis_dob",

@@ -15,9 +15,25 @@ import {
 import { assignPlan, upsertPlan } from "@community-hub/entitlements";
 import type { OtpMail } from "@community-hub/identity";
 import { startEmailOtp, verifyEmailOtp } from "@community-hub/identity";
-import { withRequest } from "@community-hub/kernel";
-import { createHousehold, createPerson } from "@community-hub/people";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createRequestHandler, type RequestLogFields, withRequest } from "@community-hub/kernel";
+import { createHousehold, createPerson, setPersonStatus } from "@community-hub/people";
+import { addMember as addGroupMember, createGroup } from "@community-hub/groups";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+const { armed } = vi.hoisted(() => ({ armed: { value: false, secret: "" } }));
+
+vi.mock("@community-hub/people", async (importActual) => {
+  const actual = await importActual<typeof import("@community-hub/people")>();
+  return {
+    ...actual,
+    listPersons: async (...args: Parameters<typeof actual.listPersons>) => {
+      if (armed.value) {
+        throw new Error(`failure carrying secret: ${armed.secret}`);
+      }
+      return actual.listPersons(...args);
+    },
+  };
+});
 
 import type { Role } from "./checkout.js";
 import { readServiceEnv, type ServiceEnv } from "./env.js";
@@ -765,4 +781,665 @@ describe("people routes real-database integration (finding 3)", () => {
       }
     }
   }, 60_000);
+
+  async function createOrgAndCommunity(
+    slugPrefix: string,
+    entitlements: string[] = ["people.directory", "groups.basic"],
+  ) {
+    const orgId = newId();
+    const communityId = newId();
+    const slug = `synth-${slugPrefix}-${orgId.slice(0, 8)}`;
+
+    await platform.begin(async (tx) => {
+      await tx`
+        insert into platform.organisations (id, slug, region, kind)
+        values (${orgId}::uuid, ${slug}, 'au', 'implicit')
+      `;
+      await tx`
+        insert into platform.communities (id, organisation_id, slug, region)
+        values (${communityId}::uuid, ${orgId}::uuid, ${slug}, 'au')
+      `;
+    });
+
+    const planKey = `plan_${orgId.slice(0, 8)}`;
+    await upsertPlan(platform, {
+      key: planKey,
+      entitlements: entitlements.map((k) => ({ key: k, limit: null })),
+    });
+    await assignPlan(platform, { organisationId: orgId, planKey, now });
+
+    const cus = `cus_${newId().replaceAll("-", "")}`;
+    const sub = `sub_${newId().replaceAll("-", "")}`;
+    await platform`
+      insert into platform.billing_accounts (organisation_id, mode, stripe_customer_id, stripe_subscription_id, stripe_status)
+      values (${orgId}::uuid, 'self_serve', ${cus}, ${sub}, 'active')
+    `;
+
+    const ownerSession = await signIn(`owner-${slugPrefix}-${orgId.slice(0, 8)}@example.test`);
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId, communityId }, (tx) =>
+        bootstrapOwner(tx, {
+          now,
+          userId: ownerSession.userId,
+          actorUserId: ownerSession.userId,
+        }),
+      ),
+    );
+
+    return { orgId, communityId, slug, ownerSession };
+  }
+
+  async function addCommunityToOrg(orgId: string, slugPrefix: string) {
+    const communityId = newId();
+    const slug = `synth-${slugPrefix}-${communityId.slice(0, 8)}`;
+    await platform`
+      insert into platform.communities (id, organisation_id, slug, region)
+      values (${communityId}::uuid, ${orgId}::uuid, ${slug}, 'au')
+    `;
+    return { communityId, slug };
+  }
+
+  it("people list: a groupId from another community of the same organisation gives an empty page", async () => {
+    const org = await createOrgAndCommunity("pin32");
+    const comm2 = await addCommunityToOrg(org.orgId, "pin32-c2");
+
+    // In comm1: create an adult
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: org.orgId, communityId: org.communityId }, async (tx) => {
+        await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: true,
+          householdId: null,
+          dateOfBirth: null,
+          givenName: "AdultCommOne",
+          familyName: "Person",
+          email: "adult1@example.test",
+          phone: null,
+          actorUserId: org.ownerSession.userId,
+        });
+      }),
+    );
+
+    // In comm2: create a group and add a person
+    let groupComm2Id = "";
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: org.orgId, communityId: comm2.communityId }, async (tx) => {
+        const a2 = await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: true,
+          householdId: null,
+          dateOfBirth: null,
+          givenName: "AdultCommTwo",
+          familyName: "Person",
+          email: "adult2@example.test",
+          phone: null,
+          actorUserId: org.ownerSession.userId,
+        });
+        const g2 = await createGroup(tx, {
+          name: "Comm2 Group",
+          kind: "group",
+          now,
+          actorUserId: org.ownerSession.userId,
+        });
+        groupComm2Id = g2.id;
+        await addGroupMember(tx, kms, KEY_ARN, {
+          groupId: g2.id,
+          personId: a2.personId,
+          now,
+          actorUserId: org.ownerSession.userId,
+        });
+      }),
+    );
+
+    const res = await post(
+      "/v1/people/list",
+      { communitySlug: org.slug, groupId: groupComm2Id },
+      org.ownerSession.accessToken,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: Array<unknown> };
+    expect(body.items).toHaveLength(0);
+  });
+
+  it("people list: a tampered ciphertext gives 500 with an empty body and no value in the log", async () => {
+    const org = await createOrgAndCommunity("pin43");
+    const SECRET_EMAIL = "tamper-route@example.test";
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: org.orgId, communityId: org.communityId }, async (tx) => {
+        const a = await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: true,
+          householdId: null,
+          dateOfBirth: null,
+          givenName: "TamperAdult",
+          familyName: "Person",
+          email: SECRET_EMAIL,
+          phone: null,
+          actorUserId: org.ownerSession.userId,
+        });
+
+        const rows = await tx<{ email: Uint8Array | null }[]>`
+          select email from app.persons where id = ${a.personId}::uuid
+        `;
+        const tampered = new Uint8Array(rows[0]!.email!);
+        tampered[0] = tampered[0]! ^ 0xff;
+        await tx`
+          update app.persons set email = ${tampered} where id = ${a.personId}::uuid
+        `;
+      }),
+    );
+
+    const kernelLogs: RequestLogFields[] = [];
+    const routes = peopleRoutes({
+      checkout,
+      kms,
+      keyArn: KEY_ARN,
+      now: () => now,
+      apiHostname: API_HOSTNAME,
+      log,
+      guardLog,
+    });
+    const match = (request: Request) =>
+      routes.find(
+        (route) =>
+          route.method === request.method && route.pattern === new URL(request.url).pathname,
+      );
+
+    const handler = createRequestHandler(
+      {
+        info: (fields: RequestLogFields) => {
+          kernelLogs.push(fields);
+        },
+        pathFor: (request) => match(request)?.pattern ?? "unmatched",
+        acceptInboundRequestId: false,
+      },
+      (request) => {
+        const route = match(request);
+        if (route === undefined) {
+          return new Response(null, { status: 404 });
+        }
+        return route.handle(request, { billing: route.billing, pattern: route.pattern });
+      },
+    );
+
+    capturedLogs.length = 0;
+    const req = new Request(`http://${API_HOSTNAME}/v1/people/list`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-community-hub-hostname": API_HOSTNAME,
+        authorization: `Bearer ${org.ownerSession.accessToken}`,
+      },
+      body: JSON.stringify({ communitySlug: org.slug }),
+    });
+
+    const res = await handler(req);
+    expect(res.status).toBe(500);
+    expect(await res.text()).toBe("");
+
+    const errorLog = kernelLogs.find((l) => l.errorClass !== undefined);
+    expect(errorLog).toBeDefined();
+    expect(errorLog?.errorClass).toMatch(/^[A-Za-z][A-Za-z0-9_]{0,63}$/);
+    const allLogText = JSON.stringify({ kernelLogs, capturedLogs });
+    expect(allLogText).not.toContain(SECRET_EMAIL);
+    expect(allLogText).not.toContain("TamperAdult");
+  });
+
+  it("people list: a failure carrying a secret logs the class only", async () => {
+    const org = await createOrgAndCommunity("pin43c");
+    const SYNTHETIC_SECRET = "secret-token-pin43c-synthetic";
+    armed.value = true;
+    armed.secret = SYNTHETIC_SECRET;
+
+    try {
+      const kernelLogs: RequestLogFields[] = [];
+      const routes = peopleRoutes({
+        checkout,
+        kms,
+        keyArn: KEY_ARN,
+        now: () => now,
+        apiHostname: API_HOSTNAME,
+        log,
+        guardLog,
+      });
+      const match = (request: Request) =>
+        routes.find(
+          (route) =>
+            route.method === request.method && route.pattern === new URL(request.url).pathname,
+        );
+
+      const handler = createRequestHandler(
+        {
+          info: (fields: RequestLogFields) => {
+            kernelLogs.push(fields);
+          },
+          pathFor: (request) => match(request)?.pattern ?? "unmatched",
+          acceptInboundRequestId: false,
+        },
+        (request) => {
+          const route = match(request);
+          if (route === undefined) {
+            return new Response(null, { status: 404 });
+          }
+          return route.handle(request, { billing: route.billing, pattern: route.pattern });
+        },
+      );
+
+      capturedLogs.length = 0;
+      const req = new Request(`http://${API_HOSTNAME}/v1/people/list`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-community-hub-hostname": API_HOSTNAME,
+          authorization: `Bearer ${org.ownerSession.accessToken}`,
+        },
+        body: JSON.stringify({ communitySlug: org.slug }),
+      });
+
+      const res = await handler(req);
+      expect(res.status).toBe(500);
+      expect(await res.text()).toBe("");
+
+      const errorLog = kernelLogs.find((l) => l.errorClass !== undefined);
+      expect(errorLog).toBeDefined();
+      expect(errorLog?.errorClass).toMatch(/^[A-Za-z][A-Za-z0-9_]{0,63}$/);
+      expect(errorLog?.errorClass).toBe("Error");
+
+      const allLogText = JSON.stringify({ kernelLogs, capturedLogs });
+      expect(allLogText).not.toContain(SYNTHETIC_SECRET);
+    } finally {
+      armed.value = false;
+      armed.secret = "";
+    }
+  });
+
+  it("people list: a groupId from another organisation gives an empty page", async () => {
+    const org1 = await createOrgAndCommunity("cross-org-l1");
+    const org2 = await createOrgAndCommunity("cross-org-l2");
+
+    let group2Id = "";
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: org2.orgId, communityId: org2.communityId }, async (tx) => {
+        const g = await createGroup(tx, {
+          name: "Org2 Group",
+          kind: "group",
+          now,
+          actorUserId: org2.ownerSession.userId,
+        });
+        group2Id = g.id;
+      }),
+    );
+
+    const res = await post(
+      "/v1/people/list",
+      { communitySlug: org1.slug, groupId: group2Id },
+      org1.ownerSession.accessToken,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: Array<unknown> };
+    expect(body.items).toHaveLength(0);
+  });
+
+  it("people status: a minor's id gives 404", async () => {
+    const org = await createOrgAndCommunity("minor-status");
+    let minorId = "";
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: org.orgId, communityId: org.communityId }, async (tx) => {
+        const h = await createHousehold(tx, kms, KEY_ARN, {
+          now,
+          label: null,
+          actorUserId: org.ownerSession.userId,
+        });
+        const m = await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: false,
+          householdId: h.householdId,
+          dateOfBirth: "2015-01-01",
+          givenName: "MinorPerson",
+          familyName: "Child",
+          email: null,
+          phone: null,
+          actorUserId: org.ownerSession.userId,
+        });
+        minorId = m.personId;
+      }),
+    );
+
+    const res = await post(
+      "/v1/people/status",
+      {
+        communitySlug: org.slug,
+        personId: minorId,
+        version: 1,
+        status: "inactive",
+      },
+      org.ownerSession.accessToken,
+    );
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe("");
+  });
+
+  it("people status: two organisations", async () => {
+    const org1 = await createOrgAndCommunity("stat-org1");
+    const org2 = await createOrgAndCommunity("stat-org2");
+
+    let adult1Id = "";
+    let adult2Id = "";
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: org1.orgId, communityId: org1.communityId }, async (tx) => {
+        const a1 = await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: true,
+          householdId: null,
+          dateOfBirth: null,
+          givenName: "AdultOne",
+          familyName: "OrgOne",
+          email: null,
+          phone: null,
+          actorUserId: org1.ownerSession.userId,
+        });
+        adult1Id = a1.personId;
+      }),
+    );
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: org2.orgId, communityId: org2.communityId }, async (tx) => {
+        const a2 = await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: true,
+          householdId: null,
+          dateOfBirth: null,
+          givenName: "AdultTwo",
+          familyName: "OrgTwo",
+          email: null,
+          phone: null,
+          actorUserId: org2.ownerSession.userId,
+        });
+        adult2Id = a2.personId;
+      }),
+    );
+
+    const resCross = await post(
+      "/v1/people/status",
+      {
+        communitySlug: org1.slug,
+        personId: adult2Id,
+        version: 1,
+        status: "inactive",
+      },
+      org1.ownerSession.accessToken,
+    );
+    expect(resCross.status).toBe(404);
+    expect(await resCross.text()).toBe("");
+
+    const rows = await withAppTransaction(
+      app,
+      { orgId: org2.orgId, communityId: org2.communityId },
+      (tx) => tx<{ status: string; version: number }[]>`
+        select status, version from app.persons where id = ${adult2Id}::uuid
+      `,
+    );
+    expect(rows[0]!.status).toBe("active");
+    expect(rows[0]!.version).toBe(1);
+
+    const resOk = await post(
+      "/v1/people/status",
+      {
+        communitySlug: org1.slug,
+        personId: adult1Id,
+        version: 1,
+        status: "inactive",
+      },
+      org1.ownerSession.accessToken,
+    );
+    expect(resOk.status).toBe(200);
+    expect(await resOk.json()).toEqual({ version: 2, status: "inactive" });
+  });
+
+  it("people summary: counts only the caller's community", async () => {
+    const org = await createOrgAndCommunity("sum-comm");
+    const comm2 = await addCommunityToOrg(org.orgId, "sum-comm2");
+
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: org.orgId, communityId: org.communityId }, async (tx) => {
+        await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: true,
+          householdId: null,
+          dateOfBirth: null,
+          givenName: "SumA1",
+          familyName: "Person",
+          email: null,
+          phone: null,
+          actorUserId: org.ownerSession.userId,
+        });
+        await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: true,
+          householdId: null,
+          dateOfBirth: null,
+          givenName: "SumA2",
+          familyName: "Person",
+          email: null,
+          phone: null,
+          actorUserId: org.ownerSession.userId,
+        });
+        const inact = await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: true,
+          householdId: null,
+          dateOfBirth: null,
+          givenName: "SumA3",
+          familyName: "Person",
+          email: null,
+          phone: null,
+          actorUserId: org.ownerSession.userId,
+        });
+        await setPersonStatus(tx, {
+          personId: inact.personId,
+          version: 1,
+          status: "inactive",
+          actorUserId: org.ownerSession.userId,
+          now,
+        });
+        const h = await createHousehold(tx, kms, KEY_ARN, {
+          now,
+          label: null,
+          actorUserId: org.ownerSession.userId,
+        });
+        await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: false,
+          householdId: h.householdId,
+          dateOfBirth: "2016-01-01",
+          givenName: "SumMinor",
+          familyName: "Child",
+          email: null,
+          phone: null,
+          actorUserId: org.ownerSession.userId,
+        });
+      }),
+    );
+
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: org.orgId, communityId: comm2.communityId }, async (tx) => {
+        await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: true,
+          householdId: null,
+          dateOfBirth: null,
+          givenName: "Comm2A1",
+          familyName: "Person",
+          email: null,
+          phone: null,
+          actorUserId: org.ownerSession.userId,
+        });
+        await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: true,
+          householdId: null,
+          dateOfBirth: null,
+          givenName: "Comm2A2",
+          familyName: "Person",
+          email: null,
+          phone: null,
+          actorUserId: org.ownerSession.userId,
+        });
+      }),
+    );
+
+    const res = await post(
+      "/v1/people/summary",
+      {
+        communitySlug: org.slug,
+        addedSince: "2026-10-01T00:00:00+00:00",
+      },
+      org.ownerSession.accessToken,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      total: number;
+      active: number;
+      inactive: number;
+      addedSince: number;
+    };
+    expect(body.total).toBe(3);
+    expect(body.active).toBe(2);
+    expect(body.inactive).toBe(1);
+    expect(body.addedSince).toBe(3);
+  });
+
+  it("people list: a minor in a group never appears and adults carry their groups", async () => {
+    const org = await createOrgAndCommunity("group-minors");
+    let adultId = "";
+    let minorId = "";
+    let groupId = "";
+
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: org.orgId, communityId: org.communityId }, async (tx) => {
+        const a = await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: true,
+          householdId: null,
+          dateOfBirth: null,
+          givenName: "GroupAdult",
+          familyName: "Person",
+          email: null,
+          phone: null,
+          actorUserId: org.ownerSession.userId,
+        });
+        adultId = a.personId;
+
+        const h = await createHousehold(tx, kms, KEY_ARN, {
+          now,
+          label: null,
+          actorUserId: org.ownerSession.userId,
+        });
+        const m = await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: false,
+          householdId: h.householdId,
+          dateOfBirth: "2016-01-01",
+          givenName: "GroupMinor",
+          familyName: "Person",
+          email: null,
+          phone: null,
+          actorUserId: org.ownerSession.userId,
+        });
+        minorId = m.personId;
+
+        const g = await createGroup(tx, {
+          name: "Youth Fellowship",
+          kind: "group",
+          now,
+          actorUserId: org.ownerSession.userId,
+        });
+        groupId = g.id;
+
+        await addGroupMember(tx, kms, KEY_ARN, {
+          groupId,
+          personId: adultId,
+          now,
+          actorUserId: org.ownerSession.userId,
+        });
+        await addGroupMember(tx, kms, KEY_ARN, {
+          groupId,
+          personId: minorId,
+          now,
+          actorUserId: org.ownerSession.userId,
+        });
+      }),
+    );
+
+    const res = await post(
+      "/v1/people/list",
+      {
+        communitySlug: org.slug,
+        groupId,
+      },
+      org.ownerSession.accessToken,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      items: Array<{
+        personId: string;
+        isMinor: boolean;
+        groups?: Array<{ id: string; name: string }>;
+      }>;
+    };
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]!.personId).toBe(adultId);
+    expect(body.items[0]!.isMinor).toBe(false);
+    expect(body.items[0]!.groups).toEqual([{ id: groupId, name: "Youth Fellowship" }]);
+    expect(body.items.some((i) => i.personId === minorId)).toBe(false);
+  });
+
+  it("people list: a decrypt failure leaves no listed audit row", async () => {
+    const org = await createOrgAndCommunity("pin43b");
+    let adultId = "";
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: org.orgId, communityId: org.communityId }, async (tx) => {
+        const a = await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: true,
+          householdId: null,
+          dateOfBirth: null,
+          givenName: "AuditRollbackAdult",
+          familyName: "Person",
+          email: "tamper-rollback@example.test",
+          phone: null,
+          actorUserId: org.ownerSession.userId,
+        });
+        adultId = a.personId;
+
+        const rows = await tx<{ email: Uint8Array | null }[]>`
+          select email from app.persons where id = ${adultId}::uuid
+        `;
+        const tampered = new Uint8Array(rows[0]!.email!);
+        tampered[0] = tampered[0]! ^ 0xff;
+        await tx`
+          update app.persons set email = ${tampered} where id = ${adultId}::uuid
+        `;
+      }),
+    );
+
+    const res = await post(
+      "/v1/people/list",
+      { communitySlug: org.slug },
+      org.ownerSession.accessToken,
+    );
+    expect(res.status).toBe(500);
+    expect(await res.text()).toBe("");
+
+    const auditRows = await withAppTransaction(
+      app,
+      { orgId: org.orgId, communityId: org.communityId },
+      (tx) => tx<{ count: string }[]>`
+        select count(*)::text as count
+        from app.audit_events
+        where org_id = ${org.orgId}::uuid
+          and action = 'people.person.listed'
+      `,
+    );
+    expect(Number(auditRows[0]?.count ?? "0")).toBe(0);
+  });
 });
