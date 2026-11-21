@@ -115,7 +115,7 @@ function parseContactItem(item: unknown): ContactItem | null {
     age: typeof item.age === "number" ? item.age : null,
     createdAt: typeof item.createdAt === "string" ? item.createdAt : "",
     status: item.status === "inactive" ? "inactive" : "active",
-    source: typeof item.source === "string" ? item.source : "manual",
+    source: typeof item.source === "string" ? item.source : "",
     groups: Array.isArray(item.groups)
       ? item.groups
           .filter(isRecord)
@@ -128,12 +128,15 @@ function parseContactItem(item: unknown): ContactItem | null {
   };
 }
 
-function parseListResponse(value: unknown): ListResponse | null {
+function parseListResponse(value: unknown, kind?: "adults" | "minors"): ListResponse | null {
   if (!isRecord(value) || !Array.isArray(value.items)) {
     return null;
   }
   const items: ContactItem[] = [];
   for (const item of value.items) {
+    if (kind === "adults" && isRecord(item) && item.isMinor === true) {
+      continue;
+    }
     const parsed = parseContactItem(item);
     if (parsed !== null) {
       items.push(parsed);
@@ -158,7 +161,7 @@ function parsePersonDetail(value: unknown): PersonDetail | null {
     dateOfBirth: typeof value.dateOfBirth === "string" ? value.dateOfBirth : null,
     version: typeof value.version === "number" ? value.version : 1,
     status: value.status === "inactive" ? "inactive" : "active",
-    source: typeof value.source === "string" ? value.source : "manual",
+    source: typeof value.source === "string" ? value.source : "",
   };
 }
 
@@ -248,6 +251,7 @@ export function AllContactsPage() {
 
   // Status toggle state
   const [savingStatusId, setSavingStatusId] = useState<string | null>(null);
+  const savingStatusRef = useRef(false);
   const [statusAlert, setStatusAlert] = useState<string | null>(null);
 
   // View state: "list" | "detail" | "add" | "edit"
@@ -370,7 +374,7 @@ export function AllContactsPage() {
         if (!isCurrent()) {
           return;
         }
-        const parsed = parseListResponse(data);
+        const parsed = parseListResponse(data, kind);
         if (parsed === null) {
           setError(true);
           return;
@@ -399,6 +403,7 @@ export function AllContactsPage() {
     if (response === "unavailable" || response.status !== 200) {
       setSummaryError(true);
       setSummary(null);
+      setGroupFilter("");
       return;
     }
 
@@ -411,16 +416,21 @@ export function AllContactsPage() {
       if (parsed === null) {
         setSummaryError(true);
         setSummary(null);
+        setGroupFilter("");
         return;
       }
       setSummary(parsed);
       setSummaryError(false);
+      if (parsed.groups === undefined) {
+        setGroupFilter("");
+      }
     } catch {
       if (!isCurrent()) {
         return;
       }
       setSummaryError(true);
       setSummary(null);
+      setGroupFilter("");
     }
   }, []);
 
@@ -440,9 +450,6 @@ export function AllContactsPage() {
       cursor,
       () => generation.current === mine,
     );
-    if (activeTab === "adults") {
-      void fetchSummary(slug, () => generation.current === mine);
-    }
   }, [
     slug,
     activeTab,
@@ -452,19 +459,22 @@ export function AllContactsPage() {
     groupFilter,
     cursor,
     fetchContacts,
-    fetchSummary,
     access.entitlements["people.directory"],
     access.permissions["people.view"],
   ]);
 
-  const previousSlugRef = useRef(slug);
+  const previousSlugRef = useRef<string | null>(null);
+  const summarySlugRef = useRef<string | null>(null);
   useEffect(() => {
     if (!slug) {
       setItems(null);
+      previousSlugRef.current = null;
+      summarySlugRef.current = null;
       return;
     }
     if (previousSlugRef.current !== slug) {
       previousSlugRef.current = slug;
+      summarySlugRef.current = null;
       setActiveTab("adults");
       setSearchDraft("");
       setSubmittedSearch("");
@@ -494,7 +504,8 @@ export function AllContactsPage() {
       setError(false);
       submittingRef.current = false;
       setSubmitting(false);
-      if (slug && access.entitlements["people.directory"] && access.permissions["people.view"]) {
+      if (access.entitlements["people.directory"] && access.permissions["people.view"]) {
+        summarySlugRef.current = slug;
         const mine = ++generation.current;
         void fetchContacts(
           slug,
@@ -514,15 +525,28 @@ export function AllContactsPage() {
       return;
     }
     reload();
+
+    if (activeTab === "adults" && summarySlugRef.current !== slug) {
+      summarySlugRef.current = slug;
+      const mine = generation.current;
+      void fetchSummary(slug, () => generation.current === mine);
+    }
   }, [
     slug,
     version,
+    activeTab,
     reload,
     access.entitlements["people.directory"],
     access.permissions["people.view"],
     fetchContacts,
     fetchSummary,
   ]);
+
+  useEffect(() => {
+    if (summary?.groups === undefined && groupFilter) {
+      setGroupFilter("");
+    }
+  }, [summary?.groups, groupFilter]);
 
   const loadPersonDetail = useCallback(
     async (
@@ -653,9 +677,10 @@ export function AllContactsPage() {
   }
 
   async function handleStatusToggle(person: ContactItem) {
-    if (savingStatusId !== null || !slug) {
+    if (savingStatusRef.current || !slug) {
       return;
     }
+    savingStatusRef.current = true;
     const newStatus = person.status === "active" ? "inactive" : "active";
     setSavingStatusId(person.id);
     setStatusAlert(null);
@@ -669,6 +694,13 @@ export function AllContactsPage() {
       });
 
       if (response === "unavailable") {
+        setStatusAlert("Unable to update contact status");
+        return;
+      }
+
+      if (response.status === 402) {
+        setPaymentRequired(true);
+        void refreshBilling();
         setStatusAlert("Unable to update contact status");
         return;
       }
@@ -713,6 +745,7 @@ export function AllContactsPage() {
         setStatusAlert("Unable to update contact status");
       }
     } finally {
+      savingStatusRef.current = false;
       setSavingStatusId(null);
     }
   }
@@ -1018,7 +1051,7 @@ export function AllContactsPage() {
         : [
             {
               value: "keep",
-              label: `Keep current (${PERSON_SOURCE_LABELS[detailPerson?.source ?? ""] ?? detailPerson?.source})`,
+              label: `Keep current (${PERSON_SOURCE_LABELS[detailPerson?.source ?? ""] ?? (detailPerson?.source || "None")})`,
             },
             { value: "manual", label: "Manual" },
             { value: "family_records", label: "Family Records" },
@@ -1105,7 +1138,11 @@ export function AllContactsPage() {
       key: "phone",
       header: "Phone",
       render: (person) =>
-        person.phone ? person.phone : <span className="text-muted-foreground">None</span>,
+        person.phone ? (
+          <span className="whitespace-nowrap">{person.phone}</span>
+        ) : (
+          <span className="text-muted-foreground">None</span>
+        ),
     },
     {
       key: "date",
@@ -1138,7 +1175,7 @@ export function AllContactsPage() {
     {
       key: "source",
       header: "Source",
-      render: (person) => PERSON_SOURCE_LABELS[person.source] ?? person.source,
+      render: (person) => PERSON_SOURCE_LABELS[person.source] ?? (person.source || "None"),
     },
     {
       key: "status",
@@ -1146,8 +1183,8 @@ export function AllContactsPage() {
       render: (person) =>
         access.permissions["people.manage"] && !hideWrites ? (
           <Switch
-            label="Active"
-            aria-label={`Active status for ${person.givenName} ${person.familyName}`}
+            label={person.status === "active" ? "Active" : "Inactive"}
+            aria-label={`${person.status === "active" ? "Active" : "Inactive"} status for ${person.givenName} ${person.familyName}`}
             checked={person.status === "active"}
             disabled={savingStatusId === person.id}
             onChange={() => void handleStatusToggle(person)}
@@ -1244,8 +1281,7 @@ export function AllContactsPage() {
           access.permissions["people.manage"] &&
           !hideWrites &&
           activeTab === "adults" &&
-          (!submittedSearch || items.length > 0) &&
-          (!hasFilters || items.length > 0) ? (
+          (!submittedSearch || items.length > 0) ? (
             <Button type="button" onClick={openAdd}>
               Add contact
             </Button>
