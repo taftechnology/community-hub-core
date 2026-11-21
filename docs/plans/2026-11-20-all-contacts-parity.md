@@ -348,3 +348,23 @@ Source: the reviewer's checkpoint pin run (pin 17 failed weakened on `OperationE
 
 - Tests with no pin claim: `createdAt` equals the stored value (a `now` different from the list's); `readPerson` returns `family_records` for an adult created with it; `updatePerson` and `listPersons` refuse a source outside their sets with `invalid_input`; the summary counts an adult whose `created_at` equals `addedSince`, and a two-organisation summary; a stub-`tx` SQL-text test that the adult list query filters by `community_id` explicitly; the migration test compares the `now()` fallback with `select now()` from the same database.
 - Not acted on: `ageOn` throwing for a future date of birth (unreachable, creation refuses it; recorded for the pull request); a thrown-error weakening (W15); `example.com` fixtures.
+
+### A2 (2026-11-21, after checkpoint 2): list 500 rollback and route test strength
+
+Source: the reviewer's checkpoint 2 pin run (pins 26 and 44 crashed weakened on `TypeError: Value is not JSON serializable`) and review of `people-routes.ts`, and the checkpoint 2 owner's check (Claude Sonnet, APPROVE WITH NOTES, 0 High, 3 Medium, 4 Low).
+
+- **Source fix (Task 7):** the list handler's catch returned an empty 500 from inside `withAppTransaction`, so the transaction committed and a `people.person.listed` audit row survived for a page that was never returned (confirmed by the owner's check with a probe). Any error other than a `PeopleError` is rethrown, so the transaction rolls back; the kernel request handler that wraps every route (`apps/api/src/gate.ts:190`, `packages/kernel/src/request-handler.ts`) answers an empty 500 and logs the error class only. The route's own `errorClassFor` and the `extra` log fields go if nothing else uses them. (The owner's check also said an unhandled throw becomes an empty 400 at `server.ts:166-175`; that catch is outside the gate, and route throws never reach it.)
+- **Tests (apps/api):**
+
+| #   | Setting                              | Weakening                                                             | File | Test that must fail (exact `it` title)                                                      |
+| --- | ------------------------------------ | --------------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------- |
+| 43b | A list failure rolls back            | Return an empty 500 from inside the transaction instead of rethrowing | I    | people list: a decrypt failure leaves no listed audit row                                   |
+| 26b | Status checks `people.manage` itself | Check `people.restricted.read` instead of `MANAGE`                    | R    | POST /v1/people/status: asks for people.manage and nothing else                             |
+| 27b | Summary checks `people.view` itself  | Check `MANAGE` instead of `VIEW`                                      | R    | POST /v1/people/summary: asks for people.view and nothing else                              |
+| 45  | Status denial is audited             | Delete the status denial `appendAuditEvent`                           | R    | POST /v1/people/status: a denial appends permission.denied with the scope ids               |
+| 46  | Summary denial is audited            | Delete the summary denial `appendAuditEvent`                          | R    | POST /v1/people/summary: a denial appends permission.denied with purpose people.person.view |
+
+- Pin 43's test runs through the kernel request handler as production does, plants the secret in the thrown error itself, and asserts the logged `errorClass` matches `/^[A-Za-z][A-Za-z0-9_]{0,63}$/` and contains no planted value; it also asserts the 500 body is empty.
+- Pins 26 and 44: the mocks return a valid result, so the weakened run fails on the status assertion, not on serialisation.
+- Tests with no pin claim: an entitled adult in no active group carries `groups: []`; `listPeopleBody` refuses a non-UUID `groupId` and an unknown `status`.
+- Not acted on, recorded for the pull request: `no-store` is absent on refusals made before the transaction (empty bodies; 400, 401, 402, 403, 404); an `addedSince` of year 0000 passes the contract and fails in PostgreSQL (rollback, no data).
