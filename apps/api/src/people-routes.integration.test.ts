@@ -18,7 +18,22 @@ import { startEmailOtp, verifyEmailOtp } from "@community-hub/identity";
 import { createRequestHandler, type RequestLogFields, withRequest } from "@community-hub/kernel";
 import { createHousehold, createPerson, setPersonStatus } from "@community-hub/people";
 import { addMember as addGroupMember, createGroup } from "@community-hub/groups";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+const { armed } = vi.hoisted(() => ({ armed: { value: false, secret: "" } }));
+
+vi.mock("@community-hub/people", async (importActual) => {
+  const actual = await importActual<typeof import("@community-hub/people")>();
+  return {
+    ...actual,
+    listPersons: async (...args: Parameters<typeof actual.listPersons>) => {
+      if (armed.value) {
+        throw new Error(`failure carrying secret: ${armed.secret}`);
+      }
+      return actual.listPersons(...args);
+    },
+  };
+});
 
 import type { Role } from "./checkout.js";
 import { readServiceEnv, type ServiceEnv } from "./env.js";
@@ -891,7 +906,7 @@ describe("people routes real-database integration (finding 3)", () => {
     const SECRET_EMAIL = "tamper-route@example.test";
     await withRequest({ requestId: REQUEST_ID }, () =>
       withAppTransaction(app, { orgId: org.orgId, communityId: org.communityId }, async (tx) => {
-        await createPerson(tx, kms, KEY_ARN, {
+        const a = await createPerson(tx, kms, KEY_ARN, {
           now,
           declaredAdult: true,
           householdId: null,
@@ -902,23 +917,22 @@ describe("people routes real-database integration (finding 3)", () => {
           phone: null,
           actorUserId: org.ownerSession.userId,
         });
+
+        const rows = await tx<{ email: Uint8Array | null }[]>`
+          select email from app.persons where id = ${a.personId}::uuid
+        `;
+        const tampered = new Uint8Array(rows[0]!.email!);
+        tampered[0] = tampered[0]! ^ 0xff;
+        await tx`
+          update app.persons set email = ${tampered} where id = ${a.personId}::uuid
+        `;
       }),
     );
-
-    const plantedError = new Error(`decryption failed with secret ${SECRET_EMAIL}`);
-    plantedError.name = "TamperDecryptError";
-
-    const throwingKms: typeof kms = {
-      ...kms,
-      decrypt: async () => {
-        throw plantedError;
-      },
-    };
 
     const kernelLogs: RequestLogFields[] = [];
     const routes = peopleRoutes({
       checkout,
-      kms: throwingKms,
+      kms,
       keyArn: KEY_ARN,
       now: () => now,
       apiHostname: API_HOSTNAME,
@@ -966,10 +980,77 @@ describe("people routes real-database integration (finding 3)", () => {
     const errorLog = kernelLogs.find((l) => l.errorClass !== undefined);
     expect(errorLog).toBeDefined();
     expect(errorLog?.errorClass).toMatch(/^[A-Za-z][A-Za-z0-9_]{0,63}$/);
-    expect(errorLog?.errorClass).toBe("TamperDecryptError");
     const allLogText = JSON.stringify({ kernelLogs, capturedLogs });
     expect(allLogText).not.toContain(SECRET_EMAIL);
     expect(allLogText).not.toContain("TamperAdult");
+  });
+
+  it("people list: a failure carrying a secret logs the class only", async () => {
+    const org = await createOrgAndCommunity("pin43c");
+    const SYNTHETIC_SECRET = "secret-token-pin43c-synthetic";
+    armed.value = true;
+    armed.secret = SYNTHETIC_SECRET;
+
+    try {
+      const kernelLogs: RequestLogFields[] = [];
+      const routes = peopleRoutes({
+        checkout,
+        kms,
+        keyArn: KEY_ARN,
+        now: () => now,
+        apiHostname: API_HOSTNAME,
+        log,
+        guardLog,
+      });
+      const match = (request: Request) =>
+        routes.find(
+          (route) =>
+            route.method === request.method && route.pattern === new URL(request.url).pathname,
+        );
+
+      const handler = createRequestHandler(
+        {
+          info: (fields: RequestLogFields) => {
+            kernelLogs.push(fields);
+          },
+          pathFor: (request) => match(request)?.pattern ?? "unmatched",
+          acceptInboundRequestId: false,
+        },
+        (request) => {
+          const route = match(request);
+          if (route === undefined) {
+            return new Response(null, { status: 404 });
+          }
+          return route.handle(request, { billing: route.billing, pattern: route.pattern });
+        },
+      );
+
+      capturedLogs.length = 0;
+      const req = new Request(`http://${API_HOSTNAME}/v1/people/list`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-community-hub-hostname": API_HOSTNAME,
+          authorization: `Bearer ${org.ownerSession.accessToken}`,
+        },
+        body: JSON.stringify({ communitySlug: org.slug }),
+      });
+
+      const res = await handler(req);
+      expect(res.status).toBe(500);
+      expect(await res.text()).toBe("");
+
+      const errorLog = kernelLogs.find((l) => l.errorClass !== undefined);
+      expect(errorLog).toBeDefined();
+      expect(errorLog?.errorClass).toMatch(/^[A-Za-z][A-Za-z0-9_]{0,63}$/);
+      expect(errorLog?.errorClass).toBe("Error");
+
+      const allLogText = JSON.stringify({ kernelLogs, capturedLogs });
+      expect(allLogText).not.toContain(SYNTHETIC_SECRET);
+    } finally {
+      armed.value = false;
+      armed.secret = "";
+    }
   });
 
   it("people list: a groupId from another organisation gives an empty page", async () => {
