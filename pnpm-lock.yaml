@@ -140,6 +140,9 @@ importers:
       '@community-hub/entitlements-eval':
         specifier: workspace:*
         version: link:../../packages/entitlements-eval
+      '@community-hub/groups':
+        specifier: workspace:*
+        version: link:../../modules/features/groups
       '@community-hub/identity':
         specifier: workspace:*
         version: link:../../modules/core/identity

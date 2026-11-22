@@ -1797,4 +1797,49 @@ describe("household members: add adult", () => {
 
     expect(stubTx).not.toHaveBeenCalled();
   });
+
+  it("addMinor and addAdult record source family_records", async () => {
+    await withTenant("family-records-source", async (tx, kms) => {
+      const home = await createHousehold(tx, kms, KEY_ARN, {
+        now: NOW,
+        label: "Family Home",
+        actorUserId: null,
+      });
+
+      const adult = await addAdult(tx, kms, KEY_ARN, {
+        now: NOW,
+        householdId: home.householdId,
+        givenName: "Parent",
+        familyName: "Member",
+        email: "parent@example.test",
+        phone: null,
+        dateOfBirth: null,
+        actorUserId: null,
+      });
+
+      const minor = await addMinor(tx, kms, KEY_ARN, {
+        now: NOW,
+        householdId: home.householdId,
+        guardianId: adult.personId,
+        givenName: "Child",
+        familyName: "Member",
+        dateOfBirth: "2015-06-15",
+        actorUserId: null,
+      });
+
+      const adultRow = (
+        await tx<{ source: string }[]>`
+          select source from app.persons where id = ${adult.personId}::uuid
+        `
+      )[0];
+      const minorRow = (
+        await tx<{ source: string }[]>`
+          select source from app.persons where id = ${minor.personId}::uuid
+        `
+      )[0];
+
+      expect(adultRow?.source).toBe("family_records");
+      expect(minorRow?.source).toBe("family_records");
+    });
+  });
 });

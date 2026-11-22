@@ -21,6 +21,7 @@
     "@community-hub/engagement": "workspace:*",
     "@community-hub/entitlements": "workspace:*",
     "@community-hub/entitlements-eval": "workspace:*",
+    "@community-hub/groups": "workspace:*",
     "@community-hub/identity": "workspace:*",
     "@community-hub/kernel": "workspace:*",
     "@community-hub/observability": "workspace:*",

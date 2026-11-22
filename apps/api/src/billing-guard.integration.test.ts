@@ -818,6 +818,43 @@ describe("billing guard against a real database", () => {
       },
     ],
     [
+      "POST /v1/people/status",
+      {
+        path: "/v1/people/status",
+        prepare: async (setup) => {
+          const personId = newId();
+          await withAppTransaction(
+            app,
+            { orgId: setup.orgId, communityId: setup.communityId },
+            async (tx) => {
+              await tx`
+                insert into app.persons (id, org_id, community_id, is_minor, age_basis, given_name, family_name, version)
+                values (
+                  ${personId}::uuid,
+                  current_setting('app.org_id')::uuid,
+                  current_setting('app.community_id')::uuid,
+                  false,
+                  'declared_adult',
+                  'Test',
+                  'User',
+                  1
+                )
+              `;
+            },
+          );
+          return {
+            body: {
+              communitySlug: setup.slug,
+              personId,
+              version: 1,
+              status: "inactive",
+            },
+            count: () => personVersion(setup, personId),
+          };
+        },
+      },
+    ],
+    [
       "POST /v1/people/life-events/create",
       {
         path: "/v1/people/life-events/create",

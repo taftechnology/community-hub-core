@@ -6831,4 +6831,12 @@ describe("Family Records - Create new adult", () => {
     const after = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
     expect(resultIds(after, "violations")).toEqual([]);
   });
+
+  describe("Family Records parity: add adult source", () => {
+    it("Family Records: the add adult form has no Source select", async () => {
+      await openNewAdultForm();
+      expect(screen.queryByLabelText("Source")).toBeNull();
+      expect(screen.queryByRole("combobox", { name: "Source" })).toBeNull();
+    });
+  });
 });

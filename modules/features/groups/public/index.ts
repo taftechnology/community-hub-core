@@ -33,11 +33,13 @@ export {
   type ListGroupsOptions,
 } from "../infrastructure/groups.js";
 export {
+  activeGroupsForPersons,
   addMember,
   removeMember,
   setMemberRole,
   listMembers,
   groupLeaderFact,
+  personIdsInGroup,
   type GroupMemberRole,
   type GroupMemberRecord,
   type AddMemberInput,

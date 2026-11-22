@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import { PeopleError } from "./error.js";
 import {
+  ageOn,
   birthdayMd,
   isMinor,
   normaliseEmail,
   normaliseName,
   normalisePhone,
   normaliseTag,
+  PERSON_SOURCES,
   resolveAge,
 } from "./person.js";
 
@@ -103,5 +105,41 @@ describe("person domain", () => {
   it("stores a tag in lowercase", () => {
     expect(normaliseTag("Choir")).toBe("choir");
     throwsCode(() => normaliseTag("A_b"), "invalid_tag");
+  });
+
+  it("PERSON_SOURCES lists the eleven keys in order", () => {
+    expect(PERSON_SOURCES).toEqual([
+      "manual",
+      "family_records",
+      "website",
+      "form",
+      "donation",
+      "event_rsvp",
+      "event_booking",
+      "volunteer_application",
+      "mobile_app",
+      "mobile_app_family",
+      "auto",
+    ]);
+  });
+
+  it("ageOn: counts completed years on the Sydney civil date", () => {
+    expect(ageOn(null, SYDNEY_ELEVENTH)).toBeNull();
+
+    // Sydney/UTC boundary:
+    // 2026-10-10T23:30:00Z is 2026-10-11T10:30:00+11:00 in Australia/Sydney.
+    const boundaryInstant = new Date("2026-10-10T23:30:00Z");
+    // In Sydney it is 2026-10-11. Born 2000-10-11 -> completed 26 years.
+    expect(ageOn("2000-10-11", boundaryInstant)).toBe(26);
+    // Born 2000-10-12 -> in Sydney it is not yet Oct 12 -> completed 25 years.
+    expect(ageOn("2000-10-12", boundaryInstant)).toBe(25);
+
+    // Leap year handling
+    expect(ageOn("2008-02-29", new Date("2026-02-28T12:00:00+11:00"))).toBe(17);
+    expect(ageOn("2008-02-29", new Date("2026-03-01T12:00:00+11:00"))).toBe(18);
+
+    // Future date rejects with invalid_date
+    throwsCode(() => ageOn("2026-10-12", SYDNEY_ELEVENTH), "invalid_date");
+    throwsCode(() => ageOn("2026-02-31", SYDNEY_ELEVENTH), "invalid_date");
   });
 });

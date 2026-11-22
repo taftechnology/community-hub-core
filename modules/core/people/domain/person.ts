@@ -154,3 +154,35 @@ export function normaliseTag(input: string): string {
   }
   return label;
 }
+
+export const PERSON_SOURCES = [
+  "manual",
+  "family_records",
+  "website",
+  "form",
+  "donation",
+  "event_rsvp",
+  "event_booking",
+  "volunteer_application",
+  "mobile_app",
+  "mobile_app_family",
+  "auto",
+] as const;
+
+export type PersonSource = (typeof PERSON_SOURCES)[number];
+
+export const PERSON_STATUSES = ["active", "inactive"] as const;
+
+export type PersonStatus = (typeof PERSON_STATUSES)[number];
+
+export function ageOn(dateOfBirth: string | null, now: Date): number | null {
+  if (dateOfBirth === null) {
+    return null;
+  }
+  const dob = parseDate(dateOfBirth);
+  const today = sydneyCivilDate(now);
+  if (isAfter(dob, today)) {
+    throw new PeopleError("invalid_date");
+  }
+  return completedYears(dob, today);
+}

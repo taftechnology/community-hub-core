@@ -11,6 +11,8 @@ import {
   normaliseEmail,
   normaliseName,
   normalisePhone,
+  type PersonSource,
+  type PersonStatus,
   resolveAge,
 } from "../domain/person.js";
 import { derivePersonFieldKeys } from "./person-keys.js";
@@ -28,12 +30,15 @@ type PersonInput = {
   email: string | null;
   phone: string | null;
   actorUserId: string | null;
+  source?: PersonSource;
 };
 
 type StoredPerson = {
   id: string;
   household_id: string | null;
   version: number;
+  status: string;
+  source: string;
   is_minor: boolean;
   age_basis: string;
   birthday_md: number | null;
@@ -154,7 +159,7 @@ async function indexOf(
   return bytes;
 }
 
-async function openField(
+export async function openField(
   bytes: Uint8Array | null,
   enc: webcrypto.CryptoKey,
   personId: string,
@@ -234,13 +239,15 @@ export async function createPerson(
   const phoneBidx = await indexOf(keys.bidx, "people.phone", phone);
   const clearGiven = minor ? null : givenName;
   const clearFamily = minor ? null : familyName;
+  const source: PersonSource = input.source ?? "manual";
   try {
     await tx.savepoint("person_insert", async (sp) => {
       await sp`
         insert into app.persons (
           id, org_id, community_id, household_id, is_minor, age_basis, birthday_md,
           given_name, family_name, given_name_restricted, family_name_restricted,
-          date_of_birth, email, email_bidx, phone, phone_bidx
+          date_of_birth, email, email_bidx, phone, phone_bidx,
+          source, created_at
         ) values (
           ${personId}::uuid,
           current_setting('app.org_id')::uuid,
@@ -257,7 +264,9 @@ export async function createPerson(
           ${emailBytes},
           ${emailBidx},
           ${phoneBytes},
-          ${phoneBidx}
+          ${phoneBidx},
+          ${source},
+          ${input.now}
         )
       `;
       const activityId = newId();
@@ -294,15 +303,10 @@ export async function createPerson(
   return { personId, isMinor: minor };
 }
 
-export async function readPerson(
-  tx: AppTransaction,
-  kms: KmsPort,
-  keyArn: string,
-  input: { personId: string; actorUserId: string | null },
-): Promise<{
+export type AdultReadPersonResult = {
   personId: string;
   householdId: string | null;
-  isMinor: boolean;
+  isMinor: false;
   ageBasis: AgeBasis;
   birthdayMd: number | null;
   givenName: string;
@@ -311,12 +315,39 @@ export async function readPerson(
   phone: string | null;
   dateOfBirth: string | null;
   version: number;
-} | null> {
+  status: PersonStatus;
+  source: PersonSource;
+};
+
+export type MinorReadPersonResult = {
+  personId: string;
+  householdId: string | null;
+  isMinor: true;
+  ageBasis: AgeBasis;
+  birthdayMd: number | null;
+  givenName: string;
+  familyName: string;
+  email: string | null;
+  phone: string | null;
+  dateOfBirth: string | null;
+  version: number;
+};
+
+export type ReadPersonResult = AdultReadPersonResult | MinorReadPersonResult | null;
+
+export async function readPerson(
+  tx: AppTransaction,
+  kms: KmsPort,
+  keyArn: string,
+  input: { personId: string; actorUserId: string | null },
+): Promise<ReadPersonResult> {
   const rows = await tx<StoredPerson[]>`
     select
       id::text as id,
       household_id::text as household_id,
       version,
+      status,
+      source,
       is_minor,
       age_basis,
       birthday_md,
@@ -371,10 +402,25 @@ export async function readPerson(
     purpose: PERSON_READ,
     targetIds: [row.id],
   });
+  if (row.is_minor) {
+    return {
+      personId: row.id,
+      householdId: row.household_id,
+      isMinor: true,
+      ageBasis: ageBasisOf(row.age_basis),
+      birthdayMd: row.birthday_md,
+      givenName,
+      familyName,
+      email,
+      phone,
+      dateOfBirth,
+      version: row.version,
+    };
+  }
   return {
     personId: row.id,
     householdId: row.household_id,
-    isMinor: row.is_minor,
+    isMinor: false,
     ageBasis: ageBasisOf(row.age_basis),
     birthdayMd: row.birthday_md,
     givenName,
@@ -383,5 +429,7 @@ export async function readPerson(
     phone,
     dateOfBirth,
     version: row.version,
+    status: row.status as PersonStatus,
+    source: row.source as PersonSource,
   };
 }
