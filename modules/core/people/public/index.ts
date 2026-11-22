@@ -35,6 +35,8 @@ defineAuditAction("people.life_event.created");
 defineAuditPurpose("people.life_event.created");
 defineAuditAction("people.life_event.updated");
 defineAuditPurpose("people.life_event.updated");
+defineAuditAction("people.person.purged");
+defineAuditPurpose("people.person.purged");
 
 export { PeopleError } from "../domain/error.js";
 export { ensureCommunityKey, ensureOrganisationKey } from "../infrastructure/keys.js";
@@ -115,3 +117,4 @@ export {
   type UpdateLifeEventInput,
   type UpdateLifeEventResult,
 } from "../infrastructure/life-event.js";
+export { purgeDeletedPersons } from "../infrastructure/purge.js";

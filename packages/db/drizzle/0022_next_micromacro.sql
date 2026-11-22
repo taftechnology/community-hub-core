@@ -82,6 +82,9 @@ AS $$
 DECLARE
   v_org_id text;
   v_community_id text;
+  v_org_uuid uuid;
+  v_community_uuid uuid;
+  v_target_ids uuid[];
 BEGIN
   v_org_id := current_setting('app.org_id', true);
   v_community_id := current_setting('app.community_id', true);
@@ -94,7 +97,115 @@ BEGIN
     RAISE EXCEPTION 'limit must be between 1 and 50';
   END IF;
 
-  RETURN;
+  v_org_uuid := v_org_id::uuid;
+  v_community_uuid := v_community_id::uuid;
+
+  SELECT coalesce(array_agg(p.id ORDER BY p.deleted_at ASC, p.id ASC), '{}')
+  INTO v_target_ids
+  FROM (
+    SELECT p.id, p.deleted_at
+    FROM app.persons p
+    WHERE p.org_id = v_org_uuid
+      AND p.community_id = v_community_uuid
+      AND p.is_minor = false
+      AND p.deleted_at <= now() - interval '720 hours'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM app.user_links ul
+        WHERE ul.org_id = v_org_uuid
+          AND ul.community_id = v_community_uuid
+          AND ul.person_id = p.id
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM app.invitations inv
+        WHERE inv.org_id = v_org_uuid
+          AND inv.community_id = v_community_uuid
+          AND inv.person_id = p.id
+          AND inv.status = 'pending'
+          AND inv.expires_at > now()
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM app.guardian_links gl
+        JOIN app.persons child
+          ON child.org_id = gl.org_id
+         AND child.id = gl.child_person_id
+        WHERE gl.org_id = v_org_uuid
+          AND gl.community_id = v_community_uuid
+          AND gl.guardian_person_id = p.id
+          AND child.is_minor = true
+          AND NOT EXISTS (
+            SELECT 1
+            FROM app.guardian_links other_gl
+            JOIN app.persons other_g
+              ON other_g.org_id = other_gl.org_id
+             AND other_g.id = other_gl.guardian_person_id
+            WHERE other_gl.org_id = v_org_uuid
+              AND other_gl.community_id = v_community_uuid
+              AND other_gl.child_person_id = gl.child_person_id
+              AND other_gl.guardian_person_id <> p.id
+              AND other_g.deleted_at IS NULL
+          )
+      )
+    ORDER BY p.deleted_at ASC, p.id ASC
+    LIMIT p_limit
+    FOR UPDATE SKIP LOCKED
+  ) p;
+
+  IF cardinality(v_target_ids) = 0 THEN
+    RETURN;
+  END IF;
+
+  DELETE FROM app.group_members
+  WHERE org_id = v_org_uuid
+    AND community_id = v_community_uuid
+    AND person_id = ANY(v_target_ids);
+
+  DELETE FROM app.guardian_links
+  WHERE org_id = v_org_uuid
+    AND community_id = v_community_uuid
+    AND (guardian_person_id = ANY(v_target_ids) OR child_person_id = ANY(v_target_ids));
+
+  DELETE FROM app.person_tag_links
+  WHERE org_id = v_org_uuid
+    AND community_id = v_community_uuid
+    AND person_id = ANY(v_target_ids);
+
+  DELETE FROM app.person_activity
+  WHERE org_id = v_org_uuid
+    AND community_id = v_community_uuid
+    AND person_id = ANY(v_target_ids);
+
+  DELETE FROM app.life_events
+  WHERE org_id = v_org_uuid
+    AND community_id = v_community_uuid
+    AND person_id = ANY(v_target_ids);
+
+  UPDATE app.invitations
+  SET status = 'void',
+      person_id = null,
+      closed_at = now()
+  WHERE org_id = v_org_uuid
+    AND community_id = v_community_uuid
+    AND person_id = ANY(v_target_ids)
+    AND status = 'pending'
+    AND expires_at <= now();
+
+  UPDATE app.invitations
+  SET person_id = null
+  WHERE org_id = v_org_uuid
+    AND community_id = v_community_uuid
+    AND person_id = ANY(v_target_ids)
+    AND status IN ('accepted', 'revoked', 'void');
+
+  DELETE FROM app.persons
+  WHERE org_id = v_org_uuid
+    AND community_id = v_community_uuid
+    AND id = ANY(v_target_ids);
+
+  RETURN QUERY
+  SELECT unnest(v_target_ids);
 END;
 $$;
 --> statement-breakpoint
