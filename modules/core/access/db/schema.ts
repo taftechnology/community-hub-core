@@ -173,7 +173,7 @@ export function accessTables(app: PgSchema) {
         }).onDelete("restrict"),
         check(
           "custom_role_permissions_permission",
-          sql`${t.permission} in ('access.users.view', 'access.users.manage', 'access.roles.view', 'access.roles.manage', 'people.view', 'people.manage', 'people.restricted.read', 'entitlements.view', 'entitlements.manage', 'service_times.manage')`,
+          sql`${t.permission} in ('access.users.view', 'access.users.manage', 'access.roles.view', 'access.roles.manage', 'people.view', 'people.manage', 'people.restricted.read', 'entitlements.view', 'entitlements.manage', 'service_times.manage', 'people.delete')`,
         ),
         pgPolicy("community_isolation", {
           for: "all",

@@ -34,6 +34,7 @@ export const CATALOGUE_PERMISSIONS = [
   "entitlements.view",
   "entitlements.manage",
   "service_times.manage",
+  "people.delete",
 ] as const;
 
 const KEY = /^[a-z][a-z0-9_]{1,31}$/;

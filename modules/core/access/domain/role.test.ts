@@ -42,6 +42,7 @@ describe("permission lists", () => {
       "people.manage",
     ]);
     expect(parsePermissionList(["service_times.manage"])).toEqual(["service_times.manage"]);
+    expect(parsePermissionList(["people.delete"])).toEqual(["people.delete"]);
   });
 
   it("rejects an empty list, a duplicate, and a string outside the catalogue", () => {

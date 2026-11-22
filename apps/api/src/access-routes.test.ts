@@ -379,6 +379,7 @@ describe("access routes", () => {
       "entitlements.view",
       "entitlements.manage",
       "service_times.manage",
+      "people.delete",
     ]);
     expect(body.grants).toEqual([
       {

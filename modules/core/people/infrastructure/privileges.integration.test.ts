@@ -164,6 +164,8 @@ describe("people table privileges", () => {
         "household_id",
         "status",
         "source",
+        "deleted_at",
+        "deleted_by",
       ] as const;
       const forbiddenColumns = [
         "id",
