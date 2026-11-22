@@ -100,6 +100,7 @@ export async function linkGuardian(
     where id in (${firstId}::uuid, ${secondId}::uuid)
       and org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
+      and deleted_at is null
     order by id asc
     for share
   `;
@@ -187,8 +188,11 @@ export async function unlinkGuardian(
   }
 
   // Pin 4 & 12: Verify link belongs to the named household and tenant scope
-  const links = await tx<{ id: string; child_person_id: string }[]>`
-    select id::text as id, child_person_id::text as child_person_id
+  const links = await tx<{ id: string; child_person_id: string; guardian_person_id: string }[]>`
+    select
+      id::text as id,
+      child_person_id::text as child_person_id,
+      guardian_person_id::text as guardian_person_id
     from app.guardian_links
     where id = ${input.linkId}::uuid
       and household_id = ${input.householdId}::uuid
@@ -213,13 +217,33 @@ export async function unlinkGuardian(
     throw new PeopleError("not_found");
   }
 
-  // Pin 3: Count remaining links in the same transaction; refuse if <= 1
-  const linkCounts = await tx<{ count: number }[]>`
-    select count(*)::int as count
-    from app.guardian_links
-    where child_person_id = ${link.child_person_id}::uuid
+  // A hidden guardian's link answers not found. The guardian is locked after the child.
+  const lockedGuardian = await tx<{ id: string }[]>`
+    select id::text as id
+    from app.persons
+    where id = ${link.guardian_person_id}::uuid
       and org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
+      and deleted_at is null
+    for update
+  `;
+  if (lockedGuardian[0] === undefined) {
+    throw new PeopleError("not_found");
+  }
+
+  // Pin 3: Count remaining links in the same transaction; refuse if <= 1. Hidden guardians
+  // do not count: the last unhidden guardian of a child stays linked.
+  const linkCounts = await tx<{ count: number }[]>`
+    select count(*)::int as count
+    from app.guardian_links gl
+    join app.persons guardian
+      on guardian.id = gl.guardian_person_id
+     and guardian.org_id = gl.org_id
+     and guardian.community_id = gl.community_id
+    where gl.child_person_id = ${link.child_person_id}::uuid
+      and gl.org_id = current_setting('app.org_id')::uuid
+      and gl.community_id = current_setting('app.community_id')::uuid
+      and guardian.deleted_at is null
   `;
   const count = linkCounts[0]?.count ?? 0;
   if (count <= 1) {

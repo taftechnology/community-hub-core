@@ -11,6 +11,7 @@ import {
   normalisePhone,
   resolveAge,
 } from "../domain/person.js";
+import { findDuplicateHolder } from "./duplicate-holder.js";
 import { derivePersonFieldKeys } from "./person-keys.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -155,6 +156,7 @@ export async function updatePerson(
     where id = ${input.personId}::uuid
       and org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
+      and deleted_at is null
   `;
 
   const existing = existingRows[0];
@@ -325,6 +327,14 @@ export async function updatePerson(
     });
   } catch (error) {
     if (isUniqueViolation(error)) {
+      const holder = await findDuplicateHolder(tx, {
+        emailBidx,
+        phoneBidx,
+        excludePersonId: input.personId,
+      });
+      if (holder?.hidden === true) {
+        throw new PeopleError("duplicate_deleted");
+      }
       throw new PeopleError("conflict");
     }
     throw error;

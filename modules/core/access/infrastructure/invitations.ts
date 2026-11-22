@@ -194,7 +194,7 @@ export async function createInvitation(
   }
 
   if (hasPerson) {
-    const minor = await personIsMinor(tx, personId!);
+    const minor = await personIsMinor(tx, personId!, { lock: "share" });
     if (minor === null) {
       throw new AccessError("person_not_found");
     }

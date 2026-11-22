@@ -25,7 +25,7 @@ function duplicateTag(error: unknown): boolean {
 
 async function personExists(tx: AppTransaction, personId: string): Promise<boolean> {
   const rows = await tx<{ id: string }[]>`
-    select id::text as id from app.persons where id = ${personId}::uuid
+    select id::text as id from app.persons where id = ${personId}::uuid and deleted_at is null
   `;
   return rows[0] !== undefined;
 }
@@ -103,6 +103,9 @@ export async function attachTag(tx: AppTransaction, input: TagLinkInput): Promis
 }
 
 export async function detachTag(tx: AppTransaction, input: TagLinkInput): Promise<void> {
+  if (!(await personExists(tx, input.personId))) {
+    throw new PeopleError("not_found");
+  }
   const removed = await tx<{ person_id: string }[]>`
     delete from app.person_tag_links
     where person_id = ${input.personId}::uuid and tag_id = ${input.tagId}::uuid
