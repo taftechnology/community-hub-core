@@ -514,6 +514,43 @@ describe("purgeDeletedPersons", () => {
     expect(purged).toBeUndefined();
   });
 
+  it("purge skips a guardian whose only co-guardian is hidden", async () => {
+    const scope = await setupTenant("p20b");
+    const guardianA = await insertAdult(scope, "Guardian", "Aged");
+    await agePerson(scope, guardianA, 721);
+    const guardianB = await insertAdult(scope, "Guardian", "Recent");
+    await agePerson(scope, guardianB, 1);
+
+    const { minorId, householdId } = await insertMinor(scope);
+    const linkA = newId();
+    const linkB = newId();
+    await withAppTransaction(migrator, scope, async (tx) => {
+      await tx`
+        insert into app.guardian_links (
+          id, org_id, community_id, household_id, guardian_person_id, child_person_id, consent, pickup, view, manage
+        ) values
+          (${linkA}, ${scope.orgId}, ${scope.communityId}, ${householdId}, ${guardianA}, ${minorId}, true, true, true, true),
+          (${linkB}, ${scope.orgId}, ${scope.communityId}, ${householdId}, ${guardianB}, ${minorId}, true, true, true, true)
+      `;
+    });
+
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, scope, async (tx) => {
+        await expect(purgeDeletedPersons(tx, 50)).resolves.toEqual([]);
+      }),
+    );
+
+    expect(await getPerson(scope, guardianA)).toBeDefined();
+    expect(await getPerson(scope, guardianB)).toBeDefined();
+
+    const links = await withAppTransaction(migrator, scope, async (tx) => {
+      return tx<{ id: string }[]>`
+        select id::text as id from app.guardian_links where child_person_id = ${minorId}
+      `;
+    });
+    expect(links.map((l) => l.id).sort()).toEqual([linkA, linkB].sort());
+  });
+
   it("purge deletes a contact who is one of two unhidden guardians", async () => {
     const scope = await setupTenant("two-guardians");
     const guardian1 = await insertAdult(scope, "Guardian", "One");
@@ -747,6 +784,51 @@ describe("purgeDeletedPersons", () => {
     expect(events[0]?.actor_kind).toBe("system");
     expect(events[0]?.actor_id).toBeNull();
     expect(events[0]?.target_ids.slice().sort()).toEqual(ids.slice().sort());
+  });
+
+  it("purge takes the oldest contacts up to the limit", async () => {
+    const scope = await setupTenant("p23b");
+    const aged723 = await insertAdult(scope, "Aged", "SevenTwentyThree");
+    const aged721 = await insertAdult(scope, "Aged", "SevenTwentyOne");
+    const aged722 = await insertAdult(scope, "Aged", "SevenTwentyTwo");
+    await agePerson(scope, aged723, 723);
+    await agePerson(scope, aged721, 721);
+    await agePerson(scope, aged722, 722);
+
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, scope, async (tx) => {
+        await expect(purgeDeletedPersons(tx, 2)).resolves.toEqual([aged723, aged722]);
+      }),
+    );
+
+    expect(await getPerson(scope, aged723)).toBeUndefined();
+    expect(await getPerson(scope, aged722)).toBeUndefined();
+    const survivor = await getPerson(scope, aged721);
+    expect(survivor).toBeDefined();
+    expect(survivor?.deleted_at).not.toBeNull();
+  });
+
+  it("purge writes no event when nothing is eligible", async () => {
+    const scope = await setupTenant("p23d");
+    const tooRecent = await insertAdult(scope, "Recent", "Hidden");
+    await agePerson(scope, tooRecent, 719);
+    await insertAdult(scope, "Visible", "Contact");
+
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, scope, async (tx) => {
+        await expect(purgeDeletedPersons(tx, 50)).resolves.toEqual([]);
+      }),
+    );
+
+    const events = await withAppTransaction(migrator, scope, async (tx) => {
+      return tx<{ id: string }[]>`
+        select id::text as id
+        from app.audit_events
+        where action = 'people.person.purged'
+          and org_id = ${scope.orgId}
+      `;
+    });
+    expect(events).toHaveLength(0);
   });
 
   it("every foreign key to app.persons is handled by the purge", async () => {

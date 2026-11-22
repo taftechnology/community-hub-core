@@ -444,6 +444,68 @@ describe("person-delete", () => {
     expect(survivorOrg2?.deleted_at).toBeNull();
   });
 
+  it("delete answers not found for a contact that is already hidden", async () => {
+    const scope = await setupTenant("pin28b");
+    const adult = await insertAdult(scope, "Already", "Hidden");
+
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, scope, async (tx) => {
+        await lockPersonForDelete(tx, { personId: adult, version: 1 });
+        await hidePerson(tx, { personId: adult, actorUserId: newId() });
+      }),
+    );
+    const hidden = await getPerson(scope, adult);
+    expect(hidden?.deleted_at).not.toBeNull();
+    expect(hidden?.version).toBe(2);
+
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      expect(
+        withAppTransaction(app, scope, async (tx) => {
+          await lockPersonForDelete(tx, { personId: adult, version: 2 });
+        }),
+      ).rejects.toMatchObject({ code: "not_found" }),
+    );
+
+    const after = await getPerson(scope, adult);
+    expect(after?.version).toBe(2);
+    expect(after?.deleted_at).toEqual(hidden?.deleted_at);
+    expect(after?.deleted_by).toBe(hidden?.deleted_by);
+  });
+
+  it("restore answers not found for a hidden minor", async () => {
+    const scope = await setupTenant("pin28c");
+    const { minorId } = await insertMinor(scope);
+    const deletedBy = newId();
+
+    // Seeded as migrator with the user triggers off: the 0022 rule refuses a minor otherwise.
+    await withAppTransaction(migrator, scope, async (tx) => {
+      await tx.unsafe("ALTER TABLE app.persons DISABLE TRIGGER USER");
+      await tx`
+        update app.persons
+        set deleted_at = now() - interval '1 hour',
+            deleted_by = ${deletedBy}
+        where id = ${minorId}::uuid
+      `;
+      await tx.unsafe("ALTER TABLE app.persons ENABLE TRIGGER USER");
+    });
+    const seeded = await getPerson(scope, minorId);
+    expect(seeded?.deleted_at).not.toBeNull();
+
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      expect(
+        withAppTransaction(app, scope, async (tx) => {
+          await restorePerson(tx, { personId: minorId, version: 1, actorUserId: newId() });
+        }),
+      ).rejects.toMatchObject({ code: "not_found" }),
+    );
+
+    const after = await getPerson(scope, minorId);
+    expect(after?.is_minor).toBe(true);
+    expect(after?.version).toBe(1);
+    expect(after?.deleted_at).toEqual(seeded?.deleted_at);
+    expect(after?.deleted_by).toBe(deletedBy);
+  });
+
   it("a stale version on delete or restore answers conflict and changes nothing", async () => {
     const scope = await setupTenant("pin29");
     const adult = await insertAdult(scope, "Version", "Check");

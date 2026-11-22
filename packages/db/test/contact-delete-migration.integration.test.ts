@@ -175,6 +175,51 @@ describe("contact delete migration 0022", () => {
     ).rejects.toThrow(/cannot change deleted_at/);
   });
 
+  it("migration 0022: refuses a restore that leaves deleted_by set", async () => {
+    await expect(
+      sql.begin(async (tx) => {
+        await tx.unsafe("set role app");
+        await tx`select set_config('app.org_id', ${orgId}, true)`;
+        await tx`select set_config('app.community_id', ${commId}, true)`;
+        await tx`
+          update app.persons
+          set deleted_at = null
+          where id = ${hiddenAdultId}
+        `;
+      }),
+    ).rejects.toThrow("deleted_by must be null when deleted_at is cleared");
+  });
+
+  it("migration 0022: refuses changing deleted_by on a hidden contact", async () => {
+    await expect(
+      sql.begin(async (tx) => {
+        await tx.unsafe("set role app");
+        await tx`select set_config('app.org_id', ${orgId}, true)`;
+        await tx`select set_config('app.community_id', ${commId}, true)`;
+        await tx`
+          update app.persons
+          set deleted_by = ${newId()}
+          where id = ${hiddenAdultId}
+        `;
+      }),
+    ).rejects.toThrow("cannot change deleted_by on a deleted person");
+  });
+
+  it("migration 0022: refuses deleted_by on a visible contact", async () => {
+    await expect(
+      sql.begin(async (tx) => {
+        await tx.unsafe("set role app");
+        await tx`select set_config('app.org_id', ${orgId}, true)`;
+        await tx`select set_config('app.community_id', ${commId}, true)`;
+        await tx`
+          update app.persons
+          set deleted_by = ${newId()}
+          where id = ${adultId}
+        `;
+      }),
+    ).rejects.toThrow("cannot set deleted_by when deleted_at is null");
+  });
+
   it("migration 0022: refuses a new contact inserted with deleted_at", async () => {
     const newPersonId = newId();
     await expect(
@@ -293,6 +338,6 @@ describe("contact delete migration 0022", () => {
           values (${orgId}, ${commId}, ${customRoleId}, 'bogus.permission')
         `;
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/custom_role_permissions_permission/);
   });
 });
