@@ -369,6 +369,51 @@ describe("person-delete", () => {
     expect(survivorG2?.version).toBe(1);
   });
 
+  it("delete does not refuse the only guardian of an adult child", async () => {
+    const scope = await setupTenant("pin27b");
+    const { minorId, householdId } = await insertMinor(scope);
+    const guardian = await insertAdult(scope, "Only", "Guardian");
+
+    await withAppTransaction(migrator, scope, async (tx) => {
+      await tx`
+        insert into app.guardian_links (
+          id, org_id, community_id, household_id, guardian_person_id, child_person_id,
+          consent, pickup, view, manage
+        ) values
+          (${newId()}, ${scope.orgId}, ${scope.communityId}, ${householdId}, ${guardian}, ${minorId}, true, true, true, true)
+      `;
+    });
+
+    // The child turns 18: the row stays, the guardian link stays, is_minor is false.
+    await withAppTransaction(migrator, scope, async (tx) => {
+      await tx`
+        update app.persons
+        set is_minor = false,
+            age_basis = 'declared_adult',
+            given_name = 'Grown',
+            family_name = 'Child',
+            given_name_restricted = null,
+            family_name_restricted = null
+        where id = ${minorId}::uuid
+      `;
+    });
+    const grownChild = await getPerson(scope, minorId);
+    expect(grownChild?.is_minor).toBe(false);
+
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      expect(
+        withAppTransaction(app, scope, async (tx) => {
+          await lockPersonForDelete(tx, { personId: guardian, version: 1 });
+          await hidePerson(tx, { personId: guardian, actorUserId: newId() });
+        }),
+      ).resolves.toBeUndefined(),
+    );
+
+    const hidden = await getPerson(scope, guardian);
+    expect(hidden?.deleted_at).not.toBeNull();
+    expect(hidden?.version).toBe(2);
+  });
+
   it("delete answers not found for a minor and for another organisation's contact", async () => {
     const scope = await setupTenant("pin28-org1");
     const { minorId } = await insertMinor(scope);

@@ -100,13 +100,19 @@ export async function hidePerson(
     throw new PeopleError("invalid_input");
   }
 
-  // Find children of this contact
+  // Find the minor children of this contact. A child who has turned 18 keeps their
+  // links but no longer needs a guardian, so only minors count (spec: Delete).
   const childLinks = await tx<{ child_person_id: string }[]>`
-    select distinct child_person_id::text as child_person_id
-    from app.guardian_links
-    where guardian_person_id = ${input.personId}::uuid
-      and org_id = current_setting('app.org_id')::uuid
-      and community_id = current_setting('app.community_id')::uuid
+    select distinct gl.child_person_id::text as child_person_id
+    from app.guardian_links gl
+    join app.persons child
+      on child.id = gl.child_person_id
+     and child.org_id = gl.org_id
+     and child.community_id = gl.community_id
+    where gl.guardian_person_id = ${input.personId}::uuid
+      and gl.org_id = current_setting('app.org_id')::uuid
+      and gl.community_id = current_setting('app.community_id')::uuid
+      and child.is_minor = true
     order by child_person_id::text asc
   `;
 
@@ -120,6 +126,7 @@ export async function hidePerson(
       where id = any(${childIds}::uuid[])
         and org_id = current_setting('app.org_id')::uuid
         and community_id = current_setting('app.community_id')::uuid
+        and is_minor = true
       order by id asc
       for update
     `;
