@@ -1,6 +1,6 @@
 import type { KmsPort } from "@community-hub/crypto";
 import { appendAuditEvent, type AppTransaction } from "@community-hub/db";
-import { readRosterNames } from "@community-hub/people";
+import { personIsMinor, readRosterNames, visiblePersonIds } from "@community-hub/people";
 
 import { GroupsError } from "../domain/error.js";
 
@@ -105,12 +105,9 @@ export async function addMember(
     throw new GroupsError("group_archived");
   }
 
-  const roster = await readRosterNames(tx, kms, keyArn, {
-    personIds: [input.personId],
-    includeRestricted: false,
-    actorUserId: input.actorUserId,
-  });
-  if (roster.length === 0 || roster[0]?.personId !== input.personId) {
+  // One locked read answers existence, hidden and minor: a contact being deleted waits here.
+  const isMinor = await personIsMinor(tx, input.personId, { lock: "share" });
+  if (isMinor === null) {
     throw new GroupsError("person_not_found");
   }
 
@@ -153,7 +150,7 @@ export async function addMember(
   return {
     personId: input.personId,
     role,
-    isMinor: roster[0]!.isMinor,
+    isMinor,
     addedAt: input.now,
   };
 }
@@ -183,6 +180,22 @@ export async function removeMember(tx: AppTransaction, input: RemoveMemberInput)
   }
   if (group.status === "archived") {
     throw new GroupsError("group_archived");
+  }
+
+  // A hidden contact is not found. A person who is no member keeps the old answer, false.
+  if ((await visiblePersonIds(tx, [input.personId])).length === 0) {
+    const held = await tx<{ person_id: string }[]>`
+      select person_id::text as person_id
+      from app.group_members
+      where group_id = ${input.groupId}::uuid
+        and person_id = ${input.personId}::uuid
+        and org_id = current_setting('app.org_id')::uuid
+        and community_id = current_setting('app.community_id')::uuid
+    `;
+    if (held.length > 0) {
+      throw new GroupsError("person_not_found");
+    }
+    return false;
   }
 
   const deletedRows = await tx<{ person_id: string }[]>`
@@ -238,6 +251,10 @@ export async function setMemberRole(tx: AppTransaction, input: SetMemberRoleInpu
   }
   if (group.status === "archived") {
     throw new GroupsError("group_archived");
+  }
+
+  if ((await visiblePersonIds(tx, [input.personId])).length === 0) {
+    throw new GroupsError("person_not_found");
   }
 
   const memberRows = await tx<{ role: string }[]>`
@@ -326,12 +343,21 @@ export async function listMembers(
     minorMap.set(person.personId, person.isMinor);
   }
 
-  return rows.map((row) => ({
-    personId: row.person_id,
-    role: row.role as GroupMemberRole,
-    isMinor: minorMap.get(row.person_id) ?? true,
-    addedAt: new Date(row.added_at),
-  }));
+  // A member absent from the roster is hidden (or gone) and is not listed.
+  return rows.flatMap((row) => {
+    const isMinor = minorMap.get(row.person_id);
+    if (isMinor === undefined) {
+      return [];
+    }
+    return [
+      {
+        personId: row.person_id,
+        role: row.role as GroupMemberRole,
+        isMinor,
+        addedAt: new Date(row.added_at),
+      },
+    ];
+  });
 }
 
 export async function groupLeaderFact(
@@ -380,7 +406,13 @@ export async function personIdsInGroup(tx: AppTransaction, groupId: string): Pro
     order by gm.added_at asc, gm.person_id asc
   `;
 
-  return rows.map((r) => r.person_id);
+  const visible = new Set(
+    await visiblePersonIds(
+      tx,
+      rows.map((r) => r.person_id),
+    ),
+  );
+  return rows.map((r) => r.person_id).filter((id) => visible.has(id));
 }
 
 export async function activeGroupsForPersons(
@@ -396,7 +428,10 @@ export async function activeGroupsForPersons(
     return new Map();
   }
 
-  const ids = [...new Set(validIds)];
+  const ids = await visiblePersonIds(tx, [...new Set(validIds)]);
+  if (ids.length === 0) {
+    return new Map();
+  }
   const result = new Map<string, { id: string; name: string }[]>();
   for (const id of ids) {
     result.set(id, []);
