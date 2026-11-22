@@ -379,8 +379,45 @@ Tasks 1 to 10 in order, one run each. Checkpoints after Tasks 3, 8 and 9.
 
 ## Definition of done (AGENTS.md §8)
 
-- Every task committed and accepted; pins 1 to 93 fail weakened and pass restored, run by the reviewer.
+- Every task committed and accepted; pins 1 to 93 and the amendment pins fail weakened and pass restored, run by the reviewer.
 - Full local gate green apart from the allowed Windows failures; CI green on the pull request.
 - Browser check screenshots in the pull request; staging stays parked, recorded as an open item.
 - The pull request body states the AGENTS.md §3 deviation (three modules) and why, as the spec requires, and the sweep's extra checkouts.
 - Reviewer sign-off and the second review line in the pull request; no `docs/plans/*-report.md`; nothing under `.superpowers/` staged.
+
+## Amendments during implementation
+
+### A1 (2026-11-22, after checkpoint 1): sole guardian of a minor only, and test strength for Tasks 1 to 3
+
+Source: the reviewer's Task 3 review and checkpoint pin run (pins 1 to 32 all fail weakened; pin 12's patch was rebuilt after Task 2 moved `0022`), and the checkpoint 1 owner's check (Claude Sonnet 5.5, CHANGES NEEDED, 0 High, 3 Medium, 4 Low; no source defect found, nine uncaught weakenings). Three commits, in this order.
+
+- **Source fix (Task 3), commit `fix(people): refuse sole_guardian only for a minor child`:** `hidePerson` counted every child in `app.guardian_links`. The spec (Behaviour → Delete) refuses only "a guardian of a minor", and the purge already joins `child.is_minor = true`. A child who turns 18 keeps their links, so deleting their parent was refused. The children read and the child-row lock take minors only. File **H**:
+
+| #   | Setting                                  | Weakening                                     | Test that must fail (exact `it` title)                     |
+| --- | ---------------------------------------- | --------------------------------------------- | ---------------------------------------------------------- |
+| 27b | Sole guardian counts minor children only | Drop `is_minor = true` from the children read | delete does not refuse the only guardian of an adult child |
+
+- **Tests (Tasks 1 to 3), commit `test(people): pin the deleted_by rules, purge limit and order, and hidden guardians`:**
+
+| #   | Setting                                    | Weakening                                                         | File | Test that must fail (exact `it` title)                          |
+| --- | ------------------------------------------ | ----------------------------------------------------------------- | ---- | --------------------------------------------------------------- |
+| 3b  | `deleted_by` cleared with `deleted_at`     | The `deleted_by must be null when deleted_at is cleared` rule off | DM   | migration 0022: refuses a restore that leaves deleted_by set    |
+| 3c  | `deleted_by` fixed on a hidden contact     | The `cannot change deleted_by on a deleted person` rule off       | DM   | migration 0022: refuses changing deleted_by on a hidden contact |
+| 3d  | No `deleted_by` on a visible contact       | The `cannot set deleted_by when deleted_at is null` rule off      | DM   | migration 0022: refuses deleted_by on a visible contact         |
+| 20b | A co-guardian who is hidden does not count | `other_g.deleted_at IS NULL` replaced by `true`                   | PG   | purge skips a guardian whose only co-guardian is hidden         |
+| 23b | At most `p_limit` contacts per call        | Drop `LIMIT p_limit`                                              | PG   | purge takes the oldest contacts up to the limit                 |
+| 23c | Oldest first                               | Drop the `ORDER BY` of the selection                              | PG   | purge takes the oldest contacts up to the limit                 |
+| 23d | No purged event when nothing is purged     | Append the event when `ids` is empty                              | PG   | purge writes no event when nothing is eligible                  |
+| 28b | A hidden contact is not found on delete    | Drop `deleted_at is null` from `lockPersonForDelete`              | H    | delete answers not found for a contact that is already hidden   |
+| 28c | A hidden minor is not found on restore     | Drop `is_minor = false` from `restorePerson`                      | H    | restore answers not found for a hidden minor                    |
+
+- Each DM test runs as `app` and asserts `rejects.toThrow("<the rule's exact message>")`.
+- 23b and 23c: three eligible contacts aged 723, 722 and 721 hours; `purgeDeletedPersons(tx, 2)` resolves to exactly the two oldest, in that order, and the third survives.
+- 20b: guardians A (aged 721 hours) and B (hidden 1 hour) of one minor; the purge resolves to `[]` and both guardians and both links survive.
+- 28c: the hidden minor is seeded as `migrator` with `DISABLE TRIGGER USER`, as Global constraints describe; `restorePerson` rejects with `{ code: "not_found" }` and the row is unchanged.
+- The existing DM test `migration 0022: a custom role may hold people.delete` asserts its unknown-key half with `rejects.toThrow(/custom_role_permissions_permission/)`, not a bare `toThrow()`.
+- **Test timing, commit `test(people): give the household detail read time under the serial gate`:** `household-detail.integration.test.ts` "pin 9" timed out at the default 5 s in the Task 3 gate (`--concurrency=1`) and passed three times alone in about 5 s of test time. Its `it` gets an explicit 20 000 ms timeout, as the concurrency tests in `person-delete.integration.test.ts` do. No assertion changes. The file is outside this chunk's named files; the pull request names it.
+- Not acted on, recorded for the pull request:
+  - F6: the insert rule (`persons_before_insert`) is in this plan (Spec pointer corrections) but not in the spec's Data section or ADR 0020. It also means a later import has to disable the trigger to insert a pre-hidden row. The pull request body says so.
+  - F7: the function's `search_path` has no trailing `pg_temp`. The spec fixes it as `pg_catalog, app`, as `0016` does, and `app` has no `TEMP` privilege (probed), so nothing can be shadowed today. It matters only if `TEMP` is ever granted to `app`.
+  - `hidePerson` relies on `lockPersonForDelete` running first in the same transaction (the plan's design); Task 8's route test keeps that order.
