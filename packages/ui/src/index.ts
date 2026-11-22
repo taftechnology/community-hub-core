@@ -15,6 +15,7 @@ export {
   type DescriptionListItem,
   type DescriptionListProps,
 } from "./description-list.js";
+export { ConfirmDialog, type ConfirmDialogProps } from "./confirm-dialog.js";
 export { Drawer, type DrawerProps } from "./drawer.js";
 export { EmptyState, type EmptyStateProps } from "./empty-state.js";
 export { Field, type FieldProps } from "./field.js";
