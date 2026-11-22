@@ -455,6 +455,7 @@ export async function readHouseholdDetail(
       and org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
       and is_minor = false
+      and deleted_at is null
     order by id asc
   `;
   const adults: HouseholdAdultMember[] = adultRows.map((r) => ({
@@ -482,6 +483,7 @@ export async function readHouseholdDetail(
         and org_id = current_setting('app.org_id')::uuid
         and community_id = current_setting('app.community_id')::uuid
         and is_minor = true
+        and deleted_at is null
       order by id asc
     `;
 
@@ -534,10 +536,24 @@ export async function readHouseholdDetail(
       pickup,
       view,
       manage
-    from app.guardian_links
+    from app.guardian_links gl
     where household_id = ${input.householdId}::uuid
       and org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
+      and exists (
+        select 1 from app.persons gp
+        where gp.id = gl.guardian_person_id
+          and gp.org_id = current_setting('app.org_id')::uuid
+          and gp.community_id = current_setting('app.community_id')::uuid
+          and gp.deleted_at is null
+      )
+      and exists (
+        select 1 from app.persons cp
+        where cp.id = gl.child_person_id
+          and cp.org_id = current_setting('app.org_id')::uuid
+          and cp.community_id = current_setting('app.community_id')::uuid
+          and cp.deleted_at is null
+      )
     order by id asc
   `;
 
@@ -565,6 +581,7 @@ export async function readHouseholdDetail(
         where id = any(${childIds}::uuid[])
           and org_id = current_setting('app.org_id')::uuid
           and community_id = current_setting('app.community_id')::uuid
+          and deleted_at is null
       `;
       const minorMap = new Map(minorCheck.map((m) => [m.id, m.is_minor]));
       guardians = linkRows

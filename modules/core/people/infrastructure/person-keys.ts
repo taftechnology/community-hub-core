@@ -130,6 +130,7 @@ export async function openPersonFieldKeys(
     select is_minor, household_id::text as household_id
     from app.persons
     where id = ${input.personId}::uuid
+      and deleted_at is null
   `;
   const row = rows[0];
   if (row === undefined) {

@@ -38,6 +38,7 @@ export async function summarisePersons(
     where org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
       and is_minor = false
+      and deleted_at is null
   `;
 
   const row = rows[0];

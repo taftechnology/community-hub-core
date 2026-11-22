@@ -100,6 +100,7 @@ export async function readLinkedContacts(
     where id = any(${ids}::uuid[])
       and org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
+      and deleted_at is null
   `;
 
   if (rows.length === 0) {

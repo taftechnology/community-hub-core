@@ -134,12 +134,160 @@ function parseMinorCursor(cursor: string): MinorCursor {
   throw new PeopleError("invalid_input");
 }
 
-function encodeCursor(payload: AdultCursor | MinorCursor): string {
+function encodeCursor(payload: AdultCursor | MinorCursor | DeletedCursor): string {
   return Buffer.from(JSON.stringify(payload)).toString("base64url");
 }
 
 function escapeLike(text: string): string {
   return text.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
+}
+
+export type ListDeletedPersonsInput = {
+  search?: string | null;
+  cursor?: string | null;
+  limit?: number;
+  actorUserId: string;
+};
+
+export type DeletedPersonListItem = {
+  id: string;
+  givenName: string;
+  familyName: string;
+  deletedAt: string;
+  purgeAfter: string;
+  version: number;
+};
+
+export type ListDeletedPersonsResult = {
+  items: DeletedPersonListItem[];
+  nextCursor: string | null;
+};
+
+// The Deleted list's cursor carries deleted_at as the text Postgres prints (microseconds kept)
+// and the id. A JS Date would cut it to milliseconds and skip or repeat rows that share one.
+// The cast goes through text because the driver turns a timestamptz parameter into a Date.
+type DeletedCursor = { d: string; i: string };
+
+const TIMESTAMPTZ_TEXT_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?[+-]\d{2}(:\d{2})?$/;
+
+function parseDeletedCursor(cursor: string): DeletedCursor {
+  for (const encoding of ["base64url", "base64"] as const) {
+    try {
+      const parsed: unknown = JSON.parse(Buffer.from(cursor, encoding).toString("utf8"));
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "d" in parsed &&
+        "i" in parsed &&
+        typeof parsed.d === "string" &&
+        typeof parsed.i === "string" &&
+        TIMESTAMPTZ_TEXT_RE.test(parsed.d) &&
+        UUID_RE.test(parsed.i)
+      ) {
+        return { d: parsed.d, i: parsed.i };
+      }
+    } catch {
+      // try the next encoding
+    }
+  }
+  throw new PeopleError("invalid_input");
+}
+
+function toIso(value: Date | string): string {
+  return (value instanceof Date ? value : new Date(value)).toISOString();
+}
+
+// Hidden adults, newest hide first. It never opens a key, decrypts or returns email, phone or
+// date of birth: a name, the two dates and the version are all the screen needs.
+export async function listDeletedPersons(
+  tx: AppTransaction,
+  input: ListDeletedPersonsInput,
+): Promise<ListDeletedPersonsResult> {
+  if (typeof input.actorUserId !== "string" || !UUID_RE.test(input.actorUserId)) {
+    throw new PeopleError("invalid_input");
+  }
+
+  const limit = input.limit ?? 50;
+  if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > 100) {
+    throw new PeopleError("invalid_input");
+  }
+
+  const term = typeof input.search === "string" ? input.search.trim() : "";
+  if (term.length > 100) {
+    throw new PeopleError("invalid_input");
+  }
+
+  let cursorClause = tx``;
+  if (typeof input.cursor === "string" && input.cursor.length > 0) {
+    const c = parseDeletedCursor(input.cursor);
+    cursorClause = tx`and (
+      deleted_at < ${c.d}::text::timestamptz
+      or (deleted_at = ${c.d}::text::timestamptz and id > ${c.i}::uuid)
+    )`;
+  }
+
+  let searchClause = tx``;
+  if (term.length > 0) {
+    const pattern = `${escapeLike(term)}%`;
+    searchClause = tx`and (given_name ilike ${pattern} or family_name ilike ${pattern})`;
+  }
+
+  const rows = await tx<
+    {
+      id: string;
+      given_name: string | null;
+      family_name: string | null;
+      version: number;
+      deleted_at: Date | string;
+      deleted_at_text: string;
+      purge_after: Date | string;
+    }[]
+  >`
+    select
+      id::text as id,
+      given_name,
+      family_name,
+      version,
+      deleted_at,
+      deleted_at::text as deleted_at_text,
+      (deleted_at + interval '720 hours') as purge_after
+    from app.persons
+    where org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
+      and is_minor = false
+      and deleted_at is not null
+      ${cursorClause}
+      ${searchClause}
+    order by deleted_at desc, id asc
+    limit ${limit + 1}
+  `;
+
+  const hasMore = rows.length > limit;
+  const pageRows = rows.slice(0, limit);
+  const last = pageRows[pageRows.length - 1];
+  const nextCursor = hasMore && last ? encodeCursor({ d: last.deleted_at_text, i: last.id }) : null;
+
+  if (pageRows.length > 0) {
+    await appendAuditEvent(tx, {
+      actorKind: "user",
+      actorId: input.actorUserId,
+      action: "people.person.listed_deleted",
+      purpose: "people.person.listed_deleted",
+      targetIds: pageRows.map((r) => r.id),
+    });
+  }
+
+  return {
+    items: pageRows.map((r) => ({
+      id: r.id,
+      givenName: r.given_name ?? "",
+      familyName: r.family_name ?? "",
+      deletedAt: toIso(r.deleted_at),
+      purgeAfter: toIso(r.purge_after),
+      version: r.version,
+    })),
+    nextCursor,
+  };
 }
 
 export async function listPersons(
@@ -290,6 +438,7 @@ export async function listPersons(
       where org_id = current_setting('app.org_id')::uuid
         and community_id = current_setting('app.community_id')::uuid
         and is_minor = false
+        and deleted_at is null
         ${cursorClause}
         ${searchClause}
         ${statusClause}
