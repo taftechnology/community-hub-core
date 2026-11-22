@@ -295,7 +295,7 @@ describe("purgeDeletedPersons", () => {
     expect(purged).toBeUndefined();
   });
 
-  it("purge skips a contact linked to a user", async () => {
+  it("purge skips a contact with a user link", async () => {
     const scope = await setupTenant("p18");
     const contactLinked = await insertAdult(scope, "Linked", "User");
     await agePerson(scope, contactLinked, 721);
