@@ -475,3 +475,18 @@ Source: the checkpoint 3 owner's check (Claude Haiku 5.5, CHANGES NEEDED, 2 Medi
   - F5: an update that races a hide answers 409, not 404 (A2's F4).
   - F6: the dialog's date is computed in the browser before the request; the Deleted list shows the server's.
   - B2 to B4: View and Delete stack at 1280px; on a phone a deleted row reads "Deleted" twice, because the spec fixes the second text; a Deleted search with no match shows "No deleted contacts.".
+
+### A4 (2026-11-23, after the second review): restore only within 720 hours
+
+Source: the second independent review on the pull request (Claude Haiku 5.5, CHANGES REQUESTED, F1 Medium; shown by a probe that restored a contact hidden 721 hours). `restorePerson` locks a hidden adult with no time condition, so a contact hidden longer than 720 hours can be restored until a sweep purges it. The spec's Problem ("can restore it for 30 days") and Screen ("can restore them until then"), architecture §12.4 and the roadmap row say restore ends at 720 hours. One commit.
+
+- **People, commit `fix(people): restore only a contact hidden less than 720 hours`:** the lock select in `restorePerson` gains `and deleted_at > now() - interval '720 hours'`, the complement of the purge's `deleted_at <= now() - interval '720 hours'` on the same database clock, so every hidden contact is either restorable or due for purge. Past it, restore answers `not_found` and the route 404, which the screen already shows as "This contact was deleted permanently." and reloads. The route does not sweep after that 404. Files **H** and **R**; tests age the contact through the migrator with the user triggers off, as `purge.integration.test.ts` does.
+
+| #   | Setting                               | Weakening                                        | File | Test that must fail (exact `it` title)                                  |
+| --- | ------------------------------------- | ------------------------------------------------ | ---- | ----------------------------------------------------------------------- |
+| 29b | Restore only within 720 hours         | Drop the 720-hour condition from `restorePerson` | H    | restore answers not found for a contact hidden 721 hours                |
+| 75b | Restore route refuses after 720 hours | Drop the 720-hour condition from `restorePerson` | R    | restore answers 404 for a contact hidden 721 hours and leaves it hidden |
+
+- 29b: a contact hidden 721 hours rejects with `not_found`, and `deleted_at`, `deleted_by` and `version` are unchanged; in the same test a contact hidden 719 hours restores.
+- 75b: the restore answers 404 with no body, the contact is still hidden afterwards (read as the migrator), and no `people.person.purged` audit is written by that call.
+- Not acted on, recorded for the pull request: F2 (`duplicate_deleted` tells a caller without `people.delete` that a hidden contact holds the email or phone; spec-approved, listed in the open items); F3 (the purge's community predicate is pinned with RLS as one layer, pin 17); F4 (an adult list by a `people.view` holder triggers the sweep, ADR 0020). A Deleted-list row past its date still shows Restore until a sweep purges it; Restore then answers 404 with the purged message.
