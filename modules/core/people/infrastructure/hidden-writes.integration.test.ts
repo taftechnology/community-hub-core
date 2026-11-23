@@ -661,6 +661,173 @@ describe("hidden writes", () => {
     );
   }, 20_000);
 
+  // Rejects when the promise has not settled within `ms`, so no wait can hang the file.
+  function within<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(`${what} did not settle in ${ms} ms`)), ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  }
+
+  // Transaction 1 locks the guardian for delete (lockPersonForDelete only) and stays open.
+  // Transaction 2 runs `second`. When transaction 2 is proven blocked through pg_locks
+  // (granted = false for its backend pid, running a statement on app.persons), transaction 1
+  // runs hidePerson, which locks the guardian's children, and commits. A lock order that makes
+  // the two cross ends in a deadlock (40P01) on one side. The wait never exceeds 10 s, and both
+  // transactions are released and settled in finally.
+  async function raceGuardianWriteAgainstDelete<T>(
+    scope: Scope,
+    guardianId: string,
+    second: (tx: AppTransaction) => Promise<T>,
+  ): Promise<{ blocked: boolean; first: Outcome<void>; outcome: Outcome<T> }> {
+    const app1 = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const app2 = createPlaintextAppSql(roleUrl(runtime, "app"));
+    let locked!: () => void;
+    const lockedPromise = new Promise<void>((resolve) => {
+      locked = resolve;
+    });
+    let proceed!: () => void;
+    const proceedPromise = new Promise<void>((resolve) => {
+      proceed = resolve;
+    });
+    const state: { pid: number | null; settled: boolean } = { pid: null, settled: false };
+    let tx1: Promise<Outcome<void>> | undefined;
+    let tx2: Promise<Outcome<T>> | undefined;
+    try {
+      tx1 = withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app1, scope, async (tx) => {
+          await lockPersonForDelete(tx, { personId: guardianId, version: 1 });
+          locked();
+          await proceedPromise;
+          await hidePerson(tx, { personId: guardianId, actorUserId: newId() });
+        }),
+      )
+        .then((): Outcome<void> => ({ ok: true, value: undefined }))
+        .catch((error: unknown): Outcome<void> => ({ ok: false, error }));
+      // Resolves when the guardian is locked; the transaction itself settles only on a failure.
+      await within(
+        Promise.race([
+          lockedPromise,
+          tx1.then((outcome) => {
+            if (!outcome.ok) {
+              throw outcome.error;
+            }
+          }),
+        ]),
+        10_000,
+        "the delete transaction locking the guardian",
+      );
+
+      tx2 = withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app2, scope, async (tx) => {
+          const rows = await tx<{ pid: number }[]>`select pg_backend_pid() as pid`;
+          state.pid = rows[0]?.pid ?? null;
+          return await second(tx);
+        }),
+      )
+        .then((value): Outcome<T> => ({ ok: true, value }))
+        .catch((error: unknown): Outcome<T> => ({ ok: false, error }))
+        .finally(() => {
+          state.settled = true;
+        });
+
+      let blocked = false;
+      const started = Date.now();
+      while (Date.now() - started < 10_000 && !state.settled) {
+        if (state.pid !== null) {
+          const rows = await migrator<{ count: number }[]>`
+            select count(*)::int as count
+            from pg_locks l
+            join pg_stat_activity a on a.pid = l.pid
+            where l.pid = ${state.pid}
+              and l.granted = false
+              and a.query like '%app.persons%'
+          `;
+          if ((rows[0]?.count ?? 0) > 0) {
+            blocked = true;
+            break;
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      proceed();
+      const first = await within(tx1, 15_000, "the delete transaction");
+      const outcome = await within(tx2, 15_000, "the second transaction");
+      return { blocked, first, outcome };
+    } finally {
+      proceed();
+      await Promise.allSettled([tx1, tx2].filter((p) => p !== undefined));
+      await app1.end({ timeout: 1 });
+      await app2.end({ timeout: 1 });
+    }
+  }
+
+  it("linkGuardian and a delete of the same guardian do not deadlock", async () => {
+    const scope = await setupTenant("hw48c");
+    const { householdId, childId } = await familyWithChild(scope, "Linkrace");
+    // The child's id must sort before the guardian's: the order that crosses with a delete.
+    let guardian = "";
+    for (let attempt = 0; attempt < 50 && !(childId < guardian); attempt += 1) {
+      guardian = await addAdultPerson(scope, "Hugo", "Linkrace", { householdId });
+    }
+    expect(childId < guardian).toBe(true);
+    const guardianLink = await link(scope, householdId, guardian, childId);
+    const linksBefore = await countRows(scope, "guardian_links", "child_person_id", childId);
+    expect(linksBefore).toBe(2);
+
+    const { blocked, first, outcome } = await raceGuardianWriteAgainstDelete(
+      scope,
+      guardian,
+      (tx) =>
+        linkGuardian(tx, {
+          now: NOW,
+          householdId,
+          guardianPersonId: guardian,
+          childPersonId: childId,
+          consent: true,
+          pickup: true,
+          view: true,
+          manage: true,
+          actorUserId: null,
+        }),
+    );
+
+    expect(blocked).toBe(true);
+    expect(first).toEqual({ ok: true, value: undefined });
+    expect(outcome.ok).toBe(false);
+    expect(!outcome.ok && outcome.error).toMatchObject({ code: "not_found" });
+    expect(await countRows(scope, "guardian_links", "child_person_id", childId)).toBe(linksBefore);
+    expect(await countRows(scope, "guardian_links", "guardian_person_id", guardian)).toBe(1);
+    expect(guardianLink).toEqual(expect.any(String));
+    expect((await personRow(scope, guardian)).deleted_at).not.toBeNull();
+  }, 20_000);
+
+  it("unlinkGuardian and a delete of the same guardian do not deadlock", async () => {
+    const scope = await setupTenant("hw50c");
+    const { householdId, childId } = await familyWithChild(scope, "Unlinkrace");
+    const guardian = await addAdultPerson(scope, "Hugo", "Unlinkrace", { householdId });
+    const guardianLink = await link(scope, householdId, guardian, childId);
+    const linksBefore = await countRows(scope, "guardian_links", "child_person_id", childId);
+    expect(linksBefore).toBe(2);
+
+    const { blocked, first, outcome } = await raceGuardianWriteAgainstDelete(
+      scope,
+      guardian,
+      (tx) =>
+        unlinkGuardian(tx, { now: NOW, householdId, linkId: guardianLink, actorUserId: null }),
+    );
+
+    expect(blocked).toBe(true);
+    expect(first).toEqual({ ok: true, value: undefined });
+    expect(outcome.ok).toBe(false);
+    expect(!outcome.ok && outcome.error).toMatchObject({ code: "not_found" });
+    expect(await countRows(scope, "guardian_links", "child_person_id", childId)).toBe(linksBefore);
+    expect(await countRows(scope, "guardian_links", "guardian_person_id", guardian)).toBe(1);
+    expect((await personRow(scope, guardian)).deleted_at).not.toBeNull();
+  }, 20_000);
+
   it("listPersonActivity answers not found for a hidden contact", async () => {
     const scope = await setupTenant("hw53");
     const visible = await addAdultPerson(scope, "Vera", "Activity");

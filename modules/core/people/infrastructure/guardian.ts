@@ -65,10 +65,6 @@ async function householdExists(tx: AppTransaction, householdId: string): Promise
   return rows[0] !== undefined;
 }
 
-function sortPair(a: string, b: string): [string, string] {
-  return a < b ? [a, b] : [b, a];
-}
-
 export async function linkGuardian(
   tx: AppTransaction,
   input: GuardianInput,
@@ -92,21 +88,31 @@ export async function linkGuardian(
     throw new PeopleError("not_found");
   }
 
-  // Pin 23: Lock both guardian and child rows in sorted order with for share
-  const [firstId, secondId] = sortPair(input.guardianPersonId, input.childPersonId);
-  const members = await tx<{ id: string; is_minor: boolean; household_id: string | null }[]>`
+  // Pin 23: Lock the guardian first and the child second, both for share, as delete does
+  // (the contact, then its children). One order everywhere, so a link, an unlink and a delete of
+  // the same guardian cannot deadlock. Each lock is one statement with the tenant scope and
+  // deleted_at is null; a missing row is not found.
+  const guardianRows = await tx<{ id: string; is_minor: boolean; household_id: string | null }[]>`
     select id::text as id, is_minor, household_id::text as household_id
     from app.persons
-    where id in (${firstId}::uuid, ${secondId}::uuid)
+    where id = ${input.guardianPersonId}::uuid
       and org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
       and deleted_at is null
-    order by id asc
+    for share
+  `;
+  const childRows = await tx<{ id: string; is_minor: boolean; household_id: string | null }[]>`
+    select id::text as id, is_minor, household_id::text as household_id
+    from app.persons
+    where id = ${input.childPersonId}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
+      and deleted_at is null
     for share
   `;
 
-  const guardian = members.find((m) => m.id === input.guardianPersonId);
-  const child = members.find((m) => m.id === input.childPersonId);
+  const guardian = guardianRows[0];
+  const child = childRows[0];
 
   if (guardian === undefined || child === undefined) {
     throw new PeopleError("not_found");
@@ -204,20 +210,8 @@ export async function unlinkGuardian(
     throw new PeopleError("not_found");
   }
 
-  // Pin 3: Lock the child person row for update
-  const lockedChild = await tx<{ id: string }[]>`
-    select id::text as id
-    from app.persons
-    where id = ${link.child_person_id}::uuid
-      and org_id = current_setting('app.org_id')::uuid
-      and community_id = current_setting('app.community_id')::uuid
-    for update
-  `;
-  if (lockedChild[0] === undefined) {
-    throw new PeopleError("not_found");
-  }
-
-  // A hidden guardian's link answers not found. The guardian is locked after the child.
+  // A hidden guardian's link answers not found. The guardian is locked first and the child
+  // second, the order delete uses (the contact, then its children).
   const lockedGuardian = await tx<{ id: string }[]>`
     select id::text as id
     from app.persons
@@ -228,6 +222,19 @@ export async function unlinkGuardian(
     for update
   `;
   if (lockedGuardian[0] === undefined) {
+    throw new PeopleError("not_found");
+  }
+
+  // Pin 3: Lock the child person row for update
+  const lockedChild = await tx<{ id: string }[]>`
+    select id::text as id
+    from app.persons
+    where id = ${link.child_person_id}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
+    for update
+  `;
+  if (lockedChild[0] === undefined) {
     throw new PeopleError("not_found");
   }
 
