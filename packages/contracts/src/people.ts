@@ -45,6 +45,8 @@ export type PersonStatus = (typeof PERSON_STATUSES)[number];
 
 const personSource = z.enum(PERSON_SOURCES);
 const personStatus = z.enum(PERSON_STATUSES);
+// "deleted" is a filter value on the list, never a stored status.
+const listStatus = z.enum([...PERSON_STATUSES, "deleted"]);
 const createUpdateSource = z.enum(["manual", "family_records"]);
 
 export const listPeopleBody = z
@@ -54,7 +56,7 @@ export const listPeopleBody = z
     search: search.optional(),
     cursor: cursor.optional(),
     limit: z.number().int().min(1).max(100).optional(),
-    status: personStatus.optional(),
+    status: listStatus.optional(),
     source: personSource.optional(),
     groupId: uuid.optional(),
   })
@@ -67,6 +69,13 @@ export const listPeopleBody = z
       ),
     {
       message: "minors list does not accept status, source, or groupId",
+    },
+  )
+  .refine(
+    (data) =>
+      !(data.status === "deleted" && (data.source !== undefined || data.groupId !== undefined)),
+    {
+      message: "the deleted list accepts a name search only, not source or groupId",
     },
   );
 
@@ -119,6 +128,72 @@ export const personStatusResponse = z
   })
   .strict();
 
+export const personDeleteBody = z
+  .object({
+    communitySlug: slug,
+    personId: uuid,
+    version: z.number().int().positive(),
+  })
+  .strict();
+
+export const personDeleteResponse = z
+  .object({
+    personId: uuid,
+    version: z.number().int().positive(),
+    purgeAfter: z.string().datetime({ offset: true }),
+  })
+  .strict();
+
+export const personRestoreBody = z
+  .object({
+    communitySlug: slug,
+    personId: uuid,
+    version: z.number().int().positive(),
+  })
+  .strict();
+
+export const personRestoreResponse = z
+  .object({
+    personId: uuid,
+    version: z.number().int().positive(),
+  })
+  .strict();
+
+// The Deleted list returns names and dates only. Its cursor is opaque to clients.
+export const deletedPersonListItem = z
+  .object({
+    id: uuid,
+    givenName: z.string().min(1),
+    familyName: z.string().min(1),
+    deletedAt: z.string().datetime({ offset: true }),
+    purgeAfter: z.string().datetime({ offset: true }),
+    version: z.number().int().positive(),
+  })
+  .strict();
+
+export const deletedPeopleListResponse = z
+  .object({
+    items: z.array(deletedPersonListItem),
+    nextCursor: cursor.nullable(),
+  })
+  .strict();
+
+// The new refusals answer 409 with a code. Every other answer stays status-only.
+export const PEOPLE_ERROR_CODES = [
+  "linked_user",
+  "pending_invitation",
+  "sole_guardian",
+  "duplicate_deleted",
+] as const;
+
+export type PeopleErrorCode = (typeof PEOPLE_ERROR_CODES)[number];
+
+export const peopleErrorBody = z
+  .object({
+    code: z.enum(PEOPLE_ERROR_CODES),
+  })
+  .strict();
+
 export const peopleSummaryBody = z
   .object({
     communitySlug: slug,
@@ -151,6 +226,13 @@ export type CreatePersonBody = z.infer<typeof createPersonBody>;
 export type UpdatePersonBody = z.infer<typeof updatePersonBody>;
 export type PersonStatusBody = z.infer<typeof personStatusBody>;
 export type PersonStatusResponse = z.infer<typeof personStatusResponse>;
+export type PersonDeleteBody = z.infer<typeof personDeleteBody>;
+export type PersonDeleteResponse = z.infer<typeof personDeleteResponse>;
+export type PersonRestoreBody = z.infer<typeof personRestoreBody>;
+export type PersonRestoreResponse = z.infer<typeof personRestoreResponse>;
+export type DeletedPersonListItem = z.infer<typeof deletedPersonListItem>;
+export type DeletedPeopleListResponse = z.infer<typeof deletedPeopleListResponse>;
+export type PeopleErrorBody = z.infer<typeof peopleErrorBody>;
 export type PeopleSummaryBody = z.infer<typeof peopleSummaryBody>;
 export type PeopleSummaryResponse = z.infer<typeof peopleSummaryResponse>;
 

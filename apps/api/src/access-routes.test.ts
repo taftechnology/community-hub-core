@@ -645,6 +645,7 @@ describe("access routes", () => {
           "people.manage": true,
           "people.restricted.read": true,
           "service_times.manage": true,
+          "people.delete": true,
         },
         entitlements: {
           "people.directory": true,
@@ -699,6 +700,7 @@ describe("access routes", () => {
         "people.manage": false,
         "people.restricted.read": false,
         "service_times.manage": false,
+        "people.delete": false,
       });
       expect(data.entitlements).toEqual({
         "people.directory": true,
@@ -787,6 +789,7 @@ describe("access routes", () => {
         "people.manage": false,
         "people.restricted.read": false,
         "service_times.manage": false,
+        "people.delete": false,
       });
 
       // only people.manage
@@ -808,6 +811,7 @@ describe("access routes", () => {
         "people.manage": true,
         "people.restricted.read": false,
         "service_times.manage": false,
+        "people.delete": false,
       });
 
       // only people.restricted.read
@@ -829,6 +833,7 @@ describe("access routes", () => {
         "people.manage": false,
         "people.restricted.read": true,
         "service_times.manage": false,
+        "people.delete": false,
       });
 
       // only service_times.manage
@@ -850,6 +855,29 @@ describe("access routes", () => {
         "people.manage": false,
         "people.restricted.read": false,
         "service_times.manage": true,
+        "people.delete": false,
+      });
+
+      // only people.delete
+      access.holdsPermission.mockImplementation(
+        async (_tx: unknown, _userId: string, perm: string) => perm === "people.delete",
+      );
+      const resDelete = await route("/v1/access/capabilities").handle(
+        request(
+          "/v1/access/capabilities",
+          API_HOSTNAME,
+          { communitySlug: "parish" },
+          `Bearer ${TOKEN}`,
+        ),
+      );
+      expect(resDelete.status).toBe(200);
+      const dataDelete = (await resDelete.json()) as CapabilitiesResponse;
+      expect(dataDelete.permissions).toEqual({
+        "people.view": false,
+        "people.manage": false,
+        "people.restricted.read": false,
+        "service_times.manage": false,
+        "people.delete": true,
       });
 
       // Entitlements toggles
