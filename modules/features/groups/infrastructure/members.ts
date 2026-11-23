@@ -183,7 +183,7 @@ export async function removeMember(tx: AppTransaction, input: RemoveMemberInput)
   }
 
   // A hidden contact is not found. A person who is no member keeps the old answer, false.
-  if ((await visiblePersonIds(tx, [input.personId])).length === 0) {
+  if ((await visiblePersonIds(tx, [input.personId], { lock: "share" })).length === 0) {
     const held = await tx<{ person_id: string }[]>`
       select person_id::text as person_id
       from app.group_members
@@ -253,7 +253,7 @@ export async function setMemberRole(tx: AppTransaction, input: SetMemberRoleInpu
     throw new GroupsError("group_archived");
   }
 
-  if ((await visiblePersonIds(tx, [input.personId])).length === 0) {
+  if ((await visiblePersonIds(tx, [input.personId], { lock: "share" })).length === 0) {
     throw new GroupsError("person_not_found");
   }
 

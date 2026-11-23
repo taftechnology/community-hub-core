@@ -209,8 +209,14 @@ export async function readRosterNames(
 }
 
 // The subset of ids that exist in the current scope and are not hidden, in the order given.
-// Groups uses it to leave hidden contacts out of its own reads.
-export async function visiblePersonIds(tx: AppTransaction, ids: string[]): Promise<string[]> {
+// Groups uses it to leave hidden contacts out of its own reads. A write passes
+// { lock: "share" } to read the contacts FOR SHARE in id order, so it waits for a delete in
+// flight; the read callers stay unlocked.
+export async function visiblePersonIds(
+  tx: AppTransaction,
+  ids: string[],
+  options?: { lock?: "share" },
+): Promise<string[]> {
   if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string" || !UUID_RE.test(id))) {
     throw new PeopleError("invalid_input");
   }
@@ -218,14 +224,26 @@ export async function visiblePersonIds(tx: AppTransaction, ids: string[]): Promi
   if (wanted.length === 0) {
     return [];
   }
-  const rows = await tx<{ id: string }[]>`
-    select id::text as id
-    from app.persons
-    where id = any(${wanted}::uuid[])
-      and org_id = current_setting('app.org_id')::uuid
-      and community_id = current_setting('app.community_id')::uuid
-      and deleted_at is null
-  `;
+  const rows =
+    options?.lock === "share"
+      ? await tx<{ id: string }[]>`
+          select id::text as id
+          from app.persons
+          where id = any(${wanted}::uuid[])
+            and org_id = current_setting('app.org_id')::uuid
+            and community_id = current_setting('app.community_id')::uuid
+            and deleted_at is null
+          order by id asc
+          for share
+        `
+      : await tx<{ id: string }[]>`
+          select id::text as id
+          from app.persons
+          where id = any(${wanted}::uuid[])
+            and org_id = current_setting('app.org_id')::uuid
+            and community_id = current_setting('app.community_id')::uuid
+            and deleted_at is null
+        `;
   const found = new Set(rows.map((r) => r.id));
   return wanted.filter((id) => found.has(id));
 }
