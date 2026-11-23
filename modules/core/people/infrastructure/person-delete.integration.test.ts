@@ -472,6 +472,73 @@ describe("person-delete", () => {
     expect(after?.deleted_by).toBe(hidden?.deleted_by);
   });
 
+  async function countAuditEvents(
+    scope: { orgId: string; communityId: string },
+    personId: string,
+  ): Promise<number> {
+    const rows = await withAppTransaction(migrator, scope, async (tx) => {
+      return await tx<{ count: number }[]>`
+        select count(*)::int as count
+        from app.audit_events
+        where org_id = ${scope.orgId}::uuid
+          and ${personId}::uuid = any(target_ids)
+      `;
+    });
+    return rows[0]?.count ?? 0;
+  }
+
+  it("hidePerson alone answers not found for a hidden contact", async () => {
+    const scope = await setupTenant("pin28d");
+    const adult = await insertAdult(scope, "Twice", "Hidden");
+
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, scope, async (tx) => {
+        await lockPersonForDelete(tx, { personId: adult, version: 1 });
+        await hidePerson(tx, { personId: adult, actorUserId: newId() });
+      }),
+    );
+    const hidden = await getPerson(scope, adult);
+    expect(hidden?.deleted_at).not.toBeNull();
+    expect(hidden?.version).toBe(2);
+    const eventsBefore = await countAuditEvents(scope, adult);
+
+    // No lockPersonForDelete: the update itself must refuse a contact that is already hidden.
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      expect(
+        withAppTransaction(app, scope, async (tx) => {
+          await hidePerson(tx, { personId: adult, actorUserId: newId() });
+        }),
+      ).rejects.toMatchObject({ code: "not_found" }),
+    );
+
+    const after = await getPerson(scope, adult);
+    expect(after?.version).toBe(2);
+    expect(after?.deleted_at).toEqual(hidden?.deleted_at);
+    expect(after?.deleted_by).toBe(hidden?.deleted_by);
+    expect(await countAuditEvents(scope, adult)).toBe(eventsBefore);
+  });
+
+  it("hidePerson alone answers not found for a minor", async () => {
+    const scope = await setupTenant("pin28e");
+    const { minorId } = await insertMinor(scope);
+    const eventsBefore = await countAuditEvents(scope, minorId);
+
+    // No lockPersonForDelete: the update itself must refuse a minor.
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      expect(
+        withAppTransaction(app, scope, async (tx) => {
+          await hidePerson(tx, { personId: minorId, actorUserId: newId() });
+        }),
+      ).rejects.toMatchObject({ code: "not_found" }),
+    );
+
+    const after = await getPerson(scope, minorId);
+    expect(after?.version).toBe(1);
+    expect(after?.deleted_at).toBeNull();
+    expect(after?.deleted_by).toBeNull();
+    expect(await countAuditEvents(scope, minorId)).toBe(eventsBefore);
+  });
+
   it("restore answers not found for a hidden minor", async () => {
     const scope = await setupTenant("pin28c");
     const { minorId } = await insertMinor(scope);

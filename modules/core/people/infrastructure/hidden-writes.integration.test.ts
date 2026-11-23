@@ -70,6 +70,8 @@ function roleUrl(runtime: Runtime, role: "app" | "platform"): string {
   return `postgres://${role}:${password}@127.0.0.1:5432/hub_product_only`;
 }
 
+type Outcome<T> = { ok: true; value: T } | { ok: false; error: unknown };
+
 type PersonRow = {
   version: number;
   status: string;
@@ -467,6 +469,197 @@ describe("hidden writes", () => {
     ).resolves.toBeUndefined();
     expect(await countRows(scope, "person_tag_links", "person_id", visible)).toBe(0);
   });
+
+  // One transaction deletes (lock and hide) and holds; a second runs `second`. The second is
+  // proven blocked through pg_locks (granted = false for its backend pid, running a statement on
+  // app.persons). Then the delete commits and the second's outcome is returned. The wait never
+  // exceeds 10 s.
+  async function raceAgainstDelete<T>(
+    scope: Scope,
+    personId: string,
+    second: (tx: AppTransaction) => Promise<T>,
+  ): Promise<{ blocked: boolean; outcome: Outcome<T> }> {
+    const app1 = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const app2 = createPlaintextAppSql(roleUrl(runtime, "app"));
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let ready!: () => void;
+    const readyPromise = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    const state: { pid: number | null; settled: boolean } = { pid: null, settled: false };
+    try {
+      const tx1 = withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app1, scope, async (tx) => {
+          await lockPersonForDelete(tx, { personId, version: 1 });
+          await hidePerson(tx, { personId, actorUserId: newId() });
+          ready();
+          await hold;
+        }),
+      );
+      // Rejects if the delete transaction fails before it holds the contact.
+      await Promise.race([readyPromise, tx1]);
+
+      const tx2: Promise<Outcome<T>> = withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app2, scope, async (tx) => {
+          const rows = await tx<{ pid: number }[]>`select pg_backend_pid() as pid`;
+          state.pid = rows[0]?.pid ?? null;
+          return await second(tx);
+        }),
+      )
+        .then((value): Outcome<T> => ({ ok: true, value }))
+        .catch((error: unknown): Outcome<T> => ({ ok: false, error }))
+        .finally(() => {
+          state.settled = true;
+        });
+
+      let blocked = false;
+      const started = Date.now();
+      while (Date.now() - started < 10_000 && !state.settled) {
+        if (state.pid !== null) {
+          // Blocked on a lock while running a statement on app.persons: the contact's row lock,
+          // not the audit chain or another wait.
+          const rows = await migrator<{ count: number }[]>`
+            select count(*)::int as count
+            from pg_locks l
+            join pg_stat_activity a on a.pid = l.pid
+            where l.pid = ${state.pid}
+              and l.granted = false
+              and a.query like '%app.persons%'
+          `;
+          if ((rows[0]?.count ?? 0) > 0) {
+            blocked = true;
+            break;
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      release();
+      await tx1;
+      return { blocked, outcome: await tx2 };
+    } finally {
+      release();
+      await app1.end({ timeout: 1 });
+      await app2.end({ timeout: 1 });
+    }
+  }
+
+  type LifeEventStored = {
+    version: number;
+    event_type: Buffer;
+    event_date: Buffer;
+    place: Buffer;
+    notes: Buffer | null;
+  };
+
+  async function lifeEventStored(scope: Scope, eventId: string): Promise<LifeEventStored> {
+    const rows = await withAppTransaction(migrator, scope, async (tx) => {
+      return await tx<LifeEventStored[]>`
+        select version, event_type, event_date, place, notes
+        from app.life_events
+        where id = ${eventId}::uuid
+      `;
+    });
+    const row = rows[0];
+    if (row === undefined) {
+      throw new Error("life event row is missing");
+    }
+    return row;
+  }
+
+  it("attachTag waits for a delete that holds the contact", async () => {
+    const scope = await setupTenant("hw51b");
+    const contact = await addAdultPerson(scope, "Hugo", "Attacher");
+    const tagId = await inScope(
+      scope,
+      async (tx) => (await createTag(tx, { label: "readers" })).tagId,
+    );
+    const activityBefore = await countRows(scope, "person_activity", "person_id", contact);
+
+    const { blocked, outcome } = await raceAgainstDelete(scope, contact, (tx) =>
+      attachTag(tx, { now: NOW, personId: contact, tagId, actorUserId: null }),
+    );
+
+    expect(blocked).toBe(true);
+    expect(outcome.ok).toBe(false);
+    expect(!outcome.ok && outcome.error).toMatchObject({ code: "not_found" });
+    expect(await countRows(scope, "person_tag_links", "person_id", contact)).toBe(0);
+    expect(await countRows(scope, "person_activity", "person_id", contact)).toBe(activityBefore);
+  }, 20_000);
+
+  it("detachTag waits for a delete that holds the contact", async () => {
+    const scope = await setupTenant("hw52b");
+    const contact = await addAdultPerson(scope, "Hugo", "Detacher");
+    const tagId = await inScope(
+      scope,
+      async (tx) => (await createTag(tx, { label: "servers" })).tagId,
+    );
+    await inScope(scope, (tx) =>
+      attachTag(tx, { now: NOW, personId: contact, tagId, actorUserId: null }),
+    );
+    const activityBefore = await countRows(scope, "person_activity", "person_id", contact);
+    expect(await countRows(scope, "person_tag_links", "person_id", contact)).toBe(1);
+
+    const { blocked, outcome } = await raceAgainstDelete(scope, contact, (tx) =>
+      detachTag(tx, { now: NOW, personId: contact, tagId, actorUserId: null }),
+    );
+
+    expect(blocked).toBe(true);
+    expect(outcome.ok).toBe(false);
+    expect(!outcome.ok && outcome.error).toMatchObject({ code: "not_found" });
+    expect(await countRows(scope, "person_tag_links", "person_id", contact)).toBe(1);
+    expect(await countRows(scope, "person_activity", "person_id", contact)).toBe(activityBefore);
+  }, 20_000);
+
+  it("updateLifeEvent waits for a delete that holds the contact", async () => {
+    const scope = await setupTenant("hw55b");
+    const contact = await addAdultPerson(scope, "Hugo", "Racer");
+    const eventId = await inScope(
+      scope,
+      async (tx) =>
+        (
+          await createLifeEvent(tx, kms, KEY_ARN, {
+            personId: contact,
+            type: "marriage",
+            date: "2019-02-03",
+            place: "Synthetic Church",
+            notes: null,
+            actorUserId: null,
+            now: NOW,
+          })
+        ).eventId,
+    );
+    const before = await lifeEventStored(scope, eventId);
+    expect(before.version).toBe(1);
+
+    const { blocked, outcome } = await raceAgainstDelete(scope, contact, (tx) =>
+      updateLifeEvent(tx, kms, KEY_ARN, {
+        eventId,
+        version: 1,
+        type: "marriage",
+        date: "2019-02-04",
+        place: "Changed Place",
+        notes: null,
+        actorUserId: null,
+        now: NOW,
+      }),
+    );
+
+    expect(blocked).toBe(true);
+    expect(outcome.ok).toBe(false);
+    expect(!outcome.ok && outcome.error).toMatchObject({ code: "life_event_not_found" });
+    const after = await lifeEventStored(scope, eventId);
+    expect(after.version).toBe(1);
+    expect(after.event_type.equals(before.event_type)).toBe(true);
+    expect(after.event_date.equals(before.event_date)).toBe(true);
+    expect(after.place.equals(before.place)).toBe(true);
+    expect(after.notes === null ? null : after.notes.toString("hex")).toBe(
+      before.notes === null ? null : before.notes.toString("hex"),
+    );
+  }, 20_000);
 
   it("listPersonActivity answers not found for a hidden contact", async () => {
     const scope = await setupTenant("hw53");
