@@ -217,6 +217,7 @@ export async function restorePerson(
       and community_id = current_setting('app.community_id')::uuid
       and is_minor = false
       and deleted_at is not null
+      and deleted_at > now() - interval '720 hours'
     for update
   `;
 

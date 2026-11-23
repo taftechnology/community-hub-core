@@ -573,6 +573,57 @@ describe("person-delete", () => {
     expect(after?.deleted_by).toBe(deletedBy);
   });
 
+  it("restore answers not found for a contact hidden 721 hours", async () => {
+    const scope = await setupTenant("pin29b");
+    const late = await insertAdult(scope, "Late", "Contact");
+    const inTime = await insertAdult(scope, "InTime", "Contact");
+    const deletedBy = newId();
+
+    // Aged as migrator with the user triggers off, in one transaction, as purge.integration.test.ts does.
+    async function age(personId: string, hours: number): Promise<void> {
+      await withAppTransaction(migrator, scope, async (tx) => {
+        await tx.unsafe("ALTER TABLE app.persons DISABLE TRIGGER USER");
+        await tx`
+          update app.persons
+          set deleted_at = now() - (${hours} * interval '1 hour'),
+              deleted_by = ${deletedBy}
+          where id = ${personId}::uuid
+        `;
+        await tx.unsafe("ALTER TABLE app.persons ENABLE TRIGGER USER");
+      });
+    }
+    await age(late, 721);
+    await age(inTime, 719);
+
+    const seeded = await getPerson(scope, late);
+    expect(seeded?.deleted_at).not.toBeNull();
+
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      expect(
+        withAppTransaction(app, scope, async (tx) => {
+          await restorePerson(tx, { personId: late, version: 1, actorUserId: newId() });
+        }),
+      ).rejects.toMatchObject({ code: "not_found" }),
+    );
+
+    const after = await getPerson(scope, late);
+    expect(after?.deleted_at).toEqual(seeded?.deleted_at);
+    expect(after?.deleted_by).toBe(deletedBy);
+    expect(after?.version).toBe(1);
+
+    let restored!: { personId: string; version: number };
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, scope, async (tx) => {
+        restored = await restorePerson(tx, { personId: inTime, version: 1, actorUserId: newId() });
+      }),
+    );
+    expect(restored.personId).toBe(inTime);
+    expect(restored.version).toBe(2);
+    const restoredRow = await getPerson(scope, inTime);
+    expect(restoredRow?.deleted_at).toBeNull();
+    expect(restoredRow?.deleted_by).toBeNull();
+  });
+
   it("a stale version on delete or restore answers conflict and changes nothing", async () => {
     const scope = await setupTenant("pin29");
     const adult = await insertAdult(scope, "Version", "Check");

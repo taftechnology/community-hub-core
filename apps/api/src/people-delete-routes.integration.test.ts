@@ -883,6 +883,40 @@ describe("contact delete routes against a real database", () => {
     expect((await restore(org, org.owner.accessToken, hiddenId, hidden.version)).status).toBe(200);
   });
 
+  it("restore answers 404 for a contact hidden 721 hours and leaves it hidden", async () => {
+    const org = await createOrg("pin75b");
+    const personId = await agedContact(org, "Late");
+    const before = await withAppTransaction(
+      migrator,
+      { orgId: org.orgId, communityId: org.communityId },
+      async (tx) => {
+        const rows = await tx<{ version: number; deleted_at: Date | null }[]>`
+          select version, deleted_at from app.persons where id = ${personId}::uuid
+        `;
+        return rows[0]!;
+      },
+    );
+    expect(before.deleted_at).not.toBeNull();
+
+    const res = await restore(org, org.owner.accessToken, personId, before.version);
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe("");
+
+    const after = await withAppTransaction(
+      migrator,
+      { orgId: org.orgId, communityId: org.communityId },
+      async (tx) => {
+        const rows = await tx<{ version: number; deleted_at: Date | null }[]>`
+          select version, deleted_at from app.persons where id = ${personId}::uuid
+        `;
+        return rows[0];
+      },
+    );
+    expect(after).toEqual(before);
+    expect(await auditRows(org, "people.person.purged")).toHaveLength(0);
+    expect(await auditRows(org, "people.person.restored")).toHaveLength(0);
+  });
+
   it("a version conflict answers 409 with an empty body", async () => {
     const org = await createOrg("pin80");
     const visible = await addAdult(org, "Visible");
