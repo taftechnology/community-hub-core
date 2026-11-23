@@ -86,6 +86,41 @@ describe("ConfirmDialog", () => {
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
+  it("ConfirmDialog keeps focus on the confirm button while pending", async () => {
+    const onConfirm = vi.fn();
+    const { rerender } = render(<ConfirmDialog {...staticProps({ onConfirm })} />);
+    const confirm = screen.getByRole("button", { name: "Delete" });
+    // The dialog moves focus inside on its own; take focus after that, as a keyboard user does.
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
+    confirm.focus();
+    expect(document.activeElement).toBe(confirm);
+
+    rerender(<ConfirmDialog {...staticProps({ onConfirm, pending: true })} />);
+    const busy = screen.getByRole("button", { name: "Delete" });
+    expect(busy).toBe(confirm);
+    expect(busy.getAttribute("aria-busy")).toBe("true");
+    expect(busy.getAttribute("aria-disabled")).toBe("true");
+    expect(busy.hasAttribute("disabled")).toBe(false);
+    await waitFor(() => expect(document.activeElement).toBe(busy));
+
+    fireEvent.click(busy);
+    fireEvent.keyDown(busy, { key: "Enter", code: "Enter" });
+    fireEvent.keyUp(busy, { key: "Enter", code: "Enter" });
+    fireEvent.keyDown(busy, { key: " ", code: "Space" });
+    fireEvent.keyUp(busy, { key: " ", code: "Space" });
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(busy);
+
+    // Not pending again: the same button is enabled and confirms.
+    rerender(<ConfirmDialog {...staticProps({ onConfirm, pending: false })} />);
+    const ready = screen.getByRole("button", { name: "Delete" });
+    expect(ready.getAttribute("aria-disabled")).not.toBe("true");
+    expect(ready.getAttribute("aria-busy")).toBeNull();
+    fireEvent.click(ready);
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
   it("shows the error line when given and announces it", () => {
     render(
       <ConfirmDialog

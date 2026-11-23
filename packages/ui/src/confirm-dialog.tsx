@@ -49,6 +49,8 @@ export function ConfirmDialog({
               variant={tone === "danger" ? "destructive" : "default"}
               aria-busy={pending ? true : undefined}
               disabled={pending}
+              focusableWhenDisabled
+              className="aria-disabled:cursor-not-allowed aria-disabled:border-border aria-disabled:bg-muted aria-disabled:text-muted-foreground aria-disabled:hover:bg-muted"
               onClick={() => {
                 if (pending) return;
                 onConfirm();
