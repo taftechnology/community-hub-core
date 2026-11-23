@@ -906,6 +906,7 @@ export function AllContactsPage() {
         setDeleteTarget(null);
         setStatusAlert(MESSAGE_PURGED);
         reload();
+        refreshSummary();
         setFocusAfterChange("heading");
         return;
       }

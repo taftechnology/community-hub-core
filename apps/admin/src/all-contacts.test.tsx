@@ -6571,6 +6571,23 @@ describe("Contact delete on All Contacts (Task 9)", () => {
     );
   });
 
+  it("a delete answered 404 also refreshes the counts", async () => {
+    const { calls } = await openScreen({ del: () => emptyResponse(404) });
+    const listBefore = callsTo(calls, "/v1/people/list").length;
+    const summaryBefore = callsTo(calls, "/v1/people/summary").length;
+    const { dialog } = await openDeleteDialog("Ada Lovelace");
+    fireEvent.click(confirmButton(dialog));
+
+    expect(await screen.findByText(MSG_PURGED)).toBeTruthy();
+    await waitFor(() => expect(callsTo(calls, "/v1/people/list")).toHaveLength(listBefore + 1));
+    await waitFor(() =>
+      expect(callsTo(calls, "/v1/people/summary")).toHaveLength(summaryBefore + 1),
+    );
+    await flushPending();
+    expect(callsTo(calls, "/v1/people/list")).toHaveLength(listBefore + 1);
+    expect(callsTo(calls, "/v1/people/summary")).toHaveLength(summaryBefore + 1);
+  });
+
   it("a restore answered 409 asks for a reload and keeps the row", async () => {
     const { calls } = await openScreen({ restore: () => emptyResponse(409) });
     await showDeleted();
@@ -6578,6 +6595,152 @@ describe("Contact delete on All Contacts (Task 9)", () => {
     expect(await screen.findByText(MSG_CHANGED)).toBeTruthy();
     expect(callsTo(calls, "/v1/people/restore")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Restore Ada Lovelace" })).toBeTruthy();
+  });
+
+  // A delete or restore answer that arrives after the community changed belongs to the old
+  // community. The new one shows no alert and no dialog and makes no further list or counts
+  // request. Each answer is released by the test after the change, never by a timer.
+  const OTHER_SLUG = "other-parish";
+  const LATE_ANSWERS: { name: string; answer: () => Response }[] = [
+    {
+      name: "200",
+      answer: () =>
+        jsonResponse(200, { personId: ADA_ID, version: 4, purgeAfter: "2026-12-23T12:00:00Z" }),
+    },
+    { name: "404", answer: () => emptyResponse(404) },
+    { name: "409", answer: () => jsonResponse(409, { code: "sole_guardian" }) },
+  ];
+
+  async function flushPending() {
+    for (let turn = 0; turn < 3; turn += 1) {
+      await act(async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      });
+    }
+  }
+
+  async function switchCommunity(calls: Call[]) {
+    // An open Delete dialog is modal and hides the picker from the accessibility tree, so the
+    // picker is found with hidden: true.
+    fireEvent.change(screen.getByRole("textbox", { name: "Community", hidden: true }), {
+      target: { value: OTHER_SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set", hidden: true }));
+    await screen.findByRole("table", { name: "Contacts" });
+    const inOther = (path: string) =>
+      callsTo(calls, path).filter((call) => call.body?.communitySlug === OTHER_SLUG).length;
+    await waitFor(() => {
+      expect(inOther("/v1/people/list")).toBeGreaterThan(0);
+      expect(inOther("/v1/people/summary")).toBeGreaterThan(0);
+    });
+    await flushPending();
+    return {
+      list: callsTo(calls, "/v1/people/list").length,
+      summary: callsTo(calls, "/v1/people/summary").length,
+    };
+  }
+
+  function expectQuiet(calls: Call[], before: { list: number; summary: number }) {
+    expect(callsTo(calls, "/v1/people/list")).toHaveLength(before.list);
+    expect(callsTo(calls, "/v1/people/summary")).toHaveLength(before.summary);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByText(MSG_PURGED)).toBeNull();
+    expect(screen.queryByText(MSG_CHANGED)).toBeNull();
+  }
+
+  it("a delete answer that arrives after the community changed is ignored", async () => {
+    for (const late of LATE_ANSWERS) {
+      let release: (response: Response) => void = () => {};
+      const { calls } = await openScreen({
+        del: () =>
+          new Promise<Response>((resolve) => {
+            release = resolve;
+          }),
+      });
+      const { dialog } = await openDeleteDialog("Ada Lovelace");
+      fireEvent.click(confirmButton(dialog));
+      await waitFor(() => expect(callsTo(calls, "/v1/people/delete")).toHaveLength(1));
+
+      const before = await switchCommunity(calls);
+      expect(screen.queryByRole("dialog")).toBeNull();
+
+      await act(async () => {
+        release(late.answer());
+      });
+      await flushPending();
+      expectQuiet(calls, before);
+      expect(callsTo(calls, "/v1/people/delete")).toHaveLength(1);
+      await resetScreen();
+    }
+  });
+
+  it("a delete refusal read after the community changed is ignored", async () => {
+    // The 409 head arrives before the change; its body is read after it. The refusal would
+    // otherwise land in a Delete dialog the user opened in the new community.
+    let releaseBody: () => void = () => {};
+    const { calls } = await openScreen({
+      del: () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              releaseBody = () => {
+                controller.enqueue(
+                  new TextEncoder().encode(JSON.stringify({ code: "sole_guardian" })),
+                );
+                controller.close();
+              };
+            },
+          }),
+          { status: 409, headers: { "content-type": "application/json" } },
+        ),
+    });
+    const first = await openDeleteDialog("Ada Lovelace");
+    fireEvent.click(confirmButton(first.dialog));
+    await waitFor(() => expect(callsTo(calls, "/v1/people/delete")).toHaveLength(1));
+    await flushPending();
+
+    const before = await switchCommunity(calls);
+    const second = await openDeleteDialog("Grace Hopper");
+    expect(within(second.dialog).queryByRole("alert")).toBeNull();
+
+    await act(async () => {
+      releaseBody();
+    });
+    await flushPending();
+    expect(within(second.dialog).queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("dialog")).toBe(second.dialog);
+    expect(callsTo(calls, "/v1/people/list")).toHaveLength(before.list);
+    expect(callsTo(calls, "/v1/people/summary")).toHaveLength(before.summary);
+    expect(callsTo(calls, "/v1/people/delete")).toHaveLength(1);
+  });
+
+  it("a restore answer that arrives after the community changed is ignored", async () => {
+    for (const late of LATE_ANSWERS) {
+      let release: (response: Response) => void = () => {};
+      const { calls } = await openScreen({
+        restore: () =>
+          new Promise<Response>((resolve) => {
+            release = resolve;
+          }),
+      });
+      await showDeleted();
+      fireEvent.click(screen.getByRole("button", { name: "Restore Ada Lovelace" }));
+      await waitFor(() => expect(callsTo(calls, "/v1/people/restore")).toHaveLength(1));
+
+      const before = await switchCommunity(calls);
+
+      await act(async () => {
+        release(
+          late.name === "200" ? jsonResponse(200, { personId: ADA_ID, version: 5 }) : late.answer(),
+        );
+      });
+      await flushPending();
+      expectQuiet(calls, before);
+      expect(callsTo(calls, "/v1/people/restore")).toHaveLength(1);
+      await resetScreen();
+    }
   });
 
   it("the deleted-duplicate message offers restore only to people.delete holders", async () => {
