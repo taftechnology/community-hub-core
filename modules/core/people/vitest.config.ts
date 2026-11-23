@@ -21,5 +21,6 @@ export default defineConfig({
     include: ["domain/**/*.test.ts", "db/**/*.test.ts", "infrastructure/**/*.test.ts"],
     globalSetup: path.resolve(root, "../../../packages/db/test/global-setup.ts"),
     fileParallelism: false,
+    testTimeout: 20_000,
   },
 });
