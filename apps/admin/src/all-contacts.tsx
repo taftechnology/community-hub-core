@@ -2,6 +2,7 @@ import {
   Alert,
   Avatar,
   Button,
+  ConfirmDialog,
   DataTable,
   type DataTableColumn,
   DescriptionList,
@@ -68,11 +69,21 @@ type ContactItem = {
   status: "active" | "inactive";
   source: string;
   groups?: { id: string; name: string }[] | undefined;
+  deletedAt?: string | undefined;
+  purgeAfter?: string | undefined;
 };
 
 type ListResponse = {
   items: ContactItem[];
   nextCursor: string | null;
+};
+
+type DeleteTarget = {
+  id: string;
+  givenName: string;
+  familyName: string;
+  version: number;
+  purgeOn: string;
 };
 
 type SummaryData = {
@@ -125,6 +136,8 @@ function parseContactItem(item: unknown): ContactItem | null {
           }))
           .filter((g) => g.id && g.name)
       : undefined,
+    deletedAt: typeof item.deletedAt === "string" ? item.deletedAt : undefined,
+    purgeAfter: typeof item.purgeAfter === "string" ? item.purgeAfter : undefined,
   };
 }
 
@@ -195,6 +208,34 @@ function parseSummary(data: unknown): SummaryData | null {
   return result;
 }
 
+const PURGE_AFTER_HOURS = 720;
+
+const MESSAGE_CHANGED = "This contact was changed. Reload and try again.";
+const MESSAGE_PURGED = "This contact was deleted permanently.";
+
+const DELETE_REFUSALS: Record<string, string> = {
+  linked_user: "This contact is linked to a user account. Remove the user first.",
+  pending_invitation: "This contact has a pending invitation. Cancel it first.",
+  sole_guardian:
+    "This contact is the only guardian of a child. Add another guardian in Family Records first.",
+};
+
+// A refusal answers 409 with { code }; older answers have an empty body.
+async function readErrorCode(response: Response): Promise<string | null> {
+  try {
+    const data: unknown = await response.json();
+    return isRecord(data) && typeof data.code === "string" ? data.code : null;
+  } catch {
+    return null;
+  }
+}
+
+function duplicateDeletedMessage(canRestore: boolean): string {
+  return canRestore
+    ? "A deleted contact has this email (or phone). Restore it from the Deleted filter."
+    : "A deleted contact has this email (or phone).";
+}
+
 function getBrowserMonthStartIso(): string {
   const now = new Date();
   const d = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
@@ -254,6 +295,17 @@ export function AllContactsPage() {
   const savingStatusRef = useRef(false);
   const [statusAlert, setStatusAlert] = useState<string | null>(null);
 
+  // Delete dialog and Restore state
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+  const lastDeleteTargetRef = useRef<DeleteTarget | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deletePending, setDeletePending] = useState(false);
+  const deletePendingRef = useRef(false);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
+  const restoringRef = useRef(false);
+  const deleteTriggerRef = useRef<HTMLElement | null>(null);
+  const [focusAfterChange, setFocusAfterChange] = useState<"trigger" | "heading" | null>(null);
+
   // View state: "list" | "detail" | "add" | "edit"
   const [view, setView] = useState<"list" | "detail" | "add" | "edit">("list");
   const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null);
@@ -310,6 +362,8 @@ export function AllContactsPage() {
   const detailGeneration = useRef(0);
   const isReadOnly = status?.state === "none" || status?.state === "read_only" || paymentRequired;
   const hideWrites = readiness === "loading" || isReadOnly;
+  const canDelete = access.permissions["people.delete"];
+  const deletedView = activeTab === "adults" && statusFilter === "deleted";
 
   const fetchContacts = useCallback(
     async (
@@ -335,10 +389,11 @@ export function AllContactsPage() {
         if (statusVal) {
           body.status = statusVal;
         }
-        if (sourceVal) {
+        // The Deleted list takes a name search only.
+        if (sourceVal && statusVal !== "deleted") {
           body.source = sourceVal;
         }
-        if (groupVal) {
+        if (groupVal && statusVal !== "deleted") {
           body.groupId = groupVal;
         }
       }
@@ -487,6 +542,13 @@ export function AllContactsPage() {
       setSummary(null);
       setSummaryError(false);
       setStatusAlert(null);
+      setDeleteTarget(null);
+      setDeleteError(null);
+      setDeletePending(false);
+      deletePendingRef.current = false;
+      setRestoringId(null);
+      restoringRef.current = false;
+      setFocusAfterChange(null);
       setView("list");
       setSelectedPersonId(null);
       setDetailPerson(null);
@@ -547,6 +609,29 @@ export function AllContactsPage() {
       setGroupFilter("");
     }
   }, [summary?.groups, groupFilter]);
+
+  useEffect(() => {
+    if (statusFilter === "deleted" && !canDelete) {
+      setStatusFilter("");
+      setItems(null);
+      setCursor(undefined);
+    }
+  }, [statusFilter, canDelete]);
+
+  // After a delete or restore the row is gone, so focus goes to the heading once the list is back.
+  // After Cancel or Escape it returns to the Delete button of the row.
+  useEffect(() => {
+    if (focusAfterChange === null || deleteTarget !== null || loading || view !== "list") {
+      return;
+    }
+    const trigger = deleteTriggerRef.current;
+    if (focusAfterChange === "trigger" && trigger?.isConnected) {
+      trigger.focus();
+    } else {
+      listHeadingRef.current?.focus();
+    }
+    setFocusAfterChange(null);
+  }, [focusAfterChange, deleteTarget, loading, view]);
 
   const loadPersonDetail = useCallback(
     async (
@@ -750,6 +835,163 @@ export function AllContactsPage() {
     }
   }
 
+  function openDeleteDialog(person: ContactItem, trigger: HTMLElement) {
+    deleteTriggerRef.current = trigger;
+    const purgeOn = formatDate(
+      new Date(Date.now() + PURGE_AFTER_HOURS * 60 * 60 * 1000).toISOString(),
+    );
+    const target: DeleteTarget = {
+      id: person.id,
+      givenName: person.givenName,
+      familyName: person.familyName,
+      version: person.version,
+      purgeOn,
+    };
+    lastDeleteTargetRef.current = target;
+    setDeleteError(null);
+    setDeleteTarget(target);
+  }
+
+  function closeDeleteDialog() {
+    if (deletePendingRef.current) {
+      return;
+    }
+    setDeleteTarget(null);
+    setDeleteError(null);
+    setFocusAfterChange("trigger");
+  }
+
+  function refreshSummary() {
+    if (slug) {
+      const mine = generation.current;
+      void fetchSummary(slug, () => generation.current === mine);
+    }
+  }
+
+  async function handleDeleteConfirm() {
+    const target = deleteTarget;
+    if (target === null || deletePendingRef.current || !slug) {
+      return;
+    }
+    const requestSlug = slug;
+    deletePendingRef.current = true;
+    setDeletePending(true);
+    setDeleteError(null);
+
+    try {
+      const response = await post("/v1/people/delete", {
+        communitySlug: requestSlug,
+        personId: target.id,
+        version: target.version,
+      });
+      if (previousSlugRef.current !== requestSlug) {
+        return;
+      }
+
+      if (response === "unavailable") {
+        setDeleteError("Unable to delete contact");
+        return;
+      }
+
+      if (response.status === 402) {
+        setPaymentRequired(true);
+        void refreshBilling();
+        setDeleteTarget(null);
+        setStatusAlert("Unable to delete contact");
+        setFocusAfterChange("heading");
+        return;
+      }
+
+      if (response.status === 404) {
+        setDeleteTarget(null);
+        setStatusAlert(MESSAGE_PURGED);
+        reload();
+        setFocusAfterChange("heading");
+        return;
+      }
+
+      if (response.status === 409) {
+        const code = await readErrorCode(response);
+        if (previousSlugRef.current !== requestSlug) {
+          return;
+        }
+        setDeleteError((code !== null ? DELETE_REFUSALS[code] : undefined) ?? MESSAGE_CHANGED);
+        return;
+      }
+
+      if (response.status !== 200) {
+        setDeleteError("Unable to delete contact");
+        return;
+      }
+
+      setDeleteTarget(null);
+      setStatusAlert(null);
+      reload();
+      refreshSummary();
+      setFocusAfterChange("heading");
+    } finally {
+      deletePendingRef.current = false;
+      setDeletePending(false);
+    }
+  }
+
+  async function handleRestore(person: ContactItem) {
+    if (restoringRef.current || !slug) {
+      return;
+    }
+    const requestSlug = slug;
+    restoringRef.current = true;
+    setRestoringId(person.id);
+    setStatusAlert(null);
+
+    try {
+      const response = await post("/v1/people/restore", {
+        communitySlug: requestSlug,
+        personId: person.id,
+        version: person.version,
+      });
+      if (previousSlugRef.current !== requestSlug) {
+        return;
+      }
+
+      if (response === "unavailable") {
+        setStatusAlert("Unable to restore contact");
+        return;
+      }
+
+      if (response.status === 402) {
+        setPaymentRequired(true);
+        void refreshBilling();
+        setStatusAlert("Unable to restore contact");
+        return;
+      }
+
+      if (response.status === 404) {
+        setStatusAlert(MESSAGE_PURGED);
+        reload();
+        setFocusAfterChange("heading");
+        return;
+      }
+
+      if (response.status === 409) {
+        setStatusAlert(MESSAGE_CHANGED);
+        return;
+      }
+
+      if (response.status !== 200) {
+        setStatusAlert("Unable to restore contact");
+        return;
+      }
+
+      reload();
+      refreshSummary();
+      setFocusAfterChange("heading");
+    } finally {
+      restoringRef.current = false;
+      setRestoringId(null);
+    }
+  }
+
   async function handleAddSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submittingRef.current || !slug) {
@@ -788,6 +1030,16 @@ export function AllContactsPage() {
 
       if (response.status === 201) {
         backToList();
+        return;
+      }
+
+      if (response.status === 409) {
+        const code = await readErrorCode(response);
+        setAddNotice(
+          code === "duplicate_deleted"
+            ? duplicateDeletedMessage(canDelete)
+            : "Unable to save contact",
+        );
         return;
       }
 
@@ -830,6 +1082,11 @@ export function AllContactsPage() {
       }
 
       if (response.status === 409) {
+        const code = await readErrorCode(response);
+        if (code === "duplicate_deleted") {
+          setEditNotice(duplicateDeletedMessage(canDelete));
+          return;
+        }
         setEditConflict(true);
         return;
       }
@@ -874,8 +1131,17 @@ export function AllContactsPage() {
   }
 
   function handleStatusFilterChange(val: string) {
+    // The Deleted list and the adult list have different rows and cursors.
+    if ((val === "deleted") !== (statusFilter === "deleted")) {
+      setItems(null);
+    }
+    if (val === "deleted") {
+      setSourceFilter("");
+      setGroupFilter("");
+    }
     setStatusFilter(val);
     setCursor(undefined);
+    setStatusAlert(null);
   }
 
   function handleSourceFilterChange(val: string) {
@@ -889,6 +1155,9 @@ export function AllContactsPage() {
   }
 
   function clearFilters() {
+    if (statusFilter === "deleted") {
+      setItems(null);
+    }
     setStatusFilter("");
     setSourceFilter("");
     setGroupFilter("");
@@ -1199,16 +1468,69 @@ export function AllContactsPage() {
       key: "actions",
       header: "Actions",
       render: (person) => (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          aria-label={`View ${person.givenName} ${person.familyName}`}
-          onClick={() => openDetail(person.id)}
-        >
-          View
-        </Button>
+        <span className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-label={`View ${person.givenName} ${person.familyName}`}
+            onClick={() => openDetail(person.id)}
+          >
+            View
+          </Button>
+          {canDelete && !hideWrites ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              aria-label={`Delete ${person.givenName} ${person.familyName}`}
+              onClick={(event) => openDeleteDialog(person, event.currentTarget)}
+            >
+              Delete
+            </Button>
+          ) : null}
+        </span>
       ),
+    },
+  ];
+
+  const deletedColumns: DataTableColumn<ContactItem>[] = [
+    {
+      key: "name",
+      header: "Name",
+      primary: true,
+      render: (person) => (
+        <span className="block font-semibold">
+          <span>{person.givenName}</span> <span>{person.familyName}</span>
+        </span>
+      ),
+    },
+    {
+      key: "deleted",
+      header: "Deleted",
+      render: (person) =>
+        person.deletedAt && person.purgeAfter ? (
+          `Deleted ${formatDate(person.deletedAt)}, deleted permanently on ${formatDate(person.purgeAfter)}`
+        ) : (
+          <span className="text-muted-foreground">None</span>
+        ),
+    },
+    {
+      key: "actions",
+      header: "Actions",
+      render: (person) =>
+        canDelete && !hideWrites ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-label={`Restore ${person.givenName} ${person.familyName}`}
+            disabled={restoringId === person.id}
+            onClick={() => void handleRestore(person)}
+          >
+            Restore
+          </Button>
+        ) : null,
     },
   ];
 
@@ -1281,6 +1603,7 @@ export function AllContactsPage() {
           access.permissions["people.manage"] &&
           !hideWrites &&
           activeTab === "adults" &&
+          !deletedView &&
           (!submittedSearch || items.length > 0) ? (
             <Button type="button" onClick={openAdd}>
               Add contact
@@ -1299,7 +1622,7 @@ export function AllContactsPage() {
           </Alert>
         ) : null}
 
-        {activeTab === "adults" ? (
+        {activeTab === "adults" && !deletedView ? (
           summaryLoading && summary === null ? (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
               <Skeleton className="h-20" />
@@ -1357,23 +1680,26 @@ export function AllContactsPage() {
                   <option value="">All statuses</option>
                   <option value="active">Active</option>
                   <option value="inactive">Inactive</option>
+                  {canDelete ? <option value="deleted">Deleted</option> : null}
                 </Select>
               </Field>
-              <Field label="Source">
-                <Select
-                  id="contact-source-filter"
-                  value={sourceFilter}
-                  onChange={(e) => handleSourceFilterChange(e.target.value)}
-                >
-                  <option value="">All sources</option>
-                  {PERSON_SOURCES.map((src) => (
-                    <option key={src} value={src}>
-                      {PERSON_SOURCE_LABELS[src]}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              {summary?.groups !== undefined ? (
+              {deletedView ? null : (
+                <Field label="Source">
+                  <Select
+                    id="contact-source-filter"
+                    value={sourceFilter}
+                    onChange={(e) => handleSourceFilterChange(e.target.value)}
+                  >
+                    <option value="">All sources</option>
+                    {PERSON_SOURCES.map((src) => (
+                      <option key={src} value={src}>
+                        {PERSON_SOURCE_LABELS[src]}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              )}
+              {summary?.groups !== undefined && !deletedView ? (
                 <Field label="Group">
                   <Select
                     id="contact-group-filter"
@@ -1406,7 +1732,9 @@ export function AllContactsPage() {
 
         {!loading && !error && items !== null ? (
           items.length === 0 ? (
-            hasFilters ? (
+            deletedView ? (
+              <EmptyState message="No deleted contacts." />
+            ) : hasFilters ? (
               <div className="grid justify-items-center gap-2 py-4">
                 <EmptyState message="No contacts match these filters" />
                 <Button type="button" variant="outline" onClick={clearFilters}>
@@ -1420,12 +1748,31 @@ export function AllContactsPage() {
             <DataTable
               aria-label="Contacts"
               rowKey={(person) => person.id}
-              columns={activeTab === "adults" ? adultColumns : minorColumns}
+              columns={
+                deletedView ? deletedColumns : activeTab === "adults" ? adultColumns : minorColumns
+              }
               rows={items}
             />
           )
         ) : null}
       </Panel>
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeDeleteDialog();
+          }
+        }}
+        title={`Delete ${(deleteTarget ?? lastDeleteTargetRef.current)?.givenName ?? ""} ${(deleteTarget ?? lastDeleteTargetRef.current)?.familyName ?? ""}?`}
+        description={`They are hidden now and deleted permanently on ${(deleteTarget ?? lastDeleteTargetRef.current)?.purgeOn ?? ""}. Staff with the delete permission can restore them until then.`}
+        confirmLabel="Delete contact"
+        cancelLabel="Cancel"
+        tone="danger"
+        onConfirm={() => void handleDeleteConfirm()}
+        pending={deletePending}
+        {...(deleteError !== null ? { error: deleteError } : {})}
+      />
     </>
   );
 }

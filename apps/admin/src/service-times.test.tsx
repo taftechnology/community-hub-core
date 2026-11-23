@@ -51,6 +51,7 @@ const fullAccess: PeopleAccess = {
     "people.view": true,
     "people.manage": true,
     "people.restricted.read": true,
+    "people.delete": false,
     "service_times.manage": true,
   },
   entitlements: {
@@ -754,6 +755,7 @@ describe("ServiceTimesPage", () => {
         "people.view": true,
         "people.manage": true,
         "people.restricted.read": true,
+        "people.delete": false,
         "service_times.manage": false,
       },
       entitlements: {
@@ -775,6 +777,7 @@ describe("ServiceTimesPage", () => {
         "people.view": true,
         "people.manage": true,
         "people.restricted.read": true,
+        "people.delete": false,
         "service_times.manage": false,
       },
       entitlements: {
@@ -796,6 +799,7 @@ describe("ServiceTimesPage", () => {
         "people.view": true,
         "people.manage": true,
         "people.restricted.read": true,
+        "people.delete": false,
         "service_times.manage": true,
       },
       entitlements: {

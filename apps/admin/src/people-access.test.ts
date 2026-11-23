@@ -35,4 +35,19 @@ describe("people-access", () => {
     expect(parsed.permissions["service_times.manage"]).toBe(false);
     expect(parsed.entitlements["module.engagement"]).toBe(false);
   });
+
+  it("defaultAccess has people.delete as false", () => {
+    expect(defaultAccess.permissions["people.delete"]).toBe(false);
+  });
+
+  it("parseAccess reads people.delete only when it is true", () => {
+    expect(
+      parseAccess({ permissions: { "people.delete": true } }).permissions["people.delete"],
+    ).toBe(true);
+    expect(
+      parseAccess({ permissions: { "people.delete": "true" } }).permissions["people.delete"],
+    ).toBe(false);
+    expect(parseAccess({ permissions: {} }).permissions["people.delete"]).toBe(false);
+    expect(parseAccess(null).permissions["people.delete"]).toBe(false);
+  });
 });

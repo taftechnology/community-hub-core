@@ -5970,3 +5970,698 @@ describe("Detail, Add, and Edit Contact (Task 10)", () => {
     });
   });
 });
+
+describe("Contact delete on All Contacts (Task 9)", () => {
+  const ADA_ID = "00000000-0000-4000-8000-0000000000a1";
+  const GRACE_ID = "00000000-0000-4000-8000-0000000000a2";
+  const ADA = {
+    id: ADA_ID,
+    givenName: "Ada",
+    familyName: "Lovelace",
+    email: "ada@example.test",
+    phone: "+61 400 555 001",
+    age: 42,
+    createdAt: "2026-01-05T00:00:00Z",
+    status: "active",
+    source: "manual",
+    version: 3,
+  };
+  const GRACE = { ...ADA, id: GRACE_ID, givenName: "Grace", familyName: "Hopper", version: 5 };
+  const DELETED_ADA = {
+    id: ADA_ID,
+    givenName: "Ada",
+    familyName: "Lovelace",
+    deletedAt: "2026-11-10T02:00:00Z",
+    purgeAfter: "2026-12-10T02:00:00Z",
+    version: 4,
+  };
+
+  const MSG_CHANGED = "This contact was changed. Reload and try again.";
+  const MSG_PURGED = "This contact was deleted permanently.";
+  const MSG_DUPLICATE = "A deleted contact has this email (or phone).";
+  const MSG_DUPLICATE_RESTORE = `${MSG_DUPLICATE} Restore it from the Deleted filter.`;
+
+  type CallBody = Record<string, unknown>;
+  type Call = { path: string; url: string; body: CallBody | undefined };
+  type Handler = (body: CallBody) => Response | Promise<Response>;
+  type Options = {
+    canDelete?: boolean;
+    canManage?: boolean;
+    billing?: "ok" | "read_only" | "loading";
+    list?: Handler;
+    summary?: Handler;
+    del?: Handler;
+    restore?: Handler;
+    create?: Handler;
+    update?: Handler;
+    read?: Handler;
+  };
+
+  function jsonResponse(status: number, value: unknown): Response {
+    return new Response(JSON.stringify(value), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  function emptyResponse(status: number): Response {
+    return new Response(null, { status });
+  }
+
+  function longDate(iso: string): string {
+    return new Intl.DateTimeFormat("en-AU", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    }).format(new Date(iso));
+  }
+
+  function defaultList(body: CallBody): Response {
+    if (body.status === "deleted") {
+      return jsonResponse(200, { items: [DELETED_ADA], nextCursor: null });
+    }
+    return jsonResponse(200, { items: [ADA, GRACE], nextCursor: null });
+  }
+
+  function mockDeleteApi(options: Options = {}) {
+    const calls: Call[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
+      const url = String(info);
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      let body: CallBody | undefined;
+      if (init?.body) {
+        const parsed: unknown = JSON.parse(String(init.body));
+        body = typeof parsed === "object" && parsed !== null ? { ...parsed } : undefined;
+      }
+      calls.push({ path, url, body });
+      const input = body ?? {};
+
+      if (path === "/v1/access/capabilities") {
+        return jsonResponse(200, {
+          permissions: {
+            "people.view": true,
+            "people.manage": options.canManage ?? true,
+            "people.restricted.read": false,
+            "people.delete": options.canDelete ?? true,
+          },
+          entitlements: { "people.directory": true, "people.households": true },
+        });
+      }
+      if (path === "/v1/billing/status") {
+        if (options.billing === "loading") {
+          return new Promise<Response>(() => {});
+        }
+        return jsonResponse(200, {
+          state: options.billing ?? "ok",
+          trial_end: null,
+          grace_until: null,
+          canView: true,
+          canManage: true,
+        });
+      }
+      if (path === "/v1/people/list") {
+        return (options.list ?? defaultList)(input);
+      }
+      if (path === "/v1/people/summary") {
+        return options.summary
+          ? options.summary(input)
+          : jsonResponse(200, { total: 2, active: 2, inactive: 0, addedSince: 1 });
+      }
+      if (path === "/v1/people/delete") {
+        return options.del
+          ? options.del(input)
+          : jsonResponse(200, {
+              personId: input.personId,
+              version: 4,
+              purgeAfter: "2026-12-23T12:00:00Z",
+            });
+      }
+      if (path === "/v1/people/restore") {
+        return options.restore
+          ? options.restore(input)
+          : jsonResponse(200, { personId: input.personId, version: 5 });
+      }
+      if (path === "/v1/people/create") {
+        return options.create ? options.create(input) : jsonResponse(201, { personId: ADA_ID });
+      }
+      if (path === "/v1/people/update") {
+        return options.update ? options.update(input) : jsonResponse(200, { version: 4 });
+      }
+      if (path === "/v1/people/read") {
+        return options.read
+          ? options.read(input)
+          : jsonResponse(200, {
+              personId: ADA_ID,
+              isMinor: false,
+              givenName: "Ada",
+              familyName: "Lovelace",
+              email: "ada@example.test",
+              phone: "+61 400 555 001",
+              dateOfBirth: "1980-01-01",
+              version: 3,
+              status: "active",
+              source: "manual",
+            });
+      }
+      return emptyResponse(404);
+    });
+    return calls;
+  }
+
+  function callsTo(calls: Call[], path: string): Call[] {
+    return calls.filter((call) => call.path === path);
+  }
+
+  async function openScreen(options: Options = {}) {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const calls = mockDeleteApi(options);
+    const container = await showContacts();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+    await screen.findByRole("table", { name: "Contacts" });
+    return { calls, container };
+  }
+
+  async function resetScreen() {
+    cleanup();
+    sessionStorage.clear();
+    vi.restoreAllMocks();
+    await router.navigate("/");
+  }
+
+  async function showDeleted() {
+    fireEvent.change(screen.getByRole("combobox", { name: "Status" }), {
+      target: { value: "deleted" },
+    });
+    await screen.findByText(/^Deleted .*, deleted permanently on /);
+  }
+
+  async function openDeleteDialog(name: string) {
+    const trigger = await screen.findByRole("button", { name: `Delete ${name}` });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = await screen.findByRole("dialog");
+    return { trigger, dialog };
+  }
+
+  function confirmButton(dialog: HTMLElement): HTMLElement {
+    return within(dialog).getByRole("button", { name: "Delete contact" });
+  }
+
+  it("no Delete action without people.delete", async () => {
+    await openScreen({ canDelete: false });
+    expect(screen.getAllByRole("button", { name: /^View / })).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: /^Delete / })).toBeNull();
+    await resetScreen();
+
+    await openScreen({ canDelete: true });
+    expect(screen.getByRole("button", { name: "Delete Ada Lovelace" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Delete Grace Hopper" })).toBeTruthy();
+  });
+
+  it("no Deleted filter without people.delete", async () => {
+    await openScreen({ canDelete: false });
+    const status = screen.getByRole("combobox", { name: "Status" });
+    expect(within(status).queryByRole("option", { name: "Deleted" })).toBeNull();
+    await resetScreen();
+
+    await openScreen({ canDelete: true });
+    const withDelete = screen.getByRole("combobox", { name: "Status" });
+    expect(within(withDelete).getByRole("option", { name: "Deleted" })).toBeTruthy();
+  });
+
+  it("Delete and Restore are hidden when billing is read-only", async () => {
+    for (const billing of ["read_only", "loading"] as const) {
+      await openScreen({ billing });
+      if (billing === "read_only") {
+        await screen.findByText(/Read-only until billing is settled/i);
+      }
+      expect(screen.getByRole("button", { name: /^View Ada/ })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: /^Delete / })).toBeNull();
+
+      const status = screen.getByRole("combobox", { name: "Status" });
+      expect(within(status).getByRole("option", { name: "Deleted" })).toBeTruthy();
+      await showDeleted();
+      const table = screen.getByRole("table", { name: "Contacts" });
+      expect(within(table).getByText("Ada")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: /^Restore/ })).toBeNull();
+      await resetScreen();
+    }
+
+    const { calls } = await openScreen({ billing: "ok" });
+    expect(screen.getByRole("button", { name: "Delete Ada Lovelace" })).toBeTruthy();
+    await showDeleted();
+    expect(screen.getByRole("button", { name: "Restore Ada Lovelace" })).toBeTruthy();
+    expect(callsTo(calls, "/v1/people/delete")).toHaveLength(0);
+  });
+
+  it("a 402 to delete or restore shows the read-only banner and hides the controls", async () => {
+    const first = await openScreen({ del: () => emptyResponse(402) });
+    const billingBefore = callsTo(first.calls, "/v1/billing/status").length;
+    const { dialog } = await openDeleteDialog("Ada Lovelace");
+    fireEvent.click(confirmButton(dialog));
+    await screen.findByText(/Read-only until billing is settled/i);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByText("Unable to delete contact")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Delete / })).toBeNull();
+    await waitFor(() =>
+      expect(callsTo(first.calls, "/v1/billing/status").length).toBeGreaterThan(billingBefore),
+    );
+    await resetScreen();
+
+    const second = await openScreen({ restore: () => emptyResponse(402) });
+    await showDeleted();
+    fireEvent.click(screen.getByRole("button", { name: "Restore Ada Lovelace" }));
+    await screen.findByText(/Read-only until billing is settled/i);
+    expect(screen.getByText("Unable to restore contact")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Restore/ })).toBeNull();
+    expect(callsTo(second.calls, "/v1/people/restore")).toHaveLength(1);
+  });
+
+  it("opens a confirm dialog with the spec text and sends the id and version in the body", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-23T12:00:00Z"));
+    const { calls } = await openScreen();
+    const { dialog } = await openDeleteDialog("Ada Lovelace");
+
+    expect(within(dialog).getByText("Delete Ada Lovelace?")).toBeTruthy();
+    const purgeDate = longDate("2026-12-23T12:00:00Z");
+    expect(
+      within(dialog).getByText(
+        `They are hidden now and deleted permanently on ${purgeDate}. Staff with the delete permission can restore them until then.`,
+      ),
+    ).toBeTruthy();
+    expect(callsTo(calls, "/v1/people/delete")).toHaveLength(0);
+
+    fireEvent.click(confirmButton(dialog));
+    await waitFor(() => expect(callsTo(calls, "/v1/people/delete")).toHaveLength(1));
+    const sent = callsTo(calls, "/v1/people/delete")[0];
+    expect(sent?.body).toEqual({ communitySlug: SLUG, personId: ADA_ID, version: 3 });
+    expect(sent?.url.endsWith("/v1/people/delete")).toBe(true);
+    expect(sent?.url).not.toContain(ADA_ID);
+    expect(sent?.url).not.toContain("?");
+  });
+
+  it("a successful delete closes the dialog, reloads the list and counts, and moves focus to the heading", async () => {
+    let deleted = false;
+    const { calls } = await openScreen({
+      del: (body) => {
+        deleted = true;
+        return jsonResponse(200, {
+          personId: body.personId,
+          version: 4,
+          purgeAfter: "2026-12-23T12:00:00Z",
+        });
+      },
+      list: (body) =>
+        body.status === "deleted"
+          ? jsonResponse(200, { items: [], nextCursor: null })
+          : jsonResponse(200, { items: deleted ? [GRACE] : [ADA, GRACE], nextCursor: null }),
+    });
+    const listBefore = callsTo(calls, "/v1/people/list").length;
+    const summaryBefore = callsTo(calls, "/v1/people/summary").length;
+    const { dialog } = await openDeleteDialog("Ada Lovelace");
+    fireEvent.click(confirmButton(dialog));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(screen.queryByText("Ada")).toBeNull());
+    expect(screen.getByText("Grace")).toBeTruthy();
+    expect(callsTo(calls, "/v1/people/list")).toHaveLength(listBefore + 1);
+    expect(callsTo(calls, "/v1/people/summary")).toHaveLength(summaryBefore + 1);
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("heading", { name: "All Contacts" })),
+    );
+  });
+
+  it("a second click on Delete while the request is pending sends nothing more", async () => {
+    let release: (response: Response) => void = () => {};
+    const { calls } = await openScreen({
+      del: () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    });
+    const { dialog } = await openDeleteDialog("Ada Lovelace");
+    const confirm = confirmButton(dialog);
+    fireEvent.click(confirm);
+    await waitFor(() => expect(callsTo(calls, "/v1/people/delete")).toHaveLength(1));
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    expect(callsTo(calls, "/v1/people/delete")).toHaveLength(1);
+    expect(confirm.getAttribute("aria-busy")).toBe("true");
+
+    release(
+      jsonResponse(200, { personId: ADA_ID, version: 4, purgeAfter: "2026-12-23T12:00:00Z" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(callsTo(calls, "/v1/people/delete")).toHaveLength(1);
+  });
+
+  it("Cancel and Escape never delete and return focus to the row's Delete button", async () => {
+    const { calls } = await openScreen();
+
+    const first = await openDeleteDialog("Ada Lovelace");
+    fireEvent.click(within(first.dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(first.trigger));
+
+    const second = await openDeleteDialog("Grace Hopper");
+    fireEvent.keyDown(second.dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(second.trigger));
+
+    expect(callsTo(calls, "/v1/people/delete")).toHaveLength(0);
+  });
+
+  it("the dialog shows the message for each refusal code", async () => {
+    const cases: { response: () => Response; message: string }[] = [
+      {
+        response: () => jsonResponse(409, { code: "linked_user" }),
+        message: "This contact is linked to a user account. Remove the user first.",
+      },
+      {
+        response: () => jsonResponse(409, { code: "pending_invitation" }),
+        message: "This contact has a pending invitation. Cancel it first.",
+      },
+      {
+        response: () => jsonResponse(409, { code: "sole_guardian" }),
+        message:
+          "This contact is the only guardian of a child. Add another guardian in Family Records first.",
+      },
+      { response: () => emptyResponse(409), message: MSG_CHANGED },
+    ];
+    let next = 0;
+    const { calls } = await openScreen({
+      del: () => {
+        const current = cases[next];
+        next += 1;
+        return current ? current.response() : emptyResponse(500);
+      },
+    });
+    const listBefore = callsTo(calls, "/v1/people/list").length;
+
+    for (const [index, { message }] of cases.entries()) {
+      const { dialog } = await openDeleteDialog("Ada Lovelace");
+      expect(within(dialog).queryByRole("alert")).toBeNull();
+      fireEvent.click(confirmButton(dialog));
+      await waitFor(() => expect(callsTo(calls, "/v1/people/delete")).toHaveLength(index + 1));
+      expect(await within(dialog).findByText(message)).toBeTruthy();
+      expect(screen.getByRole("dialog")).toBe(dialog);
+      const table = screen.getByRole("table", { name: "Contacts", hidden: true });
+      expect(within(table).getByText("Ada")).toBeTruthy();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    }
+    expect(callsTo(calls, "/v1/people/list")).toHaveLength(listBefore);
+    expect(screen.getByText("Ada")).toBeTruthy();
+  });
+
+  it("a delete answered 500 says so in the dialog and keeps it open", async () => {
+    const { calls } = await openScreen({ del: () => emptyResponse(500) });
+    const { dialog } = await openDeleteDialog("Ada Lovelace");
+    fireEvent.click(confirmButton(dialog));
+    expect(await within(dialog).findByText("Unable to delete contact")).toBeTruthy();
+    expect(callsTo(calls, "/v1/people/delete")).toHaveLength(1);
+    expect(screen.getByRole("dialog")).toBe(dialog);
+  });
+
+  it("the Deleted list is its own request and never sends source, group or a cursor from the other list", async () => {
+    const { calls } = await openScreen({
+      list: (body) => {
+        if (body.status === "deleted") {
+          return jsonResponse(200, { items: [DELETED_ADA], nextCursor: "deleted-next" });
+        }
+        return jsonResponse(200, { items: [ADA], nextCursor: "adult-next" });
+      },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "Source" }), {
+      target: { value: "website" },
+    });
+    await waitFor(() =>
+      expect(
+        callsTo(calls, "/v1/people/list").some((call) => call.body?.source === "website"),
+      ).toBe(true),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Next page" }));
+    await waitFor(() =>
+      expect(callsTo(calls, "/v1/people/list").some((c) => c.body?.cursor === "adult-next")).toBe(
+        true,
+      ),
+    );
+
+    const before = callsTo(calls, "/v1/people/list").length;
+    await showDeleted();
+    const deletedCalls = callsTo(calls, "/v1/people/list").slice(before);
+    expect(deletedCalls).toHaveLength(1);
+    expect(deletedCalls[0]?.body).toEqual({
+      communitySlug: SLUG,
+      kind: "adults",
+      status: "deleted",
+    });
+    expect(screen.queryByRole("combobox", { name: "Source" })).toBeNull();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Next page" }));
+    await waitFor(() =>
+      expect(callsTo(calls, "/v1/people/list").at(-1)?.body).toEqual({
+        communitySlug: SLUG,
+        kind: "adults",
+        status: "deleted",
+        cursor: "deleted-next",
+      }),
+    );
+
+    const beforeBack = callsTo(calls, "/v1/people/list").length;
+    fireEvent.change(screen.getByRole("combobox", { name: "Status" }), { target: { value: "" } });
+    await waitFor(() =>
+      expect(callsTo(calls, "/v1/people/list").length).toBeGreaterThan(beforeBack),
+    );
+    const back = callsTo(calls, "/v1/people/list").slice(beforeBack);
+    expect(back).toHaveLength(1);
+    expect(back[0]?.body).toEqual({ communitySlug: SLUG, kind: "adults" });
+  });
+
+  it("Deleted rows show the name, both dates and Restore, and no switch, View, email or phone", async () => {
+    await openScreen();
+    await showDeleted();
+    const table = screen.getByRole("table", { name: "Contacts" });
+
+    expect(within(table).getByText("Ada")).toBeTruthy();
+    expect(within(table).getByText("Lovelace")).toBeTruthy();
+    expect(
+      within(table).getByText(
+        `Deleted ${longDate("2026-11-10T02:00:00Z")}, deleted permanently on ${longDate("2026-12-10T02:00:00Z")}`,
+      ),
+    ).toBeTruthy();
+    expect(within(table).getByRole("button", { name: "Restore Ada Lovelace" })).toBeTruthy();
+    expect(within(table).queryByRole("switch")).toBeNull();
+    expect(within(table).queryByRole("button", { name: /^View/ })).toBeNull();
+    expect(within(table).queryByRole("button", { name: /^Delete/ })).toBeNull();
+    expect(within(table).queryByRole("columnheader", { name: "Email" })).toBeNull();
+    expect(within(table).queryByRole("columnheader", { name: "Phone" })).toBeNull();
+    expect(screen.queryByText("ada@example.test")).toBeNull();
+    expect(screen.queryByText("Total contacts")).toBeNull();
+  });
+
+  it("the Deleted filter shows 'No deleted contacts.' when the list is empty", async () => {
+    await openScreen({
+      list: (body) =>
+        body.status === "deleted"
+          ? jsonResponse(200, { items: [], nextCursor: null })
+          : jsonResponse(200, { items: [ADA], nextCursor: null }),
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "Status" }), {
+      target: { value: "deleted" },
+    });
+    expect(await screen.findByText("No deleted contacts.")).toBeTruthy();
+    expect(screen.queryByText("No contacts yet")).toBeNull();
+    expect(screen.queryByText("No contacts match these filters")).toBeNull();
+  });
+
+  it("the Deleted list searches by name only", async () => {
+    const { calls } = await openScreen();
+    await showDeleted();
+    const box = screen.getByRole("textbox", { name: "Search contacts" });
+    fireEvent.change(box, { target: { value: "Ada" } });
+    fireEvent.submit(box);
+    await waitFor(() =>
+      expect(callsTo(calls, "/v1/people/list").at(-1)?.body).toEqual({
+        communitySlug: SLUG,
+        kind: "adults",
+        status: "deleted",
+        search: "Ada",
+      }),
+    );
+  });
+
+  it("Restore sends the id and version in the body, once, then reloads the list and counts", async () => {
+    let release: (response: Response) => void = () => {};
+    let restored = false;
+    const { calls } = await openScreen({
+      restore: () =>
+        new Promise<Response>((resolve) => {
+          release = (response) => {
+            restored = true;
+            resolve(response);
+          };
+        }),
+      list: (body) =>
+        body.status === "deleted"
+          ? jsonResponse(200, { items: restored ? [] : [DELETED_ADA], nextCursor: null })
+          : jsonResponse(200, { items: [ADA], nextCursor: null }),
+    });
+    await showDeleted();
+    const listBefore = callsTo(calls, "/v1/people/list").length;
+    const summaryBefore = callsTo(calls, "/v1/people/summary").length;
+    const restore = screen.getByRole("button", { name: "Restore Ada Lovelace" });
+    fireEvent.click(restore);
+    await waitFor(() => expect(callsTo(calls, "/v1/people/restore")).toHaveLength(1));
+    fireEvent.click(restore);
+    fireEvent.click(restore);
+    expect(callsTo(calls, "/v1/people/restore")).toHaveLength(1);
+    const sent = callsTo(calls, "/v1/people/restore")[0];
+    expect(sent?.body).toEqual({ communitySlug: SLUG, personId: ADA_ID, version: 4 });
+    expect(sent?.url.endsWith("/v1/people/restore")).toBe(true);
+    expect(sent?.url).not.toContain(ADA_ID);
+
+    release(jsonResponse(200, { personId: ADA_ID, version: 5 }));
+    expect(await screen.findByText("No deleted contacts.")).toBeTruthy();
+    expect(callsTo(calls, "/v1/people/restore")).toHaveLength(1);
+    expect(callsTo(calls, "/v1/people/list")).toHaveLength(listBefore + 1);
+    expect(callsTo(calls, "/v1/people/summary")).toHaveLength(summaryBefore + 1);
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("heading", { name: "All Contacts" })),
+    );
+  });
+
+  it("restore of a purged contact says so and reloads", async () => {
+    let purged = false;
+    const { calls } = await openScreen({
+      restore: () => {
+        purged = true;
+        return emptyResponse(404);
+      },
+      list: (body) =>
+        body.status === "deleted"
+          ? jsonResponse(200, { items: purged ? [] : [DELETED_ADA], nextCursor: null })
+          : jsonResponse(200, { items: [ADA], nextCursor: null }),
+    });
+    await showDeleted();
+    const listBefore = callsTo(calls, "/v1/people/list").length;
+    fireEvent.click(screen.getByRole("button", { name: "Restore Ada Lovelace" }));
+
+    expect(await screen.findByText(MSG_PURGED)).toBeTruthy();
+    await waitFor(() => expect(callsTo(calls, "/v1/people/list")).toHaveLength(listBefore + 1));
+    expect(await screen.findByText("No deleted contacts.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Restore/ })).toBeNull();
+  });
+
+  it("a delete answered 404 for a purged contact says so, closes the dialog and reloads", async () => {
+    const { calls } = await openScreen({ del: () => emptyResponse(404) });
+    const listBefore = callsTo(calls, "/v1/people/list").length;
+    const { dialog } = await openDeleteDialog("Ada Lovelace");
+    fireEvent.click(confirmButton(dialog));
+
+    expect(await screen.findByText(MSG_PURGED)).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(callsTo(calls, "/v1/people/list")).toHaveLength(listBefore + 1));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("heading", { name: "All Contacts" })),
+    );
+  });
+
+  it("a restore answered 409 asks for a reload and keeps the row", async () => {
+    const { calls } = await openScreen({ restore: () => emptyResponse(409) });
+    await showDeleted();
+    fireEvent.click(screen.getByRole("button", { name: "Restore Ada Lovelace" }));
+    expect(await screen.findByText(MSG_CHANGED)).toBeTruthy();
+    expect(callsTo(calls, "/v1/people/restore")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Restore Ada Lovelace" })).toBeTruthy();
+  });
+
+  it("the deleted-duplicate message offers restore only to people.delete holders", async () => {
+    for (const canDelete of [true, false]) {
+      const expected = canDelete ? MSG_DUPLICATE_RESTORE : MSG_DUPLICATE;
+      await openScreen({
+        canDelete,
+        create: () => jsonResponse(409, { code: "duplicate_deleted" }),
+        update: () => jsonResponse(409, { code: "duplicate_deleted" }),
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Add contact" }));
+      fireEvent.change(await screen.findByLabelText("Given name"), { target: { value: "Ada" } });
+      fireEvent.change(screen.getByLabelText("Family name"), { target: { value: "Lovelace" } });
+      fireEvent.change(screen.getByLabelText("Email"), { target: { value: "ada@example.test" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save contact" }));
+      const createAlert = await screen.findByRole("alert");
+      expect(createAlert.textContent).toBe(expected);
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+      fireEvent.click(await screen.findByRole("button", { name: "View Ada Lovelace" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Edit contact" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Save changes" }));
+      const editAlert = await screen.findByRole("alert");
+      expect(editAlert.textContent).toBe(expected);
+      await resetScreen();
+    }
+  });
+
+  it("an older 409 with an empty body keeps today's messages on create and edit", async () => {
+    await openScreen({
+      create: () => emptyResponse(409),
+      update: () => emptyResponse(409),
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add contact" }));
+    fireEvent.change(await screen.findByLabelText("Given name"), { target: { value: "Ada" } });
+    fireEvent.change(screen.getByLabelText("Family name"), { target: { value: "Lovelace" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save contact" }));
+    expect((await screen.findByRole("alert")).textContent).toBe("Unable to save contact");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "View Ada Lovelace" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit contact" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save changes" }));
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "This contact was changed by someone else, or that email or phone is already in use.",
+    );
+  });
+
+  it("a deep link to a hidden contact answers as for an unknown contact", async () => {
+    await openScreen({ read: () => emptyResponse(404) });
+    fireEvent.click(await screen.findByRole("button", { name: "View Ada Lovelace" }));
+    expect(await screen.findByText("Contact not found")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Edit contact" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Delete/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Restore/ })).toBeNull();
+  });
+
+  it("has no axe violations in the Delete dialog, in light and dark, and in the Deleted list", async () => {
+    const { container } = await openScreen({
+      del: () => jsonResponse(409, { code: "sole_guardian" }),
+    });
+    const { dialog } = await openDeleteDialog("Ada Lovelace");
+    fireEvent.click(confirmButton(dialog));
+    await within(dialog).findByText(/only guardian of a child/);
+    for (const theme of ["light", "dark"] as const) {
+      document.documentElement.dataset.theme = theme;
+      const results = await axe.run(document.body, {
+        rules: { "color-contrast": { enabled: false } },
+      });
+      expect(resultIds(results, "violations"), theme).toEqual([]);
+    }
+    delete document.documentElement.dataset.theme;
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    await showDeleted();
+    for (const theme of ["light", "dark"] as const) {
+      document.documentElement.dataset.theme = theme;
+      const results = await axe.run(container, {
+        rules: { "color-contrast": { enabled: false } },
+      });
+      expect(resultIds(results, "violations"), theme).toEqual([]);
+    }
+    delete document.documentElement.dataset.theme;
+  });
+});
