@@ -446,3 +446,32 @@ Source: the checkpoint 2 pin run (pins 33 to 87 all fail weakened and pass resto
   - F2: the duplicate lookup checks email first whichever index fired. The spec fixes email first; Postgres checks the email index first today (the owner's probes 1a and 1b passed). If that order changed, the worst case is `duplicate_phone` where `duplicate_email` is due.
   - F4: `updatePerson`'s update has no `deleted_at is null`. A hide adds one to `version`, so the version check already refuses a stale write; the extra predicate could not be pinned, because removing it changes nothing.
   - F5: the Deleted item's `givenName` is `min(1)` and the server falls back to `""`. `normaliseName` refuses an empty name and the table's check refuses a null one for an adult.
+
+### A3 (2026-11-23, after checkpoint 3): one lock order for guardians, dialog focus, and community-change tests
+
+Source: the checkpoint 3 owner's check (Claude Haiku 5.5, CHANGES NEEDED, 2 Medium, 2 Low, 2 Nit; F1 shown by a two-transaction probe, F2 by removing both guards with all 138 tests green) and the reviewer's browser check (stub API, Brave, 1280px and 375px, light and dark; axe 0 violations and no sideways scroll in 16 views; B1 to B5). Pins 88 to 93 all fail weakened and pass restored; pin 90's Restore half was also run alone. Three commits, in this order.
+
+- **People, commit `fix(people): lock the guardian before the child in every guardian write`:** Task 5 made `unlinkGuardian` lock the guardian after the child, and delete locks the contact before its children, so an unlink and a delete of the same guardian could deadlock; the household route answers that with a 500. `linkGuardian` locks both in id order, with the same risk when the child's id sorts first (accepted in "Sole guardian holes"; this replaces that note). Both now lock the guardian first and the child second, as delete does. `linkGuardian` keeps `FOR SHARE` and its one tenant-scoped check of both rows; `unlinkGuardian` keeps `FOR UPDATE`. The `40P01` mapping on delete stays. File **HW**.
+- **UI, commit `fix(ui): keep focus on the ConfirmDialog confirm button while pending`:** the confirm button is disabled while pending, so the browser drops focus to the page body while the dialog is open (B1). It becomes `aria-disabled` and stays focusable (`focusableWhenDisabled` of the Base UI button), keeps its disabled look with tokens, and still ignores clicks and the Enter and Space keys while pending. `button.tsx` does not change. File `confirm-dialog.test.tsx`.
+- **Admin, commit `fix(admin): refresh the counts after a purged delete and pin the community-change guards`:** a delete answered 404 also requests the counts again (B5). Tests for the existing guards that ignore a delete or restore answer which arrives after the community changed (F2). File **AD**.
+
+| #   | Setting                                        | Weakening                                      | File | Test that must fail (exact `it` title)                               |
+| --- | ---------------------------------------------- | ---------------------------------------------- | ---- | -------------------------------------------------------------------- |
+| 48b | `linkGuardian` locks the guardian first        | Lock the two rows in id order                  | HW   | linkGuardian and a delete of the same guardian do not deadlock       |
+| 50b | `unlinkGuardian` locks the guardian first      | Lock the child before the guardian             | HW   | unlinkGuardian and a delete of the same guardian do not deadlock     |
+| 69b | Confirm keeps focus while pending              | Use `disabled` without `focusableWhenDisabled` | UI   | ConfirmDialog keeps focus on the confirm button while pending        |
+| 92b | Counts refreshed after a delete answers 404    | Drop the counts request from the 404 branch    | AD   | a delete answered 404 also refreshes the counts                      |
+| 94  | Delete answer after a community change ignored | Drop the slug guard after the delete answer    | AD   | a delete answer that arrives after the community changed is ignored  |
+| 94b | Delete code read after a change ignored        | Drop the slug guard after the 409 body is read | AD   | a delete refusal read after the community changed is ignored         |
+| 95  | Restore answer after a change ignored          | Drop the slug guard after the restore answer   | AD   | a restore answer that arrives after the community changed is ignored |
+
+- 48b and 50b: the minor has two unhidden guardians, so the delete is allowed. Transaction 1 runs `lockPersonForDelete` on one guardian and stays open; transaction 2 unlinks that guardian (50b) or links the same pair again (48b) and is proven blocked through `pg_locks`, as in A2; transaction 1 then runs `hidePerson` and commits. Transaction 1 resolves, transaction 2 rejects with `not_found`, neither rejects with `40P01`, and the links are unchanged. For 48b the child's id sorts before the guardian's. Each `it` has an explicit 20 000 ms timeout.
+- 69b: the confirm button has focus, `pending` becomes true, and the button is still the active element, has `aria-disabled="true"` and no `disabled` attribute; a click, Enter and Space call nothing. Pins 69 to 71 stay green.
+- 94 and 95: start the request, change the community while it is pending, then answer 200, 404 and 409 in turn. The new community shows no alert and no dialog, and no further list or counts request is made. 94b: the answer is a 409 whose body resolves after the change.
+- The reviewer repeats the browser focus check for B1.
+- Not acted on, recorded for the pull request:
+  - F3: `removeMember` answers not found for a hidden member and `false` for someone who is no member. The plan fixed both (pin 67); no route calls it.
+  - F4: the people `testTimeout` applies to the whole package, as A2 says.
+  - F5: an update that races a hide answers 409, not 404 (A2's F4).
+  - F6: the dialog's date is computed in the browser before the request; the Deleted list shows the server's.
+  - B2 to B4: View and Delete stack at 1280px; on a phone a deleted row reads "Deleted" twice, because the spec fixes the second text; a Deleted search with no match shows "No deleted contacts.".
