@@ -421,3 +421,28 @@ Source: the reviewer's Task 3 review and checkpoint pin run (pins 1 to 32 all fa
   - F6: the insert rule (`persons_before_insert`) is in this plan (Spec pointer corrections) but not in the spec's Data section or ADR 0020. It also means a later import has to disable the trigger to insert a pre-hidden row. The pull request body says so.
   - F7: the function's `search_path` has no trailing `pg_temp`. The spec fixes it as `pg_catalog, app`, as `0016` does, and `app` has no `TEMP` privilege (probed), so nothing can be shadowed today. It matters only if `TEMP` is ever granted to `app`.
   - `hidePerson` relies on `lockPersonForDelete` running first in the same transaction (the plan's design); Task 8's route test keeps that order.
+
+### A2 (2026-11-23, after checkpoint 2): writes wait for a delete, and test timing
+
+Source: the checkpoint 2 pin run (pins 33 to 87 all fail weakened and pass restored) and the checkpoint 2 owner's check (Claude Haiku 5.5, CHANGES NEEDED, 1 Medium, 3 Low, 1 Nit). F1 was shown by a two-transaction probe. The reviewer then read every write that names a contact: `detachTag` (also in F1), `updateLifeEvent`, `removeMember` and `setMemberRole` check `deleted_at` without a lock too. Create, update, status, move, the guardian writes, `createLifeEvent`, `addMember`, `createInvitation` and `writeUserLink` already lock the contact or check its state or version in the write itself. Three commits, in this order.
+
+- **People, commit `fix(people): make tag, life event and hide writes wait for or refuse a hidden contact`:** `attachTag` and `detachTag` read the contact `FOR SHARE` (`listPersonTags` stays unlocked); `updateLifeEvent` reads it `FOR SHARE OF p`; the update in `hidePerson` gains `deleted_at is null and is_minor = false`, so a caller that skips `lockPersonForDelete` gets `not_found` instead of the trigger's error. Files **HW** and **H**.
+- **Groups, commit `fix(groups): make member removal and role changes wait for a delete`:** `visiblePersonIds` takes an optional `{ lock: "share" }`, which `removeMember` and `setMemberRole` pass; its read callers stay unlocked. File `hidden-members.integration.test.ts`.
+
+| #   | Setting                               | Weakening                                         | Package | Test that must fail (exact `it` title)                    |
+| --- | ------------------------------------- | ------------------------------------------------- | ------- | --------------------------------------------------------- |
+| 28d | `hidePerson` refuses a hidden contact | Drop `deleted_at is null` from its update         | people  | hidePerson alone answers not found for a hidden contact   |
+| 28e | `hidePerson` refuses a minor          | Drop `is_minor = false` from its update           | people  | hidePerson alone answers not found for a minor            |
+| 51b | Attach waits for a delete             | Drop the lock from `attachTag`'s contact read     | people  | attachTag waits for a delete that holds the contact       |
+| 52b | Detach waits for a delete             | Drop the lock from `detachTag`'s contact read     | people  | detachTag waits for a delete that holds the contact       |
+| 55b | Life event update waits for a delete  | Drop `for share of p` from `updateLifeEvent`      | people  | updateLifeEvent waits for a delete that holds the contact |
+| 67b | Member removal waits for a delete     | Drop the lock from `removeMember`'s contact read  | groups  | removeMember waits for a delete that holds the contact    |
+| 68b | Role change waits for a delete        | Drop the lock from `setMemberRole`'s contact read | groups  | setMemberRole waits for a delete that holds the contact   |
+
+- 51b, 52b, 55b, 67b and 68b: transaction 1 runs `lockPersonForDelete` and `hidePerson` and stays open. Transaction 2's call is proven blocked through `pg_locks`, as pins 59 and 60 do (race the promise, poll with a 10 s cap, never hang). Transaction 1 commits. The call rejects as not found, and the rows it would change (link, history, life event, membership) are unchanged. Each `it` has an explicit 20 000 ms timeout. Without the lock, attach and detach still block on the history row's foreign key and then succeed, so their tests fail on the rejection, not on the wait.
+- 28d and 28e: `hidePerson` is called without `lockPersonForDelete`, in its own transaction, and rejects with `{ code: "not_found" }`; the row is unchanged and no audit event is added.
+- **Test timing, commit `test(people): raise the test timeout for the serial gate`:** `modules/core/people/vitest.config.ts` sets `testTimeout: 20_000`. Two existing tests have exceeded the default 5 s under the serial gate: household-detail "pin 9" (A1) and list-persons "filters by status…". No assertion changes. The file is outside this chunk's named files; the pull request names it.
+- Not acted on, recorded for the pull request:
+  - F2: the duplicate lookup checks email first whichever index fired. The spec fixes email first; Postgres checks the email index first today (the owner's probes 1a and 1b passed). If that order changed, the worst case is `duplicate_phone` where `duplicate_email` is due.
+  - F4: `updatePerson`'s update has no `deleted_at is null`. A hide adds one to `version`, so the version check already refuses a stale write; the extra predicate could not be pinned, because removing it changes nothing.
+  - F5: the Deleted item's `givenName` is `min(1)` and the server falls back to `""`. `normaliseName` refuses an empty name and the table's check refuses a null one for an adult.
