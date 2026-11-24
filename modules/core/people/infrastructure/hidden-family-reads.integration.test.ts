@@ -307,9 +307,7 @@ describe("hidden family reads", () => {
     const otherOrgHh = await createHouseholdRow(scope3, "Other Org");
 
     await inScope(scope1, async (tx) => {
-      await expect(
-        openHouseholdLabel(tx, kms, KEY_ARN, hidden.householdId),
-      ).resolves.toBeNull();
+      await expect(openHouseholdLabel(tx, kms, KEY_ARN, hidden.householdId)).resolves.toBeNull();
 
       await expect(
         readHousehold(tx, kms, KEY_ARN, {
@@ -489,6 +487,7 @@ describe("hidden family reads", () => {
         actorUserId: ACTOR,
       });
       expect(res.items.map((i) => i.householdId)).toEqual([hiddenHh.householdId]);
+      expect(res.items.map((i) => i.householdId)).not.toContain(visibleHh.householdId);
       expect(res.items[0]?.householdId).toBe(hiddenHh.householdId);
       expect(res.items[0]?.label).toBe("Hidden Fam");
       expect(res.items[0]?.adultCount).toBe(1);
@@ -553,7 +552,11 @@ describe("hidden family reads", () => {
       expect(p3.items[0]?.householdId).toBe(expectedOrder[2]);
       expect(p3.nextCursor).toBeNull();
 
-      const collected1 = [p1.items[0]!.householdId, p2.items[0]!.householdId, p3.items[0]!.householdId];
+      const collected1 = [
+        p1.items[0]!.householdId,
+        p2.items[0]!.householdId,
+        p3.items[0]!.householdId,
+      ];
       expect(collected1).toEqual(expectedOrder);
 
       // Paging with page size 2
@@ -574,7 +577,10 @@ describe("hidden family reads", () => {
       expect(q2.items[0]?.householdId).toBe(expectedOrder[2]);
       expect(q2.nextCursor).toBeNull();
 
-      const collected2 = [...q1.items.map((i) => i.householdId), ...q2.items.map((i) => i.householdId)];
+      const collected2 = [
+        ...q1.items.map((i) => i.householdId),
+        ...q2.items.map((i) => i.householdId),
+      ];
       expect(collected2).toEqual(expectedOrder);
     });
   });

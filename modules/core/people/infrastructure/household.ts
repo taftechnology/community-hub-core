@@ -15,6 +15,7 @@ import { recordSuccess } from "@community-hub/usage";
 
 import { PeopleError } from "../domain/error.js";
 import { normaliseName } from "../domain/person.js";
+import type { HouseholdStatus } from "./household-status.js";
 import { ensureCommunityKey } from "./keys.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -137,8 +138,6 @@ async function householdEncKey(
   const { enc } = await householdFieldKeys(tx, kms, keyArn, householdId);
   return enc;
 }
-
-export type HouseholdStatus = "active" | "inactive";
 
 export async function openField(
   bytes: Uint8Array | null,
@@ -414,12 +413,14 @@ export async function readHouseholdDetail(
     throw new PeopleError("invalid_input");
   }
 
-  const rows = await tx<{
-    id: string;
-    version: number;
-    status: HouseholdStatus;
-    label: Uint8Array | null;
-  }[]>`
+  const rows = await tx<
+    {
+      id: string;
+      version: number;
+      status: HouseholdStatus;
+      label: Uint8Array | null;
+    }[]
+  >`
     select id::text as id, version, status, label
     from app.households
     where id = ${input.householdId}::uuid

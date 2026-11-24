@@ -74,7 +74,6 @@ export {
   listHouseholds,
   type DeletedHouseholdListItem,
   type HouseholdListItem,
-  type HouseholdStatus,
   type ListDeletedHouseholdsInput,
   type ListDeletedHouseholdsResult,
   type ListHouseholdsInput,

@@ -3,14 +3,14 @@ import { appendAuditEvent, type AppTransaction } from "@community-hub/db";
 
 import { PeopleError } from "../domain/error.js";
 import { householdFieldKeys, openField, openHouseholdLabel } from "./household.js";
+import type { HouseholdStatus } from "./household-status.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const TIMESTAMPTZ_TEXT_RE =
-  /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?[+-]\d{2}(:\d{2})?$/;
+const TIMESTAMPTZ_TEXT_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?[+-]\d{2}(:\d{2})?$/;
 const HOUSEHOLD_LISTED = "people.household.listed";
 const HOUSEHOLD_LISTED_DELETED = "people.household.listed_deleted";
 
-export type HouseholdStatus = "active" | "inactive";
+export type { HouseholdStatus };
 
 export type ListHouseholdsInput = {
   cursor?: string | null;
@@ -118,11 +118,7 @@ export async function listHouseholds(
     throw new PeopleError("invalid_input");
   }
 
-  if (
-    input.status !== undefined &&
-    input.status !== "active" &&
-    input.status !== "inactive"
-  ) {
+  if (input.status !== undefined && input.status !== "active" && input.status !== "inactive") {
     throw new PeopleError("invalid_input");
   }
 
