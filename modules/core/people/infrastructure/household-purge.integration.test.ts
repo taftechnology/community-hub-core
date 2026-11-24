@@ -516,6 +516,52 @@ describe("purgeDeletedHouseholds", () => {
     );
   });
 
+  it("family purge deletes the guardian links of a former child of the family", async () => {
+    const scope = await setupTenant("p27b");
+    const householdId = await insertHousehold(scope);
+    const adult1 = await insertAdult(scope, householdId, "Guardian", "Adult");
+    const adult2 = await insertAdult(scope, householdId, "FormerChild", "Adult");
+    const linkId = newId();
+
+    await withAppTransaction(migrator, scope, async (tx) => {
+      await tx`
+        insert into app.guardian_links (
+          id, org_id, community_id, household_id, guardian_person_id, child_person_id,
+          consent, pickup, view, manage
+        )
+        values (
+          ${linkId}, ${scope.orgId}, ${scope.communityId}, ${householdId}, ${adult1}, ${adult2},
+          true, false, false, false
+        )
+      `;
+    });
+
+    await ageHousehold(scope, householdId, 721);
+
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, scope, async (tx) => {
+        await expect(purgeDeletedHouseholds(tx, 50)).resolves.toEqual([householdId]);
+      }),
+    );
+
+    const links = await withAppTransaction(migrator, scope, async (tx) => {
+      return tx<{ id: string }[]>`
+        select id::text as id
+        from app.guardian_links
+        where id = ${linkId}
+      `;
+    });
+    expect(links).toHaveLength(0);
+
+    const survivingAdult1 = await getPerson(scope, adult1);
+    expect(survivingAdult1).toBeDefined();
+    expect(survivingAdult1?.household_id).toBeNull();
+
+    const survivingAdult2 = await getPerson(scope, adult2);
+    expect(survivingAdult2).toBeDefined();
+    expect(survivingAdult2?.household_id).toBeNull();
+  });
+
   it("family purge skips a family another transaction has locked", async () => {
     const scope = await setupTenant("p28");
     const hLocked = await insertHousehold(scope);
