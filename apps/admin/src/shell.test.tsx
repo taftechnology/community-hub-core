@@ -191,6 +191,7 @@ describe("Shell and ShellLayout", () => {
         "people.view": true,
         "people.manage": true,
         "people.restricted.read": true,
+        "people.delete": false,
         "service_times.manage": false,
       },
       entitlements: {
@@ -256,6 +257,7 @@ describe("Shell and ShellLayout", () => {
         "people.view": true,
         "people.manage": true,
         "people.restricted.read": true,
+        "people.delete": false,
         "service_times.manage": true,
       },
       entitlements: {
@@ -722,6 +724,7 @@ describe("Shell and ShellLayout", () => {
         "people.view": true,
         "people.manage": true,
         "people.restricted.read": true,
+        "people.delete": false,
         "service_times.manage": false,
       },
       entitlements: {

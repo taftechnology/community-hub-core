@@ -13,6 +13,7 @@ export async function personIsMinor(
           where id = ${personId}::uuid
             and org_id = current_setting('app.org_id')::uuid
             and community_id = current_setting('app.community_id')::uuid
+            and deleted_at is null
           for share
         `
       : await tx<{ is_minor: boolean }[]>`
@@ -21,6 +22,7 @@ export async function personIsMinor(
           where id = ${personId}::uuid
             and org_id = current_setting('app.org_id')::uuid
             and community_id = current_setting('app.community_id')::uuid
+            and deleted_at is null
         `;
   const row = rows[0];
   return row === undefined ? null : row.is_minor;

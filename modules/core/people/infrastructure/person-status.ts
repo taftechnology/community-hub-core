@@ -57,6 +57,7 @@ export async function setPersonStatus(
       and org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
       and is_minor = false
+      and deleted_at is null
       and version = ${input.version}
       and status <> ${input.status}
     returning version, status
@@ -87,6 +88,7 @@ export async function setPersonStatus(
       and org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
       and is_minor = false
+      and deleted_at is null
   `;
 
   const existing = fallbackRows[0];

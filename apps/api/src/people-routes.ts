@@ -1,10 +1,19 @@
-import { AccessError, holdsPermission, readPersonForActor } from "@community-hub/access";
+import {
+  AccessError,
+  deleteBlockers,
+  holdsPermission,
+  readPersonForActor,
+} from "@community-hub/access";
 import {
   createPersonBody,
   listPeopleBody,
   peopleSummaryBody,
   type PeopleSummaryResponse,
+  personDeleteBody,
+  type PersonDeleteResponse,
   type PersonListItem,
+  personRestoreBody,
+  type PersonRestoreResponse,
   personStatusBody,
   readPersonBody,
   updatePersonBody,
@@ -15,8 +24,12 @@ import { readSession } from "@community-hub/identity";
 import { getRequestContext } from "@community-hub/kernel";
 import {
   createPerson,
+  hidePerson,
+  listDeletedPersons,
   listPersons,
+  lockPersonForDelete,
   PeopleError,
+  restorePerson,
   setPersonStatus,
   summarisePersons,
   updatePerson,
@@ -26,6 +39,7 @@ import { findCommunityBySlug } from "@community-hub/tenancy";
 
 import { guardWrite } from "./billing-guard.js";
 import type { Checkout } from "./checkout.js";
+import { sweepDeletedContacts } from "./contact-sweep.js";
 import { checkEntitlement, guardEntitlement } from "./entitlement-guard.js";
 import type { GateRoute, RouteContext } from "./gate.js";
 import type { BillingLogFields } from "./index.js";
@@ -35,6 +49,7 @@ type PeopleSql = Parameters<typeof readSession>[0];
 const DENIED = "people.permission.denied";
 const VIEW = "people.view";
 const MANAGE = "people.manage";
+const DELETE = "people.delete";
 const RESTRICTED = "people.restricted.read";
 const ADULT_VIEW_PURPOSE = "people.person.view";
 const DIRECTORY_ENTITLEMENT = "people.directory";
@@ -63,7 +78,26 @@ function noStore(response: Response): Response {
   return response;
 }
 
+// The four refusals added by contact delete answer 409 with a JSON `{ code }` body. Every other
+// answer stays status-only.
+function codedConflict(code: PeopleError["code"]): Response {
+  return Response.json({ code }, { status: 409 });
+}
+
+// Postgres `40P01`: the contact's lock order met a concurrent guardian write.
+function isDeadlock(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "40P01";
+}
+
 export function statusForPeople(error: PeopleError): Response | undefined {
+  if (
+    error.code === "linked_user" ||
+    error.code === "pending_invitation" ||
+    error.code === "sole_guardian" ||
+    error.code === "duplicate_deleted"
+  ) {
+    return codedConflict(error.code);
+  }
   if (
     error.code === "duplicate_email" ||
     error.code === "duplicate_phone" ||
@@ -249,7 +283,9 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
       return finish(request, noStore(empty(403)));
     }
 
-    return deps.checkout("app", (sql) =>
+    // Set only on the two 200 answers that sweep: the adult list and the Deleted list.
+    let sweepAfter = false;
+    const response = await deps.checkout("app", (sql) =>
       withAppTransaction(sql, scope, async (tx) => {
         try {
           const isMinorsMode = body.kind === "minors";
@@ -287,6 +323,31 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
             return finish(request, noStore(empty(403)));
           }
 
+          if (body.status === "deleted") {
+            const canDelete = await holdsPermission(tx, actor.userId, DELETE);
+            if (!canDelete) {
+              await appendAuditEvent(tx, {
+                actorKind: "user",
+                actorId: actor.userId,
+                action: DENIED,
+                purpose: DENIED,
+                targetIds: [scope.orgId, scope.communityId],
+              });
+              return finish(request, noStore(empty(400)));
+            }
+            const deleted = await listDeletedPersons(tx, {
+              search: body.search ?? null,
+              cursor: body.cursor ?? null,
+              ...(body.limit !== undefined ? { limit: body.limit } : {}),
+              actorUserId: actor.userId,
+            });
+            sweepAfter = true;
+            return finish(
+              request,
+              noStore(Response.json({ items: deleted.items, nextCursor: deleted.nextCursor })),
+            );
+          }
+
           let personIds: string[] | undefined;
           if (body.groupId !== undefined) {
             personIds = await personIdsInGroup(tx, body.groupId);
@@ -322,6 +383,7 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
             });
           }
 
+          sweepAfter = true;
           return finish(request, noStore(Response.json({ items, nextCursor: result.nextCursor })));
         } catch (error) {
           if (error instanceof PeopleError) {
@@ -334,6 +396,10 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
         }
       }),
     );
+    if (sweepAfter && response.status === 200) {
+      await sweepDeletedContacts(deps, scope, actor.userId, context);
+    }
+    return response;
   }
 
   async function read(request: Request, context: RouteContext): Promise<Response> {
@@ -587,6 +653,144 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
     );
   }
 
+  async function remove(request: Request, context: RouteContext): Promise<Response> {
+    const prep = await prepare(request, context, personDeleteBody);
+    if (!prep.ok) {
+      return prep.response;
+    }
+    const { body, actor, scope } = prep;
+
+    let response: Response;
+    try {
+      response = await deps.checkout("app", (sql) =>
+        withAppTransaction(sql, scope, async (tx) => {
+          const canView = await holdsPermission(tx, actor.userId, VIEW);
+          if (!canView) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: DENIED,
+              purpose: ADULT_VIEW_PURPOSE,
+              targetIds: [scope.orgId, scope.communityId],
+            });
+            return finish(request, empty(403));
+          }
+          const canDelete = await holdsPermission(tx, actor.userId, DELETE);
+          if (!canDelete) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: DENIED,
+              purpose: DENIED,
+              targetIds: [scope.orgId, scope.communityId],
+            });
+            return finish(request, empty(403));
+          }
+
+          try {
+            // Lock order: the contact first (lockPersonForDelete, FOR UPDATE), then the blockers
+            // under that lock, then hidePerson, which locks the contact's children by id.
+            await lockPersonForDelete(tx, { personId: body.personId, version: body.version });
+            const blockers = await deleteBlockers(tx, body.personId);
+            if (blockers.userLink) {
+              throw new PeopleError("linked_user");
+            }
+            if (blockers.pendingInvitation) {
+              throw new PeopleError("pending_invitation");
+            }
+            const hidden = await hidePerson(tx, {
+              personId: body.personId,
+              actorUserId: actor.userId,
+            });
+            const payload: PersonDeleteResponse = {
+              personId: hidden.personId,
+              version: hidden.version,
+              purgeAfter: hidden.purgeAfter.toISOString(),
+            };
+            return finish(request, Response.json(payload));
+          } catch (error) {
+            if (error instanceof PeopleError) {
+              const mapped = statusForPeople(error);
+              if (mapped !== undefined) {
+                return finish(request, mapped);
+              }
+            }
+            throw error;
+          }
+        }),
+      );
+    } catch (error) {
+      if (isDeadlock(error)) {
+        return finish(request, empty(409));
+      }
+      throw error;
+    }
+    if (response.status === 200) {
+      await sweepDeletedContacts(deps, scope, actor.userId, context);
+    }
+    return response;
+  }
+
+  async function restore(request: Request, context: RouteContext): Promise<Response> {
+    const prep = await prepare(request, context, personRestoreBody);
+    if (!prep.ok) {
+      return prep.response;
+    }
+    const { body, actor, scope } = prep;
+
+    const response = await deps.checkout("app", (sql) =>
+      withAppTransaction(sql, scope, async (tx) => {
+        const canView = await holdsPermission(tx, actor.userId, VIEW);
+        if (!canView) {
+          await appendAuditEvent(tx, {
+            actorKind: "user",
+            actorId: actor.userId,
+            action: DENIED,
+            purpose: ADULT_VIEW_PURPOSE,
+            targetIds: [scope.orgId, scope.communityId],
+          });
+          return finish(request, empty(403));
+        }
+        const canDelete = await holdsPermission(tx, actor.userId, DELETE);
+        if (!canDelete) {
+          await appendAuditEvent(tx, {
+            actorKind: "user",
+            actorId: actor.userId,
+            action: DENIED,
+            purpose: DENIED,
+            targetIds: [scope.orgId, scope.communityId],
+          });
+          return finish(request, empty(403));
+        }
+
+        try {
+          const restored = await restorePerson(tx, {
+            personId: body.personId,
+            version: body.version,
+            actorUserId: actor.userId,
+          });
+          const payload: PersonRestoreResponse = {
+            personId: restored.personId,
+            version: restored.version,
+          };
+          return finish(request, Response.json(payload));
+        } catch (error) {
+          if (error instanceof PeopleError) {
+            const mapped = statusForPeople(error);
+            if (mapped !== undefined) {
+              return finish(request, mapped);
+            }
+          }
+          throw error;
+        }
+      }),
+    );
+    if (response.status === 200) {
+      await sweepDeletedContacts(deps, scope, actor.userId, context);
+    }
+    return response;
+  }
+
   return [
     {
       method: "POST",
@@ -629,6 +833,20 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
       surface: "tenant",
       billing: "write",
       handle: status,
+    },
+    {
+      method: "POST",
+      pattern: "/v1/people/delete",
+      surface: "tenant",
+      billing: "write",
+      handle: remove,
+    },
+    {
+      method: "POST",
+      pattern: "/v1/people/restore",
+      surface: "tenant",
+      billing: "write",
+      handle: restore,
     },
   ];
 }

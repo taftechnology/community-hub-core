@@ -1746,6 +1746,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
               "people.view": true,
               "people.manage": true,
               "people.restricted.read": true,
+              "people.delete": false,
               "service_times.manage": false,
             },
           }}
@@ -1782,6 +1783,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
               "people.view": true,
               "people.manage": true,
               "people.restricted.read": false,
+              "people.delete": false,
               "service_times.manage": false,
             },
           }}
@@ -1810,6 +1812,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
               "people.view": true,
               "people.manage": true,
               "people.restricted.read": true,
+              "people.delete": false,
               "service_times.manage": false,
             },
           }}
@@ -2842,6 +2845,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
             "people.view": true,
             "people.manage": true,
             "people.restricted.read": false,
+            "people.delete": false,
             "service_times.manage": false,
           },
           entitlements: {
@@ -2866,6 +2870,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
             "people.view": true,
             "people.manage": true,
             "people.restricted.read": false,
+            "people.delete": false,
             "service_times.manage": false,
           },
           entitlements: {
@@ -2890,6 +2895,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
             "people.view": true,
             "people.manage": true,
             "people.restricted.read": false,
+            "people.delete": false,
             "service_times.manage": false,
           },
           entitlements: {
@@ -2916,6 +2922,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
             "people.view": true,
             "people.manage": true,
             "people.restricted.read": true,
+            "people.delete": false,
             "service_times.manage": false,
           },
           entitlements: {
@@ -2941,6 +2948,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
             "people.view": true,
             "people.manage": false,
             "people.restricted.read": true,
+            "people.delete": false,
             "service_times.manage": false,
           },
           entitlements: {
@@ -5577,6 +5585,7 @@ describe("Family forms restyle & security pins (Task 10)", () => {
       "people.view": true,
       "people.manage": true,
       "people.restricted.read": true,
+      "people.delete": false,
       "service_times.manage": false,
     },
     entitlements: {
@@ -6434,6 +6443,7 @@ describe("Family Records - Create new adult", () => {
       "people.view": true,
       "people.manage": true,
       "people.restricted.read": true,
+      "people.delete": false,
       "service_times.manage": false,
     },
     entitlements: {

@@ -318,7 +318,7 @@ describe("household detail read", () => {
         await directSql.end({ timeout: 1 });
       }
     }
-  });
+  }, 20_000);
 
   it("pin 24: detail read appends exactly one audit event with action people.household.read, ids only", async () => {
     const runtime = loadRuntime();

@@ -16,6 +16,7 @@ function renderNav(
       "people.view": false,
       "people.manage": false,
       "people.restricted.read": false,
+      "people.delete": false,
       "service_times.manage": false,
       ...access.permissions,
     },

@@ -23,7 +23,7 @@ function actor(
 }
 
 describe("catalogue", () => {
-  it("lists the ten permissions in order", () => {
+  it("lists the eleven permissions in order", () => {
     expect(catalogue()).toEqual([
       "access.users.view",
       "access.users.manage",
@@ -35,6 +35,7 @@ describe("catalogue", () => {
       "entitlements.view",
       "entitlements.manage",
       "service_times.manage",
+      "people.delete",
     ]);
   });
 
@@ -85,6 +86,26 @@ describe("bundle", () => {
     for (const role of ["org_owner", "org_admin", "community_admin", "content_editor"]) {
       const perms = bundle(role) ?? [];
       expect(perms, role).toContain("service_times.manage");
+    }
+  });
+
+  it("only org_owner, org_admin and community_admin hold people.delete", () => {
+    for (const role of ["org_owner", "org_admin", "community_admin"]) {
+      const perms = bundle(role) ?? [];
+      expect(perms, role).toContain("people.delete");
+    }
+    for (const role of [
+      "staff",
+      "finance",
+      "member",
+      "org_billing",
+      "org_auditor",
+      "safeguarding_officer",
+      "volunteer_coordinator",
+      "content_editor",
+    ]) {
+      const perms = bundle(role) ?? [];
+      expect(perms, role).not.toContain("people.delete");
     }
   });
 

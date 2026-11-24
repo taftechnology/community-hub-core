@@ -9,7 +9,7 @@ type ActivityView = {
 
 async function personExists(tx: AppTransaction, personId: string): Promise<boolean> {
   const rows = await tx<{ id: string }[]>`
-    select id::text as id from app.persons where id = ${personId}::uuid
+    select id::text as id from app.persons where id = ${personId}::uuid and deleted_at is null
   `;
   return rows[0] !== undefined;
 }

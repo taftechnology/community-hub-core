@@ -15,6 +15,7 @@ import {
   type PersonStatus,
   resolveAge,
 } from "../domain/person.js";
+import { findDuplicateHolder } from "./duplicate-holder.js";
 import { derivePersonFieldKeys } from "./person-keys.js";
 
 const PERSON_CREATED = "people.person.created";
@@ -287,6 +288,14 @@ export async function createPerson(
   } catch (error) {
     const duplicate = duplicateError(error);
     if (duplicate !== undefined) {
+      const holder = await findDuplicateHolder(tx, {
+        emailBidx,
+        phoneBidx,
+        excludePersonId: null,
+      });
+      if (holder?.hidden === true) {
+        throw new PeopleError("duplicate_deleted");
+      }
       throw duplicate;
     }
     throw error;
@@ -360,6 +369,7 @@ export async function readPerson(
       phone
     from app.persons
     where id = ${input.personId}::uuid
+      and deleted_at is null
   `;
   const row = rows[0];
   if (row === undefined) {

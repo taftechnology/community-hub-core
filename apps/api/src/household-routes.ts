@@ -63,6 +63,9 @@ function empty(status: number): Response {
 }
 
 export function statusForHouseholds(error: PeopleError): Response | undefined {
+  if (error.code === "duplicate_deleted") {
+    return Response.json({ code: error.code }, { status: 409 });
+  }
   if (
     error.code === "conflict" ||
     error.code === "duplicate_guardian_link" ||

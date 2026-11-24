@@ -161,6 +161,7 @@ export async function listLifeEvents(
     where id = ${input.personId}::uuid
       and org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
+      and deleted_at is null
   `;
   const person = persons[0];
   if (person === undefined) {
@@ -275,6 +276,7 @@ export async function createLifeEvent(
     where id = ${input.personId}::uuid
       and org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
+      and deleted_at is null
     for update
   `;
   const person = persons[0];
@@ -409,6 +411,8 @@ export async function updateLifeEvent(
       and e.community_id = current_setting('app.community_id')::uuid
       and p.org_id = current_setting('app.org_id')::uuid
       and p.community_id = current_setting('app.community_id')::uuid
+      and p.deleted_at is null
+    for share of p
   `;
   const existing = rows[0];
   if (existing === undefined) {

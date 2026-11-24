@@ -27,6 +27,7 @@ import {
   createHousehold,
   createLifeEvent,
   createPerson,
+  hidePerson,
   linkGuardian,
 } from "@community-hub/people";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -399,6 +400,21 @@ describe("billing guard against a real database", () => {
         const rows = await tx<{ n: number }[]>`
           select count(*)::int as n
           from app.households
+        `;
+        return rows[0]!.n;
+      },
+    );
+  }
+
+  async function countHiddenPersons(setup: OrgSetup): Promise<number> {
+    return withAppTransaction(
+      app,
+      { orgId: setup.orgId, communityId: setup.communityId },
+      async (tx) => {
+        const rows = await tx<{ n: number }[]>`
+          select count(*)::int as n
+          from app.persons
+          where deleted_at is not null
         `;
         return rows[0]!.n;
       },
@@ -850,6 +866,83 @@ describe("billing guard against a real database", () => {
               status: "inactive",
             },
             count: () => personVersion(setup, personId),
+          };
+        },
+      },
+    ],
+    [
+      "POST /v1/people/delete",
+      {
+        path: "/v1/people/delete",
+        prepare: async (setup) => {
+          const personId = newId();
+          await withAppTransaction(
+            app,
+            { orgId: setup.orgId, communityId: setup.communityId },
+            async (tx) => {
+              await tx`
+                insert into app.persons (id, org_id, community_id, is_minor, age_basis, given_name, family_name, version)
+                values (
+                  ${personId}::uuid,
+                  current_setting('app.org_id')::uuid,
+                  current_setting('app.community_id')::uuid,
+                  false,
+                  'declared_adult',
+                  'Test',
+                  'User',
+                  1
+                )
+              `;
+            },
+          );
+          return {
+            body: {
+              communitySlug: setup.slug,
+              personId,
+              version: 1,
+            },
+            count: () => countHiddenPersons(setup),
+          };
+        },
+      },
+    ],
+    [
+      "POST /v1/people/restore",
+      {
+        path: "/v1/people/restore",
+        prepare: async (setup) => {
+          const personId = newId();
+          await withAppTransaction(
+            app,
+            { orgId: setup.orgId, communityId: setup.communityId },
+            async (tx) => {
+              await tx`
+                insert into app.persons (id, org_id, community_id, is_minor, age_basis, given_name, family_name, version)
+                values (
+                  ${personId}::uuid,
+                  current_setting('app.org_id')::uuid,
+                  current_setting('app.community_id')::uuid,
+                  false,
+                  'declared_adult',
+                  'Test',
+                  'User',
+                  1
+                )
+              `;
+            },
+          );
+          const hidden = await withRequest({ requestId: REQUEST_ID }, () =>
+            withAppTransaction(app, { orgId: setup.orgId, communityId: setup.communityId }, (tx) =>
+              hidePerson(tx, { personId, actorUserId: setup.ownerUserId }),
+            ),
+          );
+          return {
+            body: {
+              communitySlug: setup.slug,
+              personId,
+              version: hidden.version,
+            },
+            count: () => countHiddenPersons(setup),
           };
         },
       },

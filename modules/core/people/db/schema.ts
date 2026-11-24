@@ -157,6 +157,8 @@ export function peopleTables(
         status: text("status").notNull().default("active"),
         source: text("source").notNull().default("manual"),
         createdAt: tz("created_at").notNull().defaultNow(),
+        deletedAt: tz("deleted_at"),
+        deletedBy: uuid("deleted_by"),
         isMinor: boolean("is_minor").notNull(),
         ageBasis: text("age_basis").notNull(),
         birthdayMd: smallint("birthday_md"),
@@ -193,6 +195,9 @@ export function peopleTables(
         uniqueIndex("persons_minor_phone_bidx")
           .on(t.householdId, t.phoneBidx)
           .where(sql`${t.isMinor} = true and ${t.phoneBidx} is not null`),
+        index("persons_deleted_idx")
+          .on(t.orgId, t.communityId, t.deletedAt)
+          .where(sql`${t.deletedAt} is not null`),
         check(
           "persons_age_basis",
           sql`${t.ageBasis} in ('date_of_birth', 'declared_adult', 'unknown')`,

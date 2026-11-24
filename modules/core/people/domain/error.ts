@@ -19,7 +19,11 @@ export type PeopleErrorCode =
   | "minor_not_movable"
   | "life_event_not_found"
   | "invalid_life_event"
-  | "too_many";
+  | "too_many"
+  | "linked_user"
+  | "pending_invitation"
+  | "sole_guardian"
+  | "duplicate_deleted";
 
 export class PeopleError extends Error {
   readonly code: PeopleErrorCode;

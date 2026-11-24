@@ -105,6 +105,7 @@ export async function listHouseholds(
       and p.org_id = current_setting('app.org_id')::uuid
       and p.community_id = current_setting('app.community_id')::uuid
       and p.is_minor = false
+      and p.deleted_at is null
     where h.org_id = current_setting('app.org_id')::uuid
       and h.community_id = current_setting('app.community_id')::uuid
       ${cursorClause}

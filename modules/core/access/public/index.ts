@@ -76,3 +76,4 @@ export {
   type MailFailureInput,
 } from "../infrastructure/invitations.js";
 export { readPersonForActor } from "../infrastructure/restricted-read.js";
+export { deleteBlockers, type DeleteBlockersResult } from "../infrastructure/delete-blockers.js";

@@ -35,6 +35,14 @@ defineAuditAction("people.life_event.created");
 defineAuditPurpose("people.life_event.created");
 defineAuditAction("people.life_event.updated");
 defineAuditPurpose("people.life_event.updated");
+defineAuditAction("people.person.purged");
+defineAuditPurpose("people.person.purged");
+defineAuditAction("people.person.deleted");
+defineAuditPurpose("people.person.deleted");
+defineAuditAction("people.person.restored");
+defineAuditPurpose("people.person.restored");
+defineAuditAction("people.person.listed_deleted");
+defineAuditPurpose("people.person.listed_deleted");
 
 export { PeopleError } from "../domain/error.js";
 export { ensureCommunityKey, ensureOrganisationKey } from "../infrastructure/keys.js";
@@ -74,7 +82,11 @@ export {
   type UpdatePersonResult,
 } from "../infrastructure/update-person.js";
 export {
+  listDeletedPersons,
   listPersons,
+  type DeletedPersonListItem,
+  type ListDeletedPersonsInput,
+  type ListDeletedPersonsResult,
   type ListPersonsInput,
   type ListPersonsResult,
   type PersonListItem,
@@ -97,7 +109,7 @@ export {
 export { listPersonActivity } from "../infrastructure/activity.js";
 export { attachTag, createTag, detachTag, listPersonTags } from "../infrastructure/tags.js";
 export { openPersonFieldKeys } from "../infrastructure/person-keys.js";
-export { readRosterNames } from "../infrastructure/roster-names.js";
+export { readRosterNames, visiblePersonIds } from "../infrastructure/roster-names.js";
 export {
   readLinkedContacts,
   type LinkedContact,
@@ -115,3 +127,15 @@ export {
   type UpdateLifeEventInput,
   type UpdateLifeEventResult,
 } from "../infrastructure/life-event.js";
+export { purgeDeletedPersons } from "../infrastructure/purge.js";
+export {
+  hidePerson,
+  lockPersonForDelete,
+  restorePerson,
+  type HidePersonInput,
+  type HidePersonResult,
+  type LockPersonForDeleteInput,
+  type LockPersonForDeleteResult,
+  type RestorePersonInput,
+  type RestorePersonResult,
+} from "../infrastructure/person-delete.js";

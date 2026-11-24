@@ -212,8 +212,9 @@ describe("access grant tables", () => {
     );
     expect(match).not.toBeNull();
     const permissionsInCheck = [...(match?.[1] ?? "").matchAll(/'([^']+)'/g)].map((m) => m[1]);
-    expect(permissionsInCheck).toHaveLength(10);
+    expect(permissionsInCheck).toHaveLength(11);
     expect(permissionsInCheck).toContain("service_times.manage");
+    expect(permissionsInCheck).toContain("people.delete");
     expect(new Set(permissionsInCheck)).toEqual(new Set(catalogue()));
   });
 

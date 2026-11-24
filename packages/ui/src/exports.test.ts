@@ -71,3 +71,8 @@ it("exports the theme, user menu, and community switcher components and utilitie
   expect(typeof ui.applyTheme).toBe("function");
   expect(typeof ui.initialTheme).toBe("function");
 });
+
+it("exports ConfirmDialog", async () => {
+  const ui = await import("./index.js");
+  expect(typeof ui.ConfirmDialog).toBe("function");
+});

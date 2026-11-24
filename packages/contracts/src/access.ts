@@ -115,6 +115,7 @@ export const CAPABILITIES_PERMISSIONS = [
   "people.manage",
   "people.restricted.read",
   "service_times.manage",
+  "people.delete",
 ] as const;
 
 export const CAPABILITIES_ENTITLEMENTS = [
@@ -139,6 +140,7 @@ export const capabilitiesResponse = z
         "people.manage": z.boolean(),
         "people.restricted.read": z.boolean(),
         "service_times.manage": z.boolean(),
+        "people.delete": z.boolean(),
       })
       .strict(),
     entitlements: z

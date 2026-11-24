@@ -16,6 +16,7 @@ export type PeopleAccess = {
     "people.view": boolean;
     "people.manage": boolean;
     "people.restricted.read": boolean;
+    "people.delete": boolean;
     "service_times.manage": boolean;
   };
   entitlements: {
@@ -30,6 +31,7 @@ export const defaultAccess: PeopleAccess = {
     "people.view": false,
     "people.manage": false,
     "people.restricted.read": false,
+    "people.delete": false,
     "service_times.manage": false,
   },
   entitlements: {
@@ -66,6 +68,7 @@ export function parseAccess(value: unknown): PeopleAccess {
       "people.view": perms["people.view"] === true,
       "people.manage": perms["people.manage"] === true,
       "people.restricted.read": perms["people.restricted.read"] === true,
+      "people.delete": perms["people.delete"] === true,
       "service_times.manage": perms["service_times.manage"] === true,
     },
     entitlements: {

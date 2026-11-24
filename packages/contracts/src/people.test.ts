@@ -2,9 +2,15 @@ import { describe, expect, it } from "vitest";
 
 import {
   createPersonBody,
+  deletedPeopleListResponse,
   listPeopleBody,
+  peopleErrorBody,
   peopleSummaryBody,
   peopleSummaryResponse,
+  personDeleteBody,
+  personDeleteResponse,
+  personRestoreBody,
+  personRestoreResponse,
   personStatusBody,
   personStatusResponse,
   PERSON_SOURCES,
@@ -630,5 +636,135 @@ describe("people contract schemas (pin 2)", () => {
         extra: "forbidden",
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("contact delete contracts", () => {
+  const listed = {
+    id: VALID_UUID,
+    givenName: "Gina",
+    familyName: "Example",
+    deletedAt: "2026-11-23T01:02:03.456Z",
+    purgeAfter: "2026-12-23T01:02:03.456Z",
+    version: 3,
+  };
+
+  it("the list body refuses status deleted with source, groupId or kind minors", () => {
+    expect(listPeopleBody.safeParse({ communitySlug: "slug", status: "deleted" }).success).toBe(
+      true,
+    );
+    expect(
+      listPeopleBody.safeParse({
+        communitySlug: "slug",
+        kind: "adults",
+        status: "deleted",
+        search: "Gin",
+        limit: 20,
+        cursor: "opaque",
+      }).success,
+    ).toBe(true);
+    expect(
+      listPeopleBody.safeParse({ communitySlug: "slug", status: "deleted", source: "manual" })
+        .success,
+    ).toBe(false);
+    expect(
+      listPeopleBody.safeParse({ communitySlug: "slug", status: "deleted", groupId: VALID_UUID })
+        .success,
+    ).toBe(false);
+    expect(
+      listPeopleBody.safeParse({ communitySlug: "slug", kind: "minors", status: "deleted" })
+        .success,
+    ).toBe(false);
+    // The other statuses still take source and groupId.
+    expect(
+      listPeopleBody.safeParse({
+        communitySlug: "slug",
+        status: "active",
+        source: "manual",
+        groupId: VALID_UUID,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("delete and restore bodies take a person id and a version only", () => {
+    for (const schema of [personDeleteBody, personRestoreBody]) {
+      expect(
+        schema.safeParse({ communitySlug: "slug", personId: VALID_UUID, version: 1 }).success,
+      ).toBe(true);
+      expect(schema.safeParse({ communitySlug: "slug", personId: VALID_UUID }).success).toBe(false);
+      expect(
+        schema.safeParse({ communitySlug: "slug", personId: VALID_UUID, version: 0 }).success,
+      ).toBe(false);
+      expect(
+        schema.safeParse({ communitySlug: "slug", personId: "not-a-uuid", version: 1 }).success,
+      ).toBe(false);
+      expect(
+        schema.safeParse({
+          communitySlug: "slug",
+          personId: VALID_UUID,
+          version: 1,
+          extra: "forbidden",
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("delete and restore responses are strict", () => {
+    expect(
+      personDeleteResponse.safeParse({
+        personId: VALID_UUID,
+        version: 2,
+        purgeAfter: "2026-12-23T01:02:03.456Z",
+      }).success,
+    ).toBe(true);
+    expect(
+      personDeleteResponse.safeParse({ personId: VALID_UUID, version: 2, purgeAfter: "soon" })
+        .success,
+    ).toBe(false);
+    expect(personDeleteResponse.safeParse({ personId: VALID_UUID, version: 2 }).success).toBe(
+      false,
+    );
+    expect(personRestoreResponse.safeParse({ personId: VALID_UUID, version: 3 }).success).toBe(
+      true,
+    );
+    expect(
+      personRestoreResponse.safeParse({ personId: VALID_UUID, version: 3, extra: 1 }).success,
+    ).toBe(false);
+  });
+
+  it("the deleted list response carries names and dates only", () => {
+    expect(deletedPeopleListResponse.safeParse({ items: [listed], nextCursor: null }).success).toBe(
+      true,
+    );
+    expect(
+      deletedPeopleListResponse.safeParse({ items: [listed], nextCursor: "opaque" }).success,
+    ).toBe(true);
+    expect(
+      deletedPeopleListResponse.safeParse({
+        items: [{ ...listed, email: "gina@example.test" }],
+        nextCursor: null,
+      }).success,
+    ).toBe(false);
+    expect(
+      deletedPeopleListResponse.safeParse({
+        items: [{ ...listed, deletedAt: "yesterday" }],
+        nextCursor: null,
+      }).success,
+    ).toBe(false);
+    expect(deletedPeopleListResponse.safeParse({ items: [listed] }).success).toBe(false);
+  });
+
+  it("the error body is a code from the four refusals and nothing else", () => {
+    for (const code of [
+      "linked_user",
+      "pending_invitation",
+      "sole_guardian",
+      "duplicate_deleted",
+    ]) {
+      expect(peopleErrorBody.safeParse({ code }).success).toBe(true);
+    }
+    expect(peopleErrorBody.safeParse({ code: "conflict" }).success).toBe(false);
+    expect(peopleErrorBody.safeParse({}).success).toBe(false);
+    expect(peopleErrorBody.safeParse({ code: "linked_user", message: "x" }).success).toBe(false);
   });
 });

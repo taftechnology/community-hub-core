@@ -65,10 +65,6 @@ async function householdExists(tx: AppTransaction, householdId: string): Promise
   return rows[0] !== undefined;
 }
 
-function sortPair(a: string, b: string): [string, string] {
-  return a < b ? [a, b] : [b, a];
-}
-
 export async function linkGuardian(
   tx: AppTransaction,
   input: GuardianInput,
@@ -92,20 +88,31 @@ export async function linkGuardian(
     throw new PeopleError("not_found");
   }
 
-  // Pin 23: Lock both guardian and child rows in sorted order with for share
-  const [firstId, secondId] = sortPair(input.guardianPersonId, input.childPersonId);
-  const members = await tx<{ id: string; is_minor: boolean; household_id: string | null }[]>`
+  // Pin 23: Lock the guardian first and the child second, both for share, as delete does
+  // (the contact, then its children). One order everywhere, so a link, an unlink and a delete of
+  // the same guardian cannot deadlock. Each lock is one statement with the tenant scope and
+  // deleted_at is null; a missing row is not found.
+  const guardianRows = await tx<{ id: string; is_minor: boolean; household_id: string | null }[]>`
     select id::text as id, is_minor, household_id::text as household_id
     from app.persons
-    where id in (${firstId}::uuid, ${secondId}::uuid)
+    where id = ${input.guardianPersonId}::uuid
       and org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
-    order by id asc
+      and deleted_at is null
+    for share
+  `;
+  const childRows = await tx<{ id: string; is_minor: boolean; household_id: string | null }[]>`
+    select id::text as id, is_minor, household_id::text as household_id
+    from app.persons
+    where id = ${input.childPersonId}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
+      and deleted_at is null
     for share
   `;
 
-  const guardian = members.find((m) => m.id === input.guardianPersonId);
-  const child = members.find((m) => m.id === input.childPersonId);
+  const guardian = guardianRows[0];
+  const child = childRows[0];
 
   if (guardian === undefined || child === undefined) {
     throw new PeopleError("not_found");
@@ -187,8 +194,11 @@ export async function unlinkGuardian(
   }
 
   // Pin 4 & 12: Verify link belongs to the named household and tenant scope
-  const links = await tx<{ id: string; child_person_id: string }[]>`
-    select id::text as id, child_person_id::text as child_person_id
+  const links = await tx<{ id: string; child_person_id: string; guardian_person_id: string }[]>`
+    select
+      id::text as id,
+      child_person_id::text as child_person_id,
+      guardian_person_id::text as guardian_person_id
     from app.guardian_links
     where id = ${input.linkId}::uuid
       and household_id = ${input.householdId}::uuid
@@ -197,6 +207,21 @@ export async function unlinkGuardian(
   `;
   const link = links[0];
   if (link === undefined) {
+    throw new PeopleError("not_found");
+  }
+
+  // A hidden guardian's link answers not found. The guardian is locked first and the child
+  // second, the order delete uses (the contact, then its children).
+  const lockedGuardian = await tx<{ id: string }[]>`
+    select id::text as id
+    from app.persons
+    where id = ${link.guardian_person_id}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
+      and deleted_at is null
+    for update
+  `;
+  if (lockedGuardian[0] === undefined) {
     throw new PeopleError("not_found");
   }
 
@@ -213,13 +238,19 @@ export async function unlinkGuardian(
     throw new PeopleError("not_found");
   }
 
-  // Pin 3: Count remaining links in the same transaction; refuse if <= 1
+  // Pin 3: Count remaining links in the same transaction; refuse if <= 1. Hidden guardians
+  // do not count: the last unhidden guardian of a child stays linked.
   const linkCounts = await tx<{ count: number }[]>`
     select count(*)::int as count
-    from app.guardian_links
-    where child_person_id = ${link.child_person_id}::uuid
-      and org_id = current_setting('app.org_id')::uuid
-      and community_id = current_setting('app.community_id')::uuid
+    from app.guardian_links gl
+    join app.persons guardian
+      on guardian.id = gl.guardian_person_id
+     and guardian.org_id = gl.org_id
+     and guardian.community_id = gl.community_id
+    where gl.child_person_id = ${link.child_person_id}::uuid
+      and gl.org_id = current_setting('app.org_id')::uuid
+      and gl.community_id = current_setting('app.community_id')::uuid
+      and guardian.deleted_at is null
   `;
   const count = linkCounts[0]?.count ?? 0;
   if (count <= 1) {

@@ -327,6 +327,7 @@ describe("access flow", () => {
           "people.manage": true,
           "people.restricted.read": true,
           "service_times.manage": true,
+          "people.delete": true,
         },
         entitlements: {
           "people.directory": true,
@@ -353,6 +354,7 @@ describe("access flow", () => {
           "people.manage": true,
           "people.restricted.read": true,
           "service_times.manage": true,
+          "people.delete": true,
         },
         entitlements: {
           "people.directory": true,
@@ -379,6 +381,7 @@ describe("access flow", () => {
           "people.manage": false,
           "people.restricted.read": false,
           "service_times.manage": false,
+          "people.delete": false,
         },
         entitlements: {
           "people.directory": true,

@@ -23,10 +23,22 @@ function duplicateTag(error: unknown): boolean {
   return false;
 }
 
-async function personExists(tx: AppTransaction, personId: string): Promise<boolean> {
-  const rows = await tx<{ id: string }[]>`
-    select id::text as id from app.persons where id = ${personId}::uuid
-  `;
+async function personExists(
+  tx: AppTransaction,
+  personId: string,
+  options?: { lock?: "share" },
+): Promise<boolean> {
+  const rows =
+    options?.lock === "share"
+      ? await tx<{ id: string }[]>`
+          select id::text as id
+          from app.persons
+          where id = ${personId}::uuid and deleted_at is null
+          for share
+        `
+      : await tx<{ id: string }[]>`
+          select id::text as id from app.persons where id = ${personId}::uuid and deleted_at is null
+        `;
   return rows[0] !== undefined;
 }
 
@@ -65,7 +77,10 @@ export async function createTag(
 }
 
 export async function attachTag(tx: AppTransaction, input: TagLinkInput): Promise<void> {
-  if (!(await personExists(tx, input.personId)) || !(await tagExists(tx, input.tagId))) {
+  if (
+    !(await personExists(tx, input.personId, { lock: "share" })) ||
+    !(await tagExists(tx, input.tagId))
+  ) {
     throw new PeopleError("not_found");
   }
   const activityId = newId();
@@ -103,6 +118,9 @@ export async function attachTag(tx: AppTransaction, input: TagLinkInput): Promis
 }
 
 export async function detachTag(tx: AppTransaction, input: TagLinkInput): Promise<void> {
+  if (!(await personExists(tx, input.personId, { lock: "share" }))) {
+    throw new PeopleError("not_found");
+  }
   const removed = await tx<{ person_id: string }[]>`
     delete from app.person_tag_links
     where person_id = ${input.personId}::uuid and tag_id = ${input.tagId}::uuid

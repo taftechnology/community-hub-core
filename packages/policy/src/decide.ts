@@ -9,6 +9,7 @@ const CATALOGUE = [
   "entitlements.view",
   "entitlements.manage",
   "service_times.manage",
+  "people.delete",
 ] as const;
 
 const BILLING = ["billing.view", "billing.manage"] as const;

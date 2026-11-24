@@ -90,6 +90,7 @@ export async function moveAdult(
     where id = ${input.personId}::uuid
       and org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
+      and deleted_at is null
     for update
   `;
   const person = persons[0];

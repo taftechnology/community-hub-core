@@ -103,6 +103,35 @@ describe("access bodies", () => {
       ).toBe(false);
     });
 
+    it("capabilities response requires people.delete", () => {
+      const permissions = {
+        "people.view": true,
+        "people.manage": false,
+        "people.restricted.read": true,
+        "service_times.manage": true,
+        "people.delete": true,
+      };
+      const entitlements = {
+        "people.directory": true,
+        "people.households": false,
+        "module.engagement": true,
+      };
+      expect(capabilitiesResponse.safeParse({ permissions, entitlements }).success).toBe(true);
+      expect(CAPABILITIES_ALLOW_LIST.permissions).toContain("people.delete");
+
+      const without: Record<string, boolean> = { ...permissions };
+      delete without["people.delete"];
+      expect(capabilitiesResponse.safeParse({ permissions: without, entitlements }).success).toBe(
+        false,
+      );
+      expect(
+        capabilitiesResponse.safeParse({
+          permissions: { ...permissions, "people.delete": "yes" },
+          entitlements,
+        }).success,
+      ).toBe(false);
+    });
+
     it("matches the allow-list exactly and rejects unknown keys in response", () => {
       const validResponse = {
         permissions: {
@@ -110,6 +139,7 @@ describe("access bodies", () => {
           "people.manage": false,
           "people.restricted.read": true,
           "service_times.manage": true,
+          "people.delete": false,
         },
         entitlements: {
           "people.directory": true,
@@ -123,7 +153,13 @@ describe("access bodies", () => {
 
       // Verify constant allow-list contents
       expect(new Set(CAPABILITIES_ALLOW_LIST.permissions)).toEqual(
-        new Set(["people.view", "people.manage", "people.restricted.read", "service_times.manage"]),
+        new Set([
+          "people.view",
+          "people.manage",
+          "people.restricted.read",
+          "service_times.manage",
+          "people.delete",
+        ]),
       );
       expect(new Set(CAPABILITIES_ALLOW_LIST.entitlements)).toEqual(
         new Set(["people.directory", "people.households", "module.engagement"]),
@@ -133,6 +169,7 @@ describe("access bodies", () => {
         "people.manage",
         "people.restricted.read",
         "service_times.manage",
+        "people.delete",
       ]);
       expect([...CAPABILITIES_ALLOW_LIST.entitlements]).toEqual([
         "people.directory",
