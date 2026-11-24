@@ -17,13 +17,15 @@ import {
 } from "@community-hub/db/plaintext";
 import { withRequest } from "@community-hub/kernel";
 
+import { openHouseholdLabel } from "./household.js";
 import {
   createHousehold,
   createPerson,
   hideHousehold,
+  hidePerson,
   listDeletedHouseholds,
   listHouseholds,
-  openHouseholdLabel,
+  lockPersonForDelete,
   readHousehold,
   readHouseholdDetail,
   readPerson,
@@ -623,5 +625,76 @@ describe("hidden family reads", () => {
     const eventsAfterOne = await listedDeletedHouseholdEvents(scope);
     expect(eventsAfterOne).toHaveLength(2);
     expect(eventsAfterOne[1]).toEqual([hh.householdId]);
+  });
+
+  it("the deleted family list returns exact times and counts visible adults only", async () => {
+    const scope = await setupTenant("fr-exact-times");
+
+    const hh = await createHouseholdRow(scope, "Exact Times Fam");
+    await addAdultPerson(scope, hh.householdId, "Adult1", "Visible");
+    const adult2 = await addAdultPerson(scope, hh.householdId, "Adult2", "Hidden");
+
+    // Hide adult 2 (contact-deleted)
+    await inScope(scope, async (tx) => {
+      await lockPersonForDelete(tx, { personId: adult2, version: 1 });
+      await hidePerson(tx, { personId: adult2, actorUserId: ACTOR });
+    });
+
+    // Hide household
+    await inScope(scope, async (tx) => {
+      await hideHousehold(tx, {
+        householdId: hh.householdId,
+        version: hh.version,
+        actorUserId: ACTOR,
+      });
+    });
+
+    const [row] = await withAppTransaction(migrator, scope, async (tx) => {
+      return await tx<{ deleted_at: Date; expected_purge_after: Date }[]>`
+        select
+          deleted_at,
+          (deleted_at + interval '720 hours') as expected_purge_after
+        from app.households
+        where id = ${hh.householdId}::uuid
+      `;
+    });
+    expect(row).toBeDefined();
+
+    await inScope(scope, async (tx) => {
+      const res = await listDeletedHouseholds(tx, kms, KEY_ARN, {
+        actorUserId: ACTOR,
+      });
+      const item = res.items.find((i) => i.householdId === hh.householdId);
+      expect(item).toBeDefined();
+      expect(new Date(item!.deletedAt).getTime()).toBe(new Date(row!.deleted_at).getTime());
+      expect(new Date(item!.purgeAfter).getTime()).toBe(
+        new Date(row!.expected_purge_after).getTime(),
+      );
+      expect(item!.adultCount).toBe(1);
+    });
+  });
+
+  it("family detail returns the stored status", async () => {
+    const scope = await setupTenant("fr-status-detail");
+
+    const hh = await createHouseholdRow(scope, "Inactive Fam");
+    await inScope(scope, async (tx) => {
+      await setHouseholdStatus(tx, {
+        householdId: hh.householdId,
+        version: hh.version,
+        status: "inactive",
+        actorUserId: ACTOR,
+      });
+    });
+
+    await inScope(scope, async (tx) => {
+      const detail = await readHouseholdDetail(tx, kms, KEY_ARN, {
+        householdId: hh.householdId,
+        includeRestricted: true,
+        actorUserId: ACTOR,
+      });
+      expect(detail).not.toBeNull();
+      expect(detail?.status).toBe("inactive");
+    });
   });
 });
