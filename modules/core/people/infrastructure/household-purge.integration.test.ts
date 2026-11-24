@@ -361,6 +361,30 @@ describe("purgeDeletedHouseholds", () => {
     expect(purged).toBeUndefined();
   });
 
+  it("family purge is not starved by an older family with a minor", async () => {
+    const scope = await setupTenant("p22b");
+    const hWithMinor = await insertHousehold(scope);
+    await insertMinor(scope, hWithMinor);
+    await ageHousehold(scope, hWithMinor, 723);
+
+    const hEligible = await insertHousehold(scope);
+    await insertAdult(scope, hEligible, "Eligible", "Adult");
+    await ageHousehold(scope, hEligible, 721);
+
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, scope, async (tx) => {
+        await expect(purgeDeletedHouseholds(tx, 1)).resolves.toEqual([hEligible]);
+      }),
+    );
+
+    const minorHousehold = await getHousehold(scope, hWithMinor);
+    expect(minorHousehold).toBeDefined();
+    expect(minorHousehold?.deleted_at).not.toBeNull();
+
+    const purged = await getHousehold(scope, hEligible);
+    expect(purged).toBeUndefined();
+  });
+
   it("family purge erases only the scoped community's families", async () => {
     const orgId = newId();
     const comm1Id = newId();

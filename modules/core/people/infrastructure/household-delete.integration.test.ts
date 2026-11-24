@@ -630,6 +630,129 @@ describe("household-delete and household-status", () => {
     });
   });
 
+  it("family delete returns purgeAfter 720 hours after deleted_at and records the actor", async () => {
+    const scope = await setupTenant("p35b");
+    const householdId = await insertHousehold(scope);
+
+    let hideResult!: { householdId: string; version: number; purgeAfter: Date };
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, scope, async (tx) => {
+        const p = hideHousehold(tx, {
+          householdId,
+          version: 1,
+          actorUserId: ACTOR,
+        });
+        await expect(p).resolves.toMatchObject({
+          householdId,
+          version: 2,
+        });
+        hideResult = await p;
+      }),
+    );
+
+    const row = await withAppTransaction(migrator, scope, async (tx) => {
+      const [r] = await tx<
+        {
+          deleted_at: Date;
+          deleted_by: string;
+          expected_purge_after: Date;
+        }[]
+      >`
+        select
+          deleted_at,
+          deleted_by::text as deleted_by,
+          (deleted_at + interval '720 hours') as expected_purge_after
+        from app.households
+        where id = ${householdId}::uuid
+      `;
+      return r;
+    });
+
+    expect(row).toBeDefined();
+    expect(row?.deleted_by).toBe(ACTOR);
+    const expectedEpochMs = new Date(row!.expected_purge_after).getTime();
+    const actualEpochMs =
+      hideResult.purgeAfter instanceof Date
+        ? hideResult.purgeAfter.getTime()
+        : new Date(hideResult.purgeAfter).getTime();
+    expect(actualEpochMs).toBe(expectedEpochMs);
+
+    const deleteEvents = await withAppTransaction(migrator, scope, async (tx) => {
+      return tx<
+        {
+          action: string;
+          purpose: string;
+          actor_kind: string;
+          actor_id: string | null;
+          target_ids: string[];
+        }[]
+      >`
+        select
+          action,
+          purpose,
+          actor_kind,
+          actor_id::text as actor_id,
+          target_ids::text[] as target_ids
+        from app.audit_events
+        where org_id = ${scope.orgId}::uuid
+          and action = 'people.household.deleted'
+      `;
+    });
+    expect(deleteEvents).toHaveLength(1);
+    expect(deleteEvents[0]).toEqual({
+      action: "people.household.deleted",
+      purpose: "people.household.deleted",
+      actor_kind: "user",
+      actor_id: ACTOR,
+      target_ids: [householdId],
+    });
+
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, scope, async (tx) => {
+        await expect(
+          restoreHousehold(tx, {
+            householdId,
+            version: 2,
+            actorUserId: ACTOR,
+          }),
+        ).resolves.toEqual({
+          householdId,
+          version: 3,
+        });
+      }),
+    );
+
+    const restoreEvents = await withAppTransaction(migrator, scope, async (tx) => {
+      return tx<
+        {
+          action: string;
+          purpose: string;
+          actor_kind: string;
+          actor_id: string | null;
+          target_ids: string[];
+        }[]
+      >`
+        select
+          action,
+          purpose,
+          actor_kind,
+          actor_id::text as actor_id,
+          target_ids::text[] as target_ids
+        from app.audit_events
+        where org_id = ${scope.orgId}::uuid
+          and action = 'people.household.restored'
+      `;
+    });
+    expect(restoreEvents).toHaveLength(1);
+    expect(restoreEvents[0]).toEqual({
+      action: "people.household.restored",
+      purpose: "people.household.restored",
+      actor_kind: "user",
+      actor_id: ACTOR,
+      target_ids: [householdId],
+    });
+  });
+
   // Pin 36: Version compare on status
   it("a stale version on family status answers conflict and changes nothing", async () => {
     const scope = await setupTenant("p36");

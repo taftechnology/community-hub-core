@@ -568,7 +568,37 @@ describe("family delete migration 0023", () => {
     expect(row?.proconfig).toEqual(["search_path=pg_catalog, app"]);
   });
 
-  it("migration 0023: app can purge through the function without a DELETE grant", async () => {
+  it("migration 0023: the household and person trigger functions are invoker, pinned and closed to PUBLIC", async () => {
+    const triggerFunctions = [
+      "households_before_insert",
+      "households_before_update",
+      "persons_before_insert",
+      "persons_before_update",
+    ];
+
+    for (const fn of triggerFunctions) {
+      const [proc] = await sql<{ prosecdef: boolean; proconfig: string[] | null }[]>`
+        select prosecdef, proconfig
+        from pg_proc
+        where proname = ${fn}
+          and pronamespace = 'app'::regnamespace
+      `;
+      expect(proc?.prosecdef).toBe(false);
+      expect(proc?.proconfig).toEqual(["search_path=pg_catalog, app"]);
+
+      const [publicPriv] = await sql<{ has_privilege: boolean }[]>`
+        select has_function_privilege('public', ${`app.${fn}()`}, 'EXECUTE') as has_privilege
+      `;
+      expect(publicPriv?.has_privilege).toBe(false);
+
+      const [appPriv] = await sql<{ has_privilege: boolean }[]>`
+        select has_function_privilege('app', ${`app.${fn}()`}, 'EXECUTE') as has_privilege
+      `;
+      expect(appPriv?.has_privilege).toBe(true);
+    }
+  });
+
+  it("migration 0023: purge_deleted_households is SECURITY DEFINER and app has no DELETE grant", async () => {
     const [proc] = await sql<{ prosecdef: boolean }[]>`
       select prosecdef from pg_proc
       where proname = 'purge_deleted_households'
