@@ -1,6 +1,7 @@
 import { appendAuditEvent, newId, type AppTransaction } from "@community-hub/db";
 
 import { PeopleError } from "../domain/error.js";
+import { lockVisibleHousehold } from "./household-lock.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const GUARDIAN_LINKED = "people.guardian.linked";
@@ -54,17 +55,6 @@ function duplicateLink(error: unknown): boolean {
   return false;
 }
 
-async function householdExists(tx: AppTransaction, householdId: string): Promise<boolean> {
-  const rows = await tx<{ id: string }[]>`
-    select id::text as id
-    from app.households
-    where id = ${householdId}::uuid
-      and org_id = current_setting('app.org_id')::uuid
-      and community_id = current_setting('app.community_id')::uuid
-  `;
-  return rows[0] !== undefined;
-}
-
 export async function linkGuardian(
   tx: AppTransaction,
   input: GuardianInput,
@@ -83,10 +73,7 @@ export async function linkGuardian(
     throw new PeopleError("invalid_input");
   }
 
-  const household = await householdExists(tx, input.householdId);
-  if (!household) {
-    throw new PeopleError("not_found");
-  }
+  await lockVisibleHousehold(tx, input.householdId);
 
   // Pin 23: Lock the guardian first and the child second, both for share, as delete does
   // (the contact, then its children). One order everywhere, so a link, an unlink and a delete of
@@ -192,6 +179,8 @@ export async function unlinkGuardian(
   ) {
     throw new PeopleError("invalid_input");
   }
+
+  await lockVisibleHousehold(tx, input.householdId);
 
   // Pin 4 & 12: Verify link belongs to the named household and tenant scope
   const links = await tx<{ id: string; child_person_id: string; guardian_person_id: string }[]>`

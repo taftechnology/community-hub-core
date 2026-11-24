@@ -307,6 +307,7 @@ export async function renameHousehold(
     where id = ${input.householdId}::uuid
       and org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
+      and deleted_at is null
   `;
   const existing = existingRows[0];
   if (existing === undefined) {
@@ -338,6 +339,7 @@ export async function renameHousehold(
     where id = ${input.householdId}::uuid
       and org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
+      and deleted_at is null
       and version = ${input.version}
     returning version
   `;

@@ -4,6 +4,7 @@ import { appendAuditEvent, type AppTransaction } from "@community-hub/db";
 import { PeopleError } from "../domain/error.js";
 import { isMinor } from "../domain/person.js";
 import { linkGuardian, type GuardianInput } from "./guardian.js";
+import { lockVisibleHousehold } from "./household-lock.js";
 import { createPerson } from "./person.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -58,18 +59,8 @@ export async function moveAdult(
     throw new PeopleError("invalid_input");
   }
 
-  // Pin 12: Verify target household inside scoped transaction
   if (input.householdId !== null) {
-    const targetHouseholds = await tx<{ id: string }[]>`
-      select id::text as id
-      from app.households
-      where id = ${input.householdId}::uuid
-        and org_id = current_setting('app.org_id')::uuid
-        and community_id = current_setting('app.community_id')::uuid
-    `;
-    if (targetHouseholds[0] === undefined) {
-      throw new PeopleError("not_found");
-    }
+    await lockVisibleHousehold(tx, input.householdId);
   }
 
   // Pin 23: Lock the person row for update before checking links
@@ -182,16 +173,7 @@ export async function addMinor(
   }
 
   // Pin 12: Verify target household inside scoped transaction
-  const households = await tx<{ id: string }[]>`
-    select id::text as id
-    from app.households
-    where id = ${input.householdId}::uuid
-      and org_id = current_setting('app.org_id')::uuid
-      and community_id = current_setting('app.community_id')::uuid
-  `;
-  if (households[0] === undefined) {
-    throw new PeopleError("not_found");
-  }
+  await lockVisibleHousehold(tx, input.householdId);
 
   // Create minor person
   const created = await createPerson(tx, kms, keyArn, {
@@ -259,16 +241,7 @@ export async function addAdult(
     throw new PeopleError("invalid_input");
   }
 
-  const households = await tx<{ id: string }[]>`
-    select id::text as id
-    from app.households
-    where id = ${input.householdId}::uuid
-      and org_id = current_setting('app.org_id')::uuid
-      and community_id = current_setting('app.community_id')::uuid
-  `;
-  if (households[0] === undefined) {
-    throw new PeopleError("not_found");
-  }
+  await lockVisibleHousehold(tx, input.householdId);
 
   const created = await createPerson(tx, kms, keyArn, {
     now: input.now,

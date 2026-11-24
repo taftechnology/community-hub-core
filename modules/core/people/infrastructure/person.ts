@@ -16,6 +16,7 @@ import {
   resolveAge,
 } from "../domain/person.js";
 import { findDuplicateHolder } from "./duplicate-holder.js";
+import { lockVisibleHousehold } from "./household-lock.js";
 import { derivePersonFieldKeys } from "./person-keys.js";
 
 const PERSON_CREATED = "people.person.created";
@@ -118,12 +119,7 @@ async function setting(tx: AppTransaction, name: "app.community_id"): Promise<st
 }
 
 async function requireHousehold(tx: AppTransaction, householdId: string): Promise<void> {
-  const rows = await tx<{ id: string }[]>`
-    select id::text as id from app.households where id = ${householdId}::uuid
-  `;
-  if (rows[0] === undefined) {
-    throw new PeopleError("not_found");
-  }
+  await lockVisibleHousehold(tx, householdId);
 }
 
 async function seal(
