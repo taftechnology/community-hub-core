@@ -223,4 +223,42 @@ describe("people app tables", () => {
     );
     expect(sql).not.toContain("GRANT DELETE ON app.life_events TO app");
   });
+
+  it("defines households status, deleted_at, deleted_by, emergency_contacts in schema and 0023 migration", () => {
+    const schemaSource = readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "schema.ts"),
+      "utf8",
+    );
+    expect(schemaSource).toMatch(
+      /status:\s*text\(["']status["']\)\.notNull\(\)\.default\(["']active["']\)/,
+    );
+    expect(schemaSource).toMatch(/deletedAt:\s*tz\(["']deleted_at["']\)/);
+    expect(schemaSource).toMatch(/deletedBy:\s*uuid\(["']deleted_by["']\)/);
+    expect(schemaSource).toMatch(
+      /emergencyContacts:\s*encryptedColumn\(["']emergency_contacts["'],\s*\{\s*label:\s*["']people\.household_emergency_contacts["'],?\s*\}\)/,
+    );
+    expect(schemaSource).toMatch(/check\(["']households_status_check["']/);
+    expect(schemaSource).toMatch(/index\(["']households_deleted_idx["']\)/);
+
+    const files = readdirSync(DRIZZLE).filter(
+      (name) => name.startsWith("0023_") && name.endsWith(".sql"),
+    );
+    expect(files).toHaveLength(1);
+    const sql = readFileSync(path.join(DRIZZLE, files[0] ?? ""), "utf8");
+    expect(sql).toMatch(
+      /ALTER TABLE "app"\."households" ADD COLUMN "status" text DEFAULT 'active' NOT NULL;/,
+    );
+    expect(sql).toMatch(
+      /ALTER TABLE "app"\."households" ADD COLUMN "deleted_at" timestamp with time zone;/,
+    );
+    expect(sql).toMatch(/ALTER TABLE "app"\."households" ADD COLUMN "deleted_by" uuid;/);
+    expect(sql).toMatch(/ALTER TABLE "app"\."households" ADD COLUMN "emergency_contacts" "bytea";/);
+    expect(sql).toMatch(
+      /CREATE INDEX "households_deleted_idx" ON "app"\."households" USING btree \("org_id","community_id","deleted_at"\) WHERE "app"\."households"\."deleted_at" is not null;/,
+    );
+    expect(sql).toContain(
+      "GRANT UPDATE (status, deleted_at, deleted_by, emergency_contacts) ON app.households TO app;",
+    );
+    expect(sql).not.toContain("GRANT DELETE ON app.households TO app");
+  });
 });
