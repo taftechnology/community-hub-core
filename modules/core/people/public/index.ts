@@ -37,6 +37,8 @@ defineAuditAction("people.life_event.updated");
 defineAuditPurpose("people.life_event.updated");
 defineAuditAction("people.person.purged");
 defineAuditPurpose("people.person.purged");
+defineAuditAction("people.household.purged");
+defineAuditPurpose("people.household.purged");
 defineAuditAction("people.person.deleted");
 defineAuditPurpose("people.person.deleted");
 defineAuditAction("people.person.restored");
@@ -128,6 +130,7 @@ export {
   type UpdateLifeEventResult,
 } from "../infrastructure/life-event.js";
 export { purgeDeletedPersons } from "../infrastructure/purge.js";
+export { purgeDeletedHouseholds } from "../infrastructure/household-purge.js";
 export {
   hidePerson,
   lockPersonForDelete,

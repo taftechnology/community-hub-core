@@ -190,6 +190,9 @@ AS $$
 DECLARE
   v_org_id text;
   v_community_id text;
+  v_org_uuid uuid;
+  v_community_uuid uuid;
+  v_target_ids uuid[];
 BEGIN
   v_org_id := current_setting('app.org_id', true);
   v_community_id := current_setting('app.community_id', true);
@@ -202,7 +205,75 @@ BEGIN
     RAISE EXCEPTION 'limit must be between 1 and 50';
   END IF;
 
-  RETURN;
+  v_org_uuid := v_org_id::uuid;
+  v_community_uuid := v_community_id::uuid;
+
+  SELECT coalesce(array_agg(h.id ORDER BY h.deleted_at ASC, h.id ASC), '{}')
+  INTO v_target_ids
+  FROM (
+    SELECT h.id, h.deleted_at
+    FROM app.households h
+    WHERE h.org_id = v_org_uuid
+      AND h.community_id = v_community_uuid
+      AND h.deleted_at <= now() - interval '720 hours'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM app.persons p
+        WHERE p.org_id = v_org_uuid
+          AND p.community_id = v_community_uuid
+          AND p.household_id = h.id
+          AND p.is_minor = true
+      )
+    ORDER BY h.deleted_at ASC, h.id ASC
+    LIMIT p_limit
+    FOR UPDATE SKIP LOCKED
+  ) h;
+
+  IF cardinality(v_target_ids) = 0 THEN
+    RETURN;
+  END IF;
+
+  -- Recheck for minors among locked households (defence in depth)
+  SELECT coalesce(array_agg(h_id), '{}')
+  INTO v_target_ids
+  FROM unnest(v_target_ids) AS h_id
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM app.persons p
+    WHERE p.org_id = v_org_uuid
+      AND p.community_id = v_community_uuid
+      AND p.household_id = h_id
+      AND p.is_minor = true
+  );
+
+  IF cardinality(v_target_ids) = 0 THEN
+    RETURN;
+  END IF;
+
+  UPDATE app.persons
+  SET household_id = null,
+      version = version + 1
+  WHERE org_id = v_org_uuid
+    AND community_id = v_community_uuid
+    AND household_id = ANY(v_target_ids);
+
+  DELETE FROM app.guardian_links
+  WHERE org_id = v_org_uuid
+    AND community_id = v_community_uuid
+    AND household_id = ANY(v_target_ids);
+
+  DELETE FROM app.household_keys
+  WHERE org_id = v_org_uuid
+    AND community_id = v_community_uuid
+    AND household_id = ANY(v_target_ids);
+
+  DELETE FROM app.households
+  WHERE org_id = v_org_uuid
+    AND community_id = v_community_uuid
+    AND id = ANY(v_target_ids);
+
+  RETURN QUERY
+  SELECT unnest(v_target_ids);
 END;
 $$;
 --> statement-breakpoint
