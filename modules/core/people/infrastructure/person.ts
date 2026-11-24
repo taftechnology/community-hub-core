@@ -352,24 +352,33 @@ export async function readPerson(
 ): Promise<ReadPersonResult> {
   const rows = await tx<StoredPerson[]>`
     select
-      id::text as id,
-      household_id::text as household_id,
-      version,
-      status,
-      source,
-      is_minor,
-      age_basis,
-      birthday_md,
-      given_name,
-      family_name,
-      given_name_restricted,
-      family_name_restricted,
-      date_of_birth,
-      email,
-      phone
-    from app.persons
-    where id = ${input.personId}::uuid
-      and deleted_at is null
+      p.id::text as id,
+      case
+        when p.is_minor = true then p.household_id::text
+        when h.id is not null then p.household_id::text
+        else null
+      end as household_id,
+      p.version,
+      p.status,
+      p.source,
+      p.is_minor,
+      p.age_basis,
+      p.birthday_md,
+      p.given_name,
+      p.family_name,
+      p.given_name_restricted,
+      p.family_name_restricted,
+      p.date_of_birth,
+      p.email,
+      p.phone
+    from app.persons p
+    left join app.households h
+      on h.id = p.household_id
+      and h.org_id = current_setting('app.org_id')::uuid
+      and h.community_id = current_setting('app.community_id')::uuid
+      and h.deleted_at is null
+    where p.id = ${input.personId}::uuid
+      and p.deleted_at is null
   `;
   const row = rows[0];
   if (row === undefined) {

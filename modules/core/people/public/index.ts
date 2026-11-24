@@ -45,6 +45,8 @@ defineAuditAction("people.household.restored");
 defineAuditPurpose("people.household.restored");
 defineAuditAction("people.household.status_changed");
 defineAuditPurpose("people.household.status_changed");
+defineAuditAction("people.household.listed_deleted");
+defineAuditPurpose("people.household.listed_deleted");
 defineAuditAction("people.person.deleted");
 defineAuditPurpose("people.person.deleted");
 defineAuditAction("people.person.restored");
@@ -56,6 +58,7 @@ export { PeopleError } from "../domain/error.js";
 export { ensureCommunityKey, ensureOrganisationKey } from "../infrastructure/keys.js";
 export {
   createHousehold,
+  openHouseholdLabel,
   readHousehold,
   readHouseholdDetail,
   renameHousehold,
@@ -67,8 +70,13 @@ export {
   type RenameHouseholdInput,
 } from "../infrastructure/household.js";
 export {
+  listDeletedHouseholds,
   listHouseholds,
+  type DeletedHouseholdListItem,
   type HouseholdListItem,
+  type HouseholdStatus,
+  type ListDeletedHouseholdsInput,
+  type ListDeletedHouseholdsResult,
   type ListHouseholdsInput,
   type ListHouseholdsResult,
 } from "../infrastructure/household-list.js";

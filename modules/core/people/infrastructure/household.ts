@@ -138,7 +138,9 @@ async function householdEncKey(
   return enc;
 }
 
-async function openField(
+export type HouseholdStatus = "active" | "inactive";
+
+export async function openField(
   bytes: Uint8Array | null,
   enc: webcrypto.CryptoKey,
   rowId: string,
@@ -167,6 +169,9 @@ export async function openHouseholdLabel(
     select id::text as id, label
     from app.households
     where id = ${householdId}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
+      and deleted_at is null
   `;
   const row = rows[0];
   if (row === undefined) {
@@ -392,6 +397,7 @@ export type ReadHouseholdDetailInput = {
 export type ReadHouseholdDetailResult = {
   householdId: string;
   version: number;
+  status: HouseholdStatus;
   label: string | null;
   adults: HouseholdAdultMember[];
   minors?: HouseholdMinorMember[];
@@ -408,12 +414,18 @@ export async function readHouseholdDetail(
     throw new PeopleError("invalid_input");
   }
 
-  const rows = await tx<{ id: string; version: number; label: Uint8Array | null }[]>`
-    select id::text as id, version, label
+  const rows = await tx<{
+    id: string;
+    version: number;
+    status: HouseholdStatus;
+    label: Uint8Array | null;
+  }[]>`
+    select id::text as id, version, status, label
     from app.households
     where id = ${input.householdId}::uuid
       and org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
+      and deleted_at is null
   `;
   const household = rows[0];
   if (household === undefined) {
@@ -604,6 +616,7 @@ export async function readHouseholdDetail(
   const result: ReadHouseholdDetailResult = {
     householdId: household.id,
     version: household.version,
+    status: household.status,
     label,
     adults,
     guardians,
