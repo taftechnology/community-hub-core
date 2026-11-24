@@ -353,3 +353,30 @@ Sequential, 1 to 10. No two tasks run together: they share `household.ts`, `publ
 - Full local gate green with allowed failures only; CI green.
 - Not verified on the staging hostname (staging stays parked): tests and a local browser check, recorded as a roadmap open item.
 - Pull request opened only after the chunk owner says so; second review on a model that is not Opus, Gemini or Sonnet; the project owner merges.
+
+## Amendments during implementation
+
+### A1 (2026-11-25, after checkpoint 1): test strength for Tasks 1 to 3
+
+Status: approved (2026-11-25, Adnan Bin Hossen)
+
+The owner's check (Claude Haiku 5.5, CHANGES NEEDED, five Low findings, read only: free memory was under its floor, so it ran nothing) found no High or Medium issue. The reviewer agent ran the 41 pins of Tasks 1 to 3 and the people and API suites. No source changes; one commit.
+
+**Commit:** `test(people): pin the family purge limit, trigger functions and delete facts`
+
+- `household-purge.integration.test.ts`: `family purge is not starved by an older family with a minor` (a minor family aged 723 hours, an eligible one aged 721, limit 1, resolves to the eligible one).
+- `family-delete-migration.integration.test.ts`: `migration 0023: the household and person trigger functions are invoker, pinned and closed to PUBLIC` (four functions: `prosecdef` false, `proconfig` equals `search_path=pg_catalog, app`, no `EXECUTE` for `PUBLIC`, `EXECUTE` for `app`); and the test at `:571` renamed `migration 0023: purge_deleted_households is SECURITY DEFINER and app has no DELETE grant`.
+- `household-delete.integration.test.ts`: `family delete returns purgeAfter 720 hours after deleted_at and records the actor` (`purgeAfter` equals the row's `deleted_at` plus 720 hours, computed in SQL; `deleted_by` and the deleted and restored events' `actor_id` are the actor, `actor_kind` is `user`).
+
+| #   | Setting                                      | Weakening                                               | File | Test that must fail (exact `it` title)                                                              |
+| --- | -------------------------------------------- | ------------------------------------------------------- | ---- | --------------------------------------------------------------------------------------------------- |
+| 22b | A minor family does not fill the purge limit | Drop the minor predicate from the locking select only   | FP   | family purge is not starved by an older family with a minor                                         |
+| 15b | Trigger function closed to `PUBLIC`          | Drop the `REVOKE` on `app.households_before_update`     | FM   | migration 0023: the household and person trigger functions are invoker, pinned and closed to PUBLIC |
+| 16b | Trigger function `search_path`               | Drop `SET search_path` from `app.persons_before_update` | FM   | migration 0023: the household and person trigger functions are invoker, pinned and closed to PUBLIC |
+| 35b | `purgeAfter` is 720 hours after `deleted_at` | Return `deleted_at + interval '719 hours'`              | FH   | family delete returns purgeAfter 720 hours after deleted_at and records the actor                   |
+| 35c | `deleted_by` is the actor                    | Set `deleted_by` to the household id                    | FH   | family delete returns purgeAfter 720 hours after deleted_at and records the actor                   |
+| 35d | The audit actor is the acting user           | Pass a null actor to `actor()` in `hideHousehold`       | FH   | family delete returns purgeAfter 720 hours after deleted_at and records the actor                   |
+
+Also added by the reviewer: pin 34c (the version compare in `restoreHousehold`) and, from Task 3, pin 27b (the purge's `guardian_links` delete).
+
+Not acted on: Low 4 (the code's scope predicates in hide, restore and status are covered only through RLS). Defence in depth; RLS is forced and tested, and the two-organisation and two-community tests stay.
