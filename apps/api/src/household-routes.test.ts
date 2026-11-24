@@ -99,7 +99,7 @@ vi.mock("@community-hub/db", async () => {
   };
 });
 
-import { householdRoutes, type HouseholdDeps } from "./household-routes.js";
+import { householdRoutes, statusForHouseholds, type HouseholdDeps } from "./household-routes.js";
 import type { RouteContext } from "./gate.js";
 
 const API_HOSTNAME = "au.api.example.test";
@@ -2110,6 +2110,15 @@ describe("household read routes (Task 9: list and read)", () => {
           expect(logLine).not.toContain("1990-01-01");
         }
       });
+    });
+  });
+
+  describe("statusForHouseholds error mapping", () => {
+    it("maps household_has_children to 409 with JSON { code }", async () => {
+      const res = statusForHouseholds(new PeopleError("household_has_children"));
+      expect(res).toBeDefined();
+      expect(res?.status).toBe(409);
+      expect(await res?.json()).toEqual({ code: "household_has_children" });
     });
   });
 });

@@ -23,7 +23,8 @@ export type PeopleErrorCode =
   | "linked_user"
   | "pending_invitation"
   | "sole_guardian"
-  | "duplicate_deleted";
+  | "duplicate_deleted"
+  | "household_has_children";
 
 export class PeopleError extends Error {
   readonly code: PeopleErrorCode;

@@ -39,6 +39,12 @@ defineAuditAction("people.person.purged");
 defineAuditPurpose("people.person.purged");
 defineAuditAction("people.household.purged");
 defineAuditPurpose("people.household.purged");
+defineAuditAction("people.household.deleted");
+defineAuditPurpose("people.household.deleted");
+defineAuditAction("people.household.restored");
+defineAuditPurpose("people.household.restored");
+defineAuditAction("people.household.status_changed");
+defineAuditPurpose("people.household.status_changed");
 defineAuditAction("people.person.deleted");
 defineAuditPurpose("people.person.deleted");
 defineAuditAction("people.person.restored");
@@ -142,3 +148,17 @@ export {
   type RestorePersonInput,
   type RestorePersonResult,
 } from "../infrastructure/person-delete.js";
+export {
+  hideHousehold,
+  restoreHousehold,
+  type HideHouseholdInput,
+  type HideHouseholdResult,
+  type RestoreHouseholdInput,
+  type RestoreHouseholdResult,
+} from "../infrastructure/household-delete.js";
+export {
+  setHouseholdStatus,
+  type HouseholdStatus,
+  type SetHouseholdStatusInput,
+  type SetHouseholdStatusResult,
+} from "../infrastructure/household-status.js";

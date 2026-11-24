@@ -106,7 +106,7 @@ vi.mock("@community-hub/db", async () => {
   };
 });
 
-import { peopleRoutes, type PeopleDeps } from "./people-routes.js";
+import { peopleRoutes, statusForPeople, type PeopleDeps } from "./people-routes.js";
 import { createGate, type RouteContext } from "./gate.js";
 
 const API_HOSTNAME = "au.api.example.test";
@@ -1697,6 +1697,15 @@ describe("people routes (list and read)", () => {
           }),
         }),
       );
+    });
+  });
+
+  describe("statusForPeople error mapping", () => {
+    it("maps household_has_children to 409 with JSON { code }", async () => {
+      const res = statusForPeople(new PeopleError("household_has_children"));
+      expect(res).toBeDefined();
+      expect(res?.status).toBe(409);
+      expect(await res?.json()).toEqual({ code: "household_has_children" });
     });
   });
 });
