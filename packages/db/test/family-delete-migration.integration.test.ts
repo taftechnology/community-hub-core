@@ -26,7 +26,6 @@ describe("family delete migration 0023", () => {
   const orgId = newId();
   const commId = newId();
   const otherCommId = newId();
-  const customRoleId = newId();
   const visibleHouseholdId = newId();
   const hiddenHouseholdId = newId();
   const householdWithMinorId = newId();
@@ -65,12 +64,6 @@ describe("family delete migration 0023", () => {
       await tx.unsafe("set role migrator");
       await tx`select set_config('app.org_id', ${orgId}, true)`;
       await tx`select set_config('app.community_id', ${commId}, true)`;
-
-      // Custom role
-      await tx`
-        insert into app.custom_roles (id, org_id, community_id, key) values
-          (${customRoleId}, ${orgId}, ${commId}, 'custom_test_role')
-      `;
 
       // Visible household
       await tx`
@@ -304,20 +297,23 @@ describe("family delete migration 0023", () => {
   });
 
   it("migration 0023: an adult in a hidden household can still be updated", async () => {
-    await sql.begin(async (tx) => {
-      await tx.unsafe("set role app");
-      await tx`select set_config('app.org_id', ${orgId}, true)`;
-      await tx`select set_config('app.community_id', ${commId}, true)`;
-      await tx`
-        update app.persons
-        set given_name = 'StillEditable'
-        where id = ${hiddenAdultId}
-      `;
-      const [person] = await tx<{ given_name: string }[]>`
-        select given_name from app.persons where id = ${hiddenAdultId}
-      `;
-      expect(person?.given_name).toBe("StillEditable");
-    });
+    await expect(
+      sql.begin(async (tx) => {
+        await tx.unsafe("set role app");
+        await tx`select set_config('app.org_id', ${orgId}, true)`;
+        await tx`select set_config('app.community_id', ${commId}, true)`;
+        await tx`
+          update app.persons
+          set given_name = 'StillEditable'
+          where id = ${hiddenAdultId}
+        `;
+        const [person] = await tx<{ given_name: string }[]>`
+          select given_name from app.persons where id = ${hiddenAdultId}
+        `;
+        expect(person?.given_name).toBe("StillEditable");
+        return person?.given_name;
+      }),
+    ).resolves.toBe("StillEditable");
   });
 
   it("migration 0023: refuses a household of another community of the organisation", async () => {
