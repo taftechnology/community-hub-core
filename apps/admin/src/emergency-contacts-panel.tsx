@@ -152,8 +152,13 @@ function validateRows(rows: Row[]): { errors: Record<number, RowErrors>; first: 
 export type EmergencyContactsParams = {
   slug: string;
   householdId: string | null;
-  // The version of the open Family Details; a rename or a reload moves it.
+  // The version of the open Family Details. It is used only after a 409, once the detail has been
+  // reloaded; before that the contacts version is the one the shown list belongs to.
   detailVersion: number;
+  // Counts the answers to the detail read; a reload has answered when it is higher than at the 409.
+  detailAnswers: { current: number };
+  // The last detail read failed or answered not found.
+  detailFailed: boolean;
   canRead: boolean;
   canEdit: boolean;
   // The open family was answered as not found.
@@ -170,12 +175,22 @@ export type EmergencyContactsParams = {
 export function useEmergencyContacts(params: EmergencyContactsParams): {
   panel: ReactNode;
   reset: () => void;
+  noteVersion: (householdId: string, version: number) => void;
 } {
   const { slug, householdId, canRead, canEdit } = params;
   const baseId = useId();
   const [phase, setPhase] = useState<Phase>("hidden");
   const [contacts, setContacts] = useState<Contact[]>([]);
-  const [knownVersion, setKnownVersion] = useState(0);
+  // The version of the shown list: the last contacts answer or save. A detail reload never moves it.
+  const knownVersion = useRef(0);
+  // After a 409 the person has been told. Save then waits for the detail that loads after it, and
+  // sends the newer of the known version and that detail's version.
+  const [conflict, setConflict] = useState<{
+    after: number;
+    answered: boolean;
+    version: number | null;
+  } | null>(null);
+  const reloading = conflict !== null && !conflict.answered;
   const [editing, setEditing] = useState(false);
   const [rows, setRows] = useState<Row[]>([]);
   const [errors, setErrors] = useState<Record<number, RowErrors>>({});
@@ -206,7 +221,8 @@ export function useEmergencyContacts(params: EmergencyContactsParams): {
   // A focus move waits until its target is on screen, for example after a detail reload.
   useEffect(() => {
     const id = focusPlan.current;
-    if (id === null) {
+    // Not while Save waits for the detail reload: the panel is about to come back.
+    if (id === null || reloading) {
       return;
     }
     const element = elements.current.get(id);
@@ -230,7 +246,8 @@ export function useEmergencyContacts(params: EmergencyContactsParams): {
     focusPlan.current = null;
     setPhase("hidden");
     setContacts([]);
-    setKnownVersion(0);
+    knownVersion.current = 0;
+    setConflict(null);
     setEditing(false);
     setRows([]);
     setErrors({});
@@ -251,6 +268,46 @@ export function useEmergencyContacts(params: EmergencyContactsParams): {
       setErrors({});
     }
   }, [canEdit, editing]);
+
+  // The conflict state ends when a detail read has answered after the 409. A failed read leaves no
+  // version; the next detail that loads sets it. The counter is bumped in the same step as the
+  // detail state, so a reload that answers before React renders is still seen.
+  useEffect(() => {
+    if (conflict === null) {
+      return;
+    }
+    if (!conflict.answered) {
+      if (params.detailAnswers.current > conflict.after) {
+        setConflict({
+          after: params.detailAnswers.current,
+          answered: true,
+          version: params.detailFailed ? null : params.detailVersion,
+        });
+      }
+    } else if (
+      conflict.version === null &&
+      params.detailAnswers.current > conflict.after &&
+      !params.detailFailed
+    ) {
+      setConflict({
+        ...conflict,
+        after: params.detailAnswers.current,
+        version: params.detailVersion,
+      });
+    }
+  });
+
+  // A change this screen made to the family counts only when it is the very next version of the
+  // shown list: someone else's change in between leaves the known version where it was.
+  function noteVersion(changedId: string, version: number) {
+    if (
+      latest.current.householdId === changedId &&
+      knownVersion.current > 0 &&
+      knownVersion.current === version - 1
+    ) {
+      knownVersion.current = version;
+    }
+  }
 
   async function load() {
     if (!slug || householdId === null || loadingRef.current) {
@@ -286,7 +343,8 @@ export function useEmergencyContacts(params: EmergencyContactsParams): {
       return;
     }
     setContacts(parsed.contacts);
-    setKnownVersion(parsed.version);
+    knownVersion.current = parsed.version;
+    setConflict(null);
     setPhase("loaded");
     focusPlan.current = "heading";
   }
@@ -314,6 +372,7 @@ export function useEmergencyContacts(params: EmergencyContactsParams): {
     setRows([]);
     setErrors({});
     setNotice(null);
+    setConflict(null);
     focusPlan.current = "edit";
   }
 
@@ -360,7 +419,7 @@ export function useEmergencyContacts(params: EmergencyContactsParams): {
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (savingRef.current || !slug || householdId === null) {
+    if (savingRef.current || !slug || householdId === null || reloading) {
       return;
     }
     const checked = validateRows(rows);
@@ -375,9 +434,12 @@ export function useEmergencyContacts(params: EmergencyContactsParams): {
       relationship: readRelationship(row.relationship === "" ? null : row.relationship) ?? null,
       phone: row.phone.trim(),
     }));
-    // The newest version this screen knows: the contacts answer, or the open detail after a
-    // rename, a status change or a reload, whichever is higher.
-    const version = Math.max(knownVersion, params.detailVersion);
+    // The version the shown list belongs to. Only after a 409, once the detail has reloaded, the
+    // newer of that and the detail's version: the person has been told that the family changed.
+    const version =
+      conflict?.answered === true && conflict.version !== null
+        ? Math.max(knownVersion.current, conflict.version)
+        : knownVersion.current;
     const mine = generation.current;
     savingRef.current = true;
     setSaving(true);
@@ -407,7 +469,12 @@ export function useEmergencyContacts(params: EmergencyContactsParams): {
       }
       if (response.status === 409) {
         showNotice(MESSAGE_CONFLICT);
-        // A detail reload brings the newer version; the typed rows stay.
+        // A detail reload brings the newer version; the typed rows stay. Save waits for it.
+        setConflict({
+          after: latest.current.detailAnswers.current,
+          answered: false,
+          version: null,
+        });
         latest.current.onConflict();
         return;
       }
@@ -443,7 +510,8 @@ export function useEmergencyContacts(params: EmergencyContactsParams): {
         return;
       }
       setContacts(toSend);
-      setKnownVersion(savedVersion);
+      knownVersion.current = savedVersion;
+      setConflict(null);
       setEditing(false);
       setRows([]);
       focusPlan.current = "heading";
@@ -615,7 +683,11 @@ export function useEmergencyContacts(params: EmergencyContactsParams): {
               ) : null}
             </fieldset>
             <div className="flex flex-wrap gap-2">
-              <Button type="submit" disabled={saving} aria-label="Save emergency contacts">
+              <Button
+                type="submit"
+                disabled={saving || reloading}
+                aria-label="Save emergency contacts"
+              >
                 Save
               </Button>
               <Button type="button" variant="outline" disabled={saving} onClick={cancelEdit}>
@@ -627,5 +699,5 @@ export function useEmergencyContacts(params: EmergencyContactsParams): {
       </Panel>
     ) : null;
 
-  return { panel, reset };
+  return { panel, reset, noteVersion };
 }

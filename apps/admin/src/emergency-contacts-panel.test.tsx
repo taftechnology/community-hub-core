@@ -30,6 +30,7 @@ const READ = "/v1/households/read";
 const LIST = "/v1/households/list";
 const RENAME = "/v1/households/rename";
 const DELETE = "/v1/households/delete";
+const STATUS = "/v1/households/status";
 const BILLING = "/v1/billing/status";
 
 const MSG_LOAD_FAILED = "Unable to load emergency contacts. Try again.";
@@ -52,6 +53,7 @@ type Options = {
   save?: Handler;
   detail?: Handler;
   rename?: Handler;
+  status?: Handler;
 };
 
 // Synthetic people. Phones are stored as digits by the module and shown as received.
@@ -178,6 +180,14 @@ function mockServer(options: Options = {}) {
         labels.set(keyOf(body), body.label);
       }
       return json(200, { version: next });
+    }
+    if (route === STATUS) {
+      if (options.status) {
+        return options.status(body);
+      }
+      const next = versionOf(body) + 1;
+      versions.set(keyOf(body), next);
+      return json(200, { householdId: body.householdId, version: next, status: body.status });
     }
     if (route === DELETE) {
       if (body.version !== versionOf(body)) {
@@ -317,6 +327,37 @@ async function renameFamily(label: string) {
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
   await screen.findByRole("heading", { name: "Household Details" });
   await screen.findByText(label);
+}
+
+// A rename that is refused because someone else changed the family, then Reload: the detail reloads
+// at the server's version, and nothing else on this screen has moved the contacts version.
+async function reloadDetailAfterRefusedRename(calls: Call[]) {
+  const reads = callsTo(calls, READ).length;
+  fireEvent.click(screen.getByRole("button", { name: "Rename household" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Save changes" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Reload" }));
+  await waitFor(() => expect(callsTo(calls, READ)).toHaveLength(reads + 1));
+  await screen.findByRole("heading", { name: "Emergency contacts" });
+  await flushPending();
+}
+
+function detailBody(householdId: unknown, version: number) {
+  return {
+    householdId,
+    version,
+    status: "active",
+    label: householdId === ID_A ? "Clarke Family" : "Webb Family",
+    adults: [
+      {
+        personId: "00000000-0000-4000-8000-000000000010",
+        givenName: "Arthur",
+        familyName: "Clarke",
+        version: 1,
+      },
+    ],
+    minors: [],
+    guardians: [],
+  };
 }
 
 function expectNoValues(values: string[], label: string) {
@@ -933,14 +974,155 @@ describe("Emergency contacts panel", () => {
       await showLoaded();
       await renameFamily("Quill Family");
       await screen.findByRole("heading", { name: "Emergency contacts" });
-      // The contacts answer carried version 3; the rename moved the family to 4.
+      // The contacts answer carried version 3; the rename of this screen moved the family to 4.
       startEdit();
       type("Contact 1 name", TYPED_NAME);
       save();
-      await screen.findByText(TYPED_NAME);
-      expect(callsTo(calls, SAVE_CONTACTS)).toHaveLength(1);
+      await waitFor(() => expect(callsTo(calls, SAVE_CONTACTS)).toHaveLength(1));
       expect(callsTo(calls, SAVE_CONTACTS)[0]!.body.version).toBe(4);
+      await screen.findByText(TYPED_NAME);
       expect(callsTo(calls, READ_CONTACTS)).toHaveLength(1);
+    });
+
+    it("a save after a detail reload that brought someone else's version answers 409 first", async () => {
+      const { calls, versions } = await openScreen();
+      await openFamilyWithPanel();
+      await showLoaded();
+      // Someone else saves other contacts (version 4); an action of this screen reloads the detail.
+      versions.set(`${SLUG}:${ID_A}`, 4);
+      await reloadDetailAfterRefusedRename(calls);
+      startEdit();
+      type("Contact 1 name", TYPED_NAME);
+      save();
+      await waitFor(() => expect(callsTo(calls, SAVE_CONTACTS)).toHaveLength(1));
+      expect(callsTo(calls, SAVE_CONTACTS)[0]!.body.version).toBe(3);
+      await expectAlert(MSG_CONFLICT);
+      expect(field("Contact 1 name").value).toBe(TYPED_NAME);
+      expect(screen.queryByText(MAYA.name)).toBeNull();
+
+      // The person has been told: the next Save sends the version the detail reloaded after that.
+      save();
+      await waitFor(() => expect(callsTo(calls, SAVE_CONTACTS)).toHaveLength(2));
+      expect(callsTo(calls, SAVE_CONTACTS)[1]!.body.version).toBe(4);
+      await screen.findByText(TYPED_NAME);
+      expect(callsTo(calls, READ_CONTACTS)).toHaveLength(1);
+    });
+
+    it("a rename on top of someone else's change does not move the contacts version", async () => {
+      const { calls, versions } = await openScreen();
+      await openFamilyWithPanel();
+      await showLoaded();
+      versions.set(`${SLUG}:${ID_A}`, 4);
+      await reloadDetailAfterRefusedRename(calls);
+      // The detail is at 4; the rename answers 5, which is not the contacts version plus one.
+      await renameFamily("Quill Family");
+      await screen.findByRole("heading", { name: "Emergency contacts" });
+      expect(callsTo(calls, RENAME).at(-1)!.body.version).toBe(4);
+      startEdit();
+      type("Contact 1 name", TYPED_NAME);
+      save();
+      await waitFor(() => expect(callsTo(calls, SAVE_CONTACTS)).toHaveLength(1));
+      expect(callsTo(calls, SAVE_CONTACTS)[0]!.body.version).toBe(3);
+      await expectAlert(MSG_CONFLICT);
+      expect(field("Contact 1 name").value).toBe(TYPED_NAME);
+    });
+
+    it("a status answer of this family that returns the next version moves the contacts version", async () => {
+      const answer = deferred();
+      const { calls, versions } = await openScreen({ status: () => answer.promise });
+      fireEvent.click(screen.getByRole("switch", { name: "Active status for Clarke Family" }));
+      await waitFor(() => expect(callsTo(calls, STATUS)).toHaveLength(1));
+      await openFamilyWithPanel();
+      await showLoaded();
+      versions.set(`${SLUG}:${ID_A}`, 4);
+      await act(async () => {
+        answer.release(json(200, { householdId: ID_A, version: 4, status: "inactive" }));
+      });
+      await flushPending();
+      startEdit();
+      type("Contact 1 name", TYPED_NAME);
+      save();
+      await waitFor(() => expect(callsTo(calls, SAVE_CONTACTS)).toHaveLength(1));
+      expect(callsTo(calls, SAVE_CONTACTS)[0]!.body.version).toBe(4);
+      await screen.findByText(TYPED_NAME);
+    });
+
+    it("Save is not available until the reload after a conflict has answered", async () => {
+      const reload = deferred();
+      let reads = 0;
+      const { calls, versions } = await openScreen({
+        detail: (body) => {
+          reads += 1;
+          return reads === 2 ? reload.promise : json(200, detailBody(body.householdId, 3));
+        },
+      });
+      await openFamilyWithPanel();
+      await showLoaded();
+      versions.set(`${SLUG}:${ID_A}`, 4);
+      startEdit();
+      type("Contact 1 name", TYPED_NAME);
+      save();
+      await waitFor(() => expect(callsTo(calls, SAVE_CONTACTS)).toHaveLength(1));
+      await waitFor(() => expect(reads).toBe(2));
+      await flushPending();
+      expect(screen.queryByRole("button", { name: "Save emergency contacts" })).toBeNull();
+      expect(callsTo(calls, SAVE_CONTACTS)).toHaveLength(1);
+
+      await act(async () => {
+        reload.release(json(200, detailBody(ID_A, 4)));
+      });
+      await expectAlert(MSG_CONFLICT);
+      expect(field("Contact 1 name").value).toBe(TYPED_NAME);
+      const button = screen.getByRole<HTMLButtonElement>("button", {
+        name: "Save emergency contacts",
+      });
+      expect(button.disabled).toBe(false);
+      fireEvent.click(button);
+      await waitFor(() => expect(callsTo(calls, SAVE_CONTACTS)).toHaveLength(2));
+      expect(callsTo(calls, SAVE_CONTACTS)[1]!.body.version).toBe(4);
+    });
+
+    it("a failed reload after a conflict keeps the rows, and the next detail that loads sets the version", async () => {
+      let reads = 0;
+      const { calls, versions } = await openScreen({
+        detail: (body) => {
+          reads += 1;
+          return reads === 2
+            ? empty(500)
+            : json(200, detailBody(body.householdId, reads === 1 ? 3 : 4));
+        },
+      });
+      await openFamilyWithPanel();
+      await showLoaded();
+      versions.set(`${SLUG}:${ID_A}`, 4);
+      startEdit();
+      type("Contact 1 name", TYPED_NAME);
+      save();
+      await screen.findByText("Failed to load household");
+      expect(callsTo(calls, SAVE_CONTACTS)).toHaveLength(1);
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      await expectAlert(MSG_CONFLICT);
+      expect(field("Contact 1 name").value).toBe(TYPED_NAME);
+      save();
+      await waitFor(() => expect(callsTo(calls, SAVE_CONTACTS)).toHaveLength(2));
+      expect(callsTo(calls, SAVE_CONTACTS)[1]!.body.version).toBe(4);
+    });
+
+    it("Cancel ends the state after a conflict, and the next Save sends the known version", async () => {
+      const { calls, versions } = await openScreen();
+      await openFamilyWithPanel();
+      await showLoaded();
+      versions.set(`${SLUG}:${ID_A}`, 4);
+      startEdit();
+      type("Contact 1 name", TYPED_NAME);
+      save();
+      await expectAlert(MSG_CONFLICT);
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      startEdit();
+      type("Contact 1 name", TYPED_NAME);
+      save();
+      await waitFor(() => expect(callsTo(calls, SAVE_CONTACTS)).toHaveLength(2));
+      expect(callsTo(calls, SAVE_CONTACTS)[1]!.body.version).toBe(3);
     });
 
     it("a save after someone else's change answers 409, keeps the rows, and works after a detail reload", async () => {
@@ -1031,6 +1213,9 @@ describe("Emergency contacts panel", () => {
       save();
       await screen.findAllByText(MSG_READ_ONLY);
       await waitFor(() => expect(callsTo(calls, BILLING).length).toBe(billingCalls + 1));
+      // The panel itself says it, not only the banner of the screen.
+      const section = heading().closest("section") as HTMLElement;
+      expect(within(section).getByText(MSG_READ_ONLY)).toBeTruthy();
       expect(screen.queryByRole("button", { name: "Edit emergency contacts" })).toBeNull();
       expect(screen.queryByRole("button", { name: "Save emergency contacts" })).toBeNull();
       expect(screen.queryByText(TYPED_NAME)).toBeNull();
@@ -1335,12 +1520,12 @@ describe("Emergency contacts panel", () => {
         target: { value: "Quill Family" },
       });
       fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
-      await screen.findByText("Quill Family");
-      expect(callsTo(calls, RENAME)).toHaveLength(1);
+      await waitFor(() => expect(callsTo(calls, RENAME)).toHaveLength(1));
       expect(callsTo(calls, RENAME)[0]!.body).toMatchObject({
         communitySlug: OTHER_SLUG,
         version: 3,
       });
+      await screen.findByText("Quill Family");
     });
 
     it("a detail reload of the same family keeps the typed rows and the answer of an open read", async () => {

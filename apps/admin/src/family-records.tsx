@@ -656,6 +656,8 @@ export function FamilyRecordsPage() {
 
   const generation = useRef(0);
   const detailGeneration = useRef(0);
+  // Counts the answers to the detail read, so the emergency contacts can tell a reload has answered.
+  const detailAnswers = useRef(0);
   // Changes only with the community or the open family, never when the detail reloads.
   const panelGeneration = useRef(0);
 
@@ -721,12 +723,14 @@ export function FamilyRecordsPage() {
     statusFilter,
     setItems,
     setAlert: setListAlert,
-    applyAnswer: (householdId, newVersion, newStatus) =>
+    applyAnswer: (householdId, newVersion, newStatus) => {
+      emergency.noteVersion(householdId, newVersion);
       setDetailHousehold((prev) =>
         prev !== null && prev.householdId === householdId
           ? { ...prev, version: newVersion, status: newStatus }
           : prev,
-      ),
+      );
+    },
     reloadList,
     focusHeading: () => setHeadingFocusPending(true),
     onPaymentRequired,
@@ -745,6 +749,8 @@ export function FamilyRecordsPage() {
     slug,
     householdId: detailHousehold?.householdId ?? null,
     detailVersion: detailHousehold?.version ?? 0,
+    detailAnswers,
+    detailFailed: detailError || detailNotFound,
     canRead: canRestricted,
     canEdit: canManage && !hideWrites,
     gone: detailNotFound,
@@ -845,16 +851,19 @@ export function FamilyRecordsPage() {
         return;
       }
       if (response === "unavailable") {
+        detailAnswers.current += 1;
         setDetailLoading(false);
         setDetailError(true);
         return;
       }
       if (response.status === 404) {
+        detailAnswers.current += 1;
         setDetailLoading(false);
         setDetailNotFound(true);
         return;
       }
       if (response.status !== 200) {
+        detailAnswers.current += 1;
         setDetailLoading(false);
         setDetailError(true);
         return;
@@ -866,16 +875,19 @@ export function FamilyRecordsPage() {
         }
         const parsed = parseHouseholdDetail(data);
         if (parsed === null) {
+          detailAnswers.current += 1;
           setDetailLoading(false);
           setDetailError(true);
           return;
         }
         setDetailHousehold(parsed);
+        detailAnswers.current += 1;
         setDetailLoading(false);
       } catch {
         if (!isCurrent()) {
           return;
         }
+        detailAnswers.current += 1;
         setDetailLoading(false);
         setDetailError(true);
       }
@@ -1443,6 +1455,15 @@ export function FamilyRecordsPage() {
       }
 
       if (response.status === 200) {
+        // The answer's version counts for the emergency contacts only when it is the next one.
+        try {
+          const answer: unknown = await response.json();
+          if (isRecord(answer) && typeof answer.version === "number") {
+            emergency.noteVersion(detailHousehold.householdId, answer.version);
+          }
+        } catch {
+          // No version in the answer: the contacts keep the version of the list on screen.
+        }
         setView("detail");
         reloadDetail();
         return;
