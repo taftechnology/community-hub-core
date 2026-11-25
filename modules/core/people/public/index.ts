@@ -47,6 +47,10 @@ defineAuditAction("people.household.status_changed");
 defineAuditPurpose("people.household.status_changed");
 defineAuditAction("people.household.listed_deleted");
 defineAuditPurpose("people.household.listed_deleted");
+defineAuditAction("people.household.emergency_contacts_read");
+defineAuditPurpose("people.household.emergency_contacts_read");
+defineAuditAction("people.household.emergency_contacts_updated");
+defineAuditPurpose("people.household.emergency_contacts_updated");
 defineAuditAction("people.person.deleted");
 defineAuditPurpose("people.person.deleted");
 defineAuditAction("people.person.restored");
@@ -168,3 +172,18 @@ export {
   type SetHouseholdStatusInput,
   type SetHouseholdStatusResult,
 } from "../infrastructure/household-status.js";
+export {
+  EMERGENCY_CONTACT_RELATIONSHIPS,
+  MAX_EMERGENCY_CONTACTS,
+  type EmergencyContact,
+  type EmergencyContactRelationship,
+  type RawEmergencyContactInput,
+} from "../domain/emergency-contact.js";
+export {
+  readEmergencyContacts,
+  saveEmergencyContacts,
+  type ReadEmergencyContactsInput,
+  type ReadEmergencyContactsResult,
+  type SaveEmergencyContactsInput,
+  type SaveEmergencyContactsResult,
+} from "../infrastructure/emergency-contacts.js";
