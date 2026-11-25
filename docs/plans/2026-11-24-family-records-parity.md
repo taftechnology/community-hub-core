@@ -440,3 +440,25 @@ The browser check of checkpoint 3 (Brave at 1280 and 375 px, light and dark; axe
 | #   | Setting                                | Weakening                             | File | Test that must fail (exact `it` title)                     |
 | --- | -------------------------------------- | ------------------------------------- | ---- | ---------------------------------------------------------- |
 | 74e | Focus stays on the switch after a save | Use `disabled` while the save is open | AD   | focus stays on the status switch after a successful change |
+
+### A5 (2026-11-25, after the second review): the move lock's test, and a late delete answer
+
+Status: approved (2026-11-25, Adnan Bin Hossen)
+
+The second independent review (Claude Haiku 5.5, CHANGES REQUESTED, one Medium, three Low and five notes, 61 weakenings of its own) found no tenancy, children's data, secret or permission defect. Two findings are changed here. Pin 90 weakens the insert trigger and its test fails as written; the review found that the update trigger's lock has no test. The reviewer agent weakened that lock and ran the family migration file (21) and the people suite (394): all passed.
+
+Not changed: the purge's minor checks and its scope predicates are pinned jointly (pins 22 and 24, as planned); a restore that answers 404 announces its message and focuses the heading, because the list reloads (an exception to A3); "No value means a child" in the spec means that no value in the list stands for a child, and an absent relationship is accepted; the sweep's write guard passes a user without a grant, but the sweep runs only after a permitted 200, which needs a grant.
+
+**Commit 1:** `test(db): pin the family lock when an adult is moved`
+
+- `packages/db/test/family-delete-migration.integration.test.ts`: a raw hide is open; a raw update as `app` that moves an adult into that family is seen waiting in `pg_locks`, and after the hide commits it is refused with `cannot place person in a deleted household`.
+
+**Commit 2:** `fix(admin): a late delete answer does not block the next dialog`
+
+- `apps/admin/src/family-status.tsx`: each delete attempt has its own number. An answer that arrives after the person opened another view clears the pending state, unless a newer attempt holds it. It changes nothing else on screen.
+- `apps/admin/src/family-records.test.tsx`: the key is lost while a delete is open, the person goes back to the list, the answer arrives, the key returns; the next family's dialog can be cancelled and confirmed.
+
+| #   | Setting                                       | Weakening                           | File | Test that must fail (exact `it` title)                                    |
+| --- | --------------------------------------------- | ----------------------------------- | ---- | ------------------------------------------------------------------------- |
+| 90b | Persons update check locks the household      | Plain read in the update trigger    | FM   | migration 0023: an adult move waits for a hide in progress and is refused |
+| 71c | A late delete answer clears the pending state | Keep it pending after a late answer | AD   | a late delete answer does not block the next Delete dialog                |
