@@ -1467,7 +1467,7 @@ describe("billing guard against a real database", () => {
               contacts: [
                 {
                   name: "Emergency Contact",
-                  phone: "+61 400 000 000",
+                  phone: "+61 411 555 000",
                   relationship: "friend",
                 },
               ],
