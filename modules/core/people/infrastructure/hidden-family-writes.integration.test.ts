@@ -286,15 +286,19 @@ describe("hidden family writes and lock order", () => {
 
       expect(blocked).toBe(true);
 
-      await withAppTransaction(app3, scope, async (tx) => {
-        const locked = await tx<{ id: string }[]>`
-          select id::text as id
-          from app.persons
-          where id = ${personId}::uuid
-          for update nowait
-        `;
-        t3Succeeded = locked.length > 0;
-      });
+      try {
+        await withAppTransaction(app3, scope, async (tx) => {
+          const locked = await tx<{ id: string }[]>`
+            select id::text as id
+            from app.persons
+            where id = ${personId}::uuid
+            for update nowait
+          `;
+          t3Succeeded = locked.length > 0;
+        });
+      } catch {
+        t3Succeeded = false;
+      }
 
       expect(t3Succeeded).toBe(true);
 
@@ -833,384 +837,559 @@ describe("hidden family writes and lock order", () => {
     });
   });
 
-  // Races against hideHousehold: both orders for add-adult, add-minor, move-adult in
-  it("races between hideHousehold and add-adult, add-minor, move-adult in both orders", async () => {
-    const scope = await setupTenant("races-hide");
+  async function runRacePair<T1, T2>(
+    scope: Scope,
+    runT1: (tx: AppTransaction) => Promise<T1>,
+    runT2: (tx: AppTransaction) => Promise<T2>,
+  ): Promise<{
+    blocked: boolean;
+    releaseT1: () => void;
+    t1Promise: Promise<T1>;
+    t2Promise: Promise<T2>;
+    cleanup: () => Promise<void>;
+  }> {
     const app1 = createPlaintextAppSql(roleUrl(runtime, "app"));
     const app2 = createPlaintextAppSql(roleUrl(runtime, "app"));
     const inspector = createPlaintextDirectSql(runtime.productOnlyUrl);
 
-    try {
-      // 1. Order A: hideHousehold holds FOR UPDATE, addAdult waits and answers not_found
-      {
-        const hh = await createHouseholdRow(scope, "Race Hide 1");
-        let releaseT1: (() => void) | undefined;
-        const releaseT1P = new Promise<void>((res) => {
-          releaseT1 = res;
-        });
-        let t1Ready!: () => void;
-        const t1ReadyP = new Promise<void>((res) => {
-          t1Ready = res;
-        });
-        let t2Pid: number | null = null;
-        let t2Settled = false;
+    let releaseT1!: () => void;
+    const releaseT1P = new Promise<void>((res) => {
+      releaseT1 = res;
+    });
+    let t1Ready!: () => void;
+    const t1ReadyP = new Promise<void>((res) => {
+      t1Ready = res;
+    });
 
-        const t1P = withAppTransaction(app1, scope, async (tx) => {
-          await withRequest({ requestId: REQUEST_ID }, () =>
-            hideHousehold(tx, {
-              householdId: hh.householdId,
-              version: hh.version,
-              actorUserId: ACTOR,
-            }),
-          );
-          t1Ready();
-          await releaseT1P;
-        }).catch((err) => {
-          t1Ready();
-          throw err;
-        });
-        await t1ReadyP;
+    const t1Promise = withAppTransaction(app1, scope, async (tx) => {
+      const res = await withRequest({ requestId: REQUEST_ID }, () => runT1(tx));
+      t1Ready();
+      await releaseT1P;
+      return res;
+    }).catch((err) => {
+      t1Ready();
+      throw err;
+    });
 
-        const t2P = withAppTransaction(app2, scope, async (tx) => {
-          const [pidRow] = await tx<{ pid: number }[]>`select pg_backend_pid() as pid`;
-          t2Pid = pidRow?.pid ?? null;
-          return await withRequest({ requestId: REQUEST_ID }, () =>
-            addAdult(tx, kms, KEY_ARN, {
-              now: NOW,
-              householdId: hh.householdId,
-              givenName: "Racer",
-              familyName: "Adult",
-              email: "race1@example.test",
-              phone: "+61 412 555 901",
-              dateOfBirth: null,
-              actorUserId: ACTOR,
-            }),
-          );
-        }).finally(() => {
-          t2Settled = true;
-        });
+    await t1ReadyP;
 
-        try {
-          let blocked = false;
-          const started = Date.now();
-          while (Date.now() - started < 10_000 && !t2Settled) {
-            if (t2Pid !== null) {
-              const rows = await inspector<{ count: number }[]>`
-                select count(*)::int as count
-                from pg_locks l
-                join pg_stat_activity a on a.pid = l.pid
-                where l.pid = ${t2Pid} and l.granted = false and a.query like '%app.households%'
-              `;
-              if ((rows[0]?.count ?? 0) > 0) {
-                blocked = true;
-                break;
-              }
-            }
-            await new Promise((r) => setTimeout(r, 50));
-          }
-          expect(blocked).toBe(true);
-        } finally {
-          releaseT1?.();
-          await Promise.allSettled([t1P, t2P]);
+    let t2Pid: number | null = null;
+    let t2Settled = false;
+    const t2Promise = withAppTransaction(app2, scope, async (tx) => {
+      const [pidRow] = await tx<{ pid: number }[]>`select pg_backend_pid() as pid`;
+      t2Pid = pidRow?.pid ?? null;
+      return await withRequest({ requestId: REQUEST_ID }, () => runT2(tx));
+    }).finally(() => {
+      t2Settled = true;
+    });
+
+    let blocked = false;
+    const started = Date.now();
+    while (Date.now() - started < 10_000 && !t2Settled) {
+      if (t2Pid !== null) {
+        const rows = await inspector<{ count: number }[]>`
+          select count(*)::int as count
+          from pg_locks l
+          join pg_stat_activity a on a.pid = l.pid
+          where l.pid = ${t2Pid}
+            and l.granted = false
+        `;
+        if ((rows[0]?.count ?? 0) > 0) {
+          blocked = true;
+          break;
         }
-
-        await expect(t2P).rejects.toMatchObject({ code: "not_found" });
       }
+      await new Promise((r) => setTimeout(r, 25));
+    }
 
-      // 2. Order B: addMinor holds FOR SHARE, hideHousehold waits and answers household_has_children
-      {
-        const hh = await createHouseholdRow(scope, "Race Hide 2");
-        const guardianId = await addAdultPerson(scope, hh.householdId, "Guardian", "Racer");
-        let releaseT1: (() => void) | undefined;
-        const releaseT1P = new Promise<void>((res) => {
-          releaseT1 = res;
-        });
-        let t1Ready!: () => void;
-        const t1ReadyP = new Promise<void>((res) => {
-          t1Ready = res;
-        });
-        let t2Pid: number | null = null;
-        let t2Settled = false;
-
-        const t1P = withAppTransaction(app1, scope, async (tx) => {
-          await withRequest({ requestId: REQUEST_ID }, () =>
-            addMinor(tx, kms, KEY_ARN, {
-              now: NOW,
-              householdId: hh.householdId,
-              givenName: "Child",
-              familyName: "Racer",
-              dateOfBirth: "2015-05-10",
-              guardianId,
-              actorUserId: ACTOR,
-            }),
-          );
-          t1Ready();
-          await releaseT1P;
-        }).catch((err) => {
-          t1Ready();
-          throw err;
-        });
-        await t1ReadyP;
-
-        const t2P = withAppTransaction(app2, scope, async (tx) => {
-          const [pidRow] = await tx<{ pid: number }[]>`select pg_backend_pid() as pid`;
-          t2Pid = pidRow?.pid ?? null;
-          return await withRequest({ requestId: REQUEST_ID }, () =>
-            hideHousehold(tx, {
-              householdId: hh.householdId,
-              version: hh.version,
-              actorUserId: ACTOR,
-            }),
-          );
-        }).finally(() => {
-          t2Settled = true;
-        });
-
-        try {
-          let blocked = false;
-          const started = Date.now();
-          while (Date.now() - started < 10_000 && !t2Settled) {
-            if (t2Pid !== null) {
-              const rows = await inspector<{ count: number }[]>`
-                select count(*)::int as count
-                from pg_locks l
-                join pg_stat_activity a on a.pid = l.pid
-                where l.pid = ${t2Pid} and l.granted = false and a.query like '%app.households%'
-              `;
-              if ((rows[0]?.count ?? 0) > 0) {
-                blocked = true;
-                break;
-              }
-            }
-            await new Promise((r) => setTimeout(r, 50));
-          }
-          expect(blocked).toBe(true);
-        } finally {
-          releaseT1?.();
-          await Promise.allSettled([t1P, t2P]);
-        }
-
-        await expect(t2P).rejects.toMatchObject({ code: "household_has_children" });
-      }
-
-      // 3. Order A: hideHousehold holds FOR UPDATE, moveAdult waits and answers not_found
-      {
-        const sourceHh = await createHouseholdRow(scope, "Race Source");
-        const targetHh = await createHouseholdRow(scope, "Race Target");
-        const adultId = await addAdultPerson(scope, sourceHh.householdId, "Moving", "Racer");
-
-        let releaseT1: (() => void) | undefined;
-        const releaseT1P = new Promise<void>((res) => {
-          releaseT1 = res;
-        });
-        let t1Ready!: () => void;
-        const t1ReadyP = new Promise<void>((res) => {
-          t1Ready = res;
-        });
-        let t2Pid: number | null = null;
-        let t2Settled = false;
-
-        const t1P = withAppTransaction(app1, scope, async (tx) => {
-          await withRequest({ requestId: REQUEST_ID }, () =>
-            hideHousehold(tx, {
-              householdId: targetHh.householdId,
-              version: targetHh.version,
-              actorUserId: ACTOR,
-            }),
-          );
-          t1Ready();
-          await releaseT1P;
-        }).catch((err) => {
-          t1Ready();
-          throw err;
-        });
-        await t1ReadyP;
-
-        const t2P = withAppTransaction(app2, scope, async (tx) => {
-          const [pidRow] = await tx<{ pid: number }[]>`select pg_backend_pid() as pid`;
-          t2Pid = pidRow?.pid ?? null;
-          return await withRequest({ requestId: REQUEST_ID }, () =>
-            moveAdult(tx, {
-              personId: adultId,
-              version: 1,
-              householdId: targetHh.householdId,
-              actorUserId: ACTOR,
-            }),
-          );
-        }).finally(() => {
-          t2Settled = true;
-        });
-
-        try {
-          let blocked = false;
-          const started = Date.now();
-          while (Date.now() - started < 10_000 && !t2Settled) {
-            if (t2Pid !== null) {
-              const rows = await inspector<{ count: number }[]>`
-                select count(*)::int as count
-                from pg_locks l
-                join pg_stat_activity a on a.pid = l.pid
-                where l.pid = ${t2Pid} and l.granted = false and a.query like '%app.households%'
-              `;
-              if ((rows[0]?.count ?? 0) > 0) {
-                blocked = true;
-                break;
-              }
-            }
-            await new Promise((r) => setTimeout(r, 50));
-          }
-          expect(blocked).toBe(true);
-        } finally {
-          releaseT1?.();
-          await Promise.allSettled([t1P, t2P]);
-        }
-
-        await expect(t2P).rejects.toMatchObject({ code: "not_found" });
-      }
-    } finally {
+    const cleanup = async () => {
+      releaseT1();
+      await Promise.allSettled([t1Promise, t2Promise]);
       await app1.end({ timeout: 1 });
       await app2.end({ timeout: 1 });
       await inspector.end({ timeout: 1 });
+    };
+
+    return { blocked, releaseT1, t1Promise, t2Promise, cleanup };
+  }
+
+  // 1. hide first, add adult waits: not_found, no person row
+  it("race: hide first, add adult waits", async () => {
+    const scope = await setupTenant("race-1");
+    const hh = await createHouseholdRow(scope, "Race 1 Fam");
+    const race = await runRacePair(
+      scope,
+      (tx) =>
+        hideHousehold(tx, {
+          householdId: hh.householdId,
+          version: hh.version,
+          actorUserId: ACTOR,
+        }),
+      (tx) =>
+        addAdult(tx, kms, KEY_ARN, {
+          now: NOW,
+          householdId: hh.householdId,
+          givenName: "Racer",
+          familyName: "Adult",
+          email: "race1@example.test",
+          phone: "+61 412 555 901",
+          dateOfBirth: null,
+          actorUserId: ACTOR,
+        }),
+    );
+    try {
+      expect(race.blocked).toBe(true);
+      race.releaseT1();
+      await race.t1Promise;
+      await expect(race.t2Promise).rejects.toMatchObject({ code: "not_found" });
+
+      const persons = await withAppTransaction(migrator, scope, async (tx) => {
+        return await tx<{ id: string }[]>`
+          select id::text as id from app.persons where org_id = ${scope.orgId}::uuid
+        `;
+      });
+      expect(persons).toHaveLength(0);
+    } finally {
+      await race.cleanup();
     }
   }, 30_000);
 
-  // Races against purgeDeletedHouseholds: contact delete, move-adult out, and move-adult in finish without 40P01
-  it("races against purgeDeletedHouseholds: contact delete, move-adult out, and move-adult in finish without 40P01", async () => {
-    const scope = await setupTenant("purge-races");
-    const app1 = createPlaintextAppSql(roleUrl(runtime, "app"));
-    const app2 = createPlaintextAppSql(roleUrl(runtime, "app"));
-
+  // 2. add adult first, hide waits: hide resolves, the adult keeps household_id
+  it("race: add adult first, hide waits", async () => {
+    const scope = await setupTenant("race-2");
+    const hh = await createHouseholdRow(scope, "Race 2 Fam");
+    const race = await runRacePair(
+      scope,
+      (tx) =>
+        addAdult(tx, kms, KEY_ARN, {
+          now: NOW,
+          householdId: hh.householdId,
+          givenName: "Racer",
+          familyName: "Adult",
+          email: "race2@example.test",
+          phone: "+61 412 555 902",
+          dateOfBirth: null,
+          actorUserId: ACTOR,
+        }),
+      (tx) =>
+        hideHousehold(tx, {
+          householdId: hh.householdId,
+          version: hh.version,
+          actorUserId: ACTOR,
+        }),
+    );
     try {
-      // 1. Contact delete vs purgeDeletedHouseholds
-      {
-        const hh = await createHouseholdRow(scope, "Purge Race 1");
-        const adultId = await addAdultPerson(scope, hh.householdId, "Adult", "PurgeRace1");
-        await inScope(scope, async (tx) => {
-          await hideHousehold(tx, {
-            householdId: hh.householdId,
-            version: hh.version,
-            actorUserId: ACTOR,
-          });
-        });
-        await ageHousehold(scope, hh.householdId, 725);
+      expect(race.blocked).toBe(true);
+      race.releaseT1();
+      const t1Res = await race.t1Promise;
+      const t2Res = await race.t2Promise;
+      expect(t2Res.version).toBe(hh.version + 1);
 
-        let releaseT1!: () => void;
-        const releaseT1P = new Promise<void>((res) => {
-          releaseT1 = res;
-        });
-        let t1Ready!: () => void;
-        const t1ReadyP = new Promise<void>((res) => {
-          t1Ready = res;
-        });
-
-        // T1: contact delete holds person lock
-        const t1P = withAppTransaction(app1, scope, async (tx) => {
-          await withRequest({ requestId: REQUEST_ID }, async () => {
-            await lockPersonForDelete(tx, { personId: adultId, version: 1 });
-            await hidePerson(tx, { personId: adultId, actorUserId: ACTOR });
-          });
-          t1Ready();
-          await releaseT1P;
-        });
-        await t1ReadyP;
-
-        // T2: purge runs concurrently
-        const t2P = withAppTransaction(app2, scope, async (tx) => {
-          return await withRequest({ requestId: REQUEST_ID }, () => purgeDeletedHouseholds(tx, 50));
-        });
-
-        releaseT1();
-        await t1P;
-        const purged = await t2P;
-        expect(purged).toContain(hh.householdId);
-
-        // Person row has household_id null and is deleted
-        const [personRow] = await withAppTransaction(migrator, scope, async (tx) => {
-          return await tx<{ household_id: string | null; deleted_at: Date | null }[]>`
-            select household_id::text as household_id, deleted_at
-            from app.persons
-            where id = ${adultId}::uuid
-          `;
-        });
-        expect(personRow?.household_id).toBeNull();
-        expect(personRow?.deleted_at).not.toBeNull();
-      }
-
-      // 2. Move-adult out vs purgeDeletedHouseholds
-      {
-        const hh = await createHouseholdRow(scope, "Purge Race 2");
-        const adultId = await addAdultPerson(scope, hh.householdId, "Adult", "PurgeRace2");
-        await inScope(scope, async (tx) => {
-          await hideHousehold(tx, {
-            householdId: hh.householdId,
-            version: hh.version,
-            actorUserId: ACTOR,
-          });
-        });
-        await ageHousehold(scope, hh.householdId, 725);
-
-        let releaseT1!: () => void;
-        const releaseT1P = new Promise<void>((res) => {
-          releaseT1 = res;
-        });
-        let t1Ready!: () => void;
-        const t1ReadyP = new Promise<void>((res) => {
-          t1Ready = res;
-        });
-
-        // T1: moveAdult out holds person lock
-        const t1P = withAppTransaction(app1, scope, async (tx) => {
-          await withRequest({ requestId: REQUEST_ID }, () =>
-            moveAdult(tx, {
-              personId: adultId,
-              version: 1,
-              householdId: null,
-              actorUserId: ACTOR,
-            }),
-          );
-          t1Ready();
-          await releaseT1P;
-        });
-        await t1ReadyP;
-
-        const t2P = withAppTransaction(app2, scope, async (tx) => {
-          return await withRequest({ requestId: REQUEST_ID }, () => purgeDeletedHouseholds(tx, 50));
-        });
-
-        releaseT1();
-        await t1P;
-        const purged = await t2P;
-        expect(purged).toContain(hh.householdId);
-      }
-
-      // 3. Move-adult in vs purgeDeletedHouseholds
-      {
-        const hh = await createHouseholdRow(scope, "Purge Race 3");
-        const adultId = await addAdultPerson(scope, null, "Adult", "PurgeRace3");
-        await inScope(scope, async (tx) => {
-          await hideHousehold(tx, {
-            householdId: hh.householdId,
-            version: hh.version,
-            actorUserId: ACTOR,
-          });
-        });
-        await ageHousehold(scope, hh.householdId, 725);
-
-        // Move adult into aged household answers not_found
-        await inScope(scope, async (tx) => {
-          await expect(
-            moveAdult(tx, {
-              personId: adultId,
-              version: 1,
-              householdId: hh.householdId,
-              actorUserId: ACTOR,
-            }),
-          ).rejects.toMatchObject({ code: "not_found" });
-        });
-      }
+      const [personRow] = await withAppTransaction(migrator, scope, async (tx) => {
+        return await tx<{ household_id: string | null }[]>`
+          select household_id::text as household_id
+          from app.persons
+          where id = ${t1Res.personId}::uuid
+        `;
+      });
+      expect(personRow?.household_id).toBe(hh.householdId);
     } finally {
-      await app1.end({ timeout: 1 });
-      await app2.end({ timeout: 1 });
+      await race.cleanup();
+    }
+  }, 30_000);
+
+  // 3. hide first, add minor waits: not_found, no person row
+  it("race: hide first, add minor waits", async () => {
+    const scope = await setupTenant("race-3");
+    const hh = await createHouseholdRow(scope, "Race 3 Fam");
+    const guardianId = await addAdultPerson(scope, null, "Guardian", "Racer");
+    const race = await runRacePair(
+      scope,
+      (tx) =>
+        hideHousehold(tx, {
+          householdId: hh.householdId,
+          version: hh.version,
+          actorUserId: ACTOR,
+        }),
+      (tx) =>
+        addMinor(tx, kms, KEY_ARN, {
+          now: NOW,
+          householdId: hh.householdId,
+          givenName: "Minor",
+          familyName: "Racer",
+          dateOfBirth: "2015-05-10",
+          guardianId,
+          actorUserId: ACTOR,
+        }),
+    );
+    try {
+      expect(race.blocked).toBe(true);
+      race.releaseT1();
+      await race.t1Promise;
+      await expect(race.t2Promise).rejects.toMatchObject({ code: "not_found" });
+
+      const minors = await withAppTransaction(migrator, scope, async (tx) => {
+        return await tx<{ id: string }[]>`
+          select id::text as id from app.persons where org_id = ${scope.orgId}::uuid and is_minor = true
+        `;
+      });
+      expect(minors).toHaveLength(0);
+    } finally {
+      await race.cleanup();
+    }
+  }, 30_000);
+
+  // 4. add minor first, hide waits: household_has_children, family visible
+  it("race: add minor first, hide waits", async () => {
+    const scope = await setupTenant("race-4");
+    const hh = await createHouseholdRow(scope, "Race 4 Fam");
+    const guardianId = await addAdultPerson(scope, hh.householdId, "Guardian", "Racer");
+    const race = await runRacePair(
+      scope,
+      (tx) =>
+        addMinor(tx, kms, KEY_ARN, {
+          now: NOW,
+          householdId: hh.householdId,
+          givenName: "Minor",
+          familyName: "Racer",
+          dateOfBirth: "2015-05-10",
+          guardianId,
+          actorUserId: ACTOR,
+        }),
+      (tx) =>
+        hideHousehold(tx, {
+          householdId: hh.householdId,
+          version: hh.version,
+          actorUserId: ACTOR,
+        }),
+    );
+    try {
+      expect(race.blocked).toBe(true);
+      race.releaseT1();
+      await race.t1Promise;
+      await expect(race.t2Promise).rejects.toMatchObject({ code: "household_has_children" });
+
+      const [hhRow] = await withAppTransaction(migrator, scope, async (tx) => {
+        return await tx<{ deleted_at: Date | null }[]>`
+          select deleted_at from app.households where id = ${hh.householdId}::uuid
+        `;
+      });
+      expect(hhRow?.deleted_at).toBeNull();
+    } finally {
+      await race.cleanup();
+    }
+  }, 30_000);
+
+  // 5. hide first, move adult in waits: not_found, adult unchanged
+  it("race: hide first, move adult in waits", async () => {
+    const scope = await setupTenant("race-5");
+    const sourceHh = await createHouseholdRow(scope, "Race 5 Source");
+    const targetHh = await createHouseholdRow(scope, "Race 5 Target");
+    const adultId = await addAdultPerson(scope, sourceHh.householdId, "Moving", "Racer");
+    const race = await runRacePair(
+      scope,
+      (tx) =>
+        hideHousehold(tx, {
+          householdId: targetHh.householdId,
+          version: targetHh.version,
+          actorUserId: ACTOR,
+        }),
+      (tx) =>
+        moveAdult(tx, {
+          personId: adultId,
+          version: 1,
+          householdId: targetHh.householdId,
+          actorUserId: ACTOR,
+        }),
+    );
+    try {
+      expect(race.blocked).toBe(true);
+      race.releaseT1();
+      await race.t1Promise;
+      await expect(race.t2Promise).rejects.toMatchObject({ code: "not_found" });
+
+      const [adultRow] = await withAppTransaction(migrator, scope, async (tx) => {
+        return await tx<{ household_id: string; version: number }[]>`
+          select household_id::text as household_id, version from app.persons where id = ${adultId}::uuid
+        `;
+      });
+      expect(adultRow?.household_id).toBe(sourceHh.householdId);
+      expect(adultRow?.version).toBe(1);
+    } finally {
+      await race.cleanup();
+    }
+  }, 30_000);
+
+  // 6. move adult in first, hide waits: hide resolves, the adult's household_id is the hidden family
+  it("race: move adult in first, hide waits", async () => {
+    const scope = await setupTenant("race-6");
+    const targetHh = await createHouseholdRow(scope, "Race 6 Target");
+    const adultId = await addAdultPerson(scope, null, "Moving", "Racer");
+    const race = await runRacePair(
+      scope,
+      (tx) =>
+        moveAdult(tx, {
+          personId: adultId,
+          version: 1,
+          householdId: targetHh.householdId,
+          actorUserId: ACTOR,
+        }),
+      (tx) =>
+        hideHousehold(tx, {
+          householdId: targetHh.householdId,
+          version: targetHh.version,
+          actorUserId: ACTOR,
+        }),
+    );
+    try {
+      expect(race.blocked).toBe(true);
+      race.releaseT1();
+      await race.t1Promise;
+      const t2Res = await race.t2Promise;
+      expect(t2Res.version).toBe(targetHh.version + 1);
+
+      const [adultRow] = await withAppTransaction(migrator, scope, async (tx) => {
+        return await tx<{ household_id: string }[]>`
+          select household_id::text as household_id from app.persons where id = ${adultId}::uuid
+        `;
+      });
+      expect(adultRow?.household_id).toBe(targetHh.householdId);
+
+      const [targetRow] = await withAppTransaction(migrator, scope, async (tx) => {
+        return await tx<{ deleted_at: Date | null }[]>`
+          select deleted_at from app.households where id = ${targetHh.householdId}::uuid
+        `;
+      });
+      expect(targetRow?.deleted_at).not.toBeNull();
+    } finally {
+      await race.cleanup();
+    }
+  }, 30_000);
+
+  // 7. contact delete first (lockPersonForDelete then hidePerson, open), purge waits on the person:
+  //    purge resolves with the family id, the contact is hidden with household_id null
+  it("race: contact delete first, purge waits", async () => {
+    const scope = await setupTenant("race-7");
+    const hh = await createHouseholdRow(scope, "Purge Race 7");
+    const adultId = await addAdultPerson(scope, hh.householdId, "Adult", "Race7");
+    await inScope(scope, async (tx) => {
+      await hideHousehold(tx, {
+        householdId: hh.householdId,
+        version: hh.version,
+        actorUserId: ACTOR,
+      });
+    });
+    await ageHousehold(scope, hh.householdId, 725);
+
+    const race = await runRacePair(
+      scope,
+      async (tx) => {
+        await lockPersonForDelete(tx, { personId: adultId, version: 1 });
+        await hidePerson(tx, { personId: adultId, actorUserId: ACTOR });
+      },
+      (tx) => purgeDeletedHouseholds(tx, 50),
+    );
+    try {
+      expect(race.blocked).toBe(true);
+      race.releaseT1();
+      await race.t1Promise;
+      const purged = await race.t2Promise;
+      expect(purged).toContain(hh.householdId);
+
+      const [personRow] = await withAppTransaction(migrator, scope, async (tx) => {
+        return await tx<{ household_id: string | null; deleted_at: Date | null }[]>`
+          select household_id::text as household_id, deleted_at
+          from app.persons
+          where id = ${adultId}::uuid
+        `;
+      });
+      expect(personRow?.household_id).toBeNull();
+      expect(personRow?.deleted_at).not.toBeNull();
+    } finally {
+      await race.cleanup();
+    }
+  }, 30_000);
+
+  // 8. purge first (open), contact delete waits on the person: conflict (the purge bumped the version),
+  //    the adult is not hidden and has household_id null
+  it("race: purge first, contact delete waits", async () => {
+    const scope = await setupTenant("race-8");
+    const hh = await createHouseholdRow(scope, "Purge Race 8");
+    const adultId = await addAdultPerson(scope, hh.householdId, "Adult", "Race8");
+    await inScope(scope, async (tx) => {
+      await hideHousehold(tx, {
+        householdId: hh.householdId,
+        version: hh.version,
+        actorUserId: ACTOR,
+      });
+    });
+    await ageHousehold(scope, hh.householdId, 725);
+
+    const race = await runRacePair(
+      scope,
+      (tx) => purgeDeletedHouseholds(tx, 50),
+      (tx) => lockPersonForDelete(tx, { personId: adultId, version: 1 }),
+    );
+    try {
+      expect(race.blocked).toBe(true);
+      race.releaseT1();
+      const purged = await race.t1Promise;
+      expect(purged).toContain(hh.householdId);
+      await expect(race.t2Promise).rejects.toMatchObject({ code: "conflict" });
+
+      const [personRow] = await withAppTransaction(migrator, scope, async (tx) => {
+        return await tx<{ household_id: string | null; deleted_at: Date | null }[]>`
+          select household_id::text as household_id, deleted_at
+          from app.persons
+          where id = ${adultId}::uuid
+        `;
+      });
+      expect(personRow?.household_id).toBeNull();
+      expect(personRow?.deleted_at).toBeNull();
+    } finally {
+      await race.cleanup();
+    }
+  }, 30_000);
+
+  // 9. move adult out first (open), purge waits: purge resolves, the adult has household_id null
+  it("race: move adult out first, purge waits", async () => {
+    const scope = await setupTenant("race-9");
+    const hh = await createHouseholdRow(scope, "Purge Race 9");
+    const adultId = await addAdultPerson(scope, hh.householdId, "Adult", "Race9");
+    await inScope(scope, async (tx) => {
+      await hideHousehold(tx, {
+        householdId: hh.householdId,
+        version: hh.version,
+        actorUserId: ACTOR,
+      });
+    });
+    await ageHousehold(scope, hh.householdId, 725);
+
+    const race = await runRacePair(
+      scope,
+      (tx) =>
+        moveAdult(tx, {
+          personId: adultId,
+          version: 1,
+          householdId: null,
+          actorUserId: ACTOR,
+        }),
+      (tx) => purgeDeletedHouseholds(tx, 50),
+    );
+    try {
+      expect(race.blocked).toBe(true);
+      race.releaseT1();
+      await race.t1Promise;
+      const purged = await race.t2Promise;
+      expect(purged).toContain(hh.householdId);
+
+      const [personRow] = await withAppTransaction(migrator, scope, async (tx) => {
+        return await tx<{ household_id: string | null }[]>`
+          select household_id::text as household_id from app.persons where id = ${adultId}::uuid
+        `;
+      });
+      expect(personRow?.household_id).toBeNull();
+    } finally {
+      await race.cleanup();
+    }
+  }, 30_000);
+
+  // 10. purge first (open), move adult out waits: conflict, household_id null
+  it("race: purge first, move adult out waits", async () => {
+    const scope = await setupTenant("race-10");
+    const hh = await createHouseholdRow(scope, "Purge Race 10");
+    const adultId = await addAdultPerson(scope, hh.householdId, "Adult", "Race10");
+    await inScope(scope, async (tx) => {
+      await hideHousehold(tx, {
+        householdId: hh.householdId,
+        version: hh.version,
+        actorUserId: ACTOR,
+      });
+    });
+    await ageHousehold(scope, hh.householdId, 725);
+
+    const race = await runRacePair(
+      scope,
+      (tx) => purgeDeletedHouseholds(tx, 50),
+      (tx) =>
+        moveAdult(tx, {
+          personId: adultId,
+          version: 1,
+          householdId: null,
+          actorUserId: ACTOR,
+        }),
+    );
+    try {
+      expect(race.blocked).toBe(true);
+      race.releaseT1();
+      const purged = await race.t1Promise;
+      expect(purged).toContain(hh.householdId);
+      await expect(race.t2Promise).rejects.toMatchObject({ code: "conflict" });
+
+      const [personRow] = await withAppTransaction(migrator, scope, async (tx) => {
+        return await tx<{ household_id: string | null }[]>`
+          select household_id::text as household_id from app.persons where id = ${adultId}::uuid
+        `;
+      });
+      expect(personRow?.household_id).toBeNull();
+    } finally {
+      await race.cleanup();
+    }
+  }, 30_000);
+
+  // 11. purge first (open), move adult in (another adult) waits on the family: not_found, that adult unchanged
+  it("race: purge first, move adult in waits", async () => {
+    const scope = await setupTenant("race-11");
+    const hh = await createHouseholdRow(scope, "Purge Race 11");
+    const adultId = await addAdultPerson(scope, hh.householdId, "Adult", "Race11");
+    const anotherAdultId = await addAdultPerson(scope, null, "AnotherAdult", "Race11");
+    await inScope(scope, async (tx) => {
+      await hideHousehold(tx, {
+        householdId: hh.householdId,
+        version: hh.version,
+        actorUserId: ACTOR,
+      });
+    });
+    await ageHousehold(scope, hh.householdId, 725);
+
+    const race = await runRacePair(
+      scope,
+      (tx) => purgeDeletedHouseholds(tx, 50),
+      async (tx) => {
+        await tx<{ id: string }[]>`
+          select id::text as id from app.households where id = ${hh.householdId}::uuid for share
+        `;
+        return await moveAdult(tx, {
+          personId: anotherAdultId,
+          version: 1,
+          householdId: hh.householdId,
+          actorUserId: ACTOR,
+        });
+      },
+    );
+    try {
+      expect(race.blocked).toBe(true);
+      race.releaseT1();
+      const purged = await race.t1Promise;
+      expect(purged).toContain(hh.householdId);
+      await expect(race.t2Promise).rejects.toMatchObject({ code: "not_found" });
+
+      const [personRow] = await withAppTransaction(migrator, scope, async (tx) => {
+        return await tx<{ household_id: string | null; version: number }[]>`
+          select household_id::text as household_id, version from app.persons where id = ${anotherAdultId}::uuid
+        `;
+      });
+      expect(personRow?.household_id).toBeNull();
+      expect(personRow?.version).toBe(1);
+
+      const [adultRow] = await withAppTransaction(migrator, scope, async (tx) => {
+        return await tx<{ household_id: string | null }[]>`
+          select household_id::text as household_id from app.persons where id = ${adultId}::uuid
+        `;
+      });
+      expect(adultRow?.household_id).toBeNull();
+    } finally {
+      await race.cleanup();
     }
   }, 30_000);
 });
