@@ -1156,6 +1156,28 @@ describe("family parity routes against a real database", () => {
     expect(del401.status).toBe(401);
     expect(del401.headers.get("cache-control")).toContain("no-store");
 
+    // A Deleted request whose body fails the schema
+    const delMalformed = await post(
+      "/v1/households/list",
+      { communitySlug: org.slug, status: "deleted", includeRestricted: true },
+      org.owner.accessToken,
+    );
+    expect(delMalformed.status).toBe(400);
+    expect(await delMalformed.text()).toBe("");
+    expect(delMalformed.headers.get("cache-control")).toContain("no-store");
+
+    // The list without a filter, answered and refused
+    const listOk = await post(
+      "/v1/households/list",
+      { communitySlug: org.slug },
+      org.owner.accessToken,
+    );
+    expect(listOk.status).toBe(200);
+    expect(listOk.headers.get("cache-control")).toContain("no-store");
+    const list401 = await post("/v1/households/list", { communitySlug: org.slug });
+    expect(list401.status).toBe(401);
+    expect(list401.headers.get("cache-control")).toContain("no-store");
+
     // Entitlement off
     const delEntOff = await post(
       "/v1/households/list",

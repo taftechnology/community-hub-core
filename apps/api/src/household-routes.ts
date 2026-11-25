@@ -235,7 +235,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
 
   type Prepared<T> =
     | { ok: true; body: T; actor: { userId: string }; scope: Scope }
-    | { ok: false; response: Response; body?: T };
+    | { ok: false; response: Response };
 
   async function prepare<T extends { communitySlug: string }>(
     request: Request,
@@ -253,7 +253,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
     }
     const actor = await sessionUser(request);
     if (actor instanceof Response) {
-      return { ok: false, response: finish(request, actor), body };
+      return { ok: false, response: finish(request, actor) };
     }
     const scope = await communityScope(
       body.communitySlug,
@@ -262,10 +262,10 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
       extraEntitlements,
     );
     if (scope === null) {
-      return { ok: false, response: finish(request, empty(403)), body };
+      return { ok: false, response: finish(request, empty(403)) };
     }
     if (scope instanceof Response) {
-      return { ok: false, response: finish(request, scope), body };
+      return { ok: false, response: finish(request, scope) };
     }
     return { ok: true, body, actor, scope };
   }
@@ -288,11 +288,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
 
   async function list(request: Request, context: RouteContext): Promise<Response> {
     const prep = await prepare(request, context, listHouseholdsBody);
-    const isDeletedFilter = prep.body?.status === "deleted";
     if (!prep.ok) {
-      if (isDeletedFilter) {
-        prep.response.headers.set("cache-control", "no-store");
-      }
       return prep.response;
     }
     const { body, actor, scope } = prep;
@@ -363,9 +359,6 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
       }
     }
 
-    if (isDeletedFilter) {
-      response.headers.set("cache-control", "no-store");
-    }
     if (response.status === 200) {
       await sweepDeletedHouseholds(deps, scope, actor.userId, context);
     }
@@ -1072,7 +1065,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
       pattern: "/v1/households/list",
       surface: "tenant",
       billing: "read",
-      handle: (request, context) => list(request, context),
+      handle: withNoStore((request, context) => list(request, context)),
     },
     {
       method: "POST",
