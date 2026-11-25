@@ -512,19 +512,58 @@ describe("family parity routes against a real database", () => {
 
   async function householdAuditEvents(
     org: Org,
+    communityId = org.communityId,
   ): Promise<Array<{ action: string; target_ids: string[] }>> {
-    return withAppTransaction(
-      app,
-      { orgId: org.orgId, communityId: org.communityId },
-      async (tx) => {
-        return tx<Array<{ action: string; target_ids: string[] }>>`
+    return withAppTransaction(app, { orgId: org.orgId, communityId }, async (tx) => {
+      return tx<Array<{ action: string; target_ids: string[] }>>`
         select action, target_ids
         from app.audit_events
         where action like 'people.household.%'
         order by id desc
       `;
-      },
-    );
+    });
+  }
+
+  async function readPrivileges(target: "households" | "purge") {
+    if (target === "households") {
+      const tablePrivileges = await migrator<
+        Array<{ grantee: string; table_schema: string; table_name: string; privilege_type: string }>
+      >`
+        select grantee, table_schema, table_name, privilege_type
+        from information_schema.table_privileges
+        where table_schema = 'app' and table_name = 'households' and grantee = 'app'
+        order by privilege_type
+      `;
+      const columnPrivileges = await migrator<
+        Array<{
+          grantee: string;
+          table_schema: string;
+          table_name: string;
+          column_name: string;
+          privilege_type: string;
+        }>
+      >`
+        select grantee, table_schema, table_name, column_name, privilege_type
+        from information_schema.column_privileges
+        where table_schema = 'app' and table_name = 'households' and grantee = 'app'
+        order by column_name, privilege_type
+      `;
+      return { tablePrivileges, columnPrivileges };
+    }
+    const routinePrivileges = await migrator<
+      Array<{
+        grantee: string;
+        routine_schema: string;
+        routine_name: string;
+        privilege_type: string;
+      }>
+    >`
+      select grantee, routine_schema, routine_name, privilege_type
+      from information_schema.routine_privileges
+      where routine_schema = 'app' and routine_name = 'purge_deleted_households' and grantee = 'app'
+      order by privilege_type
+    `;
+    return { routinePrivileges };
   }
 
   it("the contract and domain relationship lists are equal", () => {
@@ -573,8 +612,9 @@ describe("family parity routes against a real database", () => {
       },
     ];
 
-    const beforeEventsA = await householdAuditEvents(orgA);
-    const beforeEventsB = await householdAuditEvents(orgB);
+    const beforeEventsA1 = await householdAuditEvents(orgA, orgA.communityId);
+    const beforeEventsA2 = await householdAuditEvents(orgA, comm2.communityId);
+    const beforeEventsB = await householdAuditEvents(orgB, orgB.communityId);
 
     for (const target of testTargets) {
       const routes = [
@@ -650,11 +690,13 @@ describe("family parity routes against a real database", () => {
     expect(otherOrgHiddenRow?.version).toBe(hiddenOtherOrgRes.version);
     expect(otherOrgHiddenRow?.deleted_at).not.toBeNull();
 
-    // Verify no new people.household.* event was written for them
-    const afterEventsA = await householdAuditEvents(orgA);
-    const afterEventsB = await householdAuditEvents(orgB);
-    expect(afterEventsA.length).toBe(beforeEventsA.length);
-    expect(afterEventsB.length).toBe(beforeEventsB.length);
+    // Verify no new people.household.* event was written for them across all three communities
+    const afterEventsA1 = await householdAuditEvents(orgA, orgA.communityId);
+    const afterEventsA2 = await householdAuditEvents(orgA, comm2.communityId);
+    const afterEventsB = await householdAuditEvents(orgB, orgB.communityId);
+    expect(afterEventsA1).toEqual(beforeEventsA1);
+    expect(afterEventsA2).toEqual(beforeEventsA2);
+    expect(afterEventsB).toEqual(beforeEventsB);
   });
 
   // Pin 63, 63b, 63c
@@ -1065,6 +1107,8 @@ describe("family parity routes against a real database", () => {
         { ...r.validBody, communitySlug: "unknown-slug-xyz" },
         org.owner.accessToken,
       );
+      expect(resUnknownSlug.status, `expected 403 on ${r.path} unknown slug`).toBe(403);
+      expect(await resUnknownSlug.text()).toBe("");
       expect(resUnknownSlug.headers.get("cache-control")).toContain("no-store");
     }
 
@@ -1078,6 +1122,7 @@ describe("family parity routes against a real database", () => {
     // Billing refusal on the four writes in a read-only community
     const orgRo = await createOrg("ro-no-store", { billing: "read_only" });
     const famRo = await createFamily(orgRo);
+    const rowRoBefore = await getHousehold(orgRo, famRo.householdId);
     for (const r of routes.filter((x) => x.isWrite)) {
       const resRo = await post(
         r.path,
@@ -1087,6 +1132,8 @@ describe("family parity routes against a real database", () => {
       expect(resRo.status, `expected 402 on ${r.path} in read-only`).toBe(402);
       expect(resRo.headers.get("cache-control")).toContain("no-store");
     }
+    const rowRoAfter = await getHousehold(orgRo, famRo.householdId);
+    expect(rowRoAfter).toEqual(rowRoBefore);
 
     // Entitlement refusal with people.households off on all five
     const orgNoHouseholds = await createOrg("no-hh-ent", { entitlements: ["people.directory"] });
@@ -1124,9 +1171,12 @@ describe("family parity routes against a real database", () => {
       { communitySlug: "unknown-slug-xyz", status: "deleted" },
       org.owner.accessToken,
     );
+    expect(delUnknownSlug.status).toBe(403);
+    expect(await delUnknownSlug.text()).toBe("");
     expect(delUnknownSlug.headers.get("cache-control")).toContain("no-store");
 
     // 500 by temporary revoke of SELECT on app.households from app
+    const privsBeforeSelect = await readPrivileges("households");
     await migrator`revoke select on app.households from app`;
     try {
       const del500 = await post(
@@ -1140,6 +1190,8 @@ describe("family parity routes against a real database", () => {
     } finally {
       await migrator`grant select on app.households to app`;
     }
+    const privsAfterSelect = await readPrivileges("households");
+    expect(privsAfterSelect).toEqual(privsBeforeSelect);
   });
 
   // Pin 68
@@ -1371,20 +1423,64 @@ describe("family parity routes against a real database", () => {
     const f1 = await createFamily(org, "Deleted Family 1");
     await createAdultMember(org, f1.householdId, "AdultOne");
     await hideFamily(org, f1.householdId, f1.version);
+    await ageFamily(org, f1.householdId, 30);
 
     const f2 = await createFamily(org, "Deleted Family 2");
     await createAdultMember(org, f2.householdId, "AdultTwoA");
     await createAdultMember(org, f2.householdId, "AdultTwoB");
     await hideFamily(org, f2.householdId, f2.version);
+    await ageFamily(org, f2.householdId, 20);
 
     const f3 = await createFamily(org, "Deleted Family 3");
     await hideFamily(org, f3.householdId, f3.version);
+    await ageFamily(org, f3.householdId, 10);
 
     // Create a hidden family in comm2 (must NOT be in org.communityId's list)
     const fComm2 = await createFamily(org, "ForeignDeleted", comm2.communityId);
     await hideFamily(org, fComm2.householdId, fComm2.version, comm2.communityId);
 
-    // Page 1 (limit 1)
+    // Read the exact rows as recorded in the database
+    const rowF1 = await withAppTransaction(
+      app,
+      { orgId: org.orgId, communityId: org.communityId },
+      async (tx) => {
+        const [r] = await tx<
+          Array<{ id: string; version: number; deleted_at: Date; purge_after: Date }>
+        >`
+          select id::text as id, version, deleted_at, (deleted_at + interval '720 hours') as purge_after
+          from app.households where id = ${f1.householdId}::uuid
+        `;
+        return r!;
+      },
+    );
+    const rowF2 = await withAppTransaction(
+      app,
+      { orgId: org.orgId, communityId: org.communityId },
+      async (tx) => {
+        const [r] = await tx<
+          Array<{ id: string; version: number; deleted_at: Date; purge_after: Date }>
+        >`
+          select id::text as id, version, deleted_at, (deleted_at + interval '720 hours') as purge_after
+          from app.households where id = ${f2.householdId}::uuid
+        `;
+        return r!;
+      },
+    );
+    const rowF3 = await withAppTransaction(
+      app,
+      { orgId: org.orgId, communityId: org.communityId },
+      async (tx) => {
+        const [r] = await tx<
+          Array<{ id: string; version: number; deleted_at: Date; purge_after: Date }>
+        >`
+          select id::text as id, version, deleted_at, (deleted_at + interval '720 hours') as purge_after
+          from app.households where id = ${f3.householdId}::uuid
+        `;
+        return r!;
+      },
+    );
+
+    // Page 1 (limit 1): newest deletedAt first is f3
     const resP1 = await post(
       "/v1/households/list",
       { communitySlug: org.slug, status: "deleted", limit: 1 },
@@ -1392,10 +1488,19 @@ describe("family parity routes against a real database", () => {
     );
     expect(resP1.status).toBe(200);
     const bodyP1 = deletedHouseholdsListResponse.parse(await resP1.json());
-    expect(bodyP1.items).toHaveLength(1);
+    expect(bodyP1.items).toEqual([
+      {
+        householdId: f3.householdId,
+        label: "Deleted Family 3",
+        adultCount: 0,
+        version: rowF3.version,
+        deletedAt: rowF3.deleted_at.toISOString(),
+        purgeAfter: rowF3.purge_after.toISOString(),
+      },
+    ]);
     expect(bodyP1.nextCursor).not.toBeNull();
 
-    // Page 2 (limit 1)
+    // Page 2 (limit 1): next is f2
     const resP2 = await post(
       "/v1/households/list",
       { communitySlug: org.slug, status: "deleted", limit: 1, cursor: bodyP1.nextCursor! },
@@ -1403,10 +1508,19 @@ describe("family parity routes against a real database", () => {
     );
     expect(resP2.status).toBe(200);
     const bodyP2 = deletedHouseholdsListResponse.parse(await resP2.json());
-    expect(bodyP2.items).toHaveLength(1);
+    expect(bodyP2.items).toEqual([
+      {
+        householdId: f2.householdId,
+        label: "Deleted Family 2",
+        adultCount: 2,
+        version: rowF2.version,
+        deletedAt: rowF2.deleted_at.toISOString(),
+        purgeAfter: rowF2.purge_after.toISOString(),
+      },
+    ]);
     expect(bodyP2.nextCursor).not.toBeNull();
 
-    // Page 3 (limit 1)
+    // Page 3 (limit 1): oldest is f1, nextCursor null on the last page
     const resP3 = await post(
       "/v1/households/list",
       { communitySlug: org.slug, status: "deleted", limit: 1, cursor: bodyP2.nextCursor! },
@@ -1414,7 +1528,17 @@ describe("family parity routes against a real database", () => {
     );
     expect(resP3.status).toBe(200);
     const bodyP3 = deletedHouseholdsListResponse.parse(await resP3.json());
-    expect(bodyP3.items).toHaveLength(1);
+    expect(bodyP3.items).toEqual([
+      {
+        householdId: f1.householdId,
+        label: "Deleted Family 1",
+        adultCount: 1,
+        version: rowF1.version,
+        deletedAt: rowF1.deleted_at.toISOString(),
+        purgeAfter: rowF1.purge_after.toISOString(),
+      },
+    ]);
+    expect(bodyP3.nextCursor).toBeNull();
 
     // Verify all 3 returned with no duplicate and no gap
     const allIds = [
@@ -1648,6 +1772,7 @@ describe("family parity routes against a real database", () => {
     await ageFamily(org, family.householdId, 721);
 
     // Revoke EXECUTE on app.purge_deleted_households from app to force sweep failure
+    const privsBeforePurge = await readPrivileges("purge");
     await migrator`revoke execute on function app.purge_deleted_households(integer) from app`;
     try {
       // 1. Run for list
@@ -1721,6 +1846,8 @@ describe("family parity routes against a real database", () => {
     } finally {
       await migrator`grant execute on function app.purge_deleted_households(integer) to app`;
     }
+    const privsAfterPurge = await readPrivileges("purge");
+    expect(privsAfterPurge).toEqual(privsBeforePurge);
   });
 
   // Pin 86
@@ -1770,8 +1897,9 @@ describe("family parity routes against a real database", () => {
     expect(failRes.status).toBe(409);
     expect(await failRes.text()).toBe("");
 
-    // 4. Save that fails with 500 (temporary revoke of UPDATE on app.households from app)
-    await migrator`revoke update on app.households from app`;
+    // 4. Save that fails with 500 (temporary revoke of UPDATE on emergency_contacts from app)
+    const privsBeforeUpdate = await readPrivileges("households");
+    await migrator`revoke update (emergency_contacts) on app.households from app`;
     try {
       const fail500Res = await post(
         "/v1/households/emergency-contacts/save",
@@ -1787,8 +1915,10 @@ describe("family parity routes against a real database", () => {
       expect(await fail500Res.text()).toBe("");
       expect(fail500Res.headers.get("cache-control")).toContain("no-store");
     } finally {
-      await migrator`grant update on app.households to app`;
+      await migrator`grant update (emergency_contacts) on app.households to app`;
     }
+    const privsAfterUpdate = await readPrivileges("households");
+    expect(privsAfterUpdate).toEqual(privsBeforeUpdate);
 
     // Verify logs
     expect(capturedLogs.length).toBeGreaterThan(0);
@@ -2011,5 +2141,88 @@ describe("family parity routes against a real database", () => {
       org.owner.accessToken,
     );
     expect(ecSaveHidden.status).toBe(404);
+  });
+
+  it("the family tests leave the app role's household grants as the migrations set them", async () => {
+    // app has UPDATE on exactly the six columns (deleted_at, deleted_by, emergency_contacts, label, status, version)
+    const updatableColumns = await migrator<Array<{ column_name: string }>>`
+      select column_name
+      from information_schema.column_privileges
+      where table_schema = 'app'
+        and table_name = 'households'
+        and grantee = 'app'
+        and privilege_type = 'UPDATE'
+      order by column_name
+    `;
+    const sixColumns = [
+      "deleted_at",
+      "deleted_by",
+      "emergency_contacts",
+      "label",
+      "status",
+      "version",
+    ].sort();
+    expect(updatableColumns.map((c) => c.column_name).sort()).toEqual(sixColumns);
+
+    // No table-level UPDATE
+    const tableUpdate = await migrator<Array<{ privilege_type: string }>>`
+      select privilege_type
+      from information_schema.table_privileges
+      where table_schema = 'app'
+        and table_name = 'households'
+        and grantee = 'app'
+        and privilege_type = 'UPDATE'
+    `;
+    expect(tableUpdate).toHaveLength(0);
+    const [tableUpdatePriv] = await migrator<{ has: boolean }[]>`
+      select has_table_privilege('app', 'app.households', 'UPDATE') as has
+    `;
+    expect(tableUpdatePriv?.has).toBe(false);
+
+    // No DELETE
+    const tableDelete = await migrator<Array<{ privilege_type: string }>>`
+      select privilege_type
+      from information_schema.table_privileges
+      where table_schema = 'app'
+        and table_name = 'households'
+        and grantee = 'app'
+        and privilege_type = 'DELETE'
+    `;
+    expect(tableDelete).toHaveLength(0);
+    const [tableDeletePriv] = await migrator<{ has: boolean }[]>`
+      select has_table_privilege('app', 'app.households', 'DELETE') as has
+    `;
+    expect(tableDeletePriv?.has).toBe(false);
+
+    // EXECUTE on app.purge_deleted_households for app
+    const [appExecute] = await migrator<{ has: boolean }[]>`
+      select has_function_privilege('app', 'app.purge_deleted_households(integer)', 'EXECUTE') as has
+    `;
+    expect(appExecute?.has).toBe(true);
+
+    const appRoutinePriv = await migrator<Array<{ privilege_type: string }>>`
+      select privilege_type
+      from information_schema.routine_privileges
+      where routine_schema = 'app'
+        and routine_name = 'purge_deleted_households'
+        and grantee = 'app'
+        and privilege_type = 'EXECUTE'
+    `;
+    expect(appRoutinePriv).toHaveLength(1);
+
+    // PUBLIC has no EXECUTE on it
+    const [publicExecute] = await migrator<{ has: boolean }[]>`
+      select has_function_privilege('public', 'app.purge_deleted_households(integer)', 'EXECUTE') as has
+    `;
+    expect(publicExecute?.has).toBe(false);
+
+    const publicRoutinePriv = await migrator<Array<{ privilege_type: string }>>`
+      select privilege_type
+      from information_schema.routine_privileges
+      where routine_schema = 'app'
+        and routine_name = 'purge_deleted_households'
+        and grantee = 'PUBLIC'
+    `;
+    expect(publicRoutinePriv).toHaveLength(0);
   });
 });
