@@ -400,3 +400,28 @@ The owner's check of Tasks 4 to 7 (Claude Haiku 5.5, CHANGES NEEDED, one Medium 
 | --- | ----------------------------------------- | -------------------------------------------------------- | ---- | -------------------------------------------------------------------------- |
 | 67b | `no-store` on every family list answer    | Drop the wrapper from the list route (replaces 67b, 67c) | R    | every family route and the deleted list answer no-store, refusals included |
 | 40b | A minor keeps its family id in readPerson | Return null for a minor                                  | FR   | readPerson keeps the family id of a minor                                  |
+
+### A3 (2026-11-25, after checkpoint 3): show the saved contacts after a conflict, and keep focus
+
+Status: approved (2026-11-25, Adnan Bin Hossen)
+
+The owner's check of Tasks 8, 9 and A2 (Claude Haiku 5.5, CHANGES NEEDED, two Medium and six Low findings, 18 weakenings of its own) found no tenancy, children's data or secret defect. Five findings are changed here. Not changed: a delete that answers 404 closes without a message (the list reloads without the family); the dialog's date is the browser's estimate before the delete. Open item: `/v1/households/read` answers without `no-store`, as before this chunk.
+
+**Commit 1:** `fix(admin): show the saved emergency contacts after a conflict`
+
+- `apps/admin/src/emergency-contacts-panel.tsx`: after a 409 on save, one emergency contacts read (audited, as every read). The stored list is shown above the typed rows, labelled "Saved now", and Save sends the version of that read. Save waits for the read. If it fails, the load failure text shows in the panel and Save stays unavailable until Retry answers. The typed rows are never replaced by the read. The detail reload after a 409 stays.
+- `apps/admin/src/emergency-contacts-panel.test.tsx`.
+
+**Commit 2:** `fix(admin): keep focus and permissions in step on Family Records`
+
+- `apps/admin/src/family-status.tsx`, `family-records.tsx`: after a refused or failed status change or restore, focus goes to the alert; the Delete dialog closes when a key or write access is lost while it is open.
+- `apps/admin/src/family-records.test.tsx`: those, and that no deleted row renders after a key is lost, before the list reloads.
+- `apps/admin/src/emergency-contacts-panel.test.tsx`: contacts are dropped from state when the family answers not found.
+
+| #   | Setting                                           | Weakening                                   | File | Test that must fail (exact `it` title)                                   |
+| --- | ------------------------------------------------- | ------------------------------------------- | ---- | ------------------------------------------------------------------------ |
+| 88e | Saved list shown and its version sent after a 409 | Send the detail's version without a read    | AE   | a save after a conflict shows the saved contacts and sends their version |
+| 74d | Focus after a refused status change or restore    | Leave focus where it was                    | AD   | focus goes to the alert after a refused status change or restore         |
+| 71b | Delete dialog closes when a key is lost           | Keep the dialog open                        | AD   | the Delete dialog closes when a key or write access is lost              |
+| 72b | No deleted row after a key is lost                | Render the loaded items whatever the filter | AD   | no deleted row renders after the Deleted filter loses a key              |
+| 81d | Contacts dropped when the family is gone          | Drop the not-found reset                    | AE   | the contacts are dropped when the family answers not found               |
