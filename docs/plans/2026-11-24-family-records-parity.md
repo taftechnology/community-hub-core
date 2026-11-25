@@ -425,3 +425,18 @@ The owner's check of Tasks 8, 9 and A2 (Claude Haiku 5.5, CHANGES NEEDED, two Me
 | 71b | Delete dialog closes when a key is lost           | Keep the dialog open                        | AD   | the Delete dialog closes when a key or write access is lost              |
 | 72b | No deleted row after a key is lost                | Render the loaded items whatever the filter | AD   | no deleted row renders after the Deleted filter loses a key              |
 | 81d | Contacts dropped when the family is gone          | Drop the not-found reset                    | AE   | the contacts are dropped when the family answers not found               |
+
+### A4 (2026-11-25, after the browser check): focus stays on the status switch
+
+Status: approved (2026-11-25, Adnan Bin Hossen)
+
+The browser check of checkpoint 3 (Brave at 1280 and 375 px, light and dark; axe clean, no sideways scroll) found that focus fell to the page body after a successful status change, because the switch was disabled while its save was open. Not changed: after the child refusal focus stays on the dialog's confirm button, and the refusal is announced.
+
+**Commit 1:** `fix(admin): keep focus on the status switch while it saves`
+
+- `apps/admin/src/family-status.tsx`: while its save is open the switch stays focusable, with `aria-disabled="true"` and `aria-busy="true"` instead of `disabled`; a click or key press then sends nothing.
+- `apps/admin/src/family-records.test.tsx`: focus stays on the switch after a successful status change, and a second toggle during the save sends nothing.
+
+| #   | Setting                                | Weakening                             | File | Test that must fail (exact `it` title)                     |
+| --- | -------------------------------------- | ------------------------------------- | ---- | ---------------------------------------------------------- |
+| 74e | Focus stays on the switch after a save | Use `disabled` while the save is open | AD   | focus stays on the status switch after a successful change |
