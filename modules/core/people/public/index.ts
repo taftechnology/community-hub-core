@@ -37,6 +37,20 @@ defineAuditAction("people.life_event.updated");
 defineAuditPurpose("people.life_event.updated");
 defineAuditAction("people.person.purged");
 defineAuditPurpose("people.person.purged");
+defineAuditAction("people.household.purged");
+defineAuditPurpose("people.household.purged");
+defineAuditAction("people.household.deleted");
+defineAuditPurpose("people.household.deleted");
+defineAuditAction("people.household.restored");
+defineAuditPurpose("people.household.restored");
+defineAuditAction("people.household.status_changed");
+defineAuditPurpose("people.household.status_changed");
+defineAuditAction("people.household.listed_deleted");
+defineAuditPurpose("people.household.listed_deleted");
+defineAuditAction("people.household.emergency_contacts_read");
+defineAuditPurpose("people.household.emergency_contacts_read");
+defineAuditAction("people.household.emergency_contacts_updated");
+defineAuditPurpose("people.household.emergency_contacts_updated");
 defineAuditAction("people.person.deleted");
 defineAuditPurpose("people.person.deleted");
 defineAuditAction("people.person.restored");
@@ -59,8 +73,12 @@ export {
   type RenameHouseholdInput,
 } from "../infrastructure/household.js";
 export {
+  listDeletedHouseholds,
   listHouseholds,
+  type DeletedHouseholdListItem,
   type HouseholdListItem,
+  type ListDeletedHouseholdsInput,
+  type ListDeletedHouseholdsResult,
   type ListHouseholdsInput,
   type ListHouseholdsResult,
 } from "../infrastructure/household-list.js";
@@ -128,6 +146,7 @@ export {
   type UpdateLifeEventResult,
 } from "../infrastructure/life-event.js";
 export { purgeDeletedPersons } from "../infrastructure/purge.js";
+export { purgeDeletedHouseholds } from "../infrastructure/household-purge.js";
 export {
   hidePerson,
   lockPersonForDelete,
@@ -139,3 +158,31 @@ export {
   type RestorePersonInput,
   type RestorePersonResult,
 } from "../infrastructure/person-delete.js";
+export {
+  hideHousehold,
+  restoreHousehold,
+  type HideHouseholdInput,
+  type HideHouseholdResult,
+  type RestoreHouseholdInput,
+  type RestoreHouseholdResult,
+} from "../infrastructure/household-delete.js";
+export {
+  setHouseholdStatus,
+  type HouseholdStatus,
+  type SetHouseholdStatusInput,
+  type SetHouseholdStatusResult,
+} from "../infrastructure/household-status.js";
+export {
+  EMERGENCY_CONTACT_RELATIONSHIPS,
+  MAX_EMERGENCY_CONTACTS,
+  type EmergencyContact,
+  type EmergencyContactRelationship,
+} from "../domain/emergency-contact.js";
+export {
+  readEmergencyContacts,
+  saveEmergencyContacts,
+  type ReadEmergencyContactsInput,
+  type ReadEmergencyContactsResult,
+  type SaveEmergencyContactsInput,
+  type SaveEmergencyContactsResult,
+} from "../infrastructure/emergency-contacts.js";

@@ -25,6 +25,7 @@ import { useCommunity } from "./community";
 import { readAccessToken } from "./directory";
 import { usePeopleAccess } from "./people-access";
 import { type ContactFormData, ContactFields, initialFormData } from "./contact-fields";
+import { duplicateDeletedMessage, readErrorCode } from "./duplicate-deleted";
 import { ScreenTitle } from "./screen-title";
 
 export const PERSON_SOURCES = [
@@ -219,22 +220,6 @@ const DELETE_REFUSALS: Record<string, string> = {
   sole_guardian:
     "This contact is the only guardian of a child. Add another guardian in Family Records first.",
 };
-
-// A refusal answers 409 with { code }; older answers have an empty body.
-async function readErrorCode(response: Response): Promise<string | null> {
-  try {
-    const data: unknown = await response.json();
-    return isRecord(data) && typeof data.code === "string" ? data.code : null;
-  } catch {
-    return null;
-  }
-}
-
-function duplicateDeletedMessage(canRestore: boolean): string {
-  return canRestore
-    ? "A deleted contact has this email (or phone). Restore it from the Deleted filter."
-    : "A deleted contact has this email (or phone).";
-}
 
 function getBrowserMonthStartIso(): string {
   const now = new Date();

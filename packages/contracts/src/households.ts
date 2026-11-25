@@ -22,11 +22,51 @@ export const guardianRightsInput = z
     { message: "At least one right must be true" },
   );
 
+export const HOUSEHOLD_STATUSES = ["active", "inactive"] as const;
+export type HouseholdStatus = (typeof HOUSEHOLD_STATUSES)[number];
+export const householdStatus = z.enum(HOUSEHOLD_STATUSES);
+
+export const listHouseholdStatus = z.enum([...HOUSEHOLD_STATUSES, "deleted"]);
+export type ListHouseholdStatus = z.infer<typeof listHouseholdStatus>;
+
+export const EMERGENCY_CONTACT_RELATIONSHIPS = [
+  "spouse",
+  "grandparent",
+  "relative",
+  "neighbour",
+  "friend",
+  "carer",
+  "other",
+] as const;
+export type EmergencyContactRelationship = (typeof EMERGENCY_CONTACT_RELATIONSHIPS)[number];
+export const emergencyContactRelationship = z.enum(EMERGENCY_CONTACT_RELATIONSHIPS);
+
+export const MAX_EMERGENCY_CONTACTS = 5;
+
+export const emergencyContactInput = z
+  .object({
+    name: name,
+    phone: phone,
+    relationship: emergencyContactRelationship.nullable().optional(),
+  })
+  .strict();
+export type EmergencyContactInput = z.infer<typeof emergencyContactInput>;
+
+export const emergencyContactResponseItem = z
+  .object({
+    name: name,
+    phone: phone,
+    relationship: emergencyContactRelationship.nullable(),
+  })
+  .strict();
+export type EmergencyContactResponseItem = z.infer<typeof emergencyContactResponseItem>;
+
 export const listHouseholdsBody = z
   .object({
     communitySlug: slug,
     cursor: cursor.optional(),
     limit: z.number().int().min(1).max(25).optional(),
+    status: listHouseholdStatus.optional(),
   })
   .strict();
 
@@ -115,55 +155,197 @@ export type AddAdultBody = z.infer<typeof addAdultBody>;
 export type LinkGuardianBody = z.infer<typeof linkGuardianBody>;
 export type UnlinkGuardianBody = z.infer<typeof unlinkGuardianBody>;
 
-export type HouseholdListItem = {
-  householdId: string;
-  version: number;
-  label: string | null;
-  adultCount: number;
-};
+export const householdStatusBody = z
+  .object({
+    communitySlug: slug,
+    householdId: uuid,
+    version: z.number().int().positive(),
+    status: householdStatus,
+  })
+  .strict();
+export type HouseholdStatusBody = z.infer<typeof householdStatusBody>;
 
-export type ListHouseholdsResponse = {
-  items: HouseholdListItem[];
-  nextCursor: string | null;
-};
+export const householdStatusResponse = z
+  .object({
+    householdId: uuid,
+    version: z.number().int().positive(),
+    status: householdStatus,
+  })
+  .strict();
+export type HouseholdStatusResponse = z.infer<typeof householdStatusResponse>;
 
-export type HouseholdAdultMember = {
-  personId: string;
-  givenName: string;
-  familyName: string;
-  version: number;
-};
+export const householdDeleteBody = z
+  .object({
+    communitySlug: slug,
+    householdId: uuid,
+    version: z.number().int().positive(),
+  })
+  .strict();
+export type HouseholdDeleteBody = z.infer<typeof householdDeleteBody>;
 
-export type HouseholdMinorMember = {
-  personId: string;
-  givenName: string;
-  familyName: string;
-  dateOfBirth: string | null;
-  version: number;
-};
+export const householdDeleteResponse = z
+  .object({
+    householdId: uuid,
+    version: z.number().int().positive(),
+    purgeAfter: z.string().datetime({ offset: true }),
+  })
+  .strict();
+export type HouseholdDeleteResponse = z.infer<typeof householdDeleteResponse>;
 
-export type HouseholdGuardianRights = {
-  consent: boolean;
-  pickup: boolean;
-  view: boolean;
-  manage: boolean;
-};
+export const householdRestoreBody = z
+  .object({
+    communitySlug: slug,
+    householdId: uuid,
+    version: z.number().int().positive(),
+  })
+  .strict();
+export type HouseholdRestoreBody = z.infer<typeof householdRestoreBody>;
 
-export type HouseholdGuardianLink = {
-  linkId: string;
-  guardianId: string;
-  childId: string;
-  rights: HouseholdGuardianRights;
-};
+export const householdRestoreResponse = z
+  .object({
+    householdId: uuid,
+    version: z.number().int().positive(),
+  })
+  .strict();
+export type HouseholdRestoreResponse = z.infer<typeof householdRestoreResponse>;
 
-export type ReadHouseholdResponse = {
-  householdId: string;
-  version: number;
-  label: string | null;
-  adults: HouseholdAdultMember[];
-  minors?: HouseholdMinorMember[];
-  guardians: HouseholdGuardianLink[];
-};
+export const readEmergencyContactsBody = z
+  .object({
+    communitySlug: slug,
+    householdId: uuid,
+  })
+  .strict();
+export type ReadEmergencyContactsBody = z.infer<typeof readEmergencyContactsBody>;
+
+export const readEmergencyContactsResponse = z
+  .object({
+    householdId: uuid,
+    version: z.number().int().positive(),
+    contacts: z.array(emergencyContactResponseItem).max(MAX_EMERGENCY_CONTACTS),
+  })
+  .strict();
+export type ReadEmergencyContactsResponse = z.infer<typeof readEmergencyContactsResponse>;
+
+export const saveEmergencyContactsBody = z
+  .object({
+    communitySlug: slug,
+    householdId: uuid,
+    version: z.number().int().positive(),
+    contacts: z.array(emergencyContactInput).max(MAX_EMERGENCY_CONTACTS),
+  })
+  .strict();
+export type SaveEmergencyContactsBody = z.infer<typeof saveEmergencyContactsBody>;
+
+export const saveEmergencyContactsResponse = z
+  .object({
+    householdId: uuid,
+    version: z.number().int().positive(),
+  })
+  .strict();
+export type SaveEmergencyContactsResponse = z.infer<typeof saveEmergencyContactsResponse>;
+
+export const deletedHouseholdListItem = z
+  .object({
+    householdId: uuid,
+    label: name.nullable(),
+    adultCount: z.number().int().min(0),
+    version: z.number().int().positive(),
+    deletedAt: z.string().datetime({ offset: true }),
+    purgeAfter: z.string().datetime({ offset: true }),
+  })
+  .strict();
+export type DeletedHouseholdListItem = z.infer<typeof deletedHouseholdListItem>;
+
+export const deletedHouseholdsListResponse = z
+  .object({
+    items: z.array(deletedHouseholdListItem),
+    nextCursor: cursor.nullable(),
+  })
+  .strict();
+export type DeletedHouseholdsListResponse = z.infer<typeof deletedHouseholdsListResponse>;
+
+export const HOUSEHOLD_ERROR_CODES = ["household_has_children", "duplicate_deleted"] as const;
+export type HouseholdErrorCode = (typeof HOUSEHOLD_ERROR_CODES)[number];
+
+export const householdErrorBody = z
+  .object({
+    code: z.enum(HOUSEHOLD_ERROR_CODES),
+  })
+  .strict();
+export type HouseholdErrorBody = z.infer<typeof householdErrorBody>;
+
+export const householdListItem = z
+  .object({
+    householdId: uuid,
+    version: z.number().int().positive(),
+    label: name.nullable(),
+    adultCount: z.number().int().min(0),
+    status: householdStatus,
+  })
+  .strict();
+export type HouseholdListItem = z.infer<typeof householdListItem>;
+
+export const listHouseholdsResponse = z
+  .object({
+    items: z.array(householdListItem),
+    nextCursor: cursor.nullable(),
+  })
+  .strict();
+export type ListHouseholdsResponse = z.infer<typeof listHouseholdsResponse>;
+
+export const householdAdultMember = z
+  .object({
+    personId: uuid,
+    givenName: name,
+    familyName: name,
+    version: z.number().int().positive(),
+  })
+  .strict();
+export type HouseholdAdultMember = z.infer<typeof householdAdultMember>;
+
+export const householdMinorMember = z
+  .object({
+    personId: uuid,
+    givenName: name,
+    familyName: name,
+    dateOfBirth: dateOfBirth.nullable(),
+    version: z.number().int().positive(),
+  })
+  .strict();
+export type HouseholdMinorMember = z.infer<typeof householdMinorMember>;
+
+export const householdGuardianRights = z
+  .object({
+    consent: z.boolean(),
+    pickup: z.boolean(),
+    view: z.boolean(),
+    manage: z.boolean(),
+  })
+  .strict();
+export type HouseholdGuardianRights = z.infer<typeof householdGuardianRights>;
+
+export const householdGuardianLink = z
+  .object({
+    linkId: uuid,
+    guardianId: uuid,
+    childId: uuid,
+    rights: householdGuardianRights,
+  })
+  .strict();
+export type HouseholdGuardianLink = z.infer<typeof householdGuardianLink>;
+
+export const readHouseholdResponse = z
+  .object({
+    householdId: uuid,
+    version: z.number().int().positive(),
+    status: householdStatus,
+    label: name.nullable(),
+    adults: z.array(householdAdultMember),
+    minors: z.array(householdMinorMember).optional(),
+    guardians: z.array(householdGuardianLink),
+  })
+  .strict();
+export type ReadHouseholdResponse = z.infer<typeof readHouseholdResponse>;
 
 export type CreateHouseholdResponse = {
   householdId: string;

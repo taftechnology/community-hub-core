@@ -207,11 +207,18 @@ describe("people table privileges", () => {
     }
   });
 
-  it("grants app update on app.households only by column for label and version (Pin 2)", async () => {
+  it("grants app update on app.households only by column for the six allowed columns", async () => {
     const runtime = loadRuntime();
     const sql = createPlaintextDirectSql(runtime.productOnlyUrl);
     try {
-      const allowedColumns = ["label", "version"] as const;
+      const allowedColumns = [
+        "deleted_at",
+        "deleted_by",
+        "emergency_contacts",
+        "label",
+        "status",
+        "version",
+      ] as const;
       const forbiddenColumns = ["id", "org_id", "community_id"] as const;
 
       for (const col of allowedColumns) {
@@ -241,6 +248,19 @@ describe("people table privileges", () => {
       `;
       const updatableColumns = updatableRows.map((r) => r.attname);
       expect(updatableColumns).toEqual([...allowedColumns].sort());
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("app has no update on persons.is_minor", async () => {
+    const runtime = loadRuntime();
+    const sql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    try {
+      const [row] = await sql<{ granted: boolean }[]>`
+        select has_column_privilege('app', 'app.persons', 'is_minor', 'UPDATE') as granted
+      `;
+      expect(row?.granted, "expected app NOT to have update on persons.is_minor").toBe(false);
     } finally {
       await sql.end({ timeout: 1 });
     }

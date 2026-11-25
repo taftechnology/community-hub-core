@@ -731,6 +731,11 @@ describe("api boot wiring of the billing adapter and logger", () => {
         { method: "POST", pattern: "/v1/households/members/add-adult", billing: "write" },
         { method: "POST", pattern: "/v1/households/guardians/link", billing: "write" },
         { method: "POST", pattern: "/v1/households/guardians/unlink", billing: "write" },
+        { method: "POST", pattern: "/v1/households/status", billing: "write" },
+        { method: "POST", pattern: "/v1/households/delete", billing: "write" },
+        { method: "POST", pattern: "/v1/households/restore", billing: "write" },
+        { method: "POST", pattern: "/v1/households/emergency-contacts/read", billing: "read" },
+        { method: "POST", pattern: "/v1/households/emergency-contacts/save", billing: "write" },
       ];
 
       const expectedEngagementRoutes = [
@@ -812,7 +817,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
         (route as { billing?: string }).billing,
       ]),
     );
-    expect(routes).toHaveLength(62);
+    expect(routes).toHaveLength(67);
     expect(markings).toEqual(
       new Map([
         ["GET /health", "exempt"],
@@ -840,6 +845,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
         ["POST /v1/people/life-events/list", "read"],
         ["POST /v1/households/list", "read"],
         ["POST /v1/households/read", "read"],
+        ["POST /v1/households/emergency-contacts/read", "read"],
         ["POST /v1/engagement/service-times/get", "read"],
         ["POST /v1/entitlements/list", "read"],
         ["POST /v1/access/grants", "write"],
@@ -865,6 +871,10 @@ describe("api boot wiring of the billing adapter and logger", () => {
         ["POST /v1/households/members/add-adult", "write"],
         ["POST /v1/households/guardians/link", "write"],
         ["POST /v1/households/guardians/unlink", "write"],
+        ["POST /v1/households/status", "write"],
+        ["POST /v1/households/delete", "write"],
+        ["POST /v1/households/restore", "write"],
+        ["POST /v1/households/emergency-contacts/save", "write"],
         ["POST /v1/engagement/service-times/save", "write"],
         ["POST /v1/entitlements/toggle", "write"],
         ["POST /v1/ops/enrolment/start", "exempt"],

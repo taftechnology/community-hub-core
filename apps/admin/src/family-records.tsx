@@ -14,6 +14,7 @@ import {
   RestrictedValue,
   Select,
   Skeleton,
+  StatusBadge,
 } from "@community-hub/ui";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
@@ -23,17 +24,24 @@ import { useBillingStatus } from "./billing-status";
 import { useCommunity } from "./community";
 import { readAccessToken } from "./directory";
 import { type ContactFormData, ContactFields, initialFormData } from "./contact-fields";
+import { duplicateDeletedMessage, readErrorCode } from "./duplicate-deleted";
+import { useEmergencyContacts } from "./emergency-contacts-panel";
+import {
+  deletedColumns,
+  type FamilyStatus,
+  type HouseholdItem,
+  parseDeletedItem,
+  readFamilyStatus,
+  StatusFilterSelect,
+  type StatusFilter,
+  statusColumn,
+  useFamilyDelete,
+  useFamilyListActions,
+} from "./family-status";
 import { LifeEventsPanel } from "./life-events";
 import { type PeopleAccess, usePeopleAccess } from "./people-access";
 import { ScreenTitle } from "./screen-title";
 import { isUnder18OnSydneyDate } from "./sydney-age";
-
-type HouseholdItem = {
-  householdId: string;
-  version: number;
-  label: string | null;
-  adultCount: number;
-};
 
 type ListResponse = {
   items: HouseholdItem[];
@@ -72,6 +80,7 @@ type GuardianLink = {
 export type HouseholdDetail = {
   householdId: string;
   version: number;
+  status?: FamilyStatus;
   label: string | null;
   adults: AdultMember[];
   minors?: MinorMember[] | undefined;
@@ -109,6 +118,7 @@ function parseHouseholdItem(item: unknown): HouseholdItem | null {
     version: item.version,
     label: typeof item.label === "string" ? item.label : null,
     adultCount: typeof item.adultCount === "number" ? item.adultCount : 0,
+    status: readFamilyStatus(item.status),
   };
 }
 
@@ -150,13 +160,13 @@ function parseAdultSearchResponse(
   return { items, nextCursor };
 }
 
-function parseListResponse(value: unknown): ListResponse | null {
+function parseListResponse(value: unknown, deleted: boolean): ListResponse | null {
   if (!isRecord(value) || !Array.isArray(value.items)) {
     return null;
   }
   const items: HouseholdItem[] = [];
   for (const item of value.items) {
-    const parsed = parseHouseholdItem(item);
+    const parsed = deleted ? parseDeletedItem(item) : parseHouseholdItem(item);
     if (parsed !== null) {
       items.push(parsed);
     }
@@ -252,6 +262,7 @@ function parseHouseholdDetail(value: unknown): HouseholdDetail | null {
   const detail: HouseholdDetail = {
     householdId: value.householdId,
     version: value.version,
+    status: readFamilyStatus(value.status),
     label: typeof value.label === "string" ? value.label : null,
     adults,
     guardians,
@@ -261,6 +272,10 @@ function parseHouseholdDetail(value: unknown): HouseholdDetail | null {
   }
   return detail;
 }
+
+type ListQuery = { slug: string; status: StatusFilter; cursor: string | undefined };
+
+const NO_QUERY: ListQuery = { slug: "", status: "", cursor: undefined };
 
 const initialRights: GuardianRights = {
   consent: true,
@@ -485,7 +500,12 @@ export function FamilyRecordsPage() {
 
   const [items, setItems] = useState<HouseholdItem[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const [listQuery, setListQuery] = useState<ListQuery>(NO_QUERY);
+  const [itemsDeleted, setItemsDeleted] = useState(false);
+  const [listAlert, setListAlert] = useState<string | null>(null);
+  const [headingFocusPending, setHeadingFocusPending] = useState(false);
+  const [alertFocusPending, setAlertFocusPending] = useState(false);
+  const listAlertRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
 
@@ -638,6 +658,10 @@ export function FamilyRecordsPage() {
 
   const generation = useRef(0);
   const detailGeneration = useRef(0);
+  // Counts the answers to the detail read, so the emergency contacts can tell a reload has answered.
+  const detailAnswers = useRef(0);
+  // Changes only with the community or the open family, never when the detail reloads.
+  const panelGeneration = useRef(0);
 
   const isReadOnly = status?.state === "none" || status?.state === "read_only" || paymentRequired;
   const hideWrites = readiness === "loading" || isReadOnly;
@@ -654,8 +678,134 @@ export function FamilyRecordsPage() {
   const canLinkGuardian = canManage && canRestricted && !hideWrites;
   const canUnlinkGuardian = canManage && canRestricted && !hideWrites;
 
+  // Delete, restore and the Deleted filter need all three keys, and are never shown disabled.
+  const canFilterDeleted =
+    Boolean(access.permissions["people.view"]) &&
+    Boolean(access.permissions["people.delete"]) &&
+    canRestricted;
+  const canDeleteFamily = canFilterDeleted && !hideWrites;
+  const stored = listQuery.slug === slug ? listQuery : NO_QUERY;
+  // Losing a key while on the Deleted filter goes back to All; deleted rows are never shown.
+  const statusFilter: StatusFilter =
+    stored.status === "deleted" && !canFilterDeleted ? "" : stored.status;
+  const cursor = stored.status === statusFilter ? stored.cursor : undefined;
+  const deletedView = statusFilter === "deleted";
+
+  // An answer that belongs to an earlier community or filter is ignored.
+  const scope = useRef(0);
+  const community = useRef(0);
+  useEffect(() => {
+    scope.current += 1;
+  }, [slug, statusFilter]);
+  useEffect(() => {
+    community.current += 1;
+  }, [slug]);
+
+  // A reload after a late answer asks for the list on screen, not the one of the render that sent it.
+  const latestQuery = useRef({ slug, statusFilter, cursor });
+  useEffect(() => {
+    latestQuery.current = { slug, statusFilter, cursor };
+  });
+
+  useEffect(() => {
+    if (stored.status === "deleted" && !canFilterDeleted) {
+      setListQuery({ slug, status: "", cursor: undefined });
+    }
+  }, [stored.status, canFilterDeleted, slug]);
+
+  function onPaymentRequired() {
+    setPaymentRequired(true);
+    void refreshBilling();
+  }
+
+  const familyActions = useFamilyListActions({
+    slug,
+    scope,
+    community,
+    statusFilter,
+    setItems,
+    setAlert: setListAlert,
+    applyAnswer: (householdId, newVersion, newStatus) => {
+      emergency.noteVersion(householdId, newVersion);
+      setDetailHousehold((prev) =>
+        prev !== null && prev.householdId === householdId
+          ? { ...prev, version: newVersion, status: newStatus }
+          : prev,
+      );
+    },
+    reloadList,
+    focusHeading: () => setHeadingFocusPending(true),
+    focusAlert: () => setAlertFocusPending(true),
+    onPaymentRequired,
+  });
+  const familyDelete = useFamilyDelete({
+    slug,
+    panel: panelGeneration,
+    onDone: () => {
+      backToList();
+      setHeadingFocusPending(true);
+    },
+    onPaymentRequired,
+    focusFallback: () => detailHeadingRef.current?.focus(),
+  });
+  const emergency = useEmergencyContacts({
+    slug,
+    householdId: detailHousehold?.householdId ?? null,
+    detailVersion: detailHousehold?.version ?? 0,
+    detailAnswers,
+    detailFailed: detailError || detailNotFound,
+    canRead: canRestricted,
+    canEdit: canManage && !hideWrites,
+    gone: detailNotFound,
+    onSaved: (householdId, newVersion) => {
+      setDetailHousehold((prev) =>
+        prev !== null && prev.householdId === householdId ? { ...prev, version: newVersion } : prev,
+      );
+      setItems((prev) =>
+        prev === null
+          ? prev
+          : prev.map((item) =>
+              item.householdId === householdId ? { ...item, version: newVersion } : item,
+            ),
+      );
+    },
+    onConflict: reloadDetail,
+    onGone: reloadDetail,
+    onPaymentRequired,
+  });
+
+  // After a restore, or when a row leaves the list, focus goes to the heading once the list is back.
+  useEffect(() => {
+    if (!headingFocusPending || loading || view !== "list") {
+      return;
+    }
+    listHeadingRef.current?.focus();
+    setHeadingFocusPending(false);
+  }, [headingFocusPending, loading, view]);
+
+  // After a refused or failed status change or restore, focus goes to the alert.
+  useEffect(() => {
+    if (!alertFocusPending || listAlert === null || view !== "list") {
+      return;
+    }
+    listAlertRef.current?.focus();
+    setAlertFocusPending(false);
+  }, [alertFocusPending, listAlert, view]);
+
+  // Losing the key or write access to delete closes an open Delete dialog.
+  useEffect(() => {
+    if (!canDeleteFamily) {
+      familyDelete.close();
+    }
+  }, [canDeleteFamily]);
+
   const fetchHouseholds = useCallback(
-    async (communitySlug: string, cursorToken: string | undefined, isCurrent: () => boolean) => {
+    async (
+      communitySlug: string,
+      statusVal: StatusFilter,
+      cursorToken: string | undefined,
+      isCurrent: () => boolean,
+    ) => {
       setLoading(true);
       setError(false);
 
@@ -663,6 +813,9 @@ export function FamilyRecordsPage() {
         communitySlug,
         limit: 25,
       };
+      if (statusVal !== "") {
+        body.status = statusVal;
+      }
       if (cursorToken !== undefined) {
         body.cursor = cursorToken;
       }
@@ -681,13 +834,14 @@ export function FamilyRecordsPage() {
         if (!isCurrent()) {
           return;
         }
-        const parsed = parseListResponse(data);
+        const parsed = parseListResponse(data, statusVal === "deleted");
         if (parsed === null) {
           setLoading(false);
           setError(true);
           return;
         }
         setItems(parsed.items);
+        setItemsDeleted(statusVal === "deleted");
         setNextCursor(parsed.nextCursor);
         setLoading(false);
         setError(false);
@@ -716,16 +870,19 @@ export function FamilyRecordsPage() {
         return;
       }
       if (response === "unavailable") {
+        detailAnswers.current += 1;
         setDetailLoading(false);
         setDetailError(true);
         return;
       }
       if (response.status === 404) {
+        detailAnswers.current += 1;
         setDetailLoading(false);
         setDetailNotFound(true);
         return;
       }
       if (response.status !== 200) {
+        detailAnswers.current += 1;
         setDetailLoading(false);
         setDetailError(true);
         return;
@@ -737,16 +894,19 @@ export function FamilyRecordsPage() {
         }
         const parsed = parseHouseholdDetail(data);
         if (parsed === null) {
+          detailAnswers.current += 1;
           setDetailLoading(false);
           setDetailError(true);
           return;
         }
         setDetailHousehold(parsed);
+        detailAnswers.current += 1;
         setDetailLoading(false);
       } catch {
         if (!isCurrent()) {
           return;
         }
+        detailAnswers.current += 1;
         setDetailLoading(false);
         setDetailError(true);
       }
@@ -756,11 +916,18 @@ export function FamilyRecordsPage() {
 
   useEffect(() => {
     detailGeneration.current += 1;
+    panelGeneration.current += 1;
+    emergency.reset();
     setItems(null);
     setView("list");
     setSelectedHouseholdId(null);
     setDetailHousehold(null);
-    setCursor(undefined);
+    setItemsDeleted(false);
+    setListAlert(null);
+    setHeadingFocusPending(false);
+    setAlertFocusPending(false);
+    familyActions.reset();
+    familyDelete.reset();
     setCreateLabel("");
     setCreateNotice(null);
     setRenameLabel("");
@@ -808,15 +975,18 @@ export function FamilyRecordsPage() {
       return;
     }
     const mine = ++generation.current;
-    void fetchHouseholds(slug, cursor, () => generation.current === mine);
-  }, [token, access, slug, version, cursor, fetchHouseholds]);
+    void fetchHouseholds(slug, statusFilter, cursor, () => generation.current === mine);
+  }, [token, access, slug, version, statusFilter, cursor, fetchHouseholds]);
 
   function openDetail(householdId: string) {
+    setListAlert(null);
     setSelectedHouseholdId(householdId);
     setView("detail");
     setDetailHousehold(null);
     setUnlinkingLinkId(null);
     setUnlinkNotice(null);
+    panelGeneration.current += 1;
+    emergency.reset();
     const mine = ++detailGeneration.current;
     if (slug) {
       void fetchDetail(slug, householdId, () => detailGeneration.current === mine);
@@ -831,6 +1001,8 @@ export function FamilyRecordsPage() {
   }
 
   function backToList() {
+    panelGeneration.current += 1;
+    emergency.reset();
     setView("list");
     setSelectedHouseholdId(null);
     setDetailHousehold(null);
@@ -842,14 +1014,30 @@ export function FamilyRecordsPage() {
   }
 
   function reloadList() {
-    if (slug) {
+    const query = latestQuery.current;
+    if (query.slug) {
       const mine = ++generation.current;
-      void fetchHouseholds(slug, cursor, () => generation.current === mine);
+      void fetchHouseholds(
+        query.slug,
+        query.statusFilter,
+        query.cursor,
+        () => generation.current === mine,
+      );
     }
   }
 
   function handleNextPage(token: string) {
-    setCursor(token);
+    setListQuery({ slug, status: statusFilter, cursor: token });
+  }
+
+  function changeStatusFilter(next: StatusFilter) {
+    if (next === statusFilter) {
+      return;
+    }
+    setItems(null);
+    setNextCursor(null);
+    setListAlert(null);
+    setListQuery({ slug, status: next, cursor: undefined });
   }
 
   function openCreate() {
@@ -1170,6 +1358,7 @@ export function FamilyRecordsPage() {
     setSubmitting(true);
     setNewAdultNotice(null);
     setNewAdultNotFound(false);
+    const mine = panelGeneration.current;
 
     try {
       const response = await post("/v1/households/members/add-adult", {
@@ -1196,8 +1385,14 @@ export function FamilyRecordsPage() {
       }
 
       if (response.status === 409) {
+        const code = await readErrorCode(response);
+        if (panelGeneration.current !== mine) {
+          return;
+        }
         setNewAdultNotice(
-          "A contact with this email or phone already exists. Search for them instead.",
+          code === "duplicate_deleted"
+            ? duplicateDeletedMessage(Boolean(access.permissions["people.delete"]))
+            : "A contact with this email or phone already exists. Search for them instead.",
         );
         return;
       }
@@ -1280,6 +1475,15 @@ export function FamilyRecordsPage() {
       }
 
       if (response.status === 200) {
+        // The answer's version counts for the emergency contacts only when it is the next one.
+        try {
+          const answer: unknown = await response.json();
+          if (isRecord(answer) && typeof answer.version === "number") {
+            emergency.noteVersion(detailHousehold.householdId, answer.version);
+          }
+        } catch {
+          // No version in the answer: the contacts keep the version of the list on screen.
+        }
         setView("detail");
         reloadDetail();
         return;
@@ -2149,6 +2353,24 @@ export function FamilyRecordsPage() {
                   Rename household
                 </Button>
               ) : null}
+              {canDeleteFamily && detailHousehold ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={(event) =>
+                    familyDelete.openDialog(
+                      {
+                        householdId: detailHousehold.householdId,
+                        version: detailHousehold.version,
+                        label: detailHousehold.label,
+                      },
+                      event.currentTarget,
+                    )
+                  }
+                >
+                  Delete family
+                </Button>
+              ) : null}
             </div>
           }
         >
@@ -2179,7 +2401,17 @@ export function FamilyRecordsPage() {
               <strong>Household name:</strong> {detailHousehold.label}
             </p>
           ) : null}
+
+          {!detailLoading && !detailNotFound && !detailError && detailHousehold ? (
+            <p>
+              <strong>Status:</strong>{" "}
+              <StatusBadge tone={detailHousehold.status === "inactive" ? "neutral" : "success"}>
+                {detailHousehold.status === "inactive" ? "Inactive" : "Active"}
+              </StatusBadge>
+            </p>
+          ) : null}
         </Panel>
+        {familyDelete.dialog}
 
         {!detailLoading && !detailNotFound && !detailError && detailHousehold ? (
           <>
@@ -2233,11 +2465,55 @@ export function FamilyRecordsPage() {
                 setUnlinkNotice={setUnlinkNotice}
               />
             ) : null}
+
+            {emergency.panel}
           </>
         ) : null}
       </>
     );
   }
+
+  const rows = items !== null && itemsDeleted === deletedView ? items : null;
+  const listColumns: DataTableColumn<HouseholdItem>[] = [
+    {
+      key: "household",
+      header: "Household",
+      primary: true,
+      render: (household) =>
+        household.label !== null ? (
+          household.label
+        ) : canRestricted ? (
+          <span className="text-muted-foreground">None</span>
+        ) : (
+          <RestrictedValue label="Household name hidden for your role" />
+        ),
+    },
+    {
+      key: "adults",
+      header: "Adults",
+      render: (household) => household.adultCount,
+    },
+    statusColumn({
+      canSwitch: canManage && !hideWrites,
+      pending: familyActions.pending,
+      onToggle: (household) => void familyActions.toggleStatus(household),
+    }),
+    {
+      key: "actions",
+      header: "Actions",
+      render: (household) => (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          aria-label={`View ${household.label ?? "household"}`}
+          onClick={() => openDetail(household.householdId)}
+        >
+          View
+        </Button>
+      ),
+    },
+  ];
 
   return (
     <>
@@ -2254,6 +2530,12 @@ export function FamilyRecordsPage() {
         <Alert live="polite">Household names and children are hidden for your role.</Alert>
       ) : null}
 
+      {listAlert ? (
+        <Alert ref={listAlertRef} tabIndex={-1} variant="destructive" role="alert">
+          <span>{listAlert}</span>
+        </Alert>
+      ) : null}
+
       {canCreate ? (
         <div>
           <Button type="button" onClick={openCreate}>
@@ -2262,7 +2544,13 @@ export function FamilyRecordsPage() {
         </div>
       ) : null}
 
-      {loading && items === null ? (
+      <StatusFilterSelect
+        value={statusFilter}
+        onChange={changeStatusFilter}
+        canFilterDeleted={canFilterDeleted}
+      />
+
+      {loading && rows === null ? (
         <>
           <Skeleton />
           <span className="sr-only">Loading households...</span>
@@ -2278,50 +2566,32 @@ export function FamilyRecordsPage() {
         </Alert>
       ) : null}
 
-      {!error && items !== null ? (
-        items.length === 0 ? (
-          <EmptyState message="No households yet" />
+      {!error && rows !== null ? (
+        rows.length === 0 ? (
+          <EmptyState
+            message={
+              deletedView
+                ? "No deleted families."
+                : statusFilter !== ""
+                  ? "No households match this filter"
+                  : "No households yet"
+            }
+          />
         ) : (
           <>
             <DataTable
               aria-label="Households"
               rowKey={(household) => household.householdId}
-              columns={[
-                {
-                  key: "household",
-                  header: "Household",
-                  primary: true,
-                  render: (household) =>
-                    household.label !== null ? (
-                      household.label
-                    ) : canRestricted ? (
-                      <span className="text-muted-foreground">None</span>
-                    ) : (
-                      <RestrictedValue label="Household name hidden for your role" />
-                    ),
-                },
-                {
-                  key: "adults",
-                  header: "Adults",
-                  render: (household) => household.adultCount,
-                },
-                {
-                  key: "actions",
-                  header: "Actions",
-                  render: (household) => (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      aria-label={`View ${household.label ?? "household"}`}
-                      onClick={() => openDetail(household.householdId)}
-                    >
-                      View
-                    </Button>
-                  ),
-                },
-              ]}
-              rows={items}
+              columns={
+                deletedView
+                  ? deletedColumns({
+                      canRestore: canDeleteFamily,
+                      restoringId: familyActions.restoringId,
+                      onRestore: (household) => void familyActions.restore(household),
+                    })
+                  : listColumns
+              }
+              rows={rows}
             />
 
             <Pagination cursor={nextCursor} onNext={handleNextPage} />

@@ -102,10 +102,20 @@ export function peopleTables(
         orgId: uuid("org_id").notNull(),
         communityId: uuid("community_id").notNull(),
         version: integer("version").notNull().default(1),
+        status: text("status").notNull().default("active"),
+        deletedAt: tz("deleted_at"),
+        deletedBy: uuid("deleted_by"),
         label: encryptedColumn("label", { label: "people.household_label" }),
+        emergencyContacts: encryptedColumn("emergency_contacts", {
+          label: "people.household_emergency_contacts",
+        }),
       },
       (t) => [
         primaryKey({ columns: [t.orgId, t.id] }),
+        index("households_deleted_idx")
+          .on(t.orgId, t.communityId, t.deletedAt)
+          .where(sql`${t.deletedAt} is not null`),
+        check("households_status_check", sql`${t.status} in ('active', 'inactive')`),
         pgPolicy("community_isolation", {
           for: "all",
           using: communityPredicate(t.orgId, t.communityId),

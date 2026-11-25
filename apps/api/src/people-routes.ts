@@ -94,7 +94,8 @@ export function statusForPeople(error: PeopleError): Response | undefined {
     error.code === "linked_user" ||
     error.code === "pending_invitation" ||
     error.code === "sole_guardian" ||
-    error.code === "duplicate_deleted"
+    error.code === "duplicate_deleted" ||
+    error.code === "household_has_children"
   ) {
     return codedConflict(error.code);
   }

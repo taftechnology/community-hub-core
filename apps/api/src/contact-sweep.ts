@@ -21,7 +21,7 @@ export type SweepDeps = {
   readonly log: (message: string, fields?: Record<string, unknown>) => void;
 };
 
-function errorClassFor(error: unknown): string {
+export function errorClassFor(error: unknown): string {
   if (error instanceof Error) {
     const name: unknown = error.name;
     return typeof name === "string" && ERROR_CLASS.test(name) ? name : "Error";

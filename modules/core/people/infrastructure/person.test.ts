@@ -14,6 +14,7 @@ const CIPHERTEXT = [
   "email",
   "phone",
   "wrapped",
+  "emergency_contacts",
 ];
 
 // app.households.label is ciphertext. app.person_tags.label is clear text and is allowed.
@@ -103,6 +104,9 @@ const BAD = [
   "select id from app.households where label = $1",
   "select id from app.households order by label",
   "select id from app.households h where h.label like $1",
+  "select id from app.households where emergency_contacts = $1",
+  "select id from app.households order by emergency_contacts",
+  "select id from app.households group by emergency_contacts",
 ];
 
 const GOOD = [
@@ -121,6 +125,7 @@ const GOOD = [
   "insert into app.households (id, org_id, community_id, label) values ($1, $2, $3, $4)",
   "select id from app.household_keys where household_id = $1",
   "insert into app.organisation_keys (id, org_id, wrapped, key_version) values ($1, $2, $3, '1')",
+  "select id, emergency_contacts from app.households where id = $1",
 ];
 
 describe("person source", () => {
