@@ -3,11 +3,16 @@ import {
   addAdultBody,
   addMinorBody,
   createHouseholdBody,
+  householdDeleteBody,
+  householdRestoreBody,
+  householdStatusBody,
   linkGuardianBody,
   listHouseholdsBody,
   moveAdultBody,
+  readEmergencyContactsBody,
   readHouseholdBody,
   renameHouseholdBody,
+  saveEmergencyContactsBody,
   unlinkGuardianBody,
 } from "@community-hub/contracts/households";
 import { appendAuditEvent, withAppTransaction } from "@community-hub/db";
@@ -17,12 +22,18 @@ import {
   addAdult,
   addMinor,
   createHousehold,
+  hideHousehold,
   linkGuardian,
+  listDeletedHouseholds,
   listHouseholds,
   moveAdult,
   PeopleError,
+  readEmergencyContacts,
   readHouseholdDetail,
   renameHousehold,
+  restoreHousehold,
+  saveEmergencyContacts,
+  setHouseholdStatus,
   unlinkGuardian,
 } from "@community-hub/people";
 import { findCommunityBySlug } from "@community-hub/tenancy";
@@ -30,6 +41,7 @@ import { findCommunityBySlug } from "@community-hub/tenancy";
 import { guardWrite } from "./billing-guard.js";
 import type { Checkout } from "./checkout.js";
 import { guardEntitlement } from "./entitlement-guard.js";
+import { sweepDeletedHouseholds } from "./family-sweep.js";
 import type { GateRoute, RouteContext } from "./gate.js";
 import type { BillingLogFields } from "./index.js";
 
@@ -38,7 +50,9 @@ type HouseholdSql = Parameters<typeof readSession>[0];
 const DENIED = "people.permission.denied";
 const VIEW = "people.view";
 const MANAGE = "people.manage";
-// Audit purposes are registered three-part names; "people.manage" is only the permission key.
+const DELETE = "people.delete";
+// Audit purposes are registered three-part names; "people.view" and "people.manage" are only the permission keys.
+const VIEW_DENIAL_PURPOSE = "people.person.view";
 const MANAGE_DENIAL_PURPOSE = "people.person.manage";
 const RESTRICTED = "people.restricted.read";
 const HOUSEHOLDS_ENTITLEMENT = "people.households";
@@ -221,7 +235,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
 
   type Prepared<T> =
     | { ok: true; body: T; actor: { userId: string }; scope: Scope }
-    | { ok: false; response: Response };
+    | { ok: false; response: Response; body?: T };
 
   async function prepare<T extends { communitySlug: string }>(
     request: Request,
@@ -239,7 +253,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
     }
     const actor = await sessionUser(request);
     if (actor instanceof Response) {
-      return { ok: false, response: finish(request, actor) };
+      return { ok: false, response: finish(request, actor), body };
     }
     const scope = await communityScope(
       body.communitySlug,
@@ -248,23 +262,44 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
       extraEntitlements,
     );
     if (scope === null) {
-      return { ok: false, response: finish(request, empty(403)) };
+      return { ok: false, response: finish(request, empty(403)), body };
     }
     if (scope instanceof Response) {
-      return { ok: false, response: finish(request, scope) };
+      return { ok: false, response: finish(request, scope), body };
     }
     return { ok: true, body, actor, scope };
   }
 
+  function withNoStore(
+    handler: (request: Request, context: RouteContext) => Promise<Response>,
+  ): (request: Request, context: RouteContext) => Promise<Response> {
+    return async (request, context) => {
+      try {
+        const response = await handler(request, context);
+        response.headers.set("cache-control", "no-store");
+        return response;
+      } catch {
+        const response = finish(request, empty(500));
+        response.headers.set("cache-control", "no-store");
+        return response;
+      }
+    };
+  }
+
   async function list(request: Request, context: RouteContext): Promise<Response> {
     const prep = await prepare(request, context, listHouseholdsBody);
+    const isDeletedFilter = prep.body?.status === "deleted";
     if (!prep.ok) {
+      if (isDeletedFilter) {
+        prep.response.headers.set("cache-control", "no-store");
+      }
       return prep.response;
     }
     const { body, actor, scope } = prep;
 
+    let response: Response;
     try {
-      return await deps.checkout("app", (sql) =>
+      response = await deps.checkout("app", (sql) =>
         withAppTransaction(sql, scope, async (tx) => {
           const allowed = await holdsPermission(tx, actor.userId, VIEW);
           if (!allowed) {
@@ -272,10 +307,36 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
               actorKind: "user",
               actorId: actor.userId,
               action: DENIED,
-              purpose: VIEW,
+              purpose: VIEW_DENIAL_PURPOSE,
               targetIds: [scope.orgId, scope.communityId],
             });
             return finish(request, empty(403));
+          }
+
+          if (body.status === "deleted") {
+            const [canDelete, canRestricted] = await Promise.all([
+              holdsPermission(tx, actor.userId, DELETE),
+              holdsPermission(tx, actor.userId, RESTRICTED),
+            ]);
+            if (!canDelete || !canRestricted) {
+              await appendAuditEvent(tx, {
+                actorKind: "user",
+                actorId: actor.userId,
+                action: DENIED,
+                purpose: DENIED,
+                targetIds: [scope.orgId, scope.communityId],
+              });
+              return finish(request, empty(400));
+            }
+            const deleted = await listDeletedHouseholds(tx, deps.kms, deps.keyArn, {
+              cursor: body.cursor ?? null,
+              ...(body.limit !== undefined ? { limit: body.limit } : {}),
+              actorUserId: actor.userId,
+            });
+            return finish(
+              request,
+              Response.json({ items: deleted.items, nextCursor: deleted.nextCursor }),
+            );
           }
 
           const includeRestricted = await holdsPermission(tx, actor.userId, RESTRICTED);
@@ -284,6 +345,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
             ...(body.limit !== undefined ? { limit: body.limit } : {}),
             includeRestricted,
             actorUserId: actor.userId,
+            ...(body.status !== undefined ? { status: body.status } : {}),
           });
           return finish(request, Response.json(result));
         }),
@@ -292,11 +354,22 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
       if (error instanceof PeopleError) {
         const mapped = statusForHouseholds(error);
         if (mapped !== undefined) {
-          return finish(request, mapped);
+          response = finish(request, mapped);
+        } else {
+          response = finish(request, empty(500));
         }
+      } else {
+        response = finish(request, empty(500));
       }
-      return finish(request, empty(500));
     }
+
+    if (isDeletedFilter) {
+      response.headers.set("cache-control", "no-store");
+    }
+    if (response.status === 200) {
+      await sweepDeletedHouseholds(deps, scope, actor.userId, context);
+    }
+    return response;
   }
 
   async function read(request: Request, context: RouteContext): Promise<Response> {
@@ -318,7 +391,7 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
               actorKind: "user",
               actorId: actor.userId,
               action: DENIED,
-              purpose: VIEW,
+              purpose: VIEW_DENIAL_PURPOSE,
               targetIds: [scope.orgId, scope.communityId],
             });
             return finish(request, empty(403));
@@ -683,6 +756,316 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
     }
   }
 
+  async function statusHousehold(request: Request, context: RouteContext): Promise<Response> {
+    const prep = await prepare(request, context, householdStatusBody);
+    if (!prep.ok) {
+      return prep.response;
+    }
+    const { body, actor, scope } = prep;
+
+    try {
+      return await deps.checkout("app", (sql) =>
+        withAppTransaction(sql, scope, async (tx) => {
+          const canView = await holdsPermission(tx, actor.userId, VIEW);
+          if (!canView) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: DENIED,
+              purpose: VIEW_DENIAL_PURPOSE,
+              targetIds: [scope.orgId, scope.communityId],
+            });
+            return finish(request, empty(403));
+          }
+          const canManage = await holdsPermission(tx, actor.userId, MANAGE);
+          if (!canManage) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: DENIED,
+              purpose: MANAGE_DENIAL_PURPOSE,
+              targetIds: [scope.orgId, scope.communityId],
+            });
+            return finish(request, empty(403));
+          }
+
+          const result = await setHouseholdStatus(tx, {
+            householdId: body.householdId,
+            version: body.version,
+            status: body.status,
+            actorUserId: actor.userId,
+          });
+          return finish(request, Response.json(result));
+        }),
+      );
+    } catch (error) {
+      if (error instanceof PeopleError) {
+        const mapped = statusForHouseholds(error);
+        if (mapped !== undefined) {
+          return finish(request, mapped);
+        }
+      }
+      return finish(request, empty(500));
+    }
+  }
+
+  async function deleteHouseholdHandler(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const prep = await prepare(request, context, householdDeleteBody);
+    if (!prep.ok) {
+      return prep.response;
+    }
+    const { body, actor, scope } = prep;
+
+    let response: Response;
+    try {
+      response = await deps.checkout("app", (sql) =>
+        withAppTransaction(sql, scope, async (tx) => {
+          const canView = await holdsPermission(tx, actor.userId, VIEW);
+          if (!canView) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: DENIED,
+              purpose: VIEW_DENIAL_PURPOSE,
+              targetIds: [scope.orgId, scope.communityId],
+            });
+            return finish(request, empty(403));
+          }
+          const canDelete = await holdsPermission(tx, actor.userId, DELETE);
+          if (!canDelete) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: DENIED,
+              purpose: DENIED,
+              targetIds: [scope.orgId, scope.communityId],
+            });
+            return finish(request, empty(403));
+          }
+          const canRestricted = await holdsPermission(tx, actor.userId, RESTRICTED);
+          if (!canRestricted) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: DENIED,
+              purpose: RESTRICTED,
+              targetIds: [scope.orgId, scope.communityId],
+            });
+            return finish(request, empty(403));
+          }
+
+          const hidden = await hideHousehold(tx, {
+            householdId: body.householdId,
+            version: body.version,
+            actorUserId: actor.userId,
+          });
+          return finish(
+            request,
+            Response.json({
+              householdId: hidden.householdId,
+              version: hidden.version,
+              purgeAfter: hidden.purgeAfter.toISOString(),
+            }),
+          );
+        }),
+      );
+    } catch (error) {
+      if (error instanceof PeopleError) {
+        const mapped = statusForHouseholds(error);
+        if (mapped !== undefined) {
+          return finish(request, mapped);
+        }
+      }
+      return finish(request, empty(500));
+    }
+    if (response.status === 200) {
+      await sweepDeletedHouseholds(deps, scope, actor.userId, context);
+    }
+    return response;
+  }
+
+  async function restoreHouseholdHandler(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const prep = await prepare(request, context, householdRestoreBody);
+    if (!prep.ok) {
+      return prep.response;
+    }
+    const { body, actor, scope } = prep;
+
+    let response: Response;
+    try {
+      response = await deps.checkout("app", (sql) =>
+        withAppTransaction(sql, scope, async (tx) => {
+          const canView = await holdsPermission(tx, actor.userId, VIEW);
+          if (!canView) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: DENIED,
+              purpose: VIEW_DENIAL_PURPOSE,
+              targetIds: [scope.orgId, scope.communityId],
+            });
+            return finish(request, empty(403));
+          }
+          const canDelete = await holdsPermission(tx, actor.userId, DELETE);
+          if (!canDelete) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: DENIED,
+              purpose: DENIED,
+              targetIds: [scope.orgId, scope.communityId],
+            });
+            return finish(request, empty(403));
+          }
+          const canRestricted = await holdsPermission(tx, actor.userId, RESTRICTED);
+          if (!canRestricted) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: DENIED,
+              purpose: RESTRICTED,
+              targetIds: [scope.orgId, scope.communityId],
+            });
+            return finish(request, empty(403));
+          }
+
+          const restored = await restoreHousehold(tx, {
+            householdId: body.householdId,
+            version: body.version,
+            actorUserId: actor.userId,
+          });
+          return finish(
+            request,
+            Response.json({
+              householdId: restored.householdId,
+              version: restored.version,
+            }),
+          );
+        }),
+      );
+    } catch (error) {
+      if (error instanceof PeopleError) {
+        const mapped = statusForHouseholds(error);
+        if (mapped !== undefined) {
+          return finish(request, mapped);
+        }
+      }
+      return finish(request, empty(500));
+    }
+    if (response.status === 200) {
+      await sweepDeletedHouseholds(deps, scope, actor.userId, context);
+    }
+    return response;
+  }
+
+  async function readEmergencyContactsHandler(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const prep = await prepare(request, context, readEmergencyContactsBody);
+    if (!prep.ok) {
+      return prep.response;
+    }
+    const { body, actor, scope } = prep;
+
+    try {
+      return await deps.checkout("app", (sql) =>
+        withAppTransaction(sql, scope, async (tx) => {
+          const canRestricted = await holdsPermission(tx, actor.userId, RESTRICTED);
+          if (!canRestricted) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: DENIED,
+              purpose: RESTRICTED,
+              targetIds: [scope.orgId, scope.communityId],
+            });
+            return finish(request, empty(403));
+          }
+
+          const result = await readEmergencyContacts(tx, deps.kms, deps.keyArn, {
+            householdId: body.householdId,
+            actorUserId: actor.userId,
+          });
+          if (result === null) {
+            return finish(request, empty(404));
+          }
+          return finish(request, Response.json(result));
+        }),
+      );
+    } catch (error) {
+      if (error instanceof PeopleError) {
+        const mapped = statusForHouseholds(error);
+        if (mapped !== undefined) {
+          return finish(request, mapped);
+        }
+      }
+      return finish(request, empty(500));
+    }
+  }
+
+  async function saveEmergencyContactsHandler(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const prep = await prepare(request, context, saveEmergencyContactsBody);
+    if (!prep.ok) {
+      return prep.response;
+    }
+    const { body, actor, scope } = prep;
+
+    try {
+      return await deps.checkout("app", (sql) =>
+        withAppTransaction(sql, scope, async (tx) => {
+          const canManage = await holdsPermission(tx, actor.userId, MANAGE);
+          if (!canManage) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: DENIED,
+              purpose: MANAGE_DENIAL_PURPOSE,
+              targetIds: [scope.orgId, scope.communityId],
+            });
+            return finish(request, empty(403));
+          }
+          const canRestricted = await holdsPermission(tx, actor.userId, RESTRICTED);
+          if (!canRestricted) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: DENIED,
+              purpose: RESTRICTED,
+              targetIds: [scope.orgId, scope.communityId],
+            });
+            return finish(request, empty(403));
+          }
+
+          const result = await saveEmergencyContacts(tx, deps.kms, deps.keyArn, {
+            householdId: body.householdId,
+            version: body.version,
+            contacts: body.contacts,
+            actorUserId: actor.userId,
+          });
+          return finish(request, Response.json(result));
+        }),
+      );
+    } catch (error) {
+      if (error instanceof PeopleError) {
+        const mapped = statusForHouseholds(error);
+        if (mapped !== undefined) {
+          return finish(request, mapped);
+        }
+      }
+      return finish(request, empty(500));
+    }
+  }
+
   return [
     {
       method: "POST",
@@ -746,6 +1129,41 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
       surface: "tenant",
       billing: "write",
       handle: (request, context) => unlinkGuardianHandler(request, context),
+    },
+    {
+      method: "POST",
+      pattern: "/v1/households/status",
+      surface: "tenant",
+      billing: "write",
+      handle: withNoStore((request, context) => statusHousehold(request, context)),
+    },
+    {
+      method: "POST",
+      pattern: "/v1/households/delete",
+      surface: "tenant",
+      billing: "write",
+      handle: withNoStore((request, context) => deleteHouseholdHandler(request, context)),
+    },
+    {
+      method: "POST",
+      pattern: "/v1/households/restore",
+      surface: "tenant",
+      billing: "write",
+      handle: withNoStore((request, context) => restoreHouseholdHandler(request, context)),
+    },
+    {
+      method: "POST",
+      pattern: "/v1/households/emergency-contacts/read",
+      surface: "tenant",
+      billing: "read",
+      handle: withNoStore((request, context) => readEmergencyContactsHandler(request, context)),
+    },
+    {
+      method: "POST",
+      pattern: "/v1/households/emergency-contacts/save",
+      surface: "tenant",
+      billing: "write",
+      handle: withNoStore((request, context) => saveEmergencyContactsHandler(request, context)),
     },
   ];
 }

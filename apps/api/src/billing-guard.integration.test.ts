@@ -27,6 +27,7 @@ import {
   createHousehold,
   createLifeEvent,
   createPerson,
+  hideHousehold,
   hidePerson,
   linkGuardian,
 } from "@community-hub/people";
@@ -1351,6 +1352,127 @@ describe("billing guard against a real database", () => {
               linkId: linkToUnlinkId,
             },
             count: () => countGuardianLinks(setup),
+          };
+        },
+      },
+    ],
+    [
+      "POST /v1/households/status",
+      {
+        path: "/v1/households/status",
+        prepare: async (setup) => {
+          const household = await withRequest({ requestId: REQUEST_ID }, () =>
+            withAppTransaction(app, { orgId: setup.orgId, communityId: setup.communityId }, (tx) =>
+              createHousehold(tx, kms, KEY_ARN, {
+                now: setup.now,
+                label: "Household Status",
+                actorUserId: setup.ownerUserId,
+              }),
+            ),
+          );
+          return {
+            body: {
+              communitySlug: setup.slug,
+              householdId: household.householdId,
+              version: household.version,
+              status: "inactive",
+            },
+            count: () => householdVersion(setup, household.householdId),
+          };
+        },
+      },
+    ],
+    [
+      "POST /v1/households/delete",
+      {
+        path: "/v1/households/delete",
+        prepare: async (setup) => {
+          const household = await withRequest({ requestId: REQUEST_ID }, () =>
+            withAppTransaction(app, { orgId: setup.orgId, communityId: setup.communityId }, (tx) =>
+              createHousehold(tx, kms, KEY_ARN, {
+                now: setup.now,
+                label: "Household Delete",
+                actorUserId: setup.ownerUserId,
+              }),
+            ),
+          );
+          return {
+            body: {
+              communitySlug: setup.slug,
+              householdId: household.householdId,
+              version: household.version,
+            },
+            count: () => householdVersion(setup, household.householdId),
+          };
+        },
+      },
+    ],
+    [
+      "POST /v1/households/restore",
+      {
+        path: "/v1/households/restore",
+        prepare: async (setup) => {
+          let householdId!: string;
+          let version!: number;
+          await withRequest({ requestId: REQUEST_ID }, () =>
+            withAppTransaction(
+              app,
+              { orgId: setup.orgId, communityId: setup.communityId },
+              async (tx) => {
+                const h = await createHousehold(tx, kms, KEY_ARN, {
+                  now: setup.now,
+                  label: "Household Restore",
+                  actorUserId: setup.ownerUserId,
+                });
+                const hidden = await hideHousehold(tx, {
+                  householdId: h.householdId,
+                  version: h.version,
+                  actorUserId: setup.ownerUserId,
+                });
+                householdId = hidden.householdId;
+                version = hidden.version;
+              },
+            ),
+          );
+          return {
+            body: {
+              communitySlug: setup.slug,
+              householdId,
+              version,
+            },
+            count: () => householdVersion(setup, householdId),
+          };
+        },
+      },
+    ],
+    [
+      "POST /v1/households/emergency-contacts/save",
+      {
+        path: "/v1/households/emergency-contacts/save",
+        prepare: async (setup) => {
+          const household = await withRequest({ requestId: REQUEST_ID }, () =>
+            withAppTransaction(app, { orgId: setup.orgId, communityId: setup.communityId }, (tx) =>
+              createHousehold(tx, kms, KEY_ARN, {
+                now: setup.now,
+                label: "Household Emergency Contacts",
+                actorUserId: setup.ownerUserId,
+              }),
+            ),
+          );
+          return {
+            body: {
+              communitySlug: setup.slug,
+              householdId: household.householdId,
+              version: household.version,
+              contacts: [
+                {
+                  name: "Emergency Contact",
+                  phone: "+61 400 000 000",
+                  relationship: "friend",
+                },
+              ],
+            },
+            count: () => householdVersion(setup, household.householdId),
           };
         },
       },

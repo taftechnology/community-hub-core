@@ -4,11 +4,30 @@ import {
   addAdultBody,
   addMinorBody,
   createHouseholdBody,
+  deletedHouseholdListItem,
+  deletedHouseholdsListResponse,
+  emergencyContactInput,
+  emergencyContactResponseItem,
+  householdDeleteBody,
+  householdDeleteResponse,
+  householdErrorBody,
+  householdRestoreBody,
+  householdRestoreResponse,
+  householdStatusBody,
+  householdStatusResponse,
   linkGuardianBody,
   listHouseholdsBody,
+  listHouseholdsResponse,
   moveAdultBody,
+  readEmergencyContactsBody,
+  readEmergencyContactsResponse,
   readHouseholdBody,
+  readHouseholdResponse,
   renameHouseholdBody,
+  saveEmergencyContactsBody,
+  saveEmergencyContactsResponse,
+  setHouseholdStatusBody,
+  setHouseholdStatusResponse,
   unlinkGuardianBody,
 } from "./households.js";
 
@@ -585,5 +604,272 @@ describe("household contract schemas (pin 10)", () => {
     expect(addAdultBody.safeParse({ ...base, familyName: "   " }).success).toBe(false);
     expect(addAdultBody.safeParse({ ...base, givenName: null }).success).toBe(false);
     expect(addAdultBody.safeParse({ ...base, familyName: null }).success).toBe(false);
+  });
+
+  it("emergency contacts refuse an unknown field", () => {
+    const valid = {
+      name: "Jane Doe",
+      phone: "+61 400 000 000",
+      relationship: "spouse",
+    };
+    expect(emergencyContactInput.safeParse(valid).success).toBe(true);
+    const withUnknown = {
+      ...valid,
+      extra: "forbidden",
+    };
+    expect(emergencyContactInput.safeParse(withUnknown).success).toBe(false);
+  });
+
+  it("validates family parity request bodies and responses", () => {
+    // Status body & response
+    expect(
+      setHouseholdStatusBody.safeParse({
+        communitySlug: "parish-au",
+        householdId: VALID_UUID,
+        version: 1,
+        status: "inactive",
+      }).success,
+    ).toBe(true);
+
+    expect(
+      householdStatusBody.safeParse({
+        communitySlug: "parish-au",
+        householdId: VALID_UUID,
+        version: 1,
+        status: "active",
+      }).success,
+    ).toBe(true);
+
+    expect(
+      setHouseholdStatusResponse.safeParse({
+        householdId: VALID_UUID,
+        version: 2,
+        status: "inactive",
+      }).success,
+    ).toBe(true);
+
+    expect(
+      householdStatusResponse.safeParse({
+        householdId: VALID_UUID,
+        version: 2,
+        status: "active",
+      }).success,
+    ).toBe(true);
+
+    // Delete body & response
+    expect(
+      householdDeleteBody.safeParse({
+        communitySlug: "parish-au",
+        householdId: VALID_UUID,
+        version: 1,
+      }).success,
+    ).toBe(true);
+
+    expect(
+      householdDeleteResponse.safeParse({
+        householdId: VALID_UUID,
+        version: 2,
+        purgeAfter: "2026-11-20T00:00:00.000Z",
+      }).success,
+    ).toBe(true);
+
+    // Restore body & response
+    expect(
+      householdRestoreBody.safeParse({
+        communitySlug: "parish-au",
+        householdId: VALID_UUID,
+        version: 2,
+      }).success,
+    ).toBe(true);
+
+    expect(
+      householdRestoreResponse.safeParse({
+        householdId: VALID_UUID,
+        version: 3,
+      }).success,
+    ).toBe(true);
+
+    // Emergency contacts read body & response
+    expect(
+      readEmergencyContactsBody.safeParse({
+        communitySlug: "parish-au",
+        householdId: VALID_UUID,
+      }).success,
+    ).toBe(true);
+
+    expect(
+      readEmergencyContactsResponse.safeParse({
+        householdId: VALID_UUID,
+        version: 1,
+        contacts: [
+          {
+            name: "Grandma Smith",
+            phone: "+61 400 111 222",
+            relationship: "grandparent",
+          },
+          {
+            name: "Neighbour Bob",
+            phone: "+61 400 333 444",
+            relationship: null,
+          },
+        ],
+      }).success,
+    ).toBe(true);
+
+    // Emergency contacts save body & response
+    expect(
+      saveEmergencyContactsBody.safeParse({
+        communitySlug: "parish-au",
+        householdId: VALID_UUID,
+        version: 1,
+        contacts: [
+          {
+            name: "Alice",
+            phone: "+61 400 555 666",
+            relationship: "friend",
+          },
+        ],
+      }).success,
+    ).toBe(true);
+
+    expect(
+      saveEmergencyContactsResponse.safeParse({
+        householdId: VALID_UUID,
+        version: 2,
+      }).success,
+    ).toBe(true);
+
+    // List with status filter
+    expect(
+      listHouseholdsBody.safeParse({
+        communitySlug: "parish-au",
+        status: "active",
+      }).success,
+    ).toBe(true);
+
+    expect(
+      listHouseholdsBody.safeParse({
+        communitySlug: "parish-au",
+        status: "deleted",
+      }).success,
+    ).toBe(true);
+
+    // Deleted households list item and response
+    expect(
+      deletedHouseholdListItem.safeParse({
+        householdId: VALID_UUID,
+        label: "The Smiths",
+        adultCount: 2,
+        version: 3,
+        deletedAt: "2026-10-01T12:00:00.000Z",
+        purgeAfter: "2026-10-31T12:00:00.000Z",
+      }).success,
+    ).toBe(true);
+
+    expect(
+      deletedHouseholdsListResponse.safeParse({
+        items: [
+          {
+            householdId: VALID_UUID,
+            label: null,
+            adultCount: 1,
+            version: 1,
+            deletedAt: "2026-10-01T12:00:00.000Z",
+            purgeAfter: "2026-10-31T12:00:00.000Z",
+          },
+        ],
+        nextCursor: "cursor-token",
+      }).success,
+    ).toBe(true);
+
+    // Error body
+    expect(
+      householdErrorBody.safeParse({
+        code: "household_has_children",
+      }).success,
+    ).toBe(true);
+
+    // Emergency contact response item, list and read responses with status
+    expect(
+      emergencyContactResponseItem.safeParse({
+        name: "Test",
+        phone: "+61 400 000 000",
+        relationship: "friend",
+      }).success,
+    ).toBe(true);
+
+    expect(
+      listHouseholdsResponse.safeParse({
+        items: [
+          {
+            householdId: VALID_UUID,
+            version: 1,
+            label: "Smith",
+            adultCount: 2,
+            status: "active",
+          },
+        ],
+        nextCursor: null,
+      }).success,
+    ).toBe(true);
+
+    expect(
+      readHouseholdResponse.safeParse({
+        householdId: VALID_UUID,
+        version: 1,
+        status: "active",
+        label: "Smith",
+        adults: [],
+        guardians: [],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("refuses invalid emergency contacts data", () => {
+    // Relationship outside enum
+    expect(
+      emergencyContactInput.safeParse({
+        name: "Test",
+        phone: "+61 400 000 000",
+        relationship: "child",
+      }).success,
+    ).toBe(false);
+
+    // More than 5 emergency contacts
+    const sixContacts = Array.from({ length: 6 }, (_, i) => ({
+      name: `Contact ${i}`,
+      phone: "+61 400 000 000",
+      relationship: "relative" as const,
+    }));
+    expect(
+      saveEmergencyContactsBody.safeParse({
+        communitySlug: "parish-au",
+        householdId: VALID_UUID,
+        version: 1,
+        contacts: sixContacts,
+      }).success,
+    ).toBe(false);
+
+    // Name empty or too long
+    expect(
+      emergencyContactInput.safeParse({
+        name: "",
+        phone: "+61 400 000 000",
+      }).success,
+    ).toBe(false);
+    expect(
+      emergencyContactInput.safeParse({
+        name: "a".repeat(101),
+        phone: "+61 400 000 000",
+      }).success,
+    ).toBe(false);
+
+    // Phone invalid
+    expect(
+      emergencyContactInput.safeParse({
+        name: "Valid Name",
+        phone: "",
+      }).success,
+    ).toBe(false);
   });
 });
