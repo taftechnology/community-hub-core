@@ -1744,25 +1744,114 @@ describe("family parity routes against a real database", () => {
     expect(await purgedEvents()).toHaveLength(3);
   });
 
-  // Pin 69b
+  // Pin 69b, 69c, 69d
   it("the family sweep does not run after a refusal", async () => {
     const org = await createOrg("sweep-refusal");
-    const familyToPurge = await createFamily(org);
+
+    async function purgedEvents(): Promise<
+      Array<{ action: string; actor_kind: string; target_ids: string[] }>
+    > {
+      return withAppTransaction(
+        app,
+        { orgId: org.orgId, communityId: org.communityId },
+        async (tx) => {
+          return tx<Array<{ action: string; actor_kind: string; target_ids: string[] }>>`
+            select action, actor_kind, target_ids
+            from app.audit_events
+            where action = 'people.household.purged'
+            order by id desc
+          `;
+        },
+      );
+    }
+
+    const familyToPurge = await createFamily(org, "FamilyToPurge");
     await ageFamily(org, familyToPurge.householdId, 721);
 
-    const otherFamily = await createFamily(org);
+    const otherFamily = await createFamily(org, "OtherFamily");
+    const hiddenFamily = await createFamily(org, "HiddenFamily");
+    const hiddenFamilyRes = await hideFamily(org, hiddenFamily.householdId, hiddenFamily.version);
 
-    // Delete with a wrong version -> 409
-    const refusedRes = await post(
+    // Callers:
+    // a role without people.view
+    const callerNoView = await customCaller(org, [
+      "people.delete",
+      "people.restricted.read",
+      "people.manage",
+    ]);
+
+    // a role with people.view only
+    const callerViewOnly = await customCaller(org, ["people.view"]);
+
+    // 1. delete refused with 403 (a role without people.view)
+    const resDel403 = await post(
+      "/v1/households/delete",
+      {
+        communitySlug: org.slug,
+        householdId: otherFamily.householdId,
+        version: otherFamily.version,
+      },
+      callerNoView.accessToken,
+    );
+    expect(resDel403.status).toBe(403);
+    expect(await getHousehold(org, familyToPurge.householdId)).not.toBeNull();
+    expect(await purgedEvents()).toHaveLength(0);
+
+    // 2. restore refused with 403 (a role without people.view)
+    const resRestore403 = await post(
+      "/v1/households/restore",
+      {
+        communitySlug: org.slug,
+        householdId: hiddenFamily.householdId,
+        version: hiddenFamilyRes.version,
+      },
+      callerNoView.accessToken,
+    );
+    expect(resRestore403.status).toBe(403);
+    expect(await getHousehold(org, familyToPurge.householdId)).not.toBeNull();
+    expect(await purgedEvents()).toHaveLength(0);
+
+    // 3. list refused with 403 (a role without people.view)
+    const resList403 = await post(
+      "/v1/households/list",
+      { communitySlug: org.slug },
+      callerNoView.accessToken,
+    );
+    expect(resList403.status).toBe(403);
+    expect(await getHousehold(org, familyToPurge.householdId)).not.toBeNull();
+    expect(await purgedEvents()).toHaveLength(0);
+
+    // 4. the Deleted filter refused with 400 (a role with people.view only)
+    const resDeleted400 = await post(
+      "/v1/households/list",
+      { communitySlug: org.slug, status: "deleted" },
+      callerViewOnly.accessToken,
+    );
+    expect(resDeleted400.status).toBe(400);
+    expect(await getHousehold(org, familyToPurge.householdId)).not.toBeNull();
+    expect(await purgedEvents()).toHaveLength(0);
+
+    // 5. the existing 409 on delete
+    const resDel409 = await post(
       "/v1/households/delete",
       { communitySlug: org.slug, householdId: otherFamily.householdId, version: 999 },
       org.owner.accessToken,
     );
-    expect(refusedRes.status).toBe(409);
+    expect(resDel409.status).toBe(409);
+    expect(await getHousehold(org, familyToPurge.householdId)).not.toBeNull();
+    expect(await purgedEvents()).toHaveLength(0);
 
-    // Sweep must NOT have run; familyToPurge is still in the database
-    const row = await getHousehold(org, familyToPurge.householdId);
-    expect(row).not.toBeNull();
+    // At the end a permitted list answers 200 and purges it, so the test shows that the sweep could have run.
+    const resList200 = await post(
+      "/v1/households/list",
+      { communitySlug: org.slug },
+      org.owner.accessToken,
+    );
+    expect(resList200.status).toBe(200);
+    expect(await getHousehold(org, familyToPurge.householdId)).toBeNull();
+    const finalPurged = await purgedEvents();
+    expect(finalPurged).toHaveLength(1);
+    expect(finalPurged[0]!.target_ids).toEqual([familyToPurge.householdId]);
   });
 
   // Pin 69
