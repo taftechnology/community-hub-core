@@ -655,6 +655,8 @@ export function FamilyRecordsPage() {
 
   const generation = useRef(0);
   const detailGeneration = useRef(0);
+  // Changes only with the community or the open family, never when the detail reloads.
+  const panelGeneration = useRef(0);
 
   const isReadOnly = status?.state === "none" || status?.state === "read_only" || paymentRequired;
   const hideWrites = readiness === "loading" || isReadOnly;
@@ -686,9 +688,19 @@ export function FamilyRecordsPage() {
 
   // An answer that belongs to an earlier community or filter is ignored.
   const scope = useRef(0);
+  const community = useRef(0);
   useEffect(() => {
     scope.current += 1;
   }, [slug, statusFilter]);
+  useEffect(() => {
+    community.current += 1;
+  }, [slug]);
+
+  // A reload after a late answer asks for the list on screen, not the one of the render that sent it.
+  const latestQuery = useRef({ slug, statusFilter, cursor });
+  useEffect(() => {
+    latestQuery.current = { slug, statusFilter, cursor };
+  });
 
   useEffect(() => {
     if (stored.status === "deleted" && !canFilterDeleted) {
@@ -704,6 +716,7 @@ export function FamilyRecordsPage() {
   const familyActions = useFamilyListActions({
     slug,
     scope,
+    community,
     statusFilter,
     setItems,
     setAlert: setListAlert,
@@ -719,7 +732,7 @@ export function FamilyRecordsPage() {
   });
   const familyDelete = useFamilyDelete({
     slug,
-    panel: detailGeneration,
+    panel: panelGeneration,
     onDone: () => {
       backToList();
       setHeadingFocusPending(true);
@@ -848,6 +861,7 @@ export function FamilyRecordsPage() {
 
   useEffect(() => {
     detailGeneration.current += 1;
+    panelGeneration.current += 1;
     setItems(null);
     setView("list");
     setSelectedHouseholdId(null);
@@ -914,6 +928,7 @@ export function FamilyRecordsPage() {
     setDetailHousehold(null);
     setUnlinkingLinkId(null);
     setUnlinkNotice(null);
+    panelGeneration.current += 1;
     const mine = ++detailGeneration.current;
     if (slug) {
       void fetchDetail(slug, householdId, () => detailGeneration.current === mine);
@@ -928,6 +943,7 @@ export function FamilyRecordsPage() {
   }
 
   function backToList() {
+    panelGeneration.current += 1;
     setView("list");
     setSelectedHouseholdId(null);
     setDetailHousehold(null);
@@ -939,9 +955,15 @@ export function FamilyRecordsPage() {
   }
 
   function reloadList() {
-    if (slug) {
+    const query = latestQuery.current;
+    if (query.slug) {
       const mine = ++generation.current;
-      void fetchHouseholds(slug, statusFilter, cursor, () => generation.current === mine);
+      void fetchHouseholds(
+        query.slug,
+        query.statusFilter,
+        query.cursor,
+        () => generation.current === mine,
+      );
     }
   }
 
@@ -1277,7 +1299,7 @@ export function FamilyRecordsPage() {
     setSubmitting(true);
     setNewAdultNotice(null);
     setNewAdultNotFound(false);
-    const mine = detailGeneration.current;
+    const mine = panelGeneration.current;
 
     try {
       const response = await post("/v1/households/members/add-adult", {
@@ -1305,7 +1327,7 @@ export function FamilyRecordsPage() {
 
       if (response.status === 409) {
         const code = await readErrorCode(response);
-        if (detailGeneration.current !== mine) {
+        if (panelGeneration.current !== mine) {
           return;
         }
         setNewAdultNotice(

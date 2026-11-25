@@ -6866,6 +6866,7 @@ describe("Family Records status, delete and restore (Task 8)", () => {
   const DELETE = "/v1/households/delete";
   const RESTORE = "/v1/households/restore";
   const ADD_ADULT = "/v1/households/members/add-adult";
+  const UNLINK = "/v1/households/guardians/unlink";
 
   const MSG_CHANGED = "Someone else changed this family. Reload and try again.";
   const MSG_FAILED = "Unable to save. Try again.";
@@ -6933,6 +6934,7 @@ describe("Family Records status, delete and restore (Task 8)", () => {
     del?: Handler;
     restore?: Handler;
     addAdult?: Handler;
+    unlink?: Handler;
   };
 
   function json(status: number, value: unknown): Response {
@@ -6984,6 +6986,30 @@ describe("Family Records status, delete and restore (Task 8)", () => {
       minors: [],
       guardians: [],
     };
+  }
+
+  // A family with a child and a guardian link, so Family Details offers Unlink.
+  function guardianDetail(body: Body): Response {
+    return json(200, {
+      ...detailBody(body),
+      minors: [
+        {
+          personId: "00000000-0000-4000-8000-000000000020",
+          givenName: "Mia",
+          familyName: "Clarke",
+          dateOfBirth: "2015-01-01",
+          version: 1,
+        },
+      ],
+      guardians: [
+        {
+          linkId: "00000000-0000-4000-8000-000000000030",
+          guardianId: "00000000-0000-4000-8000-000000000010",
+          childId: "00000000-0000-4000-8000-000000000020",
+          rights: { consent: true, pickup: false, view: true, manage: false },
+        },
+      ],
+    });
   }
 
   function defaultRead(body: Body): Response {
@@ -7053,6 +7079,9 @@ describe("Family Records status, delete and restore (Task 8)", () => {
         return options.restore
           ? options.restore(body)
           : json(200, { householdId: body.householdId, version: (body.version as number) + 1 });
+      }
+      if (path === UNLINK) {
+        return options.unlink ? options.unlink(body) : json(200, {});
       }
       if (path === ADD_ADULT) {
         return options.addAdult
@@ -8026,6 +8055,140 @@ describe("Family Records status, delete and restore (Task 8)", () => {
         expect(screen.getByLabelText<HTMLInputElement>("Given name").value).toBe("Beatrice");
         await resetScreen();
       }
+    });
+  });
+
+  describe("late answers and reloads", () => {
+    async function startUnlink(calls: Call[]) {
+      await openDetail("Clarke Family");
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Unlink Arthur Clarke from Mia Clarke" }),
+      );
+      fireEvent.click(await screen.findByRole("button", { name: "Confirm unlink" }));
+      await waitFor(() => expect(callsTo(calls, UNLINK)).toHaveLength(1));
+    }
+
+    it("a detail reload while a delete is open does not lose its answer", async () => {
+      for (const outcome of ["200", "409"] as const) {
+        const unlink = deferred();
+        const save = deferred();
+        const { calls } = await openScreen({
+          read: (body) => guardianDetail(body),
+          unlink: () => unlink.promise,
+          del: () => save.promise,
+        });
+        await startUnlink(calls);
+        const trigger = await screen.findByRole("button", { name: "Delete family" });
+        trigger.focus();
+        fireEvent.click(trigger);
+        const dialog = await screen.findByRole("dialog");
+        fireEvent.click(confirmButton(dialog));
+        await waitFor(() => expect(callsTo(calls, DELETE)).toHaveLength(1));
+
+        // The unlink answers while the delete is open: the detail reloads.
+        const readsBefore = callsTo(calls, READ).length;
+        await act(async () => {
+          unlink.release(json(200, {}));
+        });
+        await waitFor(() => expect(callsTo(calls, READ)).toHaveLength(readsBefore + 1));
+        const listBefore = callsTo(calls, LIST).length;
+
+        if (outcome === "200") {
+          await act(async () => {
+            save.release(
+              json(200, { householdId: ID_A, version: 4, purgeAfter: new Date().toISOString() }),
+            );
+          });
+          await waitFor(() => expect(screen.queryByRole("dialog"), outcome).toBeNull());
+          expect(await screen.findByRole("table", { name: "Households" })).toBeTruthy();
+          expect(screen.queryByRole("heading", { name: "Household Details" })).toBeNull();
+          await waitFor(() => expect(callsTo(calls, LIST), outcome).toHaveLength(listBefore + 1));
+          await expectHeadingFocused();
+          await flushPending();
+          expect(callsTo(calls, LIST), outcome).toHaveLength(listBefore + 1);
+        } else {
+          await act(async () => {
+            save.release(json(409, { code: "household_has_children" }));
+          });
+          expect((await within(dialog).findByRole("alert")).textContent).toBe(MSG_CHILD);
+          fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+          await waitFor(() => expect(screen.queryByRole("dialog"), outcome).toBeNull());
+          expect(callsTo(calls, LIST), outcome).toHaveLength(listBefore);
+        }
+        expect(callsTo(calls, DELETE), outcome).toHaveLength(1);
+        await resetScreen();
+      }
+    });
+
+    it("a restore that answers after a page change reloads the page on screen", async () => {
+      const save = deferred();
+      const { calls } = await openScreen({
+        list: (body) => {
+          if (body.status === "deleted") {
+            return body.cursor === "deleted-cursor-1"
+              ? json(200, {
+                  items: [{ ...DELETED_D, householdId: ID_E, label: "Page Two Family" }],
+                  nextCursor: null,
+                })
+              : json(200, { items: [DELETED_D], nextCursor: "deleted-cursor-1" });
+          }
+          return defaultList(body);
+        },
+        restore: () => save.promise,
+      });
+      fireEvent.change(statusSelect(), { target: { value: "deleted" } });
+      await screen.findByText("Moss Family");
+      fireEvent.click(screen.getByRole("button", { name: "Restore Moss Family" }));
+      await waitFor(() => expect(callsTo(calls, RESTORE)).toHaveLength(1));
+
+      fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+      await screen.findByText("Page Two Family");
+      const listBefore = callsTo(calls, LIST).length;
+      expect(callsTo(calls, LIST).at(-1)!.body).toEqual({
+        communitySlug: SLUG,
+        limit: 25,
+        status: "deleted",
+        cursor: "deleted-cursor-1",
+      });
+
+      await act(async () => {
+        save.release(json(200, { householdId: ID_D, version: 8 }));
+      });
+      await waitFor(() => expect(callsTo(calls, LIST)).toHaveLength(listBefore + 1));
+      expect(callsTo(calls, LIST).at(-1)!.body).toEqual({
+        communitySlug: SLUG,
+        limit: 25,
+        status: "deleted",
+        cursor: "deleted-cursor-1",
+      });
+      await flushPending();
+      expect(callsTo(calls, LIST)).toHaveLength(listBefore + 1);
+      expect(screen.getByText("Page Two Family")).toBeTruthy();
+      expect(screen.queryByText("Moss Family")).toBeNull();
+    });
+
+    it("a status answer after a filter change reloads the list once", async () => {
+      const save = deferred();
+      const { calls } = await openScreen({ status: () => save.promise });
+      fireEvent.click(screen.getByRole("switch", { name: "Active status for Clarke Family" }));
+      await waitFor(() => expect(callsTo(calls, STATUS)).toHaveLength(1));
+      fireEvent.change(statusSelect(), { target: { value: "active" } });
+      await screen.findByText("Hart Family");
+      await waitFor(() => expect(callsTo(calls, LIST)).toHaveLength(2));
+
+      await act(async () => {
+        save.release(json(200, { householdId: ID_A, version: 4, status: "inactive" }));
+      });
+      await waitFor(() => expect(callsTo(calls, LIST)).toHaveLength(3));
+      expect(callsTo(calls, LIST)[2]!.body).toEqual({
+        communitySlug: SLUG,
+        limit: 25,
+        status: "active",
+      });
+      await flushPending();
+      expect(callsTo(calls, LIST)).toHaveLength(3);
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(callsTo(calls, STATUS)).toHaveLength(1);
     });
   });
 

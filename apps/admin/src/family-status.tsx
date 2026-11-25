@@ -216,6 +216,8 @@ type ListActionParams = {
   slug: string;
   // Changes with the community and the status filter; an answer for an earlier one is ignored.
   scope: MutableRefObject<number>;
+  // Changes with the community only.
+  community: MutableRefObject<number>;
   statusFilter: StatusFilter;
   setItems: Dispatch<SetStateAction<HouseholdItem[] | null>>;
   setAlert: (message: string | null) => void;
@@ -226,7 +228,7 @@ type ListActionParams = {
 };
 
 export function useFamilyListActions(params: ListActionParams) {
-  const { slug, scope, statusFilter, setItems, setAlert } = params;
+  const { slug, scope, community, statusFilter, setItems, setAlert } = params;
   const [pending, setPending] = useState<Record<string, FamilyStatus>>({});
   const saving = useRef(new Set<string>());
   const [restoringId, setRestoringId] = useState<string | null>(null);
@@ -246,6 +248,19 @@ export function useFamilyListActions(params: ListActionParams) {
     }
     const next: FamilyStatus = item.status === "active" ? "inactive" : "active";
     const mine = scope.current;
+    const mineCommunity = community.current;
+    // Another community: ignore. Same community but another filter: the row on screen may have
+    // been loaded since, so reload the list once and say nothing.
+    function superseded(): boolean {
+      if (community.current !== mineCommunity) {
+        return true;
+      }
+      if (scope.current !== mine) {
+        params.reloadList();
+        return true;
+      }
+      return false;
+    }
     saving.current.add(id);
     setPending((prev) => ({ ...prev, [id]: next }));
     setAlert(null);
@@ -257,7 +272,7 @@ export function useFamilyListActions(params: ListActionParams) {
         version: item.version,
         status: next,
       });
-      if (scope.current !== mine) {
+      if (superseded()) {
         return;
       }
       if (response === "unavailable") {
@@ -283,7 +298,7 @@ export function useFamilyListActions(params: ListActionParams) {
       } catch {
         answer = null;
       }
-      if (scope.current !== mine) {
+      if (superseded()) {
         return;
       }
       if (answer === null) {
@@ -430,6 +445,7 @@ export function useFamilyDelete(params: DeleteParams) {
       return;
     }
     const mine = panel.current;
+    let stale = false;
     pendingRef.current = true;
     setPending(true);
     setError(null);
@@ -441,6 +457,7 @@ export function useFamilyDelete(params: DeleteParams) {
         version: target.version,
       });
       if (panel.current !== mine) {
+        stale = true;
         return;
       }
       if (response === "unavailable") {
@@ -460,6 +477,7 @@ export function useFamilyDelete(params: DeleteParams) {
       if (response.status === 409) {
         const code = await readErrorCode(response);
         if (panel.current !== mine) {
+          stale = true;
           return;
         }
         setError(code === "household_has_children" ? MESSAGE_HAS_CHILDREN : MESSAGE_CHANGED);
@@ -472,7 +490,7 @@ export function useFamilyDelete(params: DeleteParams) {
       setOpen(false);
       params.onDone();
     } finally {
-      if (panel.current === mine) {
+      if (!stale) {
         pendingRef.current = false;
         setPending(false);
       }
