@@ -8192,6 +8192,153 @@ describe("Family Records status, delete and restore (Task 8)", () => {
     });
   });
 
+  describe("focus and permissions kept in step (A3)", () => {
+    const MSG_READ_ONLY = "Read-only until billing is settled";
+    const FULL_ACCESS: PeopleAccess = {
+      permissions: {
+        "people.view": true,
+        "people.manage": true,
+        "people.restricted.read": true,
+        "people.delete": true,
+        "service_times.manage": false,
+      },
+      entitlements: {
+        "people.directory": true,
+        "people.households": true,
+        "module.engagement": false,
+      },
+    };
+    function accessTree(access: PeopleAccess) {
+      return (
+        <PeopleAccessContext.Provider value={{ access }}>
+          <CommunityProvider>
+            <BillingStatusProvider>
+              <MemoryRouter initialEntries={["/family-records"]}>
+                <FamilyRecordsPage />
+              </MemoryRouter>
+            </BillingStatusProvider>
+          </CommunityProvider>
+        </PeopleAccessContext.Provider>
+      );
+    }
+    function withoutKey(key: string): PeopleAccess {
+      return { ...FULL_ACCESS, permissions: { ...FULL_ACCESS.permissions, [key]: false } };
+    }
+    function alertWith(message: string): HTMLElement | undefined {
+      return screen.getAllByRole("alert").find((element) => element.textContent === message);
+    }
+
+    it("focus goes to the alert after a refused status change or restore", async () => {
+      const refusals: Array<{ name: string; answer: Handler; message: string }> = [
+        { name: "409", answer: () => empty(409), message: MSG_CHANGED },
+        { name: "500", answer: () => empty(500), message: MSG_FAILED },
+        { name: "network", answer: networkDown, message: MSG_FAILED },
+        { name: "402", answer: () => empty(402), message: MSG_READ_ONLY },
+      ];
+      for (const action of ["status", "restore"] as const) {
+        for (const refusal of refusals) {
+          const label = `${action} ${refusal.name}`;
+          await openScreen(
+            action === "status" ? { status: refusal.answer } : { restore: refusal.answer },
+          );
+          if (action === "status") {
+            fireEvent.click(
+              screen.getByRole("switch", { name: "Active status for Clarke Family" }),
+            );
+          } else {
+            await showDeleted();
+            fireEvent.click(screen.getByRole("button", { name: "Restore Moss Family" }));
+          }
+          await waitFor(() => expect(alertWith(refusal.message), label).toBeTruthy());
+          const alert = alertWith(refusal.message)!;
+          await waitFor(() => expect(document.activeElement, label).toBe(alert));
+          expect(alert.getAttribute("tabindex"), label).toBe("-1");
+          await resetScreen();
+        }
+      }
+    });
+
+    it("the Delete dialog closes when a key or write access is lost", async () => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      sessionStorage.setItem("community-hub.community", SLUG);
+      const calls = mockFamilyApi();
+      for (const lost of ["people.delete", "people.restricted.read"]) {
+        const view = render(accessTree(FULL_ACCESS));
+        await screen.findByRole("table", { name: "Households" });
+        await openDetail("Clarke Family");
+        const trigger = await screen.findByRole("button", { name: "Delete family" });
+        trigger.focus();
+        fireEvent.click(trigger);
+        await screen.findByRole("dialog");
+        const deletes = callsTo(calls, DELETE).length;
+
+        view.rerender(accessTree(withoutKey(lost)));
+        await waitFor(() => expect(screen.queryByRole("dialog"), lost).toBeNull());
+        expect(screen.queryByRole("button", { name: "Delete family" }), lost).toBeNull();
+        await waitFor(() =>
+          expect(document.activeElement, lost).toBe(
+            screen.getByRole("heading", { name: "Household Details" }),
+          ),
+        );
+        await flushPending();
+        expect(callsTo(calls, DELETE), lost).toHaveLength(deletes);
+        view.unmount();
+      }
+      await resetScreen();
+
+      // Write access lost: the delete itself answers 402. The request is sent once, and the dialog
+      // closes with the screen's read-only message.
+      const { calls: writeCalls } = await openScreen({ del: () => empty(402) });
+      const { dialog } = await openDeleteDialog("Clarke Family");
+      fireEvent.click(confirmButton(dialog));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await screen.findByText(MSG_READ_ONLY);
+      await waitFor(() =>
+        expect(document.activeElement).toBe(
+          screen.getByRole("heading", { name: "Household Details" }),
+        ),
+      );
+      await flushPending();
+      expect(callsTo(writeCalls, DELETE)).toHaveLength(1);
+      expect(screen.queryByRole("button", { name: "Delete family" })).toBeNull();
+    });
+
+    it("no deleted row renders after the Deleted filter loses a key", async () => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      sessionStorage.setItem("community-hub.community", SLUG);
+      const reload = deferred();
+      let hold = false;
+      mockFamilyApi({
+        list: (body) => {
+          if (body.status === "deleted") {
+            return json(200, { items: [DELETED_D], nextCursor: null });
+          }
+          return hold ? reload.promise : defaultList(body);
+        },
+      });
+      const view = render(accessTree(FULL_ACCESS));
+      await screen.findByRole("table", { name: "Households" });
+      await showDeleted();
+      expect(screen.getByText("Moss Family")).toBeTruthy();
+      hold = true;
+
+      view.rerender(accessTree(withoutKey("people.delete")));
+      await waitFor(() => expect(statusSelect().value).toBe(""));
+      await flushPending();
+      // The list reload is still open: nothing of the deleted list may be on screen.
+      expect(screen.queryByText("Moss Family")).toBeNull();
+      expect(screen.queryByText(/deleted permanently on/)).toBeNull();
+      expect(screen.queryByRole("button", { name: "Restore Moss Family" })).toBeNull();
+      expect(screen.queryByRole("columnheader", { name: "Deleted" })).toBeNull();
+
+      await act(async () => {
+        reload.release(json(200, { items: ALL, nextCursor: null }));
+      });
+      await screen.findByText("Clarke Family");
+      expect(screen.queryByText("Moss Family")).toBeNull();
+    });
+  });
+
   describe("accessibility", () => {
     it("has no axe violations in the list with switches, without people.manage and in the read-only community", async () => {
       const full = await openScreen();

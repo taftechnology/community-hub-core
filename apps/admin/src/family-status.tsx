@@ -224,6 +224,8 @@ type ListActionParams = {
   applyAnswer: (householdId: string, version: number, status: FamilyStatus) => void;
   reloadList: () => void;
   focusHeading: () => void;
+  // Moves focus to the list alert once it is on screen.
+  focusAlert: () => void;
   onPaymentRequired: () => void;
 };
 
@@ -261,6 +263,11 @@ export function useFamilyListActions(params: ListActionParams) {
       }
       return false;
     }
+    // A refused or failed change says why, and focus goes to that message.
+    function refuse(message: string) {
+      setAlert(message);
+      params.focusAlert();
+    }
     saving.current.add(id);
     setPending((prev) => ({ ...prev, [id]: next }));
     setAlert(null);
@@ -276,20 +283,20 @@ export function useFamilyListActions(params: ListActionParams) {
         return;
       }
       if (response === "unavailable") {
-        setAlert(MESSAGE_FAILED);
+        refuse(MESSAGE_FAILED);
         return;
       }
       if (response.status === 402) {
         params.onPaymentRequired();
-        setAlert(MESSAGE_READ_ONLY);
+        refuse(MESSAGE_READ_ONLY);
         return;
       }
       if (response.status === 409) {
-        setAlert(MESSAGE_CHANGED);
+        refuse(MESSAGE_CHANGED);
         return;
       }
       if (response.status !== 200) {
-        setAlert(MESSAGE_FAILED);
+        refuse(MESSAGE_FAILED);
         return;
       }
       let answer: { version: number; status: FamilyStatus } | null = null;
@@ -302,7 +309,7 @@ export function useFamilyListActions(params: ListActionParams) {
         return;
       }
       if (answer === null) {
-        setAlert(MESSAGE_FAILED);
+        refuse(MESSAGE_FAILED);
         return;
       }
       const { version, status } = answer;
@@ -330,6 +337,11 @@ export function useFamilyListActions(params: ListActionParams) {
       return;
     }
     const mine = scope.current;
+    // A refused or failed restore says why, and focus goes to that message.
+    function refuse(message: string) {
+      setAlert(message);
+      params.focusAlert();
+    }
     restoring.current = id;
     setRestoringId(id);
     setAlert(null);
@@ -344,12 +356,12 @@ export function useFamilyListActions(params: ListActionParams) {
         return;
       }
       if (response === "unavailable") {
-        setAlert(MESSAGE_FAILED);
+        refuse(MESSAGE_FAILED);
         return;
       }
       if (response.status === 402) {
         params.onPaymentRequired();
-        setAlert(MESSAGE_READ_ONLY);
+        refuse(MESSAGE_READ_ONLY);
         return;
       }
       if (response.status === 404) {
@@ -359,11 +371,11 @@ export function useFamilyListActions(params: ListActionParams) {
         return;
       }
       if (response.status === 409) {
-        setAlert(MESSAGE_CHANGED);
+        refuse(MESSAGE_CHANGED);
         return;
       }
       if (response.status !== 200) {
-        setAlert(MESSAGE_FAILED);
+        refuse(MESSAGE_FAILED);
         return;
       }
       params.reloadList();
@@ -429,6 +441,17 @@ export function useFamilyDelete(params: DeleteParams) {
     setTarget({ ...family, purgeOn });
     setError(null);
     setOpen(true);
+  }
+
+  // The key or write access to delete was lost while the dialog was open. A request that is already
+  // sent stays sent and is not repeated; focus goes to the fallback once the dialog is gone.
+  function close() {
+    if (!open) {
+      return;
+    }
+    setOpen(false);
+    setError(null);
+    setRefocus(true);
   }
 
   function cancel() {
@@ -516,5 +539,5 @@ export function useFamilyDelete(params: DeleteParams) {
     />
   );
 
-  return { dialog, openDialog, reset };
+  return { dialog, openDialog, close, reset };
 }

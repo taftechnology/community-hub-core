@@ -1527,6 +1527,41 @@ describe("Emergency contacts panel", () => {
       expect(callsTo(second.calls, READ_CONTACTS)).toHaveLength(1);
     });
 
+    it("the contacts are dropped when the family answers not found", async () => {
+      let reads = 0;
+      const { calls } = await openScreen({
+        rename: () => json(409, {}),
+        detail: (body) => {
+          reads += 1;
+          return reads === 2 ? empty(404) : json(200, detailBody(body.householdId, 3));
+        },
+      });
+      await openFamilyWithPanel();
+      await showLoaded();
+      await screen.findByText(MAYA.name);
+
+      async function refusedRenameThenReload() {
+        const before = callsTo(calls, READ).length;
+        fireEvent.click(screen.getByRole("button", { name: "Rename household" }));
+        fireEvent.click(await screen.findByRole("button", { name: "Save changes" }));
+        fireEvent.click(await screen.findByRole("button", { name: "Reload" }));
+        await waitFor(() => expect(callsTo(calls, READ)).toHaveLength(before + 1));
+      }
+
+      // The reload answers not found: the panel is gone and nothing of the contacts is on screen.
+      await refusedRenameThenReload();
+      await screen.findByText("Household not found");
+      expect(screen.queryByRole("heading", { name: "Emergency contacts" })).toBeNull();
+      expectNoValues(VALUES, "after not found");
+
+      // The family is readable again: the panel comes back closed, not with the old contacts.
+      await refusedRenameThenReload();
+      await screen.findByRole("heading", { name: "Emergency contacts" });
+      await flushPending();
+      expect(showButton()).toBeTruthy();
+      expectNoValues(VALUES, "after the family is back");
+    });
+
     it("opening another family drops the contacts", async () => {
       const { calls } = await withTypedRow();
       fireEvent.click(screen.getByRole("button", { name: "Back to list" }));

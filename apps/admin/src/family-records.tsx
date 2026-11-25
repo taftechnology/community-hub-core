@@ -504,6 +504,8 @@ export function FamilyRecordsPage() {
   const [itemsDeleted, setItemsDeleted] = useState(false);
   const [listAlert, setListAlert] = useState<string | null>(null);
   const [headingFocusPending, setHeadingFocusPending] = useState(false);
+  const [alertFocusPending, setAlertFocusPending] = useState(false);
+  const listAlertRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
 
@@ -733,6 +735,7 @@ export function FamilyRecordsPage() {
     },
     reloadList,
     focusHeading: () => setHeadingFocusPending(true),
+    focusAlert: () => setAlertFocusPending(true),
     onPaymentRequired,
   });
   const familyDelete = useFamilyDelete({
@@ -779,6 +782,22 @@ export function FamilyRecordsPage() {
     listHeadingRef.current?.focus();
     setHeadingFocusPending(false);
   }, [headingFocusPending, loading, view]);
+
+  // After a refused or failed status change or restore, focus goes to the alert.
+  useEffect(() => {
+    if (!alertFocusPending || listAlert === null || view !== "list") {
+      return;
+    }
+    listAlertRef.current?.focus();
+    setAlertFocusPending(false);
+  }, [alertFocusPending, listAlert, view]);
+
+  // Losing the key or write access to delete closes an open Delete dialog.
+  useEffect(() => {
+    if (!canDeleteFamily) {
+      familyDelete.close();
+    }
+  }, [canDeleteFamily]);
 
   const fetchHouseholds = useCallback(
     async (
@@ -906,6 +925,7 @@ export function FamilyRecordsPage() {
     setItemsDeleted(false);
     setListAlert(null);
     setHeadingFocusPending(false);
+    setAlertFocusPending(false);
     familyActions.reset();
     familyDelete.reset();
     setCreateLabel("");
@@ -2511,7 +2531,7 @@ export function FamilyRecordsPage() {
       ) : null}
 
       {listAlert ? (
-        <Alert variant="destructive" role="alert">
+        <Alert ref={listAlertRef} tabIndex={-1} variant="destructive" role="alert">
           <span>{listAlert}</span>
         </Alert>
       ) : null}
