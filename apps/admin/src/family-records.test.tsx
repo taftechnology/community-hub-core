@@ -970,8 +970,8 @@ describe("Family Records list view", () => {
 
     expect(await screen.findByText("Vance Household")).toBeTruthy();
     const cells = Array.from(document.querySelectorAll("table[aria-label='Households'] tbody td"));
-    expect(cells.length).toBe(3);
-    const allowedLabels = new Set(["Household", "Adults", "Actions"]);
+    expect(cells.length).toBe(4);
+    const allowedLabels = new Set(["Household", "Adults", "Status", "Actions"]);
     for (const cell of cells) {
       const dataLabel = cell.getAttribute("data-label");
       expect(allowedLabels.has(dataLabel ?? "")).toBe(true);
@@ -6847,6 +6847,1224 @@ describe("Family Records - Create new adult", () => {
       await openNewAdultForm();
       expect(screen.queryByLabelText("Source")).toBeNull();
       expect(screen.queryByRole("combobox", { name: "Source" })).toBeNull();
+    });
+  });
+});
+
+describe("Family Records status, delete and restore (Task 8)", () => {
+  const ID_A = "00000000-0000-4000-8000-0000000000c1";
+  const ID_B = "00000000-0000-4000-8000-0000000000c2";
+  const ID_C = "00000000-0000-4000-8000-0000000000c3";
+  const ID_D = "00000000-0000-4000-8000-0000000000c4";
+  const ID_E = "00000000-0000-4000-8000-0000000000c5";
+  const OTHER_SLUG = "other-parish";
+  const DAY = 24 * 60 * 60 * 1000;
+  const HOUR = 60 * 60 * 1000;
+  const LIST = "/v1/households/list";
+  const READ = "/v1/households/read";
+  const STATUS = "/v1/households/status";
+  const DELETE = "/v1/households/delete";
+  const RESTORE = "/v1/households/restore";
+  const ADD_ADULT = "/v1/households/members/add-adult";
+
+  const MSG_CHANGED = "Someone else changed this family. Reload and try again.";
+  const MSG_FAILED = "Unable to save. Try again.";
+  const MSG_CHILD = "This family has a child in it, so it can't be deleted.";
+  const MSG_NOT_RESTORABLE =
+    "This family can't be restored. It may already be restored or deleted permanently.";
+  const MSG_DUPLICATE = "A deleted contact has this email (or phone).";
+  const MSG_DUPLICATE_RESTORE = `${MSG_DUPLICATE} Restore it from the Deleted filter.`;
+  const MSG_OLD_DUPLICATE =
+    "A contact with this email or phone already exists. Search for them instead.";
+
+  const ITEM_A = {
+    householdId: ID_A,
+    version: 3,
+    label: "Clarke Family",
+    adultCount: 2,
+    status: "active",
+  };
+  const ITEM_B = {
+    householdId: ID_B,
+    version: 5,
+    label: "Webb Family",
+    adultCount: 1,
+    status: "inactive",
+  };
+  const ITEM_C = {
+    householdId: ID_C,
+    version: 2,
+    label: "Hart Family",
+    adultCount: 1,
+    status: "active",
+  };
+  const ALL = [ITEM_A, ITEM_B, ITEM_C];
+
+  const deletedAt = new Date(Date.now() - 2 * DAY).toISOString();
+  const purgeAfter = new Date(Date.now() + 28 * DAY).toISOString();
+  const DELETED_D = {
+    householdId: ID_D,
+    label: "Moss Family",
+    adultCount: 1,
+    version: 7,
+    deletedAt,
+    purgeAfter,
+  };
+  const DELETED_PAST = {
+    householdId: ID_E,
+    label: "Lowe Family",
+    adultCount: 2,
+    version: 9,
+    deletedAt: new Date(Date.now() - 31 * DAY).toISOString(),
+    purgeAfter: new Date(Date.now() - 1 * HOUR).toISOString(),
+  };
+
+  type Body = Record<string, unknown>;
+  type Call = { path: string; url: string; body: Body };
+  type Handler = (body: Body) => Response | Promise<Response>;
+  type Options = {
+    canDelete?: boolean;
+    canManage?: boolean;
+    canRestricted?: boolean;
+    billing?: "ok" | "read_only" | "loading";
+    list?: Handler;
+    read?: Handler;
+    status?: Handler;
+    del?: Handler;
+    restore?: Handler;
+    addAdult?: Handler;
+  };
+
+  function json(status: number, value: unknown): Response {
+    return new Response(JSON.stringify(value), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  function empty(status: number): Response {
+    return new Response(null, { status });
+  }
+
+  function networkDown(): Response {
+    throw new TypeError("network down");
+  }
+
+  function longDate(value: string | number): string {
+    return new Intl.DateTimeFormat("en-AU", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    }).format(new Date(value));
+  }
+
+  function defaultList(body: Body): Response {
+    if (body.status === "deleted") {
+      return json(200, { items: [DELETED_D], nextCursor: null });
+    }
+    const items = body.status === undefined ? ALL : ALL.filter((i) => i.status === body.status);
+    return json(200, { items, nextCursor: null });
+  }
+
+  function detailBody(body: Body) {
+    const found = ALL.find((i) => i.householdId === body.householdId);
+    return {
+      householdId: body.householdId,
+      version: found?.version ?? 1,
+      status: found?.status ?? "active",
+      label: found?.label ?? null,
+      adults: [
+        {
+          personId: "00000000-0000-4000-8000-000000000010",
+          givenName: "Arthur",
+          familyName: "Clarke",
+          version: 1,
+        },
+      ],
+      minors: [],
+      guardians: [],
+    };
+  }
+
+  function defaultRead(body: Body): Response {
+    return json(200, detailBody(body));
+  }
+
+  function mockFamilyApi(options: Options = {}) {
+    const calls: Call[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
+      const url = String(info);
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      let body: Body = {};
+      if (init?.body) {
+        const parsed: unknown = JSON.parse(String(init.body));
+        body = typeof parsed === "object" && parsed !== null ? { ...parsed } : {};
+      }
+      calls.push({ path, url, body });
+
+      if (path === "/v1/access/capabilities") {
+        return json(200, {
+          permissions: {
+            "people.view": true,
+            "people.manage": options.canManage ?? true,
+            "people.restricted.read": options.canRestricted ?? true,
+            "people.delete": options.canDelete ?? true,
+          },
+          entitlements: { "people.directory": true, "people.households": true },
+        });
+      }
+      if (path === "/v1/billing/status") {
+        if (options.billing === "loading") {
+          return new Promise<Response>(() => {});
+        }
+        return json(200, {
+          state: options.billing ?? "ok",
+          trial_end: null,
+          grace_until: null,
+          canView: true,
+          canManage: true,
+        });
+      }
+      if (path === LIST) {
+        return (options.list ?? defaultList)(body);
+      }
+      if (path === READ) {
+        return (options.read ?? defaultRead)(body);
+      }
+      if (path === STATUS) {
+        return options.status
+          ? options.status(body)
+          : json(200, {
+              householdId: body.householdId,
+              version: (body.version as number) + 1,
+              status: body.status,
+            });
+      }
+      if (path === DELETE) {
+        return options.del
+          ? options.del(body)
+          : json(200, {
+              householdId: body.householdId,
+              version: (body.version as number) + 1,
+              purgeAfter: new Date(Date.now() + 30 * DAY).toISOString(),
+            });
+      }
+      if (path === RESTORE) {
+        return options.restore
+          ? options.restore(body)
+          : json(200, { householdId: body.householdId, version: (body.version as number) + 1 });
+      }
+      if (path === ADD_ADULT) {
+        return options.addAdult
+          ? options.addAdult(body)
+          : json(201, { personId: "00000000-0000-4000-8000-000000000066" });
+      }
+      if (path === "/v1/people/life-events/list") {
+        return json(200, { items: [] });
+      }
+      return empty(404);
+    });
+    return calls;
+  }
+
+  function callsTo(calls: Call[], path: string): Call[] {
+    return calls.filter((call) => call.path === path);
+  }
+
+  async function openScreen(options: Options = {}) {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const calls = mockFamilyApi(options);
+    const container = await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+    await screen.findByRole("table", { name: "Households" });
+    return { calls, container };
+  }
+
+  async function resetScreen() {
+    cleanup();
+    sessionStorage.clear();
+    vi.restoreAllMocks();
+    document.documentElement.removeAttribute("data-theme");
+    await router.navigate("/");
+  }
+
+  async function flushPending() {
+    for (let turn = 0; turn < 3; turn += 1) {
+      await act(async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      });
+    }
+  }
+
+  function statusSelect(): HTMLSelectElement {
+    return screen.getByRole<HTMLSelectElement>("combobox", { name: "Status" });
+  }
+
+  async function showDeleted() {
+    fireEvent.change(statusSelect(), { target: { value: "deleted" } });
+    await screen.findByText(/^Deleted .*, deleted permanently on /);
+  }
+
+  async function openDetail(name: string) {
+    fireEvent.click(await screen.findByRole("button", { name: `View ${name}` }));
+    await screen.findByText("Arthur");
+  }
+
+  async function openDeleteDialog(name: string) {
+    await openDetail(name);
+    const trigger = await screen.findByRole("button", { name: "Delete family" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = await screen.findByRole("dialog");
+    return { trigger, dialog };
+  }
+
+  function confirmButton(dialog: HTMLElement): HTMLElement {
+    return within(dialog).getByRole("button", { name: "Delete family" });
+  }
+
+  async function expectHeadingFocused() {
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Family Records" })),
+    );
+  }
+
+  async function switchCommunity() {
+    // An open Delete dialog is modal and hides the picker from the accessibility tree.
+    fireEvent.change(screen.getByRole("textbox", { name: "Community", hidden: true }), {
+      target: { value: OTHER_SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set", hidden: true }));
+    await screen.findByRole("table", { name: "Households" });
+    await flushPending();
+  }
+
+  async function expectNoViolations(target: HTMLElement, label: string) {
+    for (const theme of ["light", "dark"] as const) {
+      document.documentElement.dataset.theme = theme;
+      const results = await axe.run(target, { rules: { "color-contrast": { enabled: false } } });
+      expect(resultIds(results, "violations"), `${label} ${theme}`).toEqual([]);
+    }
+    document.documentElement.removeAttribute("data-theme");
+  }
+
+  function deferred() {
+    let release: (response: Response) => void = () => {};
+    const promise = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    return { promise, release: (response: Response) => release(response) };
+  }
+
+  describe("status filter", () => {
+    it("the status filter sends status only when a filter is chosen", async () => {
+      const { calls } = await openScreen();
+      const select = statusSelect();
+      expect(Array.from(select.options).map((option) => option.textContent)).toEqual([
+        "All",
+        "Active",
+        "Inactive",
+        "Deleted",
+      ]);
+      expect(callsTo(calls, LIST)).toHaveLength(1);
+      expect(callsTo(calls, LIST)[0]!.body).toEqual({ communitySlug: SLUG, limit: 25 });
+
+      fireEvent.change(select, { target: { value: "active" } });
+      await waitFor(() => expect(callsTo(calls, LIST)).toHaveLength(2));
+      expect(callsTo(calls, LIST)[1]!.body).toEqual({
+        communitySlug: SLUG,
+        limit: 25,
+        status: "active",
+      });
+      expect(await screen.findByText("Clarke Family")).toBeTruthy();
+      expect(screen.queryByText("Webb Family")).toBeNull();
+
+      fireEvent.change(select, { target: { value: "" } });
+      await waitFor(() => expect(callsTo(calls, LIST)).toHaveLength(3));
+      expect(callsTo(calls, LIST)[2]!.body).toEqual({ communitySlug: SLUG, limit: 25 });
+      await flushPending();
+      expect(callsTo(calls, LIST)).toHaveLength(3);
+    });
+
+    it("the Deleted option is not rendered without all three keys", async () => {
+      const cases: Array<{ canDelete: boolean; canRestricted: boolean; offered: boolean }> = [
+        { canDelete: true, canRestricted: true, offered: true },
+        { canDelete: false, canRestricted: true, offered: false },
+        { canDelete: true, canRestricted: false, offered: false },
+        { canDelete: false, canRestricted: false, offered: false },
+      ];
+      for (const { canDelete, canRestricted, offered } of cases) {
+        await openScreen({ canDelete, canRestricted });
+        const labels = Array.from(statusSelect().options).map((option) => option.textContent);
+        expect(labels.includes("Deleted"), `${canDelete} ${canRestricted}`).toBe(offered);
+        expect(labels.slice(0, 3)).toEqual(["All", "Active", "Inactive"]);
+        await resetScreen();
+      }
+    });
+
+    it("a missing or unknown status in a list item is read as active", async () => {
+      await openScreen({
+        list: () =>
+          json(200, {
+            items: [
+              { householdId: ID_A, version: 3, label: "Old Family", adultCount: 1 },
+              {
+                householdId: ID_B,
+                version: 5,
+                label: "Odd Family",
+                adultCount: 1,
+                status: "weird",
+              },
+            ],
+            nextCursor: null,
+          }),
+      });
+      expect(
+        screen.getByRole<HTMLInputElement>("switch", { name: "Active status for Old Family" })
+          .checked,
+      ).toBe(true);
+      expect(
+        screen.getByRole<HTMLInputElement>("switch", { name: "Active status for Odd Family" })
+          .checked,
+      ).toBe(true);
+    });
+
+    it("a caller without people.manage sees a status badge and no switch", async () => {
+      await openScreen({ canManage: false });
+      expect(screen.queryAllByRole("switch")).toHaveLength(0);
+      const table = screen.getByRole("table", { name: "Households" });
+      const badges = Array.from(table.querySelectorAll("[data-slot='status-badge']")).map(
+        (badge) => badge.textContent,
+      );
+      expect(badges).toEqual(["Active", "Inactive", "Active"]);
+    });
+
+    it("goes back to All, and never shows deleted rows, when the Deleted filter loses a key", async () => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      sessionStorage.setItem("community-hub.community", SLUG);
+      const calls = mockFamilyApi();
+      const full: PeopleAccess = {
+        permissions: {
+          "people.view": true,
+          "people.manage": true,
+          "people.restricted.read": true,
+          "people.delete": true,
+          "service_times.manage": false,
+        },
+        entitlements: {
+          "people.directory": true,
+          "people.households": true,
+          "module.engagement": false,
+        },
+      };
+      function tree(access: PeopleAccess) {
+        return (
+          <PeopleAccessContext.Provider value={{ access }}>
+            <CommunityProvider>
+              <BillingStatusProvider>
+                <MemoryRouter initialEntries={["/family-records"]}>
+                  <FamilyRecordsPage />
+                </MemoryRouter>
+              </BillingStatusProvider>
+            </CommunityProvider>
+          </PeopleAccessContext.Provider>
+        );
+      }
+
+      const view = render(tree(full));
+      await screen.findByRole("table", { name: "Households" });
+      await showDeleted();
+      expect(screen.getByText("Moss Family")).toBeTruthy();
+      const before = callsTo(calls, LIST).length;
+
+      for (const lost of ["people.delete", "people.restricted.read"]) {
+        view.rerender(tree(full));
+        fireEvent.change(statusSelect(), { target: { value: "deleted" } });
+        await screen.findByText("Moss Family");
+        const sent = callsTo(calls, LIST).length;
+        view.rerender(tree({ ...full, permissions: { ...full.permissions, [lost]: false } }));
+        await screen.findByText("Clarke Family");
+        expect(screen.queryByText("Moss Family"), lost).toBeNull();
+        expect(statusSelect().value, lost).toBe("");
+        await flushPending();
+        const sentAfter = callsTo(calls, LIST).slice(sent);
+        expect(sentAfter, lost).toHaveLength(1);
+        expect(sentAfter[0]!.body, lost).toEqual({ communitySlug: SLUG, limit: 25 });
+      }
+      expect(callsTo(calls, LIST).length).toBeGreaterThan(before);
+    });
+
+    it("a late list answer of the previous filter is ignored", async () => {
+      const late = deferred();
+      const { calls } = await openScreen({
+        list: (body) => {
+          if (body.status === "inactive") {
+            return late.promise;
+          }
+          return defaultList(body);
+        },
+      });
+      fireEvent.change(statusSelect(), { target: { value: "inactive" } });
+      await waitFor(() => expect(callsTo(calls, LIST)).toHaveLength(2));
+      fireEvent.change(statusSelect(), { target: { value: "active" } });
+      await waitFor(() => expect(callsTo(calls, LIST)).toHaveLength(3));
+      expect(await screen.findByText("Hart Family")).toBeTruthy();
+
+      await act(async () => {
+        late.release(json(200, { items: [ITEM_B], nextCursor: null }));
+      });
+      await flushPending();
+      expect(screen.queryByText("Webb Family")).toBeNull();
+      expect(screen.getByText("Clarke Family")).toBeTruthy();
+      expect(statusSelect().value).toBe("active");
+      expect(callsTo(calls, LIST)).toHaveLength(3);
+    });
+  });
+
+  describe("status switch", () => {
+    it("the status switch has an accessible name with the family name and no name in the URL or title", async () => {
+      const { calls } = await openScreen({
+        list: () =>
+          json(200, {
+            items: [ITEM_A, { ...ITEM_B, label: null }],
+            nextCursor: null,
+          }),
+      });
+      expect(
+        screen.getByRole<HTMLInputElement>("switch", { name: "Active status for Clarke Family" })
+          .checked,
+      ).toBe(true);
+      expect(
+        screen.getByRole<HTMLInputElement>("switch", { name: "Inactive status for this family" })
+          .checked,
+      ).toBe(false);
+      expect(document.title).not.toContain("Clarke");
+      for (const call of calls) {
+        expect(call.url).not.toContain("Clarke");
+      }
+    });
+
+    it("the status switch is optimistic and disabled while its own save is open", async () => {
+      const save = deferred();
+      const { calls } = await openScreen({ status: () => save.promise });
+      const own = screen.getByRole<HTMLInputElement>("switch", {
+        name: "Active status for Clarke Family",
+      });
+      const other = screen.getByRole<HTMLInputElement>("switch", {
+        name: "Active status for Hart Family",
+      });
+      fireEvent.click(own);
+      expect(own.checked).toBe(false);
+      expect(own.disabled).toBe(true);
+      expect(other.disabled).toBe(false);
+      fireEvent.click(own);
+      await waitFor(() => expect(callsTo(calls, STATUS)).toHaveLength(1));
+      expect(callsTo(calls, STATUS)[0]!.body).toEqual({
+        communitySlug: SLUG,
+        householdId: ID_A,
+        version: 3,
+        status: "inactive",
+      });
+
+      await act(async () => {
+        save.release(json(200, { householdId: ID_A, version: 4, status: "inactive" }));
+      });
+      await waitFor(() => expect(own.disabled).toBe(false));
+      expect(own.checked).toBe(false);
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(callsTo(calls, STATUS)).toHaveLength(1);
+    });
+
+    it("the status switch returns to its stored value when the save fails", async () => {
+      const failures: Array<{ name: string; answer: Handler; message: string }> = [
+        { name: "409", answer: () => empty(409), message: MSG_CHANGED },
+        { name: "500", answer: () => empty(500), message: MSG_FAILED },
+        { name: "503", answer: () => empty(503), message: MSG_FAILED },
+        { name: "network", answer: networkDown, message: MSG_FAILED },
+        { name: "bad body", answer: () => json(200, { nope: true }), message: MSG_FAILED },
+      ];
+      for (const failure of failures) {
+        const { calls } = await openScreen({ status: failure.answer });
+        const own = screen.getByRole<HTMLInputElement>("switch", {
+          name: "Active status for Clarke Family",
+        });
+        fireEvent.click(own);
+        expect((await screen.findByRole("alert")).textContent, failure.name).toBe(failure.message);
+        expect(own.checked, failure.name).toBe(true);
+        expect(own.disabled, failure.name).toBe(false);
+        expect(callsTo(calls, STATUS), failure.name).toHaveLength(1);
+        expect(callsTo(calls, LIST), failure.name).toHaveLength(1);
+        await resetScreen();
+      }
+    });
+
+    it("the status switch uses the version of the last answer", async () => {
+      const { calls } = await openScreen();
+      const own = screen.getByRole<HTMLInputElement>("switch", {
+        name: "Active status for Clarke Family",
+      });
+      fireEvent.click(own);
+      await waitFor(() => expect(callsTo(calls, STATUS)).toHaveLength(1));
+      await waitFor(() =>
+        expect(
+          screen.getByRole<HTMLInputElement>("switch", {
+            name: "Inactive status for Clarke Family",
+          }).disabled,
+        ).toBe(false),
+      );
+      expect(callsTo(calls, STATUS)[0]!.body.version).toBe(3);
+
+      fireEvent.click(screen.getByRole("switch", { name: "Inactive status for Clarke Family" }));
+      await waitFor(() => expect(callsTo(calls, STATUS)).toHaveLength(2));
+      expect(callsTo(calls, STATUS)[1]!.body).toEqual({
+        communitySlug: SLUG,
+        householdId: ID_A,
+        version: 4,
+        status: "active",
+      });
+      expect(callsTo(calls, LIST)).toHaveLength(1);
+    });
+
+    it("under an Active filter a family that became inactive leaves the list, and focus goes to the heading", async () => {
+      const { calls } = await openScreen();
+      fireEvent.change(statusSelect(), { target: { value: "active" } });
+      await screen.findByText("Hart Family");
+      await waitFor(() => expect(callsTo(calls, LIST)).toHaveLength(2));
+
+      fireEvent.click(screen.getByRole("switch", { name: "Active status for Clarke Family" }));
+      await waitFor(() => expect(screen.queryByText("Clarke Family")).toBeNull());
+      expect(screen.getByText("Hart Family")).toBeTruthy();
+      await expectHeadingFocused();
+      await flushPending();
+      expect(callsTo(calls, LIST)).toHaveLength(2);
+    });
+
+    it("a status answer that arrives after the community changed is ignored", async () => {
+      const answers: Array<{ name: string; answer: () => Response }> = [
+        {
+          name: "200",
+          answer: () => json(200, { householdId: ID_A, version: 4, status: "inactive" }),
+        },
+        { name: "409", answer: () => empty(409) },
+        { name: "500", answer: () => empty(500) },
+      ];
+      for (const late of answers) {
+        const save = deferred();
+        const { calls } = await openScreen({ status: () => save.promise });
+        fireEvent.click(screen.getByRole("switch", { name: "Active status for Clarke Family" }));
+        await waitFor(() => expect(callsTo(calls, STATUS)).toHaveLength(1));
+
+        await switchCommunity();
+        const listBefore = callsTo(calls, LIST).length;
+        await act(async () => {
+          save.release(late.answer());
+        });
+        await flushPending();
+        expect(screen.queryByRole("alert"), late.name).toBeNull();
+        const own = screen.getByRole<HTMLInputElement>("switch", {
+          name: "Active status for Clarke Family",
+        });
+        expect(own.checked, late.name).toBe(true);
+        expect(own.disabled, late.name).toBe(false);
+        expect(callsTo(calls, LIST), late.name).toHaveLength(listBefore);
+        expect(callsTo(calls, STATUS), late.name).toHaveLength(1);
+        await resetScreen();
+      }
+    });
+
+    it("an answer for the open family updates its version and status in Family Details", async () => {
+      const save = deferred();
+      const { calls } = await openScreen({ status: () => save.promise });
+      fireEvent.click(screen.getByRole("switch", { name: "Active status for Clarke Family" }));
+      await waitFor(() => expect(callsTo(calls, STATUS)).toHaveLength(1));
+      await openDetail("Clarke Family");
+      expect(screen.getByText("Active", { selector: "[data-slot='status-badge']" })).toBeTruthy();
+
+      await act(async () => {
+        save.release(json(200, { householdId: ID_A, version: 4, status: "inactive" }));
+      });
+      expect(
+        await screen.findByText("Inactive", { selector: "[data-slot='status-badge']" }),
+      ).toBeTruthy();
+
+      fireEvent.click(screen.getByRole("button", { name: "Rename household" }));
+      fireEvent.change(await screen.findByLabelText("Household name"), {
+        target: { value: "Clarke Household" },
+      });
+      const renames: Body[] = [];
+      const fetchSpy = vi.mocked(globalThis.fetch);
+      const original = fetchSpy.getMockImplementation()!;
+      fetchSpy.mockImplementation(async (info, init) => {
+        if (String(info).endsWith("/v1/households/rename")) {
+          renames.push(JSON.parse(String(init?.body)) as Body);
+          return json(200, { version: 5 });
+        }
+        return original(info, init);
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+      await waitFor(() => expect(renames).toHaveLength(1));
+      expect(renames[0]!.version).toBe(4);
+    });
+  });
+
+  describe("read-only community", () => {
+    it("a read-only community renders no status switch, Delete or Restore", async () => {
+      for (const billing of ["read_only", "loading"] as const) {
+        await openScreen({ billing });
+        expect(screen.queryAllByRole("switch"), billing).toHaveLength(0);
+        const table = screen.getByRole("table", { name: "Households" });
+        expect(table.querySelectorAll("[data-slot='status-badge']"), billing).toHaveLength(3);
+
+        // The filter and the lists still work.
+        await showDeleted();
+        expect(screen.getByText("Moss Family")).toBeTruthy();
+        expect(screen.queryByRole("button", { name: /^Restore/ }), billing).toBeNull();
+
+        fireEvent.change(statusSelect(), { target: { value: "" } });
+        await openDetail("Clarke Family");
+        expect(screen.queryByRole("button", { name: "Delete family" }), billing).toBeNull();
+        await resetScreen();
+      }
+    });
+  });
+
+  describe("Delete family", () => {
+    it("Delete family is not rendered without all three keys", async () => {
+      const cases: Array<{ canDelete: boolean; canRestricted: boolean; shown: boolean }> = [
+        { canDelete: false, canRestricted: true, shown: false },
+        { canDelete: true, canRestricted: false, shown: false },
+        { canDelete: false, canRestricted: false, shown: false },
+        { canDelete: true, canRestricted: true, shown: true },
+      ];
+      for (const { canDelete, canRestricted, shown } of cases) {
+        await openScreen({ canDelete, canRestricted });
+        await openDetail("Clarke Family");
+        expect(
+          screen.queryByRole("button", { name: "Delete family" }) !== null,
+          `${canDelete} ${canRestricted}`,
+        ).toBe(shown);
+        await resetScreen();
+      }
+    });
+
+    it("the Delete dialog names the family and the date 720 hours from now", async () => {
+      await openScreen();
+      const before = longDate(Date.now() + 720 * HOUR);
+      const { dialog } = await openDeleteDialog("Clarke Family");
+      const after = longDate(Date.now() + 720 * HOUR);
+      expect(within(dialog).getByText("Delete Clarke Family?")).toBeTruthy();
+      const text = (date: string) =>
+        `It is hidden now and deleted permanently on ${date}. Its adults stay in All Contacts. Staff with the delete and restricted read permissions can restore it until then.`;
+      const description = within(dialog).getByText(
+        /^It is hidden now and deleted permanently on /,
+      ).textContent;
+      expect([text(before), text(after)]).toContain(description);
+      expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeTruthy();
+      expect(confirmButton(dialog)).toBeTruthy();
+    });
+
+    it("a family without a name reads this family in the dialog", async () => {
+      await openScreen({
+        list: () => json(200, { items: [{ ...ITEM_A, label: null }], nextCursor: null }),
+        read: (body) => json(200, { ...detailBody(body), label: null }),
+      });
+      fireEvent.click(await screen.findByRole("button", { name: "View household" }));
+      await screen.findByText("Arthur");
+      fireEvent.click(await screen.findByRole("button", { name: "Delete family" }));
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).getByText("Delete this family?")).toBeTruthy();
+    });
+
+    it("confirming sends the version of the open family and closes the panel, reloads the list once and focuses the heading", async () => {
+      const { calls } = await openScreen();
+      const { dialog } = await openDeleteDialog("Clarke Family");
+      const listBefore = callsTo(calls, LIST).length;
+      const readBefore = callsTo(calls, READ).length;
+      fireEvent.click(confirmButton(dialog));
+
+      await waitFor(() => expect(callsTo(calls, DELETE)).toHaveLength(1));
+      expect(callsTo(calls, DELETE)[0]!.body).toEqual({
+        communitySlug: SLUG,
+        householdId: ID_A,
+        version: 3,
+      });
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(await screen.findByRole("table", { name: "Households" })).toBeTruthy();
+      expect(screen.queryByRole("heading", { name: "Household Details" })).toBeNull();
+      await expectHeadingFocused();
+      await flushPending();
+      expect(callsTo(calls, LIST)).toHaveLength(listBefore + 1);
+      expect(callsTo(calls, READ)).toHaveLength(readBefore);
+      expect(callsTo(calls, DELETE)).toHaveLength(1);
+    });
+
+    it("the dialog cannot be confirmed twice or closed while the request is open", async () => {
+      const save = deferred();
+      const { calls } = await openScreen({ del: () => save.promise });
+      const { dialog } = await openDeleteDialog("Clarke Family");
+      const confirm = confirmButton(dialog);
+      act(() => {
+        fireEvent.click(confirm);
+        fireEvent.click(confirm);
+      });
+      await waitFor(() => expect(callsTo(calls, DELETE)).toHaveLength(1));
+      fireEvent.click(confirm);
+
+      fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+      fireEvent.keyDown(dialog, { key: "Escape" });
+      await flushPending();
+      expect(screen.getByRole("dialog")).toBe(dialog);
+      expect(callsTo(calls, DELETE)).toHaveLength(1);
+
+      await act(async () => {
+        save.release(
+          json(200, { householdId: ID_A, version: 4, purgeAfter: new Date().toISOString() }),
+        );
+      });
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(callsTo(calls, DELETE)).toHaveLength(1);
+    });
+
+    it("a family with a child shows its refusal in the dialog", async () => {
+      const { calls } = await openScreen({
+        del: () => json(409, { code: "household_has_children" }),
+      });
+      const { dialog } = await openDeleteDialog("Clarke Family");
+      fireEvent.click(confirmButton(dialog));
+
+      expect((await within(dialog).findByRole("alert")).textContent).toBe(MSG_CHILD);
+      expect(screen.getByRole("dialog")).toBe(dialog);
+      expect(within(dialog).queryByText(MSG_CHANGED)).toBeNull();
+      expect(callsTo(calls, DELETE)).toHaveLength(1);
+      expect(callsTo(calls, LIST)).toHaveLength(1);
+      expect(screen.getByRole("heading", { name: "Household Details", hidden: true })).toBeTruthy();
+    });
+
+    it("the other refusals stay in the dialog with their own text", async () => {
+      const cases: Array<{ name: string; answer: Handler; message: string }> = [
+        { name: "409 without a code", answer: () => empty(409), message: MSG_CHANGED },
+        {
+          name: "409 with an unknown code",
+          answer: () => json(409, { code: "something_else" }),
+          message: MSG_CHANGED,
+        },
+        { name: "network", answer: networkDown, message: MSG_FAILED },
+        { name: "500", answer: () => empty(500), message: MSG_FAILED },
+        { name: "403", answer: () => empty(403), message: MSG_FAILED },
+      ];
+      for (const refusal of cases) {
+        const { calls } = await openScreen({ del: refusal.answer });
+        const { dialog } = await openDeleteDialog("Clarke Family");
+        fireEvent.click(confirmButton(dialog));
+        expect((await within(dialog).findByRole("alert")).textContent, refusal.name).toBe(
+          refusal.message,
+        );
+        expect(screen.getByRole("dialog"), refusal.name).toBe(dialog);
+        expect(callsTo(calls, DELETE), refusal.name).toHaveLength(1);
+        expect(callsTo(calls, LIST), refusal.name).toHaveLength(1);
+        await resetScreen();
+      }
+    });
+
+    it("a 404 closes the dialog and the panel and reloads the list", async () => {
+      const { calls } = await openScreen({ del: () => empty(404) });
+      const { dialog } = await openDeleteDialog("Clarke Family");
+      const listBefore = callsTo(calls, LIST).length;
+      fireEvent.click(confirmButton(dialog));
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(await screen.findByRole("table", { name: "Households" })).toBeTruthy();
+      expect(screen.queryByRole("heading", { name: "Household Details" })).toBeNull();
+      await waitFor(() => expect(callsTo(calls, LIST)).toHaveLength(listBefore + 1));
+      await expectHeadingFocused();
+      await flushPending();
+      expect(callsTo(calls, LIST)).toHaveLength(listBefore + 1);
+    });
+
+    it("focus stays in the dialog after a refusal", async () => {
+      await openScreen({ del: () => json(409, { code: "household_has_children" }) });
+      const { dialog } = await openDeleteDialog("Clarke Family");
+      const confirm = confirmButton(dialog);
+      confirm.focus();
+      fireEvent.click(confirm);
+
+      await within(dialog).findByText(MSG_CHILD);
+      await flushPending();
+      const active = document.activeElement;
+      expect(active).not.toBe(document.body);
+      expect(dialog.contains(active)).toBe(true);
+      expect(active?.tagName).toBe("BUTTON");
+      expect(active?.getAttribute("aria-disabled")).not.toBe("true");
+      expect((active as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it("Cancel returns focus to the Delete family button, also after a refusal", async () => {
+      await openScreen({ del: () => json(409, { code: "household_has_children" }) });
+      const { trigger, dialog } = await openDeleteDialog("Clarke Family");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await waitFor(() => expect(document.activeElement).toBe(trigger));
+
+      trigger.focus();
+      fireEvent.click(trigger);
+      const second = await screen.findByRole("dialog");
+      fireEvent.click(confirmButton(second));
+      await within(second).findByText(MSG_CHILD);
+      fireEvent.click(within(second).getByRole("button", { name: "Cancel" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await waitFor(() => expect(document.activeElement).toBe(trigger));
+      expect(screen.getByRole("button", { name: "Delete family" })).toBe(trigger);
+    });
+
+    it("a late delete answer after a community change is ignored", async () => {
+      const answers: Array<{ name: string; answer: () => Response }> = [
+        {
+          name: "200",
+          answer: () =>
+            json(200, { householdId: ID_A, version: 4, purgeAfter: new Date().toISOString() }),
+        },
+        { name: "404", answer: () => empty(404) },
+        { name: "409", answer: () => json(409, { code: "household_has_children" }) },
+      ];
+      for (const late of answers) {
+        const save = deferred();
+        const { calls } = await openScreen({ del: () => save.promise });
+        const { dialog } = await openDeleteDialog("Clarke Family");
+        fireEvent.click(confirmButton(dialog));
+        await waitFor(() => expect(callsTo(calls, DELETE)).toHaveLength(1));
+
+        await switchCommunity();
+        expect(screen.queryByRole("dialog"), late.name).toBeNull();
+        const listBefore = callsTo(calls, LIST).length;
+        await act(async () => {
+          save.release(late.answer());
+        });
+        await flushPending();
+        expect(callsTo(calls, LIST), late.name).toHaveLength(listBefore);
+        expect(screen.queryByRole("alert"), late.name).toBeNull();
+        expect(screen.queryByRole("dialog"), late.name).toBeNull();
+        expect(screen.getByRole("table", { name: "Households" }), late.name).toBeTruthy();
+        expect(callsTo(calls, DELETE), late.name).toHaveLength(1);
+        await resetScreen();
+      }
+    });
+  });
+
+  describe("Deleted list", () => {
+    it("the Deleted list shows the label, both dates and Restore, with no View, no switch and no link", async () => {
+      const { calls } = await openScreen();
+      await showDeleted();
+      expect(callsTo(calls, LIST)[1]!.body).toEqual({
+        communitySlug: SLUG,
+        limit: 25,
+        status: "deleted",
+      });
+      const table = screen.getByRole("table", { name: "Households" });
+      expect(within(table).getByText("Moss Family")).toBeTruthy();
+      expect(
+        within(table).getByText(
+          `Deleted ${longDate(deletedAt)}, deleted permanently on ${longDate(purgeAfter)}`,
+        ),
+      ).toBeTruthy();
+      expect(within(table).getByRole("button", { name: "Restore Moss Family" })).toBeTruthy();
+      expect(within(table).queryByRole("button", { name: /^View/ })).toBeNull();
+      expect(within(table).queryAllByRole("switch")).toHaveLength(0);
+      expect(within(table).queryAllByRole("link")).toHaveLength(0);
+      expect(callsTo(calls, READ)).toHaveLength(0);
+    });
+
+    it("a deleted family past its date shows pending and no Restore", async () => {
+      await openScreen({
+        list: (body) =>
+          body.status === "deleted"
+            ? json(200, { items: [DELETED_D, DELETED_PAST], nextCursor: null })
+            : defaultList(body),
+      });
+      fireEvent.change(statusSelect(), { target: { value: "deleted" } });
+      await screen.findByText("Lowe Family");
+      expect(screen.getByText("Permanent deletion pending")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Restore Lowe Family" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Restore Moss Family" })).toBeTruthy();
+    });
+
+    it("the Deleted list shows No deleted families. when it is empty", async () => {
+      await openScreen({
+        list: (body) =>
+          body.status === "deleted"
+            ? json(200, { items: [], nextCursor: null })
+            : defaultList(body),
+      });
+      fireEvent.change(statusSelect(), { target: { value: "deleted" } });
+      expect(await screen.findByText("No deleted families.")).toBeTruthy();
+      expect(screen.queryByText("No households yet")).toBeNull();
+    });
+
+    it("a malformed deleted item is dropped", async () => {
+      await openScreen({
+        list: (body) =>
+          body.status === "deleted"
+            ? json(200, {
+                items: [
+                  DELETED_D,
+                  { householdId: ID_E, label: "No Dates Family", version: 1 },
+                  {
+                    householdId: ID_B,
+                    label: "Bad Date Family",
+                    version: 1,
+                    deletedAt: "x",
+                    purgeAfter: "y",
+                  },
+                  { label: "No Id Family", version: 1, deletedAt, purgeAfter },
+                  "nonsense",
+                ],
+                nextCursor: null,
+              })
+            : defaultList(body),
+      });
+      fireEvent.change(statusSelect(), { target: { value: "deleted" } });
+      await screen.findByText("Moss Family");
+      expect(screen.queryByText("No Dates Family")).toBeNull();
+      expect(screen.queryByText("Bad Date Family")).toBeNull();
+      expect(screen.queryByText("No Id Family")).toBeNull();
+      expect(screen.getAllByRole("button", { name: /^Restore/ })).toHaveLength(1);
+    });
+
+    it("the Deleted list pages with its own cursor", async () => {
+      const { calls } = await openScreen({
+        list: (body) => {
+          if (body.status === "deleted") {
+            return body.cursor === "deleted-cursor-1"
+              ? json(200, {
+                  items: [{ ...DELETED_D, householdId: ID_E, label: "Page Two Family" }],
+                  nextCursor: null,
+                })
+              : json(200, { items: [DELETED_D], nextCursor: "deleted-cursor-1" });
+          }
+          return json(200, { items: ALL, nextCursor: "live-cursor-1" });
+        },
+      });
+      fireEvent.change(statusSelect(), { target: { value: "deleted" } });
+      await screen.findByText("Moss Family");
+      fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+      await screen.findByText("Page Two Family");
+      expect(callsTo(calls, LIST).at(-1)!.body).toEqual({
+        communitySlug: SLUG,
+        limit: 25,
+        status: "deleted",
+        cursor: "deleted-cursor-1",
+      });
+
+      fireEvent.change(statusSelect(), { target: { value: "" } });
+      await screen.findByText("Clarke Family");
+      expect(callsTo(calls, LIST).at(-1)!.body).toEqual({ communitySlug: SLUG, limit: 25 });
+      fireEvent.change(statusSelect(), { target: { value: "deleted" } });
+      await screen.findByText("Moss Family");
+      expect(callsTo(calls, LIST).at(-1)!.body).toEqual({
+        communitySlug: SLUG,
+        limit: 25,
+        status: "deleted",
+      });
+    });
+  });
+
+  describe("Restore", () => {
+    it("Restore sends the version, reloads the list once and focuses the heading", async () => {
+      let deletedLoads = 0;
+      const { calls } = await openScreen({
+        list: (body) => {
+          if (body.status === "deleted") {
+            deletedLoads += 1;
+            return json(200, { items: deletedLoads === 1 ? [DELETED_D] : [], nextCursor: null });
+          }
+          return defaultList(body);
+        },
+      });
+      await showDeleted();
+      const listBefore = callsTo(calls, LIST).length;
+      fireEvent.click(screen.getByRole("button", { name: "Restore Moss Family" }));
+
+      expect(await screen.findByText("No deleted families.")).toBeTruthy();
+      expect(callsTo(calls, RESTORE)).toHaveLength(1);
+      expect(callsTo(calls, RESTORE)[0]!.body).toEqual({
+        communitySlug: SLUG,
+        householdId: ID_D,
+        version: 7,
+      });
+      await expectHeadingFocused();
+      await flushPending();
+      expect(callsTo(calls, LIST)).toHaveLength(listBefore + 1);
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+
+    it("Restore is disabled while its own request is open and sends once", async () => {
+      const save = deferred();
+      const { calls } = await openScreen({ restore: () => save.promise });
+      await showDeleted();
+      const restore = screen.getByRole<HTMLButtonElement>("button", {
+        name: "Restore Moss Family",
+      });
+      act(() => {
+        fireEvent.click(restore);
+        fireEvent.click(restore);
+      });
+      await waitFor(() => expect(callsTo(calls, RESTORE)).toHaveLength(1));
+      expect(restore.disabled).toBe(true);
+      await act(async () => {
+        save.release(json(200, { householdId: ID_D, version: 8 }));
+      });
+      await flushPending();
+      expect(callsTo(calls, RESTORE)).toHaveLength(1);
+    });
+
+    it("a restore that answers 404 shows its message and reloads the list", async () => {
+      let deletedLoads = 0;
+      const { calls } = await openScreen({
+        list: (body) => {
+          if (body.status === "deleted") {
+            deletedLoads += 1;
+            return json(200, { items: deletedLoads === 1 ? [DELETED_D] : [], nextCursor: null });
+          }
+          return defaultList(body);
+        },
+        restore: () => empty(404),
+      });
+      await showDeleted();
+      const listBefore = callsTo(calls, LIST).length;
+      fireEvent.click(screen.getByRole("button", { name: "Restore Moss Family" }));
+
+      expect(await screen.findByText(MSG_NOT_RESTORABLE)).toBeTruthy();
+      await waitFor(() => expect(callsTo(calls, LIST)).toHaveLength(listBefore + 1));
+      await waitFor(() => expect(screen.queryByText("Moss Family")).toBeNull());
+      expect(await screen.findByText("No deleted families.")).toBeTruthy();
+      await expectHeadingFocused();
+      await flushPending();
+      expect(callsTo(calls, LIST)).toHaveLength(listBefore + 1);
+      expect(callsTo(calls, RESTORE)).toHaveLength(1);
+    });
+
+    it("a restore refused with 409 or failing keeps the row and says why", async () => {
+      const cases: Array<{ name: string; answer: Handler; message: string }> = [
+        { name: "409", answer: () => empty(409), message: MSG_CHANGED },
+        { name: "network", answer: networkDown, message: MSG_FAILED },
+        { name: "500", answer: () => empty(500), message: MSG_FAILED },
+      ];
+      for (const failure of cases) {
+        const { calls } = await openScreen({ restore: failure.answer });
+        await showDeleted();
+        const listBefore = callsTo(calls, LIST).length;
+        fireEvent.click(screen.getByRole("button", { name: "Restore Moss Family" }));
+        expect((await screen.findByRole("alert")).textContent, failure.name).toBe(failure.message);
+        const restore = screen.getByRole<HTMLButtonElement>("button", {
+          name: "Restore Moss Family",
+        });
+        expect(restore.disabled, failure.name).toBe(false);
+        expect(callsTo(calls, RESTORE), failure.name).toHaveLength(1);
+        expect(callsTo(calls, LIST), failure.name).toHaveLength(listBefore);
+        await resetScreen();
+      }
+    });
+
+    it("a restore answer that arrives after the community changed is ignored", async () => {
+      const answers: Array<{ name: string; answer: () => Response }> = [
+        { name: "200", answer: () => json(200, { householdId: ID_D, version: 8 }) },
+        { name: "404", answer: () => empty(404) },
+        { name: "409", answer: () => empty(409) },
+      ];
+      for (const late of answers) {
+        const save = deferred();
+        const { calls } = await openScreen({ restore: () => save.promise });
+        await showDeleted();
+        fireEvent.click(screen.getByRole("button", { name: "Restore Moss Family" }));
+        await waitFor(() => expect(callsTo(calls, RESTORE)).toHaveLength(1));
+
+        await switchCommunity();
+        const listBefore = callsTo(calls, LIST).length;
+        await act(async () => {
+          save.release(late.answer());
+        });
+        await flushPending();
+        expect(callsTo(calls, LIST), late.name).toHaveLength(listBefore);
+        expect(screen.queryByRole("alert"), late.name).toBeNull();
+        expect(callsTo(calls, RESTORE), late.name).toHaveLength(1);
+        await resetScreen();
+      }
+    });
+  });
+
+  describe("Add Adult", () => {
+    async function submitNewAdult() {
+      await openDetail("Clarke Family");
+      fireEvent.click(await screen.findByRole("button", { name: "Add adult" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Create new adult" }));
+      fireEvent.change(await screen.findByLabelText("Given name"), {
+        target: { value: "Beatrice" },
+      });
+      fireEvent.change(screen.getByLabelText("Family name"), { target: { value: "Webb" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save adult" }));
+    }
+
+    it("Add Adult names a deleted duplicate and keeps the old message for a visible one", async () => {
+      for (const canDelete of [true, false]) {
+        await openScreen({ canDelete, addAdult: () => json(409, { code: "duplicate_deleted" }) });
+        await submitNewAdult();
+        const alert = await screen.findByRole("alert");
+        expect(alert.textContent).toBe(canDelete ? MSG_DUPLICATE_RESTORE : MSG_DUPLICATE);
+        await resetScreen();
+      }
+
+      for (const answer of [
+        () => empty(409),
+        () => json(409, { code: "something_else" }),
+        () => new Response("not json", { status: 409 }),
+      ]) {
+        await openScreen({ addAdult: answer });
+        await submitNewAdult();
+        expect((await screen.findByRole("alert")).textContent).toBe(MSG_OLD_DUPLICATE);
+        expect(screen.getByLabelText<HTMLInputElement>("Given name").value).toBe("Beatrice");
+        await resetScreen();
+      }
+    });
+  });
+
+  describe("accessibility", () => {
+    it("has no axe violations in the list with switches, without people.manage and in the read-only community", async () => {
+      const full = await openScreen();
+      expect(screen.getAllByRole("switch")).toHaveLength(3);
+      await expectNoViolations(full.container, "list with switches");
+      await resetScreen();
+
+      const viewOnly = await openScreen({ canManage: false });
+      expect(viewOnly.container.querySelectorAll("[data-slot='status-badge']")).toHaveLength(3);
+      await expectNoViolations(viewOnly.container, "list without people.manage");
+      await resetScreen();
+
+      const readOnly = await openScreen({ billing: "read_only" });
+      await screen.findByText("Read-only until billing is settled");
+      expect(readOnly.container.querySelectorAll("[data-slot='status-badge']")).toHaveLength(3);
+      await expectNoViolations(readOnly.container, "read-only community");
+    });
+
+    it("has no axe violations in the Deleted list, the Delete dialog and a refusal in it", async () => {
+      const { container } = await openScreen({
+        list: (body) =>
+          body.status === "deleted"
+            ? json(200, { items: [DELETED_D, DELETED_PAST], nextCursor: null })
+            : defaultList(body),
+        del: () => json(409, { code: "household_has_children" }),
+      });
+      fireEvent.change(statusSelect(), { target: { value: "deleted" } });
+      await screen.findByText("Lowe Family");
+      await expectNoViolations(container, "Deleted list");
+      fireEvent.change(statusSelect(), { target: { value: "" } });
+
+      const { dialog } = await openDeleteDialog("Clarke Family");
+      await expectNoViolations(document.body, "Delete dialog");
+      fireEvent.click(confirmButton(dialog));
+      await within(dialog).findByText(MSG_CHILD);
+      await expectNoViolations(document.body, "refusal in the dialog");
     });
   });
 });
