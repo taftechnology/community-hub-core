@@ -385,6 +385,43 @@ describe("hidden family reads", () => {
     });
   });
 
+  it("readPerson keeps the family id of a minor", async () => {
+    const scope = await setupTenant("fr-minor-1");
+    const family = await createHouseholdRow(scope, "Minor Fam");
+    const adultId = await addAdultPerson(scope, family.householdId, "Mary", "Tester");
+    const minorId = await inScope(scope, async (tx) => {
+      const created = await createPerson(tx, kms, KEY_ARN, {
+        now: NOW,
+        declaredAdult: false,
+        householdId: family.householdId,
+        dateOfBirth: null,
+        givenName: "Kid",
+        familyName: "Tester",
+        email: null,
+        phone: null,
+        actorUserId: ACTOR,
+      });
+      return created.personId;
+    });
+
+    await inScope(scope, async (tx) => {
+      await expect(
+        readPerson(tx, kms, KEY_ARN, { personId: minorId, actorUserId: ACTOR }),
+      ).resolves.toMatchObject({
+        personId: minorId,
+        isMinor: true,
+        householdId: family.householdId,
+      });
+      await expect(
+        readPerson(tx, kms, KEY_ARN, { personId: adultId, actorUserId: ACTOR }),
+      ).resolves.toMatchObject({
+        personId: adultId,
+        isMinor: false,
+        householdId: family.householdId,
+      });
+    });
+  });
+
   it("the family list filters by status", async () => {
     const scope = await setupTenant("fr-status-1");
 
