@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { encrypt } from "@community-hub/crypto";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import {
   applyProductMigrations,
@@ -51,6 +52,15 @@ const KEY_ARN = [
 const REQUEST_ID = "77777777-7777-4777-8777-777777777777";
 const NOW = new Date("2026-11-01T00:00:00+11:00");
 const ACTOR = "00000000-0000-4000-8000-000000000002";
+
+function uuidToBytes(uuid: string): Uint8Array {
+  const hex = uuid.replaceAll("-", "");
+  const out = new Uint8Array(16);
+  for (let i = 0; i < 16; i += 1) {
+    out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
 
 function loadRuntime(): Runtime {
   return JSON.parse(readFileSync(RUNTIME, "utf8")) as Runtime;
@@ -201,6 +211,65 @@ describe("emergency contacts infrastructure", () => {
     });
   });
 
+  // Test 4: emergency contacts are bound to the household row
+  it("emergency contacts are bound to the household row", async () => {
+    const scope = await setupTenant("bound-row");
+    const hh1 = await createHouseholdRow(scope, "Fam 1");
+    const hh2 = await createHouseholdRow(scope, "Fam 2");
+
+    const contacts = [
+      { name: "John Contact", relationship: "friend" as const, phone: "+61 412 555 101" },
+    ];
+
+    await inScope(scope, async (tx) => {
+      await saveEmergencyContacts(tx, kms, KEY_ARN, {
+        householdId: hh1.householdId,
+        version: hh1.version,
+        contacts,
+        actorUserId: ACTOR,
+      });
+    });
+
+    const [row1] = await withAppTransaction(migrator, scope, async (tx) => {
+      return await tx<{ emergency_contacts: Uint8Array | null }[]>`
+        select emergency_contacts
+        from app.households
+        where id = ${hh1.householdId}::uuid
+      `;
+    });
+    expect(row1?.emergency_contacts).not.toBeNull();
+
+    // Positive control: opens with its own householdId as rowId
+    await inScope(scope, async (tx) => {
+      const { enc } = await householdFieldKeys(tx, kms, KEY_ARN, hh1.householdId);
+      const opened = await openField(
+        row1!.emergency_contacts,
+        enc,
+        hh1.householdId,
+        scope.communityId,
+        "people.household_emergency_contacts",
+      );
+      expect(opened).not.toBeNull();
+      expect(JSON.parse(opened!)).toEqual([
+        { name: "John Contact", relationship: "friend", phone: "61412555101" },
+      ]);
+    });
+
+    // Negative control: refused ("decryption failed") with another household id as rowId
+    await inScope(scope, async (tx) => {
+      const { enc } = await householdFieldKeys(tx, kms, KEY_ARN, hh1.householdId);
+      await expect(
+        openField(
+          row1!.emergency_contacts,
+          enc,
+          hh2.householdId,
+          scope.communityId,
+          "people.household_emergency_contacts",
+        ),
+      ).rejects.toThrow("decryption failed");
+    });
+  });
+
   // Pin 55: emergency contacts cannot be opened as a family label
   it("emergency contacts cannot be opened as a family label", async () => {
     const scope = await setupTenant("pin55");
@@ -228,9 +297,23 @@ describe("emergency contacts infrastructure", () => {
     });
     expect(row?.emergency_contacts).not.toBeNull();
 
-    // Trying to open the emergency_contacts ciphertext using the label AAD label must fail
     await inScope(scope, async (tx) => {
       const { enc } = await householdFieldKeys(tx, kms, KEY_ARN, hh.householdId);
+
+      // Positive control: the same bytes open with the label people.household_emergency_contacts
+      const opened = await openField(
+        row!.emergency_contacts,
+        enc,
+        hh.householdId,
+        scope.communityId,
+        "people.household_emergency_contacts",
+      );
+      expect(opened).not.toBeNull();
+      expect(JSON.parse(opened!)).toEqual([
+        { name: "Sarah Responder", relationship: "carer", phone: "61412555201" },
+      ]);
+
+      // Negative control: trying to open the emergency_contacts ciphertext using the label AAD label must fail
       await expect(
         openField(
           row!.emergency_contacts,
@@ -318,6 +401,123 @@ describe("emergency contacts infrastructure", () => {
     expect(row?.version).toBe(hh.version);
     expect(row?.emergency_contacts).toBeNull();
   });
+
+  // Test 6: two emergency contacts saves from one version: the second waits and answers conflict
+  it("two emergency contacts saves from one version: the second waits and answers conflict", async () => {
+    const scope = await setupTenant("save-conflict-lock");
+    const hh = await createHouseholdRow(scope, "Fam Lock Concurrency");
+
+    const contacts1 = [
+      { name: "First Saver", relationship: "friend" as const, phone: "+61 412 555 111" },
+    ];
+    const contacts2 = [
+      { name: "Second Saver", relationship: "spouse" as const, phone: "+61 412 555 222" },
+    ];
+
+    const app1 = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const app2 = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const inspector = createPlaintextDirectSql(runtime.productOnlyUrl);
+
+    let releaseT1!: () => void;
+    const releaseT1P = new Promise<void>((res) => {
+      releaseT1 = res;
+    });
+    let t1Ready!: () => void;
+    const t1ReadyP = new Promise<void>((res) => {
+      t1Ready = res;
+    });
+
+    let t1Open = false;
+    const t1Promise = withAppTransaction(app1, scope, async (tx) => {
+      const res = await withRequest({ requestId: REQUEST_ID }, () =>
+        saveEmergencyContacts(tx, kms, KEY_ARN, {
+          householdId: hh.householdId,
+          version: hh.version,
+          contacts: contacts1,
+          actorUserId: ACTOR,
+        }),
+      );
+      t1Open = true;
+      t1Ready();
+      await releaseT1P;
+      t1Open = false;
+      return res;
+    }).catch((err) => {
+      t1Open = false;
+      t1Ready();
+      throw err;
+    });
+
+    await t1ReadyP;
+
+    let t2Pid: number | null = null;
+    let t2Settled = false;
+    const t2Promise = withAppTransaction(app2, scope, async (tx) => {
+      const [pidRow] = await tx<{ pid: number }[]>`select pg_backend_pid() as pid`;
+      t2Pid = pidRow?.pid ?? null;
+      return await withRequest({ requestId: REQUEST_ID }, () =>
+        saveEmergencyContacts(tx, kms, KEY_ARN, {
+          householdId: hh.householdId,
+          version: hh.version,
+          contacts: contacts2,
+          actorUserId: ACTOR,
+        }),
+      );
+    }).finally(() => {
+      t2Settled = true;
+    });
+    t2Promise.catch(() => {});
+
+    let blocked = false;
+    const started = Date.now();
+    while (Date.now() - started < 10_000 && !t2Settled) {
+      if (t2Pid !== null) {
+        const rows = await inspector<{ count: number }[]>`
+          select count(*)::int as count
+          from pg_locks l
+          join pg_stat_activity a on a.pid = l.pid
+          where l.pid = ${t2Pid}
+            and l.granted = false
+        `;
+        if ((rows[0]?.count ?? 0) > 0) {
+          blocked = true;
+          break;
+        }
+      }
+      await new Promise((r) => setTimeout(r, 25));
+    }
+
+    try {
+      expect(blocked).toBe(true);
+      expect(t1Open).toBe(true);
+      releaseT1();
+      const t1Result = await t1Promise;
+      expect(t1Result).toEqual({
+        householdId: hh.householdId,
+        version: hh.version + 1,
+      });
+
+      await expect(t2Promise).rejects.toMatchObject({ code: "conflict" });
+
+      const stored = await inScope(scope, async (tx) => {
+        return await readEmergencyContacts(tx, kms, KEY_ARN, {
+          householdId: hh.householdId,
+          actorUserId: ACTOR,
+        });
+      });
+      expect(stored).toEqual({
+        householdId: hh.householdId,
+        version: hh.version + 1,
+        contacts: [{ name: "First Saver", relationship: "friend", phone: "61412555111" }],
+      });
+    } finally {
+      releaseT1();
+      await Promise.allSettled([t1Promise, t2Promise]);
+      await app1.end({ timeout: 1 });
+      await app2.end({ timeout: 1 });
+      await inspector.end({ timeout: 1 });
+    }
+  }, 30_000);
 
   // Pin 59: an emergency contacts read writes one event, an empty list too
   it("an emergency contacts read writes one event, an empty list too", async () => {
@@ -588,8 +788,15 @@ describe("emergency contacts infrastructure", () => {
 
     // Check all audit event rows for this organisation
     const auditRows = await withAppTransaction(migrator, scope, async (tx) => {
-      return await tx<{ action: string; purpose: string; payload: unknown }[]>`
-        select action, purpose, to_jsonb(a) as payload
+      return await tx<
+        {
+          action: string;
+          purpose: string;
+          payload: unknown;
+          target_ids: string[];
+        }[]
+      >`
+        select action, purpose, to_jsonb(a) as payload, target_ids::text[] as target_ids
         from app.audit_events a
         where org_id = ${scope.orgId}::uuid
       `;
@@ -599,6 +806,18 @@ describe("emergency contacts infrastructure", () => {
       expect(serialized).not.toContain(secretName);
       expect(serialized).not.toContain(secretPhoneDigits);
     }
+
+    expect(auditRows.length).toBeGreaterThan(0);
+    const updatedEvents = auditRows.filter(
+      (a) => a.action === "people.household.emergency_contacts_updated",
+    );
+    const readEvents = auditRows.filter(
+      (a) => a.action === "people.household.emergency_contacts_read",
+    );
+    expect(updatedEvents).toHaveLength(1);
+    expect(readEvents).toHaveLength(1);
+    expect(updatedEvents[0]?.target_ids).toEqual([hh.householdId]);
+    expect(readEvents[0]?.target_ids).toEqual([hh.householdId]);
   });
 
   it("saving an empty list stores null and bumps version", async () => {
@@ -675,6 +894,56 @@ describe("emergency contacts infrastructure", () => {
           actorUserId: ACTOR,
         }),
       ).rejects.toThrow("malformed stored emergency contacts");
+    });
+  });
+
+  // Test 8: validly encrypted JSON with an unknown key in an entry gives malformed stored emergency contacts
+  it("validly encrypted JSON with an unknown key in an entry gives malformed stored emergency contacts", async () => {
+    const scope = await setupTenant("unknown-key-entry");
+    const hh = await createHouseholdRow(scope, "Fam Unknown Key");
+
+    const badPayload = JSON.stringify([
+      {
+        name: "Valid Name",
+        relationship: "friend",
+        phone: "+61 412 555 101",
+        unexpected_extra_key: "forbidden",
+      },
+    ]);
+
+    await inScope(scope, async (tx) => {
+      const { enc, keyId } = await householdFieldKeys(tx, kms, KEY_ARN, hh.householdId);
+      const ciphertext = await encrypt(
+        enc,
+        new TextEncoder().encode(badPayload),
+        uuidToBytes(keyId),
+        {
+          tag: "chub/field/v1",
+          label: "people.household_emergency_contacts",
+          rowId: uuidToBytes(hh.householdId),
+          communityId: uuidToBytes(scope.communityId),
+        },
+      );
+
+      await tx`
+        update app.households
+        set emergency_contacts = ${ciphertext}
+        where id = ${hh.householdId}::uuid
+      `;
+    });
+
+    await inScope(scope, async (tx) => {
+      const promise = readEmergencyContacts(tx, kms, KEY_ARN, {
+        householdId: hh.householdId,
+        actorUserId: ACTOR,
+      });
+      await expect(promise).rejects.toThrow();
+      try {
+        await promise;
+      } catch (err: unknown) {
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).message).toBe("malformed stored emergency contacts");
+      }
     });
   });
 });
