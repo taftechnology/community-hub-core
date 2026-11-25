@@ -416,6 +416,8 @@ export function useFamilyDelete(params: DeleteParams) {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const pendingRef = useRef(false);
+  // Each confirm and each reset starts a new attempt number; only the newest attempt may clear pending.
+  const attemptRef = useRef(0);
   const triggerRef = useRef<HTMLElement | null>(null);
   const [refocus, setRefocus] = useState(false);
 
@@ -433,6 +435,7 @@ export function useFamilyDelete(params: DeleteParams) {
   }, [refocus, open, params]);
 
   function reset() {
+    attemptRef.current += 1;
     pendingRef.current = false;
     setPending(false);
     setOpen(false);
@@ -475,7 +478,8 @@ export function useFamilyDelete(params: DeleteParams) {
       return;
     }
     const mine = panel.current;
-    let stale = false;
+    attemptRef.current += 1;
+    const attempt = attemptRef.current;
     pendingRef.current = true;
     setPending(true);
     setError(null);
@@ -487,7 +491,6 @@ export function useFamilyDelete(params: DeleteParams) {
         version: target.version,
       });
       if (panel.current !== mine) {
-        stale = true;
         return;
       }
       if (response === "unavailable") {
@@ -507,7 +510,6 @@ export function useFamilyDelete(params: DeleteParams) {
       if (response.status === 409) {
         const code = await readErrorCode(response);
         if (panel.current !== mine) {
-          stale = true;
           return;
         }
         setError(code === "household_has_children" ? MESSAGE_HAS_CHILDREN : MESSAGE_CHANGED);
@@ -520,7 +522,8 @@ export function useFamilyDelete(params: DeleteParams) {
       setOpen(false);
       params.onDone();
     } finally {
-      if (!stale) {
+      // A late answer (the panel moved on) changes nothing else, but must not leave the next dialog blocked.
+      if (attemptRef.current === attempt) {
         pendingRef.current = false;
         setPending(false);
       }

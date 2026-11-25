@@ -8338,6 +8338,132 @@ describe("Family Records status, delete and restore (Task 8)", () => {
       expect(screen.queryByRole("button", { name: "Delete family" })).toBeNull();
     });
 
+    it("a late delete answer does not block the next Delete dialog", async () => {
+      sessionStorage.setItem("community-hub.access-token", TOKEN);
+      sessionStorage.setItem("community-hub.community", SLUG);
+      const late = deferred();
+      let sent = 0;
+      const calls = mockFamilyApi({
+        del: (body) => {
+          sent += 1;
+          return sent === 1
+            ? late.promise
+            : json(200, {
+                householdId: body.householdId,
+                version: (body.version as number) + 1,
+                purgeAfter: new Date(Date.now() + 30 * DAY).toISOString(),
+              });
+        },
+      });
+      const view = render(accessTree(FULL_ACCESS));
+      await screen.findByRole("table", { name: "Households" });
+      await openDetail("Clarke Family");
+      const trigger = await screen.findByRole("button", { name: "Delete family" });
+      trigger.focus();
+      fireEvent.click(trigger);
+      fireEvent.click(confirmButton(await screen.findByRole("dialog")));
+      await waitFor(() => expect(callsTo(calls, DELETE)).toHaveLength(1));
+
+      // The key is lost while the delete is open: the dialog closes, the request stays sent.
+      view.rerender(accessTree(withoutKey("people.delete")));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      // The person goes back to the list, and only then does the answer arrive.
+      fireEvent.click(screen.getByRole("button", { name: "Back to list" }));
+      await screen.findByRole("table", { name: "Households" });
+      await flushPending();
+      const listBefore = callsTo(calls, LIST).length;
+      await act(async () => {
+        late.release(
+          json(200, {
+            householdId: ID_A,
+            version: 4,
+            purgeAfter: new Date(Date.now() + 30 * DAY).toISOString(),
+          }),
+        );
+      });
+      await flushPending();
+      // The late answer changes nothing on screen.
+      expect(callsTo(calls, LIST)).toHaveLength(listBefore);
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(screen.getByRole("table", { name: "Households" })).toBeTruthy();
+
+      // The key returns. The next family's dialog opens, can be cancelled, and can be confirmed.
+      view.rerender(accessTree(FULL_ACCESS));
+      await openDetail("Hart Family");
+      const next = await screen.findByRole("button", { name: "Delete family" });
+      next.focus();
+      fireEvent.click(next);
+      const dialog = await screen.findByRole("dialog");
+      expect(confirmButton(dialog).getAttribute("aria-disabled")).not.toBe("true");
+      expect(confirmButton(dialog).getAttribute("aria-busy")).toBeNull();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(callsTo(calls, DELETE)).toHaveLength(1);
+
+      const again = await screen.findByRole("button", { name: "Delete family" });
+      again.focus();
+      fireEvent.click(again);
+      fireEvent.click(confirmButton(await screen.findByRole("dialog")));
+      await waitFor(() => expect(callsTo(calls, DELETE)).toHaveLength(2));
+      expect(callsTo(calls, DELETE)[1]!.body).toMatchObject({ householdId: ID_C });
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await screen.findByRole("table", { name: "Households" });
+    });
+
+    it("a late delete answer after a community change leaves the newer attempt pending", async () => {
+      const first = deferred();
+      const second = deferred();
+      let sent = 0;
+      const { calls } = await openScreen({
+        del: () => {
+          sent += 1;
+          return sent === 1 ? first.promise : second.promise;
+        },
+      });
+      fireEvent.click(confirmButton((await openDeleteDialog("Clarke Family")).dialog));
+      await waitFor(() => expect(callsTo(calls, DELETE)).toHaveLength(1));
+
+      await switchCommunity();
+      expect(screen.queryByRole("dialog")).toBeNull();
+      const { dialog } = await openDeleteDialog("Clarke Family");
+      fireEvent.click(confirmButton(dialog));
+      await waitFor(() => expect(callsTo(calls, DELETE)).toHaveLength(2));
+      await waitFor(() => expect(confirmButton(dialog).getAttribute("aria-busy")).toBe("true"));
+
+      // The first answer arrives late: the second attempt is still pending and still guarded.
+      await act(async () => {
+        first.release(
+          json(200, {
+            householdId: ID_A,
+            version: 4,
+            purgeAfter: new Date(Date.now() + 30 * DAY).toISOString(),
+          }),
+        );
+      });
+      await flushPending();
+      expect(screen.getByRole("dialog")).toBeTruthy();
+      expect(confirmButton(dialog).getAttribute("aria-busy")).toBe("true");
+      expect(confirmButton(dialog).getAttribute("aria-disabled")).toBe("true");
+      expect(screen.queryByRole("alert")).toBeNull();
+      fireEvent.click(confirmButton(dialog));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+      await flushPending();
+      expect(callsTo(calls, DELETE)).toHaveLength(2);
+      expect(screen.getByRole("dialog")).toBeTruthy();
+
+      await act(async () => {
+        second.release(
+          json(200, {
+            householdId: ID_A,
+            version: 4,
+            purgeAfter: new Date(Date.now() + 30 * DAY).toISOString(),
+          }),
+        );
+      });
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    });
+
     it("no deleted row renders after the Deleted filter loses a key", async () => {
       sessionStorage.setItem("community-hub.access-token", TOKEN);
       sessionStorage.setItem("community-hub.community", SLUG);
