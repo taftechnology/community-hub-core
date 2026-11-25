@@ -149,15 +149,32 @@ function validateRows(rows: Row[]): { errors: Record<number, RowErrors>; first: 
   return { errors, first };
 }
 
+function ContactList({ contacts }: { contacts: Contact[] }): ReactNode {
+  if (contacts.length === 0) {
+    return <p className="m-0">No emergency contacts.</p>;
+  }
+  return (
+    <ul className="m-0 grid list-none gap-2 p-0">
+      {contacts.map((contact, index) => (
+        <li key={index} className="flex flex-wrap gap-x-4 gap-y-1">
+          <span className="font-medium">{contact.name}</span>
+          {contact.relationship !== null ? (
+            <span>{RELATIONSHIP_LABELS[contact.relationship]}</span>
+          ) : null}
+          <span>{contact.phone}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export type EmergencyContactsParams = {
   slug: string;
   householdId: string | null;
-  // The version of the open Family Details. It is used only after a 409, once the detail has been
-  // reloaded; before that the contacts version is the one the shown list belongs to.
+  // The page still passes these three. Since A3 the panel takes the version after a 409 from its own
+  // contacts read, so it no longer uses them.
   detailVersion: number;
-  // Counts the answers to the detail read; a reload has answered when it is higher than at the 409.
   detailAnswers: { current: number };
-  // The last detail read failed or answered not found.
   detailFailed: boolean;
   canRead: boolean;
   canEdit: boolean;
@@ -183,14 +200,17 @@ export function useEmergencyContacts(params: EmergencyContactsParams): {
   const [contacts, setContacts] = useState<Contact[]>([]);
   // The version of the shown list: the last contacts answer or save. A detail reload never moves it.
   const knownVersion = useRef(0);
-  // After a 409 the person has been told. Save then waits for the detail that loads after it, and
-  // sends the newer of the known version and that detail's version.
-  const [conflict, setConflict] = useState<{
-    after: number;
-    answered: boolean;
-    version: number | null;
-  } | null>(null);
-  const reloading = conflict !== null && !conflict.answered;
+  // After a 409 the panel reads the stored list once. It is shown as "Saved now" above the typed
+  // rows, and Save sends the version of that read. Save waits for the read, and a failed read leaves
+  // it unavailable until Retry has answered. The typed rows are never replaced by the read.
+  const [conflict, setConflict] = useState<
+    | { read: "loading" }
+    | { read: "failed" }
+    | { read: "ready"; version: number; contacts: Contact[] }
+    | null
+  >(null);
+  const waitingForRead = conflict !== null && conflict.read !== "ready";
+  const conflictRun = useRef(0);
   const [editing, setEditing] = useState(false);
   const [rows, setRows] = useState<Row[]>([]);
   const [errors, setErrors] = useState<Record<number, RowErrors>>({});
@@ -221,8 +241,8 @@ export function useEmergencyContacts(params: EmergencyContactsParams): {
   // A focus move waits until its target is on screen, for example after a detail reload.
   useEffect(() => {
     const id = focusPlan.current;
-    // Not while Save waits for the detail reload: the panel is about to come back.
-    if (id === null || reloading) {
+    // Not while the read after a 409 is open: the detail reload is about to replace the panel.
+    if (id === null || conflict?.read === "loading") {
       return;
     }
     const element = elements.current.get(id);
@@ -244,6 +264,7 @@ export function useEmergencyContacts(params: EmergencyContactsParams): {
     loadingRef.current = false;
     savingRef.current = false;
     focusPlan.current = null;
+    conflictRun.current += 1;
     setPhase("hidden");
     setContacts([]);
     knownVersion.current = 0;
@@ -268,34 +289,6 @@ export function useEmergencyContacts(params: EmergencyContactsParams): {
       setErrors({});
     }
   }, [canEdit, editing]);
-
-  // The conflict state ends when a detail read has answered after the 409. A failed read leaves no
-  // version; the next detail that loads sets it. The counter is bumped in the same step as the
-  // detail state, so a reload that answers before React renders is still seen.
-  useEffect(() => {
-    if (conflict === null) {
-      return;
-    }
-    if (!conflict.answered) {
-      if (params.detailAnswers.current > conflict.after) {
-        setConflict({
-          after: params.detailAnswers.current,
-          answered: true,
-          version: params.detailFailed ? null : params.detailVersion,
-        });
-      }
-    } else if (
-      conflict.version === null &&
-      params.detailAnswers.current > conflict.after &&
-      !params.detailFailed
-    ) {
-      setConflict({
-        ...conflict,
-        after: params.detailAnswers.current,
-        version: params.detailVersion,
-      });
-    }
-  });
 
   // A change this screen made to the family counts only when it is the very next version of the
   // shown list: someone else's change in between leaves the known version where it was.
@@ -356,6 +349,8 @@ export function useEmergencyContacts(params: EmergencyContactsParams): {
       relationship: contact.relationship ?? "",
       phone: contact.phone,
     }));
+    conflictRun.current += 1;
+    setConflict(null);
     setRows(next);
     setErrors({});
     setNotice(null);
@@ -372,6 +367,7 @@ export function useEmergencyContacts(params: EmergencyContactsParams): {
     setRows([]);
     setErrors({});
     setNotice(null);
+    conflictRun.current += 1;
     setConflict(null);
     focusPlan.current = "edit";
   }
@@ -417,9 +413,52 @@ export function useEmergencyContacts(params: EmergencyContactsParams): {
     focusPlan.current = "alert";
   }
 
+  // One read of the stored list after a 409. An answer that belongs to an earlier Hide, Cancel,
+  // family or community changes nothing. A 404 is the not-found path of Save.
+  async function readSaved() {
+    const { slug: readSlug, householdId: readId } = latest.current;
+    if (!readSlug || readId === null) {
+      return;
+    }
+    const mine = generation.current;
+    conflictRun.current += 1;
+    const run = conflictRun.current;
+    const current = () => generation.current === mine && conflictRun.current === run;
+    setConflict({ read: "loading" });
+
+    const response = await post(READ_PATH, { communitySlug: readSlug, householdId: readId });
+    if (!current()) {
+      return;
+    }
+    if (response !== "unavailable" && response.status === 404) {
+      reset();
+      latest.current.onGone();
+      return;
+    }
+    let parsed: ReturnType<typeof parseRead> = null;
+    if (response !== "unavailable" && response.status === 200) {
+      try {
+        const data: unknown = await response.json();
+        if (!current()) {
+          return;
+        }
+        parsed = parseRead(data, readId);
+      } catch {
+        if (!current()) {
+          return;
+        }
+      }
+    }
+    setConflict(
+      parsed === null
+        ? { read: "failed" }
+        : { read: "ready", version: parsed.version, contacts: parsed.contacts },
+    );
+  }
+
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (savingRef.current || !slug || householdId === null || reloading) {
+    if (savingRef.current || !slug || householdId === null || waitingForRead) {
       return;
     }
     const checked = validateRows(rows);
@@ -434,12 +473,9 @@ export function useEmergencyContacts(params: EmergencyContactsParams): {
       relationship: readRelationship(row.relationship === "" ? null : row.relationship) ?? null,
       phone: row.phone.trim(),
     }));
-    // The version the shown list belongs to. Only after a 409, once the detail has reloaded, the
-    // newer of that and the detail's version: the person has been told that the family changed.
-    const version =
-      conflict?.answered === true && conflict.version !== null
-        ? Math.max(knownVersion.current, conflict.version)
-        : knownVersion.current;
+    // The version the shown list belongs to. After a 409, the version of the read that showed what
+    // is stored now.
+    const version = conflict?.read === "ready" ? conflict.version : knownVersion.current;
     const mine = generation.current;
     savingRef.current = true;
     setSaving(true);
@@ -469,13 +505,9 @@ export function useEmergencyContacts(params: EmergencyContactsParams): {
       }
       if (response.status === 409) {
         showNotice(MESSAGE_CONFLICT);
-        // A detail reload brings the newer version; the typed rows stay. Save waits for it.
-        setConflict({
-          after: latest.current.detailAnswers.current,
-          answered: false,
-          version: null,
-        });
+        // The detail reloads and the stored list is read once; the typed rows stay.
         latest.current.onConflict();
+        void readSaved();
         return;
       }
       if (response.status === 400) {
@@ -511,6 +543,7 @@ export function useEmergencyContacts(params: EmergencyContactsParams): {
       }
       setContacts(toSend);
       knownVersion.current = savedVersion;
+      conflictRun.current += 1;
       setConflict(null);
       setEditing(false);
       setRows([]);
@@ -583,22 +616,29 @@ export function useEmergencyContacts(params: EmergencyContactsParams): {
           </Alert>
         ) : null}
 
-        {phase === "loaded" && !editing ? (
-          contacts.length === 0 ? (
-            <p className="m-0">No emergency contacts.</p>
-          ) : (
-            <ul className="m-0 grid list-none gap-2 p-0">
-              {contacts.map((contact, index) => (
-                <li key={index} className="flex flex-wrap gap-x-4 gap-y-1">
-                  <span className="font-medium">{contact.name}</span>
-                  {contact.relationship !== null ? (
-                    <span>{RELATIONSHIP_LABELS[contact.relationship]}</span>
-                  ) : null}
-                  <span>{contact.phone}</span>
-                </li>
-              ))}
-            </ul>
-          )
+        {phase === "loaded" && !editing ? <ContactList contacts={contacts} /> : null}
+
+        {phase === "loaded" && editing && canEdit && conflict?.read === "loading" ? (
+          <>
+            <Skeleton />
+            <span className="sr-only">Loading emergency contacts...</span>
+          </>
+        ) : null}
+
+        {phase === "loaded" && editing && canEdit && conflict?.read === "failed" ? (
+          <Alert variant="destructive">
+            <span>{MESSAGE_LOAD_FAILED}</span>{" "}
+            <Button type="button" onClick={() => void readSaved()}>
+              Retry
+            </Button>
+          </Alert>
+        ) : null}
+
+        {phase === "loaded" && editing && canEdit && conflict?.read === "ready" ? (
+          <div className="grid gap-2">
+            <p className="m-0 font-semibold text-foreground">Saved now</p>
+            <ContactList contacts={conflict.contacts} />
+          </div>
         ) : null}
 
         {phase === "loaded" && editing && canEdit ? (
@@ -685,7 +725,7 @@ export function useEmergencyContacts(params: EmergencyContactsParams): {
             <div className="flex flex-wrap gap-2">
               <Button
                 type="submit"
-                disabled={saving || reloading}
+                disabled={saving || waitingForRead}
                 aria-label="Save emergency contacts"
               >
                 Save
