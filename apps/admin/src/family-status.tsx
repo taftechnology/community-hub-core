@@ -150,13 +150,20 @@ export function statusColumn(options: {
     render: (household) => {
       const shown = options.pending[household.householdId] ?? household.status;
       const text = shown === "active" ? "Active" : "Inactive";
+      const saving = household.householdId in options.pending;
+      // While its save is open the switch stays focusable (aria-disabled, not disabled), so focus
+      // is not lost to the page body; a click or key press then sends nothing.
       return options.canSwitch ? (
         <Switch
           label={text}
           aria-label={`${text} status for ${familyName(household.label)}`}
           checked={shown === "active"}
-          disabled={household.householdId in options.pending}
-          onChange={() => options.onToggle(household)}
+          {...(saving ? { "aria-disabled": true, "aria-busy": true } : {})}
+          onChange={() => {
+            if (!saving) {
+              options.onToggle(household);
+            }
+          }}
         />
       ) : (
         <StatusBadge tone={shown === "active" ? "success" : "neutral"}>{text}</StatusBadge>

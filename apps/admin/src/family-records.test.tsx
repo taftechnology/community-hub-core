@@ -7376,7 +7376,7 @@ describe("Family Records status, delete and restore (Task 8)", () => {
       }
     });
 
-    it("the status switch is optimistic and disabled while its own save is open", async () => {
+    it("the status switch is optimistic and marked busy while its own save is open", async () => {
       const save = deferred();
       const { calls } = await openScreen({ status: () => save.promise });
       const own = screen.getByRole<HTMLInputElement>("switch", {
@@ -7387,7 +7387,10 @@ describe("Family Records status, delete and restore (Task 8)", () => {
       });
       fireEvent.click(own);
       expect(own.checked).toBe(false);
-      expect(own.disabled).toBe(true);
+      expect(own.getAttribute("aria-disabled")).toBe("true");
+      expect(own.getAttribute("aria-busy")).toBe("true");
+      expect(own.disabled).toBe(false);
+      expect(other.getAttribute("aria-disabled")).toBeNull();
       expect(other.disabled).toBe(false);
       fireEvent.click(own);
       await waitFor(() => expect(callsTo(calls, STATUS)).toHaveLength(1));
@@ -7401,9 +7404,39 @@ describe("Family Records status, delete and restore (Task 8)", () => {
       await act(async () => {
         save.release(json(200, { householdId: ID_A, version: 4, status: "inactive" }));
       });
-      await waitFor(() => expect(own.disabled).toBe(false));
+      await waitFor(() => expect(own.getAttribute("aria-disabled")).toBeNull());
+      expect(own.getAttribute("aria-busy")).toBeNull();
       expect(own.checked).toBe(false);
       expect(screen.queryByRole("alert")).toBeNull();
+      expect(callsTo(calls, STATUS)).toHaveLength(1);
+    });
+
+    it("focus stays on the status switch after a successful change", async () => {
+      const save = deferred();
+      const { calls } = await openScreen({ status: () => save.promise });
+      const own = screen.getByRole<HTMLInputElement>("switch", {
+        name: "Active status for Clarke Family",
+      });
+      own.focus();
+      fireEvent.click(own);
+      await waitFor(() => expect(callsTo(calls, STATUS)).toHaveLength(1));
+      expect(own.getAttribute("aria-disabled")).toBe("true");
+      expect(document.activeElement).toBe(own);
+
+      // A second toggle while the save is open, by click or by key, sends nothing.
+      fireEvent.click(own);
+      fireEvent.keyDown(own, { key: " ", code: "Space" });
+      fireEvent.keyUp(own, { key: " ", code: "Space" });
+      await flushPending();
+      expect(callsTo(calls, STATUS)).toHaveLength(1);
+      expect(own.checked).toBe(false);
+
+      await act(async () => {
+        save.release(json(200, { householdId: ID_A, version: 4, status: "inactive" }));
+      });
+      await waitFor(() => expect(own.getAttribute("aria-disabled")).toBeNull());
+      expect(document.activeElement).toBe(own);
+      expect(own.checked).toBe(false);
       expect(callsTo(calls, STATUS)).toHaveLength(1);
     });
 
@@ -7439,10 +7472,12 @@ describe("Family Records status, delete and restore (Task 8)", () => {
       await waitFor(() => expect(callsTo(calls, STATUS)).toHaveLength(1));
       await waitFor(() =>
         expect(
-          screen.getByRole<HTMLInputElement>("switch", {
-            name: "Inactive status for Clarke Family",
-          }).disabled,
-        ).toBe(false),
+          screen
+            .getByRole<HTMLInputElement>("switch", {
+              name: "Inactive status for Clarke Family",
+            })
+            .getAttribute("aria-disabled"),
+        ).toBeNull(),
       );
       expect(callsTo(calls, STATUS)[0]!.body.version).toBe(3);
 
