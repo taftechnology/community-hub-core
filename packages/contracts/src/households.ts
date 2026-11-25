@@ -155,7 +155,7 @@ export type AddAdultBody = z.infer<typeof addAdultBody>;
 export type LinkGuardianBody = z.infer<typeof linkGuardianBody>;
 export type UnlinkGuardianBody = z.infer<typeof unlinkGuardianBody>;
 
-export const setHouseholdStatusBody = z
+export const householdStatusBody = z
   .object({
     communitySlug: slug,
     householdId: uuid,
@@ -163,20 +163,16 @@ export const setHouseholdStatusBody = z
     status: householdStatus,
   })
   .strict();
-export const householdStatusBody = setHouseholdStatusBody;
-export type SetHouseholdStatusBody = z.infer<typeof setHouseholdStatusBody>;
-export type HouseholdStatusBody = SetHouseholdStatusBody;
+export type HouseholdStatusBody = z.infer<typeof householdStatusBody>;
 
-export const setHouseholdStatusResponse = z
+export const householdStatusResponse = z
   .object({
     householdId: uuid,
     version: z.number().int().positive(),
     status: householdStatus,
   })
   .strict();
-export const householdStatusResponse = setHouseholdStatusResponse;
-export type SetHouseholdStatusResponse = z.infer<typeof setHouseholdStatusResponse>;
-export type HouseholdStatusResponse = SetHouseholdStatusResponse;
+export type HouseholdStatusResponse = z.infer<typeof householdStatusResponse>;
 
 export const householdDeleteBody = z
   .object({

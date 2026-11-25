@@ -26,8 +26,6 @@ import {
   renameHouseholdBody,
   saveEmergencyContactsBody,
   saveEmergencyContactsResponse,
-  setHouseholdStatusBody,
-  setHouseholdStatusResponse,
   unlinkGuardianBody,
 } from "./households.js";
 
@@ -623,7 +621,7 @@ describe("household contract schemas (pin 10)", () => {
   it("validates family parity request bodies and responses", () => {
     // Status body & response
     expect(
-      setHouseholdStatusBody.safeParse({
+      householdStatusBody.safeParse({
         communitySlug: "parish-au",
         householdId: VALID_UUID,
         version: 1,
@@ -641,7 +639,7 @@ describe("household contract schemas (pin 10)", () => {
     ).toBe(true);
 
     expect(
-      setHouseholdStatusResponse.safeParse({
+      householdStatusResponse.safeParse({
         householdId: VALID_UUID,
         version: 2,
         status: "inactive",
