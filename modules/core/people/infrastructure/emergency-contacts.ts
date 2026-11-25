@@ -1,9 +1,9 @@
-import { decrypt, encrypt, type Ciphertext, type KmsPort } from "@community-hub/crypto";
+import { encrypt, type KmsPort } from "@community-hub/crypto";
 import { appendAuditEvent, type AppTransaction } from "@community-hub/db";
 
 import { validateEmergencyContacts, type EmergencyContact } from "../domain/emergency-contact.js";
 import { PeopleError } from "../domain/error.js";
-import { householdFieldKeys } from "./household.js";
+import { householdFieldKeys, openField } from "./household.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EMERGENCY_CONTACTS_READ = "people.household.emergency_contacts_read";
@@ -26,10 +26,6 @@ function uuidToBytes(uuid: string): Uint8Array {
     bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   }
   return bytes;
-}
-
-function asCiphertext(bytes: Uint8Array): Ciphertext {
-  return bytes as Ciphertext;
 }
 
 async function setting(
@@ -128,13 +124,17 @@ export async function readEmergencyContacts(
   const communityId = await setting(tx, "app.community_id");
   const { enc } = await householdFieldKeys(tx, kms, keyArn, input.householdId);
   try {
-    const plain = await decrypt(asCiphertext(household.emergency_contacts), async () => enc, {
-      tag: "chub/field/v1",
-      label: "people.household_emergency_contacts",
-      rowId: uuidToBytes(input.householdId),
-      communityId: uuidToBytes(communityId),
-    });
-    const parsed: unknown = JSON.parse(new TextDecoder().decode(plain));
+    const jsonText = await openField(
+      household.emergency_contacts,
+      enc,
+      input.householdId,
+      communityId,
+      "people.household_emergency_contacts",
+    );
+    if (jsonText === null) {
+      throw new Error("malformed stored emergency contacts");
+    }
+    const parsed: unknown = JSON.parse(jsonText);
     const contacts = validateEmergencyContacts(parsed);
     return {
       householdId: household.id,

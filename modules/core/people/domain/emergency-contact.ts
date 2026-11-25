@@ -21,12 +21,6 @@ export type EmergencyContact = {
   phone: string;
 };
 
-export type RawEmergencyContactInput = {
-  name: unknown;
-  relationship?: unknown;
-  phone: unknown;
-};
-
 function hasControlCharacter(value: string): boolean {
   for (const character of value) {
     const code = character.codePointAt(0);

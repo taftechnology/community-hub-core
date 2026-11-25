@@ -177,7 +177,6 @@ export {
   MAX_EMERGENCY_CONTACTS,
   type EmergencyContact,
   type EmergencyContactRelationship,
-  type RawEmergencyContactInput,
 } from "../domain/emergency-contact.js";
 export {
   readEmergencyContacts,
