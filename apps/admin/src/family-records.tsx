@@ -25,6 +25,7 @@ import { useCommunity } from "./community";
 import { readAccessToken } from "./directory";
 import { type ContactFormData, ContactFields, initialFormData } from "./contact-fields";
 import { duplicateDeletedMessage, readErrorCode } from "./duplicate-deleted";
+import { useEmergencyContacts } from "./emergency-contacts-panel";
 import {
   deletedColumns,
   type FamilyStatus,
@@ -740,6 +741,29 @@ export function FamilyRecordsPage() {
     onPaymentRequired,
     focusFallback: () => detailHeadingRef.current?.focus(),
   });
+  const emergency = useEmergencyContacts({
+    slug,
+    householdId: detailHousehold?.householdId ?? null,
+    detailVersion: detailHousehold?.version ?? 0,
+    canRead: canRestricted,
+    canEdit: canManage && !hideWrites,
+    gone: detailNotFound,
+    onSaved: (householdId, newVersion) => {
+      setDetailHousehold((prev) =>
+        prev !== null && prev.householdId === householdId ? { ...prev, version: newVersion } : prev,
+      );
+      setItems((prev) =>
+        prev === null
+          ? prev
+          : prev.map((item) =>
+              item.householdId === householdId ? { ...item, version: newVersion } : item,
+            ),
+      );
+    },
+    onConflict: reloadDetail,
+    onGone: reloadDetail,
+    onPaymentRequired,
+  });
 
   // After a restore, or when a row leaves the list, focus goes to the heading once the list is back.
   useEffect(() => {
@@ -862,6 +886,7 @@ export function FamilyRecordsPage() {
   useEffect(() => {
     detailGeneration.current += 1;
     panelGeneration.current += 1;
+    emergency.reset();
     setItems(null);
     setView("list");
     setSelectedHouseholdId(null);
@@ -929,6 +954,7 @@ export function FamilyRecordsPage() {
     setUnlinkingLinkId(null);
     setUnlinkNotice(null);
     panelGeneration.current += 1;
+    emergency.reset();
     const mine = ++detailGeneration.current;
     if (slug) {
       void fetchDetail(slug, householdId, () => detailGeneration.current === mine);
@@ -944,6 +970,7 @@ export function FamilyRecordsPage() {
 
   function backToList() {
     panelGeneration.current += 1;
+    emergency.reset();
     setView("list");
     setSelectedHouseholdId(null);
     setDetailHousehold(null);
@@ -2397,6 +2424,8 @@ export function FamilyRecordsPage() {
                 setUnlinkNotice={setUnlinkNotice}
               />
             ) : null}
+
+            {emergency.panel}
           </>
         ) : null}
       </>
