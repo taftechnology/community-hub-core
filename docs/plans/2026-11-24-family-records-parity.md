@@ -380,3 +380,23 @@ The owner's check (Claude Haiku 5.5, CHANGES NEEDED, five Low findings, read onl
 Also added by the reviewer: pin 34c (the version compare in `restoreHousehold`) and, from Task 3, pin 27b (the purge's `guardian_links` delete).
 
 Not acted on: Low 4 (the code's scope predicates in hide, restore and status are covered only through RLS). Defence in depth; RLS is forced and tested, and the two-organisation and two-community tests stay.
+
+### A2 (2026-11-25, after checkpoint 2): no-store on the family list, and a minor's family id
+
+Status: approved (2026-11-25, Adnan Bin Hossen)
+
+The owner's check of Tasks 4 to 7 (Claude Haiku 5.5, CHANGES NEEDED, one Medium and five Low findings, 15 weakenings of its own all caught) found no tenancy, children's data, lock or secret defect. Two findings are changed here. Not changed: the read event that rolls back when decryption fails (nothing is disclosed, and the spec puts the event in the read's transaction); the name rule of the contract and the module (both answer 400); the relationship wording in the spec (no value in the list stands for a child); the text match in the lock probes.
+
+**Commit 1:** `fix(api): send no-store on every family list answer`
+
+- `apps/api/src/household-routes.ts`: the `/v1/households/list` route uses the `withNoStore` wrapper, so a Deleted request with a body that fails the schema carries `no-store` too, as the spec says. The list's own `no-store` lines go, and the parsed body that `prepare` returned with a refusal for them. Normal lists, which hold family names, carry `no-store` as well. This replaces the plan addition "`/v1/households/list` sets it when the parsed body has `status: "deleted"`".
+- `apps/api/src/family-routes.integration.test.ts`: the no-store test adds a malformed Deleted request (400), and the list without a filter (200 and 401).
+
+**Commit 2:** `test(people): assert a minor's family id in readPerson`
+
+- `modules/core/people/infrastructure/hidden-family-reads.integration.test.ts`: `readPerson keeps the family id of a minor`.
+
+| #   | Setting                                   | Weakening                                                | File | Test that must fail (exact `it` title)                                     |
+| --- | ----------------------------------------- | -------------------------------------------------------- | ---- | -------------------------------------------------------------------------- |
+| 67b | `no-store` on every family list answer    | Drop the wrapper from the list route (replaces 67b, 67c) | R    | every family route and the deleted list answer no-store, refusals included |
+| 40b | A minor keeps its family id in readPerson | Return null for a minor                                  | FR   | readPerson keeps the family id of a minor                                  |
