@@ -430,6 +430,120 @@ describe("family delete migration 0023", () => {
     }
   }, 20_000);
 
+  it("migration 0023: an adult move waits for a hide in progress and is refused", async () => {
+    const targetHouseholdId = newId();
+    const movedAdultId = newId();
+
+    // Seed the target household and an adult with no family as migrator
+    await sql.begin(async (tx) => {
+      await tx.unsafe("set role migrator");
+      await tx`select set_config('app.org_id', ${orgId}, true)`;
+      await tx`select set_config('app.community_id', ${commId}, true)`;
+      await tx`
+        insert into app.households (id, org_id, community_id)
+        values (${targetHouseholdId}, ${orgId}, ${commId})
+      `;
+      await tx`
+        insert into app.persons (id, org_id, community_id, version, is_minor, age_basis, given_name, family_name)
+        values (${movedAdultId}, ${orgId}, ${commId}, 1, false, 'declared_adult', 'Moved', 'Adult')
+      `;
+    });
+
+    const conn1 = createPlaintextDirectSql(database.url);
+    const conn2 = createPlaintextDirectSql(database.url);
+    const inspector = createPlaintextDirectSql(database.url);
+
+    let releaseTx1!: () => void;
+    const releaseTx1Promise = new Promise<void>((resolve) => {
+      releaseTx1 = resolve;
+    });
+
+    let tx1Ready!: () => void;
+    const tx1ReadyPromise = new Promise<void>((resolve) => {
+      tx1Ready = resolve;
+    });
+
+    let tx2Pid: number | null = null;
+    let tx2Settled = false;
+
+    try {
+      const tx1Promise = conn1.begin(async (tx) => {
+        await tx.unsafe("set role app");
+        await tx`select set_config('app.org_id', ${orgId}, true)`;
+        await tx`select set_config('app.community_id', ${commId}, true)`;
+        await tx`
+          update app.households
+          set deleted_at = now(),
+              deleted_by = ${newId()}
+          where id = ${targetHouseholdId}
+        `;
+        tx1Ready();
+        await releaseTx1Promise;
+      });
+
+      await tx1ReadyPromise;
+
+      const tx2Promise = conn2
+        .begin(async (tx) => {
+          await tx.unsafe("set role app");
+          await tx`select set_config('app.org_id', ${orgId}, true)`;
+          await tx`select set_config('app.community_id', ${commId}, true)`;
+          const [pidRow] = await tx<{ pid: number }[]>`select pg_backend_pid() as pid`;
+          tx2Pid = pidRow?.pid ?? null;
+          await tx`
+            update app.persons
+            set household_id = ${targetHouseholdId}
+            where id = ${movedAdultId}
+          `;
+        })
+        .finally(() => {
+          tx2Settled = true;
+        });
+
+      let blocked = false;
+      const started = Date.now();
+      while (Date.now() - started < 10_000 && !tx2Settled) {
+        if (tx2Pid !== null) {
+          const rows = await inspector<{ count: number }[]>`
+            select count(*)::int as count
+            from pg_locks l
+            join pg_stat_activity a on a.pid = l.pid
+            where l.pid = ${tx2Pid}
+              and l.granted = false
+              and a.query like '%app.persons%'
+          `;
+          if ((rows[0]?.count ?? 0) > 0) {
+            blocked = true;
+            break;
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+
+      expect(blocked).toBe(true);
+
+      releaseTx1();
+      await tx1Promise;
+
+      await expect(tx2Promise).rejects.toThrow(/cannot place person in a deleted household/);
+
+      const [moved] = await sql.begin(async (tx) => {
+        await tx.unsafe("set role migrator");
+        await tx`select set_config('app.org_id', ${orgId}, true)`;
+        await tx`select set_config('app.community_id', ${commId}, true)`;
+        return tx<{ household_id: string | null }[]>`
+          select household_id from app.persons where id = ${movedAdultId}
+        `;
+      });
+      expect(moved?.household_id).toBeNull();
+    } finally {
+      releaseTx1();
+      await conn1.end({ timeout: 1 });
+      await conn2.end({ timeout: 1 });
+      await inspector.end({ timeout: 1 });
+    }
+  }, 20_000);
+
   it("migration 0023: a raw hide waits for an add-minor in progress and is refused", async () => {
     const targetHouseholdId = newId();
     const newMinorId = newId();
