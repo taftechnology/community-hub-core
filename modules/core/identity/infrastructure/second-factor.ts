@@ -1,0 +1,734 @@
+import type { webcrypto } from "node:crypto";
+import { decrypt, encrypt, type KmsPort } from "@community-hub/crypto";
+import { newId } from "@community-hub/db";
+import type { Sql, TransactionSql } from "postgres";
+
+import { newBackupCodes, normaliseBackupCode } from "../domain/backup-code.js";
+import { base32Encode, newTotpKey, otpauthUri, verifyTotp } from "../domain/totp.js";
+import { deriveIdentityEmailKeys, type IdentityEmailKeys } from "./email-lookup.js";
+import { hmac } from "./hmac.js";
+import { lockSecondFactor } from "./second-factor-lock.js";
+import {
+  createSessionInTransaction,
+  endOtherSessions,
+  sessionAccessHash,
+  type SessionKind,
+  type SessionTokens,
+} from "./session.js";
+
+const FIVE_MINUTES_MS = 5 * 60 * 1000;
+const TEN_MINUTES_MS = 10 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const MAX_SESSION_ATTEMPTS = 5;
+const MAX_HOURLY_FAILURES = 10;
+const IDENTITY_REGION = "au";
+const AAD_TAG = "chub/field-identity/v1";
+const TOTP_SECRET_LABEL = "identity.totp_secret";
+const TOTP_PENDING_SECRET_LABEL = "identity.totp_pending_secret";
+const BACKUP_CODE_LABEL = "identity.backup_code";
+
+type TotpLabel = typeof TOTP_SECRET_LABEL | typeof TOTP_PENDING_SECRET_LABEL;
+
+type SecondFactorEvent =
+  | "totp_enrolled"
+  | "totp_removed"
+  | "passkey_enrolled"
+  | "passkey_removed"
+  | "backup_codes_generated"
+  | "backup_code_used"
+  | "verify_failed";
+
+type SessionRow = {
+  id: string;
+  user_id: string;
+  kind: SessionKind;
+  revoked_at: Date | null;
+  access_expires_at: Date;
+  fresh_factor_at: Date | null;
+  recovery_until: Date | null;
+  second_factor_attempts: number;
+};
+
+export type StartTotpSetupInput = {
+  accessToken: string;
+  now: Date;
+  adminRpId?: string | null | undefined;
+};
+
+export type StartTotpSetupResult =
+  { outcome: "started"; secret: string; otpauthUri: string } | { outcome: "refused" };
+
+export type ConfirmTotpSetupInput = {
+  accessToken: string;
+  now: Date;
+  code: string;
+  adminRpId?: string | null | undefined;
+};
+
+export type ConfirmTotpSetupResult =
+  | { outcome: "confirmed"; backupCodes: string[]; tokens: SessionTokens }
+  | { outcome: "confirmed"; backupCodes?: undefined; tokens?: undefined }
+  | { outcome: "refused" };
+
+export type VerifySecondStepMethod = "totp" | "backup_code";
+
+export type VerifySecondStepInput = {
+  accessToken: string;
+  now: Date;
+  method: VerifySecondStepMethod;
+  code: string;
+};
+
+export type VerifySecondStepResult =
+  | { outcome: "verified"; tokens: SessionTokens; backupCodesLeft?: number | undefined }
+  | { outcome: "refused" }
+  | { outcome: "limited" };
+
+export type ListedPasskey = {
+  id: string;
+  createdAt: Date | null;
+};
+
+export type ListSecondFactorsInput = {
+  accessToken: string;
+  now: Date;
+  adminRpId?: string | null | undefined;
+};
+
+export type ListSecondFactorsResult =
+  | {
+      outcome: "listed";
+      totp: { confirmedAt: Date } | null;
+      passkeys: ListedPasskey[];
+      backupCodesLeft: number;
+      freshUntil: Date | null;
+    }
+  | { outcome: "refused" };
+
+function uuidToBytes(uuid: string): Uint8Array {
+  const hex = uuid.replaceAll("-", "");
+  const out = new Uint8Array(16);
+  for (let i = 0; i < 16; i += 1) {
+    out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
+
+async function encryptTotpKey(
+  enc: webcrypto.CryptoKey,
+  keyId: string,
+  rowId: string,
+  label: TotpLabel,
+  plaintextKey: Uint8Array,
+): Promise<Uint8Array> {
+  const ciphertext = await encrypt(enc, plaintextKey, uuidToBytes(keyId), {
+    tag: AAD_TAG,
+    label,
+    rowId: uuidToBytes(rowId),
+    region: IDENTITY_REGION,
+  });
+  // Tagged templates cannot bind the branded Ciphertext type directly.
+  const bytes: Uint8Array = ciphertext;
+  return bytes;
+}
+
+async function decryptTotpKey(
+  enc: webcrypto.CryptoKey,
+  rowId: string,
+  label: TotpLabel,
+  blob: Uint8Array,
+): Promise<Uint8Array> {
+  return decrypt(blob as never, () => enc, {
+    tag: AAD_TAG,
+    label,
+    rowId: uuidToBytes(rowId),
+    region: IDENTITY_REGION,
+  });
+}
+
+function isFreshFactor(session: SessionRow, now: Date): boolean {
+  return (
+    session.recovery_until === null &&
+    session.fresh_factor_at !== null &&
+    session.fresh_factor_at.getTime() >= now.getTime() - FIVE_MINUTES_MS
+  );
+}
+
+function isInRecoveryWindow(session: SessionRow, now: Date): boolean {
+  return session.recovery_until !== null && session.recovery_until.getTime() > now.getTime();
+}
+
+function canManageTenantFactors(session: SessionRow, now: Date): boolean {
+  return isFreshFactor(session, now) || isInRecoveryWindow(session, now);
+}
+
+async function resolveSessionBeforeLock(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  accessToken: string,
+): Promise<{ sessionId: string; userId: string; keys: IdentityEmailKeys } | null> {
+  const accessHash = await sessionAccessHash(sql, kms, keyArn, accessToken);
+  if (accessHash === null) {
+    return null;
+  }
+  const keys = await deriveIdentityEmailKeys(sql, kms, keyArn);
+  const rows = await sql<{ id: string; user_id: string }[]>`
+    select id, user_id
+    from identity.sessions
+    where access_hash = ${accessHash}
+    limit 1
+  `;
+  const row = rows[0];
+  if (row === undefined) {
+    return null;
+  }
+  return { sessionId: row.id, userId: row.user_id, keys };
+}
+
+async function readActiveSessionInTx(
+  tx: TransactionSql,
+  sessionId: string,
+  now: Date,
+): Promise<SessionRow | null> {
+  const rows = await tx<SessionRow[]>`
+    select
+      id,
+      user_id,
+      kind,
+      revoked_at,
+      access_expires_at,
+      fresh_factor_at,
+      recovery_until,
+      second_factor_attempts
+    from identity.sessions
+    where id = ${sessionId}
+  `;
+  const session = rows[0];
+  if (
+    session === undefined ||
+    session.revoked_at !== null ||
+    session.access_expires_at.getTime() <= now.getTime()
+  ) {
+    return null;
+  }
+  return session;
+}
+
+async function appendSecondFactorEvent(
+  tx: TransactionSql,
+  userId: string,
+  event: SecondFactorEvent,
+  now: Date,
+): Promise<void> {
+  await tx`
+    insert into identity.second_factor_events (id, user_id, event, occurred_at)
+    values (${newId()}, ${userId}, ${event}, ${now.toISOString()}::timestamptz)
+  `;
+}
+
+async function writeBackupCodes(
+  tx: TransactionSql,
+  bidx: webcrypto.CryptoKey,
+  userId: string,
+  now: Date,
+): Promise<string[]> {
+  const codes = newBackupCodes();
+  const nowIso = now.toISOString();
+  for (const code of codes) {
+    const normalised = normaliseBackupCode(code);
+    if (normalised === null) {
+      throw new Error("generated backup code failed normalisation");
+    }
+    const codeHash = await hmac(bidx, BACKUP_CODE_LABEL, new TextEncoder().encode(normalised));
+    await tx`
+      insert into identity.backup_codes (id, user_id, code_hash, used_at, created_at)
+      values (${newId()}, ${userId}, ${codeHash}, null, ${nowIso}::timestamptz)
+    `;
+  }
+  return codes;
+}
+
+// Internal helper; not exported from public/.
+export async function hasSecondFactor(
+  tx: TransactionSql,
+  userId: string,
+  adminRpId?: string | null | undefined,
+): Promise<boolean> {
+  const totpRows = await tx<{ id: string }[]>`
+    select id
+    from identity.totp_credentials
+    where user_id = ${userId}
+      and confirmed_at is not null
+    limit 1
+  `;
+  if (totpRows[0] !== undefined) {
+    return true;
+  }
+  if (!adminRpId) {
+    return false;
+  }
+  const passkeyRows = await tx<{ id: string }[]>`
+    select id
+    from identity.passkey_credentials
+    where user_id = ${userId}
+      and user_verified = true
+      and rp_id = ${adminRpId}
+    limit 1
+  `;
+  return passkeyRows[0] !== undefined;
+}
+
+export async function startTotpSetup(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: StartTotpSetupInput,
+): Promise<StartTotpSetupResult> {
+  const resolved = await resolveSessionBeforeLock(sql, kms, keyArn, input.accessToken);
+  if (resolved === null) {
+    return { outcome: "refused" };
+  }
+
+  return sql.begin(async (tx) => {
+    await lockSecondFactor(tx, resolved.userId);
+    const session = await readActiveSessionInTx(tx, resolved.sessionId, input.now);
+    if (session === null) {
+      return { outcome: "refused" };
+    }
+
+    if (session.kind === "second_factor") {
+      if (await hasSecondFactor(tx, session.user_id, input.adminRpId)) {
+        return { outcome: "refused" };
+      }
+    } else if (session.kind === "tenant") {
+      if (!canManageTenantFactors(session, input.now)) {
+        return { outcome: "refused" };
+      }
+    } else {
+      return { outcome: "refused" };
+    }
+
+    const existingRows = await tx<{ id: string; confirmed_at: Date | null }[]>`
+      select id, confirmed_at
+      from identity.totp_credentials
+      where user_id = ${session.user_id}
+    `;
+    const existing = existingRows[0];
+    const key = newTotpKey();
+    const nowIso = input.now.toISOString();
+
+    if (existing === undefined || existing.confirmed_at === null) {
+      const rowId = existing?.id ?? newId();
+      const secretBytes = await encryptTotpKey(
+        resolved.keys.enc,
+        resolved.keys.keyId,
+        rowId,
+        TOTP_SECRET_LABEL,
+        key,
+      );
+      if (existing === undefined) {
+        await tx`
+          insert into identity.totp_credentials (
+            id, user_id, secret, pending_secret, last_used_step, confirmed_at, created_at
+          ) values (
+            ${rowId}, ${session.user_id}, ${secretBytes}, null, null, null, ${nowIso}::timestamptz
+          )
+        `;
+      } else {
+        await tx`
+          update identity.totp_credentials
+          set secret = ${secretBytes},
+              pending_secret = null,
+              last_used_step = null,
+              confirmed_at = null,
+              created_at = ${nowIso}::timestamptz
+          where id = ${existing.id}
+        `;
+      }
+    } else {
+      const pendingBytes = await encryptTotpKey(
+        resolved.keys.enc,
+        resolved.keys.keyId,
+        existing.id,
+        TOTP_PENDING_SECRET_LABEL,
+        key,
+      );
+      await tx`
+        update identity.totp_credentials
+        set pending_secret = ${pendingBytes}
+        where id = ${existing.id}
+      `;
+    }
+
+    return {
+      outcome: "started",
+      secret: base32Encode(key),
+      otpauthUri: otpauthUri(key),
+    };
+  });
+}
+
+export async function confirmTotpSetup(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: ConfirmTotpSetupInput,
+): Promise<ConfirmTotpSetupResult> {
+  const resolved = await resolveSessionBeforeLock(sql, kms, keyArn, input.accessToken);
+  if (resolved === null) {
+    return { outcome: "refused" };
+  }
+
+  return sql.begin(async (tx) => {
+    await lockSecondFactor(tx, resolved.userId);
+    const session = await readActiveSessionInTx(tx, resolved.sessionId, input.now);
+    if (session === null) {
+      return { outcome: "refused" };
+    }
+
+    if (session.kind === "second_factor") {
+      if (await hasSecondFactor(tx, session.user_id, input.adminRpId)) {
+        return { outcome: "refused" };
+      }
+    } else if (session.kind === "tenant") {
+      if (!canManageTenantFactors(session, input.now)) {
+        return { outcome: "refused" };
+      }
+    } else {
+      return { outcome: "refused" };
+    }
+
+    const credRows = await tx<
+      {
+        id: string;
+        secret: Uint8Array;
+        pending_secret: Uint8Array | null;
+        confirmed_at: Date | null;
+      }[]
+    >`
+      select id, secret, pending_secret, confirmed_at
+      from identity.totp_credentials
+      where user_id = ${session.user_id}
+    `;
+    const cred = credRows[0];
+    if (cred === undefined) {
+      return { outcome: "refused" };
+    }
+
+    const isReplacement = cred.confirmed_at !== null;
+    let encryptedToVerify: Uint8Array;
+    let verifyLabel: TotpLabel;
+    if (isReplacement) {
+      if (cred.pending_secret === null) {
+        return { outcome: "refused" };
+      }
+      encryptedToVerify = cred.pending_secret;
+      verifyLabel = TOTP_PENDING_SECRET_LABEL;
+    } else {
+      encryptedToVerify = cred.secret;
+      verifyLabel = TOTP_SECRET_LABEL;
+    }
+
+    const key = await decryptTotpKey(resolved.keys.enc, cred.id, verifyLabel, encryptedToVerify);
+    const matchedStep = verifyTotp(key, input.code, input.now);
+    if (matchedStep === null) {
+      return { outcome: "refused" };
+    }
+
+    const nowIso = input.now.toISOString();
+    if (isReplacement) {
+      const newSecretBytes = await encryptTotpKey(
+        resolved.keys.enc,
+        resolved.keys.keyId,
+        cred.id,
+        TOTP_SECRET_LABEL,
+        key,
+      );
+      await tx`
+        update identity.totp_credentials
+        set secret = ${newSecretBytes},
+            pending_secret = null,
+            confirmed_at = ${nowIso}::timestamptz,
+            last_used_step = ${matchedStep}
+        where id = ${cred.id}
+      `;
+      await endOtherSessions(tx, session.user_id, session.id, input.now);
+      await appendSecondFactorEvent(tx, session.user_id, "totp_enrolled", input.now);
+      return { outcome: "confirmed" };
+    }
+
+    await tx`
+      update identity.totp_credentials
+      set confirmed_at = ${nowIso}::timestamptz,
+          last_used_step = ${matchedStep}
+      where id = ${cred.id}
+    `;
+    await appendSecondFactorEvent(tx, session.user_id, "totp_enrolled", input.now);
+
+    if (session.kind === "second_factor") {
+      const backupCodes = await writeBackupCodes(
+        tx,
+        resolved.keys.bidx,
+        session.user_id,
+        input.now,
+      );
+      await appendSecondFactorEvent(tx, session.user_id, "backup_codes_generated", input.now);
+      await tx`
+        update identity.sessions
+        set revoked_at = ${nowIso}::timestamptz
+        where id = ${session.id}
+          and revoked_at is null
+      `;
+      const tokens = await createSessionInTransaction(tx, resolved.keys.bidx, {
+        userId: session.user_id,
+        now: input.now,
+        kind: "tenant",
+        factor: "otp_totp",
+        freshFactorAt: null,
+      });
+      return { outcome: "confirmed", backupCodes, tokens };
+    }
+
+    if (isInRecoveryWindow(session, input.now)) {
+      await endOtherSessions(tx, session.user_id, session.id, input.now);
+    }
+    return { outcome: "confirmed" };
+  });
+}
+
+export async function verifySecondStep(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: VerifySecondStepInput,
+): Promise<VerifySecondStepResult> {
+  const resolved = await resolveSessionBeforeLock(sql, kms, keyArn, input.accessToken);
+  if (resolved === null) {
+    return { outcome: "refused" };
+  }
+
+  return sql.begin(async (tx) => {
+    await lockSecondFactor(tx, resolved.userId);
+    const session = await readActiveSessionInTx(tx, resolved.sessionId, input.now);
+    if (session === null || session.kind !== "second_factor") {
+      return { outcome: "refused" };
+    }
+
+    const hourAgoIso = new Date(input.now.getTime() - HOUR_MS).toISOString();
+    const recentFailures = await tx<{ n: number }[]>`
+      select count(*)::int as n
+      from identity.second_factor_events
+      where user_id = ${session.user_id}
+        and event = 'verify_failed'
+        and occurred_at > ${hourAgoIso}::timestamptz
+    `;
+    if ((recentFailures[0]?.n ?? 0) >= MAX_HOURLY_FAILURES) {
+      return { outcome: "limited" };
+    }
+
+    const attemptRows = await tx<{ second_factor_attempts: number }[]>`
+      update identity.sessions
+      set second_factor_attempts = second_factor_attempts + 1
+      where id = ${session.id}
+        and revoked_at is null
+        and second_factor_attempts < ${MAX_SESSION_ATTEMPTS}
+      returning second_factor_attempts
+    `;
+    const attemptRow = attemptRows[0];
+    if (attemptRow === undefined) {
+      return { outcome: "limited" };
+    }
+    const attempts = attemptRow.second_factor_attempts;
+    const nowIso = input.now.toISOString();
+
+    let matched = false;
+    let backupCodesLeft: number | undefined;
+
+    if (input.method === "totp") {
+      const totpRows = await tx<{ id: string; secret: Uint8Array }[]>`
+        select id, secret
+        from identity.totp_credentials
+        where user_id = ${session.user_id}
+          and confirmed_at is not null
+      `;
+      const totpRow = totpRows[0];
+      if (totpRow !== undefined) {
+        const key = await decryptTotpKey(
+          resolved.keys.enc,
+          totpRow.id,
+          TOTP_SECRET_LABEL,
+          totpRow.secret,
+        );
+        const matchedStep = verifyTotp(key, input.code, input.now);
+        if (matchedStep !== null) {
+          const advanced = await tx<{ id: string }[]>`
+            update identity.totp_credentials
+            set last_used_step = ${matchedStep}
+            where id = ${totpRow.id}
+              and confirmed_at is not null
+              and (last_used_step is null or last_used_step < ${matchedStep})
+            returning id
+          `;
+          if (advanced[0] !== undefined) {
+            const rechecked = await tx<{ id: string }[]>`
+              select id
+              from identity.totp_credentials
+              where id = ${totpRow.id}
+                and user_id = ${session.user_id}
+                and confirmed_at is not null
+            `;
+            matched = rechecked[0] !== undefined;
+          }
+        }
+      }
+    } else if (input.method === "backup_code") {
+      const normalised = normaliseBackupCode(input.code);
+      if (normalised !== null) {
+        const codeHash = await hmac(
+          resolved.keys.bidx,
+          BACKUP_CODE_LABEL,
+          new TextEncoder().encode(normalised),
+        );
+        const consumed = await tx<{ id: string }[]>`
+          update identity.backup_codes
+          set used_at = ${nowIso}::timestamptz
+          where user_id = ${session.user_id}
+            and code_hash = ${codeHash}
+            and used_at is null
+          returning id
+        `;
+        const consumedRow = consumed[0];
+        if (consumedRow !== undefined) {
+          await appendSecondFactorEvent(tx, session.user_id, "backup_code_used", input.now);
+          const rechecked = await tx<{ id: string }[]>`
+            select id
+            from identity.backup_codes
+            where id = ${consumedRow.id}
+              and user_id = ${session.user_id}
+              and used_at is not null
+          `;
+          if (rechecked[0] !== undefined) {
+            const remaining = await tx<{ n: number }[]>`
+              select count(*)::int as n
+              from identity.backup_codes
+              where user_id = ${session.user_id}
+                and used_at is null
+            `;
+            backupCodesLeft = remaining[0]?.n ?? 0;
+            matched = true;
+          }
+        }
+      }
+    }
+
+    if (!matched) {
+      await appendSecondFactorEvent(tx, session.user_id, "verify_failed", input.now);
+      if (attempts >= MAX_SESSION_ATTEMPTS) {
+        await tx`
+          update identity.sessions
+          set revoked_at = ${nowIso}::timestamptz
+          where id = ${session.id}
+            and revoked_at is null
+        `;
+      }
+      return { outcome: "refused" };
+    }
+
+    await tx`
+      update identity.sessions
+      set revoked_at = ${nowIso}::timestamptz
+      where id = ${session.id}
+        and revoked_at is null
+    `;
+
+    if (input.method === "totp") {
+      const tokens = await createSessionInTransaction(tx, resolved.keys.bidx, {
+        userId: session.user_id,
+        now: input.now,
+        kind: "tenant",
+        factor: "otp_totp",
+        freshFactorAt: input.now,
+        recoveryUntil: null,
+      });
+      return { outcome: "verified", tokens };
+    }
+
+    const recoveryUntil = new Date(input.now.getTime() + TEN_MINUTES_MS);
+    const tokens = await createSessionInTransaction(tx, resolved.keys.bidx, {
+      userId: session.user_id,
+      now: input.now,
+      kind: "tenant",
+      factor: "otp_backup_code",
+      freshFactorAt: null,
+      recoveryUntil,
+    });
+    return { outcome: "verified", tokens, backupCodesLeft };
+  });
+}
+
+export async function listSecondFactors(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: ListSecondFactorsInput,
+): Promise<ListSecondFactorsResult> {
+  const resolved = await resolveSessionBeforeLock(sql, kms, keyArn, input.accessToken);
+  if (resolved === null) {
+    return { outcome: "refused" };
+  }
+
+  return sql.begin(async (tx) => {
+    await lockSecondFactor(tx, resolved.userId);
+    const session = await readActiveSessionInTx(tx, resolved.sessionId, input.now);
+    if (session === null || session.kind !== "tenant") {
+      return { outcome: "refused" };
+    }
+
+    const totpRows = await tx<{ confirmed_at: Date }[]>`
+      select confirmed_at
+      from identity.totp_credentials
+      where user_id = ${session.user_id}
+        and confirmed_at is not null
+      limit 1
+    `;
+    const totp = totpRows[0] !== undefined ? { confirmedAt: totpRows[0].confirmed_at } : null;
+
+    let passkeys: ListedPasskey[] = [];
+    if (input.adminRpId) {
+      const passkeyRows = await tx<{ id: string; created_at: Date | null }[]>`
+        select id, created_at
+        from identity.passkey_credentials
+        where user_id = ${session.user_id}
+          and user_verified = true
+          and rp_id = ${input.adminRpId}
+        order by created_at asc nulls last, id asc
+      `;
+      passkeys = passkeyRows.map((row) => ({
+        id: row.id,
+        createdAt: row.created_at,
+      }));
+    }
+
+    const backupRows = await tx<{ n: number }[]>`
+      select count(*)::int as n
+      from identity.backup_codes
+      where user_id = ${session.user_id}
+        and used_at is null
+    `;
+    const backupCodesLeft = backupRows[0]?.n ?? 0;
+
+    const freshUntil =
+      isFreshFactor(session, input.now) && session.fresh_factor_at !== null
+        ? new Date(session.fresh_factor_at.getTime() + FIVE_MINUTES_MS)
+        : null;
+
+    return {
+      outcome: "listed",
+      totp,
+      passkeys,
+      backupCodesLeft,
+      freshUntil,
+    };
+  });
+}

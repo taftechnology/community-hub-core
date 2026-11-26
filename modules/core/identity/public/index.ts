@@ -61,3 +61,19 @@ export {
   type VerifyOperatorEnrolmentInput,
   type VerifyOperatorEnrolmentResult,
 } from "../infrastructure/operator.js";
+export {
+  confirmTotpSetup,
+  listSecondFactors,
+  startTotpSetup,
+  verifySecondStep,
+  type ConfirmTotpSetupInput,
+  type ConfirmTotpSetupResult,
+  type ListedPasskey,
+  type ListSecondFactorsInput,
+  type ListSecondFactorsResult,
+  type StartTotpSetupInput,
+  type StartTotpSetupResult,
+  type VerifySecondStepInput,
+  type VerifySecondStepMethod,
+  type VerifySecondStepResult,
+} from "../infrastructure/second-factor.js";
