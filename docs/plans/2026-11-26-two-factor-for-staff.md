@@ -5,7 +5,9 @@ Spec: docs/specs/2026-11-26-two-factor-for-staff.md
 Slug: two-factor-for-staff
 Status: approved (2026-11-26, Adnan Bin Hossen)
 
-Revision 3 (2026-11-26) applies the delta plan check (Claude Haiku 5.5, NOT READY, 6 High, 9 Medium, 6 Low). All applied: pins 26, 27, 40, 86, 96 redesigned or moved; pin 93 removed (the `required` challenge row already guards the route; pin 66 covers `requireUvFlag`); the pre-2FA setup check lives in the service, which now takes the caller's session; the notice port's deviation from spec line 140 is stated; the billing and invitations expression is written out.
+Amendment A1 (2026-11-26, approved by Adnan Bin Hossen): Task 1 also edits `packages/db/drizzle.schema.ts` to export the three new identity tables (drizzle-kit reads only that file's exports, `packages/db/drizzle.config.ts:5`, and `generate.test.ts` re-runs it in CI); `totp_credentials.last_used_step` is `bigint` in number mode, like `passkey_credentials.sign_count`; pin 10's note is corrected. Found by the Task 1 implementer, which stopped as the brief requires.
+
+Revision 3 (2026-11-26) applied the delta plan check (Claude Haiku 5.5, NOT READY, 6 High, 9 Medium, 6 Low). All applied: pins 26, 27, 40, 86, 96 redesigned or moved; pin 93 removed (the `required` challenge row already guards the route; pin 66 covers `requireUvFlag`); the pre-2FA setup check lives in the service, which now takes the caller's session; the notice port's deviation from spec line 140 is stated; the billing and invitations expression is written out.
 
 Revision 2 (2026-11-26) applied the fresh-context plan check (Claude Haiku 5.5, NOT READY, 7 High, 13 Medium, 12 Low). All applied. H1: the notice is a separate port, `SecondFactorNotice`, so no existing `OtpMail` fake changes. H2 and H3: the route-level passkey switch moves to Task 8 with every affected test, found by grep and listed. H7 and M8: race pins become lock pins with a blocking proof. M13: billing and invitations keep today's admin origin. L11 needs no change.
 
@@ -123,7 +125,7 @@ Files: **MG** = `packages/db/test/two-factor-migration.integration.test.ts` (new
 | 7   | Old image inserts still work                     | `sessions.factor` `NOT NULL`                        | MG   | the session, refresh and passkey inserts on main still succeed                                                                                                                |
 | 8   | `user_verified` defaults false                   | Default true                                        | MG   | an existing passkey row reads user_verified false                                                                                                                             |
 | 9   | Event check list                                 | Drop the check                                      | MG   | refuses an unknown second factor event                                                                                                                                        |
-| 10  | Every new column classified                      | Remove `totp_credentials.secret` from `dataClasses` | MF   | declares every identity column and nothing else (it compares the schema with the list, so both are edited in Task 1)                                                          |
+| 10  | Every new column classified                      | Remove `totp_credentials.secret` from `dataClasses` | MF   | declares every identity column and nothing else (it compares the manifest with an inline expected list, so both are edited in Task 1)                                         |
 | 11  | RFC 6238 SHA1                                    | HMAC-SHA256                                         | TO   | matches the RFC 6238 SHA1 vectors truncated to six digits                                                                                                                     |
 | 12  | One step either side                             | Accept two steps                                    | TO   | accepts one step either side and refuses two                                                                                                                                  |
 | 13  | Leading zeros kept                               | Drop the zero padding                               | TO   | keeps leading zeros                                                                                                                                                           |
@@ -230,10 +232,10 @@ Files: **MG** = `packages/db/test/two-factor-migration.integration.test.ts` (new
 
 ### Task 1: Migration `0024`, schema and manifest
 
-**Files:** `modules/core/identity/db/schema.ts`; `packages/db/drizzle/0024_*.sql`, `packages/db/drizzle/meta/0024_snapshot.json`, `packages/db/drizzle/meta/_journal.json`; `modules/core/identity/module.manifest.ts`; `modules/core/identity/domain/manifest.test.ts`; MG (new).
+**Files:** `modules/core/identity/db/schema.ts`; `packages/db/drizzle.schema.ts` (export `totpCredentials`, `backupCodes`, `secondFactorEvents` beside the other identity tables, `:46-56`); `packages/db/drizzle/0024_*.sql`, `packages/db/drizzle/meta/0024_snapshot.json`, `packages/db/drizzle/meta/_journal.json`; `modules/core/identity/module.manifest.ts`; `modules/core/identity/domain/manifest.test.ts`; MG (new).
 
 - [ ] Write MG first: pins 1 to 9, plus the expected tables, columns, defaults and the widened check; spec test 19 (the `insert` statements copied from `session.ts:428-459`, `:316-330` and `passkey.ts:172-182` on `main` run after `0024`).
-- [ ] Add the three tables, the four session columns (`factor`, `fresh_factor_at`, `recovery_until`, `second_factor_attempts`) and the two passkey columns to the schema factory; generate `0024`; hand SQL: `sessions_kind_v2` added, then `sessions_kind` dropped; `REVOKE UPDATE, DELETE, TRUNCATE` on `second_factor_events` from `identity` (as `0012_polite_bloodstrike.sql:28-30`).
+- [ ] Add the three tables, the four session columns (`factor`, `fresh_factor_at`, `recovery_until`, `second_factor_attempts`) and the two passkey columns to the schema factory; generate `0024`; `last_used_step` is `bigint({ mode: "number" })`; hand SQL: `sessions_kind_v2` added, then `sessions_kind` dropped; `REVOKE UPDATE, DELETE, TRUNCATE` on `second_factor_events` from `identity` (as `0012_polite_bloodstrike.sql:28-30`).
 - [ ] Add every new column to `dataClasses` and the manifest test (pin 10).
 - [ ] Gate.
 
