@@ -1,5 +1,11 @@
 export { IdentityError } from "../domain/error.js";
 export { OtpMailUnavailable, rejectingOtpMail, type OtpMail } from "../domain/otp-mail.js";
+export {
+  rejectingSecondFactorNotice,
+  SecondFactorNoticeUnavailable,
+  type SecondFactorNotice,
+  type SecondFactorNoticeKind,
+} from "../domain/second-factor-notice.js";
 export { startEmailOtp, verifyEmailOtp, type OtpPurpose } from "../infrastructure/email-otp.js";
 export { ensureIdentityKey } from "../infrastructure/identity-key.js";
 export { findOrCreateUserByEmail, findUserByEmail } from "../infrastructure/email-lookup.js";
@@ -63,14 +69,28 @@ export {
 } from "../infrastructure/operator.js";
 export {
   confirmTotpSetup,
+  freshCheckTotp,
   listSecondFactors,
+  regenerateBackupCodes,
+  removePasskey,
+  removeTotp,
   startTotpSetup,
   verifySecondStep,
   type ConfirmTotpSetupInput,
   type ConfirmTotpSetupResult,
+  type FreshCheckTotpInput,
+  type FreshCheckTotpResult,
   type ListedPasskey,
   type ListSecondFactorsInput,
   type ListSecondFactorsResult,
+  type RegenerateBackupCodesInput,
+  type RegenerateBackupCodesResult,
+  type RemovePasskeyInput,
+  type RemovePasskeyResult,
+  type RemoveTotpInput,
+  type RemoveTotpResult,
+  type SecondFactorNoticeDeps,
+  type SecondFactorNoticeLogFields,
   type StartTotpSetupInput,
   type StartTotpSetupResult,
   type VerifySecondStepInput,

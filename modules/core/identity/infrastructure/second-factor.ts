@@ -4,6 +4,7 @@ import { newId } from "@community-hub/db";
 import type { Sql, TransactionSql } from "postgres";
 
 import { newBackupCodes, normaliseBackupCode } from "../domain/backup-code.js";
+import type { SecondFactorNotice, SecondFactorNoticeKind } from "../domain/second-factor-notice.js";
 import { base32Encode, newTotpKey, otpauthUri, verifyTotp } from "../domain/totp.js";
 import { deriveIdentityEmailKeys, type IdentityEmailKeys } from "./email-lookup.js";
 import { hmac } from "./hmac.js";
@@ -15,6 +16,7 @@ import {
   type SessionKind,
   type SessionTokens,
 } from "./session.js";
+import { readUserEmails } from "./user-emails.js";
 
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
 const TEN_MINUTES_MS = 10 * 60 * 1000;
@@ -374,8 +376,21 @@ export async function confirmTotpSetup(
   kms: KmsPort,
   keyArn: string,
   input: ConfirmTotpSetupInput,
+  deps?: SecondFactorNoticeDeps,
 ): Promise<ConfirmTotpSetupResult> {
   const resolved = await resolveSessionBeforeLock(sql, kms, keyArn, input.accessToken);
+  const result = await confirmTotpSetupTx(sql, resolved, input);
+  if (result.outcome === "confirmed" && resolved !== null && deps !== undefined) {
+    await sendFactorNotice(sql, kms, keyArn, resolved.userId, "totp_set_up", deps);
+  }
+  return result;
+}
+
+async function confirmTotpSetupTx(
+  sql: Sql,
+  resolved: Awaited<ReturnType<typeof resolveSessionBeforeLock>>,
+  input: ConfirmTotpSetupInput,
+): Promise<ConfirmTotpSetupResult> {
   if (resolved === null) {
     return { outcome: "refused" };
   }
@@ -731,4 +746,383 @@ export async function listSecondFactors(
       freshUntil,
     };
   });
+}
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export type SecondFactorNoticeLogFields = {
+  event: "second_factor_notice_failed";
+  kind: SecondFactorNoticeKind;
+};
+
+export type SecondFactorNoticeDeps = {
+  notice: SecondFactorNotice;
+  log?: ((fields: SecondFactorNoticeLogFields) => void) | undefined;
+};
+
+export type FreshCheckTotpInput = {
+  accessToken: string;
+  now: Date;
+  code: string;
+};
+
+export type FreshCheckTotpResult =
+  { outcome: "fresh" } | { outcome: "refused" } | { outcome: "limited" };
+
+export type RegenerateBackupCodesInput = {
+  accessToken: string;
+  now: Date;
+};
+
+export type RegenerateBackupCodesResult =
+  { outcome: "made"; backupCodes: string[] } | { outcome: "refused" };
+
+export type RemoveTotpInput = {
+  accessToken: string;
+  now: Date;
+  adminRpId?: string | null | undefined;
+};
+
+export type RemoveTotpResult = { outcome: "removed" } | { outcome: "refused" };
+
+export type RemovePasskeyInput = {
+  accessToken: string;
+  now: Date;
+  adminRpId?: string | null | undefined;
+  passkeyId: string;
+};
+
+export type RemovePasskeyResult = { outcome: "removed" } | { outcome: "refused" };
+
+async function hasReachedHourlyFailureLimit(
+  tx: TransactionSql,
+  userId: string,
+  now: Date,
+): Promise<boolean> {
+  const hourAgoIso = new Date(now.getTime() - HOUR_MS).toISOString();
+  const recentFailures = await tx<{ n: number }[]>`
+    select count(*)::int as n
+    from identity.second_factor_events
+    where user_id = ${userId}
+      and event = 'verify_failed'
+      and occurred_at > ${hourAgoIso}::timestamptz
+  `;
+  return (recentFailures[0]?.n ?? 0) >= MAX_HOURLY_FAILURES;
+}
+
+async function consumeSessionAttempt(
+  tx: TransactionSql,
+  sessionId: string,
+): Promise<number | null> {
+  const attemptRows = await tx<{ second_factor_attempts: number }[]>`
+    update identity.sessions
+    set second_factor_attempts = second_factor_attempts + 1
+    where id = ${sessionId}
+      and revoked_at is null
+      and second_factor_attempts < ${MAX_SESSION_ATTEMPTS}
+    returning second_factor_attempts
+  `;
+  return attemptRows[0]?.second_factor_attempts ?? null;
+}
+
+async function verifyConfirmedTotpInTx(
+  tx: TransactionSql,
+  encKey: webcrypto.CryptoKey,
+  userId: string,
+  code: string,
+  now: Date,
+): Promise<boolean> {
+  const totpRows = await tx<{ id: string; secret: Uint8Array }[]>`
+    select id, secret
+    from identity.totp_credentials
+    where user_id = ${userId}
+      and confirmed_at is not null
+  `;
+  const totpRow = totpRows[0];
+  if (totpRow === undefined) {
+    return false;
+  }
+  const key = await decryptTotpKey(encKey, totpRow.id, TOTP_SECRET_LABEL, totpRow.secret);
+  const matchedStep = verifyTotp(key, code, now);
+  if (matchedStep === null) {
+    return false;
+  }
+  const advanced = await tx<{ id: string }[]>`
+    update identity.totp_credentials
+    set last_used_step = ${matchedStep}
+    where id = ${totpRow.id}
+      and confirmed_at is not null
+      and (last_used_step is null or last_used_step < ${matchedStep})
+    returning id
+  `;
+  if (advanced[0] === undefined) {
+    return false;
+  }
+  const rechecked = await tx<{ id: string }[]>`
+    select id
+    from identity.totp_credentials
+    where id = ${totpRow.id}
+      and user_id = ${userId}
+      and confirmed_at is not null
+  `;
+  return rechecked[0] !== undefined;
+}
+
+async function hasConfirmedTotp(tx: TransactionSql, userId: string): Promise<boolean> {
+  const rows = await tx<{ id: string }[]>`
+    select id
+    from identity.totp_credentials
+    where user_id = ${userId}
+      and confirmed_at is not null
+    limit 1
+  `;
+  return rows[0] !== undefined;
+}
+
+async function hasCountingPasskey(
+  tx: TransactionSql,
+  userId: string,
+  adminRpId?: string | null | undefined,
+  excludePasskeyId?: string | undefined,
+): Promise<boolean> {
+  if (!adminRpId) {
+    return false;
+  }
+  const rows = excludePasskeyId
+    ? await tx<{ id: string }[]>`
+        select id
+        from identity.passkey_credentials
+        where user_id = ${userId}
+          and id <> ${excludePasskeyId}
+          and user_verified = true
+          and rp_id = ${adminRpId}
+        limit 1
+      `
+    : await tx<{ id: string }[]>`
+        select id
+        from identity.passkey_credentials
+        where user_id = ${userId}
+          and user_verified = true
+          and rp_id = ${adminRpId}
+        limit 1
+      `;
+  return rows[0] !== undefined;
+}
+
+async function sendFactorNotice(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  userId: string,
+  kind: SecondFactorNoticeKind,
+  deps: SecondFactorNoticeDeps,
+): Promise<void> {
+  try {
+    const emails = await readUserEmails(sql, kms, keyArn, [userId]);
+    const to = emails.get(userId);
+    if (to === undefined) {
+      deps.log?.({ event: "second_factor_notice_failed", kind });
+      return;
+    }
+    await deps.notice.send({ to, kind });
+  } catch {
+    deps.log?.({ event: "second_factor_notice_failed", kind });
+  }
+}
+
+export async function freshCheckTotp(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: FreshCheckTotpInput,
+): Promise<FreshCheckTotpResult> {
+  const resolved = await resolveSessionBeforeLock(sql, kms, keyArn, input.accessToken);
+  if (resolved === null) {
+    return { outcome: "refused" };
+  }
+
+  return sql.begin(async (tx) => {
+    await lockSecondFactor(tx, resolved.userId);
+    const session = await readActiveSessionInTx(tx, resolved.sessionId, input.now);
+    if (session === null || session.kind !== "tenant" || session.recovery_until !== null) {
+      return { outcome: "refused" };
+    }
+
+    if (await hasReachedHourlyFailureLimit(tx, session.user_id, input.now)) {
+      return { outcome: "limited" };
+    }
+
+    const attempts = await consumeSessionAttempt(tx, session.id);
+    if (attempts === null) {
+      return { outcome: "limited" };
+    }
+
+    const matched = await verifyConfirmedTotpInTx(
+      tx,
+      resolved.keys.enc,
+      session.user_id,
+      input.code,
+      input.now,
+    );
+    if (!matched) {
+      await appendSecondFactorEvent(tx, session.user_id, "verify_failed", input.now);
+      return { outcome: "refused" };
+    }
+
+    const nowIso = input.now.toISOString();
+    await tx`
+      update identity.sessions
+      set fresh_factor_at = ${nowIso}::timestamptz
+      where id = ${session.id}
+        and revoked_at is null
+    `;
+    return { outcome: "fresh" };
+  });
+}
+
+export async function regenerateBackupCodes(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: RegenerateBackupCodesInput,
+  deps: SecondFactorNoticeDeps,
+): Promise<RegenerateBackupCodesResult> {
+  const resolved = await resolveSessionBeforeLock(sql, kms, keyArn, input.accessToken);
+  if (resolved === null) {
+    return { outcome: "refused" };
+  }
+
+  const result = await sql.begin(async (tx): Promise<RegenerateBackupCodesResult> => {
+    await lockSecondFactor(tx, resolved.userId);
+    const session = await readActiveSessionInTx(tx, resolved.sessionId, input.now);
+    if (
+      session === null ||
+      session.kind !== "tenant" ||
+      !canManageTenantFactors(session, input.now)
+    ) {
+      return { outcome: "refused" };
+    }
+
+    await tx`
+      delete from identity.backup_codes
+      where user_id = ${session.user_id}
+    `;
+    const backupCodes = await writeBackupCodes(tx, resolved.keys.bidx, session.user_id, input.now);
+    await appendSecondFactorEvent(tx, session.user_id, "backup_codes_generated", input.now);
+    await endOtherSessions(tx, session.user_id, session.id, input.now);
+    return { outcome: "made", backupCodes };
+  });
+
+  if (result.outcome === "made") {
+    await sendFactorNotice(sql, kms, keyArn, resolved.userId, "backup_codes_made", deps);
+  }
+  return result;
+}
+
+export async function removeTotp(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: RemoveTotpInput,
+  deps: SecondFactorNoticeDeps,
+): Promise<RemoveTotpResult> {
+  const resolved = await resolveSessionBeforeLock(sql, kms, keyArn, input.accessToken);
+  if (resolved === null) {
+    return { outcome: "refused" };
+  }
+
+  const result = await sql.begin(async (tx): Promise<RemoveTotpResult> => {
+    await lockSecondFactor(tx, resolved.userId);
+    const session = await readActiveSessionInTx(tx, resolved.sessionId, input.now);
+    if (session === null || session.kind !== "tenant" || !isFreshFactor(session, input.now)) {
+      return { outcome: "refused" };
+    }
+
+    if (!(await hasConfirmedTotp(tx, session.user_id))) {
+      return { outcome: "refused" };
+    }
+
+    if (!(await hasCountingPasskey(tx, session.user_id, input.adminRpId))) {
+      return { outcome: "refused" };
+    }
+
+    await tx`
+      delete from identity.totp_credentials
+      where user_id = ${session.user_id}
+    `;
+    await appendSecondFactorEvent(tx, session.user_id, "totp_removed", input.now);
+    await endOtherSessions(tx, session.user_id, session.id, input.now);
+    return { outcome: "removed" };
+  });
+
+  if (result.outcome === "removed") {
+    await sendFactorNotice(sql, kms, keyArn, resolved.userId, "totp_removed", deps);
+  }
+  return result;
+}
+
+export async function removePasskey(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: RemovePasskeyInput,
+  deps: SecondFactorNoticeDeps,
+): Promise<RemovePasskeyResult> {
+  const resolved = await resolveSessionBeforeLock(sql, kms, keyArn, input.accessToken);
+  if (resolved === null) {
+    return { outcome: "refused" };
+  }
+
+  const result = await sql.begin(async (tx): Promise<RemovePasskeyResult> => {
+    await lockSecondFactor(tx, resolved.userId);
+    const session = await readActiveSessionInTx(tx, resolved.sessionId, input.now);
+    if (
+      session === null ||
+      session.kind !== "tenant" ||
+      !canManageTenantFactors(session, input.now)
+    ) {
+      return { outcome: "refused" };
+    }
+
+    if (!input.adminRpId || !UUID_REGEX.test(input.passkeyId)) {
+      return { outcome: "refused" };
+    }
+
+    const targetRows = await tx<{ id: string }[]>`
+      select id
+      from identity.passkey_credentials
+      where id = ${input.passkeyId}
+        and user_id = ${session.user_id}
+        and rp_id = ${input.adminRpId}
+        and user_verified = true
+    `;
+    if (targetRows[0] === undefined) {
+      return { outcome: "refused" };
+    }
+
+    const hasTotp = await hasConfirmedTotp(tx, session.user_id);
+    const hasOtherPasskey = await hasCountingPasskey(
+      tx,
+      session.user_id,
+      input.adminRpId,
+      input.passkeyId,
+    );
+    if (!hasTotp && !hasOtherPasskey) {
+      return { outcome: "refused" };
+    }
+
+    await tx`
+      delete from identity.passkey_credentials
+      where id = ${input.passkeyId}
+        and user_id = ${session.user_id}
+    `;
+    await appendSecondFactorEvent(tx, session.user_id, "passkey_removed", input.now);
+    await endOtherSessions(tx, session.user_id, session.id, input.now);
+    return { outcome: "removed" };
+  });
+
+  if (result.outcome === "removed") {
+    await sendFactorNotice(sql, kms, keyArn, resolved.userId, "passkey_removed", deps);
+  }
+  return result;
 }
