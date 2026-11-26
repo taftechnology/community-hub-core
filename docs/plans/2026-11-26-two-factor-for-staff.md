@@ -5,6 +5,16 @@ Spec: docs/specs/2026-11-26-two-factor-for-staff.md
 Slug: two-factor-for-staff
 Status: approved (2026-11-26, Adnan Bin Hossen)
 
+Amendment A3 (2026-11-26, approved by Adnan Bin Hossen): after Checkpoint 2 (Claude Haiku 5.5, CHANGES NEEDED, 0 High, 2 Medium, 5 Low; no path to an admin session without two factors found), a fix commit C2 before Task 9, implemented by Claude Sonnet 5.5 (the implementer from Task 8 on). M1: removal answers 409 for the last factor and 404 for an unknown or another user's passkey, as spec Contracts say, instead of 401. M2: `finishPasskeyAuthentication` is tenant-only and no longer exported from `public/`; a `tenant` session cannot be created with a null `factor`. L1: refresh refuses a `tenant` row whose `factor` is null. L2: `ADMIN_ORIGIN` with an explicit port is refused at start-up, so the origin check is exact. Accepted and recorded in the pull request: L3 (TOTP confirm has no failure counter; the key belongs to the session that started setup, and D-4 accepts that an account with no factor can be claimed) and L4 (passkey registration consumes its challenge before the `2fa:` lock; the re-checks under the lock keep it safe). L5 was a false alarm (every name ends in `example.test`).
+
+| 111 | Passkey second step counts attempts | Skip `consumeSessionAttempt` in `verifySecondStepPasskey` | PK | a passkey second step counts an attempt before checking and stops at five |
+| 112 | Passkey checks share the hourly limit | Skip the hourly check in `verifySecondStepPasskey` | PK | refuses a passkey second step after ten wrong answers in an hour |
+| 113 | Removing the last factor answers 409 | Map the last-factor refusal to 401 | AR | removing the last factor answers 409 |
+| 114 | Removing an unknown passkey answers 404 | Map the unknown-passkey refusal to 401 | AR | removing another user's passkey answers 404 |
+| 115 | Refresh refuses a factor-less staff session | Drop the factor check from the refresh lookup | SE | refuses to refresh a tenant session with no factor |
+| 116 | `ADMIN_ORIGIN` without a port | Accept an explicit port | EN | refuses an ADMIN_ORIGIN with an explicit port |
+| 117 | Passkey sign-in is tenant-only | Restore a non-tenant branch that creates a session | PK | finishPasskeyAuthentication creates only factor-bearing tenant sessions |
+
 Amendment A2 (2026-11-26, approved by Adnan Bin Hossen): after Checkpoint 1 (Claude Haiku 5.5, APPROVE WITH NOTES, 0 High, 2 Medium, 4 Low), a fix commit C1 before Task 6. M1: `hasSecondFactor` with no admin rpId counts every user-verified passkey, and `adminRpId` is a required argument of the second-factor functions, so a pre-2FA session can never set up a factor for a passkey-only user (pin 109). M2: the service refuses a `tenant` session whose `factor` is null, as the spec requires, without waiting for Task 8's `readSession` check (pin 110). L2: the notice dependency of `confirmTotpSetup` is required. L4: tests for removing one's own non-counting passkey, backup codes with `0`, `1`, `8` or `9`, and TOTP input that is not six digits. L1 stays in Task 8; L3 (two helpers with no production caller) is not applied.
 
 | 109 | No-rpId factor check fails closed | Return false without `adminRpId` | SF | a pre-2FA session cannot set up TOTP for a passkey-only user when no rp id is passed |
