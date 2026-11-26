@@ -54,6 +54,9 @@ export const identitySessions = identityRows.sessions;
 export const operatorGrants = identityRows.operatorGrants;
 export const operatorEvents = identityRows.operatorEvents;
 export const invitationEmails = identityRows.invitationEmails;
+export const totpCredentials = identityRows.totpCredentials;
+export const backupCodes = identityRows.backupCodes;
+export const secondFactorEvents = identityRows.secondFactorEvents;
 
 const peopleRows = peopleTables(appNamespace, { encryptedColumn, blindIndexColumn });
 
