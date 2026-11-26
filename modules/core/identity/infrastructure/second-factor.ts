@@ -13,6 +13,7 @@ import {
   createSessionInTransaction,
   endOtherSessions,
   sessionAccessHash,
+  type SessionFactor,
   type SessionKind,
   type SessionTokens,
 } from "./session.js";
@@ -44,6 +45,7 @@ type SessionRow = {
   id: string;
   user_id: string;
   kind: SessionKind;
+  factor: SessionFactor | null;
   revoked_at: Date | null;
   access_expires_at: Date;
   fresh_factor_at: Date | null;
@@ -54,7 +56,7 @@ type SessionRow = {
 export type StartTotpSetupInput = {
   accessToken: string;
   now: Date;
-  adminRpId?: string | null | undefined;
+  adminRpId: string | null;
 };
 
 export type StartTotpSetupResult =
@@ -64,7 +66,7 @@ export type ConfirmTotpSetupInput = {
   accessToken: string;
   now: Date;
   code: string;
-  adminRpId?: string | null | undefined;
+  adminRpId: string | null;
 };
 
 export type ConfirmTotpSetupResult =
@@ -94,7 +96,7 @@ export type ListedPasskey = {
 export type ListSecondFactorsInput = {
   accessToken: string;
   now: Date;
-  adminRpId?: string | null | undefined;
+  adminRpId: string | null;
 };
 
 export type ListSecondFactorsResult =
@@ -198,6 +200,7 @@ async function readActiveSessionInTx(
       id,
       user_id,
       kind,
+      factor,
       revoked_at,
       access_expires_at,
       fresh_factor_at,
@@ -210,7 +213,8 @@ async function readActiveSessionInTx(
   if (
     session === undefined ||
     session.revoked_at !== null ||
-    session.access_expires_at.getTime() <= now.getTime()
+    session.access_expires_at.getTime() <= now.getTime() ||
+    (session.kind === "tenant" && session.factor === null)
   ) {
     return null;
   }
@@ -255,7 +259,7 @@ async function writeBackupCodes(
 export async function hasSecondFactor(
   tx: TransactionSql,
   userId: string,
-  adminRpId?: string | null | undefined,
+  adminRpId: string | null,
 ): Promise<boolean> {
   const totpRows = await tx<{ id: string }[]>`
     select id
@@ -268,7 +272,14 @@ export async function hasSecondFactor(
     return true;
   }
   if (!adminRpId) {
-    return false;
+    const anyVerifiedPasskeys = await tx<{ id: string }[]>`
+      select id
+      from identity.passkey_credentials
+      where user_id = ${userId}
+        and user_verified = true
+      limit 1
+    `;
+    return anyVerifiedPasskeys[0] !== undefined;
   }
   const passkeyRows = await tx<{ id: string }[]>`
     select id
@@ -376,11 +387,11 @@ export async function confirmTotpSetup(
   kms: KmsPort,
   keyArn: string,
   input: ConfirmTotpSetupInput,
-  deps?: SecondFactorNoticeDeps,
+  deps: SecondFactorNoticeDeps,
 ): Promise<ConfirmTotpSetupResult> {
   const resolved = await resolveSessionBeforeLock(sql, kms, keyArn, input.accessToken);
   const result = await confirmTotpSetupTx(sql, resolved, input);
-  if (result.outcome === "confirmed" && resolved !== null && deps !== undefined) {
+  if (result.outcome === "confirmed" && resolved !== null) {
     await sendFactorNotice(sql, kms, keyArn, resolved.userId, "totp_set_up", deps);
   }
   return result;
@@ -780,7 +791,7 @@ export type RegenerateBackupCodesResult =
 export type RemoveTotpInput = {
   accessToken: string;
   now: Date;
-  adminRpId?: string | null | undefined;
+  adminRpId: string | null;
 };
 
 export type RemoveTotpResult = { outcome: "removed" } | { outcome: "refused" };
@@ -788,7 +799,7 @@ export type RemoveTotpResult = { outcome: "removed" } | { outcome: "refused" };
 export type RemovePasskeyInput = {
   accessToken: string;
   now: Date;
-  adminRpId?: string | null | undefined;
+  adminRpId: string | null;
   passkeyId: string;
 };
 
@@ -882,7 +893,7 @@ async function hasConfirmedTotp(tx: TransactionSql, userId: string): Promise<boo
 async function hasCountingPasskey(
   tx: TransactionSql,
   userId: string,
-  adminRpId?: string | null | undefined,
+  adminRpId: string | null,
   excludePasskeyId?: string | undefined,
 ): Promise<boolean> {
   if (!adminRpId) {

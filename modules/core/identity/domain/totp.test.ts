@@ -55,6 +55,29 @@ describe("totp", () => {
     expect(verifyTotp(RFC_6238_KEY, "١٢٣٤٥٦", now)).toBeNull();
   });
 
+  it("refuses input that is not six ASCII digits", () => {
+    const now = new Date(1234567890 * 1000);
+    const current = totpCode(RFC_6238_KEY, stepAt(now));
+
+    expect(verifyTotp(RFC_6238_KEY, "", now)).toBeNull();
+    expect(verifyTotp(RFC_6238_KEY, current.slice(0, 5), now)).toBeNull();
+    expect(verifyTotp(RFC_6238_KEY, "12345", now)).toBeNull();
+    expect(verifyTotp(RFC_6238_KEY, current + "0", now)).toBeNull();
+    expect(verifyTotp(RFC_6238_KEY, "0" + current, now)).toBeNull();
+    expect(verifyTotp(RFC_6238_KEY, "1234567", now)).toBeNull();
+    expect(verifyTotp(RFC_6238_KEY, "12345a", now)).toBeNull();
+    expect(verifyTotp(RFC_6238_KEY, "abcdef", now)).toBeNull();
+    expect(verifyTotp(RFC_6238_KEY, " " + current, now)).toBeNull();
+    expect(verifyTotp(RFC_6238_KEY, current + " ", now)).toBeNull();
+    expect(verifyTotp(RFC_6238_KEY, " " + current.slice(1), now)).toBeNull();
+    expect(verifyTotp(RFC_6238_KEY, current.slice(0, 3) + " " + current.slice(3), now)).toBeNull();
+    expect(verifyTotp(RFC_6238_KEY, "００５９２４", now)).toBeNull();
+    expect(verifyTotp(RFC_6238_KEY, "１２３４５６", now)).toBeNull();
+    expect(verifyTotp(RFC_6238_KEY, "١٢٣٤٥٦", now)).toBeNull();
+    expect(verifyTotp(RFC_6238_KEY, current + "\n", now)).toBeNull();
+    expect(verifyTotp(RFC_6238_KEY, "+05924", now)).toBeNull();
+  });
+
   it("keeps leading zeros", () => {
     const stepTwoZeros = stepAt(new Date(1234567890 * 1000));
     expect(totpCode(RFC_6238_KEY, stepTwoZeros)).toBe("005924");

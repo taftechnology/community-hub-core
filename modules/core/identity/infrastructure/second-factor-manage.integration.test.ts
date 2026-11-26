@@ -85,7 +85,7 @@ async function enrolTotpForManageTest(
   input: {
     email: string;
     now: Date;
-    adminRpId?: string | null | undefined;
+    adminRpId: string | null;
     notice?: SecondFactorNotice | undefined;
   },
 ): Promise<{ tokens: SessionTokens; key: Uint8Array; backupCodes: string[] }> {
@@ -127,7 +127,7 @@ async function enrolTotpForManageTest(
       code: totpCode(key, stepAt(input.now)),
       adminRpId: input.adminRpId,
     },
-    input.notice ? { notice: input.notice } : undefined,
+    { notice: input.notice ?? new MemoryNotice() },
   );
   if (confirmed.outcome !== "confirmed" || !confirmed.tokens || !confirmed.backupCodes) {
     throw new Error("confirmTotpSetup failed in enrolTotpForManageTest");
@@ -2147,6 +2147,217 @@ describe("second-factor service: fresh check, recovery window, removal, notices"
           now,
         }),
       ).toEqual({ userId: enrolledB.tokens.userId });
+    });
+  });
+
+  // Pin 110
+  it("the second-factor service refuses a tenant session with no factor", async () => {
+    const now = new Date("2026-11-26T00:00:00.000Z");
+    const t1 = new Date(now.getTime() + 30_000);
+    await withSql(async (sql) => {
+      const enrolled = await enrolTotpForManageTest(sql, kms, KEY_ARN, {
+        email: "pin110@example.test",
+        now,
+        adminRpId: ADMIN_RP_ID,
+      });
+      const userId = enrolled.tokens.userId;
+      const pkId = await insertCountingPasskey(sql, userId, ADMIN_RP_ID, now);
+      const notice = new MemoryNotice();
+
+      const factorless = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now: t1,
+        kind: "tenant",
+        factor: null,
+        freshFactorAt: t1,
+      });
+      const factorlessHash = await sessionAccessHash(sql, kms, KEY_ARN, factorless.accessToken);
+
+      const backupIdsBefore = await sql<{ id: string }[]>`
+        select id from identity.backup_codes where user_id = ${userId} and used_at is null order by id
+      `;
+      const eventsBefore = await sql<{ id: string }[]>`
+        select id from identity.second_factor_events where user_id = ${userId}
+      `;
+
+      await expect(
+        freshCheckTotp(sql, kms, KEY_ARN, {
+          accessToken: factorless.accessToken,
+          now: t1,
+          code: totpCode(enrolled.key, stepAt(t1)),
+        }),
+      ).resolves.toEqual({ outcome: "refused" });
+
+      await expect(
+        regenerateBackupCodes(
+          sql,
+          kms,
+          KEY_ARN,
+          { accessToken: factorless.accessToken, now: t1 },
+          { notice },
+        ).then((result) => result.outcome),
+      ).resolves.toBe("refused");
+
+      await expect(
+        removeTotp(
+          sql,
+          kms,
+          KEY_ARN,
+          { accessToken: factorless.accessToken, now: t1, adminRpId: ADMIN_RP_ID },
+          { notice },
+        ),
+      ).resolves.toEqual({ outcome: "refused" });
+
+      await expect(
+        removePasskey(
+          sql,
+          kms,
+          KEY_ARN,
+          {
+            accessToken: factorless.accessToken,
+            now: t1,
+            adminRpId: ADMIN_RP_ID,
+            passkeyId: pkId,
+          },
+          { notice },
+        ),
+      ).resolves.toEqual({ outcome: "refused" });
+
+      await expect(
+        startTotpSetup(sql, kms, KEY_ARN, {
+          accessToken: factorless.accessToken,
+          now: t1,
+          adminRpId: ADMIN_RP_ID,
+        }).then((result) => result.outcome),
+      ).resolves.toBe("refused");
+
+      await expect(
+        listSecondFactors(sql, kms, KEY_ARN, {
+          accessToken: factorless.accessToken,
+          now: t1,
+          adminRpId: ADMIN_RP_ID,
+        }),
+      ).resolves.toEqual({ outcome: "refused" });
+
+      expect(notice.calls).toHaveLength(0);
+
+      const [totpRow] = await sql<
+        {
+          pending_secret: Uint8Array | null;
+          confirmed_at: Date | null;
+          last_used_step: number | string | null;
+        }[]
+      >`
+        select pending_secret, confirmed_at, last_used_step
+        from identity.totp_credentials
+        where user_id = ${userId}
+      `;
+      expect(totpRow?.confirmed_at).toEqual(now);
+      expect(totpRow?.pending_secret).toBeNull();
+      expect(Number(totpRow?.last_used_step)).toBe(stepAt(now));
+
+      const pkRows = await sql<{ id: string }[]>`
+        select id from identity.passkey_credentials where id = ${pkId}
+      `;
+      expect(pkRows).toHaveLength(1);
+
+      const backupIdsAfter = await sql<{ id: string }[]>`
+        select id from identity.backup_codes where user_id = ${userId} and used_at is null order by id
+      `;
+      expect(backupIdsAfter).toEqual(backupIdsBefore);
+
+      const eventsAfter = await sql<{ id: string }[]>`
+        select id from identity.second_factor_events where user_id = ${userId}
+      `;
+      expect(eventsAfter).toEqual(eventsBefore);
+
+      const [factorlessRow] = await sql<
+        { second_factor_attempts: number; revoked_at: Date | null }[]
+      >`
+        select second_factor_attempts, revoked_at
+        from identity.sessions
+        where access_hash = ${factorlessHash}
+      `;
+      expect(factorlessRow?.second_factor_attempts).toBe(0);
+      expect(factorlessRow?.revoked_at).toBeNull();
+
+      expect(
+        await readSession(sql, kms, KEY_ARN, { accessToken: enrolled.tokens.accessToken, now: t1 }),
+      ).toEqual({ userId });
+    });
+  });
+
+  // L4: caller's own non-counting passkeys
+  it("removing your own passkey that does not count answers as unknown and changes nothing", async () => {
+    const now = new Date("2026-11-26T00:00:00.000Z");
+    await withSql(async (sql) => {
+      const enrolled = await enrolTotpForManageTest(sql, kms, KEY_ARN, {
+        email: "own-non-counting-pk@example.test",
+        now,
+        adminRpId: ADMIN_RP_ID,
+      });
+      const userId = enrolled.tokens.userId;
+      const countingPk = await insertCountingPasskey(sql, userId, ADMIN_RP_ID, now);
+      const unverifiedPk = newId();
+      const otherRpPk = newId();
+      const nullRpPk = newId();
+      await sql`
+        insert into identity.passkey_credentials (
+          id, user_id, credential_id, cose_key, sign_count, rp_id, user_verified, created_at
+        ) values
+          (${unverifiedPk}, ${userId}, ${crypto.getRandomValues(new Uint8Array(32))}, ${crypto.getRandomValues(new Uint8Array(32))}, 0, ${ADMIN_RP_ID}, false, ${now}),
+          (${otherRpPk}, ${userId}, ${crypto.getRandomValues(new Uint8Array(32))}, ${crypto.getRandomValues(new Uint8Array(32))}, 0, ${"ops.example.test"}, true, ${now}),
+          (${nullRpPk}, ${userId}, ${crypto.getRandomValues(new Uint8Array(32))}, ${crypto.getRandomValues(new Uint8Array(32))}, 0, ${null}, true, ${now})
+      `;
+
+      const fresh = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+        factor: "otp_totp",
+        freshFactorAt: now,
+      });
+      const notice = new MemoryNotice();
+      const eventsBefore = await sql<{ id: string }[]>`
+        select id from identity.second_factor_events where user_id = ${userId}
+      `;
+
+      const unknownResult = await removePasskey(
+        sql,
+        kms,
+        KEY_ARN,
+        { accessToken: fresh.accessToken, now, adminRpId: ADMIN_RP_ID, passkeyId: newId() },
+        { notice },
+      );
+      expect(unknownResult).toEqual({ outcome: "refused" });
+
+      for (const passkeyId of [unverifiedPk, otherRpPk, nullRpPk]) {
+        await expect(
+          removePasskey(
+            sql,
+            kms,
+            KEY_ARN,
+            { accessToken: fresh.accessToken, now, adminRpId: ADMIN_RP_ID, passkeyId },
+            { notice },
+          ),
+        ).resolves.toEqual(unknownResult);
+      }
+
+      expect(notice.calls).toHaveLength(0);
+      const remaining = await sql<{ id: string }[]>`
+        select id from identity.passkey_credentials
+        where user_id = ${userId}
+      `;
+      expect(remaining.map((r) => r.id).sort()).toEqual(
+        [countingPk, unverifiedPk, otherRpPk, nullRpPk].sort(),
+      );
+      const eventsAfter = await sql<{ id: string }[]>`
+        select id from identity.second_factor_events where user_id = ${userId}
+      `;
+      expect(eventsAfter).toEqual(eventsBefore);
+      expect(
+        await readSession(sql, kms, KEY_ARN, { accessToken: enrolled.tokens.accessToken, now }),
+      ).toEqual({ userId });
     });
   });
 

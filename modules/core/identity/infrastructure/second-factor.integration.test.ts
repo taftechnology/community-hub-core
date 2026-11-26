@@ -9,6 +9,7 @@ import { createPlaintextDirectSql, createPlaintextIdentitySql } from "@community
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { OtpMail } from "../domain/otp-mail.js";
+import type { SecondFactorNotice, SecondFactorNoticeKind } from "../domain/second-factor-notice.js";
 import { base32Decode, base32Encode, newTotpKey, stepAt, totpCode } from "../domain/totp.js";
 import {
   confirmTotpSetup,
@@ -71,6 +72,15 @@ class MemoryMail implements OtpMail {
   }
 }
 
+class MemoryNotice implements SecondFactorNotice {
+  calls: { to: string; kind: SecondFactorNoticeKind }[] = [];
+
+  send(input: { to: string; kind: SecondFactorNoticeKind }): Promise<void> {
+    this.calls.push(input);
+    return Promise.resolve();
+  }
+}
+
 // Test-only fixture helper placed in second-factor.integration.test.ts rather
 // than second-factor.fixture.ts because modules/core/identity/tsconfig.json
 // excludes only **/*.test.ts from the build output.
@@ -78,7 +88,7 @@ export async function enrolTotpForTest(
   sql: Sql,
   kms: KmsPort,
   keyArn: string,
-  input: { email: string; now: Date; adminRpId?: string | null | undefined },
+  input: { email: string; now: Date; adminRpId: string | null; notice?: SecondFactorNotice },
 ): Promise<{ tokens: SessionTokens; key: Uint8Array; backupCodes: string[] }> {
   const mail = new MemoryMail();
   await startEmailOtp(sql, kms, keyArn, mail, { email: input.email, now: input.now });
@@ -121,12 +131,18 @@ export async function enrolTotpForTest(
   if (key === null) {
     throw new Error("invalid base32 secret in enrolTotpForTest");
   }
-  const confirmed = await confirmTotpSetup(sql, kms, keyArn, {
-    accessToken: pre2faToken,
-    now: input.now,
-    code: totpCode(key, stepAt(input.now)),
-    adminRpId: input.adminRpId,
-  });
+  const confirmed = await confirmTotpSetup(
+    sql,
+    kms,
+    keyArn,
+    {
+      accessToken: pre2faToken,
+      now: input.now,
+      code: totpCode(key, stepAt(input.now)),
+      adminRpId: input.adminRpId,
+    },
+    { notice: input.notice ?? new MemoryNotice() },
+  );
   if (confirmed.outcome !== "confirmed" || !confirmed.tokens || !confirmed.backupCodes) {
     throw new Error("confirmTotpSetup failed in enrolTotpForTest");
   }
@@ -931,12 +947,18 @@ describe("second-factor service: TOTP, backup codes, second step, limits", () =>
         kind: "second_factor",
       });
       await expect(
-        confirmTotpSetup(sql, kms, KEY_ARN, {
-          accessToken: sfA.accessToken,
-          now,
-          code: totpCode(pendingKey, stepAt(now)),
-          adminRpId: ADMIN_RP_ID,
-        }),
+        confirmTotpSetup(
+          sql,
+          kms,
+          KEY_ARN,
+          {
+            accessToken: sfA.accessToken,
+            now,
+            code: totpCode(pendingKey, stepAt(now)),
+            adminRpId: ADMIN_RP_ID,
+          },
+          { notice: new MemoryNotice() },
+        ),
       ).resolves.toEqual({ outcome: "refused" });
 
       const [credA] = await sql<{ pending_secret: Uint8Array | null }[]>`
@@ -965,12 +987,18 @@ describe("second-factor service: TOTP, backup codes, second step, limits", () =>
       await insertCountingPasskey(sql, userB, ADMIN_RP_ID, now);
 
       await expect(
-        confirmTotpSetup(sql, kms, KEY_ARN, {
-          accessToken: sfB.accessToken,
-          now,
-          code: totpCode(keyB, stepAt(now)),
-          adminRpId: ADMIN_RP_ID,
-        }),
+        confirmTotpSetup(
+          sql,
+          kms,
+          KEY_ARN,
+          {
+            accessToken: sfB.accessToken,
+            now,
+            code: totpCode(keyB, stepAt(now)),
+            adminRpId: ADMIN_RP_ID,
+          },
+          { notice: new MemoryNotice() },
+        ),
       ).resolves.toEqual({ outcome: "refused" });
 
       const [credB] = await sql<{ confirmed_at: Date | null }[]>`
@@ -1046,12 +1074,18 @@ describe("second-factor service: TOTP, backup codes, second step, limits", () =>
         throw new Error("expected secondStart");
       }
       const key2 = base32Decode(secondStart.secret)!;
-      const confirmed = await confirmTotpSetup(sql, kms, KEY_ARN, {
-        accessToken: sf.accessToken,
-        now,
-        code: totpCode(key2, stepAt(now)),
-        adminRpId: ADMIN_RP_ID,
-      });
+      const confirmed = await confirmTotpSetup(
+        sql,
+        kms,
+        KEY_ARN,
+        {
+          accessToken: sf.accessToken,
+          now,
+          code: totpCode(key2, stepAt(now)),
+          adminRpId: ADMIN_RP_ID,
+        },
+        { notice: new MemoryNotice() },
+      );
       expect(confirmed.outcome).toBe("confirmed");
     });
   });
@@ -1256,12 +1290,18 @@ describe("second-factor service: TOTP, backup codes, second step, limits", () =>
       expect(Buffer.from(decryptedPending)).toEqual(Buffer.from(pendingKey));
 
       // Confirming replacement moves it into secret under identity.totp_secret and clears pending_secret
-      const confirmed = await confirmTotpSetup(sql, kms, KEY_ARN, {
-        accessToken: freshTenant.accessToken,
-        now,
-        code: totpCode(pendingKey, stepAt(now)),
-        adminRpId: ADMIN_RP_ID,
-      });
+      const confirmed = await confirmTotpSetup(
+        sql,
+        kms,
+        KEY_ARN,
+        {
+          accessToken: freshTenant.accessToken,
+          now,
+          code: totpCode(pendingKey, stepAt(now)),
+          adminRpId: ADMIN_RP_ID,
+        },
+        { notice: new MemoryNotice() },
+      );
       expect(confirmed).toEqual({ outcome: "confirmed" });
 
       const [after] = await sql<
@@ -1331,12 +1371,18 @@ describe("second-factor service: TOTP, backup codes, second step, limits", () =>
       });
       await Promise.race([lockAcquired, holderPromise]);
 
-      confirmPromise = confirmTotpSetup(sql, kms, KEY_ARN, {
-        accessToken: sf.accessToken,
-        now,
-        code: totpCode(key, stepAt(now)),
-        adminRpId: ADMIN_RP_ID,
-      }).finally(() => {
+      confirmPromise = confirmTotpSetup(
+        sql,
+        kms,
+        KEY_ARN,
+        {
+          accessToken: sf.accessToken,
+          now,
+          code: totpCode(key, stepAt(now)),
+          adminRpId: ADMIN_RP_ID,
+        },
+        { notice: new MemoryNotice() },
+      ).finally(() => {
         settled = true;
       });
 
@@ -1380,19 +1426,32 @@ describe("second-factor service: TOTP, backup codes, second step, limits", () =>
       const raceKey = base32Decode(started2.secret)!;
       const raceCode = totpCode(raceKey, stepAt(now));
 
+      const raceNotice = new MemoryNotice();
       const raceResults = await Promise.all([
-        confirmTotpSetup(sql, kms, KEY_ARN, {
-          accessToken: sf1.accessToken,
-          now,
-          code: raceCode,
-          adminRpId: ADMIN_RP_ID,
-        }),
-        confirmTotpSetup(sql, kms, KEY_ARN, {
-          accessToken: sf2.accessToken,
-          now,
-          code: raceCode,
-          adminRpId: ADMIN_RP_ID,
-        }),
+        confirmTotpSetup(
+          sql,
+          kms,
+          KEY_ARN,
+          {
+            accessToken: sf1.accessToken,
+            now,
+            code: raceCode,
+            adminRpId: ADMIN_RP_ID,
+          },
+          { notice: raceNotice },
+        ),
+        confirmTotpSetup(
+          sql,
+          kms,
+          KEY_ARN,
+          {
+            accessToken: sf2.accessToken,
+            now,
+            code: raceCode,
+            adminRpId: ADMIN_RP_ID,
+          },
+          { notice: raceNotice },
+        ),
       ]);
       expect(raceResults.filter((r) => r.outcome === "confirmed")).toHaveLength(1);
       expect(raceResults.filter((r) => r.outcome === "refused")).toHaveLength(1);
@@ -1620,6 +1679,98 @@ describe("second-factor service: TOTP, backup codes, second step, limits", () =>
     });
   });
 
+  // Pin 109
+  it("a pre-2FA session cannot set up TOTP for a passkey-only user when no rp id is passed", async () => {
+    const now = new Date("2026-11-26T00:00:00.000Z");
+    await withSql(async (sql) => {
+      // Case A: passkey-only user with no TOTP row
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: "pin109-a@example.test",
+      });
+      await insertCountingPasskey(sql, userId, ADMIN_RP_ID, now);
+      const sf = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "second_factor",
+      });
+      const notice = new MemoryNotice();
+
+      await expect(
+        startTotpSetup(sql, kms, KEY_ARN, {
+          accessToken: sf.accessToken,
+          now,
+          adminRpId: null,
+        }).then((result) => result.outcome),
+      ).resolves.toBe("refused");
+
+      await expect(
+        confirmTotpSetup(
+          sql,
+          kms,
+          KEY_ARN,
+          {
+            accessToken: sf.accessToken,
+            now,
+            code: "000000",
+            adminRpId: null,
+          },
+          { notice },
+        ).then((result) => result.outcome),
+      ).resolves.toBe("refused");
+
+      const rowsA = await sql<{ id: string }[]>`
+        select id from identity.totp_credentials where user_id = ${userId}
+      `;
+      expect(rowsA).toHaveLength(0);
+
+      // Case B: user started TOTP before enrolling a counting passkey, then attempts confirm with adminRpId: null
+      const { userId: userB } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: "pin109-b@example.test",
+      });
+      const sfB = await createSession(sql, kms, KEY_ARN, {
+        userId: userB,
+        now,
+        kind: "second_factor",
+      });
+      const startedB = await startTotpSetup(sql, kms, KEY_ARN, {
+        accessToken: sfB.accessToken,
+        now,
+        adminRpId: ADMIN_RP_ID,
+      });
+      if (startedB.outcome !== "started") {
+        throw new Error("expected startedB");
+      }
+      const keyB = base32Decode(startedB.secret)!;
+      await insertCountingPasskey(sql, userB, ADMIN_RP_ID, now);
+
+      await expect(
+        confirmTotpSetup(
+          sql,
+          kms,
+          KEY_ARN,
+          {
+            accessToken: sfB.accessToken,
+            now,
+            code: totpCode(keyB, stepAt(now)),
+            adminRpId: null,
+          },
+          { notice },
+        ).then((result) => result.outcome),
+      ).resolves.toBe("refused");
+
+      const [credB] = await sql<{ confirmed_at: Date | null }[]>`
+        select confirmed_at from identity.totp_credentials where user_id = ${userB}
+      `;
+      expect(credB?.confirmed_at).toBeNull();
+
+      const [tenantCount] = await sql<{ n: number }[]>`
+        select count(*)::int as n from identity.sessions where user_id = ${userB} and kind = 'tenant'
+      `;
+      expect(tenantCount?.n).toBe(0);
+      expect(notice.calls).toHaveLength(0);
+    });
+  });
+
   // Coverage tests: success paths, RFC vectors, limits under concurrency, replacement, and caller rules
   it("accepts a TOTP second step within one step either side and refuses two steps away", async () => {
     const baseTime = new Date(1234567890 * 1000);
@@ -1811,21 +1962,34 @@ describe("second-factor service: TOTP, backup codes, second step, limits", () =>
       const firstPendingKey = base32Decode(firstPending.secret)!;
       const secondPendingKey = base32Decode(secondPending.secret)!;
 
+      const replaceNotice = new MemoryNotice();
       await expect(
-        confirmTotpSetup(sql, kms, KEY_ARN, {
-          accessToken: currentTenant.accessToken,
-          now: t1,
-          code: totpCode(firstPendingKey, stepAt(t1)),
-          adminRpId: ADMIN_RP_ID,
-        }),
+        confirmTotpSetup(
+          sql,
+          kms,
+          KEY_ARN,
+          {
+            accessToken: currentTenant.accessToken,
+            now: t1,
+            code: totpCode(firstPendingKey, stepAt(t1)),
+            adminRpId: ADMIN_RP_ID,
+          },
+          { notice: replaceNotice },
+        ),
       ).resolves.toEqual({ outcome: "refused" });
 
-      const confirmed = await confirmTotpSetup(sql, kms, KEY_ARN, {
-        accessToken: currentTenant.accessToken,
-        now: t1,
-        code: totpCode(secondPendingKey, stepAt(t1)),
-        adminRpId: ADMIN_RP_ID,
-      });
+      const confirmed = await confirmTotpSetup(
+        sql,
+        kms,
+        KEY_ARN,
+        {
+          accessToken: currentTenant.accessToken,
+          now: t1,
+          code: totpCode(secondPendingKey, stepAt(t1)),
+          adminRpId: ADMIN_RP_ID,
+        },
+        { notice: replaceNotice },
+      );
       expect(confirmed).toEqual({ outcome: "confirmed" });
 
       // Current tenant session remains valid, other tenant/second_factor sessions are revoked, operator/enrolment untouched
@@ -1946,12 +2110,18 @@ describe("second-factor service: TOTP, backup codes, second step, limits", () =>
       }
       const newKey = base32Decode(started.secret)!;
       await expect(
-        confirmTotpSetup(sql, kms, KEY_ARN, {
-          accessToken: backupSignIn.tokens.accessToken,
-          now: inRecovery,
-          code: totpCode(newKey, stepAt(inRecovery)),
-          adminRpId: ADMIN_RP_ID,
-        }),
+        confirmTotpSetup(
+          sql,
+          kms,
+          KEY_ARN,
+          {
+            accessToken: backupSignIn.tokens.accessToken,
+            now: inRecovery,
+            code: totpCode(newKey, stepAt(inRecovery)),
+            adminRpId: ADMIN_RP_ID,
+          },
+          { notice: new MemoryNotice() },
+        ),
       ).resolves.toEqual({ outcome: "confirmed" });
 
       // Fresh tenant session expires after 5 minutes
@@ -2044,12 +2214,18 @@ describe("second-factor service: TOTP, backup codes, second step, limits", () =>
         }),
       ).resolves.toEqual({ outcome: "refused" });
       await expect(
-        confirmTotpSetup(sql, kms, KEY_ARN, {
-          accessToken: opSession.accessToken,
-          now: t1,
-          code: "000000",
-          adminRpId: ADMIN_RP_ID,
-        }),
+        confirmTotpSetup(
+          sql,
+          kms,
+          KEY_ARN,
+          {
+            accessToken: opSession.accessToken,
+            now: t1,
+            code: "000000",
+            adminRpId: ADMIN_RP_ID,
+          },
+          { notice: new MemoryNotice() },
+        ),
       ).resolves.toEqual({ outcome: "refused" });
       // Confirming without start returns refused
       const { userId: noSetupUser } = await insertIdentityUser(sql, kms, KEY_ARN, {
@@ -2061,12 +2237,18 @@ describe("second-factor service: TOTP, backup codes, second step, limits", () =>
         kind: "second_factor",
       });
       await expect(
-        confirmTotpSetup(sql, kms, KEY_ARN, {
-          accessToken: sfNoSetup.accessToken,
-          now: t1,
-          code: totpCode(newTotpKey(), stepAt(t1)),
-          adminRpId: ADMIN_RP_ID,
-        }),
+        confirmTotpSetup(
+          sql,
+          kms,
+          KEY_ARN,
+          {
+            accessToken: sfNoSetup.accessToken,
+            now: t1,
+            code: totpCode(newTotpKey(), stepAt(t1)),
+            adminRpId: ADMIN_RP_ID,
+          },
+          { notice: new MemoryNotice() },
+        ),
       ).resolves.toEqual({ outcome: "refused" });
     });
   });
@@ -2096,12 +2278,18 @@ describe("second-factor service: TOTP, backup codes, second step, limits", () =>
         throw new Error("expected started");
       }
       const key = base32Decode(started.secret)!;
-      const confirmed = await confirmTotpSetup(sql, kms, KEY_ARN, {
-        accessToken: freshTenant.accessToken,
-        now,
-        code: totpCode(key, stepAt(now)),
-        adminRpId: ADMIN_RP_ID,
-      });
+      const confirmed = await confirmTotpSetup(
+        sql,
+        kms,
+        KEY_ARN,
+        {
+          accessToken: freshTenant.accessToken,
+          now,
+          code: totpCode(key, stepAt(now)),
+          adminRpId: ADMIN_RP_ID,
+        },
+        { notice: new MemoryNotice() },
+      );
       expect(confirmed).toEqual({ outcome: "confirmed" });
 
       const [backupCount] = await sql<{ n: number }[]>`

@@ -45,6 +45,32 @@ describe("backup codes", () => {
     expect(normaliseBackupCode("ﬁABCDEFGHIJ")).toBeNull();
   });
 
+  it("refuses codes with 0, 1, 8 or 9 and other characters outside base32", () => {
+    expect(normaliseBackupCode("0BCDEFGHIJKL")).toBeNull();
+    expect(normaliseBackupCode("A1CDEFGHIJKL")).toBeNull();
+    expect(normaliseBackupCode("ABCDE8GHIJKL")).toBeNull();
+    expect(normaliseBackupCode("ABCDEFGHIJK9")).toBeNull();
+    expect(normaliseBackupCode("0189 0189 0189")).toBeNull();
+    expect(normaliseBackupCode("0189-AAAA-AAAA")).toBeNull();
+    expect(normaliseBackupCode("ABCDEFGHIJK=")).toBeNull();
+    expect(normaliseBackupCode("ABCDEFGHIJK_")).toBeNull();
+    expect(normaliseBackupCode("ABCD+EFGHIJK")).toBeNull();
+    expect(normaliseBackupCode("ABCD/EFGHIJK")).toBeNull();
+    expect(normaliseBackupCode("ABCD!EFGHIJK")).toBeNull();
+    expect(normaliseBackupCode("ABCD\tEFGHIJKL")).toBeNull();
+    expect(normaliseBackupCode("ABCD\nEFGHIJKL")).toBeNull();
+    expect(normaliseBackupCode("\u00a0ABCDEFGHIJKL")).toBeNull();
+    expect(normaliseBackupCode("ßABCDEFGHIJ")).toBeNull();
+    expect(normaliseBackupCode("ıBCDEFGHIJKL")).toBeNull();
+    expect(normaliseBackupCode("ſBCDEFGHIJKL")).toBeNull();
+    expect(normaliseBackupCode("ﬁABCDEFGHIJ")).toBeNull();
+    expect(normaliseBackupCode("ÄBCDEFGHIJKL")).toBeNull();
+    expect(normaliseBackupCode("")).toBeNull();
+    expect(normaliseBackupCode("   --  ")).toBeNull();
+    expect(normaliseBackupCode("ABCDEFGHIJK")).toBeNull();
+    expect(normaliseBackupCode("ABCDEFGHIJKLM")).toBeNull();
+  });
+
   it("formats a backup code in groups of four separated by spaces", () => {
     expect(formatBackupCode("ABCDEFGHIJKL")).toBe("ABCD EFGH IJKL");
     expect(formatBackupCode("abcd efgh-ijkl")).toBe("ABCD EFGH IJKL");
