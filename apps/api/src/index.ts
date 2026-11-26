@@ -268,7 +268,7 @@ export function bindServices(
     now: shared.now,
     apiHostname: env.API_HOSTNAME,
     webhooksHostname: env.WEBHOOKS_HOSTNAME,
-    adminOrigin: env.ADMIN_ORIGIN,
+    adminOrigin: env.BILLING_SECRET_ARN === undefined ? undefined : env.ADMIN_ORIGIN,
     log: billingLog,
     guardLog: billingLog,
   };
@@ -283,6 +283,7 @@ export function bindServices(
       mail,
       now: shared.now,
       authHostname: env.AUTH_HOSTNAME,
+      adminOrigin: env.ADMIN_ORIGIN,
       log: shared.log,
     },
     access: {
@@ -386,7 +387,7 @@ export function bindServices(
       keyArn: shared.keyArn,
       now: shared.now,
       apiHostname: env.API_HOSTNAME,
-      adminOrigin: env.ADMIN_ORIGIN,
+      adminOrigin: env.BILLING_SECRET_ARN === undefined ? undefined : env.ADMIN_ORIGIN,
       mail: invitationMail,
       log: shared.log,
       guardLog: (message: string, fields: BillingLogFields) => {

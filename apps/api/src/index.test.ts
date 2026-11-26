@@ -10,9 +10,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const accessMock = vi.hoisted(() => ({
   holdsAnyGrant: vi.fn(),
+  holdsPermission: vi.fn(),
+  createInvitation: vi.fn(),
 }));
 const billingMock = vi.hoisted(() => ({
   assertWritable: vi.fn(),
+  readAccount: vi.fn(),
+  currentSettings: vi.fn(),
+}));
+const entitlementsMock = vi.hoisted(() => ({
+  planBilling: vi.fn(),
 }));
 const identityMock = vi.hoisted(() => ({
   readSession: vi.fn(),
@@ -35,12 +42,28 @@ vi.mock("@community-hub/identity", async () => {
 vi.mock("@community-hub/billing", async () => {
   const actual =
     await vi.importActual<typeof import("@community-hub/billing")>("@community-hub/billing");
-  return { ...actual, assertWritable: billingMock.assertWritable };
+  return {
+    ...actual,
+    assertWritable: billingMock.assertWritable,
+    readAccount: billingMock.readAccount,
+    currentSettings: billingMock.currentSettings,
+  };
 });
 vi.mock("@community-hub/access", async () => {
   const actual =
     await vi.importActual<typeof import("@community-hub/access")>("@community-hub/access");
-  return { ...actual, holdsAnyGrant: accessMock.holdsAnyGrant };
+  return {
+    ...actual,
+    holdsAnyGrant: accessMock.holdsAnyGrant,
+    holdsPermission: accessMock.holdsPermission,
+    createInvitation: accessMock.createInvitation,
+  };
+});
+vi.mock("@community-hub/entitlements", async () => {
+  const actual = await vi.importActual<typeof import("@community-hub/entitlements")>(
+    "@community-hub/entitlements",
+  );
+  return { ...actual, planBilling: entitlementsMock.planBilling };
 });
 vi.mock("@community-hub/tenancy", async () => {
   const actual =
@@ -911,5 +934,177 @@ describe("api boot wiring of the billing adapter and logger", () => {
         (r.method !== "POST" || r.pattern !== "/v1/engagement/service-times/save"),
     );
     expect(invalidContentRoutes).toEqual([]);
+  });
+});
+
+describe("api boot wiring of ADMIN_ORIGIN without billing secret", () => {
+  const keyArn = `arn:aws:kms:ap-southeast-2:123456789012:key/mrk-${"ab".repeat(16)}`;
+  const adminOrigin = "https://admin.example.test";
+
+  afterEach(() => {
+    FakeSESv2Client.sendImpl = undefined;
+    sesInstances.length = 0;
+    identityMock.readSession.mockReset();
+    tenancyMock.findCommunityBySlug.mockReset();
+    accessMock.holdsAnyGrant.mockReset();
+    accessMock.holdsPermission.mockReset();
+    accessMock.createInvitation.mockReset();
+    billingMock.assertWritable.mockReset();
+    billingMock.readAccount.mockReset();
+    billingMock.currentSettings.mockReset();
+    entitlementsMock.planBilling.mockReset();
+    vi.restoreAllMocks();
+  });
+
+  it("wires ADMIN_ORIGIN onto auth deps when BILLING_SECRET_ARN is absent", () => {
+    const withOrigin = readServiceEnv(
+      {
+        ...source(),
+        ENVELOPE_KEY_ARN: keyArn,
+        ADMIN_ORIGIN: adminOrigin,
+      },
+      pem,
+    );
+    expect(withOrigin.ok).toBe(true);
+    if (!withOrigin.ok) {
+      throw new Error("expected readServiceEnv to accept ADMIN_ORIGIN alone");
+    }
+    const boundWithOrigin = bindServices(withOrigin.env, pem);
+    expect(boundWithOrigin.auth).toMatchObject({ adminOrigin });
+
+    const withoutOrigin = readServiceEnv(
+      {
+        ...source(),
+        ENVELOPE_KEY_ARN: keyArn,
+      },
+      pem,
+    );
+    expect(withoutOrigin.ok).toBe(true);
+    if (!withoutOrigin.ok) {
+      throw new Error("expected readServiceEnv to accept env without ADMIN_ORIGIN");
+    }
+    const boundWithoutOrigin = bindServices(withoutOrigin.env, pem);
+    expect(boundWithoutOrigin.auth).toMatchObject({ adminOrigin: undefined });
+  });
+
+  it("with ADMIN_ORIGIN and no billing secret, invitation create and checkout answer 503", async () => {
+    const read = readServiceEnv(
+      {
+        ...source(),
+        ENVELOPE_KEY_ARN: keyArn,
+        ADMIN_ORIGIN: adminOrigin,
+        MAIL_FROM_ADDRESS: "no-reply@mail.example.test",
+        SES_CONFIGURATION_SET: "community-hub-otp",
+      },
+      pem,
+    );
+    expect(read.ok).toBe(true);
+    if (!read.ok) {
+      throw new Error("expected readServiceEnv to accept ADMIN_ORIGIN without billing secret");
+    }
+
+    identityMock.readSession.mockResolvedValue({
+      userId: "00000000-0000-4000-8000-000000000002",
+    });
+    tenancyMock.findCommunityBySlug.mockResolvedValue({
+      id: "00000000-0000-4000-8000-000000000011",
+      organisationId: "12345678-1234-4234-8234-1234567890ab",
+    });
+    accessMock.holdsAnyGrant.mockResolvedValue(true);
+    accessMock.holdsPermission.mockResolvedValue(true);
+    accessMock.createInvitation.mockResolvedValue({
+      invitationId: "00000000-0000-4000-8000-000000000099",
+      token: "sample-invite-token",
+      expiresAt: new Date("2026-12-01T00:00:00.000Z"),
+    });
+    billingMock.assertWritable.mockResolvedValue(undefined);
+    billingMock.readAccount.mockResolvedValue({
+      organisationId: "12345678-1234-4234-8234-1234567890ab",
+      mode: "self_serve",
+      stripeCustomerId: "cus_test1",
+      stripeSubscriptionId: null,
+      stripeStatus: null,
+      planLookupKey: null,
+      quantity: null,
+      currentPeriodEnd: null,
+      trialEnd: null,
+      trialUsedAt: null,
+      unpaidSince: null,
+      graceUntil: null,
+      taxRateId: null,
+      syncedAt: null,
+    });
+    billingMock.currentSettings.mockResolvedValue({
+      id: "00000000-0000-4000-8000-000000000099",
+      gstRateBps: 1000,
+      pricesIncludeGst: true,
+      trialDays: 14,
+      graceDays: 7,
+      stripeTaxRateId: "txr_test1",
+      note: "GST settings",
+      createdAt: new Date("2026-10-18T00:00:00.000Z"),
+    });
+    entitlementsMock.planBilling.mockResolvedValue({
+      stripeLookupKey: "starter_monthly",
+      trialEligible: true,
+    });
+
+    const routes = productionRoutes(read.env, pem);
+    const inviteRoute = routes.find(
+      (r) => r.method === "POST" && r.pattern === "/v1/access/invitations/create",
+    );
+    const checkoutRoute = routes.find(
+      (r) => r.method === "POST" && r.pattern === "/v1/billing/checkout",
+    );
+    expect(inviteRoute).toBeDefined();
+    expect(checkoutRoute).toBeDefined();
+
+    const inviteReq = new Request("http://localhost/v1/access/invitations/create", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer valid-token",
+        "x-community-hub-hostname": "au.api.example.test",
+      },
+      body: JSON.stringify({
+        communitySlug: "slug-1",
+        email: "invitee@example.test",
+        roleKey: "staff",
+      }),
+    });
+    const inviteRes = await withRequest(
+      { requestId: "66666666-6666-4666-8666-666666666666" },
+      async () =>
+        inviteRoute!.handle(inviteReq, {
+          billing: inviteRoute!.billing,
+          pattern: inviteRoute!.pattern,
+        }),
+    );
+    expect(inviteRes.status).toBe(503);
+    expect(await inviteRes.text()).toBe("");
+    expect(accessMock.createInvitation).not.toHaveBeenCalled();
+
+    const checkoutReq = new Request("http://localhost/v1/billing/checkout", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer valid-token",
+        "x-community-hub-hostname": "au.api.example.test",
+      },
+      body: JSON.stringify({
+        communitySlug: "slug-1",
+        planKey: "starter",
+      }),
+    });
+    const checkoutRes = await withRequest(
+      { requestId: "66666666-6666-4666-8666-666666666666" },
+      async () =>
+        checkoutRoute!.handle(checkoutReq, {
+          billing: checkoutRoute!.billing,
+          pattern: checkoutRoute!.pattern,
+        }),
+    );
+    expect(checkoutRes.status).toBe(503);
+    expect(await checkoutRes.text()).toBe("");
   });
 });

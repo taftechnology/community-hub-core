@@ -495,7 +495,8 @@ resource "aws_ecs_task_definition" "this" {
         ],
         var.mail_from_address == null ? [] : [{ name = "MAIL_FROM_ADDRESS", value = var.mail_from_address }],
         var.ses_configuration_set == null ? [] : [{ name = "SES_CONFIGURATION_SET", value = var.ses_configuration_set }],
-        var.billing_secret_arn == null ? [] : [{ name = "ADMIN_ORIGIN", value = local.admin_origin }, { name = "BILLING_SECRET_ARN", value = var.billing_secret_arn }],
+        [{ name = "ADMIN_ORIGIN", value = local.admin_origin }],
+        var.billing_secret_arn == null ? [] : [{ name = "BILLING_SECRET_ARN", value = var.billing_secret_arn }],
       )
       secrets = concat(
         [

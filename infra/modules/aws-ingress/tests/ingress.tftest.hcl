@@ -596,6 +596,7 @@ run "staging_image_set" {
         { name = "APP_SECRET_ARN", value = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:app" },
         { name = "IDENTITY_SECRET_ARN", value = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:identity" },
         { name = "PLATFORM_SECRET_ARN", value = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:platform" },
+        { name = "ADMIN_ORIGIN", value = "https://admin.communityhub-staging.net" },
       ] &&
       [for secret in jsondecode(aws_ecs_task_definition.this[0].container_definitions)[0].secrets : secret.name] == ["PGPASSWORD_APP", "PGPASSWORD_IDENTITY", "PGPASSWORD_PLATFORM"] &&
       jsondecode(aws_ecs_task_definition.this[0].container_definitions)[0].healthCheck.command == ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -910,6 +911,55 @@ run "billing_variables_into_task" {
       !contains([for secret in jsondecode(aws_ecs_task_definition.this[0].container_definitions)[0].secrets : secret.valueFrom], var.billing_secret_arn)
     )
     error_message = "secrets names must be exactly the three PG passwords and must not contain the billing secret ARN"
+  }
+}
+
+run "admin_origin_without_billing" {
+  command = plan
+
+  variables {
+    aws_region             = "ap-southeast-2"
+    aws_account_id         = "123456789012"
+    name                   = "ch-staging"
+    environment            = "staging"
+    project                = "community-hub"
+    vpc_id                 = "vpc-example"
+    private_subnet_ids     = ["subnet-a", "subnet-b"]
+    task_security_group_id = "sg-task"
+    zone_name              = "communityhub-staging.net"
+    attach_public_dns      = true
+    create_public_zone     = false
+    public_zone_id         = "ZSTAGING"
+    service_image          = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/ch-staging/service@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    task_subnet_ids        = ["subnet-public"]
+    execution_role_arn     = "arn:aws:iam::123456789012:role/ch-staging-execution"
+    execution_role_name    = "ch-staging-execution"
+    task_role_arn          = "arn:aws:iam::123456789012:role/ch-staging-task"
+    log_group_name         = "/community-hub/ch-staging/service"
+    db_host                = "ch-staging-postgres.example.ap-southeast-2.rds.amazonaws.com"
+    db_port                = 5432
+    envelope_key_arn       = "arn:aws:kms:ap-southeast-2:123456789012:key/mock"
+    app_secret_arn         = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:app"
+    identity_secret_arn    = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:identity"
+    platform_secret_arn    = "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:platform"
+    capacity_provider      = "FARGATE_SPOT"
+    desired_count          = 0
+  }
+
+  override_resource {
+    target = aws_security_group.vpc_link
+    values = {
+      id = "sg-vpc-link"
+    }
+    override_during = plan
+  }
+
+  assert {
+    condition = (
+      output.service_environment["ADMIN_ORIGIN"] == "https://admin.communityhub-staging.net" &&
+      !contains(keys(output.service_environment), "BILLING_SECRET_ARN")
+    )
+    error_message = "ADMIN_ORIGIN is in the task environment without the billing secret, and BILLING_SECRET_ARN is not"
   }
 }
 

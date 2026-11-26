@@ -37,6 +37,7 @@ export type AuthDeps = {
   mail: OtpMail;
   now: () => Date;
   authHostname: string;
+  adminOrigin?: string | undefined;
   log: AuthLog;
 };
 
