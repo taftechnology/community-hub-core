@@ -4,10 +4,20 @@ import { newId } from "@community-hub/db";
 import type { Sql, TransactionSql } from "postgres";
 
 import { newBackupCodes, normaliseBackupCode } from "../domain/backup-code.js";
+import { IdentityError } from "../domain/error.js";
 import type { SecondFactorNotice, SecondFactorNoticeKind } from "../domain/second-factor-notice.js";
 import { base32Encode, newTotpKey, otpauthUri, verifyTotp } from "../domain/totp.js";
 import { deriveIdentityEmailKeys, type IdentityEmailKeys } from "./email-lookup.js";
 import { hmac } from "./hmac.js";
+import {
+  beginPasskeyAuthentication,
+  beginPasskeyRegistration,
+  finishPasskeyAuthentication,
+  finishPasskeyRegistration,
+  verifyPasskeyAssertionInTx,
+  type PasskeyAuthenticationOptions,
+  type PasskeyRegistrationOptions,
+} from "./passkey.js";
 import { lockSecondFactor } from "./second-factor-lock.js";
 import {
   createSessionInTransaction,
@@ -1136,4 +1146,483 @@ export async function removePasskey(
     await sendFactorNotice(sql, kms, keyArn, resolved.userId, "passkey_removed", deps);
   }
   return result;
+}
+
+export type BeginTenantPasskeyRegistrationInput = {
+  accessToken: string;
+  now: Date;
+  adminRpId: string | null;
+};
+
+export type BeginTenantPasskeyRegistrationResult =
+  { outcome: "started"; options: PasskeyRegistrationOptions } | { outcome: "refused" };
+
+export type FinishTenantPasskeyRegistrationInput = {
+  accessToken: string;
+  now: Date;
+  adminRpId: string | null;
+  clientDataJSON: Uint8Array;
+  attestationObject: Uint8Array;
+};
+
+export type FinishTenantPasskeyRegistrationResult =
+  | { outcome: "enrolled"; backupCodes: string[]; tokens: SessionTokens }
+  | { outcome: "enrolled"; backupCodes?: undefined; tokens?: undefined }
+  | { outcome: "refused" };
+
+export type BeginSecondStepPasskeyInput = {
+  accessToken: string;
+  now: Date;
+  adminRpId: string | null;
+};
+
+export type BeginSecondStepPasskeyResult =
+  { outcome: "started"; options: PasskeyAuthenticationOptions } | { outcome: "refused" };
+
+export type VerifySecondStepPasskeyInput = {
+  accessToken: string;
+  now: Date;
+  adminRpId: string | null;
+  credentialId: Uint8Array;
+  clientDataJSON: Uint8Array;
+  authenticatorData: Uint8Array;
+  signature: Uint8Array;
+};
+
+export type VerifySecondStepPasskeyResult =
+  { outcome: "verified"; tokens: SessionTokens } | { outcome: "refused" } | { outcome: "limited" };
+
+export type BeginFreshPasskeyInput = {
+  accessToken: string;
+  now: Date;
+  adminRpId: string | null;
+};
+
+export type BeginFreshPasskeyResult =
+  { outcome: "started"; options: PasskeyAuthenticationOptions } | { outcome: "refused" };
+
+export type VerifyFreshPasskeyInput = {
+  accessToken: string;
+  now: Date;
+  adminRpId: string | null;
+  credentialId: Uint8Array;
+  clientDataJSON: Uint8Array;
+  authenticatorData: Uint8Array;
+  signature: Uint8Array;
+};
+
+export type VerifyFreshPasskeyResult =
+  { outcome: "fresh" } | { outcome: "refused" } | { outcome: "limited" };
+
+export type SignInWithPasskeyInput = {
+  adminRpId: string | null;
+  now: Date;
+  credentialId: Uint8Array;
+  clientDataJSON: Uint8Array;
+  authenticatorData: Uint8Array;
+  signature: Uint8Array;
+};
+
+export type SignInWithPasskeyResult =
+  { outcome: "signed_in"; tokens: SessionTokens } | { outcome: "refused" };
+
+class TenantPasskeyRefusedError extends Error {}
+
+async function isCountingPasskeyRow(
+  tx: TransactionSql,
+  credentialRowId: string,
+  userId: string,
+  adminRpId: string,
+): Promise<boolean> {
+  const rows = await tx<{ id: string }[]>`
+    select id
+    from identity.passkey_credentials
+    where id = ${credentialRowId}
+      and user_id = ${userId}
+      and rp_id = ${adminRpId}
+      and user_verified = true
+  `;
+  return rows[0] !== undefined;
+}
+
+export async function beginTenantPasskeyRegistration(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: BeginTenantPasskeyRegistrationInput,
+): Promise<BeginTenantPasskeyRegistrationResult> {
+  const resolved = await resolveSessionBeforeLock(sql, kms, keyArn, input.accessToken);
+  if (resolved === null) {
+    return { outcome: "refused" };
+  }
+
+  return sql.begin(async (tx) => {
+    await lockSecondFactor(tx, resolved.userId);
+    const session = await readActiveSessionInTx(tx, resolved.sessionId, input.now);
+    if (session === null || !input.adminRpId) {
+      return { outcome: "refused" };
+    }
+
+    if (session.kind === "second_factor") {
+      if (await hasSecondFactor(tx, session.user_id, input.adminRpId)) {
+        return { outcome: "refused" };
+      }
+    } else if (session.kind === "tenant") {
+      if (!canManageTenantFactors(session, input.now)) {
+        return { outcome: "refused" };
+      }
+    } else {
+      return { outcome: "refused" };
+    }
+
+    try {
+      const options = await beginPasskeyRegistration(tx, {
+        userId: session.user_id,
+        rpId: input.adminRpId,
+        now: input.now,
+        userVerification: "required",
+        excludeExisting: true,
+        requireUserVerified: true,
+      });
+      return { outcome: "started", options };
+    } catch (error) {
+      if (error instanceof IdentityError && error.code === "invalid_ceremony") {
+        return { outcome: "refused" };
+      }
+      throw error;
+    }
+  });
+}
+
+export async function finishTenantPasskeyRegistration(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: FinishTenantPasskeyRegistrationInput,
+  deps: SecondFactorNoticeDeps,
+): Promise<FinishTenantPasskeyRegistrationResult> {
+  const resolved = await resolveSessionBeforeLock(sql, kms, keyArn, input.accessToken);
+  if (resolved === null || !input.adminRpId) {
+    return { outcome: "refused" };
+  }
+
+  const adminRpId = input.adminRpId;
+  let capturedSession: SessionRow | undefined;
+  let firstFactorOutput: { backupCodes: string[]; tokens: SessionTokens } | undefined;
+
+  try {
+    await finishPasskeyRegistration(sql, {
+      userId: resolved.userId,
+      rpId: adminRpId,
+      now: input.now,
+      clientDataJSON: input.clientDataJSON,
+      attestationObject: input.attestationObject,
+      acceptLegacy: false,
+      requireUvFlag: true,
+      beforeStore: async (tx) => {
+        await lockSecondFactor(tx, resolved.userId);
+        const session = await readActiveSessionInTx(tx, resolved.sessionId, input.now);
+        if (session === null) {
+          throw new TenantPasskeyRefusedError();
+        }
+        if (session.kind === "second_factor") {
+          if (await hasSecondFactor(tx, session.user_id, adminRpId)) {
+            throw new TenantPasskeyRefusedError();
+          }
+        } else if (session.kind === "tenant") {
+          if (!canManageTenantFactors(session, input.now)) {
+            throw new TenantPasskeyRefusedError();
+          }
+        } else {
+          throw new TenantPasskeyRefusedError();
+        }
+        capturedSession = session;
+      },
+      onStored: async (tx) => {
+        if (capturedSession === undefined) {
+          throw new TenantPasskeyRefusedError();
+        }
+        await appendSecondFactorEvent(tx, capturedSession.user_id, "passkey_enrolled", input.now);
+        if (capturedSession.kind === "second_factor") {
+          const backupCodes = await writeBackupCodes(
+            tx,
+            resolved.keys.bidx,
+            capturedSession.user_id,
+            input.now,
+          );
+          await appendSecondFactorEvent(
+            tx,
+            capturedSession.user_id,
+            "backup_codes_generated",
+            input.now,
+          );
+          const nowIso = input.now.toISOString();
+          await tx`
+            update identity.sessions
+            set revoked_at = ${nowIso}::timestamptz
+            where id = ${capturedSession.id}
+              and revoked_at is null
+          `;
+          const tokens = await createSessionInTransaction(tx, resolved.keys.bidx, {
+            userId: capturedSession.user_id,
+            now: input.now,
+            kind: "tenant",
+            factor: "otp_passkey",
+            freshFactorAt: null,
+          });
+          firstFactorOutput = { backupCodes, tokens };
+          return;
+        }
+        if (isInRecoveryWindow(capturedSession, input.now)) {
+          await endOtherSessions(tx, capturedSession.user_id, capturedSession.id, input.now);
+        }
+      },
+    });
+  } catch (error) {
+    if (
+      error instanceof TenantPasskeyRefusedError ||
+      (error instanceof IdentityError && error.code === "invalid_ceremony")
+    ) {
+      return { outcome: "refused" };
+    }
+    throw error;
+  }
+
+  await sendFactorNotice(sql, kms, keyArn, resolved.userId, "passkey_added", deps);
+  if (firstFactorOutput !== undefined) {
+    return {
+      outcome: "enrolled",
+      backupCodes: firstFactorOutput.backupCodes,
+      tokens: firstFactorOutput.tokens,
+    };
+  }
+  return { outcome: "enrolled" };
+}
+
+export async function beginSecondStepPasskey(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: BeginSecondStepPasskeyInput,
+): Promise<BeginSecondStepPasskeyResult> {
+  const resolved = await resolveSessionBeforeLock(sql, kms, keyArn, input.accessToken);
+  if (resolved === null) {
+    return { outcome: "refused" };
+  }
+
+  return sql.begin(async (tx) => {
+    await lockSecondFactor(tx, resolved.userId);
+    const session = await readActiveSessionInTx(tx, resolved.sessionId, input.now);
+    if (session === null || session.kind !== "second_factor" || !input.adminRpId) {
+      return { outcome: "refused" };
+    }
+
+    const options = await beginPasskeyAuthentication(tx, {
+      rpId: input.adminRpId,
+      now: input.now,
+      userVerification: "required",
+      challengeUserId: session.user_id,
+    });
+    return { outcome: "started", options };
+  });
+}
+
+export async function verifySecondStepPasskey(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: VerifySecondStepPasskeyInput,
+): Promise<VerifySecondStepPasskeyResult> {
+  const resolved = await resolveSessionBeforeLock(sql, kms, keyArn, input.accessToken);
+  if (resolved === null) {
+    return { outcome: "refused" };
+  }
+
+  return sql.begin(async (tx) => {
+    await lockSecondFactor(tx, resolved.userId);
+    const session = await readActiveSessionInTx(tx, resolved.sessionId, input.now);
+    if (session === null || session.kind !== "second_factor" || !input.adminRpId) {
+      return { outcome: "refused" };
+    }
+
+    if (await hasReachedHourlyFailureLimit(tx, session.user_id, input.now)) {
+      return { outcome: "limited" };
+    }
+
+    const attempts = await consumeSessionAttempt(tx, session.id);
+    if (attempts === null) {
+      return { outcome: "limited" };
+    }
+
+    const verified = await verifyPasskeyAssertionInTx(tx, {
+      rpId: input.adminRpId,
+      now: input.now,
+      credentialId: input.credentialId,
+      clientDataJSON: input.clientDataJSON,
+      authenticatorData: input.authenticatorData,
+      signature: input.signature,
+      acceptLegacy: false,
+      requireUvFlag: true,
+      requireUserVerified: true,
+      challengeUserId: session.user_id,
+      expectedUserId: session.user_id,
+    });
+
+    const matched =
+      verified !== null &&
+      (await isCountingPasskeyRow(tx, verified.credentialRowId, verified.userId, input.adminRpId));
+    const nowIso = input.now.toISOString();
+
+    if (!matched) {
+      await appendSecondFactorEvent(tx, session.user_id, "verify_failed", input.now);
+      if (attempts >= MAX_SESSION_ATTEMPTS) {
+        await tx`
+          update identity.sessions
+          set revoked_at = ${nowIso}::timestamptz
+          where id = ${session.id}
+            and revoked_at is null
+        `;
+      }
+      return { outcome: "refused" };
+    }
+
+    await tx`
+      update identity.sessions
+      set revoked_at = ${nowIso}::timestamptz
+      where id = ${session.id}
+        and revoked_at is null
+    `;
+    const tokens = await createSessionInTransaction(tx, resolved.keys.bidx, {
+      userId: session.user_id,
+      now: input.now,
+      kind: "tenant",
+      factor: "otp_passkey",
+      freshFactorAt: input.now,
+      recoveryUntil: null,
+    });
+    return { outcome: "verified", tokens };
+  });
+}
+
+export async function beginFreshPasskey(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: BeginFreshPasskeyInput,
+): Promise<BeginFreshPasskeyResult> {
+  const resolved = await resolveSessionBeforeLock(sql, kms, keyArn, input.accessToken);
+  if (resolved === null) {
+    return { outcome: "refused" };
+  }
+
+  return sql.begin(async (tx) => {
+    await lockSecondFactor(tx, resolved.userId);
+    const session = await readActiveSessionInTx(tx, resolved.sessionId, input.now);
+    if (
+      session === null ||
+      session.kind !== "tenant" ||
+      session.recovery_until !== null ||
+      !input.adminRpId
+    ) {
+      return { outcome: "refused" };
+    }
+
+    const options = await beginPasskeyAuthentication(tx, {
+      rpId: input.adminRpId,
+      now: input.now,
+      userVerification: "required",
+      challengeUserId: session.user_id,
+    });
+    return { outcome: "started", options };
+  });
+}
+
+export async function verifyFreshPasskey(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: VerifyFreshPasskeyInput,
+): Promise<VerifyFreshPasskeyResult> {
+  const resolved = await resolveSessionBeforeLock(sql, kms, keyArn, input.accessToken);
+  if (resolved === null) {
+    return { outcome: "refused" };
+  }
+
+  return sql.begin(async (tx) => {
+    await lockSecondFactor(tx, resolved.userId);
+    const session = await readActiveSessionInTx(tx, resolved.sessionId, input.now);
+    if (
+      session === null ||
+      session.kind !== "tenant" ||
+      session.recovery_until !== null ||
+      !input.adminRpId
+    ) {
+      return { outcome: "refused" };
+    }
+
+    if (await hasReachedHourlyFailureLimit(tx, session.user_id, input.now)) {
+      return { outcome: "limited" };
+    }
+
+    const attempts = await consumeSessionAttempt(tx, session.id);
+    if (attempts === null) {
+      return { outcome: "limited" };
+    }
+
+    const verified = await verifyPasskeyAssertionInTx(tx, {
+      rpId: input.adminRpId,
+      now: input.now,
+      credentialId: input.credentialId,
+      clientDataJSON: input.clientDataJSON,
+      authenticatorData: input.authenticatorData,
+      signature: input.signature,
+      acceptLegacy: false,
+      requireUvFlag: true,
+      requireUserVerified: true,
+      challengeUserId: session.user_id,
+      expectedUserId: session.user_id,
+    });
+
+    const matched =
+      verified !== null &&
+      (await isCountingPasskeyRow(tx, verified.credentialRowId, verified.userId, input.adminRpId));
+
+    if (!matched) {
+      await appendSecondFactorEvent(tx, session.user_id, "verify_failed", input.now);
+      return { outcome: "refused" };
+    }
+
+    const nowIso = input.now.toISOString();
+    await tx`
+      update identity.sessions
+      set fresh_factor_at = ${nowIso}::timestamptz
+      where id = ${session.id}
+        and revoked_at is null
+    `;
+    return { outcome: "fresh" };
+  });
+}
+
+export async function signInWithPasskey(
+  sql: Sql,
+  kms: KmsPort,
+  keyArn: string,
+  input: SignInWithPasskeyInput,
+): Promise<SignInWithPasskeyResult> {
+  if (!input.adminRpId) {
+    return { outcome: "refused" };
+  }
+  const tokens = await finishPasskeyAuthentication(sql, kms, keyArn, {
+    rpId: input.adminRpId,
+    now: input.now,
+    credentialId: input.credentialId,
+    clientDataJSON: input.clientDataJSON,
+    authenticatorData: input.authenticatorData,
+    signature: input.signature,
+    acceptLegacy: false,
+    requireUvFlag: true,
+    requireUserVerified: true,
+    tenant: { adminRpId: input.adminRpId },
+  });
+  return tokens === null ? { outcome: "refused" } : { outcome: "signed_in", tokens };
 }

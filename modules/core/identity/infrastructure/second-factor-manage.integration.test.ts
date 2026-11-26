@@ -1,3 +1,4 @@
+import { createHash, generateKeyPairSync, sign as signDer } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +9,7 @@ import { applyProductMigrations, newId } from "@community-hub/db";
 import { createPlaintextDirectSql, createPlaintextIdentitySql } from "@community-hub/db/plaintext";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { encodeCbor, type Cbor } from "../domain/cbor.js";
 import type { OtpMail } from "../domain/otp-mail.js";
 import {
   rejectingSecondFactorNotice,
@@ -16,7 +18,9 @@ import {
 } from "../domain/second-factor-notice.js";
 import { base32Decode, stepAt, totpCode } from "../domain/totp.js";
 import {
+  beginTenantPasskeyRegistration,
   confirmTotpSetup,
+  finishTenantPasskeyRegistration,
   freshCheckTotp,
   listSecondFactors,
   readSession,
@@ -37,6 +41,7 @@ import { createSession, sessionAccessHash, type SessionTokens } from "./session.
 
 const KEY_ARN = `arn:aws:kms:ap-southeast-2:123456789012:key/mrk-${"ab".repeat(16)}`;
 const ADMIN_RP_ID = "admin.example.test";
+const ADMIN_ORIGIN = "https://admin.example.test";
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
 const TEN_MINUTES_MS = 10 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
@@ -219,6 +224,85 @@ async function insertCountingPasskey(
     )
   `;
   return id;
+}
+
+function concatBytes(parts: Uint8Array[]): Uint8Array {
+  const length = parts.reduce((sum, part) => sum + part.byteLength, 0);
+  const out = new Uint8Array(length);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.byteLength;
+  }
+  return out;
+}
+
+function clientDataBytes(type: string, challenge: Uint8Array, origin: string): Uint8Array {
+  return new TextEncoder().encode(
+    JSON.stringify({
+      type,
+      challenge: Buffer.from(challenge).toString("base64url"),
+      origin,
+    }),
+  );
+}
+
+function coseKeyBytes(x: Uint8Array, y: Uint8Array): Uint8Array {
+  return encodeCbor(
+    new Map<Cbor, Cbor>([
+      [1, 2],
+      [3, -7],
+      [-1, 1],
+      [-2, x],
+      [-3, y],
+    ]),
+  );
+}
+
+function authenticatorDataBytes(input: {
+  rpId: string;
+  signCount: number;
+  credentialId?: Uint8Array;
+  cose?: Uint8Array;
+  flags?: number;
+}): Uint8Array {
+  const rpIdHash = new Uint8Array(createHash("sha256").update(Buffer.from(input.rpId)).digest());
+  const attested = input.credentialId !== undefined && input.cose !== undefined;
+  const flags = input.flags ?? (attested ? 0x45 : 0x05);
+  const count = new Uint8Array(4);
+  new DataView(count.buffer).setUint32(0, input.signCount);
+  const parts: Uint8Array[] = [rpIdHash, Uint8Array.of(flags), count];
+  if (attested && input.credentialId && input.cose) {
+    const length = new Uint8Array(2);
+    new DataView(length.buffer).setUint16(0, input.credentialId.byteLength);
+    parts.push(new Uint8Array(16), length, input.credentialId, input.cose);
+  }
+  return concatBytes(parts);
+}
+
+function attestationObjectBytes(authData: Uint8Array): Uint8Array {
+  return encodeCbor(
+    new Map<Cbor, Cbor>([
+      ["fmt", "none"],
+      ["attStmt", new Map<Cbor, Cbor>()],
+      ["authData", authData],
+    ]),
+  );
+}
+
+async function generatePasskeySigner(): Promise<{
+  x: Uint8Array;
+  y: Uint8Array;
+  sign: (data: Uint8Array) => Promise<Uint8Array>;
+}> {
+  const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const jwk = publicKey.export({ format: "jwk" });
+  return {
+    x: new Uint8Array(Buffer.from(jwk.x ?? "", "base64url")),
+    y: new Uint8Array(Buffer.from(jwk.y ?? "", "base64url")),
+    sign: async (data) =>
+      new Uint8Array(signDer("sha256", Buffer.from(data), { key: privateKey, dsaEncoding: "der" })),
+  };
 }
 
 async function insertBackupCodeForTest(
@@ -1203,6 +1287,137 @@ describe("second-factor service: fresh check, recovery window, removal, notices"
       if (listed.outcome === "listed") {
         expect(listed.passkeys.map((p) => p.id)).toEqual([pk2]);
       }
+    });
+  });
+
+  // Pin 53
+  it("adding a passkey in a recovery window ends the user's other admin sessions", async () => {
+    const now = new Date("2026-11-26T00:00:00.000Z");
+    const t1 = new Date(now.getTime() + 30_000);
+    const t2 = new Date(t1.getTime() + 60_000);
+    await withSql(async (sql) => {
+      const email = "pin53@example.test";
+      const enrolled = await enrolTotpForManageTest(sql, kms, KEY_ARN, {
+        email,
+        now,
+        adminRpId: ADMIN_RP_ID,
+      });
+      const userId = enrolled.tokens.userId;
+      const notice = new MemoryNotice();
+
+      const otherTenant = enrolled.tokens;
+      const otherSf = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now: t1,
+        kind: "second_factor",
+      });
+      const opSession = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now: t1,
+        kind: "operator",
+        absoluteExpiresAt: new Date(t1.getTime() + HOUR_MS),
+      });
+      const enrolSession = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now: t1,
+        kind: "enrolment",
+      });
+
+      const sf = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now: t1,
+        kind: "second_factor",
+      });
+      const recovery = await verifySecondStep(sql, kms, KEY_ARN, {
+        accessToken: sf.accessToken,
+        now: t1,
+        method: "backup_code",
+        code: enrolled.backupCodes[0]!,
+      });
+      expect(recovery.outcome).toBe("verified");
+      if (recovery.outcome !== "verified") {
+        throw new Error("expected recovery session");
+      }
+
+      const started = await beginTenantPasskeyRegistration(sql, kms, KEY_ARN, {
+        accessToken: recovery.tokens.accessToken,
+        now: t2,
+        adminRpId: ADMIN_RP_ID,
+      });
+      expect(started.outcome).toBe("started");
+      if (started.outcome !== "started") {
+        throw new Error("expected started");
+      }
+
+      const pkKey = await generatePasskeySigner();
+      const pkCredId = crypto.getRandomValues(new Uint8Array(16));
+      const finished = await finishTenantPasskeyRegistration(
+        sql,
+        kms,
+        KEY_ARN,
+        {
+          accessToken: recovery.tokens.accessToken,
+          now: t2,
+          adminRpId: ADMIN_RP_ID,
+          clientDataJSON: clientDataBytes(
+            "webauthn.create",
+            started.options.challenge,
+            ADMIN_ORIGIN,
+          ),
+          attestationObject: attestationObjectBytes(
+            authenticatorDataBytes({
+              rpId: ADMIN_RP_ID,
+              signCount: 0,
+              credentialId: pkCredId,
+              cose: coseKeyBytes(pkKey.x, pkKey.y),
+              flags: 0x45,
+            }),
+          ),
+        },
+        { notice },
+      );
+      expect(finished).toEqual({ outcome: "enrolled" });
+      expect(notice.calls).toEqual([{ to: email, kind: "passkey_added" }]);
+
+      expect(
+        await readSession(sql, kms, KEY_ARN, {
+          accessToken: recovery.tokens.accessToken,
+          now: t2,
+        }),
+      ).toEqual({ userId });
+      expect(
+        await readSession(sql, kms, KEY_ARN, {
+          accessToken: otherTenant.accessToken,
+          now: t2,
+        }),
+      ).toBeNull();
+      expect(
+        await refreshSession(sql, kms, KEY_ARN, {
+          refreshToken: otherTenant.refreshToken,
+          now: t2,
+        }),
+      ).toBeNull();
+      expect(
+        await readSessionWithKind(sql, kms, KEY_ARN, {
+          accessToken: otherSf.accessToken,
+          now: t2,
+          kinds: ["second_factor"],
+        }),
+      ).toBeNull();
+      expect(
+        await readSessionWithKind(sql, kms, KEY_ARN, {
+          accessToken: opSession.accessToken,
+          now: t2,
+          kinds: ["operator"],
+        }),
+      ).toEqual({ userId, kind: "operator" });
+      expect(
+        await readSessionWithKind(sql, kms, KEY_ARN, {
+          accessToken: enrolSession.accessToken,
+          now: t2,
+          kinds: ["enrolment"],
+        }),
+      ).toEqual({ userId, kind: "enrolment" });
     });
   });
 
