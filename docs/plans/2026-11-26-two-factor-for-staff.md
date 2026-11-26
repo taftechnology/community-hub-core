@@ -5,6 +5,11 @@ Spec: docs/specs/2026-11-26-two-factor-for-staff.md
 Slug: two-factor-for-staff
 Status: approved (2026-11-26, Adnan Bin Hossen)
 
+Amendment A2 (2026-11-26, approved by Adnan Bin Hossen): after Checkpoint 1 (Claude Haiku 5.5, APPROVE WITH NOTES, 0 High, 2 Medium, 4 Low), a fix commit C1 before Task 6. M1: `hasSecondFactor` with no admin rpId counts every user-verified passkey, and `adminRpId` is a required argument of the second-factor functions, so a pre-2FA session can never set up a factor for a passkey-only user (pin 109). M2: the service refuses a `tenant` session whose `factor` is null, as the spec requires, without waiting for Task 8's `readSession` check (pin 110). L2: the notice dependency of `confirmTotpSetup` is required. L4: tests for removing one's own non-counting passkey, backup codes with `0`, `1`, `8` or `9`, and TOTP input that is not six digits. L1 stays in Task 8; L3 (two helpers with no production caller) is not applied.
+
+| 109 | No-rpId factor check fails closed | Return false without `adminRpId` | SF | a pre-2FA session cannot set up TOTP for a passkey-only user when no rp id is passed |
+| 110 | Service refuses a factor-less staff session | Drop the `factor` check in `readActiveSessionInTx` | SM | the second-factor service refuses a tenant session with no factor |
+
 Amendment A1 (2026-11-26, approved by Adnan Bin Hossen): Task 1 also edits `packages/db/drizzle.schema.ts` to export the three new identity tables (drizzle-kit reads only that file's exports, `packages/db/drizzle.config.ts:5`, and `generate.test.ts` re-runs it in CI); `totp_credentials.last_used_step` is `bigint` in number mode, like `passkey_credentials.sign_count`; pin 10's note is corrected. Found by the Task 1 implementer, which stopped as the brief requires.
 
 Revision 3 (2026-11-26) applied the delta plan check (Claude Haiku 5.5, NOT READY, 6 High, 9 Medium, 6 Low). All applied: pins 26, 27, 40, 86, 96 redesigned or moved; pin 93 removed (the `required` challenge row already guards the route; pin 66 covers `requireUvFlag`); the pre-2FA setup check lives in the service, which now takes the caller's session; the notice port's deviation from spec line 140 is stated; the billing and invitations expression is written out.
