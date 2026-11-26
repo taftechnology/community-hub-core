@@ -73,9 +73,10 @@ it("stores the access token only and opens Users and Roles", async () => {
     if (url.endsWith("/v1/auth/email-otp/verify")) {
       return new Response(
         JSON.stringify({
+          secondFactor: "setup",
+          methods: ["totp"],
+          passkeysAvailable: false,
           accessToken: TOKEN,
-          userId: "00000000-0000-4000-8000-000000000002",
-          refreshToken: REFRESH,
           expiresIn: 900,
         }),
         { status: 200, headers: { "content-type": "application/json" } },
@@ -204,9 +205,10 @@ it("fetches billing status again after sign-in with remembered community", async
     if (url.endsWith("/v1/auth/email-otp/verify")) {
       return new Response(
         JSON.stringify({
+          secondFactor: "setup",
+          methods: ["totp"],
+          passkeysAvailable: false,
           accessToken: TOKEN,
-          userId: "00000000-0000-4000-8000-000000000002",
-          refreshToken: REFRESH,
           expiresIn: 900,
         }),
         { status: 200, headers: { "content-type": "application/json" } },
@@ -261,9 +263,10 @@ it("Pin 11a: after sign-in verify, sessionStorage has the handle and localStorag
     if (url.endsWith("/v1/auth/email-otp/verify")) {
       return new Response(
         JSON.stringify({
+          secondFactor: "setup",
+          methods: ["totp"],
+          passkeysAvailable: false,
           accessToken: TOKEN,
-          userId: "00000000-0000-4000-8000-000000000002",
-          refreshToken: REFRESH,
           expiresIn: 900,
         }),
         { status: 200, headers: { "content-type": "application/json" } },

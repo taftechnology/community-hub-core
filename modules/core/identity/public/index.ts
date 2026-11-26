@@ -6,7 +6,14 @@ export {
   type SecondFactorNotice,
   type SecondFactorNoticeKind,
 } from "../domain/second-factor-notice.js";
-export { startEmailOtp, verifyEmailOtp, type OtpPurpose } from "../infrastructure/email-otp.js";
+export {
+  readSecondFactorPrompt,
+  startEmailOtp,
+  verifyEmailOtp,
+  type EmailOtpSecondFactorMethod,
+  type EmailOtpSecondFactorState,
+  type OtpPurpose,
+} from "../infrastructure/email-otp.js";
 export { ensureIdentityKey } from "../infrastructure/identity-key.js";
 export { findOrCreateUserByEmail, findUserByEmail } from "../infrastructure/email-lookup.js";
 export { readUserEmails } from "../infrastructure/user-emails.js";

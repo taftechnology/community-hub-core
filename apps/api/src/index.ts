@@ -11,12 +11,18 @@ import {
   createPlatformSql,
   type SqlTarget,
 } from "@community-hub/db";
-import { rejectingOtpMail, type OtpMail } from "@community-hub/identity";
+import {
+  rejectingOtpMail,
+  rejectingSecondFactorNotice,
+  type OtpMail,
+  type SecondFactorNotice,
+} from "@community-hub/identity";
 import { healthRequest } from "@community-hub/kernel";
 import { type StripeBilling } from "@community-hub/billing";
 import { createLogger, type LogFields, type Logger } from "@community-hub/observability";
 
 import { authRoutes, type AuthDeps } from "./auth-routes.js";
+import { secondFactorRoutes } from "./second-factor-routes.js";
 import { accessRoutes, type AccessDeps } from "./access-routes.js";
 import { peopleRoutes, type PeopleDeps } from "./people-routes.js";
 import { householdRoutes, type HouseholdDeps } from "./household-routes.js";
@@ -32,6 +38,7 @@ import { readServiceEnv, IMAGE_CERT_PATH, type ServiceEnv } from "./env.js";
 import { RoutesRejected, type GateRoute } from "./gate.js";
 import { createAwsKmsPort } from "./kms/aws-kms-adapter.js";
 import { createSesOtpMail } from "./mail/ses-otp-mail.js";
+import { createSesSecondFactorNotice } from "./mail/ses-second-factor-notice.js";
 import { createSesInvitationMail } from "./mail/ses-invitation-mail.js";
 import { rejectingInvitationMail, type InvitationMail } from "@community-hub/access";
 import { invitationRoutes, type InvitationRouteDeps } from "./invitation-routes.js";
@@ -219,6 +226,21 @@ export function bindServices(
         })
       : rejectingOtpMail;
 
+  const notice: SecondFactorNotice =
+    env.MAIL_FROM_ADDRESS !== undefined && env.SES_CONFIGURATION_SET !== undefined
+      ? createSesSecondFactorNotice({
+          client: () => {
+            sesClient ??= new SESv2Client({ region: env.AWS_REGION, maxAttempts: 1 });
+            return sesClient;
+          },
+          from: env.MAIL_FROM_ADDRESS,
+          configurationSet: env.SES_CONFIGURATION_SET,
+          info: (fields) => {
+            logger.info("mail", fields);
+          },
+        })
+      : rejectingSecondFactorNotice;
+
   const invitationMail: InvitationMail =
     env.MAIL_FROM_ADDRESS !== undefined && env.SES_CONFIGURATION_SET !== undefined
       ? createSesInvitationMail({
@@ -281,6 +303,7 @@ export function bindServices(
       },
       keyArn: shared.keyArn,
       mail,
+      notice,
       now: shared.now,
       authHostname: env.AUTH_HOSTNAME,
       adminOrigin: env.ADMIN_ORIGIN,
@@ -403,6 +426,7 @@ export function productionRoutes(env: ServiceEnv, pem: string): readonly GateRou
   return [
     healthRoute,
     ...authRoutes(bound.auth),
+    ...secondFactorRoutes(bound.auth),
     ...accessRoutes(bound.access),
     ...invitationRoutes(bound.invitations),
     ...peopleRoutes(bound.people),

@@ -13,8 +13,7 @@ import {
   createPlaintextPlatformSql,
 } from "@community-hub/db/plaintext";
 import { assignPlan, upsertPlan } from "@community-hub/entitlements";
-import type { OtpMail } from "@community-hub/identity";
-import { startEmailOtp, verifyEmailOtp } from "@community-hub/identity";
+import { signInWithTotpInProcess } from "./test-support/second-factor.js";
 import { withRequest } from "@community-hub/kernel";
 import { createHousehold, createPerson } from "@community-hub/people";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -115,15 +114,6 @@ function envFor(port: number): ServiceEnv {
   return read.env;
 }
 
-class MemoryMail implements OtpMail {
-  last: { to: string; code: string } | undefined;
-
-  send(input: { to: string; code: string }): Promise<void> {
-    this.last = input;
-    return Promise.resolve();
-  }
-}
-
 describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => {
   const now = new Date("2026-11-01T12:00:00Z");
   let identity: ReturnType<typeof createPlaintextIdentitySql>;
@@ -131,7 +121,6 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
   let app: ReturnType<typeof createPlaintextAppSql>;
   let directSql: ReturnType<typeof createPlaintextDirectSql>;
   let kms: ReturnType<typeof createLocalKmsPort>;
-  let mail: MemoryMail;
   let server: Server;
   const userIds: string[] = [];
 
@@ -172,15 +161,7 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
   };
 
   async function signIn(email: string): Promise<{ userId: string; accessToken: string }> {
-    await startEmailOtp(identity, kms, KEY_ARN, mail, { email, now });
-    const session = await verifyEmailOtp(identity, kms, KEY_ARN, {
-      email,
-      code: mail.last?.code ?? "",
-      now,
-    });
-    if (session === null) {
-      throw new Error("Failed to sign in");
-    }
+    const session = await signInWithTotpInProcess(identity, kms, KEY_ARN, email, now);
     userIds.push(session.userId);
     return session;
   }
@@ -216,7 +197,6 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
     app = createPlaintextAppSql(roleUrl(runtime, "app"));
     directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
     kms = createLocalKmsPort();
-    mail = new MemoryMail();
     await identity`delete from identity.identity_keys`;
 
     const env = envFor(PORT);
@@ -480,6 +460,15 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
       await new Promise<void>((resolve) => {
         server.close(() => resolve());
       });
+    }
+    if (identity) {
+      for (const uid of userIds) {
+        await identity`delete from identity.backup_codes where user_id = ${uid}::uuid`;
+        await identity`delete from identity.totp_credentials where user_id = ${uid}::uuid`;
+        await identity`delete from identity.sessions where user_id = ${uid}::uuid`;
+        await identity`delete from identity.users where id = ${uid}::uuid`;
+      }
+      await identity`delete from identity.identity_keys`;
     }
     await directSql?.end({ timeout: 1 });
     await app?.end({ timeout: 1 });

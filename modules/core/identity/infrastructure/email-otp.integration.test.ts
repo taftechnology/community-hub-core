@@ -129,10 +129,13 @@ describe("email one-time code", () => {
       expect(verified).toMatchObject({ userId: expect.any(String), expiresIn: 900 });
       expect(verified?.accessToken.includes("=")).toBe(false);
       expect(verified?.refreshToken.includes("=")).toBe(false);
-      const session = await sql<{ access_hash: Uint8Array; refresh_hash: Uint8Array }[]>`
-        select access_hash, refresh_hash from identity.sessions
+      const session = await sql<
+        { access_hash: Uint8Array; refresh_hash: Uint8Array; kind: string }[]
+      >`
+        select access_hash, refresh_hash, kind from identity.sessions
       `;
       expect(session).toHaveLength(1);
+      expect(session[0]?.kind).toBe("second_factor");
       const accessHash = Buffer.from(session[0]?.access_hash ?? []);
       const refreshHash = Buffer.from(session[0]?.refresh_hash ?? []);
       expect(accessHash.equals(Buffer.from(verified?.accessToken ?? "", "base64url"))).toBe(false);

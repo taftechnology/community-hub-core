@@ -3709,6 +3709,7 @@ describe("startOperatorEnrolment and verifyOperatorEnrolment", () => {
           userId: op.userId,
           now,
           kind: "tenant",
+          factor: "otp_totp",
         });
         const tenantRead = await readOperatorSession(identitySql, kms, KEY_ARN, {
           accessToken: tenantSession.accessToken,
@@ -4140,6 +4141,7 @@ describe("startOperatorEnrolment and verifyOperatorEnrolment", () => {
         userId: user.userId,
         now,
         kind: "tenant",
+        factor: "otp_totp",
       });
 
       await endOperatorSession(identitySql, kms, KEY_ARN, {

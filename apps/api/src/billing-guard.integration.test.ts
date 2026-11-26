@@ -19,8 +19,8 @@ import {
   createPlaintextPlatformSql,
 } from "@community-hub/db/plaintext";
 import { assignPlan, upsertPlan } from "@community-hub/entitlements";
-import type { OtpMail } from "@community-hub/identity";
-import { startEmailOtp, verifyEmailOtp } from "@community-hub/identity";
+import { rejectingSecondFactorNotice, type OtpMail } from "@community-hub/identity";
+import { signInWithTotpInProcess } from "./test-support/second-factor.js";
 import { withRequest } from "@community-hub/kernel";
 import {
   addMinor,
@@ -186,15 +186,7 @@ describe("billing guard against a real database", () => {
   };
 
   async function signIn(email: string): Promise<{ userId: string; accessToken: string }> {
-    await startEmailOtp(identity, kms, KEY_ARN, mail, { email, now });
-    const session = await verifyEmailOtp(identity, kms, KEY_ARN, {
-      email,
-      code: mail.last?.code ?? "",
-      now,
-    });
-    if (session === null) {
-      throw new Error("Failed to sign in");
-    }
+    const session = await signInWithTotpInProcess(identity, kms, KEY_ARN, email, now);
     // Invitation routes read this session with a wall clock, because identity's
     // invitation functions compare expires_at with the database clock. The token
     // was issued on the suite's fixed clock, so keep it valid for both.
@@ -1518,6 +1510,7 @@ describe("billing guard against a real database", () => {
         kms,
         keyArn: KEY_ARN,
         mail,
+        notice: rejectingSecondFactorNotice,
         now: () => now,
         authHostname: AUTH_HOSTNAME,
         log: () => undefined,
@@ -1613,6 +1606,8 @@ describe("billing guard against a real database", () => {
       server.close(() => resolve());
     });
     if (userIds.length > 0) {
+      await identity`delete from identity.backup_codes where user_id in ${identity(userIds)}`;
+      await identity`delete from identity.totp_credentials where user_id in ${identity(userIds)}`;
       await identity`delete from identity.sessions where user_id in ${identity(userIds)}`;
       await identity`delete from identity.users where id in ${identity(userIds)}`;
     }

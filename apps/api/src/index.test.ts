@@ -840,7 +840,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
         (route as { billing?: string }).billing,
       ]),
     );
-    expect(routes).toHaveLength(67);
+    expect(routes).toHaveLength(79);
     expect(markings).toEqual(
       new Map([
         ["GET /health", "exempt"],
@@ -852,6 +852,18 @@ describe("api boot wiring of the billing adapter and logger", () => {
         ["POST /v1/auth/passkey/authenticate/verify", "exempt"],
         ["POST /v1/auth/session/refresh", "exempt"],
         ["POST /v1/auth/session/end", "exempt"],
+        ["POST /v1/auth/second-factor/verify", "exempt"],
+        ["POST /v1/auth/second-factor/passkey/options", "exempt"],
+        ["POST /v1/auth/second-factor/passkey/verify", "exempt"],
+        ["POST /v1/auth/second-factor/totp/start", "exempt"],
+        ["POST /v1/auth/second-factor/totp/confirm", "exempt"],
+        ["POST /v1/auth/second-factor/fresh", "exempt"],
+        ["POST /v1/auth/second-factor/fresh/passkey/options", "exempt"],
+        ["POST /v1/auth/second-factor/fresh/passkey/verify", "exempt"],
+        ["GET /v1/auth/second-factor", "exempt"],
+        ["POST /v1/auth/second-factor/totp/remove", "exempt"],
+        ["POST /v1/auth/second-factor/passkeys/remove", "exempt"],
+        ["POST /v1/auth/second-factor/backup-codes", "exempt"],
         ["POST /v1/billing/checkout", "exempt"],
         ["POST /v1/billing/portal", "exempt"],
         ["POST /v1/billing/status", "exempt"],

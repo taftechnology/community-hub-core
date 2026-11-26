@@ -7,17 +7,9 @@ import { applyProductMigrations, newId } from "@community-hub/db";
 import { createPlaintextDirectSql, createPlaintextIdentitySql } from "@community-hub/db/plaintext";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import type { OtpMail } from "../domain/otp-mail.js";
 import { IdentityError } from "../domain/error.js";
 import { insertIdentityUser } from "./identity-user.js";
-import {
-  endSession,
-  readSession,
-  readSessionWithKind,
-  refreshSession,
-  startEmailOtp,
-  verifyEmailOtp,
-} from "../public/index.js";
+import { endSession, readSession, readSessionWithKind, refreshSession } from "../public/index.js";
 import { deriveIdentityEmailKeys } from "./email-lookup.js";
 import { lockSecondFactor } from "./second-factor-lock.js";
 import {
@@ -94,15 +86,6 @@ function pauseOnSessionInsert(sql: Sql): {
   return { bound, reached, release: releaseInsert };
 }
 
-class MemoryMail implements OtpMail {
-  last: { to: string; code: string } | undefined;
-
-  send(input: { to: string; code: string }): Promise<void> {
-    this.last = input;
-    return Promise.resolve();
-  }
-}
-
 beforeAll(async () => {
   const runtime = loadRuntime();
   const migration = createPlaintextDirectSql(runtime.productOnlyUrl);
@@ -126,21 +109,20 @@ describe("sessions", () => {
   it("rotates a refresh token and revokes the family when that token is reused", async () => {
     const now = new Date("2026-10-11T00:00:00.000Z");
     const later = new Date(now.getTime() + 15 * 60 * 1000 + 1);
-    const mail = new MemoryMail();
     const kms = createLocalKmsPort();
     const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
     try {
       await clearIdentity(sql);
-      await startEmailOtp(sql, kms, KEY_ARN, mail, { email: "ada@example.com", now });
-      const opened = await verifyEmailOtp(sql, kms, KEY_ARN, {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
         email: "ada@example.com",
-        code: mail.last?.code ?? "",
+      });
+      const opened = await createSession(sql, kms, KEY_ARN, {
+        userId,
         now,
+        kind: "tenant",
+        factor: "otp_totp",
       });
       expect(opened).toMatchObject({ userId: expect.any(String), expiresIn: 900 });
-      if (opened === null) {
-        throw new Error("session was not opened");
-      }
 
       expect(
         await readSession(sql, kms, KEY_ARN, { accessToken: opened.accessToken, now }),
@@ -175,15 +157,12 @@ describe("sessions", () => {
         await readSession(sql, kms, KEY_ARN, { accessToken: rotated.accessToken, now }),
       ).toBeNull();
 
-      await startEmailOtp(sql, kms, KEY_ARN, mail, { email: "ada@example.com", now });
-      const expired = await verifyEmailOtp(sql, kms, KEY_ARN, {
-        email: "ada@example.com",
-        code: mail.last?.code ?? "",
+      const expired = await createSession(sql, kms, KEY_ARN, {
+        userId,
         now,
+        kind: "tenant",
+        factor: "otp_totp",
       });
-      if (expired === null) {
-        throw new Error("session was not opened");
-      }
       expect(
         await refreshSession(sql, kms, KEY_ARN, {
           refreshToken: expired.refreshToken,
@@ -199,20 +178,19 @@ describe("sessions", () => {
   it("returns null and creates no row when a refresh token is past refresh_expires_at", async () => {
     const now = new Date("2026-10-11T00:00:00.000Z");
     const later = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000 + 1);
-    const mail = new MemoryMail();
     const kms = createLocalKmsPort();
     const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
     try {
       await clearIdentity(sql);
-      await startEmailOtp(sql, kms, KEY_ARN, mail, { email: "ada@example.com", now });
-      const opened = await verifyEmailOtp(sql, kms, KEY_ARN, {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
         email: "ada@example.com",
-        code: mail.last?.code ?? "",
-        now,
       });
-      if (opened === null) {
-        throw new Error("session was not opened");
-      }
+      const opened = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+        factor: "otp_totp",
+      });
       const before = await sql<{ n: number }[]>`
         select count(*)::int as n from identity.sessions
       `;
@@ -231,7 +209,6 @@ describe("sessions", () => {
 
   it("returns one session when one refresh token is presented twice in parallel", async () => {
     const now = new Date("2026-10-11T00:00:00.000Z");
-    const mail = new MemoryMail();
     const kms = createLocalKmsPort();
     const runtime = loadRuntime();
     const url = identityUrl(runtime);
@@ -241,15 +218,15 @@ describe("sessions", () => {
     let pending: Promise<Awaited<ReturnType<typeof refreshSession>>[]> = Promise.resolve([]);
     try {
       await clearIdentity(sql);
-      await startEmailOtp(sql, kms, KEY_ARN, mail, { email: "ada@example.com", now });
-      const opened = await verifyEmailOtp(sql, kms, KEY_ARN, {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
         email: "ada@example.com",
-        code: mail.last?.code ?? "",
-        now,
       });
-      if (opened === null) {
-        throw new Error("session was not opened");
-      }
+      const opened = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+        factor: "otp_totp",
+      });
       let locked: () => void = () => undefined;
       const lockHeld = new Promise<void>((resolve) => {
         locked = resolve;
@@ -296,7 +273,6 @@ describe("sessions", () => {
 
   it("leaves no live row when reuse is detected during a rotation", async () => {
     const now = new Date("2026-10-11T00:00:00.000Z");
-    const mail = new MemoryMail();
     const kms = createLocalKmsPort();
     const runtime = loadRuntime();
     const sql = postgres(identityUrl(runtime), {
@@ -310,15 +286,15 @@ describe("sessions", () => {
     let release = (): void => undefined;
     try {
       await clearIdentity(sql);
-      await startEmailOtp(sql, kms, KEY_ARN, mail, { email: "ada@example.com", now });
-      const opened = await verifyEmailOtp(sql, kms, KEY_ARN, {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
         email: "ada@example.com",
-        code: mail.last?.code ?? "",
-        now,
       });
-      if (opened === null) {
-        throw new Error("session was not opened");
-      }
+      const opened = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+        factor: "otp_totp",
+      });
       const rotated = await refreshSession(sql, kms, KEY_ARN, {
         refreshToken: opened.refreshToken,
         now,
@@ -575,7 +551,11 @@ describe("session kinds and absolute expiry", () => {
       const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
         email: `pin2b-${newId()}@example.test`,
       });
-      const tenantSession = await createSession(sql, kms, KEY_ARN, { userId, now });
+      const tenantSession = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        factor: "otp_totp",
+      });
       const enSession1 = await createSession(sql, kms, KEY_ARN, { userId, now, kind: "enrolment" });
       const enSession2 = await createSession(sql, kms, KEY_ARN, { userId, now, kind: "enrolment" });
 
@@ -715,7 +695,7 @@ describe("session kinds and absolute expiry", () => {
         email: `expires-in-${newId()}@example.test`,
       });
 
-      const tenant = await createSession(sql, kms, KEY_ARN, { userId, now });
+      const tenant = await createSession(sql, kms, KEY_ARN, { userId, now, factor: "otp_totp" });
       expect(tenant.expiresIn).toBe(900);
 
       const operator = await createSession(sql, kms, KEY_ARN, {
@@ -754,7 +734,11 @@ describe("session kinds and absolute expiry", () => {
       const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
         email: `tenant-def-${newId()}@example.test`,
       });
-      const session = await createSession(sql, kms, KEY_ARN, { userId, now });
+      const session = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        factor: "otp_totp",
+      });
 
       const rows = await sql<{ kind: string; absolute_expires_at: Date | null }[]>`
         select kind, absolute_expires_at from identity.sessions where user_id = ${userId}
@@ -792,7 +776,12 @@ describe("session kinds and absolute expiry", () => {
         email: `rswk-${newId()}@example.test`,
       });
       const absExp = new Date(now.getTime() + 60 * 60 * 1000);
-      const tenant = await createSession(sql, kms, KEY_ARN, { userId, now, kind: "tenant" });
+      const tenant = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+        factor: "otp_totp",
+      });
       const op = await createSession(sql, kms, KEY_ARN, {
         userId,
         now,
@@ -884,6 +873,7 @@ describe("session kinds and absolute expiry", () => {
           userId,
           now,
           kind: "tenant",
+          factor: "otp_totp",
           absoluteExpiresAt: new Date(now.getTime() + 1000),
         }),
       ).rejects.toBeInstanceOf(IdentityError);
@@ -1148,6 +1138,7 @@ describe("session kinds and absolute expiry", () => {
         userId,
         now,
         kind: "tenant",
+        factor: "otp_totp",
       });
 
       let tenantCheckReceived: { userId: string; absoluteExpiresAt: Date | null } | undefined;
@@ -1201,6 +1192,7 @@ describe("session kinds and absolute expiry", () => {
         userId,
         now,
         kind: "tenant",
+        factor: "otp_totp",
       });
       const normalTenantHash = await sessionAccessHash(sql, kms, KEY_ARN, normalTenant.accessToken);
       const [normalTenantRow] = await sql<
@@ -1220,6 +1212,7 @@ describe("session kinds and absolute expiry", () => {
           userId,
           now,
           kind: "tenant",
+          factor: "otp_totp",
         }),
       );
       const txTenantHash = await sessionAccessHash(sql, kms, KEY_ARN, txTenant.accessToken);
@@ -1395,6 +1388,7 @@ describe("session kinds and absolute expiry", () => {
         userId,
         now,
         kind: "tenant",
+        factor: "otp_totp",
       });
       const computedHash = await sessionAccessHash(sql, kms, KEY_ARN, session.accessToken);
       expect(computedHash).not.toBeNull();
@@ -1421,6 +1415,7 @@ describe("session kinds and absolute expiry", () => {
         userId,
         now,
         kind: "tenant",
+        factor: "otp_totp",
       });
 
       const s2 = await refreshSession(sql, kms, KEY_ARN, {
@@ -1474,6 +1469,7 @@ describe("session kinds and absolute expiry", () => {
         userId,
         now,
         kind: "tenant",
+        factor: "otp_totp",
       });
 
       // Pass now > access_expires_at (20 mins past creation; expiry is 15 mins)
@@ -1549,11 +1545,13 @@ describe("session kinds and absolute expiry", () => {
         userId,
         now,
         kind: "tenant",
+        factor: "otp_totp",
       });
       const sessionB = await createSession(sql, kms, KEY_ARN, {
         userId,
         now,
         kind: "tenant",
+        factor: "otp_totp",
       });
 
       await endSession(sql, kms, KEY_ARN, {
@@ -1606,6 +1604,7 @@ describe("session kinds and absolute expiry", () => {
         userId,
         now,
         kind: "tenant",
+        factor: "otp_totp",
       });
 
       const famRows = await sql<{ refresh_family: string }[]>`
@@ -1717,6 +1716,7 @@ describe("session kinds and absolute expiry", () => {
         userId,
         now,
         kind: "tenant",
+        factor: "otp_totp",
       });
 
       const randomBytes = new Uint8Array(32);
@@ -2500,6 +2500,40 @@ describe("second_factor sessions and the 2fa lock", () => {
       await holderPromise?.catch(() => undefined);
       await holder.end({ timeout: 1 });
       await observer.end({ timeout: 1 });
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("readSessionWithKind with the tenant kind refuses a session with no factor", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `pin86-${newId()}@example.test`,
+      });
+      const factorless = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+        factor: null,
+      });
+
+      expect(
+        await readSessionWithKind(sql, kms, KEY_ARN, {
+          accessToken: factorless.accessToken,
+          now,
+          kinds: ["tenant"],
+        }),
+      ).toBeNull();
+
+      expect(
+        await readSessionWithKind(sql, kms, KEY_ARN, {
+          accessToken: factorless.accessToken,
+          now,
+          kinds: ["tenant", "second_factor"],
+        }),
+      ).toBeNull();
+    } finally {
       await sql.end({ timeout: 1 });
     }
   });

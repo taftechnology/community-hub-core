@@ -72,7 +72,13 @@ function installFetch(options: FetchOptions): Call[] {
       return new Response(null, { status: 204 });
     }
     if (url.endsWith("/v1/auth/email-otp/verify")) {
-      return json({ accessToken: SESSION, userId: "00000000-0000-4000-8000-000000000002" });
+      return json({
+        secondFactor: "setup",
+        methods: ["totp"],
+        passkeysAvailable: false,
+        accessToken: SESSION,
+        expiresIn: 900,
+      });
     }
     if (url.endsWith("/v1/auth/session/end")) {
       return new Response(null, { status: 204 });

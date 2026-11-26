@@ -5,18 +5,20 @@ import { fileURLToPath } from "node:url";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import { applyProductMigrations } from "@community-hub/db";
 import { createPlaintextDirectSql, createPlaintextIdentitySql } from "@community-hub/db/plaintext";
-import type { OtpMail } from "@community-hub/identity";
+import { rejectingSecondFactorNotice, type OtpMail } from "@community-hub/identity";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { authRoutes } from "./auth-routes.js";
+import { authRoutes, type AuthDeps } from "./auth-routes.js";
 import { readServiceEnv, type ServiceEnv } from "./env.js";
+import { secondFactorRoutes } from "./second-factor-routes.js";
 import { startServer } from "./server.js";
 import { encodeCbor, type Cbor } from "../../../modules/core/identity/domain/cbor.js";
 
 const KEY_ARN = `arn:aws:kms:ap-southeast-2:123456789012:key/mrk-${"ab".repeat(16)}`;
 const AUTH_HOSTNAME = "auth.au.example.test";
-const RP_ID = AUTH_HOSTNAME;
-const ORIGIN = `https://${AUTH_HOSTNAME}`;
+const ADMIN_ORIGIN = "https://admin.au.example.test";
+const RP_ID = "admin.au.example.test";
+const ORIGIN = ADMIN_ORIGIN;
 
 const pem = readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), "../certs/rds-ap-southeast-2-bundle.pem"),
@@ -66,6 +68,7 @@ function envFor(port: number): ServiceEnv {
       APP_SECRET_ARN: "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:app",
       IDENTITY_SECRET_ARN: "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:identity",
       PLATFORM_SECRET_ARN: "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:platform",
+      ADMIN_ORIGIN,
     },
     pem,
   );
@@ -134,7 +137,7 @@ function authenticatorData(input: {
   const attested = input.credentialId !== undefined && input.cose !== undefined;
   const count = new Uint8Array(4);
   new DataView(count.buffer).setUint32(0, input.signCount);
-  const parts = [rpIdHash, Uint8Array.of(attested ? 0x41 : 0x01), count];
+  const parts = [rpIdHash, Uint8Array.of(attested ? 0x45 : 0x05), count];
   if (attested && input.credentialId && input.cose) {
     const length = new Uint8Array(2);
     new DataView(length.buffer).setUint16(0, input.credentialId.byteLength);
@@ -195,6 +198,8 @@ type TestArtifact = {
 const capturedArtifacts: TestArtifact[] = [];
 
 async function cleanIdentity(sql: ReturnType<typeof createPlaintextIdentitySql>): Promise<void> {
+  await sql`delete from identity.backup_codes`;
+  await sql`delete from identity.totp_credentials`;
   await sql`delete from identity.sessions`;
   await sql`delete from identity.passkey_credentials`;
   await sql`delete from identity.passkey_challenges`;
@@ -222,7 +227,58 @@ async function signInUser(
     code,
   });
   expect(verified.status).toBe(200);
-  return (await verified.json()) as {
+  const pre2fa = (await verified.json()) as { accessToken: string };
+
+  const regOptionsRes = await post(
+    port,
+    "/v1/auth/passkey/register/options",
+    {},
+    `Bearer ${pre2fa.accessToken}`,
+  );
+  expect(regOptionsRes.status).toBe(200);
+  const regOptions = (await regOptionsRes.json()) as { challenge: string };
+  const key = await signer();
+  const credId = new Uint8Array(16).fill(1);
+  const regVerify = await post(
+    port,
+    "/v1/auth/passkey/register/verify",
+    {
+      clientDataJSON: b64(clientData("webauthn.create", bytesFrom(regOptions.challenge))),
+      attestationObject: b64(
+        encodeCbor(
+          new Map<Cbor, Cbor>([
+            ["fmt", "none"],
+            ["attStmt", new Map<Cbor, Cbor>()],
+            [
+              "authData",
+              authenticatorData({
+                signCount: 0,
+                credentialId: credId,
+                cose: coseKey(key.x, key.y),
+              }),
+            ],
+          ]),
+        ),
+      ),
+    },
+    `Bearer ${pre2fa.accessToken}`,
+  );
+  expect(regVerify.status).toBe(200);
+
+  const authOptsRes = await post(port, "/v1/auth/passkey/authenticate/options", {});
+  expect(authOptsRes.status).toBe(200);
+  const authOpts = (await authOptsRes.json()) as { challenge: string };
+  const authData = authenticatorData({ signCount: 1 });
+  const client = clientData("webauthn.get", bytesFrom(authOpts.challenge));
+  const clientHash = new Uint8Array(createHash("sha256").update(client).digest());
+  const signedIn = await post(port, "/v1/auth/passkey/authenticate/verify", {
+    credentialId: b64(credId),
+    clientDataJSON: b64(client),
+    authenticatorData: b64(authData),
+    signature: b64(key.sign(concat([authData, clientHash]))),
+  });
+  expect(signedIn.status).toBe(200);
+  return (await signedIn.json()) as {
     userId: string;
     accessToken: string;
     refreshToken: string;
@@ -236,17 +292,20 @@ async function startAuthServer(options: {
   mail: MemoryMail;
   log?: (message: string, fields: Record<string, unknown>) => void;
 }) {
+  const deps: AuthDeps = {
+    checkout: (_role, run) => run(options.sql),
+    kms: createLocalKmsPort(),
+    keyArn: KEY_ARN,
+    mail: options.mail,
+    notice: rejectingSecondFactorNotice,
+    now: options.now,
+    authHostname: AUTH_HOSTNAME,
+    adminOrigin: ADMIN_ORIGIN,
+    log: options.log ?? (() => undefined),
+  };
   const server = startServer({
     env: envFor(options.port),
-    routes: authRoutes({
-      checkout: (_role, run) => run(options.sql),
-      kms: createLocalKmsPort(),
-      keyArn: KEY_ARN,
-      mail: options.mail,
-      now: options.now,
-      authHostname: AUTH_HOSTNAME,
-      log: options.log ?? (() => undefined),
-    }),
+    routes: [...authRoutes(deps), ...secondFactorRoutes(deps)],
   });
   await new Promise<void>((resolve, reject) => {
     if (server.listening) {
@@ -289,17 +348,20 @@ describe("auth flow", () => {
     const mail = new MemoryMail();
     const key = await signer();
     const credentialId = new Uint8Array(16).fill(4);
+    const deps: AuthDeps = {
+      checkout: (_role, run) => run(sql),
+      kms: createLocalKmsPort(),
+      keyArn: KEY_ARN,
+      mail,
+      notice: rejectingSecondFactorNotice,
+      now: () => now,
+      authHostname: AUTH_HOSTNAME,
+      adminOrigin: ADMIN_ORIGIN,
+      log: () => undefined,
+    };
     const server = startServer({
       env: envFor(18470),
-      routes: authRoutes({
-        checkout: (_role, run) => run(sql),
-        kms: createLocalKmsPort(),
-        keyArn: KEY_ARN,
-        mail,
-        now: () => now,
-        authHostname: AUTH_HOSTNAME,
-        log: () => undefined,
-      }),
+      routes: [...authRoutes(deps), ...secondFactorRoutes(deps)],
     });
     try {
       await new Promise<void>((resolve, reject) => {
@@ -310,12 +372,7 @@ describe("auth flow", () => {
         server.once("listening", () => resolve());
         server.once("error", reject);
       });
-      await sql`delete from identity.sessions`;
-      await sql`delete from identity.passkey_credentials`;
-      await sql`delete from identity.passkey_challenges`;
-      await sql`delete from identity.otp_challenges`;
-      await sql`delete from identity.users`;
-      await sql`delete from identity.identity_keys`;
+      await cleanIdentity(sql);
 
       const started = await post(18470, "/v1/auth/email-otp/start", { email: "ada@example.com" });
       expect(started.status).toBe(204);
@@ -328,17 +385,15 @@ describe("auth flow", () => {
       });
       expect(verified.status).toBe(200);
       expect(verified.headers.get("cache-control")).toBe("no-store");
-      const first = (await verified.json()) as {
-        userId: string;
+      const pre2fa = (await verified.json()) as {
         accessToken: string;
-        refreshToken: string;
       };
 
       const options = await post(
         18470,
         "/v1/auth/passkey/register/options",
         {},
-        `Bearer ${first.accessToken}`,
+        `Bearer ${pre2fa.accessToken}`,
       );
       expect(options.status).toBe(200);
       const registration = (await options.json()) as { challenge: string };
@@ -365,9 +420,14 @@ describe("auth flow", () => {
             ),
           ),
         },
-        `Bearer ${first.accessToken}`,
+        `Bearer ${pre2fa.accessToken}`,
       );
-      expect(registered.status).toBe(204);
+      expect(registered.status).toBe(200);
+      const first = (await registered.json()) as {
+        userId: string;
+        accessToken: string;
+        refreshToken: string;
+      };
 
       const authOptions = await post(18470, "/v1/auth/passkey/authenticate/options", {});
       expect(authOptions.status).toBe(200);
@@ -403,12 +463,7 @@ describe("auth flow", () => {
         server.closeAllConnections();
         server.close(() => resolve());
       });
-      await sql`delete from identity.sessions`;
-      await sql`delete from identity.passkey_credentials`;
-      await sql`delete from identity.passkey_challenges`;
-      await sql`delete from identity.otp_challenges`;
-      await sql`delete from identity.users`;
-      await sql`delete from identity.identity_keys`;
+      await cleanIdentity(sql);
       await sql.end({ timeout: 1 });
     }
   });
@@ -418,17 +473,20 @@ describe("auth flow", () => {
     const runtime = loadRuntime();
     const sql = createPlaintextIdentitySql(identityUrl(runtime));
     const mail = new MemoryMail();
+    const deps: AuthDeps = {
+      checkout: (_role, run) => run(sql),
+      kms: createLocalKmsPort(),
+      keyArn: KEY_ARN,
+      mail,
+      notice: rejectingSecondFactorNotice,
+      now: () => now,
+      authHostname: AUTH_HOSTNAME,
+      adminOrigin: ADMIN_ORIGIN,
+      log: () => undefined,
+    };
     const server = startServer({
       env: envFor(18471),
-      routes: authRoutes({
-        checkout: (_role, run) => run(sql),
-        kms: createLocalKmsPort(),
-        keyArn: KEY_ARN,
-        mail,
-        now: () => now,
-        authHostname: AUTH_HOSTNAME,
-        log: () => undefined,
-      }),
+      routes: [...authRoutes(deps), ...secondFactorRoutes(deps)],
     });
     try {
       await new Promise<void>((resolve, reject) => {
@@ -484,12 +542,7 @@ describe("auth flow", () => {
         server.closeAllConnections();
         server.close(() => resolve());
       });
-      await sql`delete from identity.sessions`;
-      await sql`delete from identity.passkey_credentials`;
-      await sql`delete from identity.passkey_challenges`;
-      await sql`delete from identity.otp_challenges`;
-      await sql`delete from identity.users`;
-      await sql`delete from identity.identity_keys`;
+      await cleanIdentity(sql);
       await sql.end({ timeout: 1 });
     }
   });

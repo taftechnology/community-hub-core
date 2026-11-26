@@ -12,7 +12,7 @@ import {
   createPlaintextPlatformSql,
 } from "@community-hub/db/plaintext";
 import { assignPlan, upsertPlan } from "@community-hub/entitlements";
-import type { OtpMail } from "@community-hub/identity";
+import { rejectingSecondFactorNotice, type OtpMail } from "@community-hub/identity";
 import { withRequest } from "@community-hub/kernel";
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -20,7 +20,9 @@ import { accessRoutes } from "./access-routes.js";
 import { authRoutes } from "./auth-routes.js";
 import type { Role } from "./checkout.js";
 import { readServiceEnv, type ServiceEnv } from "./env.js";
+import { secondFactorRoutes } from "./second-factor-routes.js";
 import { startServer } from "./server.js";
+import { signInWithTotp } from "./test-support/second-factor.js";
 
 const KEY_ARN = `arn:aws:kms:ap-southeast-2:123456789012:key/mrk-${"ab".repeat(16)}`;
 const API_HOSTNAME = "au.api.example.test";
@@ -159,6 +161,17 @@ describe("access flow", () => {
           kms,
           keyArn: KEY_ARN,
           mail,
+          notice: rejectingSecondFactorNotice,
+          now: () => now,
+          authHostname: AUTH_HOSTNAME,
+          log: () => undefined,
+        }),
+        ...secondFactorRoutes({
+          checkout,
+          kms,
+          keyArn: KEY_ARN,
+          mail,
+          notice: rejectingSecondFactorNotice,
           now: () => now,
           authHostname: AUTH_HOSTNAME,
           log: () => undefined,
@@ -219,14 +232,12 @@ describe("access flow", () => {
         values (${secondCommunityId}::uuid, 'people.households', false)
       `;
       await identity`delete from identity.identity_keys`;
-      const started = await post(AUTH_HOSTNAME, "/v1/auth/email-otp/start", { email });
-      expect(started.status).toBe(204);
-      const verified = await post(AUTH_HOSTNAME, "/v1/auth/email-otp/verify", {
-        email,
-        code: mail.last?.code ?? "",
+      const session = await signInWithTotp(fetch, email, {
+        origin: `http://127.0.0.1:${PORT}`,
+        hostname: AUTH_HOSTNAME,
+        readEmailCode: () => mail.last?.code ?? "",
+        now: () => now,
       });
-      expect(verified.status).toBe(200);
-      const session = (await verified.json()) as { userId: string; accessToken: string };
       userId = session.userId;
       await withRequest({ requestId: REQUEST_ID }, () =>
         withAppTransaction(app, { orgId: organisationId, communityId }, (tx) =>
@@ -236,19 +247,12 @@ describe("access flow", () => {
       const bearer = `Bearer ${session.accessToken}`;
 
       const memberEmail = `member-${organisationId.slice(0, 8)}@example.com`;
-      const memberStarted = await post(AUTH_HOSTNAME, "/v1/auth/email-otp/start", {
-        email: memberEmail,
+      const memberSession = await signInWithTotp(fetch, memberEmail, {
+        origin: `http://127.0.0.1:${PORT}`,
+        hostname: AUTH_HOSTNAME,
+        readEmailCode: () => mail.last?.code ?? "",
+        now: () => now,
       });
-      expect(memberStarted.status).toBe(204);
-      const memberVerified = await post(AUTH_HOSTNAME, "/v1/auth/email-otp/verify", {
-        email: memberEmail,
-        code: mail.last?.code ?? "",
-      });
-      expect(memberVerified.status).toBe(200);
-      const memberSession = (await memberVerified.json()) as {
-        userId: string;
-        accessToken: string;
-      };
       memberUserId = memberSession.userId;
       const memberBearer = `Bearer ${memberSession.accessToken}`;
       await withRequest({ requestId: REQUEST_ID }, () =>
@@ -413,10 +417,14 @@ describe("access flow", () => {
         server.close(() => resolve());
       });
       if (userId !== "") {
+        await identity`delete from identity.backup_codes where user_id = ${userId}::uuid`;
+        await identity`delete from identity.totp_credentials where user_id = ${userId}::uuid`;
         await identity`delete from identity.sessions where user_id = ${userId}::uuid`;
         await identity`delete from identity.users where id = ${userId}::uuid`;
       }
       if (memberUserId !== "") {
+        await identity`delete from identity.backup_codes where user_id = ${memberUserId}::uuid`;
+        await identity`delete from identity.totp_credentials where user_id = ${memberUserId}::uuid`;
         await identity`delete from identity.sessions where user_id = ${memberUserId}::uuid`;
         await identity`delete from identity.users where id = ${memberUserId}::uuid`;
       }

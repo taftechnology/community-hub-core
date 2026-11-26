@@ -44,8 +44,8 @@ function accessExpiresInSeconds(now: Date, accessExpiresAt: Date): number {
 
 function computeSessionExpiries(input: {
   now: Date;
-  kind?: SessionKind;
-  absoluteExpiresAt?: Date;
+  kind?: SessionKind | undefined;
+  absoluteExpiresAt?: Date | undefined;
 }): {
   kind: SessionKind;
   accessExpiresAt: Date;
@@ -88,23 +88,39 @@ function computeSessionExpiries(input: {
   };
 }
 
+export type CreateSessionTenantInput = {
+  userId: string;
+  now: Date;
+  refreshFamily?: string;
+  kind?: "tenant" | undefined;
+  absoluteExpiresAt?: Date;
+  factor: SessionFactor | null;
+  freshFactorAt?: Date | null;
+  recoveryUntil?: Date | null;
+};
+
+export type CreateSessionNonTenantInput = {
+  userId: string;
+  now: Date;
+  refreshFamily?: string;
+  kind: "operator" | "enrolment" | "second_factor";
+  absoluteExpiresAt?: Date;
+  factor?: SessionFactor | null;
+  freshFactorAt?: Date | null;
+  recoveryUntil?: Date | null;
+};
+
 export async function createSession(
   sql: Sql,
   kms: KmsPort,
   keyArn: string,
-  input: {
-    userId: string;
-    now: Date;
-    refreshFamily?: string;
-    kind?: SessionKind;
-    absoluteExpiresAt?: Date;
-    factor?: SessionFactor | null;
-    freshFactorAt?: Date | null;
-    recoveryUntil?: Date | null;
-  },
+  input: CreateSessionTenantInput | CreateSessionNonTenantInput,
 ): Promise<SessionTokens> {
   const { kind, accessExpiresAt, refreshExpiresAt, absoluteExpiresAt } =
     computeSessionExpiries(input);
+  if (kind === "tenant" && input.factor === undefined) {
+    throw new IdentityError("invalid_ceremony");
+  }
   const minted = await mint(sql, kms, keyArn);
   const refreshFamily = input.refreshFamily ?? newId();
   await insertSession(sql, {
@@ -133,19 +149,13 @@ export async function createSession(
 export async function createSessionInTransaction(
   tx: TransactionSql,
   bidx: webcrypto.CryptoKey,
-  input: {
-    userId: string;
-    now: Date;
-    refreshFamily?: string;
-    kind?: SessionKind;
-    absoluteExpiresAt?: Date;
-    factor?: SessionFactor | null;
-    freshFactorAt?: Date | null;
-    recoveryUntil?: Date | null;
-  },
+  input: CreateSessionTenantInput | CreateSessionNonTenantInput,
 ): Promise<SessionTokens> {
   const { kind, accessExpiresAt, refreshExpiresAt, absoluteExpiresAt } =
     computeSessionExpiries(input);
+  if (kind === "tenant" && input.factor === undefined) {
+    throw new IdentityError("invalid_ceremony");
+  }
   const minted = await mintWithBidx(bidx);
   const refreshFamily = input.refreshFamily ?? newId();
   await insertSession(tx, {
@@ -208,6 +218,7 @@ export async function readSession(
       and revoked_at is null
       and access_expires_at > ${now}::timestamptz
       and kind = any(${sql.array([...kinds])})
+      and (kind <> 'tenant' or factor is not null)
   `;
   const row = rows[0];
   return row === undefined ? null : { userId: row.user_id };
@@ -235,6 +246,7 @@ export async function readSessionWithKind(
       and revoked_at is null
       and access_expires_at > ${now}::timestamptz
       and kind = any(${sql.array([...input.kinds])})
+      and (kind <> 'tenant' or factor is not null)
   `;
   const row = rows[0];
   return row === undefined ? null : { userId: row.user_id, kind: row.kind };

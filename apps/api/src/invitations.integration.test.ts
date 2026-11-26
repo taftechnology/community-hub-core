@@ -19,7 +19,7 @@ import {
   createPlaintextPlatformSql,
 } from "@community-hub/db/plaintext";
 import { assignPlan, upsertPlan } from "@community-hub/entitlements";
-import type { OtpMail } from "@community-hub/identity";
+import { rejectingSecondFactorNotice, type OtpMail } from "@community-hub/identity";
 import * as identity from "@community-hub/identity";
 import { withRequest } from "@community-hub/kernel";
 import { createPerson } from "@community-hub/people";
@@ -30,7 +30,9 @@ import { authRoutes } from "./auth-routes.js";
 import type { Role } from "./checkout.js";
 import { readServiceEnv, type ServiceEnv } from "./env.js";
 import { invitationRoutes } from "./invitation-routes.js";
+import { secondFactorRoutes } from "./second-factor-routes.js";
 import { startServer } from "./server.js";
+import { signInWithTotp } from "./test-support/second-factor.js";
 
 const KEY_ARN = `arn:aws:kms:ap-southeast-2:123456789012:key/mrk-${"ab".repeat(16)}`;
 const API_HOSTNAME = "au.api.example.test";
@@ -289,6 +291,8 @@ describe("invitations and members-only access", () => {
   }
 
   async function cleanIdentity(): Promise<void> {
+    await identitySql`delete from identity.backup_codes`;
+    await identitySql`delete from identity.totp_credentials`;
     await identitySql`delete from identity.sessions`;
     await identitySql`delete from identity.passkey_credentials`;
     await identitySql`delete from identity.passkey_challenges`;
@@ -343,18 +347,11 @@ describe("invitations and members-only access", () => {
   }
 
   async function createSession(email: string): Promise<Session> {
-    const started = await readAnswer(
-      await post(AUTH_HOSTNAME, "/v1/auth/email-otp/start", { email }),
-    );
-    expect(started.status).toBe(204);
-    const verified = await readAnswer(
-      await post(AUTH_HOSTNAME, "/v1/auth/email-otp/verify", {
-        email,
-        code: otpMail.last?.code ?? "",
-      }),
-    );
-    expect(verified.status).toBe(200);
-    const session = JSON.parse(verified.text) as { userId: string; accessToken: string };
+    const session = await signInWithTotp(fetch, email, {
+      origin: `http://127.0.0.1:${PORT}`,
+      hostname: AUTH_HOSTNAME,
+      readEmailCode: () => otpMail.last?.code ?? "",
+    });
     return { userId: session.userId, bearer: `Bearer ${session.accessToken}`, email };
   }
 
@@ -482,6 +479,17 @@ describe("invitations and members-only access", () => {
           kms,
           keyArn: KEY_ARN,
           mail: otpMail,
+          notice: rejectingSecondFactorNotice,
+          now: wall,
+          authHostname: AUTH_HOSTNAME,
+          log: routeLog,
+        }),
+        ...secondFactorRoutes({
+          checkout,
+          kms,
+          keyArn: KEY_ARN,
+          mail: otpMail,
+          notice: rejectingSecondFactorNotice,
           now: wall,
           authHostname: AUTH_HOSTNAME,
           log: routeLog,
