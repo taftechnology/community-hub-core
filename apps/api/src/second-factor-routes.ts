@@ -44,6 +44,11 @@ import type { GateRoute } from "./gate.js";
 
 type IdentitySql = Parameters<typeof startEmailOtp>[0];
 
+// A refusal is an empty body with one of these statuses: `refused` is a session that may not make
+// the call, `limited` is too many wrong answers, `last_factor` is a removal that would leave no
+// factor, and `not_found` is nothing of the caller's to remove.
+const REFUSAL_STATUS = { refused: 401, limited: 429, last_factor: 409, not_found: 404 } as const;
+
 function passkeyChallengeResponse(options: PasskeyAuthenticationOptions): Response {
   return Response.json(
     {
@@ -71,8 +76,8 @@ export function secondFactorRoutes(deps: AuthDeps): GateRoute[] {
     deps.log("second_factor", { route, status });
   }
 
-  function mapOutcomeStatus(route: string, outcome: "refused" | "limited"): Response {
-    const status = outcome === "limited" ? 429 : 401;
+  function mapOutcomeStatus(route: string, outcome: keyof typeof REFUSAL_STATUS): Response {
+    const status = REFUSAL_STATUS[outcome];
     logRefusal(route, status);
     return empty(status);
   }

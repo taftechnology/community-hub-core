@@ -804,7 +804,15 @@ export type RemoveTotpInput = {
   adminRpId: string | null;
 };
 
-export type RemoveTotpResult = { outcome: "removed" } | { outcome: "refused" };
+// `last_factor`: the change would leave no authenticator app and no counting passkey.
+// `not_found`: there is nothing of the caller's to remove (an unknown id, another user's id, a
+// passkey that does not count, or no authenticator app). `refused`: the session, its fresh factor
+// or its recovery window does not allow the change.
+export type RemoveTotpResult =
+  | { outcome: "removed" }
+  | { outcome: "last_factor" }
+  | { outcome: "not_found" }
+  | { outcome: "refused" };
 
 export type RemovePasskeyInput = {
   accessToken: string;
@@ -813,7 +821,11 @@ export type RemovePasskeyInput = {
   passkeyId: string;
 };
 
-export type RemovePasskeyResult = { outcome: "removed" } | { outcome: "refused" };
+export type RemovePasskeyResult =
+  | { outcome: "removed" }
+  | { outcome: "last_factor" }
+  | { outcome: "not_found" }
+  | { outcome: "refused" };
 
 async function hasReachedHourlyFailureLimit(
   tx: TransactionSql,
@@ -1060,11 +1072,11 @@ export async function removeTotp(
     }
 
     if (!(await hasConfirmedTotp(tx, session.user_id))) {
-      return { outcome: "refused" };
+      return { outcome: "not_found" };
     }
 
     if (!(await hasCountingPasskey(tx, session.user_id, input.adminRpId))) {
-      return { outcome: "refused" };
+      return { outcome: "last_factor" };
     }
 
     await tx`
@@ -1106,7 +1118,7 @@ export async function removePasskey(
     }
 
     if (!input.adminRpId || !UUID_REGEX.test(input.passkeyId)) {
-      return { outcome: "refused" };
+      return { outcome: "not_found" };
     }
 
     const targetRows = await tx<{ id: string }[]>`
@@ -1118,7 +1130,7 @@ export async function removePasskey(
         and user_verified = true
     `;
     if (targetRows[0] === undefined) {
-      return { outcome: "refused" };
+      return { outcome: "not_found" };
     }
 
     const hasTotp = await hasConfirmedTotp(tx, session.user_id);
@@ -1129,7 +1141,7 @@ export async function removePasskey(
       input.passkeyId,
     );
     if (!hasTotp && !hasOtherPasskey) {
-      return { outcome: "refused" };
+      return { outcome: "last_factor" };
     }
 
     await tx`
@@ -1619,9 +1631,6 @@ export async function signInWithPasskey(
     clientDataJSON: input.clientDataJSON,
     authenticatorData: input.authenticatorData,
     signature: input.signature,
-    acceptLegacy: false,
-    requireUvFlag: true,
-    requireUserVerified: true,
     tenant: { adminRpId: input.adminRpId },
   });
   return tokens === null ? { outcome: "refused" } : { outcome: "signed_in", tokens };

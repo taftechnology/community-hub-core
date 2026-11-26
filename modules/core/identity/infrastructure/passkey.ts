@@ -7,7 +7,7 @@ import { decodeCbor, decodeCoseEc2 } from "../domain/cbor.js";
 import { IdentityError } from "../domain/error.js";
 import { deriveIdentityEmailKeys } from "./email-lookup.js";
 import { lockSecondFactor } from "./second-factor-lock.js";
-import { createSession, createSessionInTransaction, type SessionTokens } from "./session.js";
+import { createSessionInTransaction, type SessionTokens } from "./session.js";
 
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
 const MAX_CREDENTIAL_ID_BYTES = 1023;
@@ -418,6 +418,10 @@ export async function verifyPasskeyAssertionInTx(
 
 class TenantAuthRefusedError extends Error {}
 
+// The tenant passkey sign-in, and the only function in this file that creates a session. It has
+// no other mode: the credential must be a user-verified passkey of the admin host, the assertion
+// must carry the user-verified flag, and the session it creates always has its factor and a
+// fresh factor set.
 export async function finishPasskeyAuthentication(
   sql: Sql,
   kms: KmsPort,
@@ -429,40 +433,22 @@ export async function finishPasskeyAuthentication(
     clientDataJSON: Uint8Array;
     authenticatorData: Uint8Array;
     signature: Uint8Array;
-    acceptLegacy?: boolean | undefined;
-    requireUvFlag?: boolean | undefined;
-    requireUserVerified?: boolean | undefined;
-    tenant?: { adminRpId: string } | undefined;
+    tenant: { adminRpId: string };
   },
 ): Promise<SessionTokens | null> {
-  if (input.tenant === undefined) {
-    const verified = await verifyPasskeyAssertion(sql, input);
-    if (verified === null) {
-      return null;
-    }
-    const requireUv = input.requireUvFlag === true;
-    return createSession(sql, kms, keyArn, {
-      userId: verified.userId,
-      now: input.now,
-      factor: requireUv ? "passkey_uv" : null,
-      freshFactorAt: requireUv ? input.now : null,
-    });
+  // The type requires `tenant`. A caller that gets round the type is refused, never given a session.
+  if (!input.tenant || input.rpId !== input.tenant.adminRpId) {
+    return null;
   }
-
   if (input.credentialId.byteLength > MAX_CREDENTIAL_ID_BYTES) {
     return null;
   }
   const adminRpId = input.tenant.adminRpId;
-  if (input.rpId !== adminRpId) {
-    return null;
-  }
-  const acceptLegacy = input.acceptLegacy ?? true;
-  const requireUserVerified = input.requireUserVerified ?? false;
   const initialRows = await findPasskeyCredential(sql, {
     credentialId: input.credentialId,
     rpId: input.rpId,
-    acceptLegacy,
-    requireUserVerified,
+    acceptLegacy: false,
+    requireUserVerified: true,
   });
   const initial = initialRows[0];
   if (initial === undefined) {
@@ -480,9 +466,9 @@ export async function finishPasskeyAuthentication(
         clientDataJSON: input.clientDataJSON,
         authenticatorData: input.authenticatorData,
         signature: input.signature,
-        acceptLegacy,
-        requireUvFlag: input.requireUvFlag,
-        requireUserVerified,
+        acceptLegacy: false,
+        requireUvFlag: true,
+        requireUserVerified: true,
       });
       if (verified === null) {
         return null;
@@ -501,13 +487,12 @@ export async function finishPasskeyAuthentication(
       ) {
         throw new TenantAuthRefusedError();
       }
-      const requireUv = input.requireUvFlag === true;
       return createSessionInTransaction(tx, keys.bidx, {
         userId: verified.userId,
         now: input.now,
         kind: "tenant",
-        factor: requireUv ? "passkey_uv" : null,
-        freshFactorAt: requireUv ? input.now : null,
+        factor: "passkey_uv",
+        freshFactorAt: input.now,
       });
     });
   } catch (error) {

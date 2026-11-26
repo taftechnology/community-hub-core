@@ -14,6 +14,7 @@ import { IdentityError } from "../domain/error.js";
 import type { SecondFactorNotice, SecondFactorNoticeKind } from "../domain/second-factor-notice.js";
 import { base32Decode, stepAt, totpCode } from "../domain/totp.js";
 import { insertIdentityUser } from "./identity-user.js";
+import { finishPasskeyAuthentication } from "./passkey.js";
 import { lockSecondFactor } from "./second-factor-lock.js";
 import { createSession, sessionAccessHash } from "./session.js";
 import {
@@ -23,7 +24,6 @@ import {
   beginSecondStepPasskey,
   beginTenantPasskeyRegistration,
   confirmTotpSetup,
-  finishPasskeyAuthentication,
   finishPasskeyRegistration,
   finishTenantPasskeyRegistration,
   listSecondFactors,
@@ -414,6 +414,95 @@ describe("passkeys", () => {
     };
   }
 
+  type EnrolledPasskey = Awaited<ReturnType<typeof registerTenantPasskey>>;
+  type SecondStepStart = { accessToken: string; challenge: Uint8Array };
+
+  async function startSecondStep(
+    sql: Sql,
+    kms: KmsPort,
+    userId: string,
+    now: Date,
+  ): Promise<SecondStepStart> {
+    const sf = await createSession(sql, kms, KEY_ARN, { userId, now, kind: "second_factor" });
+    const started = await beginSecondStepPasskey(sql, kms, KEY_ARN, {
+      accessToken: sf.accessToken,
+      now,
+      adminRpId: ADMIN_RP_ID,
+    });
+    if (started.outcome !== "started") {
+      throw new Error("expected the second step to start");
+    }
+    return { accessToken: sf.accessToken, challenge: started.options.challenge };
+  }
+
+  // Answers a second step with the enrolled credential, signed by `signWith`: the enrolled key
+  // gives a right answer, any other key a wrong one.
+  async function answerSecondStep(
+    sql: Sql,
+    kms: KmsPort,
+    step: SecondStepStart,
+    enrolled: EnrolledPasskey,
+    now: Date,
+    signWith: Awaited<ReturnType<typeof signer>>,
+  ): ReturnType<typeof verifySecondStepPasskey> {
+    const authData = authenticatorData({ rpId: ADMIN_RP_ID, signCount: 1, flags: 0x05 });
+    const client = clientData("webauthn.get", step.challenge, ADMIN_ORIGIN);
+    return verifySecondStepPasskey(sql, kms, KEY_ARN, {
+      accessToken: step.accessToken,
+      now,
+      adminRpId: ADMIN_RP_ID,
+      credentialId: enrolled.credentialId,
+      clientDataJSON: client,
+      authenticatorData: authData,
+      signature: await signWith.sign(concat([authData, await sha256(client)])),
+    });
+  }
+
+  async function sessionAttempts(
+    sql: Sql,
+    kms: KmsPort,
+    accessToken: string,
+  ): Promise<{ attempts: number; revoked: boolean }> {
+    const accessHash = await sessionAccessHash(sql, kms, KEY_ARN, accessToken);
+    const [row] = await sql<{ second_factor_attempts: number; revoked_at: Date | null }[]>`
+      select second_factor_attempts, revoked_at
+      from identity.sessions
+      where access_hash = ${accessHash}
+    `;
+    if (row === undefined) {
+      throw new Error("session row is missing");
+    }
+    return { attempts: row.second_factor_attempts, revoked: row.revoked_at !== null };
+  }
+
+  // What a refused or limited answer must leave alone: the user's tenant sessions, the
+  // challenge, and the credential's sign count.
+  async function secondStepSideEffects(
+    sql: Sql,
+    userId: string,
+    challenge: Uint8Array,
+    credentialId: Uint8Array,
+  ): Promise<{ tenantSessions: number; challengeConsumed: boolean; signCount: number }> {
+    const [sessions] = await sql<{ n: number }[]>`
+      select count(*)::int as n from identity.sessions
+      where user_id = ${userId} and kind = 'tenant'
+    `;
+    const [challengeRow] = await sql<{ consumed_at: Date | null }[]>`
+      select consumed_at from identity.passkey_challenges where challenge = ${challenge}
+    `;
+    const [credential] = await sql<{ sign_count: number | string }[]>`
+      select sign_count from identity.passkey_credentials where credential_id = ${credentialId}
+    `;
+    if (sessions === undefined || challengeRow === undefined || credential === undefined) {
+      throw new Error("a row the test needs is missing");
+    }
+    return {
+      tenantSessions: sessions.n,
+      challengeConsumed: challengeRow.consumed_at !== null,
+      signCount: Number(credential.sign_count),
+    };
+  }
+
   it("registers an ES256 credential and rejects a duplicate id", async () => {
     const now = new Date("2026-10-11T00:00:00.000Z");
     const kms = createLocalKmsPort();
@@ -515,7 +604,7 @@ describe("passkeys", () => {
       const authData = authenticatorData({ rpId: RP_ID, signCount: 1 });
       const client = clientData("webauthn.get", options.challenge, ORIGIN);
       const signature = await key.sign(concat([authData, await sha256(client)]));
-      const verified = await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+      const verified = await verifyPasskeyAssertion(sql, {
         rpId: RP_ID,
         now,
         credentialId,
@@ -523,7 +612,7 @@ describe("passkeys", () => {
         authenticatorData: authData,
         signature,
       });
-      expect(verified).toMatchObject({ userId: created.userId, expiresIn: 900 });
+      expect(verified).toEqual({ userId: created.userId });
       const counts = await sql<{ sign_count: number | string }[]>`
         select sign_count from identity.passkey_credentials
       `;
@@ -536,7 +625,7 @@ describe("passkeys", () => {
       const badData = authenticatorData({ rpId: RP_ID, signCount: 2 });
       const badClient = clientData("webauthn.get", badOrigin.challenge, "https://evil.example");
       expect(
-        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        await verifyPasskeyAssertion(sql, {
           rpId: RP_ID,
           now,
           credentialId,
@@ -554,7 +643,7 @@ describe("passkeys", () => {
       const staleData = authenticatorData({ rpId: RP_ID, signCount: 3 });
       const staleClient = clientData("webauthn.get", stale.challenge, ORIGIN);
       expect(
-        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        await verifyPasskeyAssertion(sql, {
           rpId: RP_ID,
           now: new Date(now.getTime() + 5 * 60 * 1000 + 1),
           credentialId,
@@ -569,7 +658,7 @@ describe("passkeys", () => {
       const heldData = authenticatorData({ rpId: RP_ID, signCount: 2 });
       const heldClient = clientData("webauthn.get", held.challenge, ORIGIN);
       expect(
-        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        await verifyPasskeyAssertion(sql, {
           rpId: RP_ID,
           now,
           credentialId,
@@ -603,7 +692,7 @@ describe("passkeys", () => {
       const zeroData = authenticatorData({ rpId: RP_ID, signCount: 0 });
       const zeroClient = clientData("webauthn.get", zeroOptions.challenge, ORIGIN);
       expect(
-        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        await verifyPasskeyAssertion(sql, {
           rpId: RP_ID,
           now,
           credentialId: zeroId,
@@ -611,7 +700,7 @@ describe("passkeys", () => {
           authenticatorData: zeroData,
           signature: await key.sign(concat([zeroData, await sha256(zeroClient)])),
         }),
-      ).toMatchObject({ userId: created.userId, expiresIn: 900 });
+      ).toEqual({ userId: created.userId });
     });
   });
 
@@ -649,7 +738,7 @@ describe("passkeys", () => {
       const trailing = concat([der, Uint8Array.of(0xff)]);
       expect(trailing.byteLength).toBe(der.byteLength + 1);
       expect(
-        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        await verifyPasskeyAssertion(sql, {
           rpId: RP_ID,
           now,
           credentialId,
@@ -665,7 +754,7 @@ describe("passkeys", () => {
       const rawSignature = await key.signRaw(concat([rawData, await sha256(rawClient)]));
       expect(rawSignature.byteLength).toBe(64);
       expect(
-        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        await verifyPasskeyAssertion(sql, {
           rpId: RP_ID,
           now,
           credentialId,
@@ -677,7 +766,7 @@ describe("passkeys", () => {
     });
   });
 
-  it("returns one session when one assertion is finished twice in parallel", async () => {
+  it("returns one user when one assertion is verified twice in parallel", async () => {
     const now = new Date("2026-10-11T00:00:00.000Z");
     const kms = createLocalKmsPort();
     const key = await signer();
@@ -687,8 +776,9 @@ describe("passkeys", () => {
     const holder = postgres(url, { max: 1, prepare: true, onnotice: () => undefined });
     const sql = postgres(url, { max: 4, prepare: true, onnotice: () => undefined });
     const observer = createPlaintextDirectSql(runtime.productOnlyUrl);
-    let pending: Promise<Awaited<ReturnType<typeof finishPasskeyAuthentication>>[]> =
-      Promise.resolve([]);
+    let pending: Promise<Awaited<ReturnType<typeof verifyPasskeyAssertion>>[]> = Promise.resolve(
+      [],
+    );
     try {
       await clearIdentity(sql);
       const created = await insertIdentityUser(sql, kms, KEY_ARN, { email: "ada@example.com" });
@@ -753,8 +843,8 @@ describe("passkeys", () => {
       });
       await lockHeld;
       pending = Promise.all([
-        finishPasskeyAuthentication(sql, kms, KEY_ARN, input),
-        finishPasskeyAuthentication(sql, kms, KEY_ARN, input),
+        verifyPasskeyAssertion(sql, input),
+        verifyPasskeyAssertion(sql, input),
       ]);
       await gate;
       const results = await pending;
@@ -828,7 +918,7 @@ describe("passkeys", () => {
       expect(after).toEqual([{ n: 0 }]);
 
       expect(
-        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        await verifyPasskeyAssertion(sql, {
           rpId: RP_ID,
           now,
           credentialId: new Uint8Array(1024).fill(3),
@@ -861,7 +951,7 @@ describe("passkeys", () => {
       const authData = authenticatorData({ rpId: RP_ID, signCount: 1 });
       const client = clientData("webauthn.get", options.challenge, ORIGIN);
       await expect(
-        finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        verifyPasskeyAssertion(sql, {
           rpId: RP_ID,
           now,
           credentialId,
@@ -1058,7 +1148,7 @@ describe("passkeys", () => {
       const typedData = authenticatorData({ rpId: RP_ID, signCount: 1 });
       const typedClient = clientData("webauthn.create", typed.challenge, ORIGIN);
       expect(
-        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        await verifyPasskeyAssertion(sql, {
           rpId: RP_ID,
           now,
           credentialId,
@@ -1072,7 +1162,7 @@ describe("passkeys", () => {
       const hashedData = authenticatorData({ rpId: "other.example.test", signCount: 1 });
       const hashedClient = clientData("webauthn.get", hashed.challenge, ORIGIN);
       expect(
-        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        await verifyPasskeyAssertion(sql, {
           rpId: RP_ID,
           now,
           credentialId,
@@ -1086,7 +1176,7 @@ describe("passkeys", () => {
       const presentData = authenticatorData({ rpId: RP_ID, signCount: 1, flags: 0x00 });
       const presentClient = clientData("webauthn.get", present.challenge, ORIGIN);
       expect(
-        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        await verifyPasskeyAssertion(sql, {
           rpId: RP_ID,
           now,
           credentialId,
@@ -1104,7 +1194,7 @@ describe("passkeys", () => {
       expect(lengthData.byteLength).toBe(38);
       const lengthClient = clientData("webauthn.get", length.challenge, ORIGIN);
       expect(
-        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        await verifyPasskeyAssertion(sql, {
           rpId: RP_ID,
           now,
           credentialId,
@@ -1174,7 +1264,7 @@ describe("passkeys", () => {
       const negativeParts = splitDer(padded.der);
       const negative = encodeDer(negativeParts.r, negativeParts.s.subarray(1));
       expect(
-        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        await verifyPasskeyAssertion(sql, {
           rpId: RP_ID,
           now,
           credentialId: negativeId,
@@ -1189,7 +1279,7 @@ describe("passkeys", () => {
       const minimalParts = splitDer(bare.der);
       const minimal = encodeDer(concat([Uint8Array.of(0x00), minimalParts.r]), minimalParts.s);
       expect(
-        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        await verifyPasskeyAssertion(sql, {
           rpId: RP_ID,
           now,
           credentialId: minimalId,
@@ -1205,7 +1295,7 @@ describe("passkeys", () => {
       const length = inside[1] ?? 0;
       inside[1] = length + 1;
       expect(
-        await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        await verifyPasskeyAssertion(sql, {
           rpId: RP_ID,
           now,
           credentialId: trailingId,
@@ -1219,7 +1309,7 @@ describe("passkeys", () => {
       await register(padded.key, longId);
       const longS = encodeDer(Uint8Array.of(0x01), new Uint8Array(33).fill(0x01));
       await expect(
-        finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        verifyPasskeyAssertion(sql, {
           rpId: RP_ID,
           now,
           credentialId: longId,
@@ -1254,7 +1344,7 @@ describe("passkeys", () => {
       const authData = authenticatorData({ rpId: RP_ID, signCount: 1 });
       const client = clientData("webauthn.get", options.challenge, ORIGIN);
       const signature = await key.sign(concat([authData, await sha256(client)]));
-      const result = await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+      const result = await verifyPasskeyAssertion(sql, {
         rpId: RP_ID,
         now,
         credentialId,
@@ -1289,7 +1379,7 @@ describe("passkeys", () => {
       const client = clientData("webauthn.get", options.challenge, ORIGIN);
       const signature = await key.sign(concat([authData, await sha256(client)]));
 
-      const refused = await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+      const refused = await verifyPasskeyAssertion(sql, {
         rpId: RP_ID,
         now,
         credentialId,
@@ -1300,7 +1390,7 @@ describe("passkeys", () => {
       });
       expect(refused).toBeNull();
 
-      const accepted = await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+      const accepted = await verifyPasskeyAssertion(sql, {
         rpId: RP_ID,
         now,
         credentialId,
@@ -1308,7 +1398,7 @@ describe("passkeys", () => {
         authenticatorData: authData,
         signature,
       });
-      expect(accepted).toMatchObject({ userId: created.userId, expiresIn: 900 });
+      expect(accepted).toEqual({ userId: created.userId });
     });
   });
 
@@ -1361,7 +1451,7 @@ describe("passkeys", () => {
       const authClient = clientData("webauthn.get", authChallenge, ORIGIN);
       const authSig = await key.sign(concat([authData, await sha256(authClient)]));
 
-      const refused = await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+      const refused = await verifyPasskeyAssertion(sql, {
         rpId: RP_ID,
         now,
         credentialId: regCredId,
@@ -1372,7 +1462,7 @@ describe("passkeys", () => {
       });
       expect(refused).toBeNull();
 
-      const accepted = await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+      const accepted = await verifyPasskeyAssertion(sql, {
         rpId: RP_ID,
         now,
         credentialId: regCredId,
@@ -1380,7 +1470,7 @@ describe("passkeys", () => {
         authenticatorData: authData,
         signature: authSig,
       });
-      expect(accepted).toMatchObject({ userId: created.userId, expiresIn: 900 });
+      expect(accepted).toEqual({ userId: created.userId });
     });
   });
 
@@ -1413,7 +1503,7 @@ describe("passkeys", () => {
       const client = clientData("webauthn.get", options.challenge, ORIGIN);
       const signature = await key.sign(concat([authData, await sha256(client)]));
 
-      const result = await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+      const result = await verifyPasskeyAssertion(sql, {
         rpId: RP_ID,
         now,
         credentialId,
@@ -1657,7 +1747,7 @@ describe("passkeys", () => {
         concat([authDataWithoutUv, await sha256(clientWithoutUv)]),
       );
 
-      const rejected = await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+      const rejected = await verifyPasskeyAssertion(sql, {
         rpId: RP_ID,
         now,
         credentialId,
@@ -1677,7 +1767,7 @@ describe("passkeys", () => {
       const clientWithUv = clientData("webauthn.get", authOptionsWithUv.challenge, ORIGIN);
       const signatureWithUv = await key.sign(concat([authDataWithUv, await sha256(clientWithUv)]));
 
-      const accepted = await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+      const accepted = await verifyPasskeyAssertion(sql, {
         rpId: RP_ID,
         now,
         credentialId,
@@ -1685,7 +1775,7 @@ describe("passkeys", () => {
         authenticatorData: authDataWithUv,
         signature: signatureWithUv,
       });
-      expect(accepted).toMatchObject({ userId: created.userId, expiresIn: 900 });
+      expect(accepted).toEqual({ userId: created.userId });
 
       // Positive control: preferred authentication succeeds without UV flag
       const authOptionsPreferred = await beginPasskeyAuthentication(sql, {
@@ -1699,7 +1789,7 @@ describe("passkeys", () => {
         concat([authDataPreferred, await sha256(clientPreferred)]),
       );
 
-      const acceptedPreferred = await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+      const acceptedPreferred = await verifyPasskeyAssertion(sql, {
         rpId: RP_ID,
         now,
         credentialId,
@@ -1707,7 +1797,7 @@ describe("passkeys", () => {
         authenticatorData: authDataPreferred,
         signature: signaturePreferred,
       });
-      expect(acceptedPreferred).toMatchObject({ userId: created.userId, expiresIn: 900 });
+      expect(acceptedPreferred).toEqual({ userId: created.userId });
     });
   });
 
@@ -4019,6 +4109,286 @@ describe("passkeys", () => {
       // Session stays active
       expect(
         await readSession(sql, kms, KEY_ARN, { accessToken: admin2.accessToken, now: t1 }),
+      ).toEqual({ userId });
+    });
+  });
+
+  // Pin 111
+  it("a passkey second step counts an attempt before checking and stops at five", async () => {
+    const now = new Date("2026-11-26T00:00:00.000Z");
+    const t1 = new Date(now.getTime() + 30_000);
+    const kms = createLocalKmsPort();
+    await withSql(async (sql) => {
+      const wrongKey = await signer();
+
+      // 1. Every answer is counted before it is checked: a wrong one, then a right one.
+      {
+        const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+          email: "pin111-count@example.test",
+        });
+        const enrolled = await registerTenantPasskey(sql, kms, KEY_ARN, userId, now);
+        const step = await startSecondStep(sql, kms, userId, t1);
+
+        await expect(answerSecondStep(sql, kms, step, enrolled, t1, wrongKey)).resolves.toEqual({
+          outcome: "refused",
+        });
+        expect(await sessionAttempts(sql, kms, step.accessToken)).toEqual({
+          attempts: 1,
+          revoked: false,
+        });
+
+        const verified = await answerSecondStep(sql, kms, step, enrolled, t1, enrolled.key);
+        expect(verified.outcome).toBe("verified");
+        expect(await sessionAttempts(sql, kms, step.accessToken)).toEqual({
+          attempts: 2,
+          revoked: true,
+        });
+      }
+
+      // 2. At five attempts a right answer is not checked at all: no session, nothing consumed.
+      {
+        const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+          email: "pin111-stop@example.test",
+        });
+        const enrolled = await registerTenantPasskey(sql, kms, KEY_ARN, userId, now);
+        const step = await startSecondStep(sql, kms, userId, t1);
+        const stepHash = await sessionAccessHash(sql, kms, KEY_ARN, step.accessToken);
+        await sql`
+          update identity.sessions
+          set second_factor_attempts = 5
+          where access_hash = ${stepHash}
+        `;
+        const before = await secondStepSideEffects(
+          sql,
+          userId,
+          step.challenge,
+          enrolled.credentialId,
+        );
+
+        await expect(answerSecondStep(sql, kms, step, enrolled, t1, enrolled.key)).resolves.toEqual(
+          { outcome: "limited" },
+        );
+
+        expect(await sessionAttempts(sql, kms, step.accessToken)).toEqual({
+          attempts: 5,
+          revoked: false,
+        });
+        expect(
+          await secondStepSideEffects(sql, userId, step.challenge, enrolled.credentialId),
+        ).toEqual(before);
+        expect(before.challengeConsumed).toBe(false);
+      }
+
+      // 3. Four wrong answers leave the session live and a right fifth one passes; five wrong
+      // answers revoke the session in the same transaction, so a sixth answer meets a dead one.
+      {
+        const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+          email: "pin111-five@example.test",
+        });
+        const enrolled = await registerTenantPasskey(sql, kms, KEY_ARN, userId, now);
+
+        const fourWrong = await startSecondStep(sql, kms, userId, t1);
+        for (let i = 0; i < 4; i += 1) {
+          await expect(
+            answerSecondStep(sql, kms, fourWrong, enrolled, t1, wrongKey),
+          ).resolves.toEqual({ outcome: "refused" });
+        }
+        expect(await sessionAttempts(sql, kms, fourWrong.accessToken)).toEqual({
+          attempts: 4,
+          revoked: false,
+        });
+        const fifthRight = await answerSecondStep(sql, kms, fourWrong, enrolled, t1, enrolled.key);
+        expect(fifthRight.outcome).toBe("verified");
+
+        const fiveWrong = await startSecondStep(sql, kms, userId, t1);
+        for (let i = 0; i < 5; i += 1) {
+          await expect(
+            answerSecondStep(sql, kms, fiveWrong, enrolled, t1, wrongKey),
+          ).resolves.toEqual({ outcome: "refused" });
+        }
+        expect(await sessionAttempts(sql, kms, fiveWrong.accessToken)).toEqual({
+          attempts: 5,
+          revoked: true,
+        });
+        await expect(
+          answerSecondStep(sql, kms, fiveWrong, enrolled, t1, enrolled.key),
+        ).resolves.toEqual({ outcome: "refused" });
+        const [tenantRows] = await sql<{ n: number }[]>`
+          select count(*)::int as n from identity.sessions
+          where user_id = ${userId} and kind = 'tenant' and factor = 'otp_passkey'
+            and fresh_factor_at is not null
+        `;
+        expect(tenantRows?.n).toBe(1);
+      }
+    });
+  });
+
+  // Pin 112
+  it("refuses a passkey second step after ten wrong answers in an hour", async () => {
+    const now = new Date("2026-11-26T00:00:00.000Z");
+    const t1 = new Date(now.getTime() + 30_000);
+    const kms = createLocalKmsPort();
+    await withSql(async (sql) => {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: "pin112@example.test",
+      });
+      const enrolled = await registerTenantPasskey(sql, kms, KEY_ARN, userId, now);
+      const wrongKey = await signer();
+
+      // Two pre-2FA sessions with five wrong answers each give ten failures inside the hour.
+      for (const offsetMs of [0, 60_000]) {
+        const at = new Date(t1.getTime() + offsetMs);
+        const step = await startSecondStep(sql, kms, userId, at);
+        for (let i = 0; i < 5; i += 1) {
+          await expect(answerSecondStep(sql, kms, step, enrolled, at, wrongKey)).resolves.toEqual({
+            outcome: "refused",
+          });
+        }
+        expect(await sessionAttempts(sql, kms, step.accessToken)).toEqual({
+          attempts: 5,
+          revoked: true,
+        });
+      }
+      const [failures] = await sql<{ n: number }[]>`
+        select count(*)::int as n from identity.second_factor_events
+        where user_id = ${userId} and event = 'verify_failed'
+      `;
+      expect(failures?.n).toBe(10);
+
+      // Inside the hour a third pre-2FA session is limited even with the right passkey, and the
+      // limit stops before the attempt is counted or anything is consumed.
+      const t3 = new Date(t1.getTime() + 59 * 60 * 1000);
+      const limitedStep = await startSecondStep(sql, kms, userId, t3);
+      const before = await secondStepSideEffects(
+        sql,
+        userId,
+        limitedStep.challenge,
+        enrolled.credentialId,
+      );
+      await expect(
+        answerSecondStep(sql, kms, limitedStep, enrolled, t3, enrolled.key),
+      ).resolves.toEqual({ outcome: "limited" });
+      expect(await sessionAttempts(sql, kms, limitedStep.accessToken)).toEqual({
+        attempts: 0,
+        revoked: false,
+      });
+      expect(
+        await secondStepSideEffects(sql, userId, limitedStep.challenge, enrolled.credentialId),
+      ).toEqual(before);
+      expect(before.challengeConsumed).toBe(false);
+
+      // Once the first five failures are an hour old only five remain in the window.
+      const t4 = new Date(t1.getTime() + HOUR_MS);
+      const allowedStep = await startSecondStep(sql, kms, userId, t4);
+      const allowed = await answerSecondStep(sql, kms, allowedStep, enrolled, t4, enrolled.key);
+      expect(allowed.outcome).toBe("verified");
+    });
+  });
+
+  // Pin 117
+  it("finishPasskeyAuthentication creates only factor-bearing tenant sessions", async () => {
+    const now = new Date("2026-11-26T00:00:00.000Z");
+    const t1 = new Date(now.getTime() + 30_000);
+    const kms = createLocalKmsPort();
+    const opsRpId = "ops.example.test";
+    const opsOrigin = "https://ops.example.test";
+    type FinishInput = Parameters<typeof finishPasskeyAuthentication>[3];
+    await withSql(async (sql) => {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: "pin117@example.test",
+      });
+      const enrolled = await registerTenantPasskey(sql, kms, KEY_ARN, userId, now);
+      const sessionRows = () =>
+        sql<{ id: string; kind: string; factor: string | null; fresh_factor_at: Date | null }[]>`
+          select id, kind, factor, fresh_factor_at
+          from identity.sessions
+          where user_id = ${userId}
+          order by id
+        `;
+      const rowsBefore = await sessionRows();
+
+      // 1. With no tenant context an operator passkey signs in to nothing: no session at all.
+      // The type refuses the call, so the test casts to reach the old non-tenant branch.
+      const opsKey = await signer();
+      const opsCredentialId = crypto.getRandomValues(new Uint8Array(16));
+      await sql`
+        insert into identity.passkey_credentials (id, user_id, credential_id, cose_key, sign_count, rp_id)
+        values (${newId()}, ${userId}, ${opsCredentialId}, ${coseKey(opsKey.x, opsKey.y)}, 0, ${opsRpId})
+      `;
+      const opsOptions = await beginPasskeyAuthentication(sql, {
+        rpId: opsRpId,
+        now: t1,
+        userVerification: "required",
+      });
+      const opsAuthData = authenticatorData({ rpId: opsRpId, signCount: 1, flags: 0x05 });
+      const opsClient = clientData("webauthn.get", opsOptions.challenge, opsOrigin);
+      const noTenant = {
+        rpId: opsRpId,
+        now: t1,
+        credentialId: opsCredentialId,
+        clientDataJSON: opsClient,
+        authenticatorData: opsAuthData,
+        signature: await opsKey.sign(concat([opsAuthData, await sha256(opsClient)])),
+      } as unknown as FinishInput;
+      await expect(finishPasskeyAuthentication(sql, kms, KEY_ARN, noTenant)).resolves.toBeNull();
+      expect(await sessionRows()).toEqual(rowsBefore);
+
+      // 2. With the tenant context but no UV flag in the assertion, on a challenge that only
+      // prefers it: refused, so no tenant session can come out with no factor.
+      const preferred = await beginPasskeyAuthentication(sql, {
+        rpId: ADMIN_RP_ID,
+        now: t1,
+        userVerification: "preferred",
+      });
+      const noUvData = authenticatorData({ rpId: ADMIN_RP_ID, signCount: 1, flags: 0x01 });
+      const noUvClient = clientData("webauthn.get", preferred.challenge, ADMIN_ORIGIN);
+      await expect(
+        finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+          rpId: ADMIN_RP_ID,
+          now: t1,
+          credentialId: enrolled.credentialId,
+          clientDataJSON: noUvClient,
+          authenticatorData: noUvData,
+          signature: await enrolled.key.sign(concat([noUvData, await sha256(noUvClient)])),
+          tenant: { adminRpId: ADMIN_RP_ID },
+        }),
+      ).resolves.toBeNull();
+      expect(await sessionRows()).toEqual(rowsBefore);
+
+      // 3. A user-verified admin passkey signs in: one tenant session, with its factor and a
+      // fresh factor set.
+      const required = await beginPasskeyAuthentication(sql, {
+        rpId: ADMIN_RP_ID,
+        now: t1,
+        userVerification: "required",
+      });
+      const uvData = authenticatorData({ rpId: ADMIN_RP_ID, signCount: 1, flags: 0x05 });
+      const uvClient = clientData("webauthn.get", required.challenge, ADMIN_ORIGIN);
+      const tokens = await finishPasskeyAuthentication(sql, kms, KEY_ARN, {
+        rpId: ADMIN_RP_ID,
+        now: t1,
+        credentialId: enrolled.credentialId,
+        clientDataJSON: uvClient,
+        authenticatorData: uvData,
+        signature: await enrolled.key.sign(concat([uvData, await sha256(uvClient)])),
+        tenant: { adminRpId: ADMIN_RP_ID },
+      });
+      expect(tokens).toMatchObject({ userId, expiresIn: 900 });
+      if (tokens === null) {
+        throw new Error("expected a passkey sign-in");
+      }
+
+      const rowsAfter = await sessionRows();
+      const created = rowsAfter.filter(
+        (row) => !rowsBefore.some((existing) => existing.id === row.id),
+      );
+      expect(created).toEqual([
+        { id: expect.any(String), kind: "tenant", factor: "passkey_uv", fresh_factor_at: t1 },
+      ]);
+      expect(rowsAfter).toHaveLength(rowsBefore.length + 1);
+      expect(rowsAfter.filter((row) => row.kind === "tenant" && row.factor === null)).toEqual([]);
+      expect(
+        await readSession(sql, kms, KEY_ARN, { accessToken: tokens.accessToken, now: t1 }),
       ).toEqual({ userId });
     });
   });

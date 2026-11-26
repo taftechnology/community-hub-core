@@ -2504,6 +2504,84 @@ describe("second_factor sessions and the 2fa lock", () => {
     }
   });
 
+  // A tenant row with no factor is what an image from before the second factor left behind. The
+  // service no longer mints one, so a test makes a normal session and clears its factor.
+  async function tenantSessionWithoutFactor(
+    sql: Sql,
+    userId: string,
+    now: Date,
+  ): Promise<Awaited<ReturnType<typeof createSession>>> {
+    const tokens = await createSession(sql, kms, KEY_ARN, {
+      userId,
+      now,
+      kind: "tenant",
+      factor: "otp_totp",
+    });
+    const accessHash = await sessionAccessHash(sql, kms, KEY_ARN, tokens.accessToken);
+    await sql`update identity.sessions set factor = null where access_hash = ${accessHash}`;
+    return tokens;
+  }
+
+  // Pin 115
+  it("refuses to refresh a tenant session with no factor", async () => {
+    const now = new Date("2026-11-26T00:00:00.000Z");
+    const later = new Date(now.getTime() + 60_000);
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `pin115-${newId()}@example.test`,
+      });
+
+      // Positive control: a tenant session with a factor refreshes and keeps its factor.
+      const withFactor = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+        factor: "otp_totp",
+      });
+      const rotated = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: withFactor.refreshToken,
+        now: later,
+      });
+      expect(rotated).not.toBeNull();
+      const rotatedHash = await sessionAccessHash(sql, kms, KEY_ARN, rotated!.accessToken);
+      const [rotatedRow] = await sql<{ kind: string; factor: string | null }[]>`
+        select kind, factor from identity.sessions where access_hash = ${rotatedHash}
+      `;
+      expect(rotatedRow).toEqual({ kind: "tenant", factor: "otp_totp" });
+
+      // A tenant row with no factor does not refresh: no successor, no claim, no revoke.
+      const factorless = await tenantSessionWithoutFactor(sql, userId, now);
+      const rowsBefore = await sql<
+        { id: string; revoked_at: Date | null; replaced_by: string | null }[]
+      >`
+        select id, revoked_at, replaced_by from identity.sessions
+        where user_id = ${userId}
+        order by id
+      `;
+      expect(rowsBefore).toHaveLength(3);
+      await expect(
+        refreshSession(sql, kms, KEY_ARN, { refreshToken: factorless.refreshToken, now: later }),
+      ).resolves.toBeNull();
+      const rowsAfter = await sql<
+        { id: string; revoked_at: Date | null; replaced_by: string | null }[]
+      >`
+        select id, revoked_at, replaced_by from identity.sessions
+        where user_id = ${userId}
+        order by id
+      `;
+      expect(rowsAfter).toEqual(rowsBefore);
+      const factorlessHash = await sessionAccessHash(sql, kms, KEY_ARN, factorless.accessToken);
+      const [factorlessRow] = await sql<{ factor: string | null; revoked_at: Date | null }[]>`
+        select factor, revoked_at from identity.sessions where access_hash = ${factorlessHash}
+      `;
+      expect(factorlessRow).toEqual({ factor: null, revoked_at: null });
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  // Pin 86
   it("readSessionWithKind with the tenant kind refuses a session with no factor", async () => {
     const now = new Date("2026-10-11T00:00:00.000Z");
     const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
@@ -2511,12 +2589,7 @@ describe("second_factor sessions and the 2fa lock", () => {
       const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
         email: `pin86-${newId()}@example.test`,
       });
-      const factorless = await createSession(sql, kms, KEY_ARN, {
-        userId,
-        now,
-        kind: "tenant",
-        factor: null,
-      });
+      const factorless = await tenantSessionWithoutFactor(sql, userId, now);
 
       expect(
         await readSessionWithKind(sql, kms, KEY_ARN, {

@@ -28,7 +28,6 @@ export {
 export {
   beginPasskeyAuthentication,
   beginPasskeyRegistration,
-  finishPasskeyAuthentication,
   finishPasskeyRegistration,
   verifyPasskeyAssertion,
   type PasskeyAuthenticationOptions,

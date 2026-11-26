@@ -326,6 +326,29 @@ describe("readServiceEnv", () => {
       ).toEqual({ ok: false });
     });
 
+    it("refuses an ADMIN_ORIGIN with an explicit port", () => {
+      for (const port of ["8443", "4443", "443"]) {
+        const adminOrigin = `https://admin.example.test:${port}`;
+        expect(readServiceEnv({ ...complete(), ADMIN_ORIGIN: adminOrigin }, pem)).toEqual({
+          ok: false,
+        });
+        expect(
+          readServiceEnv(
+            { ...complete(), BILLING_SECRET_ARN: validBillingArn, ADMIN_ORIGIN: adminOrigin },
+            pem,
+          ),
+        ).toEqual({ ok: false });
+      }
+
+      // The same host without a port is accepted, so the refusals above are about the port alone
+      // and the origin check stays an exact match on https://<host>.
+      const accepted = readServiceEnv({ ...complete(), ADMIN_ORIGIN: validAdminOrigin }, pem);
+      expect(accepted.ok).toBe(true);
+      if (accepted.ok) {
+        expect(accepted.env.ADMIN_ORIGIN).toBe(validAdminOrigin);
+      }
+    });
+
     it.each([
       ["only BILLING_SECRET_ARN", { BILLING_SECRET_ARN: validBillingArn }],
       [

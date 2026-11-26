@@ -94,7 +94,9 @@ export type CreateSessionTenantInput = {
   refreshFamily?: string;
   kind?: "tenant" | undefined;
   absoluteExpiresAt?: Date;
-  factor: SessionFactor | null;
+  // A tenant session always has a factor. A tenant row with none is a row from before the second
+  // factor, and reads and refresh refuse it.
+  factor: SessionFactor;
   freshFactorAt?: Date | null;
   recoveryUntil?: Date | null;
 };
@@ -281,6 +283,7 @@ export async function refreshSession(
     from identity.sessions
     where refresh_hash = ${refreshHash}
       and kind = any(${sql.array([...kinds])})
+      and (kind <> 'tenant' or factor is not null)
   `;
   const target = located[0];
   if (target === undefined) {
@@ -330,8 +333,10 @@ export async function refreshSession(
         and refresh_expires_at > ${now}::timestamptz
         and replaced_by is null
         and revoked_at is null
-        -- Intentional defence in depth: the locate select already refuses other kinds.
+        -- Intentional defence in depth: the locate select already refuses other kinds and a
+        -- tenant row with no factor.
         and kind = any(${sql.array([...kinds])})
+        and (kind <> 'tenant' or factor is not null)
       returning id, user_id, refresh_family, kind, absolute_expires_at, factor
     `;
     const row = rows[0];

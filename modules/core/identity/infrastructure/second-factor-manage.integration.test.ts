@@ -845,7 +845,7 @@ describe("second-factor service: fresh check, recovery window, removal, notices"
           { accessToken: freshTotp.accessToken, now, adminRpId: ADMIN_RP_ID },
           { notice },
         ),
-      ).resolves.toEqual({ outcome: "refused" });
+      ).resolves.toEqual({ outcome: "last_factor" });
       expect(notice.calls).toHaveLength(0);
       const totpAfter = await sql<{ id: string }[]>`
         select id from identity.totp_credentials where user_id = ${totpUserId} and confirmed_at is not null
@@ -878,7 +878,7 @@ describe("second-factor service: fresh check, recovery window, removal, notices"
           { accessToken: freshPk.accessToken, now, adminRpId: ADMIN_RP_ID, passkeyId: pkId },
           { notice },
         ),
-      ).resolves.toEqual({ outcome: "refused" });
+      ).resolves.toEqual({ outcome: "last_factor" });
       expect(notice.calls).toHaveLength(0);
       const pkAfter = await sql<{ id: string }[]>`
         select id from identity.passkey_credentials where id = ${pkId}
@@ -934,7 +934,7 @@ describe("second-factor service: fresh check, recovery window, removal, notices"
         throw new Error("expected recovery");
       }
 
-      // Removing the sole remaining passkey in recovery is refused
+      // Removing the sole remaining passkey in recovery is refused as the last factor
       await expect(
         removePasskey(
           sql,
@@ -948,7 +948,7 @@ describe("second-factor service: fresh check, recovery window, removal, notices"
           },
           { notice },
         ),
-      ).resolves.toEqual({ outcome: "refused" });
+      ).resolves.toEqual({ outcome: "last_factor" });
       expect(notice.calls).toHaveLength(0);
       const pkRows = await sql<{ id: string }[]>`
         select id from identity.passkey_credentials where id = ${pkId}
@@ -1711,7 +1711,7 @@ describe("second-factor service: fresh check, recovery window, removal, notices"
         ),
       ]);
       expect(parallelMix.filter((r) => r.outcome === "removed")).toHaveLength(1);
-      expect(parallelMix.filter((r) => r.outcome === "refused")).toHaveLength(1);
+      expect(parallelMix.filter((r) => r.outcome === "last_factor")).toHaveLength(1);
 
       const listedRace = await listSecondFactors(sql, kms, KEY_ARN, {
         accessToken: raceFresh.accessToken,
@@ -1754,7 +1754,7 @@ describe("second-factor service: fresh check, recovery window, removal, notices"
         ),
       ]);
       expect(parallelPks.filter((r) => r.outcome === "removed")).toHaveLength(1);
-      expect(parallelPks.filter((r) => r.outcome === "refused")).toHaveLength(1);
+      expect(parallelPks.filter((r) => r.outcome === "last_factor")).toHaveLength(1);
       const remainingPkRows = await sql<{ id: string }[]>`
         select id from identity.passkey_credentials where user_id = ${pkOnlyUser}
       `;
@@ -1828,7 +1828,7 @@ describe("second-factor service: fresh check, recovery window, removal, notices"
         ),
       ).resolves.toEqual({ outcome: "refused" });
 
-      // Removing last factor (TOTP with no counting passkey) -> refused
+      // Removing last factor (TOTP with no counting passkey) -> refused as the last factor
       await expect(
         removeTotp(
           sql,
@@ -1837,9 +1837,9 @@ describe("second-factor service: fresh check, recovery window, removal, notices"
           { accessToken: fresh.accessToken, now, adminRpId: ADMIN_RP_ID },
           { notice, log: (f) => logCalls.push(f) },
         ),
-      ).resolves.toEqual({ outcome: "refused" });
+      ).resolves.toEqual({ outcome: "last_factor" });
 
-      // Unknown passkey id -> refused
+      // Unknown passkey id -> refused as unknown
       await expect(
         removePasskey(
           sql,
@@ -1853,7 +1853,7 @@ describe("second-factor service: fresh check, recovery window, removal, notices"
           },
           { notice, log: (f) => logCalls.push(f) },
         ),
-      ).resolves.toEqual({ outcome: "refused" });
+      ).resolves.toEqual({ outcome: "not_found" });
 
       expect(notice.calls).toHaveLength(0);
       expect(logCalls).toHaveLength(0);
@@ -2299,7 +2299,7 @@ describe("second-factor service: fresh check, recovery window, removal, notices"
           { accessToken: freshB.accessToken, now, adminRpId: ADMIN_RP_ID, passkeyId: pkA },
           { notice },
         ),
-      ).resolves.toEqual({ outcome: "refused" });
+      ).resolves.toEqual({ outcome: "not_found" });
 
       // Unknown UUID
       await expect(
@@ -2310,7 +2310,7 @@ describe("second-factor service: fresh check, recovery window, removal, notices"
           { accessToken: freshB.accessToken, now, adminRpId: ADMIN_RP_ID, passkeyId: newId() },
           { notice },
         ),
-      ).resolves.toEqual({ outcome: "refused" });
+      ).resolves.toEqual({ outcome: "not_found" });
 
       // Caller's own non-counting passkey id
       await expect(
@@ -2326,7 +2326,7 @@ describe("second-factor service: fresh check, recovery window, removal, notices"
           },
           { notice },
         ),
-      ).resolves.toEqual({ outcome: "refused" });
+      ).resolves.toEqual({ outcome: "not_found" });
 
       // Malformed id does not throw
       await expect(
@@ -2342,7 +2342,7 @@ describe("second-factor service: fresh check, recovery window, removal, notices"
           },
           { notice },
         ),
-      ).resolves.toEqual({ outcome: "refused" });
+      ).resolves.toEqual({ outcome: "not_found" });
 
       expect(notice.calls).toHaveLength(0);
 
@@ -2379,14 +2379,17 @@ describe("second-factor service: fresh check, recovery window, removal, notices"
       const pkId = await insertCountingPasskey(sql, userId, ADMIN_RP_ID, now);
       const notice = new MemoryNotice();
 
+      // A tenant row with no factor is what an image from before the second factor left behind.
+      // The service no longer mints one, so the test clears the factor of a fresh session.
       const factorless = await createSession(sql, kms, KEY_ARN, {
         userId,
         now: t1,
         kind: "tenant",
-        factor: null,
+        factor: "otp_totp",
         freshFactorAt: t1,
       });
       const factorlessHash = await sessionAccessHash(sql, kms, KEY_ARN, factorless.accessToken);
+      await sql`update identity.sessions set factor = null where access_hash = ${factorlessHash}`;
 
       const backupIdsBefore = await sql<{ id: string }[]>`
         select id from identity.backup_codes where user_id = ${userId} and used_at is null order by id
@@ -2544,7 +2547,7 @@ describe("second-factor service: fresh check, recovery window, removal, notices"
         { accessToken: fresh.accessToken, now, adminRpId: ADMIN_RP_ID, passkeyId: newId() },
         { notice },
       );
-      expect(unknownResult).toEqual({ outcome: "refused" });
+      expect(unknownResult).toEqual({ outcome: "not_found" });
 
       for (const passkeyId of [unverifiedPk, otherRpPk, nullRpPk]) {
         await expect(

@@ -21,7 +21,10 @@ import {
 import { withRequest } from "@community-hub/kernel";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { createSession } from "../../../modules/core/identity/infrastructure/session.js";
+import {
+  createSession,
+  sessionAccessHash,
+} from "../../../modules/core/identity/infrastructure/session.js";
 import type { Role } from "./checkout.js";
 import { readServiceEnv, type ServiceEnv } from "./env.js";
 import { productionRoutes } from "./index.js";
@@ -589,12 +592,21 @@ describe("second-factor route gate", () => {
     });
     expect(pre).not.toBeNull();
 
+    // A tenant row with no factor is what an image from before the second factor left behind. The
+    // service no longer mints one, so the test clears the factor of a normal session.
     const factorless = await createSession(identitySql, localKms, KEY_ARN, {
       userId: pre!.userId,
       now,
       kind: "tenant",
-      factor: null,
+      factor: "otp_totp",
     });
+    const factorlessHash = await sessionAccessHash(
+      identitySql,
+      localKms,
+      KEY_ARN,
+      factorless.accessToken,
+    );
+    await identitySql`update identity.sessions set factor = null where access_hash = ${factorlessHash}`;
 
     const listGrants = routes.find(
       (r) => `${r.method} ${r.pattern}` === "POST /v1/access/grants/list",

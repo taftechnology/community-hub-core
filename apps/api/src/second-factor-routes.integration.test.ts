@@ -396,6 +396,104 @@ async function cleanIdentity(): Promise<void> {
   await identitySql`delete from identity.identity_keys`;
 }
 
+type Harness = ReturnType<typeof makeHarness>;
+type PasskeySigner = Awaited<ReturnType<typeof signer>>;
+
+// Email code, then the first authenticator-app setup. The answer is an admin session that has
+// not passed a fresh check yet.
+async function signUpWithTotp(
+  h: Harness,
+  email: string,
+): Promise<{ userId: string; accessToken: string; secret: string }> {
+  await h.call("POST", "/v1/auth/email-otp/start", { email });
+  const pre2fa = verifyEmailOtpAnswer.parse(
+    await (
+      await h.call("POST", "/v1/auth/email-otp/verify", { email, code: h.mail.last?.code ?? "" })
+    ).json(),
+  );
+  const started = totpStartAnswer.parse(
+    await (
+      await h.call("POST", "/v1/auth/second-factor/totp/start", {}, `Bearer ${pre2fa.accessToken}`)
+    ).json(),
+  );
+  const confirmed = firstFactorBackupCodesAnswer.parse(
+    await (
+      await h.call(
+        "POST",
+        "/v1/auth/second-factor/totp/confirm",
+        { code: totpCodeAt(started.secret, h.advanceMs(0)) },
+        `Bearer ${pre2fa.accessToken}`,
+      )
+    ).json(),
+  );
+  return { userId: confirmed.userId, accessToken: confirmed.accessToken, secret: started.secret };
+}
+
+// The first setup's code is spent for its step, so the fresh check waits for the next one.
+async function passFreshCheckWithTotp(
+  h: Harness,
+  accessToken: string,
+  secret: string,
+): Promise<void> {
+  h.advanceMs(31_000);
+  const fresh = await h.call(
+    "POST",
+    "/v1/auth/second-factor/fresh",
+    { code: totpCodeAt(secret, h.advanceMs(0)) },
+    `Bearer ${accessToken}`,
+  );
+  expect(fresh.status).toBe(204);
+}
+
+// Email code, then the first passkey as the first factor.
+async function signUpWithPasskey(
+  h: Harness,
+  email: string,
+  credentialFill: number,
+): Promise<{ userId: string; key: PasskeySigner; credentialId: Uint8Array }> {
+  await h.call("POST", "/v1/auth/email-otp/start", { email });
+  const pre2fa = verifyEmailOtpAnswer.parse(
+    await (
+      await h.call("POST", "/v1/auth/email-otp/verify", { email, code: h.mail.last?.code ?? "" })
+    ).json(),
+  );
+  const options = passkeyRegisterOptionsAnswer.parse(
+    await (
+      await h.call("POST", "/v1/auth/passkey/register/options", {}, `Bearer ${pre2fa.accessToken}`)
+    ).json(),
+  );
+  const key = await signer();
+  const credentialId = new Uint8Array(16).fill(credentialFill);
+  const registered = await h.call(
+    "POST",
+    "/v1/auth/passkey/register/verify",
+    makePasskeyAttestation(bytesFrom(options.challenge), credentialId, key),
+    `Bearer ${pre2fa.accessToken}`,
+  );
+  expect(registered.status).toBe(200);
+  const answer = firstFactorBackupCodesAnswer.parse(await registered.json());
+  return { userId: answer.userId, key, credentialId };
+}
+
+// A passkey sign-in is user verified, so its admin session passes the fresh check.
+async function signInWithFreshPasskey(
+  h: Harness,
+  key: PasskeySigner,
+  credentialId: Uint8Array,
+  signCount: number,
+): Promise<string> {
+  const options = passkeyAuthenticateOptionsAnswer.parse(
+    await (await h.call("POST", "/v1/auth/passkey/authenticate/options", {})).json(),
+  );
+  const signedIn = await h.call(
+    "POST",
+    "/v1/auth/passkey/authenticate/verify",
+    makePasskeyAssertion(bytesFrom(options.challenge), credentialId, key, signCount),
+  );
+  expect(signedIn.status).toBe(200);
+  return secondFactorVerifyAnswer.parse(await signedIn.json()).accessToken;
+}
+
 beforeAll(async () => {
   await applyProductMigrations(directSql);
 });
@@ -1296,14 +1394,14 @@ describe("second-factor HTTP routes", () => {
       expect(afterRemove.totp).toBeNull();
       expect(afterRemove.passkeys).toHaveLength(1);
 
-      // Removing the last remaining factor (passkey) is refused
+      // Removing the last remaining factor (passkey) is refused as the last factor
       const rmLastPasskey = await h.call(
         "POST",
         "/v1/auth/second-factor/passkeys/remove",
         { passkeyId: afterRemove.passkeys[0]!.id },
         `Bearer ${ownerAdmin.accessToken}`,
       );
-      expect(rmLastPasskey.status).toBe(401);
+      expect(rmLastPasskey.status).toBe(409);
     } finally {
       await new Promise<void>((resolve) => {
         server.closeAllConnections();
@@ -1314,5 +1412,110 @@ describe("second-factor HTTP routes", () => {
       await platformSql`delete from platform.communities where organisation_id = ${orgId}::uuid`;
       await platformSql`delete from platform.organisations where id = ${orgId}::uuid`;
     }
+  });
+
+  // Pin 113
+  it("removing the last factor answers 409", async () => {
+    await cleanIdentity();
+    const h = makeHarness({ adminOrigin: ADMIN_ORIGIN });
+    const list = async (accessToken: string) =>
+      secondFactorListAnswer.parse(
+        await (
+          await h.call("GET", "/v1/auth/second-factor", undefined, `Bearer ${accessToken}`)
+        ).json(),
+      );
+
+    // The authenticator app is the only factor; backup codes never count.
+    const appUser = await signUpWithTotp(h, `pin113-app-${newId()}@example.test`);
+    await passFreshCheckWithTotp(h, appUser.accessToken, appUser.secret);
+    const removeApp = await h.call(
+      "POST",
+      "/v1/auth/second-factor/totp/remove",
+      {},
+      `Bearer ${appUser.accessToken}`,
+    );
+    expect(removeApp.status).toBe(409);
+    expect(await removeApp.text()).toBe("");
+    const appAfter = await list(appUser.accessToken);
+    expect(appAfter.totp).not.toBeNull();
+    expect(appAfter.backupCodesLeft).toBe(10);
+
+    // One passkey is the only factor.
+    const passkeyUser = await signUpWithPasskey(h, `pin113-key-${newId()}@example.test`, 31);
+    const passkeyAccess = await signInWithFreshPasskey(
+      h,
+      passkeyUser.key,
+      passkeyUser.credentialId,
+      1,
+    );
+    const before = await list(passkeyAccess);
+    expect(before.totp).toBeNull();
+    expect(before.passkeys).toHaveLength(1);
+    const removeOnlyPasskey = await h.call(
+      "POST",
+      "/v1/auth/second-factor/passkeys/remove",
+      { passkeyId: before.passkeys[0]!.id },
+      `Bearer ${passkeyAccess}`,
+    );
+    expect(removeOnlyPasskey.status).toBe(409);
+    expect(await removeOnlyPasskey.text()).toBe("");
+    expect((await list(passkeyAccess)).passkeys).toEqual(before.passkeys);
+  });
+
+  // Pin 114
+  it("removing another user's passkey answers 404", async () => {
+    await cleanIdentity();
+    const h = makeHarness({ adminOrigin: ADMIN_ORIGIN });
+
+    // User A has one passkey and nothing else but backup codes.
+    const a = await signUpWithPasskey(h, `pin114-a-${newId()}@example.test`, 41);
+    const [aPasskey] = await identitySql<{ id: string }[]>`
+      select id from identity.passkey_credentials where user_id = ${a.userId}
+    `;
+    expect(aPasskey).toBeDefined();
+
+    // User B has the authenticator app and a fresh check.
+    const b = await signUpWithTotp(h, `pin114-b-${newId()}@example.test`);
+    await passFreshCheckWithTotp(h, b.accessToken, b.secret);
+
+    // Another user's id, an id nobody has and a malformed id all answer the same 404.
+    for (const passkeyId of [aPasskey!.id, newId(), "not-a-uuid"]) {
+      const res = await h.call(
+        "POST",
+        "/v1/auth/second-factor/passkeys/remove",
+        { passkeyId },
+        `Bearer ${b.accessToken}`,
+      );
+      expect(
+        res.status,
+        `expected 404 for ${passkeyId === aPasskey!.id ? "A's id" : passkeyId}`,
+      ).toBe(404);
+      expect(await res.text()).toBe("");
+    }
+    const passkeyRows = await identitySql<{ id: string; user_id: string }[]>`
+      select id, user_id from identity.passkey_credentials
+    `;
+    expect(passkeyRows).toEqual([{ id: aPasskey!.id, user_id: a.userId }]);
+    const bList = secondFactorListAnswer.parse(
+      await (
+        await h.call("GET", "/v1/auth/second-factor", undefined, `Bearer ${b.accessToken}`)
+      ).json(),
+    );
+    expect(bList.totp).not.toBeNull();
+
+    // Removing an authenticator app that was never set up is a 404 too, and changes nothing.
+    const aAccess = await signInWithFreshPasskey(h, a.key, a.credentialId, 1);
+    const removeMissingApp = await h.call(
+      "POST",
+      "/v1/auth/second-factor/totp/remove",
+      {},
+      `Bearer ${aAccess}`,
+    );
+    expect(removeMissingApp.status).toBe(404);
+    expect(await removeMissingApp.text()).toBe("");
+    const afterRows = await identitySql<{ id: string }[]>`
+      select id from identity.passkey_credentials where user_id = ${a.userId}
+    `;
+    expect(afterRows).toEqual([{ id: aPasskey!.id }]);
   });
 });
