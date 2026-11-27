@@ -9,6 +9,9 @@ import { router, Shell } from "./shell";
 // Built at run time, so no token-shaped literal is committed.
 const INVITE = "v1." + "A".repeat(107);
 const SESSION = "session-" + "1";
+// An email code gives a pre-2FA session first; the second step then gives SESSION.
+const PRE_SESSION = "pre-session-" + "1";
+const TOTP_CODE = "654321";
 const ADDRESS = "invitee@example.test";
 const CODE = "123456";
 const ACCEPT_URL = "https://au.api.example.test/v1/invitations/accept";
@@ -73,10 +76,18 @@ function installFetch(options: FetchOptions): Call[] {
     }
     if (url.endsWith("/v1/auth/email-otp/verify")) {
       return json({
-        secondFactor: "setup",
+        secondFactor: "verify",
         methods: ["totp"],
         passkeysAvailable: false,
+        accessToken: PRE_SESSION,
+        expiresIn: 900,
+      });
+    }
+    if (url.endsWith("/v1/auth/second-factor/verify")) {
+      return json({
+        userId: "00000000-0000-4000-8000-000000000002",
         accessToken: SESSION,
+        refreshToken: "refresh-" + "1",
         expiresIn: 900,
       });
     }
@@ -137,6 +148,14 @@ async function clickAccept(): Promise<void> {
   fireEvent.click(await screen.findByRole("button", { name: SENTENCE.heading }));
 }
 
+// The second step after a right email code. The invitation token is not touched by it.
+async function completeSecondStep(): Promise<void> {
+  fireEvent.change(await screen.findByRole("textbox", { name: "Authenticator code" }), {
+    target: { value: TOTP_CODE },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+}
+
 async function signInThroughForm(): Promise<void> {
   await router.navigate("/sign-in");
   render(<Shell />);
@@ -145,6 +164,7 @@ async function signInThroughForm(): Promise<void> {
   });
   fireEvent.change(screen.getByRole("textbox", { name: "Code" }), { target: { value: CODE } });
   fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+  await completeSecondStep();
 }
 
 // Loads the app the way the browser does: through main.tsx, with the fragment in the address.
@@ -518,6 +538,7 @@ describe("signed out", () => {
     });
     fireEvent.change(screen.getByRole("textbox", { name: "Code" }), { target: { value: CODE } });
     fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+    await completeSecondStep();
   }
 
   it("a 401 sends the person to sign in and keeps the invitation", async () => {
