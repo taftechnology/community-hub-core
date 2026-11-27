@@ -404,7 +404,7 @@ type PasskeySigner = Awaited<ReturnType<typeof signer>>;
 async function signUpWithTotp(
   h: Harness,
   email: string,
-): Promise<{ userId: string; accessToken: string; secret: string }> {
+): Promise<{ userId: string; accessToken: string; secret: string; backupCodes: string[] }> {
   await h.call("POST", "/v1/auth/email-otp/start", { email });
   const pre2fa = verifyEmailOtpAnswer.parse(
     await (
@@ -426,7 +426,12 @@ async function signUpWithTotp(
       )
     ).json(),
   );
-  return { userId: confirmed.userId, accessToken: confirmed.accessToken, secret: started.secret };
+  return {
+    userId: confirmed.userId,
+    accessToken: confirmed.accessToken,
+    secret: started.secret,
+    backupCodes: confirmed.backupCodes,
+  };
 }
 
 // The first setup's code is spent for its step, so the fresh check waits for the next one.
@@ -1517,5 +1522,68 @@ describe("second-factor HTTP routes", () => {
       select id from identity.passkey_credentials where user_id = ${a.userId}
     `;
     expect(afterRows).toEqual([{ id: aPasskey!.id }]);
+  });
+
+  // Pin 118
+  it("the factor list reports the recovery window of a backup-code session", async () => {
+    await cleanIdentity();
+    const h = makeHarness({ adminOrigin: ADMIN_ORIGIN });
+    const email = `pin118-${newId()}@example.test`;
+    const user = await signUpWithTotp(h, email);
+    const list = async (accessToken: string) =>
+      secondFactorListAnswer.parse(
+        await (
+          await h.call("GET", "/v1/auth/second-factor", undefined, `Bearer ${accessToken}`)
+        ).json(),
+      );
+    // An email code, then the second step with the given method, a minute after the last sign-in.
+    const secondStep = async (method: "totp" | "backup_code", code: () => string) => {
+      h.advanceMs(60_000);
+      await h.call("POST", "/v1/auth/email-otp/start", { email });
+      const pre2fa = verifyEmailOtpAnswer.parse(
+        await (
+          await h.call("POST", "/v1/auth/email-otp/verify", {
+            email,
+            code: h.mail.last?.code ?? "",
+          })
+        ).json(),
+      );
+      const verified = await h.call(
+        "POST",
+        "/v1/auth/second-factor/verify",
+        { method, code: code() },
+        `Bearer ${pre2fa.accessToken}`,
+      );
+      expect(verified.status).toBe(200);
+      return secondFactorVerifyAnswer.parse(await verified.json()).accessToken;
+    };
+
+    // A second step by the app is a fresh factor and opens no recovery window.
+    const appAccess = await secondStep("totp", () => totpCodeAt(user.secret, h.advanceMs(0)));
+    const plain = await list(appAccess);
+    expect(plain.recoveryUntil).toBeNull();
+    expect(plain.freshUntil).not.toBeNull();
+
+    // A backup code opens a ten-minute recovery window, and the session is never fresh.
+    const codeAccess = await secondStep("backup_code", () => user.backupCodes[0] ?? "");
+    const signedInAt = h.advanceMs(0);
+    const recovering = await list(codeAccess);
+    expect(recovering.recoveryUntil).toBe(
+      new Date(signedInAt.getTime() + 10 * 60_000).toISOString(),
+    );
+    expect(recovering.freshUntil).toBeNull();
+    expect(recovering.backupCodesLeft).toBe(9);
+    // The other session is not in a window, whatever this one is in.
+    expect((await list(appAccess)).recoveryUntil).toBeNull();
+
+    // The answer carries the window only while it lasts.
+    h.advanceMs(10 * 60_000 - 1);
+    expect((await list(codeAccess)).recoveryUntil).toBe(
+      new Date(signedInAt.getTime() + 10 * 60_000).toISOString(),
+    );
+    h.advanceMs(2);
+    const ended = await list(codeAccess);
+    expect(ended.recoveryUntil).toBeNull();
+    expect(ended.freshUntil).toBeNull();
   });
 });

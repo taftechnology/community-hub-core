@@ -10,6 +10,7 @@ import { getInviteToken } from "./invite-token";
 import { labels } from "./labels";
 import { PeopleAccessProvider } from "./people-access";
 import { ScreenTitle } from "./screen-title";
+import { SecurityPage } from "./security";
 import { ShellLayout } from "./shell-layout";
 import { AllContactsPage } from "./all-contacts";
 import { FamilyRecordsPage } from "./family-records";
@@ -86,6 +87,7 @@ export const router = createBrowserRouter([
       { index: true, element: <IndexPage /> },
       { path: "settings/general", element: <GeneralSettingsPage /> },
       { path: "settings/users", element: <UsersRolesPage /> },
+      { path: "settings/security", element: <SecurityPage /> },
       { path: "settings/modules", element: <ModuleTogglesPage /> },
       { path: "contacts", element: <AllContactsPage /> },
       { path: "family-records", element: <FamilyRecordsPage /> },

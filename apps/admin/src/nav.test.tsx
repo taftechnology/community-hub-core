@@ -202,6 +202,55 @@ describe("AdminNav", () => {
     expect(screen.queryByRole("link", { name: plural })).toBeNull();
   });
 
+  it("shows Security after Users & Roles to every signed-in user, whatever their permissions", () => {
+    const callers = [
+      {},
+      {
+        permissions: {
+          "people.view": true,
+          "people.manage": true,
+          "people.restricted.read": true,
+          "people.delete": true,
+          "service_times.manage": true,
+        },
+        entitlements: {
+          "people.directory": true,
+          "people.households": true,
+          "module.engagement": true,
+        },
+      },
+    ];
+    for (const access of callers) {
+      const { unmount } = renderNav(access);
+      const links = screen.getAllByRole("link").map((link) => link.textContent);
+      // Security is one more child of Settings, right after Users & Roles. Nothing else moves.
+      expect(links.slice(links.indexOf("General Settings"))).toEqual([
+        "General Settings",
+        "Users & Roles",
+        "Security",
+        "Module Toggles",
+      ]);
+      expect(screen.getByRole("link", { name: "Security" }).getAttribute("href")).toBe(
+        "/settings/security",
+      );
+      unmount();
+    }
+  });
+
+  it("findActiveId selects security on /settings/security", () => {
+    const footer = [
+      {
+        id: "settings",
+        label: "Settings",
+        children: [
+          { id: "users-roles", label: "Users & Roles", href: "/settings/users" },
+          { id: "security", label: "Security", href: "/settings/security" },
+        ],
+      },
+    ];
+    expect(findActiveId([], footer, "/settings/security")).toBe("security");
+  });
+
   it("findActiveId selects service-times on /engagement/service-times", () => {
     const plural = terminology("engagement.service_times").plural;
     const items = [

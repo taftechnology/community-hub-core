@@ -140,6 +140,9 @@ export const secondFactorListAnswer = z.strictObject({
   ),
   backupCodesLeft: z.number().int().nonnegative(),
   freshUntil: z.string().datetime().nullable(),
+  // The end of the 10-minute window a backup-code sign-in opens, or null when the session has none
+  // or it has passed. It tells Settings → Security which changes to offer.
+  recoveryUntil: z.string().datetime().nullable(),
 });
 
 export const removeTotpBody = z.strictObject({});

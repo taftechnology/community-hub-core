@@ -29,12 +29,12 @@ const LOST_EVERYTHING =
   "Lost your phone and all your backup codes? You can't sign in until your account is recovered. Contact Community Hub support.";
 const KEEP_SAFE =
   "Keep these somewhere safe. They are the only way back in if you lose your phone or passkey.";
-const NO_PASSKEY_HERE = "This browser can't use passkeys. Try another browser or device.";
+export const NO_PASSKEY_HERE = "This browser can't use passkeys. Try another browser or device.";
 const COPY_FAILED = "Couldn't copy. Select the codes and copy them by hand.";
 
 // Five answers that are not right end the pre-2FA session on the server.
 const MAX_WRONG_ANSWERS = 5;
-const TOTP_DIGITS = 6;
+export const TOTP_DIGITS = 6;
 const BACKUP_CODE_LENGTH = 12;
 
 export type SecondFactorMethod = "totp" | "passkey" | "backup_code";
@@ -102,7 +102,7 @@ function readBackupCodesLeft(body: unknown): number | undefined {
   return typeof left === "number" && Number.isInteger(left) && left >= 0 ? left : undefined;
 }
 
-function readBackupCodes(body: unknown): string[] | undefined {
+export function readBackupCodes(body: unknown): string[] | undefined {
   if (!isRecord(body)) {
     return undefined;
   }
@@ -121,7 +121,7 @@ function readBackupCodes(body: unknown): string[] | undefined {
   return codes.length > 0 ? codes : undefined;
 }
 
-function readTotpStart(body: unknown): { secret: string; otpauthUri: string } | undefined {
+export function readTotpStart(body: unknown): { secret: string; otpauthUri: string } | undefined {
   if (!isRecord(body)) {
     return undefined;
   }
@@ -215,7 +215,9 @@ export function readAuthenticationOptions(body: unknown): AuthenticationOptions 
   return challenge === undefined || rpId === undefined ? undefined : { challenge, rpId };
 }
 
-function readRegistrationOptions(body: unknown): PublicKeyCredentialCreationOptions | undefined {
+export function readRegistrationOptions(
+  body: unknown,
+): PublicKeyCredentialCreationOptions | undefined {
   if (!isRecord(body) || !isRecord(body.rp) || !isRecord(body.user)) {
     return undefined;
   }
@@ -331,7 +333,7 @@ export async function requestAssertion(
   }
 }
 
-async function createPasskey(
+export async function createPasskey(
   options: PublicKeyCredentialCreationOptions,
 ): Promise<Attestation | undefined> {
   try {
@@ -344,11 +346,11 @@ async function createPasskey(
 
 // ---- what is typed and shown -----------------------------------------------------------------
 
-function inGroupsOfFour(value: string): string {
+export function inGroupsOfFour(value: string): string {
   return (value.replace(/\s+/g, "").match(/.{1,4}/g) ?? []).join(" ");
 }
 
-function digitsOnly(value: string): string {
+export function digitsOnly(value: string): string {
   return value.replace(/\D/g, "").slice(0, TOTP_DIGITS);
 }
 
@@ -360,7 +362,7 @@ function backupCodeFrom(value: string): string {
     .slice(0, BACKUP_CODE_LENGTH);
 }
 
-function codesLeftSentence(left: number): string {
+export function codesLeftSentence(left: number): string {
   if (left === 0) {
     return "You have no backup codes left.";
   }
@@ -419,7 +421,7 @@ function StepHeading({ children }: { children: string }) {
 
 // One request at a time on a screen: the buttons are disabled while it waits, and a second submit
 // is ignored, so a code is never sent twice by one tap.
-function useAttempt() {
+export function useAttempt() {
   const [busy, setBusy] = useState(false);
   const inFlight = useRef(false);
   const [notice, showNotice, clearNotice] = useNotice();
@@ -821,6 +823,37 @@ function SetupChooseScreen({
   );
 }
 
+// The picture an authenticator app scans, and the same key as text. The picture is inline SVG
+// markup, because the page's security policy allows no data: images. Shared with Settings →
+// Security, which sets an app up the same way.
+export function AuthenticatorKey({ secret, svg }: { secret: string; svg: string }) {
+  return (
+    <>
+      <div
+        role="img"
+        aria-label="QR code for your authenticator app"
+        className="mx-auto size-[224px] max-w-full [&>svg]:size-full"
+        dangerouslySetInnerHTML={{ __html: svg }}
+      />
+      <p className="text-sm text-foreground">
+        Can&#39;t scan it? Type this key into your app instead.
+      </p>
+      <p className="rounded-md bg-muted px-3 py-2 font-mono text-sm tracking-wider break-all select-all text-foreground">
+        {inGroupsOfFour(secret)}
+      </p>
+    </>
+  );
+}
+
+// The picture for an otpauth link, or undefined when it cannot be drawn.
+export async function qrMarkup(otpauthUri: string): Promise<string | undefined> {
+  try {
+    return await qrToString(otpauthUri, { type: "svg" });
+  } catch {
+    return undefined;
+  }
+}
+
 function SetupAppScreen({
   context,
   secret,
@@ -878,18 +911,7 @@ function SetupAppScreen({
       <p className="text-sm text-foreground">
         Scan this picture with an authenticator app on your phone.
       </p>
-      <div
-        role="img"
-        aria-label="QR code for your authenticator app"
-        className="mx-auto size-[224px] max-w-full [&>svg]:size-full"
-        dangerouslySetInnerHTML={{ __html: svg }}
-      />
-      <p className="text-sm text-foreground">
-        Can&#39;t scan it? Type this key into your app instead.
-      </p>
-      <p className="rounded-md bg-muted px-3 py-2 font-mono text-sm tracking-wider break-all select-all text-foreground">
-        {inGroupsOfFour(secret)}
-      </p>
+      <AuthenticatorKey secret={secret} svg={svg} />
       <form className="grid gap-4" onSubmit={confirm}>
         <Field label="Authenticator code" help="Then type the 6 digits your app shows.">
           <Input
@@ -923,7 +945,7 @@ function SetupAppScreen({
 
 // The admin session already exists on the server, but nothing is stored and nothing is entered
 // until the person says the codes are saved. There is no Cancel here: the way out is Continue.
-function BackupCodesScreen({
+export function BackupCodesScreen({
   codes,
   onContinue,
 }: {

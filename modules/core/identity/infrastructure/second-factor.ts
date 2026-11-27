@@ -116,6 +116,7 @@ export type ListSecondFactorsResult =
       passkeys: ListedPasskey[];
       backupCodesLeft: number;
       freshUntil: Date | null;
+      recoveryUntil: Date | null;
     }
   | { outcome: "refused" };
 
@@ -758,6 +759,9 @@ export async function listSecondFactors(
       isFreshFactor(session, input.now) && session.fresh_factor_at !== null
         ? new Date(session.fresh_factor_at.getTime() + FIVE_MINUTES_MS)
         : null;
+    // The window a backup-code sign-in opened, while it lasts. A session in one never has a fresh
+    // factor, so this is how a caller tells it apart from a session that needs a fresh check.
+    const recoveryUntil = isInRecoveryWindow(session, input.now) ? session.recovery_until : null;
 
     return {
       outcome: "listed",
@@ -765,6 +769,7 @@ export async function listSecondFactors(
       passkeys,
       backupCodesLeft,
       freshUntil,
+      recoveryUntil,
     };
   });
 }

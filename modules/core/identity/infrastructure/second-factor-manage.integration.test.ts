@@ -418,6 +418,7 @@ describe("second-factor service: fresh check, recovery window, removal, notices"
         passkeys: [{ id: pkId, createdAt: now }],
         backupCodesLeft: 10,
         freshUntil: null,
+        recoveryUntil: null,
       });
     });
   });

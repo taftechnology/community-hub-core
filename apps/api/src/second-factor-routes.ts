@@ -425,6 +425,8 @@ export function secondFactorRoutes(deps: AuthDeps): GateRoute[] {
             })),
             backupCodesLeft: result.backupCodesLeft,
             freshUntil: result.freshUntil === null ? null : result.freshUntil.toISOString(),
+            recoveryUntil:
+              result.recoveryUntil === null ? null : result.recoveryUntil.toISOString(),
           },
           { headers: { "cache-control": "no-store" } },
         );

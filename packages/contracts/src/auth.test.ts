@@ -164,6 +164,7 @@ describe("auth answers", () => {
       ],
       backupCodesLeft: 8,
       freshUntil: "2026-11-26T00:05:00.000Z",
+      recoveryUntil: null,
     };
     expect(secondFactorListAnswer.safeParse(valid).success).toBe(true);
     expect(
@@ -179,6 +180,34 @@ describe("auth answers", () => {
           confirmedAt: "2026-11-26T00:00:00.000Z",
           secret: SYNTHETIC_KEY,
         },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("the factor list answer carries the recovery window as an ISO time or null", () => {
+    const base = {
+      totp: { confirmedAt: "2026-11-26T00:00:00.000Z" },
+      passkeys: [],
+      backupCodesLeft: 9,
+      freshUntil: null,
+    };
+    expect(
+      secondFactorListAnswer.safeParse({ ...base, recoveryUntil: "2026-11-26T00:10:00.000Z" })
+        .success,
+    ).toBe(true);
+    expect(secondFactorListAnswer.safeParse({ ...base, recoveryUntil: null }).success).toBe(true);
+    // The field is always sent, so an answer without it is not the answer the service gives.
+    expect(secondFactorListAnswer.safeParse(base).success).toBe(false);
+    expect(secondFactorListAnswer.safeParse({ ...base, recoveryUntil: "soon" }).success).toBe(
+      false,
+    );
+    expect(secondFactorListAnswer.safeParse({ ...base, recoveryUntil: 600 }).success).toBe(false);
+    // A recovery window does not make room for a key.
+    expect(
+      secondFactorListAnswer.safeParse({
+        ...base,
+        recoveryUntil: null,
+        secret: SYNTHETIC_KEY,
       }).success,
     ).toBe(false);
   });

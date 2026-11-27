@@ -125,6 +125,11 @@ export function useSidebarItems(): {
           href: "/settings/users",
         },
         {
+          id: "security",
+          label: "Security",
+          href: "/settings/security",
+        },
+        {
           id: "module-toggles",
           label: "Module Toggles",
           href: "/settings/modules",

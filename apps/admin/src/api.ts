@@ -89,6 +89,32 @@ export async function updateLifeEvent(body: {
   return post("/v1/people/life-events/update", body);
 }
 
+// A call to the auth service with the signed-in token, for Settings → Security. Unlike `post`, a 401
+// leaves the token where it is: there it can mean "confirm it's you first" and not "signed out", and
+// the page tells the two apart by asking the factor list.
+export async function authCall(
+  method: "GET" | "POST",
+  path: string,
+  body?: unknown,
+): Promise<Response | "unavailable"> {
+  const origins = directoryOrigins();
+  const token = readAccessToken();
+  if (origins === undefined || token === null) {
+    return "unavailable";
+  }
+  const headers: Record<string, string> = { authorization: `Bearer ${token}` };
+  const init: RequestInit = { method, headers, cache: "no-store" };
+  if (method === "POST") {
+    headers["content-type"] = "application/json";
+    init.body = JSON.stringify(body ?? {});
+  }
+  try {
+    return await fetch(`${origins.auth}${path}`, init);
+  } catch {
+    return "unavailable";
+  }
+}
+
 export async function post(path: string, body: unknown): Promise<Response | "unavailable"> {
   const origins = directoryOrigins();
   const token = readAccessToken();
