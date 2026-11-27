@@ -5,6 +5,10 @@ Spec: docs/specs/2026-11-26-two-factor-for-staff.md
 Slug: two-factor-for-staff
 Status: approved (2026-11-26, Adnan Bin Hossen)
 
+Amendment A5 (2026-11-27, approved by Adnan Bin Hossen): after Checkpoint 3 (Claude Haiku 5.5, APPROVE WITH NOTES, 0 High, 0 Medium, 6 Low) and the reviewer's browser check (Playwriter on Brave against a scratch API stub, passed), a fix commit C3 before Task 11, implemented by Claude Sonnet 5.5. L1: when the second step answers 429, the admin ends the pre-2FA session on the server (`POST /v1/auth/session/end`) before leaving the flow, as Cancel does. L5: axe assertions for the removal confirm dialog on Security, the no-passkey-in-this-browser state, and the passkey-setup path to the backup-codes screen. Accepted and recorded in the pull request: L2 (the steps are states of `/sign-in`, not routes; no reload, token in memory), L3 (a passkey-only second step opens on the choice rather than starting the passkey), L4 (Security's shorter passkey-not-saved message), L6 (the QR SVG insertion was probed with injected markup and carries none).
+
+| 119 | A 429 at the second step ends the pre-2FA session | Leave without calling `session/end` | AT | a 429 at the second step ends the pre-2FA session on the server |
+
 Amendment A4 (2026-11-27, approved by Adnan Bin Hossen): the Security page must know when a session is in a backup-code recovery window (spec Behaviour, Recovery window), and the factor-list answer had no field for it (Task 10's implementer stopped on this, as its brief required). Task 10 also adds `recoveryUntil` (an ISO time, or null) to `secondFactorListAnswer` in `packages/contracts/src/auth.ts`, to `listSecondFactors` in `modules/core/identity/infrastructure/second-factor.ts`, and to the list route in `apps/api/src/second-factor-routes.ts`, with a contract test and an API test.
 
 | 118 | The list tells a recovery session | Always answer `recoveryUntil: null` | AR | the factor list reports the recovery window of a backup-code session |
