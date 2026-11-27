@@ -5,6 +5,10 @@ Spec: docs/specs/2026-11-26-two-factor-for-staff.md
 Slug: two-factor-for-staff
 Status: approved (2026-11-26, Adnan Bin Hossen)
 
+Amendment A4 (2026-11-27, approved by Adnan Bin Hossen): the Security page must know when a session is in a backup-code recovery window (spec Behaviour, Recovery window), and the factor-list answer had no field for it (Task 10's implementer stopped on this, as its brief required). Task 10 also adds `recoveryUntil` (an ISO time, or null) to `secondFactorListAnswer` in `packages/contracts/src/auth.ts`, to `listSecondFactors` in `modules/core/identity/infrastructure/second-factor.ts`, and to the list route in `apps/api/src/second-factor-routes.ts`, with a contract test and an API test.
+
+| 118 | The list tells a recovery session | Always answer `recoveryUntil: null` | AR | the factor list reports the recovery window of a backup-code session |
+
 Amendment A3 (2026-11-26, approved by Adnan Bin Hossen): after Checkpoint 2 (Claude Haiku 5.5, CHANGES NEEDED, 0 High, 2 Medium, 5 Low; no path to an admin session without two factors found), a fix commit C2 before Task 9, implemented by Claude Sonnet 5.5 (the implementer from Task 8 on). M1: removal answers 409 for the last factor and 404 for an unknown or another user's passkey, as spec Contracts say, instead of 401. M2: `finishPasskeyAuthentication` is tenant-only and no longer exported from `public/`; a `tenant` session cannot be created with a null `factor`. L1: refresh refuses a `tenant` row whose `factor` is null. L2: `ADMIN_ORIGIN` with an explicit port is refused at start-up, so the origin check is exact. Accepted and recorded in the pull request: L3 (TOTP confirm has no failure counter; the key belongs to the session that started setup, and D-4 accepts that an account with no factor can be claimed) and L4 (passkey registration consumes its challenge before the `2fa:` lock; the re-checks under the lock keep it safe). L5 was a false alarm (every name ends in `example.test`).
 
 | 111 | Passkey second step counts attempts | Skip `consumeSessionAttempt` in `verifySecondStepPasskey` | PK | a passkey second step counts an attempt before checking and stops at five |
