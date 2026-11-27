@@ -560,8 +560,9 @@ describe("the second step", () => {
     expect(screen.queryByRole("button", { name: "Verify" })).not.toBeNull();
     expect(sessionStorage.length).toBe(0);
     expect(router.state.location.pathname).toBe("/sign-in");
-    expect(callsTo(calls, "/v1/auth/session/end")).toHaveLength(0);
-    expect(authCalls(calls)).toHaveLength(3);
+    // The 429 also ends the first session on the server (the next test pins that call).
+    expect(callsTo(calls, "/v1/auth/session/end")).toHaveLength(1);
+    expect(authCalls(calls)).toHaveLength(4);
     await expectNoAxeViolations();
 
     fireEvent.change(screen.getByRole("textbox", { name: "Code" }), {
@@ -575,6 +576,36 @@ describe("the second step", () => {
     expect(sentAuthorization(callsTo(calls, "/v1/auth/second-factor/verify")[1])).toBe(
       `Bearer ${PRE_TOKEN_TWO}`,
     );
+  });
+
+  it("a 429 at the second step ends the pre-2FA session on the server", async () => {
+    const calls = installFetch(
+      secondStepHandlers({
+        "/v1/auth/second-factor/verify": () => new Response(null, { status: 429 }),
+      }),
+    );
+    await emailStep();
+    await secondStepWithCode();
+
+    // By the time the email step is back with its message, the session has been ended once, with
+    // the pre-2FA token, and nothing else was sent.
+    await screen.findByText(SENTENCE.tooMany);
+    expect(screen.queryByRole("textbox", { name: "Email" })).not.toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Authenticator code" })).toBeNull();
+    expect(calls.map((call) => `${call.method} ${call.path}`)).toEqual([
+      "POST /v1/auth/email-otp/start",
+      "POST /v1/auth/email-otp/verify",
+      "POST /v1/auth/second-factor/verify",
+      "POST /v1/auth/session/end",
+    ]);
+    const verify = callsTo(calls, "/v1/auth/second-factor/verify");
+    expect(verify).toHaveLength(1);
+    expect(sentAuthorization(verify[0])).toBe(`Bearer ${PRE_TOKEN}`);
+    const ended = callsTo(calls, "/v1/auth/session/end");
+    expect(ended).toHaveLength(1);
+    expect(ended[0]?.body).toEqual({});
+    expect(sentAuthorization(ended[0])).toBe(`Bearer ${PRE_TOKEN}`);
+    expect(sessionStorage.length).toBe(0);
   });
 
   it("the fifth wrong answer ends the sign-in", async () => {
@@ -1238,6 +1269,7 @@ describe("setting up two-step sign-in", () => {
     });
     expect(sentAuthorization(verify[0])).toBe(`Bearer ${PRE_TOKEN}`);
     expect(sessionStorage.length).toBe(0);
+    await expectNoAxeViolations();
   });
 
   it("a passkey that is not saved says so and saves nothing", async () => {

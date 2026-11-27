@@ -528,6 +528,9 @@ function SecondStepScreen({
       return;
     }
     if (response.status === 429) {
+      // The limit leaves the session alive on the server, so end it as Cancel does. The person
+      // does not wait for the answer.
+      void context.post("/v1/auth/session/end", {}, context.token);
       context.leave(MESSAGES.tooMany);
       return;
     }
