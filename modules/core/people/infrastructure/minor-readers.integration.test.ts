@@ -38,6 +38,8 @@ import {
   readHouseholdDetail,
   readLinkedContacts,
   readPerson,
+  readRosterNames,
+  visiblePersonIds,
 } from "../public/index.js";
 import { childLabels } from "./child-labels.js";
 
@@ -714,6 +716,204 @@ describe("people readers carry no minor fields", () => {
         childView: "admin",
       });
       expect(adultAdmin.items).toEqual(adultPresence.items);
+    });
+  });
+
+  it("pin 35: readRosterNames under presence has no minor row and reports minorCount", async () => {
+    const scope = await newScope();
+    const actorUserId = newId();
+    const counting = countingKms(baseKms);
+    const family = await inScope(scope, (tx) => seedFamily(tx, actorUserId, "Marchetti"));
+    const personIds = [family.adultId, family.childOneId, family.childTwoId];
+
+    await inScope(scope, async (tx) => {
+      counting.reset();
+      const presence = await readRosterNames(tx, counting.kms, KEY_ARN, {
+        personIds,
+        childView: "presence",
+        actorUserId,
+      });
+      expect(Object.keys(presence).sort()).toEqual(["adults", "children", "minorCount"]);
+      // The adult is unchanged: the same four keys as before this chunk.
+      expect(presence.adults).toEqual([
+        { personId: family.adultId, isMinor: false, givenName: "Aurelia", familyName: "Marchetti" },
+      ]);
+      // No minor row at all: not a name, not a label and not an id.
+      expect(presence.children).toEqual([]);
+      expect(presence.minorCount).toBe(2);
+      const text = JSON.stringify(presence);
+      expect(text).not.toContain(family.childOneId);
+      expect(text).not.toContain(family.childTwoId);
+      expect(text).not.toContain("Child");
+      expectNoChildValue(presence);
+      // Nothing was decrypted, so no key was opened and no read was audited.
+      expect(counting.calls()).toBe(0);
+      const reads = await tx<{ n: number }[]>`
+        select count(*)::int as n
+        from app.audit_events
+        where action = 'people.person.read'
+          and (${family.childOneId}::uuid = any(target_ids)
+            or ${family.childTwoId}::uuid = any(target_ids))
+      `;
+      expect(reads[0]?.n).toBe(0);
+
+      // Only children asked for: no row and a count.
+      const onlyChildren = await readRosterNames(tx, counting.kms, KEY_ARN, {
+        personIds: [family.childOneId, family.childTwoId],
+        childView: "presence",
+        actorUserId,
+      });
+      expect(onlyChildren).toEqual({ adults: [], children: [], minorCount: 2 });
+      // An id that is not a person adds nothing to the count.
+      const withStranger = await readRosterNames(tx, counting.kms, KEY_ARN, {
+        personIds: [family.childOneId, newId()],
+        childView: "presence",
+        actorUserId,
+      });
+      expect(withStranger).toEqual({ adults: [], children: [], minorCount: 1 });
+    });
+
+    // A hidden child is neither listed nor counted.
+    await hideChildren(scope, [family.childTwoId]);
+    await inScope(scope, async (tx) => {
+      const after = await readRosterNames(tx, baseKms, KEY_ARN, {
+        personIds,
+        childView: "presence",
+        actorUserId,
+      });
+      expect(after.minorCount).toBe(1);
+      expect(after.children).toEqual([]);
+    });
+
+    // The view is required, with no default, and is checked before anything else.
+    await inScope(scope, async (tx) => {
+      for (const bad of [undefined, "", "Admin", null, true]) {
+        await expect(
+          readRosterNames(tx, baseKms, KEY_ARN, {
+            personIds,
+            childView: bad as never,
+            actorUserId,
+          }),
+        ).rejects.toMatchObject({ code: "invalid_input" });
+      }
+      await expect(
+        readRosterNames(tx, baseKms, KEY_ARN, { personIds: [], actorUserId } as never),
+      ).rejects.toMatchObject({ code: "invalid_input" });
+    });
+  });
+
+  it("pin 36: readRosterNames under admin returns a minor as personId and label only", async () => {
+    const scope = await newScope();
+    const actorUserId = newId();
+    const counting = countingKms(baseKms);
+    const family = await inScope(scope, (tx) => seedFamily(tx, actorUserId, "Marchetti"));
+    const personIds = [family.adultId, family.childOneId, family.childTwoId];
+
+    await inScope(scope, async (tx) => {
+      counting.reset();
+      const admin = await readRosterNames(tx, counting.kms, KEY_ARN, {
+        personIds,
+        childView: "admin",
+        actorUserId,
+      });
+      // Each child is exactly an id and the label childLabels gives it: Child 1 was created
+      // first and Child 2 an hour later.
+      expect(admin.children.map((child) => Object.keys(child).sort())).toEqual([
+        ["label", "personId"],
+        ["label", "personId"],
+      ]);
+      const labelled = Object.fromEntries(admin.children.map((c) => [c.personId, c.label]));
+      expect(labelled).toEqual({
+        [family.childOneId]: "Child 1",
+        [family.childTwoId]: "Child 2",
+      });
+      expect(admin.minorCount).toBe(2);
+      expect(admin.adults).toEqual([
+        { personId: family.adultId, isMinor: false, givenName: "Aurelia", familyName: "Marchetti" },
+      ]);
+      // It never names a minor: no key was opened and no seeded child value is in the answer.
+      expect(counting.calls()).toBe(0);
+      expectNoChildValue(admin);
+      const reads = await tx<{ n: number }[]>`
+        select count(*)::int as n
+        from app.audit_events
+        where action = 'people.person.read'
+          and (${family.childOneId}::uuid = any(target_ids)
+            or ${family.childTwoId}::uuid = any(target_ids))
+      `;
+      expect(reads[0]?.n).toBe(0);
+
+      // The label is the same one every other screen shows.
+      const labels = await childLabels(tx, [family.householdId]);
+      expect(Object.fromEntries(labels.map((entry) => [entry.personId, entry.label]))).toEqual(
+        labelled,
+      );
+    });
+
+    // A hidden child is neither listed nor counted, and the rest are renumbered.
+    await hideChildren(scope, [family.childOneId]);
+    await inScope(scope, async (tx) => {
+      const after = await readRosterNames(tx, baseKms, KEY_ARN, {
+        personIds,
+        childView: "admin",
+        actorUserId,
+      });
+      expect(after.children).toEqual([{ personId: family.childTwoId, label: "Child 1" }]);
+      expect(after.minorCount).toBe(1);
+    });
+  });
+
+  it("pin 44b: visiblePersonIds under presence has no minor id", async () => {
+    const scope = await newScope();
+    const actorUserId = newId();
+    const family = await inScope(scope, (tx) => seedFamily(tx, actorUserId, "Marchetti"));
+    const stranger = newId();
+    const asked = [family.childOneId, stranger, family.adultId, family.childTwoId, family.adultId];
+
+    await inScope(scope, async (tx) => {
+      const presence = await visiblePersonIds(tx, asked, { childView: "presence" });
+      expect(presence).toEqual([family.adultId]);
+      expect(JSON.stringify(presence)).not.toContain(family.childOneId);
+      expect(JSON.stringify(presence)).not.toContain(family.childTwoId);
+      // Only children asked for: nothing comes back.
+      await expect(
+        visiblePersonIds(tx, [family.childOneId, family.childTwoId], { childView: "presence" }),
+      ).resolves.toEqual([]);
+      // The write path takes the same view and the same lock.
+      await expect(
+        visiblePersonIds(tx, asked, { childView: "presence", lock: "share" }),
+      ).resolves.toEqual([family.adultId]);
+
+      // A Community Admin's view keeps the ids, in the order asked and each once.
+      await expect(visiblePersonIds(tx, asked, { childView: "admin" })).resolves.toEqual([
+        family.childOneId,
+        family.adultId,
+        family.childTwoId,
+      ]);
+      await expect(
+        visiblePersonIds(tx, asked, { childView: "admin", lock: "share" }),
+      ).resolves.toEqual([family.childOneId, family.adultId, family.childTwoId]);
+
+      // The view is required, with no default, and is checked before anything else.
+      for (const bad of [undefined, "", "Admin", null]) {
+        await expect(
+          visiblePersonIds(tx, asked, { childView: bad as never }),
+        ).rejects.toMatchObject({ code: "invalid_input" });
+      }
+      await expect(visiblePersonIds(tx, [], {} as never)).rejects.toMatchObject({
+        code: "invalid_input",
+      });
+      await expect(visiblePersonIds(tx, asked, undefined as never)).rejects.toMatchObject({
+        code: "invalid_input",
+      });
+    });
+
+    // A hidden child is not visible under either view.
+    await hideChildren(scope, [family.childOneId]);
+    await inScope(scope, async (tx) => {
+      await expect(
+        visiblePersonIds(tx, [family.childOneId, family.childTwoId], { childView: "admin" }),
+      ).resolves.toEqual([family.childTwoId]);
     });
   });
 });

@@ -874,6 +874,7 @@ describe("people routes real-database integration (finding 3)", () => {
           personId: a2.personId,
           now,
           actorUserId: org.ownerSession.userId,
+          childView: "presence",
         });
       }),
     );
@@ -1632,12 +1633,15 @@ describe("people routes real-database integration (finding 3)", () => {
           personId: adultId,
           now,
           actorUserId: org.ownerSession.userId,
+          childView: "presence",
         });
+        // Seeded as a Community Admin would add the child: the list below must still never show it.
         await addGroupMember(tx, kms, KEY_ARN, {
           groupId,
           personId: minorId,
           now,
           actorUserId: org.ownerSession.userId,
+          childView: "admin",
         });
       }),
     );

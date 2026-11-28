@@ -146,7 +146,7 @@ async function createTestScope(platform: ReturnType<typeof createPlaintextPlatfo
 }
 
 describe("exportRosterCsv", () => {
-  it("omits minors unless includeRestricted (pin 20)", async () => {
+  it("omits minors under presence and shows each as Child n under admin, never a name (pin 20)", async () => {
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
     const app = createPlaintextAppSql(roleUrl(runtime, "app"));
@@ -196,6 +196,7 @@ describe("exportRosterCsv", () => {
           });
 
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group.id,
             personId: adult.personId,
             role: "member",
@@ -204,6 +205,7 @@ describe("exportRosterCsv", () => {
           });
 
           await addMember(tx, kms, KEY_ARN, {
+            childView: "admin",
             groupId: group.id,
             personId: minor.personId,
             role: "leader",
@@ -211,10 +213,10 @@ describe("exportRosterCsv", () => {
             actorUserId,
           });
 
-          // Without includeRestricted: minor is omitted (pin 20)
+          // Under presence: the minor is omitted (pin 20)
           const csvWithout = await exportRosterCsv(tx, kms, KEY_ARN, {
             groupId: group.id,
-            includeRestricted: false,
+            childView: "presence",
             actorUserId,
           });
 
@@ -231,10 +233,10 @@ describe("exportRosterCsv", () => {
           `;
           expect(Number(peopleAuditWithout[0]?.count ?? "0")).toBe(0);
 
-          // With includeRestricted: minor is present
+          // Under admin: the minor is the label alone, in the first column, with no family name
           const csvWith = await exportRosterCsv(tx, kms, KEY_ARN, {
             groupId: group.id,
-            includeRestricted: true,
+            childView: "admin",
             actorUserId,
           });
 
@@ -242,16 +244,17 @@ describe("exportRosterCsv", () => {
           expect(parsedWith).toEqual([
             ["given_name", "family_name", "role"],
             ["Alice", "Singer", "member"],
-            ["Charlie", "Smith", "leader"],
+            ["Child 1", "", "leader"],
           ]);
+          expect(csvWith).not.toContain("Charlie");
+          expect(csvWith).not.toContain("Smith");
 
-          // people.person.read audit event exists with minor's id as target
+          // Nothing was decrypted in either view, so no people.person.read event names the minor
           const peopleAuditWith = await tx<{ target_ids: string[] }[]>`
             select target_ids from app.audit_events
             where action = 'people.person.read'
           `;
-          expect(peopleAuditWith).toHaveLength(1);
-          expect(peopleAuditWith[0]?.target_ids).toEqual([minor.personId]);
+          expect(peopleAuditWith).toEqual([]);
         });
       });
     } finally {
@@ -294,6 +297,7 @@ describe("exportRosterCsv", () => {
           });
 
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group.id,
             personId: adult.personId,
             role: "member",
@@ -309,7 +313,7 @@ describe("exportRosterCsv", () => {
 
           await exportRosterCsv(tx, kms, KEY_ARN, {
             groupId: group.id,
-            includeRestricted: false,
+            childView: "presence",
             actorUserId,
           });
 
@@ -352,7 +356,7 @@ describe("exportRosterCsv", () => {
     }
   });
 
-  it("orders by family name, given name, person id, minors included (pin 23)", async () => {
+  it("orders adults by family name, given name, person id, and puts children last by label (pin 23)", async () => {
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
     const app = createPlaintextAppSql(roleUrl(runtime, "app"));
@@ -396,7 +400,7 @@ describe("exportRosterCsv", () => {
             actorUserId,
           });
 
-          // Create a minor with earlier alphabet name
+          // Create a minor whose name would sort first: under admin it is a label and sorts last
           const hh = await createHousehold(tx, kms, KEY_ARN, {
             now: NOW,
             label: "Alpha Household",
@@ -418,6 +422,7 @@ describe("exportRosterCsv", () => {
 
           // Insert members in wrong person-id order: pHigh first with "member", then minor with "leader", then pLow with "leader"
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group.id,
             personId: pHigh,
             role: "member",
@@ -425,6 +430,7 @@ describe("exportRosterCsv", () => {
             actorUserId,
           });
           await addMember(tx, kms, KEY_ARN, {
+            childView: "admin",
             groupId: group.id,
             personId: minor.personId,
             role: "leader",
@@ -432,6 +438,7 @@ describe("exportRosterCsv", () => {
             actorUserId,
           });
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group.id,
             personId: pLow,
             role: "leader",
@@ -441,17 +448,19 @@ describe("exportRosterCsv", () => {
 
           const csv = await exportRosterCsv(tx, kms, KEY_ARN, {
             groupId: group.id,
-            includeRestricted: true,
+            childView: "admin",
             actorUserId,
           });
 
           const parsed = parseCsv(csv);
           expect(parsed).toEqual([
             ["given_name", "family_name", "role"],
-            ["Alex", "Alpha", "leader"],
             ["Identical", "Name", "leader"],
             ["Identical", "Name", "member"],
+            ["Child 1", "", "leader"],
           ]);
+          expect(csv).not.toContain("Alex");
+          expect(csv).not.toContain("Alpha");
         });
       });
     } finally {
@@ -500,6 +509,7 @@ describe("exportRosterCsv", () => {
           });
 
           await addMember(tx, counting.kms, KEY_ARN, {
+            childView: "admin",
             groupId: group.id,
             personId: minor.personId,
             role: "member",
@@ -518,7 +528,7 @@ describe("exportRosterCsv", () => {
           await expect(
             exportRosterCsv(tx, counting.kms, KEY_ARN, {
               groupId: nonexistentGroupId,
-              includeRestricted: true,
+              childView: "admin",
               actorUserId: null as unknown as string,
             }),
           ).rejects.toMatchObject({ code: "invalid_input" });
@@ -526,7 +536,7 @@ describe("exportRosterCsv", () => {
           await expect(
             exportRosterCsv(tx, counting.kms, KEY_ARN, {
               groupId: nonexistentGroupId,
-              includeRestricted: true,
+              childView: "admin",
               actorUserId: "not-a-uuid",
             }),
           ).rejects.toMatchObject({ code: "invalid_input" });
@@ -535,7 +545,7 @@ describe("exportRosterCsv", () => {
           await expect(
             exportRosterCsv(tx, counting.kms, KEY_ARN, {
               groupId: group.id,
-              includeRestricted: true,
+              childView: "admin",
               actorUserId: null as unknown as string,
             }),
           ).rejects.toMatchObject({ code: "invalid_input" });
@@ -544,7 +554,7 @@ describe("exportRosterCsv", () => {
           await expect(
             exportRosterCsv(tx, counting.kms, KEY_ARN, {
               groupId: group.id,
-              includeRestricted: true,
+              childView: "admin",
               actorUserId: "not-a-uuid",
             }),
           ).rejects.toMatchObject({ code: "invalid_input" });
@@ -586,7 +596,7 @@ describe("exportRosterCsv", () => {
 
           const csv = await exportRosterCsv(tx, kms, KEY_ARN, {
             groupId: group.id,
-            includeRestricted: false,
+            childView: "presence",
             actorUserId,
           });
 
@@ -608,7 +618,7 @@ describe("exportRosterCsv", () => {
     }
   });
 
-  it("returns header only for all-minor group without includeRestricted", async () => {
+  it("returns header only for an all-minor group under presence, and only labels under admin", async () => {
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
     const app = createPlaintextAppSql(roleUrl(runtime, "app"));
@@ -646,6 +656,7 @@ describe("exportRosterCsv", () => {
           });
 
           await addMember(tx, kms, KEY_ARN, {
+            childView: "admin",
             groupId: group.id,
             personId: minor.personId,
             role: "member",
@@ -655,11 +666,20 @@ describe("exportRosterCsv", () => {
 
           const csv = await exportRosterCsv(tx, kms, KEY_ARN, {
             groupId: group.id,
-            includeRestricted: false,
+            childView: "presence",
             actorUserId,
           });
 
           expect(csv).toBe('"given_name","family_name","role"\n');
+
+          // Under admin the same group is one row: the label, and no name of the minor.
+          const adminCsv = await exportRosterCsv(tx, kms, KEY_ARN, {
+            groupId: group.id,
+            childView: "admin",
+            actorUserId,
+          });
+          expect(adminCsv).toBe('"given_name","family_name","role"\n"Child 1","","member"\n');
+          expect(adminCsv).not.toContain("OnlyMinor");
         });
       });
     } finally {
@@ -727,6 +747,7 @@ describe("exportRosterCsv", () => {
           `;
 
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group.id,
             personId: formulaPerson.personId,
             role: "member",
@@ -735,6 +756,7 @@ describe("exportRosterCsv", () => {
           });
 
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group.id,
             personId: specialPersonId,
             role: "leader",
@@ -744,7 +766,7 @@ describe("exportRosterCsv", () => {
 
           const csv = await exportRosterCsv(tx, kms, KEY_ARN, {
             groupId: group.id,
-            includeRestricted: false,
+            childView: "presence",
             actorUserId,
           });
 
@@ -802,7 +824,7 @@ describe("exportRosterCsv", () => {
           await expect(
             exportRosterCsv(tx, counting.kms, KEY_ARN, {
               groupId: groupAId,
-              includeRestricted: false,
+              childView: "presence",
               actorUserId,
             }),
           ).rejects.toMatchObject({ code: "group_not_found" });
@@ -819,7 +841,7 @@ describe("exportRosterCsv", () => {
           await expect(
             exportRosterCsv(tx, counting.kms, KEY_ARN, {
               groupId: groupAId,
-              includeRestricted: false,
+              childView: "presence",
               actorUserId,
             }),
           ).rejects.toMatchObject({ code: "group_not_found" });
@@ -832,7 +854,7 @@ describe("exportRosterCsv", () => {
           await expect(
             exportRosterCsv(tx, counting.kms, KEY_ARN, {
               groupId: groupAId,
-              includeRestricted: false,
+              childView: "presence",
               actorUserId,
             }),
           ).rejects.toMatchObject({ code: "group_not_found" });
@@ -891,6 +913,7 @@ describe("exportRosterCsv", () => {
           });
 
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group.id,
             personId: person.personId,
             role: "member",
@@ -904,7 +927,7 @@ describe("exportRosterCsv", () => {
           // Export succeeds on archived group
           const csv = await exportRosterCsv(tx, kms, KEY_ARN, {
             groupId: group.id,
-            includeRestricted: false,
+            childView: "presence",
             actorUserId,
           });
 

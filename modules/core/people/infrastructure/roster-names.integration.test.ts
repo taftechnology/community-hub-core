@@ -213,11 +213,13 @@ describe("readRosterNames", () => {
         await withAppTransaction(app, scopeA, async (tx) => {
           const results = await readRosterNames(tx, kms, KEY_ARN, {
             personIds: [adultAId, adultOtherCommId, adultOtherOrgId],
-            includeRestricted: true,
+            childView: "admin",
             actorUserId,
           });
-          expect(results).toHaveLength(1);
-          expect(results[0]?.personId).toBe(adultAId);
+          expect(results.adults).toHaveLength(1);
+          expect(results.adults[0]?.personId).toBe(adultAId);
+          expect(results.children).toEqual([]);
+          expect(results.minorCount).toBe(0);
         });
       });
     } finally {
@@ -229,7 +231,7 @@ describe("readRosterNames", () => {
     }
   });
 
-  it("returns no name for a minor without the flag (pin 13)", async () => {
+  it("returns no row for a minor under presence, only minorCount (pin 13)", async () => {
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
     const app = createPlaintextAppSql(roleUrl(runtime, "app"));
@@ -276,26 +278,17 @@ describe("readRosterNames", () => {
 
           const results = await readRosterNames(tx, kms, KEY_ARN, {
             personIds: [adult.personId, minor.personId],
-            includeRestricted: false,
+            childView: "presence",
             actorUserId,
           });
 
-          expect(results).toHaveLength(2);
-          const adultResult = results.find((r) => r.personId === adult.personId);
-          const minorResult = results.find((r) => r.personId === minor.personId);
-
-          expect(adultResult).toEqual({
-            personId: adult.personId,
-            isMinor: false,
-            givenName: "Jane",
-            familyName: "Smith",
-          });
-          expect(minorResult).toEqual({
-            personId: minor.personId,
-            isMinor: true,
-            givenName: "",
-            familyName: "",
-          });
+          // The adult is unchanged. The minor is not a row: it is only counted.
+          expect(results.adults).toEqual([
+            { personId: adult.personId, isMinor: false, givenName: "Jane", familyName: "Smith" },
+          ]);
+          expect(results.children).toEqual([]);
+          expect(results.minorCount).toBe(1);
+          expect(JSON.stringify(results)).not.toContain(minor.personId);
 
           const auditAfter = await tx<{ count: string }[]>`
             select count(*)::text as count from app.audit_events where action = 'people.person.read'
@@ -311,7 +304,7 @@ describe("readRosterNames", () => {
     }
   });
 
-  it("audits a restricted read with the actor and all target ids (pin 14)", async () => {
+  it("under admin a minor is an id and a label, and no people.person.read event is written (pin 14)", async () => {
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
     const app = createPlaintextAppSql(roleUrl(runtime, "app"));
@@ -354,46 +347,29 @@ describe("readRosterNames", () => {
 
           const results = await readRosterNames(tx, kms, KEY_ARN, {
             personIds: [adult.personId, minor.personId],
-            includeRestricted: true,
+            childView: "admin",
             actorUserId,
           });
 
-          const minorResult = results.find((r) => r.personId === minor.personId);
-          expect(minorResult).toEqual({
-            personId: minor.personId,
-            isMinor: true,
-            givenName: "Johnny",
-            familyName: "Smith",
-          });
+          // A minor is an id and a label, never a name.
+          expect(results.children).toEqual([{ personId: minor.personId, label: "Child 1" }]);
+          expect(results.minorCount).toBe(1);
 
-          const auditRows = await tx<
-            {
-              action: string;
-              purpose: string;
-              actor_kind: string;
-              actor_id: string;
-              target_ids: string[];
-            }[]
-          >`
-            select action, purpose, actor_kind, actor_id::text as actor_id, target_ids::text[] as target_ids
+          // Nothing was decrypted, so there is no read to audit: no people.person.read event
+          // names the minor, or anyone else, for this actor.
+          const auditRows = await tx<{ target_ids: string[] }[]>`
+            select target_ids::text[] as target_ids
             from app.audit_events
             where action = 'people.person.read'
               and actor_id = ${actorUserId}::uuid
           `;
+          expect(auditRows).toEqual([]);
 
-          expect(auditRows).toHaveLength(1);
-          const audit = auditRows[0]!;
-          expect(audit.action).toBe("people.person.read");
-          expect(audit.purpose).toBe("people.person.read");
-          expect(audit.actor_kind).toBe("user");
-          expect(audit.actor_id).toBe(actorUserId);
-          expect(audit.target_ids).toEqual([minor.personId]);
-
-          // No fixture name appears in the audit event row
-          const serialized = JSON.stringify(audit);
+          // No name of the minor appears in the child rows (the adult's own name is in `adults`).
+          const serialized = JSON.stringify(results.children);
           expect(serialized).not.toContain("Johnny");
           expect(serialized).not.toContain("Smith");
-          expect(serialized).not.toContain("Jane");
+          expect(JSON.stringify(results.adults)).not.toContain("Johnny");
         });
       });
     } finally {
@@ -418,7 +394,7 @@ describe("readRosterNames", () => {
           await expect(
             readRosterNames(tx, kms, KEY_ARN, {
               personIds: [newId()],
-              includeRestricted: true,
+              childView: "admin",
               actorUserId: null as never,
             }),
           ).rejects.toBeInstanceOf(PeopleError);
@@ -426,7 +402,7 @@ describe("readRosterNames", () => {
           await expect(
             readRosterNames(tx, kms, KEY_ARN, {
               personIds: [newId()],
-              includeRestricted: true,
+              childView: "admin",
               actorUserId: "not-a-uuid",
             }),
           ).rejects.toBeInstanceOf(PeopleError);
@@ -480,7 +456,7 @@ describe("readRosterNames", () => {
           await expect(
             readRosterNames(tx, countingKms.kms, KEY_ARN, {
               personIds: [minorId],
-              includeRestricted: true,
+              childView: "admin",
               actorUserId: null as never,
             }),
           ).rejects.toBeInstanceOf(PeopleError);
@@ -500,7 +476,7 @@ describe("readRosterNames", () => {
           await expect(
             readRosterNames(tx, countingKms.kms, KEY_ARN, {
               personIds: [minorId],
-              includeRestricted: true,
+              childView: "admin",
               actorUserId: "not-a-valid-uuid",
             }),
           ).rejects.toBeInstanceOf(PeopleError);
@@ -524,7 +500,7 @@ describe("readRosterNames", () => {
     }
   });
 
-  it("returns exactly the roster fields (pin 15)", async () => {
+  it("returns exactly the roster fields: four for an adult, two for a minor (pin 15)", async () => {
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
     const app = createPlaintextAppSql(roleUrl(runtime, "app"));
@@ -567,17 +543,24 @@ describe("readRosterNames", () => {
 
           const results = await readRosterNames(tx, kms, KEY_ARN, {
             personIds: [adult.personId, minor.personId],
-            includeRestricted: true,
+            childView: "admin",
             actorUserId,
           });
 
-          for (const entry of results) {
+          expect(Object.keys(results).sort()).toEqual(["adults", "children", "minorCount"]);
+          expect(results.adults).toHaveLength(1);
+          for (const entry of results.adults) {
             expect(Object.keys(entry).sort()).toEqual([
               "familyName",
               "givenName",
               "isMinor",
               "personId",
             ]);
+          }
+          // A minor is an id and a label and nothing else.
+          expect(results.children).toHaveLength(1);
+          for (const entry of results.children) {
+            expect(Object.keys(entry).sort()).toEqual(["label", "personId"]);
           }
         });
       });
@@ -589,7 +572,7 @@ describe("readRosterNames", () => {
     }
   });
 
-  it("derives each household key once (pin 16)", async () => {
+  it("opens no household key for a minor under either view (pin 16)", async () => {
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
     const app = createPlaintextAppSql(roleUrl(runtime, "app"));
@@ -670,40 +653,51 @@ describe("readRosterNames", () => {
           m4Id = m4.personId;
         });
 
-        // Test 1: one minor in HH1
+        // No key is derived for a minor under either view: a label comes from clear columns, and
+        // under presence a minor is only counted. So the KMS is never asked, whatever the mix of
+        // households (this replaces the old one-key-per-household cost check).
         await withAppTransaction(app, scope, async (tx) => {
-          counting.reset();
-          const r1 = await readRosterNames(tx, counting.kms, KEY_ARN, {
-            personIds: [m1Id],
-            includeRestricted: true,
+          for (const childView of ["admin", "presence"] as const) {
+            // One minor in HH1
+            counting.reset();
+            const r1 = await readRosterNames(tx, counting.kms, KEY_ARN, {
+              personIds: [m1Id],
+              childView,
+              actorUserId,
+            });
+            expect(r1.minorCount).toBe(1);
+            expect(r1.children).toHaveLength(childView === "admin" ? 1 : 0);
+
+            // Three minors in one household (HH1)
+            const r2 = await readRosterNames(tx, counting.kms, KEY_ARN, {
+              personIds: [m1Id, m2Id, m3Id],
+              childView,
+              actorUserId,
+            });
+            expect(r2.minorCount).toBe(3);
+            expect(r2.children).toHaveLength(childView === "admin" ? 3 : 0);
+
+            // Three minors in two households (m1, m2 from HH1, m4 from HH2)
+            const r3 = await readRosterNames(tx, counting.kms, KEY_ARN, {
+              personIds: [m1Id, m2Id, m4Id],
+              childView,
+              actorUserId,
+            });
+            expect(r3.minorCount).toBe(3);
+            expect(r3.children).toHaveLength(childView === "admin" ? 3 : 0);
+
+            expect(counting.count()).toBe(0);
+          }
+
+          // Labels restart in each household: m4 is the only child of HH2.
+          const admin = await readRosterNames(tx, counting.kms, KEY_ARN, {
+            personIds: [m1Id, m2Id, m3Id, m4Id],
+            childView: "admin",
             actorUserId,
           });
-          expect(r1).toHaveLength(1);
-          const count1 = counting.count();
-
-          // Test 2: three minors in one household (HH1)
-          counting.reset();
-          const r2 = await readRosterNames(tx, counting.kms, KEY_ARN, {
-            personIds: [m1Id, m2Id, m3Id],
-            includeRestricted: true,
-            actorUserId,
-          });
-          expect(r2).toHaveLength(3);
-          const count2 = counting.count();
-
-          // Test 3: three minors in two households (m1, m2 from HH1, m4 from HH2)
-          counting.reset();
-          const r3 = await readRosterNames(tx, counting.kms, KEY_ARN, {
-            personIds: [m1Id, m2Id, m4Id],
-            includeRestricted: true,
-            actorUserId,
-          });
-          expect(r3).toHaveLength(3);
-          const count3 = counting.count();
-
-          // The first two counts are equal; the third is the first plus the cost of one more household.
-          expect(count2).toBe(count1);
-          expect(count3).toBe(count1 + 1);
+          const labelOf = Object.fromEntries(admin.children.map((c) => [c.personId, c.label]));
+          expect(labelOf[m4Id]).toBe("Child 1");
+          expect(Object.values(labelOf).filter((label) => label === "Child 1")).toHaveLength(2);
         });
       });
     } finally {
@@ -745,10 +739,11 @@ describe("readRosterNames", () => {
 
           const results = await readRosterNames(tx, kms, KEY_ARN, {
             personIds: [adult.personId],
-            includeRestricted: true,
+            childView: "admin",
             actorUserId,
           });
-          expect(results).toHaveLength(1);
+          expect(results.adults).toHaveLength(1);
+          expect(results.minorCount).toBe(0);
 
           const auditAfter = await tx<{ count: string }[]>`
             select count(*)::text as count from app.audit_events where action = 'people.person.read'
@@ -783,10 +778,10 @@ describe("readRosterNames", () => {
 
           const results = await readRosterNames(tx, kms, KEY_ARN, {
             personIds: [],
-            includeRestricted: true,
+            childView: "admin",
             actorUserId,
           });
-          expect(results).toEqual([]);
+          expect(results).toEqual({ adults: [], children: [], minorCount: 0 });
 
           const auditAfter = await tx<{ count: string }[]>`
             select count(*)::text as count from app.audit_events where action = 'people.person.read'
@@ -829,11 +824,11 @@ describe("readRosterNames", () => {
 
           const results = await readRosterNames(tx, kms, KEY_ARN, {
             personIds: [adult.personId, adult.personId, adult.personId],
-            includeRestricted: true,
+            childView: "admin",
             actorUserId,
           });
-          expect(results).toHaveLength(1);
-          expect(results[0]?.personId).toBe(adult.personId);
+          expect(results.adults).toHaveLength(1);
+          expect(results.adults[0]?.personId).toBe(adult.personId);
         });
       });
     } finally {
@@ -876,7 +871,7 @@ describe("readRosterNames", () => {
           await expect(
             readRosterNames(tx, kms, KEY_ARN, {
               personIds: ["not-a-uuid"],
-              includeRestricted: true,
+              childView: "admin",
               actorUserId,
             }),
           ).rejects.toMatchObject({ code: "invalid_input" });
@@ -884,7 +879,7 @@ describe("readRosterNames", () => {
           await expect(
             readRosterNames(tx, kms, KEY_ARN, {
               personIds: [adult.personId, "not-a-uuid"],
-              includeRestricted: true,
+              childView: "admin",
               actorUserId,
             }),
           ).rejects.toMatchObject({ code: "invalid_input" });

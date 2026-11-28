@@ -1626,9 +1626,11 @@ describe("people routes (list and read)", () => {
         groupId: "00000000-0000-4000-8000-000000000099",
       });
       expect(res.status).toBe(200);
+      // The adults list never shows a child, so the group filter asks for the presence view.
       expect(groups.personIdsInGroup).toHaveBeenCalledWith(
         expect.anything(),
         "00000000-0000-4000-8000-000000000099",
+        { childView: "presence" },
       );
       expect(people.listPersons).toHaveBeenCalledWith(
         expect.anything(),
@@ -1691,6 +1693,12 @@ describe("people routes (list and read)", () => {
         { id: "00000000-0000-4000-8000-000000000001", name: "Choir" },
       ]);
       expect(data.items[1]?.groups).toEqual([]);
+      // The group column is for adults only, so it asks for the presence view too.
+      expect(groups.activeGroupsForPersons).toHaveBeenCalledWith(
+        expect.anything(),
+        [PERSON_ID, "00000000-0000-4000-8000-000000000098"],
+        { childView: "presence" },
+      );
     });
 
     it("POST /v1/people/create: passes source when provided", async () => {

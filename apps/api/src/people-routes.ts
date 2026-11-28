@@ -354,7 +354,8 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
 
           let personIds: string[] | undefined;
           if (body.groupId !== undefined) {
-            personIds = await personIdsInGroup(tx, body.groupId);
+            // This list is adults only, so the group filter never carries a child's id.
+            personIds = await personIdsInGroup(tx, body.groupId, { childView: "presence" });
           }
 
           const result = await listPersons(tx, deps.kms, deps.keyArn, {
@@ -373,7 +374,9 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
           let items: AdultPersonListItem[] = result.items;
           if (hasGroups) {
             const adultIds = result.items.map((item) => item.personId);
-            const groupsMap = await activeGroupsForPersons(tx, adultIds);
+            const groupsMap = await activeGroupsForPersons(tx, adultIds, {
+              childView: "presence",
+            });
             items = result.items.map((item): AdultPersonListItem => ({
               ...item,
               groups: groupsMap.get(item.personId) ?? [],

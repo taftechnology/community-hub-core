@@ -68,7 +68,9 @@ const NOW = new Date("2026-10-15T00:00:00+11:00");
 // writer            writes; its answer carries ids and versions only; called, and its answer is searched.
 // field-opener      opens one minor field; the only one, tested in minor-field.integration.test.ts.
 // type-or-constant  not a function that touches a person.
-// pending-task-5    groups and the roster readers change in Task 5, which moves them to `checked`.
+// covered-by-GS    a groups export. The groups package depends on this one, so this file cannot
+//                   call it: modules/features/groups/infrastructure/function-sweep.integration.test.ts
+//                   (GS) classifies the same index and calls every export with a child view.
 type ExportClass =
   | "checked"
   | "minor-refused"
@@ -76,7 +78,7 @@ type ExportClass =
   | "writer"
   | "field-opener"
   | "type-or-constant"
-  | "pending-task-5";
+  | "covered-by-GS";
 
 type Entry = readonly [ExportClass, string];
 
@@ -110,8 +112,8 @@ const PEOPLE_EXPORTS: Record<string, Entry> = {
   detachTag: ["minor-refused", "a minor is not found"],
   listPersonTags: ["minor-refused", "a minor answers as a person that does not exist"],
   openPersonFieldKeys: ["minor-refused", "a minor's keys are never handed out"],
-  readRosterNames: ["pending-task-5", "takes includeRestricted today; Task 5 gives it childView"],
-  visiblePersonIds: ["pending-task-5", "takes includeRestricted today; Task 5 gives it childView"],
+  readRosterNames: ["checked", "adults by name; a minor is only counted, or an id and a label"],
+  visiblePersonIds: ["checked", "ids only; a minor's id only for a Community Admin"],
   readLinkedContacts: ["checked", "a minor is absent, or { minor: true } for a Community Admin"],
   createLifeEvent: ["writer", "returns an id and a version"],
   listLifeEvents: ["checked", "a minor's events are ids only, for a Community Admin only"],
@@ -136,20 +138,20 @@ const PEOPLE_EXPORTS: Record<string, Entry> = {
 
 const GROUPS_EXPORTS: Record<string, Entry> = {
   GroupsError: ["type-or-constant", "the error class; it carries a code and nothing else"],
-  createGroup: ["pending-task-5", "no person field; Task 5 extends this sweep to the groups"],
-  updateGroup: ["pending-task-5", "no person field; Task 5 extends this sweep to the groups"],
-  archiveGroup: ["pending-task-5", "no person field; Task 5 extends this sweep to the groups"],
-  restoreGroup: ["pending-task-5", "no person field; Task 5 extends this sweep to the groups"],
-  listGroups: ["pending-task-5", "no person field; Task 5 extends this sweep to the groups"],
-  readGroup: ["pending-task-5", "no person field; Task 5 extends this sweep to the groups"],
-  activeGroupsForPersons: ["pending-task-5", "takes person ids; Task 5 gives it childView"],
-  addMember: ["pending-task-5", "a minor member is a Community Admin's; Task 5"],
-  removeMember: ["pending-task-5", "a minor member is a Community Admin's; Task 5"],
-  setMemberRole: ["pending-task-5", "a minor member is a Community Admin's; Task 5"],
-  listMembers: ["pending-task-5", "takes includeRestricted today; Task 5 gives it childView"],
-  groupLeaderFact: ["pending-task-5", "a fact about a group; no person field"],
-  personIdsInGroup: ["pending-task-5", "takes includeRestricted today; Task 5 gives it childView"],
-  exportRosterCsv: ["pending-task-5", "takes includeRestricted today; Task 5 gives it childView"],
+  createGroup: ["covered-by-GS", "no person field; classified and called in the groups sweep"],
+  updateGroup: ["covered-by-GS", "no person field; classified and called in the groups sweep"],
+  archiveGroup: ["covered-by-GS", "no person field; classified and called in the groups sweep"],
+  restoreGroup: ["covered-by-GS", "no person field; classified and called in the groups sweep"],
+  listGroups: ["covered-by-GS", "no person field; classified and called in the groups sweep"],
+  readGroup: ["covered-by-GS", "no person field; classified and called in the groups sweep"],
+  activeGroupsForPersons: ["covered-by-GS", "takes childView; called under both views in GS"],
+  addMember: ["covered-by-GS", "takes childView; a minor is a Community Admin's, called in GS"],
+  removeMember: ["covered-by-GS", "takes childView; a minor is a Community Admin's, called in GS"],
+  setMemberRole: ["covered-by-GS", "takes childView; a minor is a Community Admin's, called in GS"],
+  listMembers: ["covered-by-GS", "takes childView; called under both views in GS"],
+  groupLeaderFact: ["covered-by-GS", "a fact about a group; no person field; called in GS"],
+  personIdsInGroup: ["covered-by-GS", "takes childView; called under both views in GS"],
+  exportRosterCsv: ["covered-by-GS", "takes childView; called under both views in GS"],
 };
 
 // The runtime export names of a `public/index.ts`: named exports that are not type-only, and
@@ -231,7 +233,7 @@ describe("function sweep: the export table", () => {
     ]) {
       expect(reason.length, `${name} needs a reason`).toBeGreaterThan(5);
       expect(exportClass).toMatch(
-        /^(checked|minor-refused|adult-only|writer|field-opener|type-or-constant|pending-task-5)$/,
+        /^(checked|minor-refused|adult-only|writer|field-opener|type-or-constant|covered-by-GS)$/,
       );
     }
     // openMinorField is the one field opener.
@@ -604,6 +606,16 @@ addForEachChild("listLifeEvents", true, (x, child) =>
     actorUserId: x.actor,
     childView: x.view,
   }),
+);
+add("readRosterNames", true, "", (x) =>
+  people.readRosterNames(x.tx, x.kms, KEY_ARN, {
+    personIds: [x.t.adultId, ...x.t.childIds],
+    childView: x.view,
+    actorUserId: x.actor,
+  }),
+);
+add("visiblePersonIds", true, "", (x) =>
+  people.visiblePersonIds(x.tx, [x.t.adultId, ...x.t.childIds], { childView: x.view }),
 );
 add("readEmergencyContacts", false, "", (x) =>
   people.readEmergencyContacts(x.tx, x.kms, KEY_ARN, {

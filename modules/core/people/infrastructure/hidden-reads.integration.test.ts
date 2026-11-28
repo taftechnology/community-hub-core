@@ -343,10 +343,11 @@ describe("hidden reads", () => {
     await inScope(scope, async (tx) => {
       const roster = await readRosterNames(tx, kms, KEY_ARN, {
         personIds: [visible, hidden],
-        includeRestricted: false,
+        childView: "presence",
         actorUserId: newId(),
       });
-      expect(roster.map((r) => r.personId)).toEqual([visible]);
+      expect(roster.adults.map((r) => r.personId)).toEqual([visible]);
+      expect(roster.minorCount).toBe(0);
     });
   });
 
@@ -597,7 +598,7 @@ describe("hidden reads", () => {
     });
   });
 
-  it("visiblePersonIds returns the ids that are not hidden, in the current scope", async () => {
+  it("visiblePersonIds returns the ids that are not hidden, in the current scope, and a child's only to a Community Admin", async () => {
     const scope = await setupTenant("hr45");
     const other = await setupTenant("hr45o");
     const householdId = await createHouseholdRow(scope, "Visible Family");
@@ -620,11 +621,21 @@ describe("hidden reads", () => {
     const unknown = newId();
 
     await inScope(scope, async (tx) => {
+      // A Community Admin's view keeps a child's id; everyone else's view never has one.
       await expect(
-        visiblePersonIds(tx, [minorId, hidden, unknown, foreign, visible, visible]),
+        visiblePersonIds(tx, [minorId, hidden, unknown, foreign, visible, visible], {
+          childView: "admin",
+        }),
       ).resolves.toEqual([minorId, visible]);
-      await expect(visiblePersonIds(tx, [])).resolves.toEqual([]);
-      await expect(visiblePersonIds(tx, ["not-a-uuid"])).rejects.toMatchObject({
+      await expect(
+        visiblePersonIds(tx, [minorId, hidden, unknown, foreign, visible, visible], {
+          childView: "presence",
+        }),
+      ).resolves.toEqual([visible]);
+      await expect(visiblePersonIds(tx, [], { childView: "presence" })).resolves.toEqual([]);
+      await expect(
+        visiblePersonIds(tx, ["not-a-uuid"], { childView: "presence" }),
+      ).rejects.toMatchObject({
         code: "invalid_input",
       });
     });

@@ -1,8 +1,14 @@
 import type { KmsPort } from "@community-hub/crypto";
 import { appendAuditEvent, type AppTransaction } from "@community-hub/db";
-import { personIsMinor, readRosterNames, visiblePersonIds } from "@community-hub/people";
+import {
+  personIsMinor,
+  readRosterNames,
+  visiblePersonIds,
+  type ChildView,
+} from "@community-hub/people";
 
 import { GroupsError } from "../domain/error.js";
+import { isChildView } from "./child-view.js";
 
 export type GroupMemberRole = "leader" | "member";
 
@@ -11,14 +17,20 @@ export interface GroupMemberRecord {
   role: GroupMemberRole;
   isMinor: boolean;
   addedAt: Date;
+  // A child's display label ("Child n"), set only on a child listed under childView "admin". A
+  // label, never a name: no function here decrypts a child's field.
+  label?: string;
 }
 
+// childView is required on every input below, with no default. A child's membership is a Community
+// Admin's to read or change: under "presence" a child is not found, listed or counted by id.
 export interface AddMemberInput {
   groupId: string;
   personId: string;
   role?: GroupMemberRole;
   now: Date;
   actorUserId: string;
+  childView: ChildView;
 }
 
 export interface RemoveMemberInput {
@@ -26,6 +38,7 @@ export interface RemoveMemberInput {
   personId: string;
   now?: Date;
   actorUserId: string;
+  childView: ChildView;
 }
 
 export interface SetMemberRoleInput {
@@ -34,11 +47,25 @@ export interface SetMemberRoleInput {
   role: GroupMemberRole;
   now?: Date;
   actorUserId: string;
+  childView: ChildView;
 }
 
 export interface ListMembersInput {
   groupId: string;
   actorUserId: string;
+  childView: ChildView;
+}
+
+export interface ListMembersResult {
+  // Under "presence" only adults. Under "admin" a child is a row with a label.
+  members: GroupMemberRecord[];
+  // The children who are members and not hidden, under both views.
+  minorCount: number;
+}
+
+// The view for the reads that take ids rather than an input object.
+export interface MemberViewOptions {
+  childView: ChildView;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -80,7 +107,8 @@ export async function addMember(
     typeof input.personId !== "string" ||
     !UUID_RE.test(input.personId) ||
     typeof input.actorUserId !== "string" ||
-    !UUID_RE.test(input.actorUserId)
+    !UUID_RE.test(input.actorUserId) ||
+    !isChildView(input.childView)
   ) {
     throw new GroupsError("invalid_input");
   }
@@ -108,6 +136,11 @@ export async function addMember(
   // One locked read answers existence, hidden and minor: a contact being deleted waits here.
   const isMinor = await personIsMinor(tx, input.personId, { lock: "share" });
   if (isMinor === null) {
+    throw new GroupsError("person_not_found");
+  }
+  // A child is a Community Admin's to add. Anyone else gets the answer for a person who does not
+  // exist, so the refusal says nothing about who is a child.
+  if (isMinor && input.childView !== "admin") {
     throw new GroupsError("person_not_found");
   }
 
@@ -162,7 +195,8 @@ export async function removeMember(tx: AppTransaction, input: RemoveMemberInput)
     typeof input.personId !== "string" ||
     !UUID_RE.test(input.personId) ||
     typeof input.actorUserId !== "string" ||
-    !UUID_RE.test(input.actorUserId)
+    !UUID_RE.test(input.actorUserId) ||
+    !isChildView(input.childView)
   ) {
     throw new GroupsError("invalid_input");
   }
@@ -182,8 +216,13 @@ export async function removeMember(tx: AppTransaction, input: RemoveMemberInput)
     throw new GroupsError("group_archived");
   }
 
-  // A hidden contact is not found. A person who is no member keeps the old answer, false.
-  if ((await visiblePersonIds(tx, [input.personId], { lock: "share" })).length === 0) {
+  // A hidden contact is not found, and so is a child for anyone but a Community Admin. A person
+  // who is no member keeps the old answer, false.
+  const visible = await visiblePersonIds(tx, [input.personId], {
+    childView: input.childView,
+    lock: "share",
+  });
+  if (visible.length === 0) {
     const held = await tx<{ person_id: string }[]>`
       select person_id::text as person_id
       from app.group_members
@@ -229,7 +268,8 @@ export async function setMemberRole(tx: AppTransaction, input: SetMemberRoleInpu
     typeof input.personId !== "string" ||
     !UUID_RE.test(input.personId) ||
     typeof input.actorUserId !== "string" ||
-    !UUID_RE.test(input.actorUserId)
+    !UUID_RE.test(input.actorUserId) ||
+    !isChildView(input.childView)
   ) {
     throw new GroupsError("invalid_input");
   }
@@ -253,7 +293,11 @@ export async function setMemberRole(tx: AppTransaction, input: SetMemberRoleInpu
     throw new GroupsError("group_archived");
   }
 
-  if ((await visiblePersonIds(tx, [input.personId], { lock: "share" })).length === 0) {
+  const visible = await visiblePersonIds(tx, [input.personId], {
+    childView: input.childView,
+    lock: "share",
+  });
+  if (visible.length === 0) {
     throw new GroupsError("person_not_found");
   }
 
@@ -297,12 +341,13 @@ export async function listMembers(
   kms: KmsPort,
   keyArn: string,
   input: ListMembersInput,
-): Promise<GroupMemberRecord[]> {
+): Promise<ListMembersResult> {
   if (
     typeof input.groupId !== "string" ||
     !UUID_RE.test(input.groupId) ||
     typeof input.actorUserId !== "string" ||
-    !UUID_RE.test(input.actorUserId)
+    !UUID_RE.test(input.actorUserId) ||
+    !isChildView(input.childView)
   ) {
     throw new GroupsError("invalid_input");
   }
@@ -328,36 +373,35 @@ export async function listMembers(
   `;
 
   if (rows.length === 0) {
-    return [];
+    return { members: [], minorCount: 0 };
   }
 
   const personIds = rows.map((r) => r.person_id);
   const roster = await readRosterNames(tx, kms, keyArn, {
     personIds,
-    includeRestricted: false,
+    childView: input.childView,
     actorUserId: input.actorUserId,
   });
 
-  const minorMap = new Map<string, boolean>();
-  for (const person of roster) {
-    minorMap.set(person.personId, person.isMinor);
-  }
+  const adults = new Set(roster.adults.map((person) => person.personId));
+  const labelOf = new Map(roster.children.map((child) => [child.personId, child.label]));
 
-  // A member absent from the roster is hidden (or gone) and is not listed.
-  return rows.flatMap((row) => {
-    const isMinor = minorMap.get(row.person_id);
-    if (isMinor === undefined) {
-      return [];
+  // A member absent from the roster is hidden (or gone) and is not listed. A child is listed, with
+  // a label, only under "admin"; under "presence" the roster has no child row, and the child is
+  // only in minorCount.
+  const members = rows.flatMap((row): GroupMemberRecord[] => {
+    const role = row.role as GroupMemberRole;
+    const addedAt = new Date(row.added_at);
+    if (adults.has(row.person_id)) {
+      return [{ personId: row.person_id, role, isMinor: false, addedAt }];
     }
-    return [
-      {
-        personId: row.person_id,
-        role: row.role as GroupMemberRole,
-        isMinor,
-        addedAt: new Date(row.added_at),
-      },
-    ];
+    const label = labelOf.get(row.person_id);
+    if (label !== undefined) {
+      return [{ personId: row.person_id, role, isMinor: true, addedAt, label }];
+    }
+    return [];
   });
+  return { members, minorCount: roster.minorCount };
 }
 
 export async function groupLeaderFact(
@@ -387,7 +431,14 @@ export async function groupLeaderFact(
   return rows.length > 0;
 }
 
-export async function personIdsInGroup(tx: AppTransaction, groupId: string): Promise<string[]> {
+export async function personIdsInGroup(
+  tx: AppTransaction,
+  groupId: string,
+  options: MemberViewOptions,
+): Promise<string[]> {
+  if (!isChildView(options?.childView)) {
+    throw new GroupsError("invalid_input");
+  }
   if (typeof groupId !== "string" || !UUID_RE.test(groupId)) {
     return [];
   }
@@ -406,10 +457,12 @@ export async function personIdsInGroup(tx: AppTransaction, groupId: string): Pro
     order by gm.added_at asc, gm.person_id asc
   `;
 
+  // Under "presence" a child's id is left out, as a hidden contact's is.
   const visible = new Set(
     await visiblePersonIds(
       tx,
       rows.map((r) => r.person_id),
+      { childView: options.childView },
     ),
   );
   return rows.map((r) => r.person_id).filter((id) => visible.has(id));
@@ -418,7 +471,11 @@ export async function personIdsInGroup(tx: AppTransaction, groupId: string): Pro
 export async function activeGroupsForPersons(
   tx: AppTransaction,
   personIds: string[],
+  options: MemberViewOptions,
 ): Promise<Map<string, { id: string; name: string }[]>> {
+  if (!isChildView(options?.childView)) {
+    throw new GroupsError("invalid_input");
+  }
   if (!Array.isArray(personIds) || personIds.length === 0) {
     return new Map();
   }
@@ -428,7 +485,8 @@ export async function activeGroupsForPersons(
     return new Map();
   }
 
-  const ids = await visiblePersonIds(tx, [...new Set(validIds)]);
+  // Under "presence" a child is not given a key or a group, as a hidden contact is not.
+  const ids = await visiblePersonIds(tx, [...new Set(validIds)], { childView: options.childView });
   if (ids.length === 0) {
     return new Map();
   }
