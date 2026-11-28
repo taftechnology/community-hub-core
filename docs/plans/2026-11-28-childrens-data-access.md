@@ -5,6 +5,12 @@ Spec: docs/specs/2026-11-28-childrens-data-access.md
 Slug: childrens-data-access
 Status: approved (2026-11-28, Adnan Bin Hossen)
 
+Amendment A7 (2026-11-28, approved by Adnan Bin Hossen, standing instruction): what Task 9 and fix commit C2 found, and fix commit C3.
+
+- Task 9 accepted with these differences: the role copy is in `users-roles.tsx` (rendered from `role-labels.ts`), not `people-access.tsx`; the admin has no query cache, so pin 87 asserts a POST sent with `cache: "no-store"`, no id in the path, and the value in no storage, address, title or console; a child's life event can be added but not edited, because the child list carries ids only (recorded for the pull request); and most of Task 9's source was written before its tests, so its evidence is the 13 pins rather than a red run.
+- C2 differences: `POST /v1/access/user-links` with a child's id answered 409 (not 500) before C2 and now answers 404; the IS checker also refuses `"admin"` inside an `if (!isAdmin)` block; pin 128b covers the kernel's 500; and the patches for pins 55, 59 and 75 were regenerated. Recorded for the pull request: `apps/admin/src/invitations.tsx` still maps a `422 person_minor` the API no longer sends, and add-minor with a child as the guardian answers 400 to a Community Admin.
+- Fix commit C3, implemented by Claude Sonnet 5.5: the capabilities answer (`/v1/access/capabilities`) gains `roles.communityAdmin`, computed with `isCommunityAdmin` and written to no audit row. The admin reads it for the Minors tab, Add minor, the rename control and the child rows, instead of a minors-list probe on every All Contacts load (which wrote a `people.person.listed_minors` or denial audit row each time) and instead of inferring the role from the household read. Pins 136 (the flag is the role, not `people.restricted.read`) and 137 (no minors list request on load).
+
 Amendment A6 (2026-11-28, approved by Adnan Bin Hossen, standing instruction): Checkpoint 2 (Claude Haiku 5.5, CHANGES NEEDED, 0 High, 2 Medium, 9 Low; range `276a840..13e4684`). Fix commit C2 comes after Task 9, implemented by Claude Sonnet 5.5:
 
 - M1: the minors list (`/v1/people/list` with `kind: "minors"`) runs the `people.households` entitlement guard after the Community Admin check, and answers its empty 403. This is pin 125.
