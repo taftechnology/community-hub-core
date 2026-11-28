@@ -19,6 +19,7 @@ const ADMIN_VIEW_ALLOW_LIST: Record<string, string> = {
   "apps/api/src/people-routes.ts": "the minors list (Community Admin only)",
   "apps/api/src/access-routes.ts": "the users list (the minor flag)",
   "apps/api/src/life-event-routes.ts": "the life-event list",
+  "apps/api/src/household-routes.ts": "the household read (children as ids and labels)",
 };
 
 type Violation = string;
@@ -291,7 +292,7 @@ describe("childView admin call sites (pin 42)", () => {
 
     it('refuses childView "admin" from a file that is not on the list', () => {
       const result = auditChildViewAdmin(
-        "apps/api/src/household-routes.ts",
+        "apps/api/src/unlisted-routes.ts",
         `async function f(tx) { const isAdmin = await isCommunityAdmin(tx, u); return listPersons(tx, k, a, { childView: isAdmin ? "admin" : "presence" }); }`,
       );
       expect(result.problems).toHaveLength(1);
@@ -374,8 +375,152 @@ describe("childView admin call sites (pin 42)", () => {
   });
 });
 
-// Pin 41 (Task 4): only modules/core/access/infrastructure/minor-view.ts may import
-// openMinorField. The check is added with the function it guards, in Task 4.
-describe("openMinorField import allow-list (pin 41, added in Task 4)", () => {
-  it.todo("pin 41: only minor-view.ts imports openMinorField");
+// Pin 41. openMinorField is the one function that opens a child's field, and only the Community
+// Admin's View service may use it (ADR 0017, plan P1). Every other non-test file is refused if it
+// names it, or imports the module that defines it, so the one reader cannot gain a second caller
+// without this test failing.
+const OPEN_MINOR_FIELD = "openMinorField";
+const MINOR_FIELD_MODULE = /(^|\/)minor-field(\.js|\.ts)?$/;
+// Where it is defined, where @community-hub/people re-exports it, and the one file that uses it.
+// The View service (Task 8) does not exist yet, so today nothing imports it.
+const OPEN_MINOR_FIELD_FILES = new Set([
+  "modules/core/people/infrastructure/minor-field.ts",
+  "modules/core/people/public/index.ts",
+  "modules/core/access/infrastructure/minor-view.ts",
+]);
+
+// Returns the problems in one source file. `relPath` is the repository-relative path.
+export function auditOpenMinorFieldUses(
+  relPath: string,
+  text: string,
+  allowed: ReadonlySet<string> = OPEN_MINOR_FIELD_FILES,
+): { problems: Violation[]; mentions: boolean } {
+  const problems: Violation[] = [];
+  const mentionsName = text.includes(OPEN_MINOR_FIELD);
+  const mentionsModule = text.includes("minor-field");
+  if (!mentionsName && !mentionsModule) {
+    return { problems, mentions: false };
+  }
+  const kind = relPath.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const source = ts.createSourceFile(relPath, text, ts.ScriptTarget.Latest, true, kind);
+  let mentions = false;
+
+  const flag = (node: ts.Node, what: string): void => {
+    mentions = true;
+    if (allowed.has(relPath)) {
+      return;
+    }
+    const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+    problems.push(`${relPath}:${line}: ${what}; only minor-view.ts may use openMinorField`);
+  };
+
+  const visit = (node: ts.Node): void => {
+    // The name, as an identifier (an import, a property access, a destructuring) or a string.
+    if ((ts.isIdentifier(node) || ts.isStringLiteralLike(node)) && node.text === OPEN_MINOR_FIELD) {
+      flag(node, "names openMinorField");
+    }
+    // The module that defines it, by import, re-export or dynamic import.
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier !== undefined &&
+      ts.isStringLiteralLike(node.moduleSpecifier) &&
+      MINOR_FIELD_MODULE.test(node.moduleSpecifier.text)
+    ) {
+      flag(node, "imports the minor-field module");
+    }
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments[0] !== undefined &&
+      ts.isStringLiteralLike(node.arguments[0]) &&
+      MINOR_FIELD_MODULE.test(node.arguments[0].text)
+    ) {
+      flag(node, "dynamically imports the minor-field module");
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return { problems, mentions };
+}
+
+describe("openMinorField import allow-list (pin 41)", () => {
+  it("pin 41: only minor-view.ts imports openMinorField", () => {
+    const problems: Violation[] = [];
+    const mentioning: string[] = [];
+    for (const root of SCAN_ROOTS) {
+      for (const file of sourceFiles(path.join(REPO_ROOT, root))) {
+        const rel = path.relative(REPO_ROOT, file).split(path.sep).join("/");
+        const result = auditOpenMinorFieldUses(rel, readFileSync(file, "utf8"));
+        problems.push(...result.problems);
+        if (result.mentions) {
+          mentioning.push(rel);
+        }
+      }
+    }
+    expect(problems).toEqual([]);
+    // The scan can see the real mentions: the definition and the re-export are found, and nothing
+    // else is. (minor-view.ts joins this list when the View service is added, in Task 8.)
+    const outsideTheListed = mentioning.filter((rel) => !OPEN_MINOR_FIELD_FILES.has(rel));
+    expect(outsideTheListed).toEqual([]);
+    expect(mentioning).toContain("modules/core/people/infrastructure/minor-field.ts");
+    expect(mentioning).toContain("modules/core/people/public/index.ts");
+  });
+
+  describe("the check itself (must-fail fixtures)", () => {
+    it("refuses an import of openMinorField from another file", () => {
+      const result = auditOpenMinorFieldUses(
+        "modules/core/access/infrastructure/community-admin.ts",
+        `import { openMinorField } from "@community-hub/people";`,
+      );
+      expect(result.problems).toHaveLength(1);
+    });
+
+    it("refuses an aliased import, a namespace access and a destructuring", () => {
+      for (const text of [
+        `import { openMinorField as open } from "@community-hub/people";`,
+        `import * as people from "@community-hub/people"; people.openMinorField(tx);`,
+        `import * as people from "@community-hub/people"; const { openMinorField: f } = people;`,
+        `const f = people["openMinorField"];`,
+      ]) {
+        const result = auditOpenMinorFieldUses("apps/api/src/some-routes.ts", text);
+        expect(result.problems.length, text).toBeGreaterThan(0);
+      }
+    });
+
+    it("refuses an import of the module that defines it, by path", () => {
+      for (const text of [
+        `import { x } from "./minor-field.js";`,
+        `export { x } from "../infrastructure/minor-field.js";`,
+        `const m = await import("./minor-field.js");`,
+      ]) {
+        const result = auditOpenMinorFieldUses(
+          "modules/core/people/infrastructure/person.ts",
+          text,
+        );
+        expect(result.problems.length, text).toBeGreaterThan(0);
+      }
+    });
+
+    it("accepts the View service, the definition and the re-export", () => {
+      for (const rel of OPEN_MINOR_FIELD_FILES) {
+        const result = auditOpenMinorFieldUses(
+          rel,
+          `import { openMinorField } from "@community-hub/people"; export { openMinorField } from "../infrastructure/minor-field.js";`,
+        );
+        expect(result.problems).toEqual([]);
+        expect(result.mentions).toBe(true);
+      }
+    });
+
+    it("accepts a comment that names it, and a file that does not", () => {
+      const comment = auditOpenMinorFieldUses(
+        "modules/core/people/infrastructure/person-keys.ts",
+        `// the View opens a field with openMinorField, one at a time\nexport const x = 1;`,
+      );
+      expect(comment.problems).toEqual([]);
+      expect(comment.mentions).toBe(false);
+      const none = auditOpenMinorFieldUses("apps/api/src/other.ts", `export const y = 2;`);
+      expect(none.problems).toEqual([]);
+    });
+  });
 });

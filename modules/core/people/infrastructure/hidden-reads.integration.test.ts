@@ -287,9 +287,11 @@ describe("hidden reads", () => {
     await hide(scope, hiddenGuardian);
 
     await inScope(scope, async (tx) => {
+      // The link is to a child, which only a Community Admin's view lists (ADR 0017).
       const detail = await readHouseholdDetail(tx, kms, KEY_ARN, {
         householdId,
         includeRestricted: true,
+        childView: "admin",
         actorUserId: newId(),
       });
       expect(detail).not.toBeNull();

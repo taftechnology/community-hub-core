@@ -13,8 +13,10 @@ import {
 import { appendAuditEvent, newId, type AppTransaction } from "@community-hub/db";
 import { recordSuccess } from "@community-hub/usage";
 
+import { type ChildView, isChildView } from "../domain/child-view.js";
 import { PeopleError } from "../domain/error.js";
 import { normaliseName } from "../domain/person.js";
+import { childLabels } from "./child-labels.js";
 import type { HouseholdStatus } from "./household-status.js";
 import { ensureCommunityKey } from "./keys.js";
 
@@ -260,16 +262,71 @@ export async function createHousehold(
   return { householdId, version: 1 };
 }
 
+// A child as a household read shows one: an id and the display label "Child n" (see childLabels),
+// and nothing else. A child's fields are never returned from here (ADR 0017).
+export type HouseholdChildRef = {
+  personId: string;
+  label: string;
+};
+
+// How many children a family has, for everyone who may see the family. Under the "admin" view the
+// children are listed too, as ids and labels; under "presence" there is no child row and no child id.
+export type HouseholdChildren = {
+  childCount: number;
+  children?: HouseholdChildRef[];
+};
+
+// The children of one household, as the view allows. It reads clear columns only (is_minor,
+// household_id, deleted_at, created_at, id), so nothing is decrypted and no key is opened
+// (AGENTS.md §1 rule 3). A hidden child is not counted and takes no number.
+async function readChildren(
+  tx: AppTransaction,
+  householdId: string,
+  childView: ChildView,
+): Promise<HouseholdChildren> {
+  if (childView === "admin") {
+    const labelled = await childLabels(tx, [householdId]);
+    const children = labelled.map((child) => ({ personId: child.personId, label: child.label }));
+    return { childCount: children.length, children };
+  }
+  const rows = await tx<{ count: number }[]>`
+    select count(*)::int as count
+    from app.persons
+    where household_id = ${householdId}::uuid
+      and org_id = current_setting('app.org_id')::uuid
+      and community_id = current_setting('app.community_id')::uuid
+      and is_minor = true
+      and deleted_at is null
+  `;
+  return { childCount: rows[0]?.count ?? 0 };
+}
+
+export type ReadHouseholdInput = {
+  householdId: string;
+  childView: ChildView;
+  actorUserId: string | null;
+};
+
+export type ReadHouseholdResult = {
+  householdId: string;
+  label: string | null;
+  minors: HouseholdChildren;
+};
+
 export async function readHousehold(
   tx: AppTransaction,
   kms: KmsPort,
   keyArn: string,
-  input: { householdId: string; actorUserId: string | null },
-): Promise<{ householdId: string; label: string | null } | null> {
+  input: ReadHouseholdInput,
+): Promise<ReadHouseholdResult | null> {
+  if (!isChildView(input.childView)) {
+    throw new PeopleError("invalid_input");
+  }
   const opened = await openHouseholdLabel(tx, kms, keyArn, input.householdId);
   if (opened === null) {
     return null;
   }
+  const minors = await readChildren(tx, opened.householdId, input.childView);
   const recorded = actor(input.actorUserId);
   await appendAuditEvent(tx, {
     actorKind: recorded.actorKind,
@@ -278,7 +335,7 @@ export async function readHousehold(
     purpose: HOUSEHOLD_READ,
     targetIds: [opened.householdId],
   });
-  return opened;
+  return { householdId: opened.householdId, label: opened.label, minors };
 }
 
 export type RenameHouseholdInput = {
@@ -367,20 +424,13 @@ export type HouseholdAdultMember = {
   version: number;
 };
 
-export type HouseholdMinorMember = {
-  id: string;
-  personId: string;
-  givenName: string;
-  familyName: string;
-  dateOfBirth: string | null;
-  version: number;
-};
-
 export type HouseholdGuardianLink = {
   linkId: string;
   id: string;
   guardianId: string;
   childId: string;
+  // Only under the "admin" view, for a link to a child: the child as an id and a label.
+  child?: HouseholdChildRef;
   rights: {
     consent: boolean;
     pickup: boolean;
@@ -391,7 +441,10 @@ export type HouseholdGuardianLink = {
 
 export type ReadHouseholdDetailInput = {
   householdId: string;
+  // The adult-level family label, as before.
   includeRestricted: boolean;
+  // How much of a child to show; required, with no default (ADR 0017).
+  childView: ChildView;
   actorUserId: string | null;
 };
 
@@ -401,7 +454,7 @@ export type ReadHouseholdDetailResult = {
   status: HouseholdStatus;
   label: string | null;
   adults: HouseholdAdultMember[];
-  minors?: HouseholdMinorMember[];
+  minors: HouseholdChildren;
   guardians: HouseholdGuardianLink[];
 };
 
@@ -411,6 +464,9 @@ export async function readHouseholdDetail(
   keyArn: string,
   input: ReadHouseholdDetailInput,
 ): Promise<ReadHouseholdDetailResult | null> {
+  if (!isChildView(input.childView)) {
+    throw new PeopleError("invalid_input");
+  }
   if (typeof input.householdId !== "string" || !UUID_RE.test(input.householdId)) {
     throw new PeopleError("invalid_input");
   }
@@ -481,57 +537,12 @@ export async function readHouseholdDetail(
     version: r.version,
   }));
 
-  let minors: HouseholdMinorMember[] | undefined = undefined;
-  if (input.includeRestricted) {
-    const minorRows = await tx<
-      {
-        id: string;
-        given_name_restricted: Uint8Array | null;
-        family_name_restricted: Uint8Array | null;
-        date_of_birth: Uint8Array | null;
-        version: number;
-      }[]
-    >`
-      select id::text as id, given_name_restricted, family_name_restricted, date_of_birth, version
-      from app.persons
-      where household_id = ${input.householdId}::uuid
-        and org_id = current_setting('app.org_id')::uuid
-        and community_id = current_setting('app.community_id')::uuid
-        and is_minor = true
-        and deleted_at is null
-      order by id asc
-    `;
+  // The children: a count for everyone, and ids and labels for a Community Admin. Nothing of a
+  // child is decrypted, and no key is opened for one (ADR 0017).
+  const minors = await readChildren(tx, household.id, input.childView);
 
-    if (minorRows.length > 0 && enc === null) {
-      const keys = await householdFieldKeys(tx, kms, keyArn, household.id);
-      enc = keys.enc;
-    }
-
-    const decryptedMinors: HouseholdMinorMember[] = [];
-    for (const r of minorRows) {
-      const givenName = enc
-        ? await openField(r.given_name_restricted, enc, r.id, communityId, "people.given_name")
-        : "";
-      const familyName = enc
-        ? await openField(r.family_name_restricted, enc, r.id, communityId, "people.family_name")
-        : "";
-      const dob = enc
-        ? await openField(r.date_of_birth, enc, r.id, communityId, "people.date_of_birth")
-        : null;
-
-      decryptedMinors.push({
-        id: r.id,
-        personId: r.id,
-        givenName: givenName ?? "",
-        familyName: familyName ?? "",
-        dateOfBirth: dob,
-        version: r.version,
-      });
-    }
-    minors = decryptedMinors;
-  }
-
-  // Guardian links
+  // Guardian links. The child is joined here, in the same scope, so a link to a person who is
+  // hidden or in another community is not listed.
   const linkRows = await tx<
     {
       id: string;
@@ -541,20 +552,29 @@ export async function readHouseholdDetail(
       pickup: boolean;
       view: boolean;
       manage: boolean;
+      child_is_minor: boolean;
+      child_household_id: string | null;
     }[]
   >`
     select
-      id::text as id,
-      guardian_person_id::text as guardian_person_id,
-      child_person_id::text as child_person_id,
-      consent,
-      pickup,
-      view,
-      manage
+      gl.id::text as id,
+      gl.guardian_person_id::text as guardian_person_id,
+      gl.child_person_id::text as child_person_id,
+      gl.consent,
+      gl.pickup,
+      gl.view,
+      gl.manage,
+      cp.is_minor as child_is_minor,
+      cp.household_id::text as child_household_id
     from app.guardian_links gl
-    where household_id = ${input.householdId}::uuid
-      and org_id = current_setting('app.org_id')::uuid
-      and community_id = current_setting('app.community_id')::uuid
+    inner join app.persons cp
+      on cp.id = gl.child_person_id
+      and cp.org_id = current_setting('app.org_id')::uuid
+      and cp.community_id = current_setting('app.community_id')::uuid
+      and cp.deleted_at is null
+    where gl.household_id = ${input.householdId}::uuid
+      and gl.org_id = current_setting('app.org_id')::uuid
+      and gl.community_id = current_setting('app.community_id')::uuid
       and exists (
         select 1 from app.persons gp
         where gp.id = gl.guardian_person_id
@@ -562,70 +582,58 @@ export async function readHouseholdDetail(
           and gp.community_id = current_setting('app.community_id')::uuid
           and gp.deleted_at is null
       )
-      and exists (
-        select 1 from app.persons cp
-        where cp.id = gl.child_person_id
-          and cp.org_id = current_setting('app.org_id')::uuid
-          and cp.community_id = current_setting('app.community_id')::uuid
-          and cp.deleted_at is null
-      )
-    order by id asc
+    order by gl.id asc
   `;
 
-  let guardians: HouseholdGuardianLink[] = [];
-  if (input.includeRestricted) {
-    guardians = linkRows.map((r) => ({
-      linkId: r.id,
-      id: r.id,
-      guardianId: r.guardian_person_id,
-      childId: r.child_person_id,
-      rights: {
-        consent: r.consent,
-        pickup: r.pickup,
-        view: r.view,
-        manage: r.manage,
-      },
-    }));
-  } else {
-    // For a caller without restricted read, guardian links that reference a minor are omitted
-    if (linkRows.length > 0) {
-      const childIds = linkRows.map((l) => l.child_person_id);
-      const minorCheck = await tx<{ id: string; is_minor: boolean }[]>`
-        select id::text as id, is_minor
-        from app.persons
-        where id = any(${childIds}::uuid[])
-          and org_id = current_setting('app.org_id')::uuid
-          and community_id = current_setting('app.community_id')::uuid
-          and deleted_at is null
-      `;
-      const minorMap = new Map(minorCheck.map((m) => [m.id, m.is_minor]));
-      guardians = linkRows
-        .filter((r) => minorMap.get(r.child_person_id) === false)
-        .map((r) => ({
-          linkId: r.id,
-          id: r.id,
-          guardianId: r.guardian_person_id,
-          childId: r.child_person_id,
-          rights: {
-            consent: r.consent,
-            pickup: r.pickup,
-            view: r.view,
-            manage: r.manage,
-          },
-        }));
+  // Under "admin" a link to a child names the child by the label it has in its own household.
+  const labelOf = new Map<string, string>();
+  if (input.childView === "admin") {
+    const households = linkRows
+      .filter((row) => row.child_is_minor && row.child_household_id !== null)
+      .map((row) => row.child_household_id as string);
+    for (const child of await childLabels(tx, households)) {
+      labelOf.set(child.personId, child.label);
     }
   }
 
-  const result: ReadHouseholdDetailResult = {
+  const guardians: HouseholdGuardianLink[] = [];
+  for (const row of linkRows) {
+    const link: HouseholdGuardianLink = {
+      linkId: row.id,
+      id: row.id,
+      guardianId: row.guardian_person_id,
+      childId: row.child_person_id,
+      rights: {
+        consent: row.consent,
+        pickup: row.pickup,
+        view: row.view,
+        manage: row.manage,
+      },
+    };
+    if (!row.child_is_minor) {
+      // Only a person positively known to be an adult is listed without a view.
+      guardians.push(link);
+      continue;
+    }
+    if (input.childView !== "admin") {
+      // A link to a child is omitted: it would carry the child's id.
+      continue;
+    }
+    const label = labelOf.get(row.child_person_id);
+    if (label === undefined) {
+      // The child was hidden between the two reads: leave the link out.
+      continue;
+    }
+    guardians.push({ ...link, child: { personId: row.child_person_id, label } });
+  }
+
+  return {
     householdId: household.id,
     version: household.version,
     status: household.status,
     label,
     adults,
+    minors,
     guardians,
   };
-  if (minors !== undefined) {
-    result.minors = minors;
-  }
-  return result;
 }

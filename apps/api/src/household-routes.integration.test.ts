@@ -588,13 +588,13 @@ describe("household routes real-database integration (finding 4)", () => {
       label: string | null;
       adults: Array<{ personId: string; givenName: string; familyName: string }>;
       guardians?: unknown[];
-      minors?: unknown[];
+      minors?: unknown;
     };
     expect(parsedRead.householdId).toBe(householdA1Id);
     expect(parsedRead.label).toBeNull();
     expect(parsedRead.adults).toHaveLength(2);
     expect(parsedRead.guardians).toEqual([]);
-    expect(parsedRead.minors).toBeUndefined();
+    expect(parsedRead.minors).toEqual({ childCount: 2 });
 
     // 2. List route: caller holding only people.view
     const resList = await post("/v1/households/list", { communitySlug: slugA1 }, viewOnlyToken);
@@ -615,25 +615,55 @@ describe("household routes real-database integration (finding 4)", () => {
     expect(foundItem?.adultCount).toBe(2);
   });
 
-  it("exposes minor details to callers holding people.restricted.read (pin 9, 11)", async () => {
-    // Read route: caller holding people.restricted.read
+  it("pin 73: the household read gives a Community Admin each child as an id and a label, and a caller holding people.restricted.read a count (pin 9, 11)", async () => {
+    type Read = {
+      householdId: string;
+      label: string | null;
+      adults: Array<{ personId: string }>;
+      minors: {
+        childCount: number;
+        children?: Array<{ personId: string; label: string }>;
+      };
+      guardians: Array<{
+        linkId: string;
+        guardianId: string;
+        childId: string;
+        child?: { personId: string; label: string };
+      }>;
+    };
+    const forbiddenInEveryAnswer = [
+      "Charlie",
+      "Daisy",
+      "2015-03-12",
+      "2017-08-25",
+      "ageBasis",
+      "birthdayMd",
+    ];
+
+    // A safeguarding officer: holds people.restricted.read and is not a Community Admin.
     const resRestricted = await post(
       "/v1/households/read",
       { communitySlug: slugA1, householdId: householdA1Id },
       restrictedOnlyToken,
     );
     expect(resRestricted.status).toBe(200);
-
     const rawRestrictedBytes = await resRestricted.text();
-    expect(rawRestrictedBytes).toContain("Charlie");
-    expect(rawRestrictedBytes).toContain("Daisy");
-    expect(rawRestrictedBytes).toContain("2015-03-12");
-    expect(rawRestrictedBytes).toContain("2017-08-25");
-    expect(rawRestrictedBytes).toContain(minorCharlieId);
-    expect(rawRestrictedBytes).toContain(minorDaisyId);
-    expect(rawRestrictedBytes).toContain("The Smiths");
+    const restricted = JSON.parse(rawRestrictedBytes) as Read;
+    // The adult-level label is read as before; a child is only a number.
+    expect(restricted.label).toBe("The Smiths");
+    expect(restricted.minors).toEqual({ childCount: 2 });
+    expect(restricted.guardians).toEqual([]);
+    for (const forbidden of [
+      ...forbiddenInEveryAnswer,
+      minorCharlieId,
+      minorDaisyId,
+      guardianLinkId,
+      "Child ",
+    ]) {
+      expect(rawRestrictedBytes).not.toContain(forbidden);
+    }
 
-    // Also owner holding all permissions
+    // The bootstrap owner holds the community_admin role in this community.
     const resOwner = await post(
       "/v1/households/read",
       { communitySlug: slugA1, householdId: householdA1Id },
@@ -641,8 +671,28 @@ describe("household routes real-database integration (finding 4)", () => {
     );
     expect(resOwner.status).toBe(200);
     const rawOwnerBytes = await resOwner.text();
-    expect(rawOwnerBytes).toContain("Charlie");
-    expect(rawOwnerBytes).toContain("Daisy");
+    const owner = JSON.parse(rawOwnerBytes) as Read;
+    expect(owner.label).toBe("The Smiths");
+    expect(owner.minors.childCount).toBe(2);
+    const children = owner.minors.children ?? [];
+    // Two children created in one millisecond may be numbered either way round: compare as sets.
+    expect(children.map((child) => child.personId).sort()).toEqual(
+      [minorCharlieId, minorDaisyId].sort(),
+    );
+    expect(children.map((child) => child.label).sort()).toEqual(["Child 1", "Child 2"]);
+    for (const child of children) {
+      expect(Object.keys(child).sort()).toEqual(["label", "personId"]);
+    }
+    // Each guardian link names its child as the same id and label (the three links of the fixture).
+    expect(owner.guardians).toHaveLength(3);
+    const labelOf = new Map(children.map((child) => [child.personId, child.label]));
+    for (const link of owner.guardians) {
+      expect(link.child).toEqual({ personId: link.childId, label: labelOf.get(link.childId) });
+    }
+    // Not even the Community Admin's household read carries a name or a date of birth.
+    for (const forbidden of forbiddenInEveryAnswer) {
+      expect(rawOwnerBytes).not.toContain(forbidden);
+    }
   });
 
   it("enforces tenant and community isolation: cross-org and cross-community ids give identical empty 404 to absent ids (pin 12)", async () => {
@@ -1077,21 +1127,27 @@ describe("household routes real-database integration (finding 4)", () => {
   });
 
   it("pins the household predicate in readHouseholdDetail across co-located households (finding H2)", async () => {
-    // 1. Restricted caller reads Household A1 ("The Smiths")
-    const resA1Restricted = await post(
-      "/v1/households/read",
-      { communitySlug: slugA1, householdId: householdA1Id },
-      restrictedOnlyToken,
-    );
-    expect(resA1Restricted.status).toBe(200);
-    const bodyA1Restricted = (await resA1Restricted.json()) as {
+    type Detail = {
       householdId: string;
       label: string | null;
       adults: Array<{ personId: string; givenName: string; familyName: string }>;
-      minors?: Array<{ personId: string; givenName: string; familyName: string }>;
-      guardians?: Array<{ linkId: string; guardianId: string; childId: string }>;
+      minors: { childCount: number; children?: Array<{ personId: string; label: string }> };
+      guardians: Array<{
+        linkId: string;
+        guardianId: string;
+        childId: string;
+        child?: { personId: string; label: string };
+      }>;
+    };
+    const read = async (token: string, householdId: string): Promise<Detail> => {
+      const res = await post("/v1/households/read", { communitySlug: slugA1, householdId }, token);
+      expect(res.status).toBe(200);
+      return (await res.json()) as Detail;
     };
 
+    // 1. A caller holding people.restricted.read reads Household A1 ("The Smiths"): the label,
+    //    the adults, and the number of children of this household only.
+    const bodyA1Restricted = await read(restrictedOnlyToken, householdA1Id);
     expect(bodyA1Restricted.householdId).toBe(householdA1Id);
     expect(bodyA1Restricted.label).toBe("The Smiths");
 
@@ -1103,17 +1159,23 @@ describe("household routes real-database integration (finding 4)", () => {
     expect(adultIdsA1).not.toContain(adultFionaId);
     expect(bodyA1Restricted.adults).toHaveLength(2);
 
-    // Minors: only Charlie and Daisy; George must NOT appear
-    const minorIdsA1 = bodyA1Restricted.minors!.map((m) => m.personId);
+    // Children: Charlie and Daisy count, George (Household 2) does not
+    expect(bodyA1Restricted.minors).toEqual({ childCount: 2 });
+    expect(bodyA1Restricted.guardians).toEqual([]);
+
+    // 1b. A Community Admin reads Household A1: the same predicate holds for ids and links.
+    const adminA1 = await read(ownerA1Token, householdA1Id);
+    const minorIdsA1 = (adminA1.minors.children ?? []).map((m) => m.personId);
     expect(minorIdsA1).toContain(minorCharlieId);
     expect(minorIdsA1).toContain(minorDaisyId);
     expect(minorIdsA1).not.toContain(minorGeorgeId);
-    expect(bodyA1Restricted.minors).toHaveLength(2);
+    expect(adminA1.minors.childCount).toBe(2);
+    expect(minorIdsA1).toHaveLength(2);
 
     // Guardian links: only links for Charlie and Daisy; links involving George or Evan/Fiona must NOT appear
-    const linkIdsA1 = bodyA1Restricted.guardians!.map((g) => g.linkId);
-    const linkChildIdsA1 = bodyA1Restricted.guardians!.map((g) => g.childId);
-    const linkGuardianIdsA1 = bodyA1Restricted.guardians!.map((g) => g.guardianId);
+    const linkIdsA1 = adminA1.guardians.map((g) => g.linkId);
+    const linkChildIdsA1 = adminA1.guardians.map((g) => g.childId);
+    const linkGuardianIdsA1 = adminA1.guardians.map((g) => g.guardianId);
     expect(linkIdsA1).toContain(guardianLinkId);
     expect(linkIdsA1).not.toContain(guardianLinkGeorgeId);
     expect(linkChildIdsA1).toContain(minorCharlieId);
@@ -1121,46 +1183,21 @@ describe("household routes real-database integration (finding 4)", () => {
     expect(linkChildIdsA1).not.toContain(minorGeorgeId);
     expect(linkGuardianIdsA1).not.toContain(adultEvanId);
     expect(linkGuardianIdsA1).not.toContain(adultFionaId);
-    expect(bodyA1Restricted.guardians).toHaveLength(3);
+    expect(adminA1.guardians).toHaveLength(3);
 
     // 2. View-only caller reads Household A1
-    const resA1View = await post(
-      "/v1/households/read",
-      { communitySlug: slugA1, householdId: householdA1Id },
-      viewOnlyToken,
-    );
-    expect(resA1View.status).toBe(200);
-    const bodyA1View = (await resA1View.json()) as {
-      householdId: string;
-      label: string | null;
-      adults: Array<{ personId: string }>;
-      minors?: unknown[];
-      guardians?: unknown[];
-    };
+    const bodyA1View = await read(viewOnlyToken, householdA1Id);
     const adultIdsA1View = bodyA1View.adults.map((a) => a.personId);
     expect(adultIdsA1View).toContain(adultAliceId);
     expect(adultIdsA1View).toContain(adultBobId);
     expect(adultIdsA1View).not.toContain(adultEvanId);
     expect(adultIdsA1View).not.toContain(adultFionaId);
     expect(bodyA1View.adults).toHaveLength(2);
-    expect(bodyA1View.minors).toBeUndefined();
+    expect(bodyA1View.minors).toEqual({ childCount: 2 });
     expect(bodyA1View.guardians).toEqual([]);
 
-    // 3. Restricted caller reads Household A2 ("The Johnsons")
-    const resA2Restricted = await post(
-      "/v1/households/read",
-      { communitySlug: slugA1, householdId: householdA1SecondId },
-      restrictedOnlyToken,
-    );
-    expect(resA2Restricted.status).toBe(200);
-    const bodyA2Restricted = (await resA2Restricted.json()) as {
-      householdId: string;
-      label: string | null;
-      adults: Array<{ personId: string }>;
-      minors?: Array<{ personId: string }>;
-      guardians?: Array<{ linkId: string; guardianId: string; childId: string }>;
-    };
-
+    // 3. A caller holding people.restricted.read reads Household A2 ("The Johnsons")
+    const bodyA2Restricted = await read(restrictedOnlyToken, householdA1SecondId);
     expect(bodyA2Restricted.householdId).toBe(householdA1SecondId);
     expect(bodyA2Restricted.label).toBe("The Johnsons");
 
@@ -1172,45 +1209,45 @@ describe("household routes real-database integration (finding 4)", () => {
     expect(adultIdsA2).not.toContain(adultBobId);
     expect(bodyA2Restricted.adults).toHaveLength(2);
 
-    // Minors: only George; Charlie and Daisy must NOT appear
-    const minorIdsA2 = bodyA2Restricted.minors!.map((m) => m.personId);
+    // Children: only George counts
+    expect(bodyA2Restricted.minors).toEqual({ childCount: 1 });
+    expect(bodyA2Restricted.guardians).toEqual([]);
+
+    // 3b. A Community Admin reads Household A2
+    const adminA2 = await read(ownerA1Token, householdA1SecondId);
+    const minorIdsA2 = (adminA2.minors.children ?? []).map((m) => m.personId);
     expect(minorIdsA2).toContain(minorGeorgeId);
     expect(minorIdsA2).not.toContain(minorCharlieId);
     expect(minorIdsA2).not.toContain(minorDaisyId);
-    expect(bodyA2Restricted.minors).toHaveLength(1);
+    expect(minorIdsA2).toHaveLength(1);
+    // The numbering restarts in each household: George is Child 1 of his own.
+    expect(adminA2.minors.children).toEqual([{ personId: minorGeorgeId, label: "Child 1" }]);
 
     // Guardian links: only George's links; Charlie and Daisy's links must NOT appear
-    const linkIdsA2 = bodyA2Restricted.guardians!.map((g) => g.linkId);
-    const linkChildIdsA2 = bodyA2Restricted.guardians!.map((g) => g.childId);
+    const linkIdsA2 = adminA2.guardians.map((g) => g.linkId);
+    const linkChildIdsA2 = adminA2.guardians.map((g) => g.childId);
     expect(linkIdsA2).toContain(guardianLinkGeorgeId);
     expect(linkIdsA2).not.toContain(guardianLinkId);
     expect(linkChildIdsA2).toContain(minorGeorgeId);
     expect(linkChildIdsA2).not.toContain(minorCharlieId);
     expect(linkChildIdsA2).not.toContain(minorDaisyId);
-    expect(bodyA2Restricted.guardians).toHaveLength(2);
+    expect(adminA2.guardians).toHaveLength(2);
+    for (const link of adminA2.guardians) {
+      expect(link.child).toEqual({ personId: minorGeorgeId, label: "Child 1" });
+    }
 
     // 4. View-only caller reads Household A2
-    const resA2View = await post(
-      "/v1/households/read",
-      { communitySlug: slugA1, householdId: householdA1SecondId },
-      viewOnlyToken,
-    );
-    expect(resA2View.status).toBe(200);
-    const bodyA2View = (await resA2View.json()) as {
-      householdId: string;
-      adults: Array<{ personId: string }>;
-      minors?: unknown[];
-      guardians?: unknown[];
-    };
+    const bodyA2View = await read(viewOnlyToken, householdA1SecondId);
     const adultIdsA2View = bodyA2View.adults.map((a) => a.personId);
     expect(adultIdsA2View).toContain(adultEvanId);
     expect(adultIdsA2View).toContain(adultFionaId);
     expect(adultIdsA2View).not.toContain(adultAliceId);
     expect(adultIdsA2View).not.toContain(adultBobId);
     expect(bodyA2View.adults).toHaveLength(2);
-    expect(bodyA2View.minors).toBeUndefined();
+    expect(bodyA2View.minors).toEqual({ childCount: 1 });
     expect(bodyA2View.guardians).toEqual([]);
   });
+
   it("rejects a partial rights object on add-minor and link; omitted rights default to view and consent", async () => {
     const scopeA1 = { orgId: orgIdA, communityId: communityIdA1 };
     const rightsOf = async (childId: string, guardianId: string) =>

@@ -264,6 +264,7 @@ describe("hidden family reads", () => {
         readHouseholdDetail(tx, kms, KEY_ARN, {
           householdId: hidden.householdId,
           includeRestricted: true,
+          childView: "presence",
           actorUserId: ACTOR,
         }),
       ).resolves.toBeNull();
@@ -273,6 +274,7 @@ describe("hidden family reads", () => {
         readHouseholdDetail(tx, kms, KEY_ARN, {
           householdId: otherCommHh.householdId,
           includeRestricted: true,
+          childView: "presence",
           actorUserId: ACTOR,
         }),
       ).resolves.toBeNull();
@@ -281,6 +283,7 @@ describe("hidden family reads", () => {
         readHouseholdDetail(tx, kms, KEY_ARN, {
           householdId: otherOrgHh.householdId,
           includeRestricted: true,
+          childView: "presence",
           actorUserId: ACTOR,
         }),
       ).resolves.toBeNull();
@@ -314,6 +317,7 @@ describe("hidden family reads", () => {
       await expect(
         readHousehold(tx, kms, KEY_ARN, {
           householdId: hidden.householdId,
+          childView: "presence",
           actorUserId: ACTOR,
         }),
       ).resolves.toBeNull();
@@ -724,6 +728,7 @@ describe("hidden family reads", () => {
       const detail = await readHouseholdDetail(tx, kms, KEY_ARN, {
         householdId: hh.householdId,
         includeRestricted: true,
+        childView: "presence",
         actorUserId: ACTOR,
       });
       expect(detail).not.toBeNull();

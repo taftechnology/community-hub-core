@@ -303,16 +303,26 @@ export const householdAdultMember = z
   .strict();
 export type HouseholdAdultMember = z.infer<typeof householdAdultMember>;
 
-export const householdMinorMember = z
+// A child as the household read shows one: an id and the display label "Child n", and nothing
+// else. A child's name, date of birth, email and phone are read one field at a time through the
+// Community Admin's View (ADR 0017).
+export const householdChildRef = z
   .object({
     personId: uuid,
-    givenName: name,
-    familyName: name,
-    dateOfBirth: dateOfBirth.nullable(),
-    version: z.number().int().positive(),
+    label: z.string().min(1).max(40),
   })
   .strict();
-export type HouseholdMinorMember = z.infer<typeof householdMinorMember>;
+export type HouseholdChildRef = z.infer<typeof householdChildRef>;
+
+// How many children a family has, for everyone who may see the family. A Community Admin also gets
+// each child as an id and a label.
+export const householdChildren = z
+  .object({
+    childCount: z.number().int().min(0),
+    children: z.array(householdChildRef).optional(),
+  })
+  .strict();
+export type HouseholdChildren = z.infer<typeof householdChildren>;
 
 export const householdGuardianRights = z
   .object({
@@ -329,6 +339,8 @@ export const householdGuardianLink = z
     linkId: uuid,
     guardianId: uuid,
     childId: uuid,
+    // Present only for a Community Admin: the child as an id and a label.
+    child: householdChildRef.optional(),
     rights: householdGuardianRights,
   })
   .strict();
@@ -341,7 +353,7 @@ export const readHouseholdResponse = z
     status: householdStatus,
     label: name.nullable(),
     adults: z.array(householdAdultMember),
-    minors: z.array(householdMinorMember).optional(),
+    minors: householdChildren,
     guardians: z.array(householdGuardianLink),
   })
   .strict();

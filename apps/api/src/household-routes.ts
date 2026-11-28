@@ -1,4 +1,4 @@
-import { holdsPermission } from "@community-hub/access";
+import { holdsPermission, isCommunityAdmin } from "@community-hub/access";
 import {
   addAdultBody,
   addMinorBody,
@@ -391,9 +391,13 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
           }
 
           const includeRestricted = canRestricted;
+          // A child's id and label are for a Community Admin only (ADR 0017). Everyone else sees
+          // how many children the family has; people.restricted.read alone shows no child.
+          const isAdmin = await isCommunityAdmin(tx, actor.userId);
           const result = await readHouseholdDetail(tx, deps.kms, deps.keyArn, {
             householdId: body.householdId,
             includeRestricted,
+            childView: isAdmin ? "admin" : "presence",
             actorUserId: actor.userId,
           });
           if (result === null) {

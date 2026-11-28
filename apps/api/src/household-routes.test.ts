@@ -15,6 +15,7 @@ const tenancy = vi.hoisted(() => ({
 const access = vi.hoisted(() => ({
   holdsPermission: vi.fn(),
   holdsAnyGrant: vi.fn(),
+  isCommunityAdmin: vi.fn(),
 }));
 
 const billing = vi.hoisted(() => ({
@@ -57,6 +58,7 @@ vi.mock("@community-hub/access", async () => {
     ...actual,
     holdsPermission: access.holdsPermission,
     holdsAnyGrant: access.holdsAnyGrant,
+    isCommunityAdmin: access.isCommunityAdmin,
   };
 });
 
@@ -225,6 +227,8 @@ describe("household read routes (Task 9: list and read)", () => {
 
     access.holdsPermission.mockResolvedValue(true);
     access.holdsAnyGrant.mockResolvedValue(true);
+    // Not a Community Admin unless a test says so: a child is a count for everyone else.
+    access.isCommunityAdmin.mockResolvedValue(false);
     billing.assertWritable.mockResolvedValue("ok");
     entitlements.readSnapshot.mockResolvedValue(createSnapshot());
 
@@ -531,13 +535,14 @@ describe("household read routes (Task 9: list and read)", () => {
         KEY_ARN,
         expect.objectContaining({
           includeRestricted: false,
+          childView: "presence",
           householdId: HOUSEHOLD_ID,
           actorUserId: USER,
         }),
       );
     });
 
-    it("passes includeRestricted: true when caller holds people.restricted.read", async () => {
+    it("passes includeRestricted: true, and childView presence, when caller holds people.restricted.read but is not a Community Admin (pin 73)", async () => {
       access.holdsPermission.mockImplementation(async (_tx, _userId, perm) => {
         return perm === "people.view" || perm === "people.restricted.read";
       });
@@ -563,10 +568,47 @@ describe("household read routes (Task 9: list and read)", () => {
         KEY_ARN,
         expect.objectContaining({
           includeRestricted: true,
+          childView: "presence",
           householdId: HOUSEHOLD_ID,
           actorUserId: USER,
         }),
       );
+      expect(access.isCommunityAdmin).toHaveBeenCalledTimes(1);
+    });
+
+    it("passes childView admin only when isCommunityAdmin says so, and not for people.restricted.read alone (pin 73)", async () => {
+      access.holdsPermission.mockResolvedValue(true);
+      access.isCommunityAdmin.mockResolvedValue(true);
+      await call("/v1/households/read", { communitySlug: SLUG, householdId: HOUSEHOLD_ID });
+      expect(people.readHouseholdDetail).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.anything(),
+        KEY_ARN,
+        expect.objectContaining({ childView: "admin", actorUserId: USER }),
+      );
+
+      // Every permission, but no Community Admin grant: still the presence view.
+      people.readHouseholdDetail.mockClear();
+      access.isCommunityAdmin.mockResolvedValue(false);
+      await call("/v1/households/read", { communitySlug: SLUG, householdId: HOUSEHOLD_ID });
+      expect(people.readHouseholdDetail).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.anything(),
+        KEY_ARN,
+        expect.objectContaining({ childView: "presence" }),
+      );
+    });
+
+    it("does not ask isCommunityAdmin when the caller may not read at all, and the refusal stays empty", async () => {
+      access.holdsPermission.mockResolvedValue(false);
+      const res = await call("/v1/households/read", {
+        communitySlug: SLUG,
+        householdId: HOUSEHOLD_ID,
+      });
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+      expect(access.isCommunityAdmin).not.toHaveBeenCalled();
+      expect(people.readHouseholdDetail).not.toHaveBeenCalled();
     });
   });
 
@@ -1331,6 +1373,7 @@ describe("household read routes (Task 9: list and read)", () => {
           expect.objectContaining({
             householdId: HOUSEHOLD_ID,
             includeRestricted: true,
+            childView: "presence",
             actorUserId: USER,
           }),
         );
