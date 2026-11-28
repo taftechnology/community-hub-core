@@ -89,6 +89,25 @@ export async function updateLifeEvent(body: {
   return post("/v1/people/life-events/update", body);
 }
 
+// The Community Admin's View of one field of one child (ADR 0017). Each View is a POST with the ids
+// in the body, never in the address, and is asked for as it is needed: it is not a query, and the
+// answer is not kept anywhere but in the component that shows it.
+export type PersonViewField = "name" | "dateOfBirth" | "email" | "phone";
+export type LifeEventViewField = "type" | "date" | "place" | "notes";
+
+export type ChildViewTarget =
+  | { personId: string; field: PersonViewField }
+  | { personId: string; lifeEventId: string; field: LifeEventViewField };
+
+export async function viewChildField(
+  communitySlug: string,
+  target: ChildViewTarget,
+): Promise<Response | "unavailable"> {
+  const path =
+    "lifeEventId" in target ? "/v1/people/minors/life-events/view" : "/v1/people/minors/view";
+  return postNoStore(path, { communitySlug, ...target });
+}
+
 // A call to the auth service with the signed-in token, for Settings → Security. Unlike `post`, a 401
 // leaves the token where it is: there it can mean "confirm it's you first" and not "signed out", and
 // the page tells the two apart by asking the factor list.
@@ -115,7 +134,11 @@ export async function authCall(
   }
 }
 
-export async function post(path: string, body: unknown): Promise<Response | "unavailable"> {
+async function send(
+  path: string,
+  body: unknown,
+  extra: RequestInit,
+): Promise<Response | "unavailable"> {
   const origins = directoryOrigins();
   const token = readAccessToken();
   if (origins === undefined || token === null) {
@@ -129,6 +152,7 @@ export async function post(path: string, body: unknown): Promise<Response | "una
         authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(body),
+      ...extra,
     });
     if (response.status === 401) {
       clearAccessToken();
@@ -137,4 +161,13 @@ export async function post(path: string, body: unknown): Promise<Response | "una
   } catch {
     return "unavailable";
   }
+}
+
+export async function post(path: string, body: unknown): Promise<Response | "unavailable"> {
+  return send(path, body, {});
+}
+
+// The same call, told not to use or fill any cache.
+export async function postNoStore(path: string, body: unknown): Promise<Response | "unavailable"> {
+  return send(path, body, { cache: "no-store" });
 }

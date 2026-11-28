@@ -79,6 +79,19 @@ type ListResponse = {
   nextCursor: string | null;
 };
 
+// A child in the Community Admin's list: the display label "Child n" and the family, and nothing
+// else (ADR 0017). A child's name and details are read one field at a time in Family Records.
+type MinorRow = {
+  personId: string;
+  label: string;
+  householdLabel: string | null;
+};
+
+type MinorListResponse = {
+  items: MinorRow[];
+  nextCursor: string | null;
+};
+
 type DeleteTarget = {
   id: string;
   givenName: string;
@@ -154,6 +167,26 @@ function parseListResponse(value: unknown, kind?: "adults" | "minors"): ListResp
     const parsed = parseContactItem(item);
     if (parsed !== null) {
       items.push(parsed);
+    }
+  }
+  const nextCursor = typeof value.nextCursor === "string" ? value.nextCursor : null;
+  return { items, nextCursor };
+}
+
+// Only the id, the label and the family's label are taken from a row, so nothing else an answer
+// carries about a child can reach the screen.
+function parseMinorListResponse(value: unknown): MinorListResponse | null {
+  if (!isRecord(value) || !Array.isArray(value.items)) {
+    return null;
+  }
+  const items: MinorRow[] = [];
+  for (const item of value.items) {
+    if (isRecord(item) && typeof item.personId === "string" && typeof item.label === "string") {
+      items.push({
+        personId: item.personId,
+        label: item.label,
+        householdLabel: typeof item.householdLabel === "string" ? item.householdLabel : null,
+      });
     }
   }
   const nextCursor = typeof value.nextCursor === "string" ? value.nextCursor : null;
@@ -265,7 +298,12 @@ export function AllContactsPage() {
   const [cursor, setCursor] = useState<string | undefined>(undefined);
 
   const [items, setItems] = useState<ContactItem[] | null>(null);
+  const [minorItems, setMinorItems] = useState<MinorRow[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  // Whether the service lets this caller see the children's list. It answers a Community Admin and
+  // refuses everyone else, and the capabilities list does not say which a caller is, so it is asked
+  // once for each community, and only of a caller who holds the key and the entitlement it needs.
+  const [minorsAllowed, setMinorsAllowed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
   const [paymentRequired, setPaymentRequired] = useState(false);
@@ -399,8 +437,17 @@ export function AllContactsPage() {
 
       if (response.status === 402) {
         setItems(null);
+        setMinorItems(null);
         setPaymentRequired(true);
         void refreshBilling();
+        return;
+      }
+
+      if (kind === "minors" && response.status === 403) {
+        // Not a Community Admin here (any more): the tab goes, and the adults' list comes back.
+        setMinorsAllowed(false);
+        setMinorItems(null);
+        setActiveTab("adults");
         return;
       }
 
@@ -412,6 +459,16 @@ export function AllContactsPage() {
       try {
         const data: unknown = await response.json();
         if (!isCurrent()) {
+          return;
+        }
+        if (kind === "minors") {
+          const minors = parseMinorListResponse(data);
+          if (minors === null) {
+            setError(true);
+            return;
+          }
+          setMinorItems(minors.items);
+          setNextCursor(minors.nextCursor);
           return;
         }
         const parsed = parseListResponse(data, kind);
@@ -524,6 +581,7 @@ export function AllContactsPage() {
       setCursor(undefined);
       setNextCursor(null);
       setItems(null);
+      setMinorItems(null);
       setSummary(null);
       setSummaryError(false);
       setStatusAlert(null);
@@ -588,6 +646,49 @@ export function AllContactsPage() {
     fetchContacts,
     fetchSummary,
   ]);
+
+  const wantsMinors =
+    Boolean(access.permissions["people.restricted.read"]) &&
+    Boolean(access.entitlements["people.households"]) &&
+    Boolean(access.permissions["people.view"]) &&
+    Boolean(access.entitlements["people.directory"]);
+  // The community the children's list was last asked about. A new community starts with no answer,
+  // so the tab is gone until the service says this caller may see its children. The same community
+  // asked again keeps the answer it has until the new one arrives, so a refresh does not move
+  // anyone off the tab.
+  const probedSlug = useRef("");
+  useEffect(() => {
+    if (!token || !slug || !wantsMinors) {
+      probedSlug.current = "";
+      setMinorsAllowed(false);
+      return;
+    }
+    if (probedSlug.current !== slug) {
+      probedSlug.current = slug;
+      setMinorsAllowed(false);
+    }
+    let live = true;
+    void (async () => {
+      const response = await post("/v1/people/list", {
+        communitySlug: slug,
+        kind: "minors",
+        limit: 1,
+      });
+      if (live) {
+        setMinorsAllowed(response !== "unavailable" && response.status === 200);
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [token, slug, version, wantsMinors]);
+
+  useEffect(() => {
+    if (!minorsAllowed && activeTab === "minors") {
+      setActiveTab("adults");
+      setMinorItems(null);
+    }
+  }, [minorsAllowed, activeTab]);
 
   useEffect(() => {
     if (summary?.groups === undefined && groupFilter) {
@@ -1107,6 +1208,7 @@ export function AllContactsPage() {
     setSourceFilter("");
     setGroupFilter("");
     setItems(null);
+    setMinorItems(null);
     setStatusAlert(null);
   }
 
@@ -1520,34 +1622,28 @@ export function AllContactsPage() {
     },
   ];
 
-  const minorColumns: DataTableColumn<ContactItem>[] = [
+  const minorColumns: DataTableColumn<MinorRow>[] = [
     {
-      key: "givenName",
-      header: "Given name",
+      key: "child",
+      header: "Child",
       primary: true,
-      render: (person) => person.givenName,
+      render: (child) => child.label,
     },
     {
-      key: "familyName",
-      header: "Family name",
-      render: (person) => person.familyName,
-    },
-    {
-      key: "actions",
-      header: "Actions",
-      render: (person) => (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          aria-label={`View ${person.givenName} ${person.familyName}`}
-          onClick={() => openDetail(person.id)}
-        >
-          View
-        </Button>
-      ),
+      key: "family",
+      header: "Family",
+      render: (child) =>
+        child.householdLabel !== null ? (
+          child.householdLabel
+        ) : (
+          <span className="text-muted-foreground">No family name</span>
+        ),
     },
   ];
+
+  const minorsTab = activeTab === "minors";
+  const rowsLoaded = minorsTab ? minorItems !== null : items !== null;
+  const rowCount = minorsTab ? (minorItems?.length ?? 0) : (items?.length ?? 0);
 
   return (
     <>
@@ -1569,7 +1665,7 @@ export function AllContactsPage() {
         >
           Adults
         </Button>
-        {access.permissions["people.restricted.read"] ? (
+        {minorsAllowed ? (
           <Button
             type="button"
             aria-pressed={activeTab === "minors"}
@@ -1597,7 +1693,7 @@ export function AllContactsPage() {
           ) : undefined
         }
         footer={
-          !loading && !error && items !== null && items.length > 0 && nextCursor !== null ? (
+          !loading && !error && rowsLoaded && rowCount > 0 && nextCursor !== null ? (
             <Pagination cursor={nextCursor} onNext={handleNextPage} />
           ) : undefined
         }
@@ -1716,7 +1812,20 @@ export function AllContactsPage() {
 
         {loading ? <Skeleton /> : null}
 
-        {!loading && !error && items !== null ? (
+        {!loading && !error && minorsTab && minorItems !== null ? (
+          minorItems.length === 0 ? (
+            <EmptyState message="No children yet" />
+          ) : (
+            <DataTable
+              aria-label="Children"
+              rowKey={(child) => child.personId}
+              columns={minorColumns}
+              rows={minorItems}
+            />
+          )
+        ) : null}
+
+        {!loading && !error && !minorsTab && items !== null ? (
           items.length === 0 ? (
             deletedView ? (
               <EmptyState message="No deleted contacts." />
@@ -1734,9 +1843,7 @@ export function AllContactsPage() {
             <DataTable
               aria-label="Contacts"
               rowKey={(person) => person.id}
-              columns={
-                deletedView ? deletedColumns : activeTab === "adults" ? adultColumns : minorColumns
-              }
+              columns={deletedView ? deletedColumns : adultColumns}
               rows={items}
             />
           )

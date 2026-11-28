@@ -1,5 +1,5 @@
 import { Alert, Button, Checkbox, Field, Input, Panel, Select } from "@community-hub/ui";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, Fragment, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 
 import { post } from "./api";
@@ -7,7 +7,7 @@ import { useBillingStatus } from "./billing-status";
 import { useCommunity } from "./community";
 import { directoryOrigins, readAccessToken } from "./directory";
 import { CommunityEpochContext, ContactPicker, InvitationsSection } from "./invitations";
-import { roleLabel } from "./role-labels";
+import { permissionDescription, roleDescription, roleLabel } from "./role-labels";
 import { ScreenTitle } from "./screen-title";
 
 type UserNameView = {
@@ -642,6 +642,11 @@ export function UsersRolesPage() {
                   {directory.builtIn.map((builtIn) => (
                     <li key={builtIn.roleKey} className="flex flex-wrap items-center gap-2">
                       {roleLabel(builtIn.roleKey)} {builtIn.permissions.join(" ")}
+                      {roleDescription(builtIn.roleKey) === undefined ? null : (
+                        <span className="basis-full text-sm text-muted-foreground">
+                          {roleDescription(builtIn.roleKey)}
+                        </span>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -689,16 +694,32 @@ export function UsersRolesPage() {
                       }}
                     />
                   </Field>
-                  {directory.catalogue.map((permission) => (
-                    <Checkbox
-                      key={permission}
-                      label={permission}
-                      checked={selected.has(permission)}
-                      onChange={() => {
-                        toggle(permission);
-                      }}
-                    />
-                  ))}
+                  {directory.catalogue.map((permission) => {
+                    const description = permissionDescription(permission);
+                    const describedBy =
+                      description === undefined
+                        ? undefined
+                        : `permission-${permission}-description`;
+                    return (
+                      <Fragment key={permission}>
+                        <Checkbox
+                          label={permission}
+                          checked={selected.has(permission)}
+                          onChange={() => {
+                            toggle(permission);
+                          }}
+                          {...(describedBy === undefined
+                            ? {}
+                            : { "aria-describedby": describedBy })}
+                        />
+                        {description === undefined ? null : (
+                          <p id={describedBy} className="m-0 text-sm text-muted-foreground">
+                            {description}
+                          </p>
+                        )}
+                      </Fragment>
+                    );
+                  })}
                   <Button className="justify-self-start" type="submit">
                     Create custom role
                   </Button>
