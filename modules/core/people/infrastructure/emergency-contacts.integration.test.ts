@@ -628,6 +628,7 @@ describe("emergency contacts infrastructure", () => {
       return await readHouseholdDetail(tx, kms, KEY_ARN, {
         householdId: hh.householdId,
         includeRestricted: true,
+        childView: "presence",
         actorUserId: ACTOR,
       });
     });
@@ -636,7 +637,7 @@ describe("emergency contacts infrastructure", () => {
       label: "Fam Pin 61",
       version: hh.version + 1,
       adults: [],
-      minors: [],
+      minors: { childCount: 0 },
       guardians: [],
       status: "active",
     });

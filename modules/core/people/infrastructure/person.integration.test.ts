@@ -454,11 +454,34 @@ describe("person create and read", () => {
             personId: unknown.personId,
             actorUserId: null,
           });
-          expect(datedMinorRead).toMatchObject({
-            isMinor: true,
-            ageBasis: "date_of_birth",
-            givenName: "Ned",
-          });
+          // A child is read as a person that does not exist, so a child's age basis is checked on
+          // the clear columns instead.
+          expect(datedMinorRead).toBeNull();
+          expect(unknownRead).toBeNull();
+          const minorBasis = await tx<
+            { id: string; is_minor: boolean; age_basis: string; has_dob: boolean }[]
+          >`
+            select id::text as id, is_minor, age_basis, date_of_birth is not null as has_dob
+            from app.persons
+            where id = any(${[datedMinor.personId, unknown.personId]}::uuid[])
+          `;
+          expect(new Map(minorBasis.map((row) => [row.id, row]))).toEqual(
+            new Map([
+              [
+                datedMinor.personId,
+                {
+                  id: datedMinor.personId,
+                  is_minor: true,
+                  age_basis: "date_of_birth",
+                  has_dob: true,
+                },
+              ],
+              [
+                unknown.personId,
+                { id: unknown.personId, is_minor: true, age_basis: "unknown", has_dob: false },
+              ],
+            ]),
+          );
           expect(datedAdultRead).toMatchObject({
             isMinor: false,
             ageBasis: "date_of_birth",
@@ -470,11 +493,6 @@ describe("person create and read", () => {
             givenName: "Bea",
             familyName: "Example",
             email: "bea@example.com",
-            dateOfBirth: null,
-          });
-          expect(unknownRead).toMatchObject({
-            isMinor: true,
-            ageBasis: "unknown",
             dateOfBirth: null,
           });
 
@@ -1054,7 +1072,7 @@ describe("person create and read", () => {
     }
   });
 
-  it("readPerson: returns status and source for an adult and neither for a minor", async () => {
+  it("readPerson: returns status and source for an adult and null for a minor", async () => {
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
     const app = createPlaintextAppSql(roleUrl(runtime, "app"));
@@ -1117,10 +1135,7 @@ describe("person create and read", () => {
           expect((adultRead as { status?: unknown })?.status).toBe("active");
           expect((adultRead as { source?: unknown })?.source).toBe("family_records");
 
-          expect(minorRead).not.toBeNull();
-          expect(minorRead?.isMinor).toBe(true);
-          expect("status" in (minorRead ?? {})).toBe(false);
-          expect("source" in (minorRead ?? {})).toBe(false);
+          expect(minorRead).toBeNull();
         }),
       );
     } finally {

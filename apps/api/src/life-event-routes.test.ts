@@ -14,6 +14,7 @@ const tenancy = vi.hoisted(() => ({
 const access = vi.hoisted(() => ({
   holdsPermission: vi.fn(),
   holdsAnyGrant: vi.fn(),
+  isCommunityAdmin: vi.fn(),
 }));
 
 const billing = vi.hoisted(() => ({
@@ -24,6 +25,8 @@ const people = vi.hoisted(() => ({
   listLifeEvents: vi.fn(),
   createLifeEvent: vi.fn(),
   updateLifeEvent: vi.fn(),
+  personIsMinor: vi.fn(),
+  lifeEventPersonIsMinor: vi.fn(),
 }));
 
 const entitlements = vi.hoisted(() => ({
@@ -50,6 +53,7 @@ vi.mock("@community-hub/access", async () => {
     ...actual,
     holdsPermission: access.holdsPermission,
     holdsAnyGrant: access.holdsAnyGrant,
+    isCommunityAdmin: access.isCommunityAdmin,
   };
 });
 
@@ -70,6 +74,8 @@ vi.mock("@community-hub/people", async () => {
     listLifeEvents: people.listLifeEvents,
     createLifeEvent: people.createLifeEvent,
     updateLifeEvent: people.updateLifeEvent,
+    personIsMinor: people.personIsMinor,
+    lifeEventPersonIsMinor: people.lifeEventPersonIsMinor,
   };
 });
 
@@ -201,6 +207,10 @@ describe("life event routes unit tests", () => {
     entitlements.readSnapshot.mockResolvedValue(createSnapshot());
     access.holdsAnyGrant.mockResolvedValue(true);
     access.holdsPermission.mockResolvedValue(true);
+    // Not a Community Admin, and the person is an adult, unless a test says otherwise.
+    access.isCommunityAdmin.mockResolvedValue(false);
+    people.personIsMinor.mockResolvedValue(false);
+    people.lifeEventPersonIsMinor.mockResolvedValue(false);
     billing.assertWritable.mockResolvedValue(undefined);
     db.withAppTransaction.mockImplementation(async (_sql, _scope, run) => run({} as never));
   });
@@ -422,6 +432,82 @@ describe("life event routes unit tests", () => {
     });
   });
 
+  describe("writes about a child (pin 78)", () => {
+    const writes = [
+      {
+        path: "/v1/people/life-events/create",
+        body: { communitySlug: SLUG, personId: PERSON_ID, type: "baptism", date: "2020-01-01" },
+        lookup: () => people.personIsMinor,
+        write: () => people.createLifeEvent,
+        id: PERSON_ID,
+        status: 201,
+        answer: { eventId: EVENT_ID, version: 1 },
+      },
+      {
+        path: "/v1/people/life-events/update",
+        body: {
+          communitySlug: SLUG,
+          eventId: EVENT_ID,
+          version: 1,
+          type: "baptism",
+          date: "2020-01-01",
+        },
+        lookup: () => people.lifeEventPersonIsMinor,
+        write: () => people.updateLifeEvent,
+        id: EVENT_ID,
+        status: 200,
+        answer: { version: 2 },
+      },
+    ];
+
+    it.each(writes)(
+      "$path: a non-admin gets the 404 of a missing record and nothing is written",
+      async ({ path, body, lookup, write, id }) => {
+        // holdsPermission answers true for every permission.
+        lookup().mockResolvedValue(true);
+        const child = await call(path, body);
+        expect(child.status).toBe(404);
+        expect(await child.text()).toBe("");
+        expect(lookup()).toHaveBeenLastCalledWith(expect.anything(), id);
+        expect(write()).not.toHaveBeenCalled();
+        expect(db.appendAuditEvent).not.toHaveBeenCalled();
+
+        lookup().mockResolvedValue(null);
+        write().mockRejectedValueOnce(new PeopleError("life_event_not_found"));
+        const missing = await call(path, body);
+        expect(missing.status).toBe(404);
+        expect(await missing.text()).toBe("");
+        expect([...missing.headers.entries()]).toEqual([...child.headers.entries()]);
+
+        // A caller without the permissions gets today's refusal, child or not.
+        lookup().mockResolvedValue(true);
+        access.holdsPermission.mockResolvedValue(false);
+        write().mockClear();
+        expect((await call(path, body)).status).toBe(403);
+        expect(write()).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(writes)(
+      "$path: a Community Admin writes a child's record on the role alone, an adult's on the permissions",
+      async ({ path, body, lookup, write, status, answer }) => {
+        access.isCommunityAdmin.mockResolvedValue(true);
+        access.holdsPermission.mockResolvedValue(false);
+        lookup().mockResolvedValue(true);
+        write().mockResolvedValueOnce(answer);
+        const child = await call(path, body);
+        expect(child.status).toBe(status);
+        expect(await child.json()).toEqual(answer);
+
+        // The role adds nothing to an adult's record.
+        lookup().mockResolvedValue(false);
+        write().mockClear();
+        expect((await call(path, body)).status).toBe(403);
+        expect(write()).not.toHaveBeenCalled();
+      },
+    );
+  });
+
   describe("happy path execution", () => {
     it("list returns 200 with items for authorized caller", async () => {
       const mockResult = {
@@ -452,8 +538,74 @@ describe("life event routes unit tests", () => {
         {
           personId: PERSON_ID,
           actorUserId: USER,
+          childView: "presence",
         },
       );
+    });
+
+    it("list of a child's events: a Community Admin gets the ids and the call carries childView admin", async () => {
+      access.isCommunityAdmin.mockResolvedValue(true);
+      people.personIsMinor.mockResolvedValue(true);
+      const mockResult = { items: [{ eventId: EVENT_ID }] };
+      people.listLifeEvents.mockResolvedValueOnce(mockResult);
+
+      const res = await call("/v1/people/life-events/list", {
+        communitySlug: SLUG,
+        personId: PERSON_ID,
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(mockResult);
+      expect(people.listLifeEvents).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        KEY_ARN,
+        { personId: PERSON_ID, actorUserId: USER, childView: "admin" },
+      );
+    });
+
+    it("list of a child's events: anyone else gets the 404 of a missing person and nothing is read", async () => {
+      // holdsPermission answers true for every permission, people.restricted.read included.
+      access.isCommunityAdmin.mockResolvedValue(false);
+      people.personIsMinor.mockResolvedValue(true);
+
+      const res = await call("/v1/people/life-events/list", {
+        communitySlug: SLUG,
+        personId: PERSON_ID,
+      });
+
+      expect(res.status).toBe(404);
+      expect(await res.text()).toBe("");
+      expect(people.listLifeEvents).not.toHaveBeenCalled();
+      expect(db.appendAuditEvent).not.toHaveBeenCalled();
+
+      // The answer for a person that does not exist is the same.
+      people.personIsMinor.mockResolvedValue(null);
+      people.listLifeEvents.mockRejectedValueOnce(new PeopleError("life_event_not_found"));
+      const missing = await call("/v1/people/life-events/list", {
+        communitySlug: SLUG,
+        personId: PERSON_ID,
+      });
+      expect(missing.status).toBe(404);
+      expect(await missing.text()).toBe("");
+      expect([...missing.headers.entries()]).toEqual([...res.headers.entries()]);
+    });
+
+    it("list of a child's events: a caller without people.restricted.read gets 403 before the person is looked up", async () => {
+      access.holdsPermission.mockImplementation(
+        async (_tx: unknown, _userId: string, perm: string) => perm !== "people.restricted.read",
+      );
+      people.personIsMinor.mockResolvedValue(true);
+
+      const res = await call("/v1/people/life-events/list", {
+        communitySlug: SLUG,
+        personId: PERSON_ID,
+      });
+
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+      expect(people.personIsMinor).not.toHaveBeenCalled();
+      expect(people.listLifeEvents).not.toHaveBeenCalled();
     });
 
     it("create returns 201 with eventId and version for caller with manage and restricted.read", async () => {

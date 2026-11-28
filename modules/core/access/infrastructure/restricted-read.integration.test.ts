@@ -154,7 +154,7 @@ async function createMinor(
 }
 
 describe("restricted read for an actor", () => {
-  it("lets a safeguarding officer read a minor", async () => {
+  it("refuses a safeguarding officer reading a minor with forbidden and audits the denial", async () => {
     await withParish("read-officer", async (tx, kms) => {
       const owner = newId();
       const officer = newId();
@@ -173,22 +173,24 @@ describe("restricted read for an actor", () => {
         actorUserId: null,
       });
       const minorId = await createMinor(tx, kms, household.householdId, "Ned");
-      const view = await readPersonForActor(tx, kms, KEY_ARN, {
-        personId: minorId,
-        actorUserId: officer,
-      });
-      expect(view).toMatchObject({
-        personId: minorId,
-        isMinor: true,
-        givenName: "Ned",
-        version: 1,
-      });
-      const reads = await tx<{ target_ids: string[] }[]>`
-        select target_ids::text[] as target_ids
+      await expect(
+        readPersonForActor(tx, kms, KEY_ARN, {
+          personId: minorId,
+          actorUserId: officer,
+        }),
+      ).rejects.toMatchObject({ code: "forbidden" });
+      const reads = await tx<{ n: number }[]>`
+        select count(*)::int as n
         from app.audit_events
         where action = 'people.person.read'
       `;
-      expect(reads).toEqual([{ target_ids: [minorId] }]);
+      const denied = await tx<{ purpose: string; target_ids: string[] }[]>`
+        select purpose, target_ids::text[] as target_ids
+        from app.audit_events
+        where action = 'access.permission.denied'
+      `;
+      expect(reads).toEqual([{ n: 0 }]);
+      expect(denied).toEqual([{ purpose: "people.restricted.read", target_ids: [minorId] }]);
     });
   });
 
@@ -229,7 +231,7 @@ describe("restricted read for an actor", () => {
     });
   });
 
-  it("lets a guardian read only the linked child", async () => {
+  it("refuses a guardian reading a linked child with forbidden and audits the denial", async () => {
     await withParish("read-guardian", async (tx, kms) => {
       const guardianUser = newId();
       const owner = newId();
@@ -270,21 +272,117 @@ describe("restricted read for an actor", () => {
         manage: false,
         actorUserId: null,
       });
-      const view = await readPersonForActor(tx, kms, KEY_ARN, {
-        personId: childId,
-        actorUserId: guardianUser,
-      });
-      expect(view).toMatchObject({ personId: childId, givenName: "Ned" });
+      await expect(
+        readPersonForActor(tx, kms, KEY_ARN, { personId: childId, actorUserId: guardianUser }),
+      ).rejects.toMatchObject({ code: "forbidden" });
       await expect(
         readPersonForActor(tx, kms, KEY_ARN, { personId: otherId, actorUserId: guardianUser }),
       ).rejects.toMatchObject({ code: "forbidden" });
-      const otherReads = await tx<{ n: number }[]>`
+      const reads = await tx<{ n: number }[]>`
         select count(*)::int as n
         from app.audit_events
         where action = 'people.person.read'
-          and ${otherId}::uuid = any(target_ids)
       `;
-      expect(otherReads).toEqual([{ n: 0 }]);
+      const denied = await tx<{ purpose: string; target_ids: string[] }[]>`
+        select purpose, target_ids::text[] as target_ids
+        from app.audit_events
+        where action = 'access.permission.denied'
+        order by id asc
+      `;
+      expect(reads).toEqual([{ n: 0 }]);
+      expect(denied).toEqual([
+        { purpose: "people.restricted.read", target_ids: [childId] },
+        { purpose: "people.restricted.read", target_ids: [otherId] },
+      ]);
+    });
+  });
+
+  it("a guardian with view = true gets forbidden for their child (pin 19)", async () => {
+    await withParish("read-guardian-pin19", async (tx, kms) => {
+      const guardianUser = newId();
+      const owner = newId();
+      await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      const household = await createHousehold(tx, kms, KEY_ARN, {
+        now: NOW,
+        label: null,
+        actorUserId: null,
+      });
+      const adult = await createPerson(tx, kms, KEY_ARN, {
+        now: NOW,
+        declaredAdult: true,
+        householdId: household.householdId,
+        dateOfBirth: "1990-01-01",
+        givenName: "Ada",
+        familyName: "Example",
+        email: null,
+        phone: null,
+        actorUserId: null,
+      });
+      const childId = await createMinor(tx, kms, household.householdId, "Ned");
+      await addMember(tx, guardianUser);
+      await linkUser(tx, {
+        now: NOW,
+        userId: guardianUser,
+        personId: adult.personId,
+        actorUserId: owner,
+      });
+      await linkGuardian(tx, {
+        now: NOW,
+        householdId: household.householdId,
+        guardianPersonId: adult.personId,
+        childPersonId: childId,
+        consent: false,
+        pickup: false,
+        view: true,
+        manage: false,
+        actorUserId: null,
+      });
+      await expect(
+        readPersonForActor(tx, kms, KEY_ARN, { personId: childId, actorUserId: guardianUser }),
+      ).rejects.toMatchObject({ code: "forbidden" });
+      const denied = await tx<{ purpose: string; target_ids: string[] }[]>`
+        select purpose, target_ids::text[] as target_ids
+        from app.audit_events
+        where action = 'access.permission.denied'
+      `;
+      expect(denied).toEqual([{ purpose: "people.restricted.read", target_ids: [childId] }]);
+    });
+  });
+
+  it("a Community Admin gets forbidden from readPersonForActor for a minor (pin 20)", async () => {
+    await withParish("read-admin-pin20", async (tx, kms) => {
+      const owner = newId();
+      const adminUser = newId();
+      await bootstrapOwner(tx, { now: NOW, userId: owner, actorUserId: owner });
+      await addMember(tx, adminUser);
+      await grantRole(tx, {
+        now: NOW,
+        userId: adminUser,
+        roleKey: "community_admin",
+        customRoleId: null,
+        actorUserId: owner,
+      });
+      const household = await createHousehold(tx, kms, KEY_ARN, {
+        now: NOW,
+        label: null,
+        actorUserId: null,
+      });
+      const minorId = await createMinor(tx, kms, household.householdId, "Ned");
+      await expect(
+        readPersonForActor(tx, kms, KEY_ARN, { personId: minorId, actorUserId: adminUser }),
+      ).rejects.toMatchObject({ code: "forbidden" });
+      const reads = await tx<{ n: number }[]>`
+        select count(*)::int as n
+        from app.audit_events
+        where action = 'people.person.read'
+      `;
+      const denied = await tx<{ purpose: string; target_ids: string[] }[]>`
+        select purpose, target_ids::text[] as target_ids
+        from app.audit_events
+        where action = 'access.permission.denied'
+      `;
+      expect(reads).toEqual([{ n: 0 }]);
+      expect(denied).toEqual([{ purpose: "people.restricted.read", target_ids: [minorId] }]);
     });
   });
 

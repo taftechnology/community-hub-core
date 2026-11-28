@@ -62,6 +62,8 @@ function held(keys: readonly string[]): Set<string> {
 }
 
 export function decide(input: DecideInput): boolean {
+  // After Children's data access, no caller passes `guardianView` for a minor;
+  // guardian read is rebuilt by the member-portal chunk (ADR 0017 point 3, O4).
   if (input.permission === "people.restricted.read" && input.personScoped && input.guardianView) {
     return true;
   }

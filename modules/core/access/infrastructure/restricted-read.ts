@@ -1,5 +1,5 @@
 import { appendAuditEvent, type AppTransaction } from "@community-hub/db";
-import { hasGuardianView, readPerson } from "@community-hub/people";
+import { readPerson } from "@community-hub/people";
 import { decide } from "@community-hub/policy";
 
 import { AccessError } from "../domain/error.js";
@@ -31,7 +31,7 @@ export async function readPersonForActor(
       and deleted_at is null
   `;
   const row = rows[0];
-  if (row === undefined) {
+  if (row === undefined || row.is_minor) {
     await appendAuditEvent(tx, {
       actorKind: "user",
       actorId: actorUserId,
@@ -43,62 +43,29 @@ export async function readPersonForActor(
   }
 
   const actor = await loadActor(tx, actorUserId);
-
-  if (!row.is_minor) {
-    const allowed =
-      decide({
-        permission: VIEW,
-        organisationRoleKeys: actor.organisationRoleKeys,
-        communityRoleKeys: actor.communityRoleKeys,
-        customPermissions: actor.customPermissions,
-        guardianView: false,
-        personScoped: false,
-      }) ||
-      decide({
-        permission: RESTRICTED,
-        organisationRoleKeys: actor.organisationRoleKeys,
-        communityRoleKeys: actor.communityRoleKeys,
-        customPermissions: actor.customPermissions,
-        guardianView: false,
-        personScoped: false,
-      });
-    if (!allowed) {
-      await appendAuditEvent(tx, {
-        actorKind: "user",
-        actorId: actorUserId,
-        action: DENIED,
-        purpose: ADULT_VIEW_PURPOSE,
-        targetIds: [personId],
-      });
-      throw new AccessError("forbidden");
-    }
-    return readPerson(tx, kms, keyArn, { personId, actorUserId });
-  }
-
-  const links = await tx<{ person_id: string }[]>`
-    select person_id::text as person_id
-    from app.user_links
-    where user_id = ${actorUserId}::uuid
-      and org_id = current_setting('app.org_id')::uuid
-      and community_id = current_setting('app.community_id')::uuid
-  `;
-  const guardianPersonId = links[0]?.person_id;
-  const guardianView =
-    guardianPersonId === undefined ? false : await hasGuardianView(tx, guardianPersonId, personId);
-  const allowed = decide({
-    permission: RESTRICTED,
-    organisationRoleKeys: actor.organisationRoleKeys,
-    communityRoleKeys: actor.communityRoleKeys,
-    customPermissions: actor.customPermissions,
-    guardianView,
-    personScoped: true,
-  });
+  const allowed =
+    decide({
+      permission: VIEW,
+      organisationRoleKeys: actor.organisationRoleKeys,
+      communityRoleKeys: actor.communityRoleKeys,
+      customPermissions: actor.customPermissions,
+      guardianView: false,
+      personScoped: false,
+    }) ||
+    decide({
+      permission: RESTRICTED,
+      organisationRoleKeys: actor.organisationRoleKeys,
+      communityRoleKeys: actor.communityRoleKeys,
+      customPermissions: actor.customPermissions,
+      guardianView: false,
+      personScoped: false,
+    });
   if (!allowed) {
     await appendAuditEvent(tx, {
       actorKind: "user",
       actorId: actorUserId,
       action: DENIED,
-      purpose: RESTRICTED,
+      purpose: ADULT_VIEW_PURPOSE,
       targetIds: [personId],
     });
     throw new AccessError("forbidden");

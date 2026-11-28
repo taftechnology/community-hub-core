@@ -2,6 +2,7 @@ import { newId, type AppTransaction } from "@community-hub/db";
 
 import { PeopleError } from "../domain/error.js";
 import { normaliseTag } from "../domain/person.js";
+import { personIsMinor } from "./access-facts.js";
 
 type TagLinkInput = {
   now: Date;
@@ -21,25 +22,6 @@ function duplicateTag(error: unknown): boolean {
     current = "cause" in current ? current.cause : undefined;
   }
   return false;
-}
-
-async function personExists(
-  tx: AppTransaction,
-  personId: string,
-  options?: { lock?: "share" },
-): Promise<boolean> {
-  const rows =
-    options?.lock === "share"
-      ? await tx<{ id: string }[]>`
-          select id::text as id
-          from app.persons
-          where id = ${personId}::uuid and deleted_at is null
-          for share
-        `
-      : await tx<{ id: string }[]>`
-          select id::text as id from app.persons where id = ${personId}::uuid and deleted_at is null
-        `;
-  return rows[0] !== undefined;
 }
 
 async function tagExists(tx: AppTransaction, tagId: string): Promise<boolean> {
@@ -76,9 +58,10 @@ export async function createTag(
   return { tagId };
 }
 
+// Tags are for adults. A child is refused as a person that does not exist.
 export async function attachTag(tx: AppTransaction, input: TagLinkInput): Promise<void> {
   if (
-    !(await personExists(tx, input.personId, { lock: "share" })) ||
+    (await personIsMinor(tx, input.personId, { lock: "share" })) !== false ||
     !(await tagExists(tx, input.tagId))
   ) {
     throw new PeopleError("not_found");
@@ -118,7 +101,8 @@ export async function attachTag(tx: AppTransaction, input: TagLinkInput): Promis
 }
 
 export async function detachTag(tx: AppTransaction, input: TagLinkInput): Promise<void> {
-  if (!(await personExists(tx, input.personId, { lock: "share" }))) {
+  // A child is refused as a person that does not exist, even when a link was left on it.
+  if ((await personIsMinor(tx, input.personId, { lock: "share" })) !== false) {
     throw new PeopleError("not_found");
   }
   const removed = await tx<{ person_id: string }[]>`
@@ -149,7 +133,7 @@ export async function listPersonTags(
   tx: AppTransaction,
   personId: string,
 ): Promise<{ tagId: string; label: string }[] | null> {
-  if (!(await personExists(tx, personId))) {
+  if ((await personIsMinor(tx, personId)) !== false) {
     return null;
   }
   const rows = await tx<{ tag_id: string; label: string }[]>`

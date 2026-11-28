@@ -1,3 +1,4 @@
+import { createHash, generateKeyPairSync, sign as signDer } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,18 +9,24 @@ import { applyProductMigrations, newId } from "@community-hub/db";
 import { createPlaintextDirectSql, createPlaintextIdentitySql } from "@community-hub/db/plaintext";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { encodeCbor, type Cbor } from "../domain/cbor.js";
 import type { OtpMail } from "../domain/otp-mail.js";
 import type { SecondFactorNotice, SecondFactorNoticeKind } from "../domain/second-factor-notice.js";
 import { base32Decode, base32Encode, newTotpKey, stepAt, totpCode } from "../domain/totp.js";
 import {
+  beginFreshPasskey,
+  beginTenantPasskeyRegistration,
   confirmTotpSetup,
   endSession,
+  finishTenantPasskeyRegistration,
+  freshCheckTotp,
   listSecondFactors,
   readSessionWithKind,
   refreshSession,
   startEmailOtp,
   startTotpSetup,
   verifyEmailOtp,
+  verifyFreshPasskey,
   verifySecondStep,
 } from "../public/index.js";
 import { deriveIdentityEmailKeys } from "./email-lookup.js";
@@ -30,6 +37,7 @@ import { createSession, sessionAccessHash, type SessionTokens } from "./session.
 
 const KEY_ARN = `arn:aws:kms:ap-southeast-2:123456789012:key/mrk-${"ab".repeat(16)}`;
 const ADMIN_RP_ID = "admin.example.test";
+const ADMIN_ORIGIN = "https://admin.example.test";
 const RFC_6238_KEY = new TextEncoder().encode("12345678901234567890");
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
 const TEN_MINUTES_MS = 10 * 60 * 1000;
@@ -2303,4 +2311,612 @@ describe("second-factor service: TOTP, backup codes, second step, limits", () =>
       expect(events.map((e) => e.event)).toEqual(["totp_enrolled"]);
     });
   });
+
+  // Pin 7
+  it("seven correct TOTP fresh checks in one session all answer fresh", async () => {
+    const now = new Date("2026-11-28T00:00:00.000Z");
+    await withSql(async (sql) => {
+      const enrolled = await enrolTotpForTest(sql, kms, KEY_ARN, {
+        email: "pin7-fresh-totp@example.test",
+        now,
+        adminRpId: ADMIN_RP_ID,
+      });
+      const accessHash = await sessionAccessHash(sql, kms, KEY_ARN, enrolled.tokens.accessToken);
+
+      for (let i = 1; i <= 7; i += 1) {
+        const t = new Date(now.getTime() + i * 30_000);
+        const code = totpCode(enrolled.key, stepAt(t));
+        await expect(
+          freshCheckTotp(sql, kms, KEY_ARN, {
+            accessToken: enrolled.tokens.accessToken,
+            now: t,
+            code,
+          }),
+        ).resolves.toEqual({ outcome: "fresh" });
+      }
+
+      const [row] = await sql<{ second_factor_attempts: number }[]>`
+        select second_factor_attempts from identity.sessions where access_hash = ${accessHash}
+      `;
+      expect(row?.second_factor_attempts).toBe(0);
+    });
+  });
+
+  // Pin 8
+  it("seven correct passkey fresh checks in one session all answer fresh", async () => {
+    const now = new Date("2026-11-28T00:00:00.000Z");
+    await withSql(async (sql) => {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: "pin8-fresh-pk@example.test",
+      });
+      const enrolled = await registerTenantPasskeyForTest(sql, kms, userId, now);
+      const accessHash = await sessionAccessHash(sql, kms, KEY_ARN, enrolled.tokens.accessToken);
+
+      for (let i = 1; i <= 7; i += 1) {
+        const t = new Date(now.getTime() + i * 30_000);
+        const opts = await beginFreshPasskey(sql, kms, KEY_ARN, {
+          accessToken: enrolled.tokens.accessToken,
+          now: t,
+          adminRpId: ADMIN_RP_ID,
+        });
+        expect(opts.outcome).toBe("started");
+        if (opts.outcome !== "started") {
+          throw new Error("expected started");
+        }
+        const authData = authenticatorDataBytes({
+          rpId: ADMIN_RP_ID,
+          signCount: i,
+          flags: 0x05,
+        });
+        const client = clientDataBytes("webauthn.get", opts.options.challenge, ADMIN_ORIGIN);
+        const signature = await enrolled.key.sign(
+          concatBytes([authData, await sha256Bytes(client)]),
+        );
+        await expect(
+          verifyFreshPasskey(sql, kms, KEY_ARN, {
+            accessToken: enrolled.tokens.accessToken,
+            now: t,
+            adminRpId: ADMIN_RP_ID,
+            credentialId: enrolled.credentialId,
+            clientDataJSON: client,
+            authenticatorData: authData,
+            signature,
+          }),
+        ).resolves.toEqual({ outcome: "fresh" });
+      }
+
+      const [row] = await sql<{ second_factor_attempts: number }[]>`
+        select second_factor_attempts from identity.sessions where access_hash = ${accessHash}
+      `;
+      expect(row?.second_factor_attempts).toBe(0);
+    });
+  });
+
+  // Pin 9
+  it("five wrong TOTP fresh checks, then a correct one, answers limited", async () => {
+    const now = new Date("2026-11-28T00:00:00.000Z");
+    const t1 = new Date(now.getTime() + 30_000);
+    await withSql(async (sql) => {
+      const enrolled = await enrolTotpForTest(sql, kms, KEY_ARN, {
+        email: "pin9-wrong-count@example.test",
+        now,
+        adminRpId: ADMIN_RP_ID,
+      });
+      const accessHash = await sessionAccessHash(sql, kms, KEY_ARN, enrolled.tokens.accessToken);
+      const rightCode = totpCode(enrolled.key, stepAt(t1));
+      const wrongCode = rightCode === "000000" ? "111111" : "000000";
+
+      for (let i = 0; i < 5; i += 1) {
+        await expect(
+          freshCheckTotp(sql, kms, KEY_ARN, {
+            accessToken: enrolled.tokens.accessToken,
+            now: t1,
+            code: wrongCode,
+          }),
+        ).resolves.toEqual({ outcome: "refused" });
+      }
+
+      await expect(
+        freshCheckTotp(sql, kms, KEY_ARN, {
+          accessToken: enrolled.tokens.accessToken,
+          now: t1,
+          code: rightCode,
+        }),
+      ).resolves.toEqual({ outcome: "limited" });
+
+      const [row] = await sql<{ second_factor_attempts: number; revoked_at: Date | null }[]>`
+        select second_factor_attempts, revoked_at
+        from identity.sessions
+        where access_hash = ${accessHash}
+      `;
+      expect(row?.second_factor_attempts).toBe(5);
+      expect(row?.revoked_at).toBeNull();
+    });
+  });
+
+  // Pin 11
+  it("ten wrong fresh codes across sessions in an hour, then a correct one, answers limited", async () => {
+    const now = new Date("2026-11-28T00:00:00.000Z");
+    const t1 = new Date(now.getTime() + 30_000);
+    const t2 = new Date(t1.getTime() + 30_000);
+    const t3 = new Date(t2.getTime() + 30_000);
+    await withSql(async (sql) => {
+      const enrolled = await enrolTotpForTest(sql, kms, KEY_ARN, {
+        email: "pin11-hourly@example.test",
+        now,
+        adminRpId: ADMIN_RP_ID,
+      });
+      const userId = enrolled.tokens.userId;
+
+      const admin1 = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now: t1,
+        kind: "tenant",
+        factor: "otp_totp",
+      });
+      const right1 = totpCode(enrolled.key, stepAt(t1));
+      const wrong1 = right1 === "000000" ? "111111" : "000000";
+      for (let i = 0; i < 5; i += 1) {
+        await expect(
+          freshCheckTotp(sql, kms, KEY_ARN, {
+            accessToken: admin1.accessToken,
+            now: t1,
+            code: wrong1,
+          }),
+        ).resolves.toEqual({ outcome: "refused" });
+      }
+
+      const admin2 = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now: t2,
+        kind: "tenant",
+        factor: "otp_totp",
+      });
+      const right2 = totpCode(enrolled.key, stepAt(t2));
+      const wrong2 = right2 === "000000" ? "111111" : "000000";
+      for (let i = 0; i < 5; i += 1) {
+        await expect(
+          freshCheckTotp(sql, kms, KEY_ARN, {
+            accessToken: admin2.accessToken,
+            now: t2,
+            code: wrong2,
+          }),
+        ).resolves.toEqual({ outcome: "refused" });
+      }
+
+      const admin3 = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now: t3,
+        kind: "tenant",
+        factor: "otp_totp",
+      });
+      await expect(
+        freshCheckTotp(sql, kms, KEY_ARN, {
+          accessToken: admin3.accessToken,
+          now: t3,
+          code: totpCode(enrolled.key, stepAt(t3)),
+        }),
+      ).resolves.toEqual({ outcome: "limited" });
+    });
+  });
+
+  // Pin 12
+  it("after one refused and one correct second step, second_factor_attempts is 2", async () => {
+    const now = new Date("2026-11-28T00:00:00.000Z");
+    const t1 = new Date(now.getTime() + 30_000);
+    await withSql(async (sql) => {
+      const enrolled = await enrolTotpForTest(sql, kms, KEY_ARN, {
+        email: "pin12-step@example.test",
+        now,
+        adminRpId: ADMIN_RP_ID,
+      });
+      const sf = await createSession(sql, kms, KEY_ARN, {
+        userId: enrolled.tokens.userId,
+        now: t1,
+        kind: "second_factor",
+      });
+      const sfHash = await sessionAccessHash(sql, kms, KEY_ARN, sf.accessToken);
+      const rightCode = totpCode(enrolled.key, stepAt(t1));
+      const wrongCode = rightCode === "000000" ? "111111" : "000000";
+
+      await expect(
+        verifySecondStep(sql, kms, KEY_ARN, {
+          accessToken: sf.accessToken,
+          now: t1,
+          method: "totp",
+          code: wrongCode,
+        }),
+      ).resolves.toEqual({ outcome: "refused" });
+
+      const verified = await verifySecondStep(sql, kms, KEY_ARN, {
+        accessToken: sf.accessToken,
+        now: t1,
+        method: "totp",
+        code: rightCode,
+      });
+      expect(verified.outcome).toBe("verified");
+
+      const [sfRow] = await sql<{ second_factor_attempts: number }[]>`
+        select second_factor_attempts from identity.sessions where access_hash = ${sfHash}
+      `;
+      expect(sfRow?.second_factor_attempts).toBe(2);
+    });
+  });
+
+  // Pin 120
+  it("a recovery session answers refused to a correct TOTP fresh check and stays without a fresh factor", async () => {
+    const now = new Date("2026-11-28T00:00:00.000Z");
+    const t1 = new Date(now.getTime() + 30_000);
+    const t2 = new Date(t1.getTime() + 30_000);
+    // After the ten-minute window, and still inside the 15-minute life of the access token.
+    const t3 = new Date(t1.getTime() + TEN_MINUTES_MS + 30_000);
+    await withSql(async (sql) => {
+      const enrolled = await enrolTotpForTest(sql, kms, KEY_ARN, {
+        email: "pin120-recovery-totp@example.test",
+        now,
+        adminRpId: ADMIN_RP_ID,
+      });
+      const userId = enrolled.tokens.userId;
+
+      // A real backup-code sign-in opens the recovery session.
+      const sf = await createSession(sql, kms, KEY_ARN, { userId, now: t1, kind: "second_factor" });
+      const recovery = await verifySecondStep(sql, kms, KEY_ARN, {
+        accessToken: sf.accessToken,
+        now: t1,
+        method: "backup_code",
+        code: enrolled.backupCodes[0]!,
+      });
+      if (recovery.outcome !== "verified") {
+        throw new Error("expected a backup-code sign-in");
+      }
+      const recoveryHash = await sessionAccessHash(sql, kms, KEY_ARN, recovery.tokens.accessToken);
+      const readRecovery = async () => {
+        const [row] = await sql<
+          { factor: string | null; fresh_factor_at: Date | null; recovery_until: Date | null }[]
+        >`
+          select factor, fresh_factor_at, recovery_until
+          from identity.sessions
+          where access_hash = ${recoveryHash}
+        `;
+        return row;
+      };
+      const before = await readRecovery();
+      expect(before?.factor).toBe("otp_backup_code");
+      expect(before?.fresh_factor_at).toBeNull();
+      expect(before?.recovery_until).toEqual(new Date(t1.getTime() + TEN_MINUTES_MS));
+
+      // A correct code, inside the recovery window, is refused.
+      await expect(
+        freshCheckTotp(sql, kms, KEY_ARN, {
+          accessToken: recovery.tokens.accessToken,
+          now: t2,
+          code: totpCode(enrolled.key, stepAt(t2)),
+        }),
+      ).resolves.toEqual({ outcome: "refused" });
+
+      // Control: the same code from the user's ordinary tenant session is fresh, so the code was
+      // right and the recovery session is the only thing wrong with the check above.
+      await expect(
+        freshCheckTotp(sql, kms, KEY_ARN, {
+          accessToken: enrolled.tokens.accessToken,
+          now: t2,
+          code: totpCode(enrolled.key, stepAt(t2)),
+        }),
+      ).resolves.toEqual({ outcome: "fresh" });
+
+      // After the window has ended, recovery_until stays set and the session still never passes.
+      await expect(
+        freshCheckTotp(sql, kms, KEY_ARN, {
+          accessToken: recovery.tokens.accessToken,
+          now: t3,
+          code: totpCode(enrolled.key, stepAt(t3)),
+        }),
+      ).resolves.toEqual({ outcome: "refused" });
+
+      expect((await readRecovery())?.fresh_factor_at).toBeNull();
+    });
+  });
+
+  // Pin 121
+  it("a recovery session answers refused to a correct passkey fresh check and stays without a fresh factor", async () => {
+    const now = new Date("2026-11-28T00:00:00.000Z");
+    const t1 = new Date(now.getTime() + 30_000);
+    const t2 = new Date(t1.getTime() + 30_000);
+    await withSql(async (sql) => {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: "pin121-recovery-pk@example.test",
+      });
+      const enrolled = await registerTenantPasskeyForTest(sql, kms, userId, now);
+
+      // A real backup-code sign-in opens the recovery session.
+      const sf = await createSession(sql, kms, KEY_ARN, { userId, now: t1, kind: "second_factor" });
+      const recovery = await verifySecondStep(sql, kms, KEY_ARN, {
+        accessToken: sf.accessToken,
+        now: t1,
+        method: "backup_code",
+        code: enrolled.backupCodes[0]!,
+      });
+      if (recovery.outcome !== "verified") {
+        throw new Error("expected a backup-code sign-in");
+      }
+      const recoveryHash = await sessionAccessHash(sql, kms, KEY_ARN, recovery.tokens.accessToken);
+      const readRecovery = async () => {
+        const [row] = await sql<
+          { factor: string | null; fresh_factor_at: Date | null; recovery_until: Date | null }[]
+        >`
+          select factor, fresh_factor_at, recovery_until
+          from identity.sessions
+          where access_hash = ${recoveryHash}
+        `;
+        return row;
+      };
+      const before = await readRecovery();
+      expect(before?.factor).toBe("otp_backup_code");
+      expect(before?.fresh_factor_at).toBeNull();
+      expect(before?.recovery_until).toEqual(new Date(t1.getTime() + TEN_MINUTES_MS));
+
+      // The recovery session cannot ask for a challenge, but a challenge belongs to the user and
+      // not to a session. The user's ordinary session asks for one, and the recovery session
+      // answers it with a valid user-verified assertion.
+      const opts = await beginFreshPasskey(sql, kms, KEY_ARN, {
+        accessToken: enrolled.tokens.accessToken,
+        now: t2,
+        adminRpId: ADMIN_RP_ID,
+      });
+      if (opts.outcome !== "started") {
+        throw new Error("expected started");
+      }
+      const authData = authenticatorDataBytes({ rpId: ADMIN_RP_ID, signCount: 1, flags: 0x05 });
+      const client = clientDataBytes("webauthn.get", opts.options.challenge, ADMIN_ORIGIN);
+      const assertion = {
+        adminRpId: ADMIN_RP_ID,
+        credentialId: enrolled.credentialId,
+        clientDataJSON: client,
+        authenticatorData: authData,
+        signature: await enrolled.key.sign(concatBytes([authData, await sha256Bytes(client)])),
+      };
+
+      await expect(
+        verifyFreshPasskey(sql, kms, KEY_ARN, {
+          accessToken: recovery.tokens.accessToken,
+          now: t2,
+          ...assertion,
+        }),
+      ).resolves.toEqual({ outcome: "refused" });
+      expect((await readRecovery())?.fresh_factor_at).toBeNull();
+
+      // Control: the same assertion answered by the user's ordinary tenant session is fresh, so
+      // the assertion was valid and the recovery session is the only thing wrong with the answer
+      // above. The refusal also left the challenge unused.
+      await expect(
+        verifyFreshPasskey(sql, kms, KEY_ARN, {
+          accessToken: enrolled.tokens.accessToken,
+          now: t2,
+          ...assertion,
+        }),
+      ).resolves.toEqual({ outcome: "fresh" });
+    });
+  });
+
+  // Tests-only floor check
+  it("second_factor_attempts stays at zero after a correct fresh check", async () => {
+    const now = new Date("2026-11-28T00:00:00.000Z");
+    const t1 = new Date(now.getTime() + 30_000);
+    const t2 = new Date(t1.getTime() + 30_000);
+    await withSql(async (sql) => {
+      const enrolledTotp = await enrolTotpForTest(sql, kms, KEY_ARN, {
+        email: "floor-totp@example.test",
+        now,
+        adminRpId: ADMIN_RP_ID,
+      });
+      const totpHash = await sessionAccessHash(sql, kms, KEY_ARN, enrolledTotp.tokens.accessToken);
+
+      await expect(
+        freshCheckTotp(sql, kms, KEY_ARN, {
+          accessToken: enrolledTotp.tokens.accessToken,
+          now: t1,
+          code: totpCode(enrolledTotp.key, stepAt(t1)),
+        }),
+      ).resolves.toEqual({ outcome: "fresh" });
+
+      const [afterTotp] = await sql<{ second_factor_attempts: number }[]>`
+        select second_factor_attempts from identity.sessions where access_hash = ${totpHash}
+      `;
+      expect(afterTotp?.second_factor_attempts).toBe(0);
+
+      // Two wrong checks followed by a correct check leaves attempts at 2 (only the correct attempt is returned)
+      const right2 = totpCode(enrolledTotp.key, stepAt(t2));
+      const wrong2 = right2 === "000000" ? "111111" : "000000";
+      await expect(
+        freshCheckTotp(sql, kms, KEY_ARN, {
+          accessToken: enrolledTotp.tokens.accessToken,
+          now: t2,
+          code: wrong2,
+        }),
+      ).resolves.toEqual({ outcome: "refused" });
+      await expect(
+        freshCheckTotp(sql, kms, KEY_ARN, {
+          accessToken: enrolledTotp.tokens.accessToken,
+          now: t2,
+          code: wrong2,
+        }),
+      ).resolves.toEqual({ outcome: "refused" });
+      await expect(
+        freshCheckTotp(sql, kms, KEY_ARN, {
+          accessToken: enrolledTotp.tokens.accessToken,
+          now: t2,
+          code: right2,
+        }),
+      ).resolves.toEqual({ outcome: "fresh" });
+
+      const [afterPartial] = await sql<{ second_factor_attempts: number }[]>`
+        select second_factor_attempts from identity.sessions where access_hash = ${totpHash}
+      `;
+      expect(afterPartial?.second_factor_attempts).toBe(2);
+
+      // Passkey fresh check starting at 0 also stays at 0
+      const { userId: pkUserId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: "floor-pk@example.test",
+      });
+      const enrolledPk = await registerTenantPasskeyForTest(sql, kms, pkUserId, now);
+      const pkHash = await sessionAccessHash(sql, kms, KEY_ARN, enrolledPk.tokens.accessToken);
+      const opts = await beginFreshPasskey(sql, kms, KEY_ARN, {
+        accessToken: enrolledPk.tokens.accessToken,
+        now: t1,
+        adminRpId: ADMIN_RP_ID,
+      });
+      if (opts.outcome !== "started") {
+        throw new Error("expected started");
+      }
+      const authData = authenticatorDataBytes({ rpId: ADMIN_RP_ID, signCount: 1, flags: 0x05 });
+      const client = clientDataBytes("webauthn.get", opts.options.challenge, ADMIN_ORIGIN);
+      await expect(
+        verifyFreshPasskey(sql, kms, KEY_ARN, {
+          accessToken: enrolledPk.tokens.accessToken,
+          now: t1,
+          adminRpId: ADMIN_RP_ID,
+          credentialId: enrolledPk.credentialId,
+          clientDataJSON: client,
+          authenticatorData: authData,
+          signature: await enrolledPk.key.sign(concatBytes([authData, await sha256Bytes(client)])),
+        }),
+      ).resolves.toEqual({ outcome: "fresh" });
+
+      const [afterPk] = await sql<{ second_factor_attempts: number }[]>`
+        select second_factor_attempts from identity.sessions where access_hash = ${pkHash}
+      `;
+      expect(afterPk?.second_factor_attempts).toBe(0);
+    });
+  });
 });
+
+function concatBytes(parts: Uint8Array[]): Uint8Array {
+  const length = parts.reduce((sum, part) => sum + part.byteLength, 0);
+  const out = new Uint8Array(length);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.byteLength;
+  }
+  return out;
+}
+
+async function sha256Bytes(bytes: Uint8Array): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes)));
+}
+
+function clientDataBytes(type: string, challenge: Uint8Array, origin: string): Uint8Array {
+  return new TextEncoder().encode(
+    JSON.stringify({
+      type,
+      challenge: Buffer.from(challenge).toString("base64url"),
+      origin,
+    }),
+  );
+}
+
+function coseKeyBytes(x: Uint8Array, y: Uint8Array): Uint8Array {
+  return encodeCbor(
+    new Map<Cbor, Cbor>([
+      [1, 2],
+      [3, -7],
+      [-1, 1],
+      [-2, x],
+      [-3, y],
+    ]),
+  );
+}
+
+function authenticatorDataBytes(input: {
+  rpId: string;
+  signCount: number;
+  credentialId?: Uint8Array;
+  cose?: Uint8Array;
+  flags?: number;
+}): Uint8Array {
+  const rpIdHash = new Uint8Array(createHash("sha256").update(Buffer.from(input.rpId)).digest());
+  const attested = input.credentialId !== undefined && input.cose !== undefined;
+  const flags = input.flags ?? (attested ? 0x45 : 0x05);
+  const count = new Uint8Array(4);
+  new DataView(count.buffer).setUint32(0, input.signCount);
+  const parts: Uint8Array[] = [rpIdHash, Uint8Array.of(flags), count];
+  if (attested && input.credentialId && input.cose) {
+    const length = new Uint8Array(2);
+    new DataView(length.buffer).setUint16(0, input.credentialId.byteLength);
+    parts.push(new Uint8Array(16), length, input.credentialId, input.cose);
+  }
+  return concatBytes(parts);
+}
+
+function attestationObjectBytes(authData: Uint8Array): Uint8Array {
+  return encodeCbor(
+    new Map<Cbor, Cbor>([
+      ["fmt", "none"],
+      ["attStmt", new Map<Cbor, Cbor>()],
+      ["authData", authData],
+    ]),
+  );
+}
+
+async function generatePasskeySigner(): Promise<{
+  x: Uint8Array;
+  y: Uint8Array;
+  sign: (data: Uint8Array) => Promise<Uint8Array>;
+}> {
+  const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const jwk = publicKey.export({ format: "jwk" });
+  return {
+    x: new Uint8Array(Buffer.from(jwk.x ?? "", "base64url")),
+    y: new Uint8Array(Buffer.from(jwk.y ?? "", "base64url")),
+    sign: async (data) =>
+      new Uint8Array(signDer("sha256", Buffer.from(data), { key: privateKey, dsaEncoding: "der" })),
+  };
+}
+
+async function registerTenantPasskeyForTest(
+  sql: Sql,
+  kms: KmsPort,
+  userId: string,
+  now: Date,
+): Promise<{
+  credentialId: Uint8Array;
+  key: Awaited<ReturnType<typeof generatePasskeySigner>>;
+  tokens: SessionTokens;
+  backupCodes: string[];
+}> {
+  const sf = await createSession(sql, kms, KEY_ARN, { userId, now, kind: "second_factor" });
+  const started = await beginTenantPasskeyRegistration(sql, kms, KEY_ARN, {
+    accessToken: sf.accessToken,
+    now,
+    adminRpId: ADMIN_RP_ID,
+  });
+  if (started.outcome !== "started") {
+    throw new Error("expected tenant passkey registration start");
+  }
+  const key = await generatePasskeySigner();
+  const credentialId = crypto.getRandomValues(new Uint8Array(16));
+  const authData = authenticatorDataBytes({
+    rpId: ADMIN_RP_ID,
+    signCount: 0,
+    credentialId,
+    cose: coseKeyBytes(key.x, key.y),
+    flags: 0x45,
+  });
+  const enrolled = await finishTenantPasskeyRegistration(
+    sql,
+    kms,
+    KEY_ARN,
+    {
+      accessToken: sf.accessToken,
+      now,
+      adminRpId: ADMIN_RP_ID,
+      clientDataJSON: clientDataBytes("webauthn.create", started.options.challenge, ADMIN_ORIGIN),
+      attestationObject: attestationObjectBytes(authData),
+    },
+    { notice: new MemoryNotice() },
+  );
+  if (enrolled.outcome !== "enrolled" || !enrolled.tokens) {
+    throw new Error("expected first-factor passkey enrolment");
+  }
+  return { credentialId, key, tokens: enrolled.tokens, backupCodes: enrolled.backupCodes };
+}

@@ -173,6 +173,7 @@ describe("life events", () => {
 
           // List adult events
           const adultList = await listLifeEvents(tx, kms, KEY_ARN, {
+            childView: "presence",
             personId: adult.personId,
             actorUserId: null,
           });
@@ -186,20 +187,20 @@ describe("life events", () => {
             notes: "Married with witnesses",
           });
 
-          // List minor events
+          // List minor events: ids only for a Community Admin, refused for everyone else
           const minorList = await listLifeEvents(tx, kms, KEY_ARN, {
+            childView: "admin",
             personId: minor.personId,
             actorUserId: null,
           });
-          expect(minorList.items).toHaveLength(1);
-          expect(minorList.items[0]).toEqual({
-            eventId: minorCreated.eventId,
-            version: 1,
-            type: "baptism",
-            date: "2024-03-10",
-            place: "St Patrick's",
-            notes: "Baptism record",
-          });
+          expect(minorList.items).toEqual([{ eventId: minorCreated.eventId }]);
+          await expect(
+            listLifeEvents(tx, kms, KEY_ARN, {
+              childView: "presence",
+              personId: minor.personId,
+              actorUserId: null,
+            }),
+          ).rejects.toMatchObject({ code: "life_event_not_found" });
 
           // Update adult event
           const updated = await updateLifeEvent(tx, kms, KEY_ARN, {
@@ -215,6 +216,7 @@ describe("life events", () => {
           expect(updated.version).toBe(2);
 
           const adultListAfter = await listLifeEvents(tx, kms, KEY_ARN, {
+            childView: "presence",
             personId: adult.personId,
             actorUserId: null,
           });
@@ -376,16 +378,14 @@ describe("life events", () => {
           );
           expect(new TextDecoder().decode(decryptedNotesAfter)).toBe("Updated communion note");
 
-          // Assert the envelope still decrypts after the update (a list returns the new values)
+          // The envelope still opens with the household key after the update (checked above). The
+          // list no longer returns a child's values: it returns the id only.
           const listed = await listLifeEvents(tx, kms, KEY_ARN, {
+            childView: "admin",
             personId: minor.personId,
             actorUserId: null,
           });
-          expect(listed.items).toHaveLength(1);
-          expect(listed.items[0]?.place).toBe("St Jude's Chapel");
-          expect(listed.items[0]?.notes).toBe("Updated communion note");
-          expect(listed.items[0]?.date).toBe("2025-05-19");
-          expect(listed.items[0]?.version).toBe(2);
+          expect(listed.items).toEqual([{ eventId: created.eventId }]);
         }),
       );
     } finally {
@@ -559,6 +559,7 @@ describe("life events", () => {
           let error: unknown;
           try {
             listResult1 = await listLifeEvents(tx, kms, KEY_ARN, {
+              childView: "presence",
               personId,
               actorUserId: null,
             });
@@ -625,6 +626,7 @@ describe("life events", () => {
             let error: unknown;
             try {
               listResult2 = await listLifeEvents(tx, kms, KEY_ARN, {
+                childView: "presence",
                 personId: comm2PersonId,
                 actorUserId: null,
               });
@@ -708,7 +710,11 @@ describe("life events", () => {
       await withRequest({ requestId: REQUEST_ID }, () =>
         withAppTransaction(app, { orgId: org1Id, communityId: comm1B }, async (tx) => {
           await expect(
-            listLifeEvents(tx, kms, KEY_ARN, { personId: personInComm1A, actorUserId: null }),
+            listLifeEvents(tx, kms, KEY_ARN, {
+              childView: "presence",
+              personId: personInComm1A,
+              actorUserId: null,
+            }),
           ).rejects.toThrowError(new PeopleError("life_event_not_found"));
 
           await expect(
@@ -748,7 +754,11 @@ describe("life events", () => {
       await withRequest({ requestId: REQUEST_ID }, () =>
         withAppTransaction(app, { orgId: org2Id, communityId: comm2 }, async (tx) => {
           await expect(
-            listLifeEvents(tx, kms, KEY_ARN, { personId: personInComm1A, actorUserId: null }),
+            listLifeEvents(tx, kms, KEY_ARN, {
+              childView: "presence",
+              personId: personInComm1A,
+              actorUserId: null,
+            }),
           ).rejects.toThrowError(new PeopleError("life_event_not_found"));
 
           await expect(
@@ -855,6 +865,7 @@ describe("life events", () => {
 
           // Row unchanged
           const list = await listLifeEvents(tx, kms, KEY_ARN, {
+            childView: "presence",
             personId: person.personId,
             actorUserId: null,
           });
@@ -983,6 +994,7 @@ describe("life events", () => {
       await withRequest({ requestId: REQUEST_ID }, () =>
         withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
           const list = await listLifeEvents(tx, kms, KEY_ARN, {
+            childView: "presence",
             personId: concurrentPersonId,
             actorUserId: null,
           });
@@ -1039,6 +1051,7 @@ describe("life events", () => {
 
           // Empty list audit: targetIds has [person.personId]
           await listLifeEvents(tx, kms, KEY_ARN, {
+            childView: "presence",
             personId: person.personId,
             actorUserId: null,
           });
@@ -1081,6 +1094,7 @@ describe("life events", () => {
 
           // List audit with events: targetIds has event IDs
           await listLifeEvents(tx, kms, KEY_ARN, {
+            childView: "presence",
             personId: person.personId,
             actorUserId: null,
           });
@@ -1285,6 +1299,7 @@ describe("life events", () => {
           expect(kmsGenerateCalls).toBe(0);
 
           const list = await listLifeEvents(tx, kms, KEY_ARN, {
+            childView: "presence",
             personId,
             actorUserId: null,
           });
@@ -1360,6 +1375,7 @@ describe("life events", () => {
       await withRequest({ requestId: REQUEST_ID }, () =>
         withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
           const listed = await listLifeEvents(tx, kms, KEY_ARN, {
+            childView: "presence",
             personId,
             actorUserId: null,
           });
@@ -1412,6 +1428,7 @@ describe("life events", () => {
         withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
           await expect(
             listLifeEvents(tx, kms, KEY_ARN, {
+              childView: "presence",
               personId,
               actorUserId: null,
             }),
@@ -1614,6 +1631,7 @@ describe("life events", () => {
           });
 
           const list = await listLifeEvents(tx, kms, KEY_ARN, {
+            childView: "presence",
             personId: person.personId,
             actorUserId: null,
           });
@@ -1789,6 +1807,7 @@ describe("life events", () => {
 
           // listLifeEvents still succeeds
           const list = await listLifeEvents(tx, kms, KEY_ARN, {
+            childView: "presence",
             personId,
             actorUserId: null,
           });

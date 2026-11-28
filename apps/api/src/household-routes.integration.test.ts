@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bootstrapOwner, createCustomRole, grantRole } from "@community-hub/access";
 import { addMember } from "@community-hub/access/testing";
+import { readHouseholdResponse } from "@community-hub/contracts/households";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import { applyProductMigrations, newId, withAppTransaction } from "@community-hub/db";
 import {
@@ -170,6 +171,8 @@ describe("household routes real-database integration (finding 4)", () => {
   let viewOnlyToken: string;
   let restrictedOnlyToken: string;
   let manageOnlyToken: string;
+  // An org_admin: people.view, people.manage and people.restricted.read, and not a Community Admin.
+  let orgAdminToken: string;
 
   let householdA1Id: string;
   let minorCharlieId: string;
@@ -352,6 +355,22 @@ describe("household routes real-database integration (finding 4)", () => {
           userId: manageOnlySession.userId,
           roleKey: null,
           customRoleId: role.customRoleId,
+          actorUserId: ownerA1Session.userId,
+        });
+      }),
+    );
+
+    // An organisation admin with no community_admin grant
+    const orgAdminSession = await signIn(`org-admin-${orgIdA.slice(0, 8)}@example.test`);
+    orgAdminToken = orgAdminSession.accessToken;
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: orgIdA, communityId: communityIdA1 }, async (tx) => {
+        await addMember(tx, orgAdminSession.userId);
+        await grantRole(tx, {
+          now,
+          userId: orgAdminSession.userId,
+          roleKey: "org_admin",
+          customRoleId: null,
           actorUserId: ownerA1Session.userId,
         });
       }),
@@ -588,13 +607,13 @@ describe("household routes real-database integration (finding 4)", () => {
       label: string | null;
       adults: Array<{ personId: string; givenName: string; familyName: string }>;
       guardians?: unknown[];
-      minors?: unknown[];
+      minors?: unknown;
     };
     expect(parsedRead.householdId).toBe(householdA1Id);
     expect(parsedRead.label).toBeNull();
     expect(parsedRead.adults).toHaveLength(2);
     expect(parsedRead.guardians).toEqual([]);
-    expect(parsedRead.minors).toBeUndefined();
+    expect(parsedRead.minors).toEqual({ childCount: 2 });
 
     // 2. List route: caller holding only people.view
     const resList = await post("/v1/households/list", { communitySlug: slugA1 }, viewOnlyToken);
@@ -615,25 +634,55 @@ describe("household routes real-database integration (finding 4)", () => {
     expect(foundItem?.adultCount).toBe(2);
   });
 
-  it("exposes minor details to callers holding people.restricted.read (pin 9, 11)", async () => {
-    // Read route: caller holding people.restricted.read
+  it("pin 73: the household read gives a Community Admin each child as an id and a label, and a caller holding people.restricted.read a count (pin 9, 11)", async () => {
+    type Read = {
+      householdId: string;
+      label: string | null;
+      adults: Array<{ personId: string }>;
+      minors: {
+        childCount: number;
+        children?: Array<{ personId: string; label: string }>;
+      };
+      guardians: Array<{
+        linkId: string;
+        guardianId: string;
+        childId: string;
+        child?: { personId: string; label: string };
+      }>;
+    };
+    const forbiddenInEveryAnswer = [
+      "Charlie",
+      "Daisy",
+      "2015-03-12",
+      "2017-08-25",
+      "ageBasis",
+      "birthdayMd",
+    ];
+
+    // A safeguarding officer: holds people.restricted.read and is not a Community Admin.
     const resRestricted = await post(
       "/v1/households/read",
       { communitySlug: slugA1, householdId: householdA1Id },
       restrictedOnlyToken,
     );
     expect(resRestricted.status).toBe(200);
-
     const rawRestrictedBytes = await resRestricted.text();
-    expect(rawRestrictedBytes).toContain("Charlie");
-    expect(rawRestrictedBytes).toContain("Daisy");
-    expect(rawRestrictedBytes).toContain("2015-03-12");
-    expect(rawRestrictedBytes).toContain("2017-08-25");
-    expect(rawRestrictedBytes).toContain(minorCharlieId);
-    expect(rawRestrictedBytes).toContain(minorDaisyId);
-    expect(rawRestrictedBytes).toContain("The Smiths");
+    const restricted = JSON.parse(rawRestrictedBytes) as Read;
+    // The adult-level label is read as before; a child is only a number.
+    expect(restricted.label).toBe("The Smiths");
+    expect(restricted.minors).toEqual({ childCount: 2 });
+    expect(restricted.guardians).toEqual([]);
+    for (const forbidden of [
+      ...forbiddenInEveryAnswer,
+      minorCharlieId,
+      minorDaisyId,
+      guardianLinkId,
+      "Child ",
+    ]) {
+      expect(rawRestrictedBytes).not.toContain(forbidden);
+    }
 
-    // Also owner holding all permissions
+    // The bootstrap owner holds the community_admin role in this community.
     const resOwner = await post(
       "/v1/households/read",
       { communitySlug: slugA1, householdId: householdA1Id },
@@ -641,8 +690,28 @@ describe("household routes real-database integration (finding 4)", () => {
     );
     expect(resOwner.status).toBe(200);
     const rawOwnerBytes = await resOwner.text();
-    expect(rawOwnerBytes).toContain("Charlie");
-    expect(rawOwnerBytes).toContain("Daisy");
+    const owner = JSON.parse(rawOwnerBytes) as Read;
+    expect(owner.label).toBe("The Smiths");
+    expect(owner.minors.childCount).toBe(2);
+    const children = owner.minors.children ?? [];
+    // Two children created in one millisecond may be numbered either way round: compare as sets.
+    expect(children.map((child) => child.personId).sort()).toEqual(
+      [minorCharlieId, minorDaisyId].sort(),
+    );
+    expect(children.map((child) => child.label).sort()).toEqual(["Child 1", "Child 2"]);
+    for (const child of children) {
+      expect(Object.keys(child).sort()).toEqual(["label", "personId"]);
+    }
+    // Each guardian link names its child as the same id and label (the three links of the fixture).
+    expect(owner.guardians).toHaveLength(3);
+    const labelOf = new Map(children.map((child) => [child.personId, child.label]));
+    for (const link of owner.guardians) {
+      expect(link.child).toEqual({ personId: link.childId, label: labelOf.get(link.childId) });
+    }
+    // Not even the Community Admin's household read carries a name or a date of birth.
+    for (const forbidden of forbiddenInEveryAnswer) {
+      expect(rawOwnerBytes).not.toContain(forbidden);
+    }
   });
 
   it("enforces tenant and community isolation: cross-org and cross-community ids give identical empty 404 to absent ids (pin 12)", async () => {
@@ -1077,21 +1146,27 @@ describe("household routes real-database integration (finding 4)", () => {
   });
 
   it("pins the household predicate in readHouseholdDetail across co-located households (finding H2)", async () => {
-    // 1. Restricted caller reads Household A1 ("The Smiths")
-    const resA1Restricted = await post(
-      "/v1/households/read",
-      { communitySlug: slugA1, householdId: householdA1Id },
-      restrictedOnlyToken,
-    );
-    expect(resA1Restricted.status).toBe(200);
-    const bodyA1Restricted = (await resA1Restricted.json()) as {
+    type Detail = {
       householdId: string;
       label: string | null;
       adults: Array<{ personId: string; givenName: string; familyName: string }>;
-      minors?: Array<{ personId: string; givenName: string; familyName: string }>;
-      guardians?: Array<{ linkId: string; guardianId: string; childId: string }>;
+      minors: { childCount: number; children?: Array<{ personId: string; label: string }> };
+      guardians: Array<{
+        linkId: string;
+        guardianId: string;
+        childId: string;
+        child?: { personId: string; label: string };
+      }>;
+    };
+    const read = async (token: string, householdId: string): Promise<Detail> => {
+      const res = await post("/v1/households/read", { communitySlug: slugA1, householdId }, token);
+      expect(res.status).toBe(200);
+      return (await res.json()) as Detail;
     };
 
+    // 1. A caller holding people.restricted.read reads Household A1 ("The Smiths"): the label,
+    //    the adults, and the number of children of this household only.
+    const bodyA1Restricted = await read(restrictedOnlyToken, householdA1Id);
     expect(bodyA1Restricted.householdId).toBe(householdA1Id);
     expect(bodyA1Restricted.label).toBe("The Smiths");
 
@@ -1103,17 +1178,23 @@ describe("household routes real-database integration (finding 4)", () => {
     expect(adultIdsA1).not.toContain(adultFionaId);
     expect(bodyA1Restricted.adults).toHaveLength(2);
 
-    // Minors: only Charlie and Daisy; George must NOT appear
-    const minorIdsA1 = bodyA1Restricted.minors!.map((m) => m.personId);
+    // Children: Charlie and Daisy count, George (Household 2) does not
+    expect(bodyA1Restricted.minors).toEqual({ childCount: 2 });
+    expect(bodyA1Restricted.guardians).toEqual([]);
+
+    // 1b. A Community Admin reads Household A1: the same predicate holds for ids and links.
+    const adminA1 = await read(ownerA1Token, householdA1Id);
+    const minorIdsA1 = (adminA1.minors.children ?? []).map((m) => m.personId);
     expect(minorIdsA1).toContain(minorCharlieId);
     expect(minorIdsA1).toContain(minorDaisyId);
     expect(minorIdsA1).not.toContain(minorGeorgeId);
-    expect(bodyA1Restricted.minors).toHaveLength(2);
+    expect(adminA1.minors.childCount).toBe(2);
+    expect(minorIdsA1).toHaveLength(2);
 
     // Guardian links: only links for Charlie and Daisy; links involving George or Evan/Fiona must NOT appear
-    const linkIdsA1 = bodyA1Restricted.guardians!.map((g) => g.linkId);
-    const linkChildIdsA1 = bodyA1Restricted.guardians!.map((g) => g.childId);
-    const linkGuardianIdsA1 = bodyA1Restricted.guardians!.map((g) => g.guardianId);
+    const linkIdsA1 = adminA1.guardians.map((g) => g.linkId);
+    const linkChildIdsA1 = adminA1.guardians.map((g) => g.childId);
+    const linkGuardianIdsA1 = adminA1.guardians.map((g) => g.guardianId);
     expect(linkIdsA1).toContain(guardianLinkId);
     expect(linkIdsA1).not.toContain(guardianLinkGeorgeId);
     expect(linkChildIdsA1).toContain(minorCharlieId);
@@ -1121,46 +1202,21 @@ describe("household routes real-database integration (finding 4)", () => {
     expect(linkChildIdsA1).not.toContain(minorGeorgeId);
     expect(linkGuardianIdsA1).not.toContain(adultEvanId);
     expect(linkGuardianIdsA1).not.toContain(adultFionaId);
-    expect(bodyA1Restricted.guardians).toHaveLength(3);
+    expect(adminA1.guardians).toHaveLength(3);
 
     // 2. View-only caller reads Household A1
-    const resA1View = await post(
-      "/v1/households/read",
-      { communitySlug: slugA1, householdId: householdA1Id },
-      viewOnlyToken,
-    );
-    expect(resA1View.status).toBe(200);
-    const bodyA1View = (await resA1View.json()) as {
-      householdId: string;
-      label: string | null;
-      adults: Array<{ personId: string }>;
-      minors?: unknown[];
-      guardians?: unknown[];
-    };
+    const bodyA1View = await read(viewOnlyToken, householdA1Id);
     const adultIdsA1View = bodyA1View.adults.map((a) => a.personId);
     expect(adultIdsA1View).toContain(adultAliceId);
     expect(adultIdsA1View).toContain(adultBobId);
     expect(adultIdsA1View).not.toContain(adultEvanId);
     expect(adultIdsA1View).not.toContain(adultFionaId);
     expect(bodyA1View.adults).toHaveLength(2);
-    expect(bodyA1View.minors).toBeUndefined();
+    expect(bodyA1View.minors).toEqual({ childCount: 2 });
     expect(bodyA1View.guardians).toEqual([]);
 
-    // 3. Restricted caller reads Household A2 ("The Johnsons")
-    const resA2Restricted = await post(
-      "/v1/households/read",
-      { communitySlug: slugA1, householdId: householdA1SecondId },
-      restrictedOnlyToken,
-    );
-    expect(resA2Restricted.status).toBe(200);
-    const bodyA2Restricted = (await resA2Restricted.json()) as {
-      householdId: string;
-      label: string | null;
-      adults: Array<{ personId: string }>;
-      minors?: Array<{ personId: string }>;
-      guardians?: Array<{ linkId: string; guardianId: string; childId: string }>;
-    };
-
+    // 3. A caller holding people.restricted.read reads Household A2 ("The Johnsons")
+    const bodyA2Restricted = await read(restrictedOnlyToken, householdA1SecondId);
     expect(bodyA2Restricted.householdId).toBe(householdA1SecondId);
     expect(bodyA2Restricted.label).toBe("The Johnsons");
 
@@ -1172,45 +1228,45 @@ describe("household routes real-database integration (finding 4)", () => {
     expect(adultIdsA2).not.toContain(adultBobId);
     expect(bodyA2Restricted.adults).toHaveLength(2);
 
-    // Minors: only George; Charlie and Daisy must NOT appear
-    const minorIdsA2 = bodyA2Restricted.minors!.map((m) => m.personId);
+    // Children: only George counts
+    expect(bodyA2Restricted.minors).toEqual({ childCount: 1 });
+    expect(bodyA2Restricted.guardians).toEqual([]);
+
+    // 3b. A Community Admin reads Household A2
+    const adminA2 = await read(ownerA1Token, householdA1SecondId);
+    const minorIdsA2 = (adminA2.minors.children ?? []).map((m) => m.personId);
     expect(minorIdsA2).toContain(minorGeorgeId);
     expect(minorIdsA2).not.toContain(minorCharlieId);
     expect(minorIdsA2).not.toContain(minorDaisyId);
-    expect(bodyA2Restricted.minors).toHaveLength(1);
+    expect(minorIdsA2).toHaveLength(1);
+    // The numbering restarts in each household: George is Child 1 of his own.
+    expect(adminA2.minors.children).toEqual([{ personId: minorGeorgeId, label: "Child 1" }]);
 
     // Guardian links: only George's links; Charlie and Daisy's links must NOT appear
-    const linkIdsA2 = bodyA2Restricted.guardians!.map((g) => g.linkId);
-    const linkChildIdsA2 = bodyA2Restricted.guardians!.map((g) => g.childId);
+    const linkIdsA2 = adminA2.guardians.map((g) => g.linkId);
+    const linkChildIdsA2 = adminA2.guardians.map((g) => g.childId);
     expect(linkIdsA2).toContain(guardianLinkGeorgeId);
     expect(linkIdsA2).not.toContain(guardianLinkId);
     expect(linkChildIdsA2).toContain(minorGeorgeId);
     expect(linkChildIdsA2).not.toContain(minorCharlieId);
     expect(linkChildIdsA2).not.toContain(minorDaisyId);
-    expect(bodyA2Restricted.guardians).toHaveLength(2);
+    expect(adminA2.guardians).toHaveLength(2);
+    for (const link of adminA2.guardians) {
+      expect(link.child).toEqual({ personId: minorGeorgeId, label: "Child 1" });
+    }
 
     // 4. View-only caller reads Household A2
-    const resA2View = await post(
-      "/v1/households/read",
-      { communitySlug: slugA1, householdId: householdA1SecondId },
-      viewOnlyToken,
-    );
-    expect(resA2View.status).toBe(200);
-    const bodyA2View = (await resA2View.json()) as {
-      householdId: string;
-      adults: Array<{ personId: string }>;
-      minors?: unknown[];
-      guardians?: unknown[];
-    };
+    const bodyA2View = await read(viewOnlyToken, householdA1SecondId);
     const adultIdsA2View = bodyA2View.adults.map((a) => a.personId);
     expect(adultIdsA2View).toContain(adultEvanId);
     expect(adultIdsA2View).toContain(adultFionaId);
     expect(adultIdsA2View).not.toContain(adultAliceId);
     expect(adultIdsA2View).not.toContain(adultBobId);
     expect(bodyA2View.adults).toHaveLength(2);
-    expect(bodyA2View.minors).toBeUndefined();
+    expect(bodyA2View.minors).toEqual({ childCount: 1 });
     expect(bodyA2View.guardians).toEqual([]);
   });
+
   it("rejects a partial rights object on add-minor and link; omitted rights default to view and consent", async () => {
     const scopeA1 = { orgId: orgIdA, communityId: communityIdA1 };
     const rightsOf = async (childId: string, guardianId: string) =>
@@ -1637,6 +1693,522 @@ describe("household routes real-database integration (finding 4)", () => {
         action: "people.permission.denied",
         purpose: "people.person.manage",
       });
+    }
+  });
+
+  it("rename answers 422 label_contains_child_name and nothing else, and changes nothing", async () => {
+    const scopeA1 = { orgId: orgIdA, communityId: communityIdA1 };
+    const householdId = await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(secondApp, scopeA1, async (tx) => {
+        const household = await createHousehold(tx, kms, KEY_ARN, {
+          now,
+          label: "Quillonwick",
+          actorUserId: null,
+        });
+        await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: false,
+          householdId: household.householdId,
+          dateOfBirth: "2018-05-05",
+          givenName: "Zephyrine",
+          familyName: "Quillonwick",
+          email: null,
+          phone: null,
+          actorUserId: null,
+        });
+        return household.householdId;
+      }),
+    );
+    const state = () =>
+      withAppTransaction(secondApp, scopeA1, async (tx) => {
+        const [household] = await tx<{ version: number }[]>`
+          select version from app.households where id = ${householdId}::uuid
+        `;
+        const [audit] = await tx<{ count: number }[]>`
+          select count(*)::int as count from app.audit_events
+        `;
+        return { version: household!.version, audit: audit!.count };
+      });
+    const before = await state();
+
+    // ownerA1 is the Community Admin of this community.
+    const res = await post(
+      "/v1/households/rename",
+      { communitySlug: slugA1, householdId, version: 1, label: "Zephyrine's family" },
+      ownerA1Token,
+    );
+
+    expect(res.status).toBe(422);
+    expect(await res.text()).toBe('{"code":"label_contains_child_name"}');
+    expect(await state()).toEqual(before);
+  });
+
+  it("add-minor answers 422 label_contains_child_name and nothing else onto a label naming the child", async () => {
+    const scopeA1 = { orgId: orgIdA, communityId: communityIdA1 };
+    const family = await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(secondApp, scopeA1, async (tx) => {
+        // A new family has no children, so its label is not checked when it is created.
+        const household = await createHousehold(tx, kms, KEY_ARN, {
+          now,
+          label: "Quillonwick (Zephyrine)",
+          actorUserId: null,
+        });
+        const adult = await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: true,
+          householdId: household.householdId,
+          dateOfBirth: null,
+          givenName: "Aurelia",
+          familyName: "Quillonwick",
+          email: null,
+          phone: null,
+          actorUserId: null,
+        });
+        return { householdId: household.householdId, adultId: adult.personId };
+      }),
+    );
+    const state = () =>
+      withAppTransaction(secondApp, scopeA1, async (tx) => {
+        const [persons] = await tx<{ count: number }[]>`
+          select count(*)::int as count from app.persons
+        `;
+        const [links] = await tx<{ count: number }[]>`
+          select count(*)::int as count from app.guardian_links
+        `;
+        const [audit] = await tx<{ count: number }[]>`
+          select count(*)::int as count from app.audit_events
+        `;
+        return { persons: persons!.count, links: links!.count, audit: audit!.count };
+      });
+    const before = await state();
+
+    const res = await post(
+      "/v1/households/members/add-minor",
+      {
+        communitySlug: slugA1,
+        householdId: family.householdId,
+        givenName: "Zephyrine",
+        familyName: "Quillonwick",
+        dateOfBirth: "2018-05-05",
+        guardianId: family.adultId,
+      },
+      ownerA1Token,
+    );
+
+    expect(res.status).toBe(422);
+    expect(await res.text()).toBe('{"code":"label_contains_child_name"}');
+    expect(await state()).toEqual(before);
+  });
+
+  type Family = {
+    householdId: string;
+    firstAdultId: string;
+    secondAdultId: string;
+    childId: string | null;
+    // The child's links to the first and the second adult.
+    linkIds: string[];
+  };
+
+  // A family of two adults, with a child linked to the first (and to both when asked).
+  async function seedFamily(
+    scope: { orgId: string; communityId: string },
+    options: { child: boolean; bothLinked?: boolean },
+  ): Promise<Family> {
+    return withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(secondApp, scope, async (tx) => {
+        const household = await createHousehold(tx, kms, KEY_ARN, {
+          now,
+          label: "Wexcombe",
+          actorUserId: null,
+        });
+        const adult = (givenName: string) =>
+          createPerson(tx, kms, KEY_ARN, {
+            now,
+            declaredAdult: true,
+            householdId: household.householdId,
+            dateOfBirth: null,
+            givenName,
+            familyName: "Wexcombe",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+        const first = await adult("Aurelia");
+        const second = await adult("Benedict");
+        const family: Family = {
+          householdId: household.householdId,
+          firstAdultId: first.personId,
+          secondAdultId: second.personId,
+          childId: null,
+          linkIds: [],
+        };
+        if (!options.child) {
+          return family;
+        }
+        const child = await addMinor(tx, kms, KEY_ARN, {
+          now,
+          householdId: household.householdId,
+          givenName: "Zephyrine",
+          familyName: "Wexcombe",
+          dateOfBirth: "2018-05-05",
+          guardianId: first.personId,
+          actorUserId: null,
+        });
+        family.childId = child.personId;
+        family.linkIds.push(child.linkId);
+        if (options.bothLinked === true) {
+          const link = await linkGuardian(tx, {
+            now,
+            householdId: household.householdId,
+            guardianPersonId: second.personId,
+            childPersonId: child.personId,
+            consent: true,
+            pickup: false,
+            view: true,
+            manage: false,
+            actorUserId: null,
+          });
+          family.linkIds.push(link.linkId);
+        }
+        return family;
+      }),
+    );
+  }
+
+  // What a write about one family could change, and the number of audit rows of the community.
+  async function familyState(scope: { orgId: string; communityId: string }, householdId: string) {
+    return withAppTransaction(secondApp, scope, async (tx) => {
+      const [household] = await tx<{ version: number; label: Uint8Array | null }[]>`
+        select version, label from app.households where id = ${householdId}::uuid
+      `;
+      const [persons] = await tx<{ count: number }[]>`
+        select count(*)::int as count from app.persons
+      `;
+      const [links] = await tx<{ count: number }[]>`
+        select count(*)::int as count from app.guardian_links
+      `;
+      const [activity] = await tx<{ count: number }[]>`
+        select count(*)::int as count from app.person_activity
+      `;
+      const [audit] = await tx<{ count: number }[]>`
+        select count(*)::int as count from app.audit_events
+      `;
+      return {
+        rows: {
+          household: household!,
+          persons: persons!.count,
+          links: links!.count,
+          activity: activity!.count,
+        },
+        audit: audit!.count,
+      };
+    });
+  }
+
+  async function lastAudit(scope: { orgId: string; communityId: string }) {
+    return withAppTransaction(secondApp, scope, async (tx) => {
+      const [row] = await tx<{ action: string; purpose: string; target_ids: string[] }[]>`
+        select action, purpose, target_ids from app.audit_events order by seq desc limit 1
+      `;
+      return row!;
+    });
+  }
+
+  // Everything a caller can tell two answers apart by, the date aside.
+  async function answer(res: Response) {
+    const headers = [...res.headers.entries()].filter(([name]) => name !== "date");
+    return { status: res.status, body: await res.text(), headers };
+  }
+
+  // Hides or shows a child the way a later chunk will. The user triggers refuse that today, so it
+  // is done as the migrator with them off (see the other hidden-row tests).
+  async function setChildHidden(
+    scope: { orgId: string; communityId: string },
+    childId: string,
+    hidden: boolean,
+  ): Promise<void> {
+    const direct = createPlaintextDirectSql(loadRuntime().productOnlyUrl);
+    try {
+      await withAppTransaction(direct, scope, async (tx) => {
+        await tx.unsafe("ALTER TABLE app.persons DISABLE TRIGGER USER");
+        await tx`
+          update app.persons
+          set deleted_at = case when ${hidden} then now() - interval '1 hour' end,
+              deleted_by = case when ${hidden} then ${newId()}::uuid end
+          where id = ${childId}::uuid
+        `;
+        await tx.unsafe("ALTER TABLE app.persons ENABLE TRIGGER USER");
+      });
+    } finally {
+      await direct.end({ timeout: 1 });
+    }
+  }
+
+  const addChildBody = (family: Family) => ({
+    communitySlug: slugA1,
+    householdId: family.householdId,
+    givenName: "Quillon",
+    familyName: "Wexcombe",
+    dateOfBirth: "2019-05-05",
+    guardianId: family.firstAdultId,
+  });
+
+  it("pin 74: an org_admin without community_admin gets 403 from add-minor, and no child is written", async () => {
+    const scope = { orgId: orgIdA, communityId: communityIdA1 };
+    const family = await seedFamily(scope, { child: false });
+    // org_admin holds people.manage and people.restricted.read. The Community Admin of another
+    // community of the organisation is not one here.
+    for (const token of [orgAdminToken, ownerA2Token]) {
+      const before = await familyState(scope, family.householdId);
+      const res = await post("/v1/households/members/add-minor", addChildBody(family), token);
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+      const after = await familyState(scope, family.householdId);
+      expect(after.rows).toEqual(before.rows);
+      expect(after.audit).toBe(before.audit + 1);
+      const denial = await lastAudit(scope);
+      expect(denial.action).toBe("people.permission.denied");
+      expect(denial.target_ids).toEqual([orgIdA, communityIdA1]);
+    }
+
+    const added = await post(
+      "/v1/households/members/add-minor",
+      addChildBody(family),
+      ownerA1Token,
+    );
+    expect(added.status).toBe(201);
+    expect(Object.keys((await added.json()) as object).sort()).toEqual(["linkId", "personId"]);
+  });
+
+  it("a holder of community_admin alone adds a child, links and unlinks a guardian, and gets ids only", async () => {
+    // ownerA2 holds community_admin in community A2 and no organisation role.
+    const scope = { orgId: orgIdA, communityId: communityIdA2 };
+    const family = await seedFamily(scope, { child: false });
+
+    const added = await post(
+      "/v1/households/members/add-minor",
+      { ...addChildBody(family), communitySlug: slugA2 },
+      ownerA2Token,
+    );
+    expect(added.status).toBe(201);
+    const child = (await added.json()) as { personId: string; linkId: string };
+    expect(Object.keys(child).sort()).toEqual(["linkId", "personId"]);
+
+    const linked = await post(
+      "/v1/households/guardians/link",
+      {
+        communitySlug: slugA2,
+        householdId: family.householdId,
+        guardianId: family.secondAdultId,
+        childId: child.personId,
+      },
+      ownerA2Token,
+    );
+    expect(linked.status).toBe(201);
+    const link = (await linked.json()) as { linkId: string };
+    expect(Object.keys(link)).toEqual(["linkId"]);
+
+    const unlinked = await post(
+      "/v1/households/guardians/unlink",
+      { communitySlug: slugA2, householdId: family.householdId, linkId: link.linkId },
+      ownerA2Token,
+    );
+    expect(unlinked.status).toBe(200);
+    expect(await unlinked.json()).toEqual({});
+  });
+
+  it("pin 75: a non-admin linking a minor gets the same 404 as for a missing person", async () => {
+    const scope = { orgId: orgIdA, communityId: communityIdA1 };
+    const family = await seedFamily(scope, { child: true });
+    const body = (childId: string) => ({
+      communitySlug: slugA1,
+      householdId: family.householdId,
+      guardianId: family.secondAdultId,
+      childId,
+    });
+    const before = await familyState(scope, family.householdId);
+
+    const child = await answer(
+      await post("/v1/households/guardians/link", body(family.childId!), orgAdminToken),
+    );
+    const missing = await answer(
+      await post("/v1/households/guardians/link", body(newId()), orgAdminToken),
+    );
+    expect(child.status).toBe(404);
+    expect(child.body).toBe("");
+    expect(child).toEqual(missing);
+    expect(await familyState(scope, family.householdId)).toEqual(before);
+
+    // A caller without the permissions gets one answer for a child and for nobody, too.
+    for (const childId of [family.childId!, newId()]) {
+      const res = await post("/v1/households/guardians/link", body(childId), viewOnlyToken);
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+    }
+
+    // An adult target keeps its answer.
+    const adult = await post(
+      "/v1/households/guardians/link",
+      body(family.firstAdultId),
+      orgAdminToken,
+    );
+    expect(adult.status).toBe(400);
+
+    const linked = await post("/v1/households/guardians/link", body(family.childId!), ownerA1Token);
+    expect(linked.status).toBe(201);
+    expect(Object.keys((await linked.json()) as object)).toEqual(["linkId"]);
+  });
+
+  it("a non-admin unlinking a child's guardian gets the same 404 as for a missing link, for a hidden child too", async () => {
+    const scope = { orgId: orgIdA, communityId: communityIdA1 };
+    const family = await seedFamily(scope, { child: true, bothLinked: true });
+    const body = (linkId: string) => ({
+      communitySlug: slugA1,
+      householdId: family.householdId,
+      linkId,
+    });
+    const unlink = async (linkId: string, token: string) =>
+      answer(await post("/v1/households/guardians/unlink", body(linkId), token));
+
+    for (const hidden of [false, true]) {
+      await setChildHidden(scope, family.childId!, hidden);
+      const before = await familyState(scope, family.householdId);
+      const childLink = await unlink(family.linkIds[1]!, orgAdminToken);
+      const missing = await unlink(newId(), orgAdminToken);
+      expect(childLink.status, `hidden ${hidden}`).toBe(404);
+      expect(childLink.body).toBe("");
+      expect(childLink).toEqual(missing);
+      expect(await familyState(scope, family.householdId)).toEqual(before);
+      for (const linkId of [family.linkIds[1]!, newId()]) {
+        expect((await unlink(linkId, viewOnlyToken)).status).toBe(403);
+      }
+    }
+    await setChildHidden(scope, family.childId!, false);
+
+    const removed = await unlink(family.linkIds[1]!, ownerA1Token);
+    expect(removed.status).toBe(200);
+    expect(removed.body).toBe("{}");
+  });
+
+  it("pin 76: a non-admin rename of a family with a child answers 403 whatever the label", async () => {
+    const scope = { orgId: orgIdA, communityId: communityIdA1 };
+    const family = await seedFamily(scope, { child: true });
+    const rename = (householdId: string, label: string | null, token: string, version = 1) =>
+      post("/v1/households/rename", { communitySlug: slugA1, householdId, version, label }, token);
+
+    // A hidden child still makes the family one with a child.
+    for (const hidden of [false, true]) {
+      await setChildHidden(scope, family.childId!, hidden);
+      // A neutral label, the child's name, no label, and a stale version: one answer.
+      const attempts: [string | null, number][] = [
+        ["Marazion", 1],
+        ["Zephyrine's family", 1],
+        [null, 1],
+        ["Marazion", 999],
+      ];
+      for (const [label, version] of attempts) {
+        const before = await familyState(scope, family.householdId);
+        const res = await rename(family.householdId, label, orgAdminToken, version);
+        expect(res.status, `${String(label)} version ${version} hidden ${hidden}`).toBe(403);
+        expect(await res.text()).toBe("");
+        const after = await familyState(scope, family.householdId);
+        expect(after.rows).toEqual(before.rows);
+        expect(after.audit).toBe(before.audit + 1);
+        expect(await lastAudit(scope)).toEqual({
+          action: "people.permission.denied",
+          purpose: "people.restricted.read",
+          target_ids: [orgIdA, communityIdA1],
+        });
+      }
+    }
+    await setChildHidden(scope, family.childId!, false);
+
+    // A family with no child keeps today's gate.
+    const adultsOnly = await seedFamily(scope, { child: false });
+    expect((await rename(adultsOnly.householdId, "Marazion", orgAdminToken)).status).toBe(200);
+    // The Community Admin renames the family with a child.
+    expect((await rename(family.householdId, "Marazion", ownerA1Token)).status).toBe(200);
+  });
+
+  it("a non-admin rename waits for a child who is being added, and is then refused", async () => {
+    const scope = { orgId: orgIdA, communityId: communityIdA1 };
+    const family = await seedFamily(scope, { child: false });
+    const direct = createPlaintextDirectSql(loadRuntime().productOnlyUrl);
+    let inserted!: () => void;
+    const childInserted = new Promise<void>((resolve) => {
+      inserted = resolve;
+    });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    try {
+      const adding = withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(secondApp, scope, async (tx) => {
+          await createPerson(tx, kms, KEY_ARN, {
+            now,
+            declaredAdult: false,
+            householdId: family.householdId,
+            dateOfBirth: "2019-05-05",
+            givenName: "Quillon",
+            familyName: "Wexcombe",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          inserted();
+          await released;
+        }),
+      );
+      await childInserted;
+
+      let answered = false;
+      const renaming = post(
+        "/v1/households/rename",
+        { communitySlug: slugA1, householdId: family.householdId, version: 1, label: "Marazion" },
+        orgAdminToken,
+      ).then((res) => {
+        answered = true;
+        return res;
+      });
+      // Go on when the rename is waiting for a lock (or has answered without waiting).
+      for (let tries = 0; tries < 500 && !answered; tries += 1) {
+        const [row] = await direct<{ waiting: number }[]>`
+          select count(*)::int as waiting
+          from pg_stat_activity
+          where datname = current_database() and wait_event_type = 'Lock'
+        `;
+        if ((row?.waiting ?? 0) > 0) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      release();
+      await adding;
+
+      const res = await renaming;
+      expect(res.status).toBe(403);
+      expect((await familyState(scope, family.householdId)).rows.household.version).toBe(1);
+    } finally {
+      release();
+      await direct.end({ timeout: 1 });
+    }
+  });
+
+  it("a real household read answer parses with the contract, for a Community Admin and for everyone else", async () => {
+    for (const token of [ownerA1Token, restrictedOnlyToken, viewOnlyToken]) {
+      const res = await post(
+        "/v1/households/read",
+        { communitySlug: slugA1, householdId: householdA1Id },
+        token,
+      );
+      expect(res.status).toBe(200);
+      const parsed = readHouseholdResponse.safeParse(await res.json());
+      expect(parsed.error?.issues ?? []).toEqual([]);
+      expect(parsed.data?.adults.length).toBeGreaterThan(0);
+      if (token === ownerA1Token) {
+        expect(parsed.data?.guardians.length).toBeGreaterThan(0);
+      }
     }
   });
 });

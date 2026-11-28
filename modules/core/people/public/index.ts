@@ -59,6 +59,7 @@ defineAuditAction("people.person.listed_deleted");
 defineAuditPurpose("people.person.listed_deleted");
 
 export { PeopleError } from "../domain/error.js";
+export type { ChildView } from "../domain/child-view.js";
 export { ensureCommunityKey, ensureOrganisationKey } from "../infrastructure/keys.js";
 export {
   createHousehold,
@@ -66,10 +67,13 @@ export {
   readHouseholdDetail,
   renameHousehold,
   type HouseholdAdultMember,
+  type HouseholdChildren,
+  type HouseholdChildRef,
   type HouseholdGuardianLink,
-  type HouseholdMinorMember,
   type ReadHouseholdDetailInput,
   type ReadHouseholdDetailResult,
+  type ReadHouseholdInput,
+  type ReadHouseholdResult,
   type RenameHouseholdInput,
 } from "../infrastructure/household.js";
 export {
@@ -102,14 +106,26 @@ export {
 export {
   listDeletedPersons,
   listPersons,
+  type AdultListItem,
   type DeletedPersonListItem,
+  type ListAdultsInput,
+  type ListAdultsResult,
   type ListDeletedPersonsInput,
   type ListDeletedPersonsResult,
+  type ListMinorsInput,
+  type ListMinorsResult,
   type ListPersonsInput,
   type ListPersonsResult,
+  type MinorListItem,
   type PersonListItem,
 } from "../infrastructure/list-persons.js";
-export { hasGuardianView, personIsMinor } from "../infrastructure/access-facts.js";
+export {
+  guardianLinkChildIsMinor,
+  hasGuardianView,
+  householdHasMinor,
+  lifeEventPersonIsMinor,
+  personIsMinor,
+} from "../infrastructure/access-facts.js";
 export {
   moveAdult,
   addMinor,
@@ -127,6 +143,14 @@ export {
 export { listPersonActivity } from "../infrastructure/activity.js";
 export { attachTag, createTag, detachTag, listPersonTags } from "../infrastructure/tags.js";
 export { openPersonFieldKeys } from "../infrastructure/person-keys.js";
+// The one reader of a child's field. Only the Community Admin's View service imports it (pin 41).
+export {
+  openMinorField,
+  type MinorLifeEventField,
+  type MinorName,
+  type MinorPersonField,
+  type OpenMinorFieldInput,
+} from "../infrastructure/minor-field.js";
 export { readRosterNames, visiblePersonIds } from "../infrastructure/roster-names.js";
 export {
   readLinkedContacts,
@@ -140,8 +164,10 @@ export {
   type CreateLifeEventInput,
   type CreateLifeEventResult,
   type LifeEventItem,
+  type LifeEventListing,
   type ListLifeEventsInput,
   type ListLifeEventsResult,
+  type MinorLifeEventItem,
   type UpdateLifeEventInput,
   type UpdateLifeEventResult,
 } from "../infrastructure/life-event.js";

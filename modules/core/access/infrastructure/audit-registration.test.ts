@@ -35,6 +35,25 @@ describe("audit registration", () => {
     expect(isAuditPurpose("access.user.not_member")).toBe(true);
   });
 
+  it("registers the View action and its eight purposes, three segments each", () => {
+    expect(isAuditAction("people.minor.field_viewed")).toBe(true);
+    const purposes = [
+      "people.minor_view.name",
+      "people.minor_view.date_of_birth",
+      "people.minor_view.email",
+      "people.minor_view.phone",
+      "people.minor_view.life_event_type",
+      "people.minor_view.life_event_date",
+      "people.minor_view.life_event_place",
+      "people.minor_view.life_event_notes",
+    ];
+    for (const purpose of purposes) {
+      expect(isAuditPurpose(purpose), purpose).toBe(true);
+      // The audit table's check allows exactly three segments.
+      expect(purpose.split(".")).toHaveLength(3);
+    }
+  });
+
   it("includes new error codes in AccessErrorCode", () => {
     const newCodes: AccessErrorCode[] = [
       "not_member",

@@ -437,7 +437,8 @@ describe("updatePerson", () => {
           await withRequest({ requestId: REQUEST_ID }, async () => {
             const hh = await createHousehold(tx, kms, KEY_ARN, {
               now: NOW,
-              label: "Minor Household",
+              // Not the child's name: a family label that holds it is refused (spec O3).
+              label: "Example Household",
               actorUserId,
             });
             const m = await createPerson(tx, kms, KEY_ARN, {

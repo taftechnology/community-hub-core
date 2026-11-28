@@ -19,6 +19,7 @@ import {
   listLifeEvents,
   updateLifeEvent,
 } from "./api";
+import { ChildValue } from "./child-view";
 import { useCommunity } from "./community";
 
 export type LifeEventsPanelProps = {
@@ -26,7 +27,14 @@ export type LifeEventsPanelProps = {
   personName: string;
   isReadOnly?: boolean;
   canManage?: boolean;
+  // A child's life events. The list carries ids only, each field is read with its own View (ADR
+  // 0017), and a child's event is added here but not changed: no value is on screen to change.
+  child?: boolean;
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
 
 const LIFE_EVENT_TYPES: { key: LifeEventType; label: string }[] = [
   { key: "baptism", label: "Baptism" },
@@ -50,11 +58,14 @@ export function LifeEventsPanel({
   personName,
   isReadOnly = false,
   canManage = false,
+  child = false,
 }: LifeEventsPanelProps) {
   const { slug } = useCommunity();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [events, setEvents] = useState<LifeEvent[] | null>(null);
+  // A child's events, as ids: nothing else of one is taken from the list.
+  const [childEvents, setChildEvents] = useState<{ eventId: string }[] | null>(null);
 
   const [formMode, setFormMode] = useState<"none" | "add" | "edit">("none");
   const [editingEvent, setEditingEvent] = useState<LifeEvent | null>(null);
@@ -73,6 +84,7 @@ export function LifeEventsPanel({
   const loadEvents = useCallback(async () => {
     if (!slug || !personId) {
       setEvents([]);
+      setChildEvents([]);
       setLoading(false);
       return;
     }
@@ -94,11 +106,20 @@ export function LifeEventsPanel({
     }
 
     try {
-      const data = (await response.json()) as { items?: LifeEvent[] };
+      const data = (await response.json()) as { items?: unknown };
       if (generation.current !== currentGen) {
         return;
       }
-      setEvents(data.items ?? []);
+      if (child) {
+        const items: unknown[] = Array.isArray(data.items) ? data.items : [];
+        setChildEvents(
+          items.flatMap((item) =>
+            isRecord(item) && typeof item.eventId === "string" ? [{ eventId: item.eventId }] : [],
+          ),
+        );
+      } else {
+        setEvents((data.items as LifeEvent[] | undefined) ?? []);
+      }
     } catch {
       if (generation.current !== currentGen) {
         return;
@@ -109,7 +130,7 @@ export function LifeEventsPanel({
         setLoading(false);
       }
     }
-  }, [slug, personId]);
+  }, [slug, personId, child]);
 
   useEffect(() => {
     void loadEvents();
@@ -221,12 +242,13 @@ export function LifeEventsPanel({
   }
 
   const canEdit = canManage && !isReadOnly;
+  const rows = child ? childEvents : events;
 
   return (
     <div data-testid={`life-events-panel-${personId}`}>
       <Panel
         title={`Life events: ${personName}`}
-        level={4}
+        level={child ? 5 : 4}
         actions={
           canEdit && formMode === "none" ? (
             <Button type="button" variant="outline" onClick={startAdd}>
@@ -235,7 +257,7 @@ export function LifeEventsPanel({
           ) : null
         }
       >
-        {loading && events === null ? (
+        {loading && rows === null ? (
           <>
             <Skeleton />
             <span className="sr-only">Loading life events...</span>
@@ -329,11 +351,39 @@ export function LifeEventsPanel({
           </form>
         ) : null}
 
-        {!loading && !error && events !== null && events.length === 0 && formMode === "none" ? (
+        {!loading && !error && rows !== null && rows.length === 0 && formMode === "none" ? (
           <EmptyState message="No life events recorded" />
         ) : null}
 
-        {!loading && !error && events !== null && events.length > 0 ? (
+        {!loading && !error && child && childEvents !== null && childEvents.length > 0 ? (
+          <DataTable
+            aria-label={`Life events for ${personName}`}
+            rowKey={(event) => event.eventId}
+            columns={(
+              [
+                { key: "type", header: "Type", name: "type" },
+                { key: "date", header: "Date", name: "date" },
+                { key: "place", header: "Place", name: "place" },
+                { key: "notes", header: "Notes", name: "notes" },
+              ] as const
+            ).map((column, columnIndex) => ({
+              key: column.key,
+              header: column.header,
+              ...(columnIndex === 0 ? { primary: true } : {}),
+              render: (event: { eventId: string }) => (
+                <ChildValue
+                  target={{ personId, lifeEventId: event.eventId, field: column.name }}
+                  fieldName={`${column.name} of life event ${childEvents.indexOf(event) + 1}`}
+                  subject={personName}
+                  {...(column.name === "type" ? { format: formatType } : {})}
+                />
+              ),
+            }))}
+            rows={childEvents}
+          />
+        ) : null}
+
+        {!loading && !error && !child && events !== null && events.length > 0 ? (
           <DataTable
             aria-label={`Life events for ${personName}`}
             rowKey={(event) => event.eventId}

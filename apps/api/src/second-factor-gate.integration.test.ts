@@ -358,6 +358,20 @@ const SESSION_ROUTES = new Map<string, RouteSpec>([
       },
     },
   ],
+  [
+    "POST /v1/people/minors/view",
+    {
+      hostname: API_HOSTNAME,
+      body: { communitySlug: slug, personId: ZERO_UUID, field: "name" },
+    },
+  ],
+  [
+    "POST /v1/people/minors/life-events/view",
+    {
+      hostname: API_HOSTNAME,
+      body: { communitySlug: slug, personId: ZERO_UUID, lifeEventId: ZERO_UUID, field: "place" },
+    },
+  ],
   ["POST /v1/households/list", { hostname: API_HOSTNAME, body: { communitySlug: slug } }],
   [
     "POST /v1/households/read",

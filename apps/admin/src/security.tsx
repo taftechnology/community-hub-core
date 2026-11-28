@@ -11,6 +11,7 @@ import { Link } from "react-router";
 
 import { authCall } from "./api";
 import { clearAccessToken, readAccessToken } from "./directory";
+import { FRESH_TEXT, FreshCheck, type FreshOutcome, useHeadingFocus } from "./fresh-check";
 import { ScreenTitle } from "./screen-title";
 import {
   AuthenticatorKey,
@@ -20,7 +21,6 @@ import {
   digitsOnly,
   hasWebAuthn,
   MESSAGES,
-  NO_PASSKEY_HERE,
   NoticeAlert,
   qrMarkup,
   readAuthenticationOptions,
@@ -41,12 +41,11 @@ import {
 // setup has just been given, and it never keeps a code, a key or a link anywhere but on screen.
 
 const TEXT = {
-  limited: "Too many tries. Try again later.",
   lastFactor: "You need at least one way to confirm it's you",
   passkeyGone: "That passkey is no longer there",
   appGone: "Your authenticator app is no longer there",
   passkeyNotSaved: "The passkey wasn't saved. Try again.",
-  passkeysUnavailable: "Passkeys aren't available here.",
+  passkeysUnavailable: FRESH_TEXT.passkeysUnavailable,
   windowEnded: "The recovery window has ended. Sign in again to make changes.",
   recovery:
     "You signed in with a backup code. For a short time you can set up your sign-in methods again: replace your authenticator app, add or remove a passkey, or make new backup codes.",
@@ -174,8 +173,6 @@ type Step =
 
 type Phase = "loading" | "failed" | "signed_out" | "ready";
 
-type FreshOutcome = "passed" | "wrong" | "limited" | "failed" | "unavailable" | "gone";
-
 type SetupOutcome = "done" | "wrong" | "failed" | "gone";
 
 // What asking the factor list says after the service refused a call. A refusal is an empty 401
@@ -184,107 +181,6 @@ type SetupOutcome = "done" | "wrong" | "failed" | "gone";
 type Verdict = "signed_out" | "failed" | "allowed" | "needs_fresh" | "window_ended";
 
 // ---- the screens a change goes through -------------------------------------------------------
-
-// The heading of a screen takes the focus when it opens, as the sign-in screens do.
-function useHeadingFocus() {
-  const ref = useRef<HTMLHeadingElement>(null);
-  useLayoutEffect(() => {
-    ref.current?.focus();
-  }, []);
-  return ref;
-}
-
-function ConfirmItsYouStep({
-  hasApp,
-  passkeyUsable,
-  onCode,
-  onPasskey,
-  onCancel,
-}: {
-  hasApp: boolean;
-  passkeyUsable: boolean;
-  onCode: (code: string) => Promise<FreshOutcome>;
-  onPasskey: () => Promise<FreshOutcome>;
-  onCancel: () => void;
-}) {
-  const heading = useHeadingFocus();
-  const { busy, run, notice, showNotice } = useAttempt();
-  const [code, setCode] = useState("");
-
-  function report(outcome: FreshOutcome): void {
-    if (outcome === "wrong") {
-      setCode("");
-      showNotice(MESSAGES.wrongCode);
-    } else if (outcome === "limited") {
-      showNotice(TEXT.limited);
-    } else if (outcome === "failed") {
-      showNotice(MESSAGES.generic);
-    } else if (outcome === "unavailable") {
-      showNotice(TEXT.passkeysUnavailable);
-    }
-  }
-
-  function submit(event: FormEvent<HTMLFormElement>): void {
-    event.preventDefault();
-    void run(async () => {
-      report(await onCode(code));
-    });
-  }
-
-  function startPasskey(): void {
-    void run(async () => {
-      report(await onPasskey());
-    });
-  }
-
-  return (
-    <Panel title="Confirm it's you" level={2} headingRef={heading} headingTabIndex={-1}>
-      <NoticeAlert notice={notice} />
-      <p className="text-sm text-foreground">
-        Do this before you change how you confirm it&#39;s you.
-      </p>
-      {hasApp ? (
-        <form className="grid gap-4" onSubmit={submit}>
-          <Field label="Authenticator code" help="The 6 digits your authenticator app shows.">
-            <Input
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              value={code}
-              onChange={(event) => {
-                setCode(digitsOnly(event.target.value));
-              }}
-            />
-          </Field>
-          <Button
-            className="justify-self-start"
-            type="submit"
-            disabled={busy || code.length !== TOTP_DIGITS}
-          >
-            Confirm
-          </Button>
-        </form>
-      ) : null}
-      <div className="flex flex-wrap gap-2">
-        {passkeyUsable ? (
-          <Button
-            type="button"
-            variant={hasApp ? "outline" : "default"}
-            disabled={busy}
-            onClick={startPasskey}
-          >
-            Use a passkey
-          </Button>
-        ) : null}
-        <Button type="button" variant="ghost" onClick={onCancel}>
-          Cancel
-        </Button>
-      </div>
-      {!hasApp && !passkeyUsable ? (
-        <p className="text-sm text-foreground">{NO_PASSKEY_HERE}</p>
-      ) : null}
-    </Panel>
-  );
-}
 
 function SetupAppStep({
   secret,
@@ -937,7 +833,7 @@ export function SecurityPage() {
   if (step.kind === "confirm") {
     const action = step.action;
     body = (
-      <ConfirmItsYouStep
+      <FreshCheck
         hasApp={factors.totp !== null}
         passkeyUsable={factors.passkeys.length > 0 && hasWebAuthn() && !passkeysGone}
         onCode={(code) => freshWithCode(action, code)}

@@ -120,16 +120,20 @@ function actor(actorUserId: string | null): {
   return { actorKind: "user", actorId: actorUserId };
 }
 
+// The keys that open an adult's fields. A child's household key is never handed out here, to
+// anyone: the answer for a minor is null, as for a person that does not exist. The Community
+// Admin's View opens the household key itself, one field at a time (ADR 0017).
 export async function openPersonFieldKeys(
   tx: AppTransaction,
   kms: KmsPort,
   keyArn: string,
   input: { personId: string; actorUserId: string | null },
 ): Promise<{ enc: webcrypto.CryptoKey; bidx: webcrypto.CryptoKey } | null> {
-  const rows = await tx<{ is_minor: boolean; household_id: string | null }[]>`
-    select is_minor, household_id::text as household_id
+  const rows = await tx<{ household_id: string | null }[]>`
+    select household_id::text as household_id
     from app.persons
     where id = ${input.personId}::uuid
+      and is_minor = false
       and deleted_at is null
   `;
   const row = rows[0];
@@ -137,7 +141,7 @@ export async function openPersonFieldKeys(
     return null;
   }
   const keys = await derivePersonFieldKeys(tx, kms, keyArn, {
-    isMinor: row.is_minor,
+    isMinor: false,
     householdId: row.household_id,
   });
   const recorded = actor(input.actorUserId);

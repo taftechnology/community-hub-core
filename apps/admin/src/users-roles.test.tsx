@@ -2631,3 +2631,61 @@ it("sends the selected user id and contact in the link body", async () => {
   });
   expect(form.textContent).not.toContain(personId);
 });
+
+it("pin 95: the Community Admin role says it can view children's details, and people.restricted.read says adults only", async () => {
+  sessionStorage.setItem("community-hub.access-token", TOKEN);
+  const roles = {
+    ...directory(
+      0,
+      [ownerGrant],
+      ["access.users.view", "access.roles.view", "access.roles.manage"],
+    ),
+    catalogue: ["access.users.view", "people.restricted.read"],
+    builtIn: [
+      {
+        roleKey: "community_admin",
+        scope: "community",
+        permissions: ["access.users.view", "people.restricted.read"],
+      },
+      {
+        roleKey: "safeguarding_officer",
+        scope: "community",
+        permissions: ["people.restricted.read"],
+      },
+    ],
+  };
+  urlKeyedFetch({
+    grants: () =>
+      new Response(JSON.stringify(roles), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+  });
+
+  const container = await showUsers();
+  fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+    target: { value: "parish" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+  // The role description sits with the role, and only that role has one.
+  const sentence = "Can view children's details (a second-factor check for each field)";
+  const description = await screen.findByText(sentence);
+  expect(screen.getAllByText(sentence)).toHaveLength(1);
+  expect(description.closest("li")?.textContent).toContain("Community Admin");
+  expect(screen.getByText("Safeguarding Officer", { exact: false }).textContent).not.toContain(
+    sentence,
+  );
+
+  // The permission list says what people.restricted.read covers, and the checkbox points to it.
+  const note = screen.getByText("Restricted details of adults");
+  const checkbox = screen.getByRole("checkbox", { name: "people.restricted.read" });
+  expect(note.id).not.toBe("");
+  expect(checkbox.getAttribute("aria-describedby")).toBe(note.id);
+  expect(
+    screen.getByRole("checkbox", { name: "access.users.view" }).getAttribute("aria-describedby"),
+  ).toBeNull();
+
+  const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+  expect(resultIds(results, "violations")).toEqual([]);
+});

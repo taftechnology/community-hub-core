@@ -126,12 +126,18 @@ describe("household create, rename and read", () => {
 
           const read = await readHousehold(tx, kms, KEY_ARN, {
             householdId: created.householdId,
+            childView: "presence",
             actorUserId: null,
           });
-          expect(read).toEqual({ householdId: created.householdId, label: "Example" });
+          expect(read).toEqual({
+            householdId: created.householdId,
+            label: "Example",
+            minors: { childCount: 0 },
+          });
 
           const missing = await readHousehold(tx, kms, KEY_ARN, {
             householdId: missingId,
+            childView: "presence",
             actorUserId: null,
           });
           expect(missing).toBeNull();
@@ -305,6 +311,7 @@ describe("household create, rename and read", () => {
 
           const read = await readHousehold(tx, kms, KEY_ARN, {
             householdId,
+            childView: "presence",
             actorUserId: null,
           });
           expect(read?.label).toBe("Renamed Family");
@@ -343,6 +350,7 @@ describe("household create, rename and read", () => {
           // Row unchanged
           const read = await readHousehold(tx, kms, KEY_ARN, {
             householdId,
+            childView: "presence",
             actorUserId: null,
           });
           expect(read?.label).toBe("Renamed Family");
@@ -541,6 +549,7 @@ describe("household create, rename and read", () => {
         withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
           const hh = await readHousehold(tx, kms, KEY_ARN, {
             householdId,
+            childView: "presence",
             actorUserId: null,
           });
           expect(hh?.label).toBe("Winner Rename");
@@ -704,6 +713,7 @@ describe("household create, rename and read", () => {
 
           const read = await readHousehold(tx, kms, KEY_ARN, {
             householdId,
+            childView: "presence",
             actorUserId: null,
           });
           expect(read?.label).toBe("Normalised Family");

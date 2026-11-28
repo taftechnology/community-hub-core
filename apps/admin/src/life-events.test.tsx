@@ -3,6 +3,7 @@ import axe from "axe-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { LifeEvent, LifeEventType } from "./api";
+import { ChildViewProvider } from "./child-view";
 import { CommunityProvider, useCommunity } from "./community";
 import { LifeEventsPanel } from "./life-events";
 
@@ -866,5 +867,163 @@ describe("LifeEventsPanel unit and accessibility tests", () => {
     for (const btn of buttons) {
       expect(btn.className).toContain("h-(--ch-size-control-sm)");
     }
+  });
+});
+
+describe("LifeEventsPanel for a child (ADR 0017)", () => {
+  const CHILD_ID = "00000000-0000-4000-8000-000000000021";
+  const EVENT_1 = "00000000-0000-4000-8000-000000000041";
+  const EVENT_2 = "00000000-0000-4000-8000-000000000042";
+  // Synthetic values the panel must show only after a View.
+  const PLACE = "Quillon Chapel";
+
+  beforeEach(() => {
+    sessionStorage.clear();
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    sessionStorage.setItem("community-hub.community", SLUG);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  function renderChild(props: { withProvider?: boolean; canManage?: boolean } = {}) {
+    const panel = (
+      <LifeEventsPanel
+        personId={CHILD_ID}
+        personName="Child 1"
+        canManage={props.canManage ?? true}
+        child
+      />
+    );
+    return render(
+      <CommunityProvider>
+        {props.withProvider === false ? panel : <ChildViewProvider>{panel}</ChildViewProvider>}
+      </CommunityProvider>,
+    );
+  }
+
+  function install(answers: Response[] = []) {
+    const calls: { path: string; body: Record<string, unknown> }[] = [];
+    let next = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
+      const path = String(info).replace(/^https?:\/\/[^/]+/, "");
+      const body =
+        typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : {};
+      calls.push({ path, body });
+      if (path === "/v1/people/life-events/list") {
+        // A child's list is ids only. The fields here are what a mistaken answer might carry.
+        return new Response(
+          JSON.stringify({
+            items: [
+              { eventId: EVENT_1, type: "baptism", date: "2010-04-15", place: "Leaky Parish" },
+              { eventId: EVENT_2, version: 3, notes: "Leaky notes" },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (path === "/v1/people/minors/life-events/view") {
+        const answer = answers[next];
+        next += 1;
+        return answer ?? new Response(null, { status: 500 });
+      }
+      if (path === "/v1/people/life-events/create") {
+        return new Response(JSON.stringify({ eventId: EVENT_2, version: 1 }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+    return calls;
+  }
+
+  it("lists a child's events as ids with every field hidden, and ignores what else the list carries", async () => {
+    install();
+    const { container } = renderChild();
+
+    const table = await screen.findByRole("table", { name: "Life events for Child 1" });
+    expect(screen.getByRole("heading", { name: "Life events: Child 1", level: 5 })).toBeTruthy();
+    expect(table.querySelectorAll("tbody tr")).toHaveLength(2);
+    expect(screen.getAllByText("Hidden")).toHaveLength(8);
+    expect(document.body.textContent).not.toContain("Leaky");
+    expect(document.body.textContent).not.toContain("Baptism");
+    expect(document.body.textContent).not.toContain("2010-04-15");
+
+    // A button for each field of each event, named for the field, the event and the child.
+    for (const field of ["type", "date", "place", "notes"]) {
+      for (const n of [1, 2]) {
+        expect(
+          screen.getByRole("button", { name: `View ${field} of life event ${n} for Child 1` }),
+        ).toBeTruthy();
+      }
+    }
+    // Nothing to edit: there is no value on screen to change.
+    expect(screen.queryByRole("button", { name: /^Edit/ })).toBeNull();
+
+    const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    expect(resultIds(results, "violations")).toEqual([]);
+  });
+
+  it("shows one field after its View, in the words of a Title Case type, and hides it with Hide", async () => {
+    const calls = install([
+      new Response(JSON.stringify({ value: "first_communion" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+      new Response(JSON.stringify({ value: PLACE }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    ]);
+    renderChild();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "View type of life event 2 for Child 1" }),
+    );
+    expect(await screen.findByText("First Communion")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "View place of life event 1 for Child 1" }));
+    expect(await screen.findByText(PLACE)).toBeTruthy();
+    expect(screen.queryByText("First Communion")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide place of life event 1 for Child 1" }));
+    expect(screen.queryByText(PLACE)).toBeNull();
+
+    expect(
+      calls
+        .filter((call) => call.path === "/v1/people/minors/life-events/view")
+        .map((call) => call.body),
+    ).toEqual([
+      { communitySlug: SLUG, personId: CHILD_ID, lifeEventId: EVENT_2, field: "type" },
+      { communitySlug: SLUG, personId: CHILD_ID, lifeEventId: EVENT_1, field: "place" },
+    ]);
+  });
+
+  it("adds an event for a child and reads the list again, still showing ids only", async () => {
+    const calls = install();
+    renderChild();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add life event" }));
+    fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2012-05-06" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save life event" }));
+
+    await vi.waitFor(() =>
+      expect(calls.filter((call) => call.path === "/v1/people/life-events/list")).toHaveLength(2),
+    );
+    expect(calls.some((call) => call.path === "/v1/people/life-events/create")).toBe(true);
+    expect(await screen.findByRole("table", { name: "Life events for Child 1" })).toBeTruthy();
+    expect(document.body.textContent).not.toContain("Leaky");
+  });
+
+  it("outside a section that can run a View there is nothing to ask for and nothing to show", async () => {
+    install();
+    renderChild({ withProvider: false });
+
+    await screen.findByRole("table", { name: "Life events for Child 1" });
+    expect(screen.getAllByText("Hidden")).toHaveLength(8);
+    expect(screen.queryByRole("button", { name: /^View / })).toBeNull();
   });
 });

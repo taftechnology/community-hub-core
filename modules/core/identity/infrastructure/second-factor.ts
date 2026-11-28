@@ -795,6 +795,17 @@ export type FreshCheckTotpInput = {
 export type FreshCheckTotpResult =
   { outcome: "fresh" } | { outcome: "refused" } | { outcome: "limited" };
 
+export type ConsumeFreshFactorInput = {
+  sql: Sql;
+  kms: KmsPort;
+  keyArn: string;
+  accessToken: string;
+  now: Date;
+};
+
+export type ConsumeFreshFactorResult =
+  { outcome: "consumed" } | { outcome: "recovery" } | { outcome: "not_fresh" };
+
 export type RegenerateBackupCodesInput = {
   accessToken: string;
   now: Date;
@@ -1010,11 +1021,72 @@ export async function freshCheckTotp(
     const nowIso = input.now.toISOString();
     await tx`
       update identity.sessions
-      set fresh_factor_at = ${nowIso}::timestamptz
+      set fresh_factor_at = ${nowIso}::timestamptz,
+          second_factor_attempts = greatest(second_factor_attempts - 1, 0)
       where id = ${session.id}
         and revoked_at is null
     `;
     return { outcome: "fresh" };
+  });
+}
+
+/**
+ * Atomically consumes a fresh second-factor check on a session row without taking an advisory lock.
+ * Exported for concurrency tests only; not exported from public/.
+ * Every guard lives in the one conditional UPDATE so concurrent callers serialize on the row lock.
+ * They are the ones `readActiveSessionInTx` applies (not revoked, access token not expired, a
+ * tenant session has a factor), then no recovery session and a fresh check within five minutes.
+ */
+export async function consumeFreshFactorInTx(
+  tx: TransactionSql,
+  input: { sessionId: string; now: Date },
+): Promise<ConsumeFreshFactorResult> {
+  const updated = await tx<{ id: string }[]>`
+    update identity.sessions
+    set fresh_factor_at = null
+    where id = ${input.sessionId}
+      and kind = 'tenant'
+      and revoked_at is null
+      and access_expires_at > ${input.now.toISOString()}::timestamptz
+      and (kind <> 'tenant' or factor is not null)
+      and recovery_until is null
+      and fresh_factor_at >= ${input.now.toISOString()}::timestamptz - interval '5 minutes'
+    returning id
+  `;
+  if (updated[0] !== undefined) {
+    return { outcome: "consumed" };
+  }
+  const rows = await tx<{ recovery: boolean }[]>`
+    select (recovery_until is not null) as recovery
+    from identity.sessions
+    where id = ${input.sessionId}
+  `;
+  return rows[0]?.recovery === true ? { outcome: "recovery" } : { outcome: "not_fresh" };
+}
+
+/**
+ * Resolves the session from `accessToken` and consumes its fresh second-factor check under the
+ * user's advisory lock, returning `consumed`, `recovery`, or `not_fresh`.
+ */
+export async function consumeFreshFactor(
+  input: ConsumeFreshFactorInput,
+): Promise<ConsumeFreshFactorResult> {
+  const resolved = await resolveSessionBeforeLock(
+    input.sql,
+    input.kms,
+    input.keyArn,
+    input.accessToken,
+  );
+  if (resolved === null) {
+    return { outcome: "not_fresh" };
+  }
+
+  return input.sql.begin(async (tx) => {
+    await lockSecondFactor(tx, resolved.userId);
+    return consumeFreshFactorInTx(tx, {
+      sessionId: resolved.sessionId,
+      now: input.now,
+    });
   });
 }
 
@@ -1612,7 +1684,8 @@ export async function verifyFreshPasskey(
     const nowIso = input.now.toISOString();
     await tx`
       update identity.sessions
-      set fresh_factor_at = ${nowIso}::timestamptz
+      set fresh_factor_at = ${nowIso}::timestamptz,
+          second_factor_attempts = greatest(second_factor_attempts - 1, 0)
       where id = ${session.id}
         and revoked_at is null
     `;

@@ -152,8 +152,10 @@ export function invitationStatus(error: AccessError): Response | undefined {
   ) {
     return jsonError(409, error.code);
   }
+  // A child cannot be invited, and a child's id is not confirmed to a caller who guesses it: the
+  // answer is the one for a person that does not exist (spec Scope 6).
   if (error.code === "person_minor") {
-    return jsonError(422, "person_minor");
+    return jsonError(404, "person_not_found");
   }
   return undefined;
 }

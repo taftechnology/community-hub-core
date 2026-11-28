@@ -5,6 +5,7 @@ import {
   Checkbox,
   DataTable,
   type DataTableColumn,
+  DescriptionList,
   EmptyState,
   Field,
   FilterBar,
@@ -21,6 +22,7 @@ import { Link } from "react-router";
 
 import { post } from "./api";
 import { useBillingStatus } from "./billing-status";
+import { ChildValue, ChildViewProvider, type StaleReason } from "./child-view";
 import { useCommunity } from "./community";
 import { readAccessToken } from "./directory";
 import { type ContactFormData, ContactFields, initialFormData } from "./contact-fields";
@@ -55,12 +57,18 @@ type AdultMember = {
   version: number;
 };
 
-type MinorMember = {
+// A child as the family read shows one: an id and the label "Child n", and nothing else. Every field
+// of a child is read on its own, with a View (ADR 0017).
+type ChildRef = {
   personId: string;
-  givenName: string;
-  familyName: string;
-  dateOfBirth: string | null;
-  version: number;
+  label: string;
+};
+
+// How many children a family has, for everyone who may see the family. A Community Admin also gets
+// each child as an id and a label: that is how this screen knows which of the two it is showing.
+export type HouseholdMinors = {
+  childCount: number;
+  children?: ChildRef[] | undefined;
 };
 
 type GuardianRights = {
@@ -74,6 +82,8 @@ type GuardianLink = {
   linkId: string;
   guardianId: string;
   childId: string;
+  // Present for a Community Admin only.
+  child?: ChildRef | undefined;
   rights: GuardianRights;
 };
 
@@ -83,7 +93,7 @@ export type HouseholdDetail = {
   status?: FamilyStatus;
   label: string | null;
   adults: AdultMember[];
-  minors?: MinorMember[] | undefined;
+  minors?: HouseholdMinors | undefined;
   guardians: GuardianLink[];
 };
 
@@ -187,17 +197,35 @@ function parseAdultMember(value: unknown): AdultMember | null {
   };
 }
 
-function parseMinorMember(value: unknown): MinorMember | null {
-  if (!isRecord(value) || typeof value.personId !== "string") {
+// Only the id and the label are taken. Whatever else an answer carries about a child is dropped here,
+// so no screen below can show it.
+function parseChildRef(value: unknown): ChildRef | null {
+  if (!isRecord(value) || typeof value.personId !== "string" || typeof value.label !== "string") {
     return null;
   }
-  return {
-    personId: value.personId,
-    givenName: typeof value.givenName === "string" ? value.givenName : "",
-    familyName: typeof value.familyName === "string" ? value.familyName : "",
-    dateOfBirth: typeof value.dateOfBirth === "string" ? value.dateOfBirth : null,
-    version: typeof value.version === "number" ? value.version : 1,
-  };
+  return { personId: value.personId, label: value.label };
+}
+
+function parseMinors(value: unknown): HouseholdMinors | undefined {
+  if (
+    !isRecord(value) ||
+    typeof value.childCount !== "number" ||
+    !Number.isInteger(value.childCount) ||
+    value.childCount < 0
+  ) {
+    return undefined;
+  }
+  if (!Array.isArray(value.children)) {
+    return { childCount: value.childCount };
+  }
+  const children: ChildRef[] = [];
+  for (const item of value.children) {
+    const parsed = parseChildRef(item);
+    if (parsed !== null) {
+      children.push(parsed);
+    }
+  }
+  return { childCount: value.childCount, children };
 }
 
 function parseGuardianLink(value: unknown): GuardianLink | null {
@@ -210,10 +238,12 @@ function parseGuardianLink(value: unknown): GuardianLink | null {
     return null;
   }
   const rightsRecord = isRecord(value.rights) ? value.rights : {};
+  const child = parseChildRef(value.child);
   return {
     linkId: value.linkId,
     guardianId: value.guardianId,
     childId: value.childId,
+    ...(child === null ? {} : { child }),
     rights: {
       consent: Boolean(rightsRecord.consent),
       pickup: Boolean(rightsRecord.pickup),
@@ -240,16 +270,7 @@ function parseHouseholdDetail(value: unknown): HouseholdDetail | null {
       }
     }
   }
-  let minors: MinorMember[] | undefined = undefined;
-  if (Array.isArray(value.minors)) {
-    minors = [];
-    for (const m of value.minors) {
-      const parsed = parseMinorMember(m);
-      if (parsed) {
-        minors.push(parsed);
-      }
-    }
-  }
+  const minors = parseMinors(value.minors);
   const guardians: GuardianLink[] = [];
   if (Array.isArray(value.guardians)) {
     for (const g of value.guardians) {
@@ -284,6 +305,25 @@ const initialRights: GuardianRights = {
   manage: false,
 };
 
+// What the guidance under the household name says, on the create form and on the rename form. The
+// service refuses a name that holds a child's given name, and says nothing about which.
+const LABEL_GUIDANCE = "Use the family name. Don't include a child's name.";
+const LABEL_REFUSED = "The household name can't include a child's name. Use the family name.";
+const LABEL_REFUSED_FOR_NEW_CHILD =
+  "The household name includes this child's name. Rename the household to the family name only, then add the child.";
+
+function childCountText(count: number): string {
+  return `${count} ${count === 1 ? "child" : "children"} in this family`;
+}
+
+// A Community Admin is the only one the service sends the children to, as ids and labels, and the
+// capabilities answer says who that is. The service stays the authority: a family read with no
+// `children` shows the count only, whoever reads it, and a caller who is not a Community Admin never
+// shows a child even if an answer carried them.
+function isChildAdmin(detail: HouseholdDetail | null, communityAdmin: boolean): boolean {
+  return communityAdmin && detail?.minors?.children !== undefined;
+}
+
 export type MinorsSectionProps = {
   detailHousehold: HouseholdDetail;
   access: PeopleAccess;
@@ -296,13 +336,16 @@ export type MinorsSectionProps = {
   handleConfirmUnlink?: (linkId: string) => void;
   setUnlinkingLinkId?: (id: string | null) => void;
   setUnlinkNotice?: (notice: string | null) => void;
+  // Called when a View finds that the child or the caller's role has changed since the family was
+  // read, so the family can be read again.
+  onStale?: (reason: StaleReason) => void;
 };
 
 function getGuardianLinkDetails(link: GuardianLink, household: HouseholdDetail) {
   const guardian = household.adults.find((a) => a.personId === link.guardianId);
-  const minor = household.minors?.find((m) => m.personId === link.childId);
+  const child = link.child ?? household.minors?.children?.find((c) => c.personId === link.childId);
   const guardianName = guardian ? `${guardian.givenName} ${guardian.familyName}` : link.guardianId;
-  const childName = minor ? `${minor.givenName} ${minor.familyName}` : link.childId;
+  const childName = child ? child.label : "Child";
   const rightsList = [
     link.rights.consent && "Consent",
     link.rights.pickup && "Pickup",
@@ -326,33 +369,29 @@ export function MinorsSection({
   handleConfirmUnlink,
   setUnlinkingLinkId,
   setUnlinkNotice,
+  onStale,
 }: MinorsSectionProps) {
+  const minors = detailHousehold.minors;
   const canManage = canManageProp ?? Boolean(access.permissions["people.manage"]);
-  const canRestricted = Boolean(access.permissions["people.restricted.read"]);
-  const canReadLifeEvents = canRestricted && Boolean(access.entitlements["people.households"]);
-  const canAddMinor = canManage && canRestricted && !isReadOnly;
-  const canLinkGuardian = canManage && canRestricted && !isReadOnly;
-  const canUnlinkGuardian = canManage && canRestricted && !isReadOnly;
+  if (minors === undefined) {
+    return null;
+  }
 
-  const minorColumns: DataTableColumn<MinorMember>[] = [
-    {
-      key: "givenName",
-      header: "Given name",
-      primary: true,
-      render: (minor) => minor.givenName,
-    },
-    {
-      key: "familyName",
-      header: "Family name",
-      render: (minor) => minor.familyName,
-    },
-    {
-      key: "dateOfBirth",
-      header: "Date of birth",
-      render: (minor) =>
-        minor.dateOfBirth ? minor.dateOfBirth : <span className="text-muted-foreground">None</span>,
-    },
-  ];
+  // Everyone but a Community Admin sees how many children there are, and nothing else of them: no
+  // label, no id, no guardian link.
+  if (!isChildAdmin(detailHousehold, access.roles.communityAdmin)) {
+    return minors.childCount === 0 ? null : (
+      <Panel title="Children" level={3}>
+        <p>{childCountText(minors.childCount)}</p>
+      </Panel>
+    );
+  }
+
+  const children = minors.children ?? [];
+  const canReadLifeEvents = Boolean(access.entitlements["people.households"]);
+  const canAddMinor = canManage && !isReadOnly;
+  const canLinkGuardian = canManage && !isReadOnly;
+  const canUnlinkGuardian = canManage && !isReadOnly;
 
   const guardianColumns: DataTableColumn<GuardianLink>[] = [
     {
@@ -438,28 +477,76 @@ export function MinorsSection({
           ) : null
         }
       >
-        {detailHousehold.minors && detailHousehold.minors.length === 0 ? (
-          <p>No minor members</p>
-        ) : (
-          <DataTable
-            aria-label="Minor members"
-            rowKey={(minor) => minor.personId}
-            rows={detailHousehold.minors ?? []}
-            columns={minorColumns}
-          />
-        )}
-
-        {canReadLifeEvents && detailHousehold.minors
-          ? detailHousehold.minors.map((minor) => (
-              <LifeEventsPanel
-                key={minor.personId}
-                personId={minor.personId}
-                personName={`${minor.givenName} ${minor.familyName}`}
-                isReadOnly={isReadOnly}
-                canManage={canManage}
-              />
+        <ChildViewProvider onStale={onStale}>
+          {children.length === 0 ? (
+            <p>No minor members</p>
+          ) : (
+            children.map((child) => (
+              <div
+                key={child.personId}
+                className="grid gap-2 rounded-md border border-border p-3"
+                data-testid={`child-${child.personId}`}
+              >
+                <h4 className="font-semibold text-foreground text-base leading-[22px]">
+                  {child.label}
+                </h4>
+                <DescriptionList
+                  items={[
+                    {
+                      term: "Name",
+                      value: (
+                        <ChildValue
+                          target={{ personId: child.personId, field: "name" }}
+                          fieldName="name"
+                          subject={child.label}
+                        />
+                      ),
+                    },
+                    {
+                      term: "Date of birth",
+                      value: (
+                        <ChildValue
+                          target={{ personId: child.personId, field: "dateOfBirth" }}
+                          fieldName="date of birth"
+                          subject={child.label}
+                        />
+                      ),
+                    },
+                    {
+                      term: "Email",
+                      value: (
+                        <ChildValue
+                          target={{ personId: child.personId, field: "email" }}
+                          fieldName="email"
+                          subject={child.label}
+                        />
+                      ),
+                    },
+                    {
+                      term: "Phone",
+                      value: (
+                        <ChildValue
+                          target={{ personId: child.personId, field: "phone" }}
+                          fieldName="phone"
+                          subject={child.label}
+                        />
+                      ),
+                    },
+                  ]}
+                />
+                {canReadLifeEvents ? (
+                  <LifeEventsPanel
+                    personId={child.personId}
+                    personName={child.label}
+                    isReadOnly={isReadOnly}
+                    canManage={canManage}
+                    child
+                  />
+                ) : null}
+              </div>
             ))
-          : null}
+          )}
+        </ChildViewProvider>
       </Panel>
 
       <Panel
@@ -669,14 +756,19 @@ export function FamilyRecordsPage() {
   const canManage = Boolean(access.permissions["people.manage"]);
   const canRestricted = Boolean(access.permissions["people.restricted.read"]);
   const canReadLifeEvents = canRestricted && Boolean(access.entitlements["people.households"]);
+  // Only a Community Admin is sent the children, as ids and labels. Everyone else is sent a count.
+  const communityAdmin = access.roles.communityAdmin;
+  const childAdmin = isChildAdmin(detailHousehold, communityAdmin);
+  const hasChildren = (detailHousehold?.minors?.childCount ?? 0) > 0;
 
   const canCreate = canManage && !hideWrites;
-  const canRename = canManage && canRestricted && !hideWrites;
+  // A family with a child is renamed by a Community Admin only: the service refuses anyone else.
+  const canRename = canManage && canRestricted && !hideWrites && (!hasChildren || communityAdmin);
   const canMoveAdult = canManage && canRestricted && !hideWrites;
   const canAddAdult = canMoveAdult && Boolean(access.entitlements["people.directory"]);
-  const canAddMinor = canManage && canRestricted && !hideWrites;
-  const canLinkGuardian = canManage && canRestricted && !hideWrites;
-  const canUnlinkGuardian = canManage && canRestricted && !hideWrites;
+  const canAddMinor = childAdmin && canManage && !hideWrites;
+  const canLinkGuardian = childAdmin && canManage && !hideWrites;
+  const canUnlinkGuardian = childAdmin && canManage && !hideWrites;
 
   // Delete, restore and the Deleted filter need all three keys, and are never shown disabled.
   const canFilterDeleted =
@@ -769,8 +861,8 @@ export function FamilyRecordsPage() {
             ),
       );
     },
-    onConflict: reloadDetail,
-    onGone: reloadDetail,
+    onConflict: () => reloadDetail(),
+    onGone: () => reloadDetail(),
     onPaymentRequired,
   });
 
@@ -856,11 +948,16 @@ export function FamilyRecordsPage() {
     [],
   );
 
+  // A quiet read replaces the family on screen when it answers and leaves what is shown alone
+  // meanwhile, so the page does not blink when a View finds that the family has changed. It speaks
+  // up only when the family is gone.
   const fetchDetail = useCallback(
-    async (communitySlug: string, householdId: string, isCurrent: () => boolean) => {
-      setDetailLoading(true);
-      setDetailNotFound(false);
-      setDetailError(false);
+    async (communitySlug: string, householdId: string, isCurrent: () => boolean, quiet = false) => {
+      if (!quiet) {
+        setDetailLoading(true);
+        setDetailNotFound(false);
+        setDetailError(false);
+      }
 
       const response = await post("/v1/households/read", {
         communitySlug,
@@ -872,7 +969,7 @@ export function FamilyRecordsPage() {
       if (response === "unavailable") {
         detailAnswers.current += 1;
         setDetailLoading(false);
-        setDetailError(true);
+        setDetailError(!quiet);
         return;
       }
       if (response.status === 404) {
@@ -884,7 +981,7 @@ export function FamilyRecordsPage() {
       if (response.status !== 200) {
         detailAnswers.current += 1;
         setDetailLoading(false);
-        setDetailError(true);
+        setDetailError(!quiet);
         return;
       }
       try {
@@ -896,7 +993,7 @@ export function FamilyRecordsPage() {
         if (parsed === null) {
           detailAnswers.current += 1;
           setDetailLoading(false);
-          setDetailError(true);
+          setDetailError(!quiet);
           return;
         }
         setDetailHousehold(parsed);
@@ -908,7 +1005,7 @@ export function FamilyRecordsPage() {
         }
         detailAnswers.current += 1;
         setDetailLoading(false);
-        setDetailError(true);
+        setDetailError(!quiet);
       }
     },
     [],
@@ -993,10 +1090,15 @@ export function FamilyRecordsPage() {
     }
   }
 
-  function reloadDetail() {
+  function reloadDetail(options?: { quiet?: boolean }) {
     if (slug && selectedHouseholdId) {
       const mine = ++detailGeneration.current;
-      void fetchDetail(slug, selectedHouseholdId, () => detailGeneration.current === mine);
+      void fetchDetail(
+        slug,
+        selectedHouseholdId,
+        () => detailGeneration.current === mine,
+        options?.quiet === true,
+      );
     }
   }
 
@@ -1121,7 +1223,7 @@ export function FamilyRecordsPage() {
 
   function openLinkGuardian() {
     setLinkGuardianId(detailHousehold?.adults[0]?.personId ?? "");
-    setLinkChildId(detailHousehold?.minors?.[0]?.personId ?? "");
+    setLinkChildId(detailHousehold?.minors?.children?.[0]?.personId ?? "");
     setLinkRights(initialRights);
     setLinkNotice(null);
     setView("link-guardian");
@@ -1160,6 +1262,15 @@ export function FamilyRecordsPage() {
 
       if (response.status === 403) {
         setCreateNotice("Not allowed");
+        return;
+      }
+
+      if (response.status === 422) {
+        setCreateNotice(
+          (await readErrorCode(response)) === "label_contains_child_name"
+            ? LABEL_REFUSED
+            : "Invalid input",
+        );
         return;
       }
 
@@ -1469,6 +1580,15 @@ export function FamilyRecordsPage() {
         return;
       }
 
+      if (response.status === 422) {
+        setRenameNotice(
+          (await readErrorCode(response)) === "label_contains_child_name"
+            ? LABEL_REFUSED
+            : "Invalid input",
+        );
+        return;
+      }
+
       if (response.status === 404) {
         setRenameNotice("Household not found");
         return;
@@ -1599,6 +1719,15 @@ export function FamilyRecordsPage() {
 
       if (response.status === 403) {
         setAddMinorNotice("Not allowed");
+        return;
+      }
+
+      if (response.status === 422) {
+        setAddMinorNotice(
+          (await readErrorCode(response)) === "label_contains_child_name"
+            ? LABEL_REFUSED_FOR_NEW_CHILD
+            : "Invalid input",
+        );
         return;
       }
 
@@ -1793,7 +1922,7 @@ export function FamilyRecordsPage() {
           ) : null}
 
           <form onSubmit={handleCreateSubmit} className="grid gap-4">
-            <Field label="Household name (optional)">
+            <Field label="Household name (optional)" help={LABEL_GUIDANCE}>
               <Input
                 id="create-household-label"
                 value={createLabel}
@@ -1844,7 +1973,7 @@ export function FamilyRecordsPage() {
           ) : null}
 
           <form onSubmit={handleRenameSubmit} className="grid gap-4">
-            <Field label="Household name">
+            <Field label="Household name" help={LABEL_GUIDANCE}>
               <Input
                 id="rename-household-label"
                 value={renameLabel}
@@ -2233,9 +2362,9 @@ export function FamilyRecordsPage() {
                 required
               >
                 <option value="">Select child</option>
-                {detailHousehold?.minors?.map((minor) => (
-                  <option key={minor.personId} value={minor.personId}>
-                    {minor.givenName} {minor.familyName}
+                {detailHousehold?.minors?.children?.map((child) => (
+                  <option key={child.personId} value={child.personId}>
+                    {child.label}
                   </option>
                 ))}
               </Select>
@@ -2390,7 +2519,7 @@ export function FamilyRecordsPage() {
           {detailError ? (
             <Alert variant="destructive" live="assertive">
               <span>Failed to load household</span>
-              <Button type="button" onClick={reloadDetail}>
+              <Button type="button" onClick={() => reloadDetail()}>
                 Retry
               </Button>
             </Alert>
@@ -2450,7 +2579,7 @@ export function FamilyRecordsPage() {
                 : null}
             </Panel>
 
-            {access.permissions["people.restricted.read"] && detailHousehold.minors ? (
+            {detailHousehold.minors ? (
               <MinorsSection
                 detailHousehold={detailHousehold}
                 access={access}
@@ -2463,6 +2592,12 @@ export function FamilyRecordsPage() {
                 handleConfirmUnlink={handleConfirmUnlink}
                 setUnlinkingLinkId={setUnlinkingLinkId}
                 setUnlinkNotice={setUnlinkNotice}
+                onStale={(reason) => {
+                  if (reason === "not_allowed") {
+                    setUnlinkNotice("Not allowed");
+                  }
+                  reloadDetail({ quiet: true });
+                }}
               />
             ) : null}
 

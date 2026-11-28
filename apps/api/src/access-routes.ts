@@ -18,6 +18,7 @@ import {
   grantRole,
   holdsAnyGrant,
   holdsPermission,
+  isCommunityAdmin,
   linkUser,
   revokeRole,
   unlinkUser,
@@ -26,7 +27,7 @@ import { appendAuditEvent, withAppTransaction, type AppTransaction } from "@comm
 import { bundle, catalogue, decide } from "@community-hub/policy";
 import { findCommunityBySlug } from "@community-hub/tenancy";
 import { readSession, readUserEmails } from "@community-hub/identity";
-import { readLinkedContacts, type LinkedContact } from "@community-hub/people";
+import { personIsMinor, readLinkedContacts, type LinkedContact } from "@community-hub/people";
 import { getRequestContext } from "@community-hub/kernel";
 
 import type { Checkout } from "./checkout.js";
@@ -222,6 +223,12 @@ function statusFor(error: AccessError, route?: "grants" | "user-links"): Respons
   if (error.code === "not_found") {
     return empty(404);
   }
+  // A link to a child answers as a link to a person that does not exist, whoever asks: a child's id
+  // is not confirmed to a caller who guesses it (spec Scope 6). A grant to a user who is already
+  // linked to a child is another case, and stays a conflict.
+  if (error.code === "minor_forbidden" && route === "user-links") {
+    return empty(404);
+  }
   if (CONFLICT.has(error.code)) {
     return empty(409);
   }
@@ -363,6 +370,22 @@ function listBody(
   };
 }
 
+// A user's link names a person by id. A link to a child is for a Community Admin only (ADR 0017),
+// so anyone else gets the directory without it, and with it no child's id. A link is kept only when
+// the person is known to be an adult: an unknown person, or one who is hidden (personIsMinor reads
+// visible persons only), fails closed, as the users list does. An adult's link is listed as before.
+// (The product no longer links a user to a child, so a link like this is a record from before that
+// rule.)
+async function withoutChildLinks(tx: AppTransaction, directory: Directory): Promise<Directory> {
+  const userLinks: Directory["userLinks"] = [];
+  for (const link of directory.userLinks) {
+    if ((await personIsMinor(tx, link.personId)) === false) {
+      userLinks.push(link);
+    }
+  }
+  return { ...directory, userLinks };
+}
+
 export function accessRoutes(deps: AccessDeps): GateRoute[] {
   function foreignHost(request: Request): Response | undefined {
     if (presentedHostname(request) !== deps.apiHostname.toLowerCase()) {
@@ -489,7 +512,10 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
           if (!allows(directory, actor.userId, VIEW)) {
             return deny(tx, actor.userId, VIEW);
           }
-          return listBody(directory, callerPermissions(directory, actor.userId));
+          const visible = (await isCommunityAdmin(tx, actor.userId))
+            ? directory
+            : await withoutChildLinks(tx, directory);
+          return listBody(visible, callerPermissions(visible, actor.userId));
         });
         return finish(outcome, (value) => Response.json(value));
       },
@@ -581,12 +607,16 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
             const personIds = Array.from(new Set(directory.userLinks.map((l) => l.personId)));
             const includePhone = permissions.includes("people.view");
 
+            // Whether a linked user is a child is shown to a Community Admin only (ADR 0017).
+            const isAdmin = await isCommunityAdmin(tx, actor.userId);
+
             let linkedContacts = new Map<string, LinkedContact>();
             if (personIds.length > 0) {
               linkedContacts = await readLinkedContacts(tx, deps.kms, deps.keyArn, {
                 personIds,
                 includePhone,
                 actorUserId: actor.userId,
+                childView: isAdmin ? "admin" : "presence",
               });
             }
 
@@ -613,6 +643,18 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
                 contact?.minor === true || (personId !== null && contact === undefined);
 
               if (isMinor) {
+                if (!isAdmin) {
+                  // A user linked to a child, or to a person who cannot be shown, is listed with
+                  // no linked contact: no person id, no flag and no email.
+                  return {
+                    userId,
+                    personId: null,
+                    name: null,
+                    email: null,
+                    phone: null,
+                    minor: false,
+                  };
+                }
                 return {
                   userId,
                   personId,
@@ -713,7 +755,14 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
                 async (perm) => [perm, await holdsPermission(tx, actor.userId, perm)] as const,
               ),
             );
-            return Object.fromEntries(permissionEntries) as CapabilitiesResponse["permissions"];
+            // The role flag comes from the grant itself, not from a permission the
+            // owner and admin roles also hold (children's data access, amendment A7).
+            return {
+              permissions: Object.fromEntries(
+                permissionEntries,
+              ) as CapabilitiesResponse["permissions"],
+              roles: { communityAdmin: await isCommunityAdmin(tx, actor.userId) },
+            };
           }),
         );
 
@@ -739,8 +788,9 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
         ) as CapabilitiesResponse["entitlements"];
 
         const response: CapabilitiesResponse = {
-          permissions: perms,
+          permissions: perms.permissions,
           entitlements,
+          roles: perms.roles,
         };
 
         return Response.json(response);

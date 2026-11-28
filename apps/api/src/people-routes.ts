@@ -2,16 +2,17 @@ import {
   AccessError,
   deleteBlockers,
   holdsPermission,
+  isCommunityAdmin,
   readPersonForActor,
 } from "@community-hub/access";
 import {
+  type AdultPersonListItem,
   createPersonBody,
   listPeopleBody,
   peopleSummaryBody,
   type PeopleSummaryResponse,
   personDeleteBody,
   type PersonDeleteResponse,
-  type PersonListItem,
   personRestoreBody,
   type PersonRestoreResponse,
   personStatusBody,
@@ -54,6 +55,7 @@ const RESTRICTED = "people.restricted.read";
 const ADULT_VIEW_PURPOSE = "people.person.view";
 const DIRECTORY_ENTITLEMENT = "people.directory";
 const GROUPS_BASIC_ENTITLEMENT = "groups.basic";
+const HOUSEHOLDS_ENTITLEMENT = "people.households";
 
 type Scope = { orgId: string; communityId: string };
 
@@ -291,8 +293,10 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
         try {
           const isMinorsMode = body.kind === "minors";
           if (isMinorsMode) {
-            const allowed = await holdsPermission(tx, actor.userId, RESTRICTED);
-            if (!allowed) {
+            // The children's list is for a Community Admin only: people.restricted.read covers
+            // adults (ADR 0017). Everyone else gets 403 with an empty body.
+            const isAdmin = await isCommunityAdmin(tx, actor.userId);
+            if (!isAdmin) {
               await appendAuditEvent(tx, {
                 actorKind: "user",
                 actorId: actor.userId,
@@ -302,11 +306,22 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
               });
               return finish(request, noStore(empty(403)));
             }
+            // The Minors tab sits behind people.households, as every other children route does.
+            // It comes after the role check, so a caller who is not a Community Admin is refused
+            // and audited whatever the community holds.
+            const blockedEntitlement = await guardEntitlement(
+              { checkout: deps.checkout, now: deps.now, guardLog: deps.guardLog },
+              scope,
+              HOUSEHOLDS_ENTITLEMENT,
+            );
+            if (blockedEntitlement !== null) {
+              return finish(request, noStore(blockedEntitlement));
+            }
             const result = await listPersons(tx, deps.kms, deps.keyArn, {
               kind: "minors",
               cursor: body.cursor ?? null,
               ...(body.limit !== undefined ? { limit: body.limit } : {}),
-              includeRestricted: true,
+              childView: "admin",
               actorUserId: actor.userId,
             });
             return finish(request, noStore(Response.json(result)));
@@ -351,7 +366,8 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
 
           let personIds: string[] | undefined;
           if (body.groupId !== undefined) {
-            personIds = await personIdsInGroup(tx, body.groupId);
+            // This list is adults only, so the group filter never carries a child's id.
+            personIds = await personIdsInGroup(tx, body.groupId, { childView: "presence" });
           }
 
           const result = await listPersons(tx, deps.kms, deps.keyArn, {
@@ -367,21 +383,16 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
             ...(personIds !== undefined ? { personIds } : {}),
           });
 
-          let items: PersonListItem[] = result.items;
+          let items: AdultPersonListItem[] = result.items;
           if (hasGroups) {
-            const adultIds = result.items
-              .filter((item) => !item.isMinor)
-              .map((item) => item.personId);
-            const groupsMap = await activeGroupsForPersons(tx, adultIds);
-            items = result.items.map((item): PersonListItem => {
-              if (item.isMinor) {
-                return item;
-              }
-              return {
-                ...item,
-                groups: groupsMap.get(item.personId) ?? [],
-              };
+            const adultIds = result.items.map((item) => item.personId);
+            const groupsMap = await activeGroupsForPersons(tx, adultIds, {
+              childView: "presence",
             });
+            items = result.items.map((item): AdultPersonListItem => ({
+              ...item,
+              groups: groupsMap.get(item.personId) ?? [],
+            }));
           }
 
           sweepAfter = true;

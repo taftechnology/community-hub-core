@@ -1,75 +1,56 @@
-import type { webcrypto } from "node:crypto";
+import type { KmsPort } from "@community-hub/crypto";
+import type { AppTransaction } from "@community-hub/db";
 
-import { decrypt, type Ciphertext, type KmsPort } from "@community-hub/crypto";
-import { appendAuditEvent, type AppTransaction } from "@community-hub/db";
-
+import { isChildView, type ChildView } from "../domain/child-view.js";
 import { PeopleError } from "../domain/error.js";
-import { householdFieldKeys, type PersonFieldKeys } from "./person-keys.js";
+import { childLabels } from "./child-labels.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function uuidToBytes(uuid: string): Uint8Array {
-  const hex = uuid.replaceAll("-", "");
-  const out = new Uint8Array(16);
-  for (let i = 0; i < 16; i += 1) {
-    out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-  }
-  return out;
-}
-
-function asCiphertext(bytes: Uint8Array): Ciphertext {
-  return bytes as never;
-}
-
-async function openField(
-  bytes: Uint8Array | null,
-  enc: webcrypto.CryptoKey,
-  personId: string,
-  communityId: string,
-  label: string,
-): Promise<string | null> {
-  if (bytes === null) {
-    return null;
-  }
-  const plain = await decrypt(asCiphertext(bytes), async () => enc, {
-    tag: "chub/field/v1",
-    label,
-    rowId: uuidToBytes(personId),
-    communityId: uuidToBytes(communityId),
-  });
-  return new TextDecoder().decode(plain);
-}
-
-async function setting(tx: AppTransaction, name: "app.community_id"): Promise<string> {
-  const rows = await tx<{ value: string }[]>`
-    select current_setting(${name}) as value
-  `;
-  const value = rows[0]?.value;
-  if (value === undefined || value.length === 0) {
-    throw new Error("tenant setting is missing");
-  }
-  return value;
-}
-
 export type ReadRosterNamesInput = {
   personIds: string[];
-  includeRestricted: boolean;
+  // Required, with no default. "admin" is passed only by code that has just asked
+  // isCommunityAdmin; everyone else passes "presence".
+  childView: ChildView;
   actorUserId: string;
 };
 
+// An adult, by name. This is the row as it always was.
 export type RosterPerson = {
   personId: string;
-  isMinor: boolean;
+  isMinor: false;
   givenName: string;
   familyName: string;
 };
 
+// A child, for a Community Admin: an id and the label childLabels gives it. Never a name.
+export type RosterChild = {
+  personId: string;
+  label: string;
+};
+
+export type ReadRosterNamesResult = {
+  adults: RosterPerson[];
+  // Under "admin", each child that exists and is not hidden. Always empty under "presence".
+  children: RosterChild[];
+  // The children among the requested ids that exist and are not hidden, under both views.
+  minorCount: number;
+};
+
+// The names of the requested people, for a roster. An adult's name is in clear columns. A child is
+// never named: under "presence" a child is only counted, and under "admin" a child is an id and a
+// label. Nothing here opens a key or decrypts a field, so `kms` and `keyArn` are not used; they
+// stay in the signature so that a caller does not change with the view.
 export async function readRosterNames(
   tx: AppTransaction,
   kms: KmsPort,
   keyArn: string,
   input: ReadRosterNamesInput,
-): Promise<RosterPerson[]> {
+): Promise<ReadRosterNamesResult> {
+  if (!isChildView(input.childView)) {
+    throw new PeopleError("invalid_input");
+  }
+
   if (typeof input.actorUserId !== "string" || !UUID_RE.test(input.actorUserId)) {
     throw new PeopleError("invalid_input");
   }
@@ -83,12 +64,8 @@ export async function readRosterNames(
 
   const ids = [...new Set(input.personIds)];
   if (ids.length === 0) {
-    return [];
+    return { adults: [], children: [], minorCount: 0 };
   }
-
-  const restrictedCols = input.includeRestricted
-    ? tx`given_name_restricted, family_name_restricted`
-    : tx`null::bytea as given_name_restricted, null::bytea as family_name_restricted`;
 
   const rows = await tx<
     {
@@ -97,8 +74,6 @@ export async function readRosterNames(
       household_id: string | null;
       given_name: string | null;
       family_name: string | null;
-      given_name_restricted: Uint8Array | null;
-      family_name_restricted: Uint8Array | null;
     }[]
   >`
     select
@@ -106,8 +81,7 @@ export async function readRosterNames(
       is_minor,
       household_id::text as household_id,
       given_name,
-      family_name,
-      ${restrictedCols}
+      family_name
     from app.persons
     where id = any(${ids}::uuid[])
       and org_id = current_setting('app.org_id')::uuid
@@ -115,108 +89,62 @@ export async function readRosterNames(
       and deleted_at is null
   `;
 
-  if (rows.length === 0) {
-    return [];
-  }
-
-  const householdKeyMap = new Map<string, PersonFieldKeys>();
-  async function getHouseholdKeys(householdId: string): Promise<PersonFieldKeys> {
-    let keys = householdKeyMap.get(householdId);
-    if (keys === undefined) {
-      keys = await householdFieldKeys(tx, kms, keyArn, householdId);
-      householdKeyMap.set(householdId, keys);
-    }
-    return keys;
-  }
-
-  let communityId: string | null = null;
-  async function getCommunityId(): Promise<string> {
-    if (communityId === null) {
-      communityId = await setting(tx, "app.community_id");
-    }
-    return communityId;
-  }
-
-  const decryptedTargetIds: string[] = [];
-  const results: RosterPerson[] = [];
-
+  const adults: RosterPerson[] = [];
+  const minors: { personId: string; householdId: string | null }[] = [];
   for (const row of rows) {
-    if (!row.is_minor) {
-      results.push({
+    if (row.is_minor) {
+      minors.push({ personId: row.id, householdId: row.household_id });
+    } else {
+      adults.push({
         personId: row.id,
         isMinor: false,
         givenName: row.given_name ?? "",
         familyName: row.family_name ?? "",
       });
-      continue;
     }
-
-    if (!input.includeRestricted) {
-      results.push({
-        personId: row.id,
-        isMinor: true,
-        givenName: "",
-        familyName: "",
-      });
-      continue;
-    }
-
-    if (row.household_id === null) {
-      throw new PeopleError("household_required");
-    }
-
-    const keys = await getHouseholdKeys(row.household_id);
-    const commId = await getCommunityId();
-
-    const givenName = await openField(
-      row.given_name_restricted,
-      keys.enc,
-      row.id,
-      commId,
-      "people.given_name",
-    );
-    const familyName = await openField(
-      row.family_name_restricted,
-      keys.enc,
-      row.id,
-      commId,
-      "people.family_name",
-    );
-    if (givenName === null || familyName === null) {
-      throw new Error("person name is missing");
-    }
-
-    decryptedTargetIds.push(row.id);
-    results.push({
-      personId: row.id,
-      isMinor: true,
-      givenName,
-      familyName,
-    });
   }
 
-  if (decryptedTargetIds.length > 0) {
-    await appendAuditEvent(tx, {
-      actorKind: "user",
-      actorId: input.actorUserId,
-      action: "people.person.read",
-      purpose: "people.person.read",
-      targetIds: decryptedTargetIds,
-    });
+  if (input.childView === "presence") {
+    return { adults, children: [], minorCount: minors.length };
   }
 
-  return results;
+  // A Community Admin's view: each child is an id and its label, from clear columns.
+  const householdIds = [
+    ...new Set(minors.flatMap((minor) => (minor.householdId === null ? [] : [minor.householdId]))),
+  ];
+  const labelOf = new Map(
+    (await childLabels(tx, householdIds)).map((entry) => [entry.personId, entry.label]),
+  );
+  const children: RosterChild[] = [];
+  for (const minor of minors) {
+    const label = labelOf.get(minor.personId);
+    // A child with no label was hidden between the two reads: it is not listed or counted.
+    if (label !== undefined) {
+      children.push({ personId: minor.personId, label });
+    }
+  }
+  return { adults, children, minorCount: children.length };
 }
 
-// The subset of ids that exist in the current scope and are not hidden, in the order given.
-// Groups uses it to leave hidden contacts out of its own reads. A write passes
-// { lock: "share" } to read the contacts FOR SHARE in id order, so it waits for a delete in
-// flight; the read callers stay unlocked.
+export type VisiblePersonIdsOptions = {
+  // Required, with no default. Under "presence" a child's id is never returned.
+  childView: ChildView;
+  lock?: "share";
+};
+
+// The subset of ids that exist in the current scope and are not hidden, in the order given. Under
+// "presence" a child's id is left out, as if the child were hidden: only a Community Admin's view
+// ("admin") keeps it. Groups uses it to leave hidden contacts, and children for anyone else, out
+// of its own reads. A write passes { lock: "share" } to read the contacts FOR SHARE in id order,
+// so it waits for a delete in flight; the read callers stay unlocked.
 export async function visiblePersonIds(
   tx: AppTransaction,
   ids: string[],
-  options?: { lock?: "share" },
+  options: VisiblePersonIdsOptions,
 ): Promise<string[]> {
+  if (typeof options !== "object" || options === null || !isChildView(options.childView)) {
+    throw new PeopleError("invalid_input");
+  }
   if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string" || !UUID_RE.test(id))) {
     throw new PeopleError("invalid_input");
   }
@@ -224,8 +152,10 @@ export async function visiblePersonIds(
   if (wanted.length === 0) {
     return [];
   }
+  // One statement either way: a child is in the answer only for a Community Admin's view.
+  const withChildren = options.childView === "admin";
   const rows =
-    options?.lock === "share"
+    options.lock === "share"
       ? await tx<{ id: string }[]>`
           select id::text as id
           from app.persons
@@ -233,6 +163,7 @@ export async function visiblePersonIds(
             and org_id = current_setting('app.org_id')::uuid
             and community_id = current_setting('app.community_id')::uuid
             and deleted_at is null
+            and (${withChildren}::boolean or is_minor = false)
           order by id asc
           for share
         `
@@ -243,6 +174,7 @@ export async function visiblePersonIds(
             and org_id = current_setting('app.org_id')::uuid
             and community_id = current_setting('app.community_id')::uuid
             and deleted_at is null
+            and (${withChildren}::boolean or is_minor = false)
         `;
   const found = new Set(rows.map((r) => r.id));
   return wanted.filter((id) => found.has(id));

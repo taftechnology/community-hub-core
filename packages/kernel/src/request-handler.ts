@@ -106,7 +106,9 @@ export function createRequestHandler(
       } catch (error) {
         status = 500;
         thrown = describeThrown(error);
-        return new Response(null, { status: 500 });
+        // The body is empty and carries nothing, and the answer is never stored: a View path
+        // (/v1/people/minors/) answers no-store in every case, and the kernel does not know the path.
+        return new Response(null, { status: 500, headers: { "cache-control": "no-store" } });
       } finally {
         const fields: RequestLogFields = {
           method: request.method,

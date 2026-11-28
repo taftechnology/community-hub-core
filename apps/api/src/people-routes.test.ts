@@ -16,6 +16,7 @@ const tenancy = vi.hoisted(() => ({
 const access = vi.hoisted(() => ({
   holdsPermission: vi.fn(),
   holdsAnyGrant: vi.fn(),
+  isCommunityAdmin: vi.fn(),
   readPersonForActor: vi.fn(),
 }));
 
@@ -61,6 +62,7 @@ vi.mock("@community-hub/access", async () => {
     ...actual,
     holdsPermission: access.holdsPermission,
     holdsAnyGrant: access.holdsAnyGrant,
+    isCommunityAdmin: access.isCommunityAdmin,
     readPersonForActor: access.readPersonForActor,
   };
 });
@@ -154,6 +156,17 @@ function createSnapshotWithGroups(): EntitlementSnapshot {
   });
 }
 
+// The children's list sits behind people.households as well as people.directory (spec, Rules touched).
+function createSnapshotWithHouseholds(): EntitlementSnapshot {
+  return createSnapshot({
+    planEntitlements: [
+      { key: "people.directory", limit: null },
+      { key: "people.households", limit: null },
+    ],
+    allocations: ["people.directory", "people.households"],
+  });
+}
+
 describe("people routes (list and read)", () => {
   const logCalls: { message: string; fields?: Record<string, unknown> }[] = [];
 
@@ -219,6 +232,7 @@ describe("people routes (list and read)", () => {
     tenancy.findCommunityBySlug.mockReset();
     access.holdsPermission.mockReset();
     access.holdsAnyGrant.mockReset();
+    access.isCommunityAdmin.mockReset();
     access.readPersonForActor.mockReset();
     billing.assertWritable.mockReset();
     people.listPersons.mockReset();
@@ -249,6 +263,8 @@ describe("people routes (list and read)", () => {
     );
     access.holdsPermission.mockResolvedValue(true);
     access.holdsAnyGrant.mockResolvedValue(true);
+    // Not a Community Admin unless a test says so: people.restricted.read does not make one.
+    access.isCommunityAdmin.mockResolvedValue(false);
     billing.assertWritable.mockResolvedValue("ok");
   });
 
@@ -302,6 +318,43 @@ describe("people routes (list and read)", () => {
         includeRestricted: true,
       });
       expect(resUpdate.status).toBe(400);
+    });
+
+    it("returns 400 with an empty body for a list kind other than adults or minors, and reaches no reader (checkpoint 1, L3)", async () => {
+      // A Community Admin, who may list children, so the kind alone can be the reason for the 400.
+      // The community holds people.households, which the children's list needs (checkpoint 2, M1).
+      access.isCommunityAdmin.mockResolvedValue(true);
+      entitlements.readSnapshot.mockResolvedValue(createSnapshotWithHouseholds());
+
+      for (const kind of [
+        "everyone",
+        "Minors",
+        "MINORS",
+        "adult",
+        "children",
+        "",
+        null,
+        1,
+        true,
+        ["minors"],
+        { kind: "minors" },
+      ]) {
+        const res = await call("/v1/people/list", { communitySlug: "parish", kind });
+        expect(res.status).toBe(400);
+        expect(await res.text()).toBe("");
+      }
+      expect(people.listPersons).not.toHaveBeenCalled();
+      expect(access.isCommunityAdmin).not.toHaveBeenCalled();
+      expect(db.withAppTransaction).not.toHaveBeenCalled();
+
+      // Control: the same body with either accepted kind is answered, so the 400s above are the
+      // kind's and not some other part of the body.
+      people.listPersons.mockResolvedValue({ items: [], nextCursor: null });
+      for (const kind of ["adults", "minors"]) {
+        const res = await call("/v1/people/list", { communitySlug: "parish", kind });
+        expect(res.status).toBe(200);
+      }
+      expect(people.listPersons).toHaveBeenCalledTimes(2);
     });
 
     it("answers unknown communities like unauthorised ones with 403 (finding 1, Deviation 12)", async () => {
@@ -578,16 +631,16 @@ describe("people routes (list and read)", () => {
       });
     });
 
-    it("lists minors with includeRestricted=true when kind is minors and actor holds people.restricted.read (pin 3)", async () => {
+    it("lists minors with childView admin when kind is minors and the actor is a Community Admin (pin 3)", async () => {
+      access.isCommunityAdmin.mockResolvedValue(true);
+      entitlements.readSnapshot.mockResolvedValue(createSnapshotWithHouseholds());
       const mockMinorsResult = {
         items: [
           {
-            id: PERSON_ID,
             personId: PERSON_ID,
-            isMinor: true,
-            givenName: "Tommy",
-            familyName: "Smith",
-            version: 1,
+            label: "Child 1",
+            householdId: "00000000-0000-4000-8000-0000000000e1",
+            householdLabel: "Smith",
           },
         ],
         nextCursor: null,
@@ -601,11 +654,7 @@ describe("people routes (list and read)", () => {
 
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual(mockMinorsResult);
-      expect(access.holdsPermission).toHaveBeenCalledWith(
-        expect.anything(),
-        USER,
-        "people.restricted.read",
-      );
+      expect(access.isCommunityAdmin).toHaveBeenCalledWith(expect.anything(), USER);
       expect(people.listPersons).toHaveBeenCalledWith(
         expect.anything(),
         expect.anything(),
@@ -613,16 +662,15 @@ describe("people routes (list and read)", () => {
         {
           kind: "minors",
           cursor: null,
-          includeRestricted: true,
+          childView: "admin",
           actorUserId: USER,
         },
       );
     });
 
-    it("refuses minors mode with 403 and people.permission.denied audit when actor lacks people.restricted.read (pins 3, 4)", async () => {
-      access.holdsPermission.mockImplementation(
-        async (_tx: unknown, _userId: string, perm: string) => perm === "people.view",
-      );
+    it("refuses minors mode with 403 and people.permission.denied audit when the actor is not a Community Admin, even holding people.restricted.read (pins 3, 4)", async () => {
+      // holdsPermission answers true for every permission, people.restricted.read included.
+      access.isCommunityAdmin.mockResolvedValue(false);
 
       const res = await call("/v1/people/list", {
         communitySlug: "parish",
@@ -641,6 +689,45 @@ describe("people routes (list and read)", () => {
       });
     });
 
+    it("refuses minors mode with an empty no-store 403 for a Community Admin when people.households is off, and reads no child (checkpoint 2, M1)", async () => {
+      access.isCommunityAdmin.mockResolvedValue(true);
+      // The default snapshot holds people.directory only, so people.households is off.
+
+      const res = await call("/v1/people/list", { communitySlug: "parish", kind: "minors" });
+
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+      expect(res.headers.get("cache-control")).toBe("no-store");
+      expect(people.listPersons).not.toHaveBeenCalled();
+
+      // Control: the same Community Admin and body are answered once the community holds it.
+      entitlements.readSnapshot.mockResolvedValue(createSnapshotWithHouseholds());
+      people.listPersons.mockResolvedValueOnce({ items: [], nextCursor: null });
+      const answered = await call("/v1/people/list", { communitySlug: "parish", kind: "minors" });
+      expect(answered.status).toBe(200);
+      expect(people.listPersons).toHaveBeenCalledTimes(1);
+    });
+
+    it("checks the Community Admin role before people.households, so a caller who is not one is refused and audited either way (checkpoint 2, M1)", async () => {
+      access.isCommunityAdmin.mockResolvedValue(false);
+      for (const snapshot of [createSnapshot(), createSnapshotWithHouseholds()]) {
+        db.appendAuditEvent.mockClear();
+        entitlements.readSnapshot.mockResolvedValue(snapshot);
+
+        const res = await call("/v1/people/list", { communitySlug: "parish", kind: "minors" });
+
+        expect(res.status).toBe(403);
+        expect(await res.text()).toBe("");
+        expect(people.listPersons).not.toHaveBeenCalled();
+        // One denial row each time: the role refusal does not depend on the entitlement.
+        expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
+        expect(db.appendAuditEvent).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({ action: "people.permission.denied" }),
+        );
+      }
+    });
+
     it("returns 400 with empty body when listPersons throws PeopleError invalid_input (finding 2)", async () => {
       people.listPersons.mockRejectedValueOnce(new PeopleError("invalid_input"));
 
@@ -653,6 +740,8 @@ describe("people routes (list and read)", () => {
       expect(await resAdult.text()).toBe("");
 
       people.listPersons.mockRejectedValueOnce(new PeopleError("invalid_input"));
+      access.isCommunityAdmin.mockResolvedValue(true);
+      entitlements.readSnapshot.mockResolvedValue(createSnapshotWithHouseholds());
 
       const resMinor = await call("/v1/people/list", {
         communitySlug: "parish",
@@ -693,6 +782,8 @@ describe("people routes (list and read)", () => {
     });
 
     it("forwards cursor and limit to listPersons in minors mode (finding 4)", async () => {
+      access.isCommunityAdmin.mockResolvedValue(true);
+      entitlements.readSnapshot.mockResolvedValue(createSnapshotWithHouseholds());
       people.listPersons.mockResolvedValueOnce({ items: [], nextCursor: null });
 
       const res = await call("/v1/people/list", {
@@ -711,7 +802,7 @@ describe("people routes (list and read)", () => {
           kind: "minors",
           cursor: "cursor-minors-token",
           limit: 15,
-          includeRestricted: true,
+          childView: "admin",
           actorUserId: USER,
         },
       );
@@ -1590,9 +1681,11 @@ describe("people routes (list and read)", () => {
         groupId: "00000000-0000-4000-8000-000000000099",
       });
       expect(res.status).toBe(200);
+      // The adults list never shows a child, so the group filter asks for the presence view.
       expect(groups.personIdsInGroup).toHaveBeenCalledWith(
         expect.anything(),
         "00000000-0000-4000-8000-000000000099",
+        { childView: "presence" },
       );
       expect(people.listPersons).toHaveBeenCalledWith(
         expect.anything(),
@@ -1605,6 +1698,47 @@ describe("people routes (list and read)", () => {
           now: FIXED_NOW,
         }),
       );
+    });
+
+    it("pin 129: the adult list asks the group readers for the presence view, for a Community Admin too (checkpoint 2, L3)", async () => {
+      // The adult list never shows a child, so neither the group filter nor the group column may be
+      // given the "admin" view, whoever asks. In a database test the adult query's own
+      // `is_minor = false` hides what the view would change, so the argument is checked here.
+      const GROUP_ID = "00000000-0000-4000-8000-0000000000a9";
+      access.isCommunityAdmin.mockResolvedValue(true);
+      entitlements.readSnapshot.mockResolvedValue(createSnapshotWithGroups());
+      groups.personIdsInGroup.mockResolvedValueOnce([PERSON_ID]);
+      people.listPersons.mockResolvedValueOnce({
+        items: [
+          {
+            id: PERSON_ID,
+            personId: PERSON_ID,
+            isMinor: false,
+            givenName: "Arthur",
+            familyName: "Dent",
+            version: 1,
+            email: null,
+            phone: null,
+            age: 42,
+            createdAt: "2026-10-01T00:00:00.000Z",
+            status: "active",
+            source: "manual",
+          },
+        ],
+        nextCursor: null,
+      });
+
+      const res = await call("/v1/people/list", { communitySlug: "parish", groupId: GROUP_ID });
+
+      expect(res.status).toBe(200);
+      expect(groups.personIdsInGroup).toHaveBeenCalledTimes(1);
+      expect(groups.personIdsInGroup).toHaveBeenCalledWith(expect.anything(), GROUP_ID, {
+        childView: "presence",
+      });
+      expect(groups.activeGroupsForPersons).toHaveBeenCalledTimes(1);
+      expect(groups.activeGroupsForPersons).toHaveBeenCalledWith(expect.anything(), [PERSON_ID], {
+        childView: "presence",
+      });
     });
 
     it("POST /v1/people/list: attaches groups to adult items when groups.basic is enabled", async () => {
@@ -1655,6 +1789,12 @@ describe("people routes (list and read)", () => {
         { id: "00000000-0000-4000-8000-000000000001", name: "Choir" },
       ]);
       expect(data.items[1]?.groups).toEqual([]);
+      // The group column is for adults only, so it asks for the presence view too.
+      expect(groups.activeGroupsForPersons).toHaveBeenCalledWith(
+        expect.anything(),
+        [PERSON_ID, "00000000-0000-4000-8000-000000000098"],
+        { childView: "presence" },
+      );
     });
 
     it("POST /v1/people/create: passes source when provided", async () => {

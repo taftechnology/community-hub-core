@@ -1,6 +1,7 @@
 import { blindIndex, type KmsPort } from "@community-hub/crypto";
 import { appendAuditEvent, type AppTransaction } from "@community-hub/db";
 
+import { type ChildView, isChildView } from "../domain/child-view.js";
 import { PeopleError } from "../domain/error.js";
 import {
   ageOn,
@@ -10,14 +11,15 @@ import {
   type PersonSource,
   type PersonStatus,
 } from "../domain/person.js";
+import { childLabels } from "./child-labels.js";
+import { openHouseholdLabel } from "./household.js";
 import { existingCommunityFieldKeys, type PersonFieldKeys } from "./person-keys.js";
 import { openField } from "./person.js";
-import { readRosterNames } from "./roster-names.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export type ListPersonsInput = {
-  kind?: "adults" | "minors";
+export type ListAdultsInput = {
+  kind?: "adults";
   search?: string | null;
   cursor?: string | null;
   limit?: number;
@@ -28,6 +30,22 @@ export type ListPersonsInput = {
   source?: PersonSource;
   personIds?: string[];
 };
+
+// Minors mode is the Community Admin's list of children, so childView is required and only
+// "admin" is accepted: a caller that has not asked isCommunityAdmin has no business here.
+export type ListMinorsInput = {
+  kind: "minors";
+  cursor?: string | null;
+  limit?: number;
+  actorUserId: string;
+  childView: ChildView;
+};
+
+export type ListPersonsInput = ListAdultsInput | ListMinorsInput;
+
+function isAdultsInput(input: ListPersonsInput): input is ListAdultsInput {
+  return input.kind !== "minors";
+}
 
 export type AdultListItem = {
   id: string;
@@ -44,21 +62,29 @@ export type AdultListItem = {
   source: PersonSource;
 };
 
+// A child in the Community Admin's list: an id, a display label and the family. No field of the
+// child is here, the name included. householdLabel is the family's own label, an adult-level
+// field a Community Admin can already read.
 export type MinorListItem = {
-  id: string;
   personId: string;
-  isMinor: true;
-  givenName: string;
-  familyName: string;
-  version: number;
+  label: string;
+  householdId: string;
+  householdLabel: string | null;
 };
 
 export type PersonListItem = AdultListItem | MinorListItem;
 
-export type ListPersonsResult = {
-  items: PersonListItem[];
+export type ListAdultsResult = {
+  items: AdultListItem[];
   nextCursor: string | null;
 };
+
+export type ListMinorsResult = {
+  items: MinorListItem[];
+  nextCursor: string | null;
+};
+
+export type ListPersonsResult = ListAdultsResult | ListMinorsResult;
 
 type AdultCursor = { f: string; g: string; i: string };
 type MinorCursor = { i: string };
@@ -198,7 +224,9 @@ function toIso(value: Date | string): string {
 }
 
 // Hidden adults, newest hide first. It never opens a key, decrypts or returns email, phone or
-// date of birth: a name, the two dates and the version are all the screen needs.
+// date of birth: a name, the two dates and the version are all the screen needs. A hidden child
+// is never listed (is_minor = false): a child's name is encrypted and no reader but the Community
+// Admin's View returns it.
 export async function listDeletedPersons(
   tx: AppTransaction,
   input: ListDeletedPersonsInput,
@@ -294,6 +322,24 @@ export async function listPersons(
   tx: AppTransaction,
   kms: KmsPort,
   keyArn: string,
+  input: ListAdultsInput,
+): Promise<ListAdultsResult>;
+export async function listPersons(
+  tx: AppTransaction,
+  kms: KmsPort,
+  keyArn: string,
+  input: ListMinorsInput,
+): Promise<ListMinorsResult>;
+export async function listPersons(
+  tx: AppTransaction,
+  kms: KmsPort,
+  keyArn: string,
+  input: ListPersonsInput,
+): Promise<ListPersonsResult>;
+export async function listPersons(
+  tx: AppTransaction,
+  kms: KmsPort,
+  keyArn: string,
   input: ListPersonsInput,
 ): Promise<ListPersonsResult> {
   if (typeof input.actorUserId !== "string" || !UUID_RE.test(input.actorUserId)) {
@@ -310,28 +356,28 @@ export async function listPersons(
     throw new PeopleError("invalid_input");
   }
 
-  const term = typeof input.search === "string" ? input.search.trim() : "";
-  if (term.length > 100) {
-    throw new PeopleError("invalid_input");
-  }
+  if (isAdultsInput(input)) {
+    const term = typeof input.search === "string" ? input.search.trim() : "";
+    if (term.length > 100) {
+      throw new PeopleError("invalid_input");
+    }
 
-  if (input.status !== undefined && input.status !== "active" && input.status !== "inactive") {
-    throw new PeopleError("invalid_input");
-  }
+    if (input.status !== undefined && input.status !== "active" && input.status !== "inactive") {
+      throw new PeopleError("invalid_input");
+    }
 
-  if (input.source !== undefined && !PERSON_SOURCES.includes(input.source)) {
-    throw new PeopleError("invalid_input");
-  }
+    if (input.source !== undefined && !PERSON_SOURCES.includes(input.source)) {
+      throw new PeopleError("invalid_input");
+    }
 
-  if (input.personIds !== undefined) {
-    for (const id of input.personIds) {
-      if (!UUID_RE.test(id)) {
-        throw new PeopleError("invalid_input");
+    if (input.personIds !== undefined) {
+      for (const id of input.personIds) {
+        if (!UUID_RE.test(id)) {
+          throw new PeopleError("invalid_input");
+        }
       }
     }
-  }
 
-  if (kind === "adults") {
     if (input.personIds !== undefined && input.personIds.length === 0) {
       return { items: [], nextCursor: null };
     }
@@ -530,8 +576,19 @@ export async function listPersons(
     return { items, nextCursor };
   }
 
-  // Minors mode
-  if (input.includeRestricted !== true) {
+  return listChildren(tx, kms, keyArn, input, limit);
+}
+
+// The Community Admin's list of children: id, label, family. It decrypts no field of a child. The
+// only thing opened is the family's label, which is an adult-level field.
+async function listChildren(
+  tx: AppTransaction,
+  kms: KmsPort,
+  keyArn: string,
+  input: ListMinorsInput,
+  limit: number,
+): Promise<ListMinorsResult> {
+  if (!isChildView(input.childView) || input.childView !== "admin") {
     throw new PeopleError("invalid_input");
   }
 
@@ -541,17 +598,13 @@ export async function listPersons(
     cursorClause = tx`and id > ${c.i}::uuid`;
   }
 
-  const rows = await tx<
-    {
-      id: string;
-      version: number;
-    }[]
-  >`
-    select id::text as id, version
+  const rows = await tx<{ id: string; household_id: string }[]>`
+    select id::text as id, household_id::text as household_id
     from app.persons
     where org_id = current_setting('app.org_id')::uuid
       and community_id = current_setting('app.community_id')::uuid
       and is_minor = true
+      and deleted_at is null
       ${cursorClause}
     order by id asc
     limit ${limit + 1}
@@ -559,7 +612,6 @@ export async function listPersons(
 
   const hasMore = rows.length > limit;
   const pageRows = rows.slice(0, limit);
-  const versionMap = new Map(pageRows.map((r) => [r.id, r.version]));
   const pageIds = pageRows.map((r) => r.id);
   const lastId = pageIds[pageIds.length - 1];
   const nextCursor = hasMore && lastId ? encodeCursor({ i: lastId }) : null;
@@ -572,28 +624,30 @@ export async function listPersons(
     targetIds: pageIds,
   });
 
-  const roster = await readRosterNames(tx, kms, keyArn, {
-    personIds: pageIds,
-    includeRestricted: input.includeRestricted ?? false,
-    actorUserId: input.actorUserId,
-  });
+  const householdIds = [...new Set(pageRows.map((r) => r.household_id))];
+  const labelOf = new Map(
+    (await childLabels(tx, householdIds)).map((entry) => [entry.personId, entry.label]),
+  );
+  const householdLabelOf = new Map<string, string | null>();
+  for (const householdId of householdIds) {
+    const opened = await openHouseholdLabel(tx, kms, keyArn, householdId);
+    householdLabelOf.set(householdId, opened?.label ?? null);
+  }
 
-  const rosterMap = new Map(roster.map((r) => [r.personId, r]));
-  const items: PersonListItem[] = pageIds.map((id) => {
-    const r = rosterMap.get(id);
-    const version = versionMap.get(id);
-    if (version === undefined) {
-      throw new Error("minor version is missing");
+  const items: MinorListItem[] = [];
+  for (const row of pageRows) {
+    const label = labelOf.get(row.id);
+    if (label === undefined) {
+      // Hidden between the two reads: it is no longer in the list.
+      continue;
     }
-    return {
-      id,
-      personId: id,
-      isMinor: true,
-      givenName: r?.givenName ?? "",
-      familyName: r?.familyName ?? "",
-      version,
-    };
-  });
+    items.push({
+      personId: row.id,
+      label,
+      householdId: row.household_id,
+      householdLabel: householdLabelOf.get(row.household_id) ?? null,
+    });
+  }
 
   return { items, nextCursor };
 }

@@ -76,7 +76,7 @@ beforeAll(async () => {
 });
 
 describe("person field keys", () => {
-  it("opens the community key for an adult and the household key for a minor", async () => {
+  it("opens the community key for an adult and no key for a minor", async () => {
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
     const app = createPlaintextAppSql(roleUrl(runtime, "app"));
@@ -156,16 +156,23 @@ describe("person field keys", () => {
           await expect(crypto.subtle.exportKey("raw", adultKeys.enc)).rejects.toThrow();
           expect(await readCount(tx, adult.personId)).toBe(adultReads + 1);
 
+          // openPersonFieldKeys hands out no key for a child, to any actor, and records no read.
           const minorReads = await readCount(tx, minor.personId);
-          const minorKeys = await openPersonFieldKeys(tx, kms, KEY_ARN, {
-            personId: minor.personId,
-            actorUserId: null,
+          expect(
+            await openPersonFieldKeys(tx, kms, KEY_ARN, {
+              personId: minor.personId,
+              actorUserId: null,
+            }),
+          ).toBeNull();
+          expect(await readCount(tx, minor.personId)).toBe(minorReads);
+
+          // The household key is still the only key that opens a child's ciphertext. It is derived
+          // here through the internal helper, which the Community Admin's View alone will use.
+          const minorKeys = await derivePersonFieldKeys(tx, kms, KEY_ARN, {
+            isMinor: true,
+            householdId: household.householdId,
           });
-          expect(minorKeys).not.toBeNull();
-          if (minorKeys === null) {
-            return;
-          }
-          expect(Object.keys(minorKeys).sort()).toEqual(["bidx", "enc"]);
+          expect(Object.keys(minorKeys).sort()).toEqual(["bidx", "enc", "keyId"]);
           await expect(
             decrypt(asCiphertext(restricted), async () => adultKeys.enc, {
               tag: "chub/field/v1",
@@ -182,7 +189,6 @@ describe("person field keys", () => {
           });
           expect(new TextDecoder().decode(minorName)).toBe("Ned");
           await expect(crypto.subtle.exportKey("raw", minorKeys.enc)).rejects.toThrow();
-          expect(await readCount(tx, minor.personId)).toBe(minorReads + 1);
 
           const missingId = newId();
           const readsBefore = await tx<{ n: number }[]>`
@@ -288,12 +294,12 @@ describe("person field keys", () => {
           expect(adultRead?.email).toBe("grace@example.com");
           expect(adultRead?.givenName).toBe("Grace");
 
+          // A child is read as a person that does not exist.
           const minorRead = await readPerson(tx, kms, KEY_ARN, {
             personId: minor.personId,
             actorUserId: null,
           });
-          expect(minorRead).not.toBeNull();
-          expect(minorRead?.givenName).toBe("Young");
+          expect(minorRead).toBeNull();
 
           // openPersonFieldKeys still keeps { enc, bidx } shape
           const openedAdult = await openPersonFieldKeys(tx, kms, KEY_ARN, {

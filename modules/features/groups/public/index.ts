@@ -46,5 +46,7 @@ export {
   type RemoveMemberInput,
   type SetMemberRoleInput,
   type ListMembersInput,
+  type ListMembersResult,
+  type MemberViewOptions,
 } from "../infrastructure/members.js";
 export { exportRosterCsv, type ExportRosterCsvInput } from "../infrastructure/export.js";

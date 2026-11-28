@@ -314,6 +314,14 @@ describe("access flow", () => {
       expect(await absent.text()).toBe("");
 
       // POST /v1/access/capabilities (finding 1: real DB entitlement check with enabled entitlements)
+      const auditCount = (): Promise<number> =>
+        withAppTransaction(app, { orgId: organisationId, communityId }, async (tx) => {
+          const rows = await tx<{ count: number }[]>`
+            select count(*)::int as count from app.audit_events
+          `;
+          return rows[0]?.count ?? 0;
+        });
+      const auditBefore = await auditCount();
       const capRes = await post(
         API_HOSTNAME,
         "/v1/access/capabilities",
@@ -324,6 +332,7 @@ describe("access flow", () => {
       const capData = (await capRes.json()) as {
         permissions: Record<string, boolean>;
         entitlements: Record<string, boolean>;
+        roles: Record<string, boolean>;
       };
       expect(capData).toEqual({
         permissions: {
@@ -338,6 +347,7 @@ describe("access flow", () => {
           "people.households": true,
           "module.engagement": false,
         },
+        roles: { communityAdmin: true },
       });
 
       // Second community in the same organisation has households toggled off
@@ -351,6 +361,7 @@ describe("access flow", () => {
       const capData2 = (await capRes2.json()) as {
         permissions: Record<string, boolean>;
         entitlements: Record<string, boolean>;
+        roles: Record<string, boolean>;
       };
       expect(capData2).toEqual({
         permissions: {
@@ -365,6 +376,10 @@ describe("access flow", () => {
           "people.households": false,
           "module.engagement": false,
         },
+        // The same caller is the Community Admin of the first community, so this is the case of
+        // a Community Admin elsewhere in the organisation, who reaches this one by an
+        // organisation role and has the permissions without the role (pin 136)
+        roles: { communityAdmin: false },
       });
 
       // Finding 2: caller with member role grant (no people permissions) gets 200 with all permissions false
@@ -378,6 +393,7 @@ describe("access flow", () => {
       const memberCapData = (await memberCapRes.json()) as {
         permissions: Record<string, boolean>;
         entitlements: Record<string, boolean>;
+        roles: Record<string, boolean>;
       };
       expect(memberCapData).toEqual({
         permissions: {
@@ -392,7 +408,11 @@ describe("access flow", () => {
           "people.households": true,
           "module.engagement": false,
         },
+        roles: { communityAdmin: false },
       });
+
+      // Asking for the role writes no audit row, as the admin screens do on every load
+      expect(await auditCount()).toBe(auditBefore);
 
       // Pin 19: stranger and unknown slug return identical empty 403 on capabilities
       const missingCap = await post(

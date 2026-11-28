@@ -8,9 +8,12 @@ import {
   deletedHouseholdsListResponse,
   emergencyContactInput,
   emergencyContactResponseItem,
+  householdAdultMember,
+  householdChildren,
   householdDeleteBody,
   householdDeleteResponse,
   householdErrorBody,
+  householdGuardianLink,
   householdRestoreBody,
   householdRestoreResponse,
   householdStatusBody,
@@ -818,9 +821,155 @@ describe("household contract schemas (pin 10)", () => {
         status: "active",
         label: "Smith",
         adults: [],
+        minors: { childCount: 0 },
         guardians: [],
       }).success,
     ).toBe(true);
+  });
+
+  it("the household read shows a child as a count, or as an id and a label, and nothing else", () => {
+    const base = {
+      householdId: VALID_UUID,
+      version: 1,
+      status: "active",
+      label: "Smith",
+      adults: [],
+      guardians: [],
+    };
+    // A count, for everyone who may see the family.
+    expect(readHouseholdResponse.safeParse({ ...base, minors: { childCount: 2 } }).success).toBe(
+      true,
+    );
+    // Ids and labels, for a Community Admin.
+    const children = [
+      { personId: VALID_UUID, label: "Child 1" },
+      { personId: OTHER_UUID, label: "Child 2" },
+    ];
+    expect(
+      readHouseholdResponse.safeParse({ ...base, minors: { childCount: 2, children } }).success,
+    ).toBe(true);
+    expect(householdChildren.safeParse({ childCount: 0 }).success).toBe(true);
+
+    // The count is required, and a negative or fractional count is refused.
+    expect(readHouseholdResponse.safeParse(base).success).toBe(false);
+    expect(householdChildren.safeParse({ children }).success).toBe(false);
+    expect(householdChildren.safeParse({ childCount: -1 }).success).toBe(false);
+    expect(householdChildren.safeParse({ childCount: 1.5 }).success).toBe(false);
+
+    // The old shape (a list of children with their fields) is refused, and so is any field of a
+    // child: a name, a date of birth, an email, a phone, an age, a version.
+    expect(readHouseholdResponse.safeParse({ ...base, minors: children }).success).toBe(false);
+    for (const extra of [
+      { givenName: "Zephyrine" },
+      { familyName: "Quillonwick" },
+      { dateOfBirth: "2018-05-05" },
+      { email: "a@zephyr.example.test" },
+      { phone: "61400555301" },
+      { age: 7 },
+      { ageBasis: "date_of_birth" },
+      { birthdayMd: 505 },
+      { version: 1 },
+    ]) {
+      expect(
+        householdChildren.safeParse({
+          childCount: 1,
+          children: [{ personId: VALID_UUID, label: "Child 1", ...extra }],
+        }).success,
+      ).toBe(false);
+    }
+    expect(householdChildren.safeParse({ childCount: 1, givenName: "Zephyrine" }).success).toBe(
+      false,
+    );
+  });
+
+  it("a guardian link names its child only as an id and a label", () => {
+    const link = {
+      linkId: VALID_UUID,
+      id: VALID_UUID,
+      guardianId: OTHER_UUID,
+      childId: OTHER_UUID,
+      rights: { consent: true, pickup: false, view: true, manage: false },
+    };
+    expect(householdGuardianLink.safeParse(link).success).toBe(true);
+    expect(
+      householdGuardianLink.safeParse({
+        ...link,
+        child: { personId: OTHER_UUID, label: "Child 1" },
+      }).success,
+    ).toBe(true);
+    expect(
+      householdGuardianLink.safeParse({
+        ...link,
+        child: { personId: OTHER_UUID, label: "Child 1", givenName: "Zephyrine" },
+      }).success,
+    ).toBe(false);
+    expect(householdGuardianLink.safeParse({ ...link, child: { label: "Child 1" } }).success).toBe(
+      false,
+    );
+  });
+
+  it("a household read answer with an adult and a guardian link parses, with the ids it carries", () => {
+    // The shape /v1/households/read answers: an adult and a link carry `id` beside their own id.
+    const adult = {
+      id: VALID_UUID,
+      personId: VALID_UUID,
+      givenName: "Aurelia",
+      familyName: "Quillonwick",
+      version: 2,
+    };
+    const link = {
+      linkId: OTHER_UUID,
+      id: OTHER_UUID,
+      guardianId: VALID_UUID,
+      childId: OTHER_UUID,
+      child: { personId: OTHER_UUID, label: "Child 1" },
+      rights: { consent: true, pickup: false, view: true, manage: false },
+    };
+    const answer = {
+      householdId: VALID_UUID,
+      version: 1,
+      status: "active",
+      label: "Quillonwick",
+      adults: [adult],
+      minors: { childCount: 1, children: [{ personId: OTHER_UUID, label: "Child 1" }] },
+      guardians: [link],
+    };
+    expect(readHouseholdResponse.safeParse(answer).success).toBe(true);
+
+    // The id is required, and both shapes stay strict.
+    const adultWithoutId = {
+      personId: adult.personId,
+      givenName: adult.givenName,
+      familyName: adult.familyName,
+      version: adult.version,
+    };
+    expect(householdAdultMember.safeParse(adultWithoutId).success).toBe(false);
+    expect(householdAdultMember.safeParse({ ...adult, email: null }).success).toBe(false);
+    const linkWithoutId = {
+      linkId: link.linkId,
+      guardianId: link.guardianId,
+      childId: link.childId,
+      rights: link.rights,
+    };
+    expect(householdGuardianLink.safeParse(linkWithoutId).success).toBe(false);
+    expect(householdGuardianLink.safeParse({ ...link, childName: "Zephyrine" }).success).toBe(
+      false,
+    );
+  });
+
+  it("the household error body carries each household refusal code and nothing else", () => {
+    for (const code of [
+      "household_has_children",
+      "duplicate_deleted",
+      "label_contains_child_name",
+    ]) {
+      expect(householdErrorBody.safeParse({ code }).success, code).toBe(true);
+    }
+    expect(
+      householdErrorBody.safeParse({ code: "label_contains_child_name", label: "Zephyrine" })
+        .success,
+    ).toBe(false);
+    expect(householdErrorBody.safeParse({ code: "conflict" }).success).toBe(false);
   });
 
   it("refuses invalid emergency contacts data", () => {

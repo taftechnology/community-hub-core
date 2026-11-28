@@ -24,7 +24,8 @@ export type PeopleErrorCode =
   | "pending_invitation"
   | "sole_guardian"
   | "duplicate_deleted"
-  | "household_has_children";
+  | "household_has_children"
+  | "label_contains_child_name";
 
 export class PeopleError extends Error {
   readonly code: PeopleErrorCode;

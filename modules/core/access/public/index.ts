@@ -37,6 +37,17 @@ defineAuditPurpose("access.invitations.listed");
 defineAuditPurpose("access.user.not_member");
 defineAuditPurpose("people.person.view");
 defineAuditPurpose("people.restricted.read");
+// The Community Admin's View of one child field (ADR 0017). The action is written once per View,
+// with the purpose of the field viewed. Three segments each: the audit table's check allows no more.
+defineAuditAction("people.minor.field_viewed");
+defineAuditPurpose("people.minor_view.name");
+defineAuditPurpose("people.minor_view.date_of_birth");
+defineAuditPurpose("people.minor_view.email");
+defineAuditPurpose("people.minor_view.phone");
+defineAuditPurpose("people.minor_view.life_event_type");
+defineAuditPurpose("people.minor_view.life_event_date");
+defineAuditPurpose("people.minor_view.life_event_place");
+defineAuditPurpose("people.minor_view.life_event_notes");
 
 export { AccessError } from "../domain/error.js";
 export type { InvitationAddresses } from "../domain/invitation-addresses.js";
@@ -57,6 +68,13 @@ export {
 } from "../infrastructure/grants.js";
 export { holdsAnyGrant } from "../infrastructure/holds-any-grant.js";
 export { holdsPermission } from "../infrastructure/holds-permission.js";
+export { isCommunityAdmin } from "../infrastructure/community-admin.js";
+export {
+  finishMinorView,
+  prepareMinorView,
+  type MinorViewInput,
+  type MinorViewValue,
+} from "../infrastructure/minor-view.js";
 export {
   createInvitation,
   listInvitations,

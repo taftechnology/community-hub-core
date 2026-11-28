@@ -3,6 +3,7 @@ import type { webcrypto } from "node:crypto";
 import { decrypt, deriveKeys, type Ciphertext, type KmsPort } from "@community-hub/crypto";
 import { appendAuditEvent, type AppTransaction } from "@community-hub/db";
 
+import { type ChildView, isChildView } from "../domain/child-view.js";
 import { PeopleError } from "../domain/error.js";
 import { openExistingCommunityHkdf } from "./keys.js";
 
@@ -44,8 +45,12 @@ export type ReadLinkedContactsInput = {
   personIds: readonly string[];
   includePhone: boolean;
   actorUserId: string;
+  childView: ChildView;
 };
 
+// Under "admin" a child's person id maps to { minor: true } and no field. Under "presence" a child
+// has no entry at all, exactly as a person who is not linked or not found has none, so a caller
+// that is not a Community Admin cannot tell that a linked user is a child.
 export type LinkedContact =
   | { minor: true }
   | {
@@ -61,6 +66,10 @@ export async function readLinkedContacts(
   keyArn: string,
   input: ReadLinkedContactsInput,
 ): Promise<Map<string, LinkedContact>> {
+  if (!isChildView(input.childView)) {
+    throw new PeopleError("invalid_input");
+  }
+
   if (input.personIds.length === 0) {
     return new Map();
   }
@@ -134,7 +143,9 @@ export async function readLinkedContacts(
 
   for (const row of rows) {
     if (row.is_minor) {
-      result.set(row.id, { minor: true });
+      if (input.childView === "admin") {
+        result.set(row.id, { minor: true });
+      }
       continue;
     }
 

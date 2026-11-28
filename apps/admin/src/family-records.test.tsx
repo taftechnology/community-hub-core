@@ -26,6 +26,7 @@ type CapabilitiesInput =
       canView?: boolean;
       canManage?: boolean;
       canReadMinors?: boolean;
+      communityAdmin?: boolean;
     }
   | number;
 
@@ -60,6 +61,7 @@ function mockCapabilitiesResponse(input: CapabilitiesInput = {}): Response {
         "people.directory": input.directoryEnabled ?? true,
         "people.households": input.householdsEnabled ?? true,
       },
+      roles: { communityAdmin: input.communityAdmin ?? input.canReadMinors ?? true },
     }),
     {
       status: 200,
@@ -1172,15 +1174,10 @@ describe("Family Records detail view", () => {
         version: 1,
       },
     ],
-    minors: [
-      {
-        personId: "00000000-0000-4000-8000-000000000020",
-        givenName: "Leo",
-        familyName: "Clarke",
-        dateOfBirth: "2015-06-12",
-        version: 1,
-      },
-    ],
+    minors: {
+      childCount: 1,
+      children: [{ personId: "00000000-0000-4000-8000-000000000020", label: "Child 1" }],
+    },
     guardians: [
       {
         linkId: "00000000-0000-4000-8000-000000000030",
@@ -1412,7 +1409,7 @@ describe("Family Records detail view", () => {
     expect(screen.queryByRole("heading", { name: "Household Details" })).toBeNull();
   });
 
-  it("shows minors section with DOB and guardians section when caller has people.restricted.read (Pin 21)", async () => {
+  it("a Community Admin sees each child as a label with every field hidden, and the guardians section (Pin 21, ADR 0017)", async () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);
     mockApi({
       access: { householdsEnabled: true, canView: true, canReadMinors: true },
@@ -1440,8 +1437,13 @@ describe("Family Records detail view", () => {
     fireEvent.click(viewBtn);
 
     expect(await screen.findByRole("heading", { name: "Minors" })).toBeTruthy();
-    expect(screen.getByText("Leo")).toBeTruthy();
-    expect(screen.getByText("2015-06-12")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Child 1" })).toBeTruthy();
+    // Every field is hidden, with a View that names the field and the child.
+    for (const field of ["name", "date of birth", "email", "phone"]) {
+      expect(screen.getByRole("button", { name: `View ${field} for Child 1` })).toBeTruthy();
+    }
+    expect(screen.queryByText("Leo")).toBeNull();
+    expect(screen.queryByText("2015-06-12")).toBeNull();
 
     expect(screen.getByRole("heading", { name: "Guardians" })).toBeTruthy();
     expect(screen.getByText("Consent, Pickup, View")).toBeTruthy();
@@ -1452,12 +1454,13 @@ describe("Family Records detail view", () => {
 
   it("hides minors section and guardian links when caller lacks people.restricted.read (Pin 21)", async () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);
-    // Detail response from server without minors or with minors stripped
+    // The answer for anyone but a Community Admin: how many children, and nothing else of them.
     const unrestrictedDetail = {
       householdId: sampleDetail.householdId,
       version: 1,
       label: null,
       adults: sampleDetail.adults,
+      minors: { childCount: 1 },
       guardians: [],
     };
     mockApi({
@@ -1481,11 +1484,12 @@ describe("Family Records detail view", () => {
     expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
     expect(await screen.findByText("Arthur")).toBeTruthy();
 
-    // Minors section and guardians section MUST NOT be rendered
+    // Minors section and guardians section MUST NOT be rendered: the caller is told the count only
     expect(screen.queryByRole("heading", { name: "Minors" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "Guardians" })).toBeNull();
     expect(screen.queryByText("Leo")).toBeNull();
     expect(screen.queryByText("2015-06-12")).toBeNull();
+    expect(screen.getByText("1 child in this family")).toBeTruthy();
   });
 
   it("defensively omits minors section when caller lacks people.restricted.read even if server payload contains minors (Pin 21)", async () => {
@@ -1515,7 +1519,9 @@ describe("Family Records detail view", () => {
     // Pin 21: UI MUST NOT render minors section without people.restricted.read
     expect(screen.queryByRole("heading", { name: "Minors" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "Guardians" })).toBeNull();
-    expect(screen.queryByText("Leo")).toBeNull();
+    expect(screen.queryByText("Child 1")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^View .* for Child 1$/ })).toBeNull();
+    expect(screen.getByText("1 child in this family")).toBeTruthy();
   });
 
   it("discards an in-flight detail read after community switch so the prior household never appears", async () => {
@@ -1667,15 +1673,10 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
         version: 1,
       },
     ],
-    minors: [
-      {
-        personId: "00000000-0000-4000-8000-000000000020",
-        givenName: "Leo",
-        familyName: "Clarke",
-        dateOfBirth: "2015-06-12",
-        version: 1,
-      },
-    ],
+    minors: {
+      childCount: 1,
+      children: [{ personId: "00000000-0000-4000-8000-000000000020", label: "Child 1" }],
+    },
     guardians: [
       {
         linkId: "00000000-0000-4000-8000-000000000030",
@@ -1749,13 +1750,14 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
               "people.delete": false,
               "service_times.manage": false,
             },
+            roles: { communityAdmin: true },
           }}
           isReadOnly={false}
         />
       </CommunityProvider>,
     );
 
-    expect(screen.queryByText(/Life events: Leo Clarke/i)).toBeNull();
+    expect(screen.queryByText(/Life events: Child 1/i)).toBeNull();
     expect(screen.queryByText("No life events recorded")).toBeNull();
     expect(postCalls.filter((p) => p.includes("/v1/people/life-events"))).toHaveLength(0);
   });
@@ -1786,13 +1788,14 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
               "people.delete": false,
               "service_times.manage": false,
             },
+            roles: { communityAdmin: false },
           }}
           isReadOnly={false}
         />
       </CommunityProvider>,
     );
 
-    expect(screen.queryByText(/Life events: Leo Clarke/i)).toBeNull();
+    expect(screen.queryByText(/Life events: Child 1/i)).toBeNull();
     expect(screen.queryByText("No life events recorded")).toBeNull();
     expect(postCalls.filter((p) => p.includes("/v1/people/life-events"))).toHaveLength(0);
   });
@@ -1815,15 +1818,14 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
               "people.delete": false,
               "service_times.manage": false,
             },
+            roles: { communityAdmin: true },
           }}
           isReadOnly={true}
         />
       </CommunityProvider>,
     );
 
-    expect(
-      screen.queryByRole("button", { name: "Unlink Arthur Clarke from Leo Clarke" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Unlink Arthur Clarke from Child 1" })).toBeNull();
   });
 
   it("Pin 16: renders life events panel for adult and minor members when holding both capabilities", async () => {
@@ -1857,13 +1859,13 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
 
     expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
     expect(await screen.findByText("Arthur")).toBeTruthy();
-    expect(screen.getByText("Leo")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Child 1" })).toBeTruthy();
 
     expect(await screen.findByText(/Life events: Arthur Clarke/i)).toBeTruthy();
-    expect(await screen.findByText(/Life events: Leo Clarke/i)).toBeTruthy();
+    expect(await screen.findByText(/Life events: Child 1/i)).toBeTruthy();
 
     const adultPersonId = sampleDetail.adults[0]?.personId;
-    const minorPersonId = sampleDetail.minors[0]?.personId;
+    const minorPersonId = sampleDetail.minors.children[0]?.personId;
     await waitFor(() => {
       const lifeEventCalls = postCalls.filter((p) => p.path === "/v1/people/life-events/list");
       expect(lifeEventCalls).toHaveLength(2);
@@ -1934,7 +1936,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
 
     expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
     expect(await screen.findByText(/Life events: Arthur Clarke/i)).toBeTruthy();
-    expect(await screen.findByText(/Life events: Leo Clarke/i)).toBeTruthy();
+    expect(await screen.findByText(/Life events: Child 1/i)).toBeTruthy();
 
     // While billing status is loading: no Add or Edit button in adult or minor panel
     expect(screen.queryAllByRole("button", { name: "Add life event" })).toHaveLength(0);
@@ -1956,11 +1958,13 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
       );
     });
 
-    // Once billing is ready and writable: Add and Edit buttons render for both adult and minor
+    // Once billing is ready and writable: Add renders for the adult and for the child. Edit renders
+    // for the adult's event only: a child's event shows no value to change, so it has no Edit.
     const addButtons = await screen.findAllByRole("button", { name: "Add life event" });
     expect(addButtons).toHaveLength(2);
     const editButtons = await screen.findAllByRole("button", { name: /Edit/i });
-    expect(editButtons).toHaveLength(2);
+    expect(editButtons).toHaveLength(1);
+    expect(editButtons[0]?.getAttribute("aria-label")).toBe("Edit Baptism for Arthur Clarke");
 
     cleanup();
 
@@ -1994,7 +1998,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
 
     expect(await screen.findByRole("heading", { name: "Household Details" })).toBeTruthy();
     expect(await screen.findByText(/Life events: Arthur Clarke/i)).toBeTruthy();
-    expect(await screen.findByText(/Life events: Leo Clarke/i)).toBeTruthy();
+    expect(await screen.findByText(/Life events: Child 1/i)).toBeTruthy();
 
     expect(screen.queryAllByRole("button", { name: "Add life event" })).toHaveLength(0);
     expect(screen.queryAllByRole("button", { name: /Edit/i })).toHaveLength(0);
@@ -2832,11 +2836,11 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
     fireEvent.click(viewBtn);
 
     expect(
-      await screen.findByRole("button", { name: "Unlink Arthur Clarke from Leo Clarke" }),
+      await screen.findByRole("button", { name: "Unlink Arthur Clarke from Child 1" }),
     ).toBeTruthy();
   });
 
-  it("independently hides 'Add minor' button in MinorsSection when caller lacks people.restricted.read", () => {
+  it("independently hides 'Add minor' button in MinorsSection when caller lacks people.restricted.read: the caller is told the count only", () => {
     render(
       <MinorsSection
         detailHousehold={sampleDetail}
@@ -2853,15 +2857,17 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
             "people.households": true,
             "module.engagement": false,
           },
+          roles: { communityAdmin: false },
         }}
         isReadOnly={false}
       />,
     );
-    expect(screen.getByRole("heading", { name: "Minors" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Minors" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Add minor" })).toBeNull();
+    expect(screen.getByText("1 child in this family")).toBeTruthy();
   });
 
-  it("independently hides 'Link guardian' button in MinorsSection when caller lacks people.restricted.read", () => {
+  it("independently hides 'Link guardian' button in MinorsSection when caller lacks people.restricted.read: no guardians section either", () => {
     render(
       <MinorsSection
         detailHousehold={sampleDetail}
@@ -2878,11 +2884,12 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
             "people.households": true,
             "module.engagement": false,
           },
+          roles: { communityAdmin: false },
         }}
         isReadOnly={false}
       />,
     );
-    expect(screen.getByRole("heading", { name: "Guardians" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Guardians" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Link guardian" })).toBeNull();
   });
 
@@ -2903,13 +2910,12 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
             "people.households": true,
             "module.engagement": false,
           },
+          roles: { communityAdmin: false },
         }}
         isReadOnly={false}
       />,
     );
-    expect(
-      screen.queryByRole("button", { name: "Unlink Arthur Clarke from Leo Clarke" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Unlink Arthur Clarke from Child 1" })).toBeNull();
   });
 
   it("independently gates Add minor, Link guardian and Unlink on people.manage in MinorsSection (finding H5b)", () => {
@@ -2930,6 +2936,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
             "people.households": true,
             "module.engagement": false,
           },
+          roles: { communityAdmin: true },
         }}
         isReadOnly={false}
       />,
@@ -2956,6 +2963,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
             "people.households": true,
             "module.engagement": false,
           },
+          roles: { communityAdmin: true },
         }}
         isReadOnly={false}
       />,
@@ -3037,9 +3045,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
     expect(screen.queryByRole("button", { name: "Move Arthur Clarke" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Add minor" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Link guardian" })).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "Unlink Arthur Clarke from Leo Clarke" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Unlink Arthur Clarke from Child 1" })).toBeNull();
   });
 });
 
@@ -3056,15 +3062,10 @@ describe("Family Records Actions - Form submissions & success flows", () => {
         version: 1,
       },
     ],
-    minors: [
-      {
-        personId: "00000000-0000-4000-8000-000000000020",
-        givenName: "Leo",
-        familyName: "Clarke",
-        dateOfBirth: "2015-06-12",
-        version: 1,
-      },
-    ],
+    minors: {
+      childCount: 1,
+      children: [{ personId: "00000000-0000-4000-8000-000000000020", label: "Child 1" }],
+    },
     guardians: [
       {
         linkId: "00000000-0000-4000-8000-000000000030",
@@ -3443,7 +3444,7 @@ describe("Family Records Actions - Form submissions & success flows", () => {
       target: { value: sampleDetail.adults[0]!.personId },
     });
     fireEvent.change(screen.getByLabelText(/^Child$/i), {
-      target: { value: sampleDetail.minors![0]!.personId },
+      target: { value: sampleDetail.minors!.children![0]!.personId },
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Save link" }));
@@ -3456,7 +3457,7 @@ describe("Family Records Actions - Form submissions & success flows", () => {
         communitySlug: SLUG,
         householdId: sampleDetail.householdId,
         guardianId: sampleDetail.adults[0]!.personId,
-        childId: sampleDetail.minors![0]!.personId,
+        childId: sampleDetail.minors!.children![0]!.personId,
         rights: {
           consent: true,
           pickup: false,
@@ -3540,7 +3541,7 @@ describe("Family Records Actions - Form submissions & success flows", () => {
     fireEvent.click(viewBtn);
 
     const unlinkBtn = await screen.findByRole("button", {
-      name: "Unlink Arthur Clarke from Leo Clarke",
+      name: "Unlink Arthur Clarke from Child 1",
     });
     fireEvent.click(unlinkBtn);
 
@@ -3586,15 +3587,10 @@ describe("Family Records Actions - Error status handling & copy", () => {
         version: 1,
       },
     ],
-    minors: [
-      {
-        personId: "00000000-0000-4000-8000-000000000020",
-        givenName: "Leo",
-        familyName: "Clarke",
-        dateOfBirth: "2015-06-12",
-        version: 1,
-      },
-    ],
+    minors: {
+      childCount: 1,
+      children: [{ personId: "00000000-0000-4000-8000-000000000020", label: "Child 1" }],
+    },
     guardians: [
       {
         linkId: "00000000-0000-4000-8000-000000000030",
@@ -3968,7 +3964,7 @@ describe("Family Records Actions - Error status handling & copy", () => {
       target: { value: sampleDetail.adults[0]!.personId },
     });
     fireEvent.change(screen.getByLabelText(/^Child$/i), {
-      target: { value: sampleDetail.minors![0]!.personId },
+      target: { value: sampleDetail.minors!.children![0]!.personId },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save link" }));
 
@@ -4004,7 +4000,7 @@ describe("Family Records Actions - Error status handling & copy", () => {
     fireEvent.click(viewBtn);
 
     const unlinkBtn = await screen.findByRole("button", {
-      name: "Unlink Arthur Clarke from Leo Clarke",
+      name: "Unlink Arthur Clarke from Child 1",
     });
     fireEvent.click(unlinkBtn);
 
@@ -4290,7 +4286,7 @@ describe("Family Records Actions - Error status handling & copy", () => {
     fireEvent.click(viewBtn);
 
     const unlinkBtn = await screen.findByRole("button", {
-      name: "Unlink Arthur Clarke from Leo Clarke",
+      name: "Unlink Arthur Clarke from Child 1",
     });
     fireEvent.click(unlinkBtn);
 
@@ -4315,15 +4311,10 @@ describe("Family Records Actions - Privacy & Accessibility (WCAG 2.2 AA)", () =>
         version: 1,
       },
     ],
-    minors: [
-      {
-        personId: "00000000-0000-4000-8000-000000000020",
-        givenName: "Leo",
-        familyName: "Clarke",
-        dateOfBirth: "2015-06-12",
-        version: 1,
-      },
-    ],
+    minors: {
+      childCount: 1,
+      children: [{ personId: "00000000-0000-4000-8000-000000000020", label: "Child 1" }],
+    },
     guardians: [
       {
         linkId: "00000000-0000-4000-8000-000000000030",
@@ -4693,7 +4684,7 @@ describe("Family Records Actions - Privacy & Accessibility (WCAG 2.2 AA)", () =>
     fireEvent.click(viewBtn);
 
     const unlinkBtn = await screen.findByRole("button", {
-      name: "Unlink Arthur Clarke from Leo Clarke",
+      name: "Unlink Arthur Clarke from Child 1",
     });
     fireEvent.click(unlinkBtn);
 
@@ -4769,15 +4760,10 @@ describe("Family Details restyle & security pins (Task 9)", () => {
         version: 1,
       },
     ],
-    minors: [
-      {
-        personId: "00000000-0000-4000-8000-000000000020",
-        givenName: "Leo",
-        familyName: "Clarke",
-        dateOfBirth: "2015-06-12",
-        version: 1,
-      },
-    ],
+    minors: {
+      childCount: 1,
+      children: [{ personId: "00000000-0000-4000-8000-000000000020", label: "Child 1" }],
+    },
     guardians: [
       {
         linkId: "00000000-0000-4000-8000-000000000030",
@@ -5178,15 +5164,10 @@ describe("Family Details restyle & security pins (Task 9)", () => {
           version: 1,
         },
       ],
-      minors: [
-        {
-          personId: "00000000-0000-4000-8000-000000000020",
-          givenName: "Pip",
-          familyName: "Tolland",
-          dateOfBirth: "2016-03-14",
-          version: 1,
-        },
-      ],
+      minors: {
+        childCount: 1,
+        children: [{ personId: "00000000-0000-4000-8000-000000000020", label: "Child 1" }],
+      },
       guardians: [
         {
           linkId: "00000000-0000-4000-8000-000000000030",
@@ -5235,7 +5216,7 @@ describe("Family Details restyle & security pins (Task 9)", () => {
     expect(resultIds(results, "violations")).toEqual([]);
   });
 
-  it("renders Avatar in Adult members table with aria-hidden=true and none in Minor members table", async () => {
+  it("renders Avatar in Adult members table with aria-hidden=true and none for a child, who is a label and not a row", async () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);
     mockApi({
       access: { householdsEnabled: true, canView: true, canReadMinors: true },
@@ -5268,9 +5249,12 @@ describe("Family Details restyle & security pins (Task 9)", () => {
       expect(avatar.getAttribute("aria-hidden")).toBe("true");
     });
 
-    const minorTable = await screen.findByRole("table", { name: "Minor members" });
-    const minorAvatars = minorTable.querySelectorAll('[data-slot="avatar"]');
-    expect(minorAvatars.length).toBe(0);
+    const minorsPanel = (await screen.findByRole("heading", { name: "Minors" })).closest(
+      'section[data-slot="panel"]',
+    );
+    expect(minorsPanel).not.toBeNull();
+    expect(screen.queryByRole("table", { name: "Minor members" })).toBeNull();
+    expect(minorsPanel!.querySelectorAll('[data-slot="avatar"]').length).toBe(0);
 
     const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
     expect(resultIds(results, "violations")).toEqual([]);
@@ -5350,7 +5334,7 @@ describe("Family Details restyle & security pins (Task 9)", () => {
     ).toBe(true);
 
     // Minor life events inside Minors section
-    const minorLifeEvents = within(minorsSection!).getByText(/Life events: Leo Clarke/i);
+    const minorLifeEvents = within(minorsSection!).getByText(/Life events: Child 1/i);
     expect(minorLifeEvents).toBeTruthy();
 
     const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
@@ -5525,7 +5509,7 @@ describe("Family Details restyle & security pins (Task 9)", () => {
 
     const guardianTable = await screen.findByRole("table", { name: "Guardian links" });
     const unlinkBtn = within(guardianTable).getByRole("button", {
-      name: "Unlink Arthur Clarke from Leo Clarke",
+      name: "Unlink Arthur Clarke from Child 1",
     });
     const cell = unlinkBtn.closest("td");
     expect(cell).not.toBeNull();
@@ -5556,15 +5540,10 @@ describe("Family forms restyle & security pins (Task 10)", () => {
         version: 1,
       },
     ],
-    minors: [
-      {
-        personId: "00000000-0000-4000-8000-000000000020",
-        givenName: "Leo",
-        familyName: "Clarke",
-        dateOfBirth: "2015-06-12",
-        version: 1,
-      },
-    ],
+    minors: {
+      childCount: 1,
+      children: [{ personId: "00000000-0000-4000-8000-000000000020", label: "Child 1" }],
+    },
     guardians: [
       {
         linkId: "00000000-0000-4000-8000-000000000030",
@@ -5593,6 +5572,7 @@ describe("Family forms restyle & security pins (Task 10)", () => {
       "people.households": true,
       "module.engagement": false,
     },
+    roles: { communityAdmin: true },
   };
 
   const accessWithoutRestricted: PeopleAccess = {
@@ -5601,6 +5581,8 @@ describe("Family forms restyle & security pins (Task 10)", () => {
       ...fullAccess.permissions,
       "people.restricted.read": false,
     },
+    // A Community Admin holds the key, so a caller without it is not one
+    roles: { communityAdmin: false },
   };
 
   it("renders move adult target select with data-slot and aria-describedby referencing target hint (and paged notice when paged)", async () => {
@@ -5801,7 +5783,7 @@ describe("Family forms restyle & security pins (Task 10)", () => {
       target: { value: sampleDetail.adults[0]!.personId },
     });
     fireEvent.change(screen.getByLabelText(/^Child$/i), {
-      target: { value: sampleDetail.minors![0]!.personId },
+      target: { value: sampleDetail.minors!.children![0]!.personId },
     });
 
     // Re-render with the same tree but without people.restricted.read
@@ -6269,7 +6251,7 @@ describe("Family forms restyle & security pins (Task 10)", () => {
       target: { value: sampleDetail.adults[0]!.personId },
     });
     fireEvent.change(screen.getByRole("combobox", { name: "Child" }), {
-      target: { value: sampleDetail.minors![0]!.personId },
+      target: { value: sampleDetail.minors!.children![0]!.personId },
     });
 
     const consentCb = screen.getByRole("checkbox", { name: "Consent" }) as HTMLInputElement;
@@ -6422,7 +6404,7 @@ describe("Family Records - Create new adult", () => {
         version: 1,
       },
     ],
-    minors: [],
+    minors: { childCount: 0, children: [] },
     guardians: [],
   };
 
@@ -6451,6 +6433,7 @@ describe("Family Records - Create new adult", () => {
       "people.households": true,
       "module.engagement": false,
     },
+    roles: { communityAdmin: true },
   };
 
   type Recorded = Array<{ path: string; body: unknown }>;
@@ -6983,7 +6966,7 @@ describe("Family Records status, delete and restore (Task 8)", () => {
           version: 1,
         },
       ],
-      minors: [],
+      minors: { childCount: 0, children: [] },
       guardians: [],
     };
   }
@@ -6992,15 +6975,10 @@ describe("Family Records status, delete and restore (Task 8)", () => {
   function guardianDetail(body: Body): Response {
     return json(200, {
       ...detailBody(body),
-      minors: [
-        {
-          personId: "00000000-0000-4000-8000-000000000020",
-          givenName: "Mia",
-          familyName: "Clarke",
-          dateOfBirth: "2015-01-01",
-          version: 1,
-        },
-      ],
+      minors: {
+        childCount: 1,
+        children: [{ personId: "00000000-0000-4000-8000-000000000020", label: "Child 1" }],
+      },
       guardians: [
         {
           linkId: "00000000-0000-4000-8000-000000000030",
@@ -7037,6 +7015,7 @@ describe("Family Records status, delete and restore (Task 8)", () => {
             "people.delete": options.canDelete ?? true,
           },
           entitlements: { "people.directory": true, "people.households": true },
+          roles: { communityAdmin: options.canRestricted ?? true },
         });
       }
       if (path === "/v1/billing/status") {
@@ -7288,6 +7267,7 @@ describe("Family Records status, delete and restore (Task 8)", () => {
           "people.households": true,
           "module.engagement": false,
         },
+        roles: { communityAdmin: true },
       };
       function tree(access: PeopleAccess) {
         return (
@@ -8097,7 +8077,7 @@ describe("Family Records status, delete and restore (Task 8)", () => {
     async function startUnlink(calls: Call[]) {
       await openDetail("Clarke Family");
       fireEvent.click(
-        await screen.findByRole("button", { name: "Unlink Arthur Clarke from Mia Clarke" }),
+        await screen.findByRole("button", { name: "Unlink Arthur Clarke from Child 1" }),
       );
       fireEvent.click(await screen.findByRole("button", { name: "Confirm unlink" }));
       await waitFor(() => expect(callsTo(calls, UNLINK)).toHaveLength(1));
@@ -8242,6 +8222,7 @@ describe("Family Records status, delete and restore (Task 8)", () => {
         "people.households": true,
         "module.engagement": false,
       },
+      roles: { communityAdmin: true },
     };
     function accessTree(access: PeopleAccess) {
       return (
@@ -8537,5 +8518,742 @@ describe("Family Records status, delete and restore (Task 8)", () => {
       await within(dialog).findByText(MSG_CHILD);
       await expectNoViolations(document.body, "refusal in the dialog");
     });
+  });
+});
+
+// ---- Children: every field hidden until a View, which needs a fresh check (ADR 0017) -------------
+
+describe("Children are hidden until a View, which needs a fresh check (ADR 0017)", () => {
+  const FAMILY_ID = "00000000-0000-4000-8000-000000000001";
+  const ADULT_ID = "00000000-0000-4000-8000-000000000010";
+  const CHILD_1 = "00000000-0000-4000-8000-000000000021";
+  const CHILD_2 = "00000000-0000-4000-8000-000000000022";
+  const EVENT_1 = "00000000-0000-4000-8000-000000000041";
+  // Values the screen may show only after a View. They are synthetic, and unlike anything else
+  // that is on the screen, so a hit on one of them is never a coincidence.
+  const GIVEN = "Zephyrine";
+  const FAMILY = "Quillontest";
+  const FULL_NAME = `${GIVEN} ${FAMILY}`;
+  const DOB = "2014-03-09";
+  const CODE = "246810";
+  const SECRETS = [GIVEN, FAMILY, DOB];
+
+  type Call = { path: string; body: Record<string, unknown>; init: RequestInit | undefined };
+  type Answer =
+    | Response
+    | Promise<Response>
+    | ((body: Record<string, unknown>) => Response | Promise<Response>);
+
+  function json(status: number, body: unknown): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  function adminDetail(over: Record<string, unknown> = {}) {
+    return {
+      householdId: FAMILY_ID,
+      version: 1,
+      status: "active",
+      label: "Clarke Family",
+      adults: [{ personId: ADULT_ID, givenName: "Arthur", familyName: "Clarke", version: 1 }],
+      minors: {
+        childCount: 2,
+        children: [
+          { personId: CHILD_1, label: "Child 1" },
+          { personId: CHILD_2, label: "Child 2" },
+        ],
+      },
+      guardians: [
+        {
+          linkId: "00000000-0000-4000-8000-000000000030",
+          guardianId: ADULT_ID,
+          childId: CHILD_1,
+          child: { personId: CHILD_1, label: "Child 1" },
+          rights: { consent: true, pickup: false, view: true, manage: false },
+        },
+      ],
+      ...over,
+    };
+  }
+
+  // What everyone but a Community Admin is sent: how many children, and nothing else of them.
+  function presenceDetail(childCount: number, over: Record<string, unknown> = {}) {
+    return {
+      householdId: FAMILY_ID,
+      version: 1,
+      status: "active",
+      label: "Clarke Family",
+      adults: [{ personId: ADULT_ID, givenName: "Arthur", familyName: "Clarke", version: 1 }],
+      minors: { childCount },
+      guardians: [],
+      ...over,
+    };
+  }
+
+  function install(
+    options: {
+      access?: CapabilitiesInput;
+      // The family reads, in order. The last one is used again.
+      details?: unknown[];
+      // The answers to View calls, in order.
+      views?: Answer[];
+      // The answers to code checks, in order. A check with no answer is a pass.
+      fresh?: Response[];
+      factors?: unknown;
+      childEvents?: unknown[];
+      renameResult?: Response;
+      createResult?: Response;
+      addMinorResult?: Response;
+    } = {},
+  ) {
+    const calls: Call[] = [];
+    const details = options.details ?? [adminDetail()];
+    let reads = 0;
+    let viewed = 0;
+    let checked = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
+      const path = String(info).replace(/^https?:\/\/[^/]+/, "");
+      let body: Record<string, unknown> = {};
+      if (typeof init?.body === "string") {
+        body = JSON.parse(init.body) as Record<string, unknown>;
+      }
+      calls.push({ path, body, init });
+      switch (path) {
+        case "/v1/access/capabilities":
+          return mockCapabilitiesResponse(options.access ?? {});
+        case "/v1/billing/status":
+          return json(200, {
+            state: "ok",
+            trial_end: null,
+            grace_until: null,
+            canView: true,
+            canManage: true,
+          });
+        case "/v1/households/list":
+          return json(200, {
+            items: [{ householdId: FAMILY_ID, version: 1, label: "Clarke Family", adultCount: 1 }],
+            nextCursor: null,
+          });
+        case "/v1/households/read": {
+          const detail = details[Math.min(reads, details.length - 1)];
+          reads += 1;
+          return json(200, detail);
+        }
+        case "/v1/households/rename":
+          return options.renameResult ?? json(200, { version: 2 });
+        case "/v1/households/create":
+          return options.createResult ?? json(201, { householdId: FAMILY_ID, version: 1 });
+        case "/v1/households/members/add-minor":
+          return options.addMinorResult ?? json(201, { personId: CHILD_1, linkId: CHILD_2 });
+        case "/v1/people/life-events/list":
+          return json(200, { items: body.personId === CHILD_1 ? (options.childEvents ?? []) : [] });
+        case "/v1/people/minors/view":
+        case "/v1/people/minors/life-events/view": {
+          const next = options.views?.[viewed];
+          viewed += 1;
+          if (next === undefined) {
+            throw new Error("a View nobody expected");
+          }
+          return typeof next === "function" ? next(body) : next;
+        }
+        case "/v1/auth/second-factor":
+          return json(
+            200,
+            options.factors ?? {
+              totp: { confirmedAt: "2026-03-04T05:06:07.000Z" },
+              passkeys: [],
+              backupCodesLeft: 8,
+              freshUntil: null,
+              recoveryUntil: null,
+            },
+          );
+        case "/v1/auth/second-factor/fresh": {
+          const next = options.fresh?.[checked];
+          checked += 1;
+          return next ?? new Response(null, { status: 204 });
+        }
+        default:
+          return new Response(null, { status: 404 });
+      }
+    });
+    return {
+      calls,
+      views: () =>
+        calls.filter(
+          (call) =>
+            call.path === "/v1/people/minors/view" ||
+            call.path === "/v1/people/minors/life-events/view",
+        ),
+      reads: () => calls.filter((call) => call.path === "/v1/households/read"),
+    };
+  }
+
+  async function openFamily(): Promise<HTMLElement> {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const container = await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+    fireEvent.click(await screen.findByRole("button", { name: "View Clarke Family" }));
+    await screen.findByRole("heading", { name: "Household Details" });
+    return container;
+  }
+
+  async function view(name: string): Promise<HTMLElement> {
+    const button = await screen.findByRole("button", { name });
+    fireEvent.click(button);
+    return button;
+  }
+
+  const NAME_VALUE = () => json(200, { value: { given: GIVEN, family: FAMILY } });
+
+  it("pin 84: no value of a child is on the page before a View, and none is asked for", async () => {
+    const harness = install({ views: [NAME_VALUE(), json(200, { value: DOB })] });
+    const container = await openFamily();
+
+    expect(await screen.findByRole("heading", { name: "Child 1" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Child 2" })).toBeTruthy();
+    // Four fields for each of two children, all hidden.
+    expect(screen.getAllByText("Hidden")).toHaveLength(8);
+    await act(async () => {});
+    for (const secret of SECRETS) {
+      expect(document.body.textContent).not.toContain(secret);
+    }
+    expect(harness.views()).toHaveLength(0);
+
+    const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    expect(resultIds(results, "violations")).toEqual([]);
+  });
+
+  it("pin 85: viewing another field hides the first, so one value is on screen at a time", async () => {
+    const harness = install({ views: [NAME_VALUE(), json(200, { value: DOB })] });
+    const container = await openFamily();
+
+    await view("View name for Child 1");
+    expect(await screen.findByText(FULL_NAME)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Hide name for Child 1" })).toBeTruthy();
+    const withOne = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    expect(resultIds(withOne, "violations")).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "View date of birth for Child 1" }));
+    expect(await screen.findByText(DOB)).toBeTruthy();
+    expect(screen.queryByText(FULL_NAME)).toBeNull();
+    // The first field is hidden again, and can be viewed again.
+    expect(screen.getByRole("button", { name: "View name for Child 1" })).toBeTruthy();
+
+    // Each View is a POST that names the child and the field in its body.
+    expect(harness.views().map((call) => call.body)).toEqual([
+      { communitySlug: SLUG, personId: CHILD_1, field: "name" },
+      { communitySlug: SLUG, personId: CHILD_1, field: "dateOfBirth" },
+    ]);
+    for (const call of harness.views()) {
+      expect(call.path).toBe("/v1/people/minors/view");
+      expect(call.init?.method).toBe("POST");
+    }
+
+    // Hide puts the mask back.
+    fireEvent.click(screen.getByRole("button", { name: "Hide date of birth for Child 1" }));
+    expect(screen.queryByText(DOB)).toBeNull();
+    expect(screen.getByRole("button", { name: "View date of birth for Child 1" })).toBeTruthy();
+  });
+
+  it("shows Not recorded for a field with nothing in it", async () => {
+    install({
+      views: [json(200, { value: null }), json(200, { value: { given: null, family: null } })],
+    });
+    await openFamily();
+    await view("View email for Child 1");
+    expect(await screen.findByText("Not recorded")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "View name for Child 2" }));
+    await waitFor(() => expect(screen.getAllByText("Not recorded")).toHaveLength(1));
+    expect(screen.getByRole("button", { name: "Hide name for Child 2" })).toBeTruthy();
+  });
+
+  it("while a View is on its way no other View can start, and the buttons stay reachable by keyboard", async () => {
+    let answer!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => {
+      answer = resolve;
+    });
+    const harness = install({ views: [pending] });
+    await openFamily();
+
+    fireEvent.click(await screen.findByRole("button", { name: "View name for Child 1" }));
+    const other = await screen.findByRole("button", { name: "View email for Child 2" });
+    await waitFor(() => expect(other.getAttribute("aria-disabled")).toBe("true"));
+    fireEvent.click(other);
+    await act(async () => {});
+    expect(harness.views()).toHaveLength(1);
+
+    await act(async () => {
+      answer(NAME_VALUE());
+    });
+    expect(await screen.findByText(FULL_NAME)).toBeTruthy();
+    expect(other.getAttribute("aria-disabled")).not.toBe("true");
+  });
+
+  it("pin 86: closing the family drops the value, and so does leaving for another screen", async () => {
+    install({ views: [NAME_VALUE(), NAME_VALUE()] });
+    await openFamily();
+
+    await view("View name for Child 1");
+    expect(await screen.findByText(FULL_NAME)).toBeTruthy();
+
+    // Closing the family.
+    fireEvent.click(screen.getByRole("button", { name: "Back to list" }));
+    fireEvent.click(await screen.findByRole("button", { name: "View Clarke Family" }));
+    expect(await screen.findByRole("heading", { name: "Child 1" })).toBeTruthy();
+    expect(screen.queryByText(FULL_NAME)).toBeNull();
+    expect(screen.getByRole("button", { name: "View name for Child 1" })).toBeTruthy();
+
+    // Leaving for the rename screen and coming back.
+    await view("View name for Child 1");
+    expect(await screen.findByText(FULL_NAME)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Rename household" }));
+    expect(await screen.findByRole("heading", { name: "Rename Household" })).toBeTruthy();
+    expect(screen.queryByText(FULL_NAME)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await screen.findByRole("heading", { name: "Child 1" })).toBeTruthy();
+    expect(screen.queryByText(FULL_NAME)).toBeNull();
+  });
+
+  it("pin 87: no View answer is cached or stored: a POST sent with no-store, the value on the page only", async () => {
+    const writes: string[] = [];
+    for (const method of ["log", "info", "debug", "warn", "error", "trace"] as const) {
+      vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+        writes.push(args.map((value) => String(value)).join(" "));
+      });
+    }
+    const harness = install({ views: [NAME_VALUE()] });
+    await openFamily();
+    await view("View name for Child 1");
+    expect(await screen.findByText(FULL_NAME)).toBeTruthy();
+
+    // The request is a mutation: a POST, told to use and fill no cache, with no id in its address.
+    const [call] = harness.views();
+    expect(call?.init?.method).toBe("POST");
+    expect(call?.init?.cache).toBe("no-store");
+    expect(call?.path).toBe("/v1/people/minors/view");
+    for (const entry of harness.calls) {
+      expect(entry.path).not.toContain("?");
+      expect(entry.path).not.toContain(CHILD_1);
+    }
+
+    // The value is in one place on the page, and nowhere that outlives it.
+    expect(document.body.textContent?.split(FULL_NAME).length).toBe(2);
+    const kept: string[] = [];
+    for (const storage of [sessionStorage, globalThis.localStorage as Storage | undefined]) {
+      // A runtime may have no localStorage to look in.
+      if (storage === undefined || typeof storage.length !== "number") {
+        continue;
+      }
+      for (let index = 0; index < storage.length; index += 1) {
+        const key = storage.key(index) ?? "";
+        kept.push(key, storage.getItem(key) ?? "");
+      }
+    }
+    kept.push(window.location.href, document.title, writes.join(" "));
+    for (const secret of SECRETS) {
+      expect(kept.join(" ")).not.toContain(secret);
+    }
+  });
+
+  it("pin 88: a fresh_required answer opens Confirm it's you, and a passed check retries that one View", async () => {
+    const harness = install({
+      views: [json(403, { code: "fresh_required" }), json(200, { value: DOB })],
+      fresh: [new Response(null, { status: 204 })],
+    });
+    const container = await openFamily();
+
+    const trigger = await view("View date of birth for Child 1");
+    const heading = await screen.findByRole("heading", { name: "Confirm it's you", level: 4 });
+    // The panel has the focus, and the field stays hidden while it is open.
+    expect(document.activeElement).toBe(heading);
+    expect(screen.queryByText(DOB)).toBeNull();
+    const withPanel = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    expect(resultIds(withPanel, "violations")).toEqual([]);
+
+    // The panel asks for the authenticator code the factor list says this person has.
+    fireEvent.change(await screen.findByLabelText("Authenticator code"), {
+      target: { value: CODE },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    expect(await screen.findByText(DOB)).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Confirm it's you" })).toBeNull();
+    // The View was asked twice and the check once, and only the check carried the code.
+    expect(harness.views()).toHaveLength(2);
+    expect(harness.views().every((call) => !JSON.stringify(call.body).includes(CODE))).toBe(true);
+    const checks = harness.calls.filter((call) => call.path === "/v1/auth/second-factor/fresh");
+    expect(checks.map((call) => call.body)).toEqual([{ code: CODE }]);
+    // The focus is back on the button that asked.
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("Cancel on Confirm it's you leaves the field hidden and the focus on the View button", async () => {
+    const harness = install({ views: [json(403, { code: "fresh_required" })] });
+    await openFamily();
+
+    const trigger = await view("View phone for Child 2");
+    await screen.findByRole("heading", { name: "Confirm it's you", level: 4 });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("heading", { name: "Confirm it's you" })).toBeNull();
+    expect(screen.getByRole("button", { name: "View phone for Child 2" })).toBe(trigger);
+    expect(document.activeElement).toBe(trigger);
+    expect(harness.views()).toHaveLength(1);
+  });
+
+  it("a wrong code keeps the panel open and the field hidden, and too many tries say so", async () => {
+    install({
+      views: [json(403, { code: "fresh_required" })],
+      fresh: [new Response(null, { status: 401 }), new Response(null, { status: 429 })],
+    });
+    await openFamily();
+
+    await view("View email for Child 1");
+    const input = await screen.findByLabelText("Authenticator code");
+    fireEvent.change(input, { target: { value: CODE } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(await screen.findByText("That code didn't work.")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Confirm it's you" })).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Authenticator code"), { target: { value: CODE } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(await screen.findByText("Too many tries. Try again later.")).toBeTruthy();
+    expect(screen.queryByText("Not recorded")).toBeNull();
+    for (const secret of SECRETS) {
+      expect(document.body.textContent).not.toContain(secret);
+    }
+  });
+
+  it("a fresh_required straight after a check that passed is an error, not a second panel", async () => {
+    const harness = install({
+      views: [json(403, { code: "fresh_required" }), json(403, { code: "fresh_required" })],
+    });
+    await openFamily();
+
+    await view("View email for Child 1");
+    fireEvent.change(await screen.findByLabelText("Authenticator code"), {
+      target: { value: CODE },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    expect(await screen.findByText("Something went wrong. Try again.")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Confirm it's you" })).toBeNull();
+    expect(harness.views()).toHaveLength(2);
+  });
+
+  it("pin 89: a recovery_session answer says to sign in again, and opens no panel", async () => {
+    const harness = install({ views: [json(403, { code: "recovery_session" })] });
+    await openFamily();
+
+    await view("View name for Child 1");
+    expect(
+      await screen.findByText(
+        "Sign in again with your authenticator app or passkey to view children's details",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Confirm it's you" })).toBeNull();
+    expect(harness.calls.some((call) => call.path.startsWith("/v1/auth/second-factor"))).toBe(
+      false,
+    );
+    for (const secret of SECRETS) {
+      expect(document.body.textContent).not.toContain(secret);
+    }
+  });
+
+  it("a refusal with no code says Not allowed, and the family is read again", async () => {
+    const harness = install({
+      views: [new Response(null, { status: 403 })],
+      // The second read is the family as someone who is no longer a Community Admin sees it.
+      details: [adminDetail(), presenceDetail(2)],
+    });
+    await openFamily();
+
+    await view("View name for Child 1");
+    expect(await screen.findByText("Not allowed")).toBeTruthy();
+    await waitFor(() => expect(harness.reads()).toHaveLength(2));
+    expect(await screen.findByText("2 children in this family")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Child 1" })).toBeNull();
+  });
+
+  it("a 404 shows Not found in the field, and the family is read again without the page blinking", async () => {
+    const harness = install({ views: [new Response(null, { status: 404 })] });
+    await openFamily();
+
+    await view("View name for Child 1");
+    expect(await screen.findByText("Not found")).toBeTruthy();
+    await waitFor(() => expect(harness.reads()).toHaveLength(2));
+    // The sections stayed where they were: no Skeleton replaced them while the family was read.
+    expect(screen.getByRole("heading", { name: "Minors" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Hide name for Child 1" })).toBeTruthy();
+  });
+
+  it("a failure or a network error shows a plain error and no value", async () => {
+    const harness = install({
+      views: [
+        new Response(null, { status: 500 }),
+        () => {
+          throw new TypeError("network down");
+        },
+      ],
+    });
+    await openFamily();
+
+    await view("View email for Child 1");
+    expect(await screen.findByText("Something went wrong. Try again.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "View email for Child 1" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "View phone for Child 1" }));
+    await waitFor(() => expect(harness.views()).toHaveLength(2));
+    expect(await screen.findByText("Something went wrong. Try again.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "View phone for Child 1" })).toBeTruthy();
+    for (const secret of SECRETS) {
+      expect(document.body.textContent).not.toContain(secret);
+    }
+  });
+
+  it("pin 90: everyone but a Community Admin sees how many children there are, and nothing more", async () => {
+    const harness = install({ details: [presenceDetail(2)] });
+    const container = await openFamily();
+
+    expect(await screen.findByText("2 children in this family")).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/Child \d/);
+    expect(screen.queryByRole("heading", { name: "Minors" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Guardians" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^View .* for / })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add minor" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Link guardian" })).toBeNull();
+    await act(async () => {});
+    expect(
+      harness.calls.some(
+        (call) => call.path.includes("life-events/list") && call.body.personId !== ADULT_ID,
+      ),
+    ).toBe(false);
+
+    const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    expect(resultIds(results, "violations")).toEqual([]);
+  });
+
+  it("says 1 child for one, and says nothing about children for a family without any", async () => {
+    install({ details: [presenceDetail(1)] });
+    await openFamily();
+    expect(await screen.findByText("1 child in this family")).toBeTruthy();
+    cleanup();
+    vi.restoreAllMocks();
+
+    install({ details: [presenceDetail(0)] });
+    await openFamily();
+    await screen.findByText("Arthur");
+    expect(screen.queryByText(/in this family/)).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Children" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Minors" })).toBeNull();
+  });
+
+  it("pin 91: a family with a child has no rename control for anyone but a Community Admin", async () => {
+    install({ access: { communityAdmin: false }, details: [presenceDetail(2)] });
+    await openFamily();
+    await screen.findByText("2 children in this family");
+    expect(screen.queryByRole("button", { name: "Rename household" })).toBeNull();
+    cleanup();
+    vi.restoreAllMocks();
+
+    // Without a child anyone who may rename a family can.
+    install({ details: [presenceDetail(0)] });
+    await openFamily();
+    expect(await screen.findByRole("button", { name: "Rename household" })).toBeTruthy();
+    cleanup();
+    vi.restoreAllMocks();
+
+    // A Community Admin, who is sent the children, can rename a family that has them.
+    install({ details: [adminDetail()] });
+    await openFamily();
+    expect(await screen.findByRole("button", { name: "Rename household" })).toBeTruthy();
+  });
+
+  it("only a Community Admin sees Add minor, Link guardian and Unlink", async () => {
+    install({ access: { communityAdmin: false }, details: [presenceDetail(1)] });
+    await openFamily();
+    await screen.findByText("1 child in this family");
+    for (const name of ["Add minor", "Link guardian", /^Unlink/]) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
+    cleanup();
+    vi.restoreAllMocks();
+
+    // The capabilities name the role and the service is still the authority: a Community Admin
+    // whose family read carries no children is shown the count, and no control for them.
+    install({ access: { communityAdmin: true }, details: [presenceDetail(1)] });
+    await openFamily();
+    await screen.findByText("1 child in this family");
+    for (const name of ["Add minor", "Link guardian", /^Unlink/]) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
+    expect(screen.queryByText("Child 1")).toBeNull();
+    cleanup();
+    vi.restoreAllMocks();
+
+    install({ details: [adminDetail()] });
+    await openFamily();
+    expect(await screen.findByRole("button", { name: "Add minor" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Link guardian" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Unlink Arthur Clarke from Child 1" })).toBeTruthy();
+  });
+
+  it("pin 92: the create and rename forms both say to use the family name, and a refusal is plain text", async () => {
+    const GUIDANCE = "Use the family name. Don't include a child's name.";
+    const REFUSED = "The household name can't include a child's name. Use the family name.";
+    install({
+      renameResult: json(422, { code: "label_contains_child_name" }),
+      createResult: json(422, { code: "label_contains_child_name" }),
+    });
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    await showFamilyRecords();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    // Create.
+    fireEvent.click(await screen.findByRole("button", { name: "Create household" }));
+    expect(await screen.findByText(GUIDANCE)).toBeTruthy();
+    expect(
+      screen
+        .getByRole("textbox", { name: "Household name (optional)" })
+        .getAttribute("aria-describedby"),
+    ).toBeTruthy();
+    fireEvent.change(screen.getByRole("textbox", { name: "Household name (optional)" }), {
+      target: { value: `Nguyen (${GIVEN})` },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save household" }));
+    const createAlert = await screen.findByText(REFUSED);
+    expect(createAlert.textContent).not.toContain(GIVEN);
+    expect(document.body.textContent).not.toContain(`Nguyen (${GIVEN})`);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    // Rename.
+    fireEvent.click(await screen.findByRole("button", { name: "View Clarke Family" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rename household" }));
+    expect(await screen.findByText(GUIDANCE)).toBeTruthy();
+    fireEvent.change(screen.getByRole("textbox", { name: "Household name" }), {
+      target: { value: `Clarke (${GIVEN})` },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    const renameAlert = await screen.findByText(REFUSED);
+    expect(renameAlert.textContent).not.toContain(GIVEN);
+    // A refusal that is not about a name keeps its own words.
+    expect(document.body.textContent).not.toContain("Invalid input");
+  });
+
+  it("an add-minor refusal for a label that holds the child's name says so, without the name", async () => {
+    install({ addMinorResult: json(422, { code: "label_contains_child_name" }) });
+    await openFamily();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add minor" }));
+    fireEvent.change(screen.getByLabelText(/Given name/i), { target: { value: GIVEN } });
+    fireEvent.change(screen.getByLabelText(/Family name/i), { target: { value: FAMILY } });
+    fireEvent.change(screen.getByLabelText(/Date of birth/i), { target: { value: DOB } });
+    fireEvent.click(screen.getByRole("button", { name: "Save minor" }));
+
+    const alert = await screen.findByText(
+      "The household name includes this child's name. Rename the household to the family name only, then add the child.",
+    );
+    expect(alert.textContent).not.toContain(GIVEN);
+  });
+
+  it("a child's life events are masked rows with a View for each field, one value at a time with the rest", async () => {
+    const harness = install({
+      // The list answer carries ids only. Fields it might carry are never read.
+      childEvents: [{ eventId: EVENT_1, type: "baptism", place: "Leaky Parish", notes: "extra" }],
+      views: [json(200, { value: "baptism" }), json(200, { value: "Quillon Chapel" })],
+    });
+    const container = await openFamily();
+
+    const table = await screen.findByRole("table", { name: "Life events for Child 1" });
+    expect(
+      within(table)
+        .getAllByRole("columnheader")
+        .map((header) => header.textContent),
+    ).toEqual(["Type", "Date", "Place", "Notes"]);
+    expect(document.body.textContent).not.toContain("Leaky Parish");
+    expect(document.body.textContent).not.toContain("Baptism");
+    // A child's event is added here but not changed: no value is shown to change.
+    expect(within(table).queryByRole("button", { name: /^Edit/ })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "Add life event" })).toHaveLength(3);
+
+    await view("View type of life event 1 for Child 1");
+    expect(await within(table).findByText("Baptism")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "View place of life event 1 for Child 1" }));
+    expect(await within(table).findByText("Quillon Chapel")).toBeTruthy();
+    // Viewing the place hid the type again: one value is on screen across the whole family.
+    expect(within(table).queryByText("Baptism")).toBeNull();
+
+    expect(harness.views().map((call) => [call.path, call.body])).toEqual([
+      [
+        "/v1/people/minors/life-events/view",
+        { communitySlug: SLUG, personId: CHILD_1, lifeEventId: EVENT_1, field: "type" },
+      ],
+      [
+        "/v1/people/minors/life-events/view",
+        { communitySlug: SLUG, personId: CHILD_1, lifeEventId: EVENT_1, field: "place" },
+      ],
+    ]);
+
+    const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    expect(resultIds(results, "violations")).toEqual([]);
+  });
+
+  it("viewing a child's name hides a life event's value that was on screen", async () => {
+    install({
+      childEvents: [{ eventId: EVENT_1 }],
+      views: [json(200, { value: "2018-07-01" }), NAME_VALUE()],
+    });
+    await openFamily();
+
+    await view("View date of life event 1 for Child 1");
+    expect(await screen.findByText("2018-07-01")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "View name for Child 1" }));
+    expect(await screen.findByText(FULL_NAME)).toBeTruthy();
+    expect(screen.queryByText("2018-07-01")).toBeNull();
+  });
+
+  it("a section without people.households shows the children and no life events panel for them", async () => {
+    const calls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      calls.push(String(info));
+      return new Response(null, { status: 404 });
+    });
+    sessionStorage.setItem("community-hub.community", SLUG);
+    render(
+      <CommunityProvider>
+        <MinorsSection
+          detailHousehold={adminDetail() as never}
+          access={{
+            permissions: {
+              "people.view": true,
+              "people.manage": true,
+              "people.restricted.read": true,
+              "people.delete": false,
+              "service_times.manage": false,
+            },
+            entitlements: {
+              "people.directory": true,
+              "people.households": false,
+              "module.engagement": false,
+            },
+            roles: { communityAdmin: true },
+          }}
+          isReadOnly={false}
+        />
+      </CommunityProvider>,
+    );
+    expect(screen.getByRole("heading", { name: "Child 1" })).toBeTruthy();
+    expect(screen.queryByText(/Life events: Child 1/)).toBeNull();
+    await act(async () => {});
+    expect(calls.filter((url) => url.includes("life-events"))).toHaveLength(0);
   });
 });

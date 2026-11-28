@@ -303,6 +303,31 @@ describe("life-events contract schemas (pins 12, 15)", () => {
     ).toBe(false);
   });
 
+  it("a child's life event in the list is the id only", () => {
+    expect(
+      listLifeEventsResponse.safeParse({
+        items: [{ eventId: VALID_UUID }, { eventId: OTHER_UUID }],
+      }).success,
+    ).toBe(true);
+
+    // A child's row cannot carry a field: type, date, place and notes are read one at a time
+    expect(
+      listLifeEventsResponse.safeParse({
+        items: [{ eventId: VALID_UUID, type: "baptism" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      listLifeEventsResponse.safeParse({
+        items: [{ eventId: VALID_UUID, place: "Chapel" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      listLifeEventsResponse.safeParse({
+        items: [{ eventId: "not-a-uuid" }],
+      }).success,
+    ).toBe(false);
+  });
+
   it("validates response shapes and rejects extra fields", () => {
     // List response
     expect(

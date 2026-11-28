@@ -24,6 +24,11 @@ export type PeopleAccess = {
     "people.households": boolean;
     "module.engagement": boolean;
   };
+  // Which role the caller holds here, as the service answers it. A Community Admin is the only
+  // caller who sees children, and no permission says so: an organisation admin holds the same keys.
+  roles: {
+    communityAdmin: boolean;
+  };
 };
 
 export const defaultAccess: PeopleAccess = {
@@ -38,6 +43,9 @@ export const defaultAccess: PeopleAccess = {
     "people.directory": false,
     "people.households": false,
     "module.engagement": false,
+  },
+  roles: {
+    communityAdmin: false,
   },
 };
 
@@ -63,6 +71,7 @@ export function parseAccess(value: unknown): PeopleAccess {
   }
   const perms = isRecord(value.permissions) ? value.permissions : {};
   const ents = isRecord(value.entitlements) ? value.entitlements : {};
+  const roles = isRecord(value.roles) ? value.roles : {};
   return {
     permissions: {
       "people.view": perms["people.view"] === true,
@@ -75,6 +84,9 @@ export function parseAccess(value: unknown): PeopleAccess {
       "people.directory": ents["people.directory"] === true,
       "people.households": ents["people.households"] === true,
       "module.engagement": ents["module.engagement"] === true,
+    },
+    roles: {
+      communityAdmin: roles.communityAdmin === true,
     },
   };
 }

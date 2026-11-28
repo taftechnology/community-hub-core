@@ -744,6 +744,11 @@ describe("api boot wiring of the billing adapter and logger", () => {
         { method: "POST", pattern: "/v1/people/life-events/update", billing: "write" },
       ];
 
+      const expectedMinorViewRoutes = [
+        { method: "POST", pattern: "/v1/people/minors/view", billing: "read" },
+        { method: "POST", pattern: "/v1/people/minors/life-events/view", billing: "read" },
+      ];
+
       const expectedHouseholdRoutes = [
         { method: "POST", pattern: "/v1/households/list", billing: "read" },
         { method: "POST", pattern: "/v1/households/read", billing: "read" },
@@ -768,6 +773,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
 
       for (const expected of [
         ...expectedLifeEventRoutes,
+        ...expectedMinorViewRoutes,
         ...expectedHouseholdRoutes,
         ...expectedEngagementRoutes,
       ]) {
@@ -840,7 +846,7 @@ describe("api boot wiring of the billing adapter and logger", () => {
         (route as { billing?: string }).billing,
       ]),
     );
-    expect(routes).toHaveLength(79);
+    expect(routes).toHaveLength(81);
     expect(markings).toEqual(
       new Map([
         ["GET /health", "exempt"],
@@ -878,6 +884,8 @@ describe("api boot wiring of the billing adapter and logger", () => {
         ["POST /v1/people/read", "read"],
         ["POST /v1/people/summary", "read"],
         ["POST /v1/people/life-events/list", "read"],
+        ["POST /v1/people/minors/view", "read"],
+        ["POST /v1/people/minors/life-events/view", "read"],
         ["POST /v1/households/list", "read"],
         ["POST /v1/households/read", "read"],
         ["POST /v1/households/emergency-contacts/read", "read"],

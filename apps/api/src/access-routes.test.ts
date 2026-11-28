@@ -40,6 +40,7 @@ const access = vi.hoisted(() => {
     unlinkUser: vi.fn(),
     holdsAnyGrant: vi.fn(),
     holdsPermission: vi.fn(),
+    isCommunityAdmin: vi.fn(),
   };
 });
 
@@ -82,6 +83,7 @@ vi.mock("@community-hub/access", () => ({
   unlinkUser: access.unlinkUser,
   holdsAnyGrant: access.holdsAnyGrant,
   holdsPermission: access.holdsPermission,
+  isCommunityAdmin: access.isCommunityAdmin,
 }));
 
 vi.mock("./entitlement-guard.js", async () => {
@@ -249,6 +251,8 @@ describe("access routes", () => {
     access.holdsAnyGrant.mockResolvedValue(true);
     access.holdsPermission.mockReset();
     access.holdsPermission.mockResolvedValue(true);
+    access.isCommunityAdmin.mockReset();
+    access.isCommunityAdmin.mockResolvedValue(false);
     entitlementGuard.checkEntitlement.mockReset();
     entitlementGuard.checkEntitlement.mockResolvedValue(true);
     billing.assertWritable.mockReset();
@@ -568,6 +572,47 @@ describe("access routes", () => {
     expect(await linkRes.text()).toBe('{"error":"user_not_member"}');
   });
 
+  it("pin 131: a child's person id on POST /v1/access/user-links answers the empty 404 of a missing person, and a grant to a user linked to a child keeps its 409 (checkpoint 2, L4)", async () => {
+    const userId = "00000000-0000-4000-8000-000000000030";
+    const personId = "00000000-0000-4000-8000-000000000031";
+    const link = () =>
+      route("/v1/access/user-links").handle(
+        request(
+          "/v1/access/user-links",
+          API_HOSTNAME,
+          { communitySlug: "parish", userId, personId },
+          `Bearer ${TOKEN}`,
+        ),
+      );
+
+    // The module refuses a child with minor_forbidden, and a missing person with not_found. The
+    // route answers both the same way, so a child's id is not confirmed to a caller who guesses it.
+    access.linkUser.mockReset();
+    access.linkUser.mockRejectedValueOnce(new access.AccessError("minor_forbidden"));
+    const child = await link();
+    access.linkUser.mockRejectedValueOnce(new access.AccessError("not_found"));
+    const missing = await link();
+    expect(missing.status).toBe(404);
+    expect(child.status).toBe(404);
+    expect(await child.text()).toBe("");
+    expect(await missing.text()).toBe("");
+    expect([...child.headers.entries()]).toEqual([...missing.headers.entries()]);
+
+    // A role grant to a user who is already linked to a child is another case, and stays a 409.
+    access.grantRole.mockReset();
+    access.grantRole.mockRejectedValue(new access.AccessError("minor_forbidden"));
+    const grant = await route("/v1/access/grants").handle(
+      request(
+        "/v1/access/grants",
+        API_HOSTNAME,
+        { communitySlug: "parish", userId, roleKey: "member" },
+        `Bearer ${TOKEN}`,
+      ),
+    );
+    expect(grant.status).toBe(409);
+    expect(await grant.text()).toBe("");
+  });
+
   it("a member without access.roles.manage gets 402 on POST /v1/access/grants in read_only and 403 in ok", async () => {
     access.grantRole.mockRejectedValue(new access.AccessError("forbidden"));
     billing.assertWritable.mockRejectedValue(new BillingReadOnly("read_only"));
@@ -627,6 +672,7 @@ describe("access routes", () => {
     it("returns 200 with all permissions and entitlements when caller has grants", async () => {
       access.holdsAnyGrant.mockResolvedValueOnce(true);
       access.holdsPermission.mockResolvedValue(true);
+      access.isCommunityAdmin.mockResolvedValue(true);
       entitlementGuard.checkEntitlement.mockResolvedValue(true);
 
       const res = await route("/v1/access/capabilities").handle(
@@ -652,6 +698,7 @@ describe("access routes", () => {
           "people.households": true,
           "module.engagement": true,
         },
+        roles: { communityAdmin: true },
       });
 
       // Pin 17: response key set equals the constant allow-list
@@ -678,6 +725,27 @@ describe("access routes", () => {
         { orgId: ORG, communityId: COMMUNITY },
         "module.engagement",
       );
+    });
+
+    it("pin 136: takes roles.communityAdmin from isCommunityAdmin, not from people.restricted.read", async () => {
+      access.holdsAnyGrant.mockResolvedValueOnce(true);
+      access.holdsPermission.mockResolvedValue(true);
+      access.isCommunityAdmin.mockResolvedValue(false);
+      entitlementGuard.checkEntitlement.mockResolvedValue(true);
+
+      const res = await route("/v1/access/capabilities").handle(
+        request(
+          "/v1/access/capabilities",
+          API_HOSTNAME,
+          { communitySlug: "parish" },
+          `Bearer ${TOKEN}`,
+        ),
+      );
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as CapabilitiesResponse;
+      expect(data.permissions["people.restricted.read"]).toBe(true);
+      expect(data.roles).toEqual({ communityAdmin: false });
+      expect(access.isCommunityAdmin).toHaveBeenCalledTimes(1);
     });
 
     it("returns 200 with all permissions false when caller has role grant with no people permissions (finding 2)", async () => {
@@ -1223,14 +1291,21 @@ describe("access routes", () => {
       expect(body.users[0]?.email).toBe("staff@example.com");
     });
 
-    it("Pin 3: minor-linked user id never reaches readUserEmails, row has minor: true and nulls", async () => {
+    it("Pin 3: for a Community Admin, a minor-linked user never reaches readUserEmails and the row has minor: true and nulls", async () => {
       const minorPersonId = "00000000-0000-4000-8000-000000000044";
       userLinks = [{ user_id: USER, person_id: minorPersonId }];
+      access.isCommunityAdmin.mockResolvedValue(true);
       people.readLinkedContacts.mockResolvedValueOnce(new Map([[minorPersonId, { minor: true }]]));
 
       const res = await callUsersList({ communitySlug: "parish" });
       expect(res.status).toBe(200);
       expect(identity.readUserEmails).not.toHaveBeenCalled();
+      expect(people.readLinkedContacts).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ childView: "admin", personIds: [minorPersonId] }),
+      );
 
       const body = listUsersResponse.parse(await res.json());
       expect(body.users).toEqual([
@@ -1245,9 +1320,74 @@ describe("access routes", () => {
       ]);
     });
 
+    it("Pin 3b: a caller who is not a Community Admin sees a minor-linked user with no linked contact, no person id and no flag", async () => {
+      const minorPersonId = "00000000-0000-4000-8000-000000000044";
+      userLinks = [{ user_id: USER, person_id: minorPersonId }];
+      // The reader leaves a child out under "presence". A reader that did return the child must
+      // still not reach the answer.
+      for (const readerAnswer of [new Map(), new Map([[minorPersonId, { minor: true }]])]) {
+        identity.readUserEmails.mockClear();
+        people.readLinkedContacts.mockClear();
+        people.readLinkedContacts.mockResolvedValueOnce(readerAnswer);
+
+        const res = await callUsersList({ communitySlug: "parish" });
+        expect(res.status).toBe(200);
+        expect(identity.readUserEmails).not.toHaveBeenCalled();
+        expect(people.readLinkedContacts).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          expect.anything(),
+          expect.objectContaining({ childView: "presence", personIds: [minorPersonId] }),
+        );
+
+        const text = await res.text();
+        expect(text).not.toContain(minorPersonId);
+        expect(listUsersResponse.parse(JSON.parse(text)).users).toEqual([
+          {
+            userId: USER,
+            personId: null,
+            name: null,
+            email: null,
+            phone: null,
+            minor: false,
+          },
+        ]);
+      }
+    });
+
+    it("pin 130: the users list asks for the admin view for a Community Admin and the presence view for everyone else (checkpoint 2, L3)", async () => {
+      // The route's own isAdmin branches give one answer under either view, so a flipped polarity
+      // cannot be seen in the body. The argument is the setting, and it is checked here, once for
+      // each side, with an adult-linked user so no other branch decides the answer.
+      const personId = "00000000-0000-4000-8000-000000000044";
+      userLinks = [{ user_id: USER, person_id: personId }];
+      for (const [isAdmin, view] of [
+        [true, "admin"],
+        [false, "presence"],
+      ] as const) {
+        access.isCommunityAdmin.mockResolvedValue(isAdmin);
+        people.readLinkedContacts.mockClear();
+        people.readLinkedContacts.mockResolvedValueOnce(
+          new Map([[personId, { minor: false, given: "Ada", family: "Lovelace", phone: null }]]),
+        );
+
+        const res = await callUsersList({ communitySlug: "parish" });
+
+        expect(res.status, view).toBe(200);
+        expect(people.readLinkedContacts).toHaveBeenCalledTimes(1);
+        expect(people.readLinkedContacts).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          expect.anything(),
+          expect.objectContaining({ childView: view }),
+        );
+      }
+    });
+
     it("a linked user whose person is not returned is hidden and never reaches readUserEmails", async () => {
       const missingPersonId = "00000000-0000-4000-8000-000000000088";
       userLinks = [{ user_id: USER, person_id: missingPersonId }];
+      access.isCommunityAdmin.mockResolvedValue(true);
       people.readLinkedContacts.mockResolvedValueOnce(new Map());
       identity.readUserEmails.mockResolvedValueOnce(new Map([[USER, "hidden@example.test"]]));
 
@@ -1270,6 +1410,31 @@ describe("access routes", () => {
       for (const call of identity.readUserEmails.mock.calls) {
         expect((call[3] as string[] | undefined) ?? []).not.toContain(USER);
       }
+    });
+
+    it("for a caller who is not a Community Admin, a linked user whose person is not returned has no linked contact and no person id", async () => {
+      const missingPersonId = "00000000-0000-4000-8000-000000000088";
+      userLinks = [{ user_id: USER, person_id: missingPersonId }];
+      people.readLinkedContacts.mockResolvedValueOnce(new Map());
+      identity.readUserEmails.mockResolvedValueOnce(new Map([[USER, "hidden@users.example.test"]]));
+
+      const res = await callUsersList({ communitySlug: "parish" });
+      expect(res.status).toBe(200);
+
+      const text = await res.text();
+      expect(text).not.toContain(missingPersonId);
+      expect(text).not.toContain("hidden@users.example.test");
+      expect(listUsersResponse.parse(JSON.parse(text)).users).toEqual([
+        {
+          userId: USER,
+          personId: null,
+          name: null,
+          email: null,
+          phone: null,
+          minor: false,
+        },
+      ]);
+      expect(identity.readUserEmails).not.toHaveBeenCalled();
     });
 
     it("mixed directory (L3): readUserEmails receives exactly the adult-linked user and unlinked user, never the minor", async () => {

@@ -50,4 +50,17 @@ describe("people-access", () => {
     expect(parseAccess({ permissions: {} }).permissions["people.delete"]).toBe(false);
     expect(parseAccess(null).permissions["people.delete"]).toBe(false);
   });
+
+  it("defaultAccess is not a Community Admin, and parseAccess reads the role only when it is true", () => {
+    expect(defaultAccess.roles.communityAdmin).toBe(false);
+    expect(parseAccess({ roles: { communityAdmin: true } }).roles.communityAdmin).toBe(true);
+    expect(parseAccess({ roles: { communityAdmin: "true" } }).roles.communityAdmin).toBe(false);
+    expect(parseAccess({ roles: {} }).roles.communityAdmin).toBe(false);
+    // An answer from before the service named the role, or with the keys alone, is not an admin.
+    expect(
+      parseAccess({ permissions: { "people.restricted.read": true }, entitlements: {} }).roles
+        .communityAdmin,
+    ).toBe(false);
+    expect(parseAccess(null).roles.communityAdmin).toBe(false);
+  });
 });

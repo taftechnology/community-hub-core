@@ -150,12 +150,14 @@ describe("hidden contacts in group members", () => {
           ids.hidden = await create("Hilda", "Hiddenoutsider");
 
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: ids.groupId,
             personId: ids.visible,
             now: NOW,
             actorUserId,
           });
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: ids.groupId,
             personId: ids.hiddenMember,
             now: NOW,
@@ -237,6 +239,7 @@ describe("hidden contacts in group members", () => {
           });
           ids.contactId = created.personId;
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: ids.groupId,
             personId: ids.contactId,
             now: NOW,
@@ -337,6 +340,7 @@ describe("hidden contacts in group members", () => {
 
       const { blocked, outcome } = await raceAgainstDelete(f, (tx) =>
         removeMember(tx, {
+          childView: "presence",
           groupId: f.groupId,
           personId: f.contactId,
           now: NOW,
@@ -363,6 +367,7 @@ describe("hidden contacts in group members", () => {
 
       const { blocked, outcome } = await raceAgainstDelete(f, (tx) =>
         setMemberRole(tx, {
+          childView: "presence",
           groupId: f.groupId,
           personId: f.contactId,
           role: "leader",
@@ -387,11 +392,13 @@ describe("hidden contacts in group members", () => {
     await withFixture(async (f) => {
       await withAppTransaction(f.app, f.scope, async (tx) => {
         const members = await listMembers(tx, f.kms, KEY_ARN, {
+          childView: "presence",
           groupId: f.groupId,
           actorUserId: f.actorUserId,
         });
-        expect(members.map((m) => m.personId)).toEqual([f.visibleId]);
-        expect(members[0]?.isMinor).toBe(false);
+        expect(members.members.map((m) => m.personId)).toEqual([f.visibleId]);
+        expect(members.members[0]?.isMinor).toBe(false);
+        expect(members.minorCount).toBe(0);
       });
     });
   });
@@ -399,7 +406,9 @@ describe("hidden contacts in group members", () => {
   it("personIdsInGroup leaves out a hidden contact", async () => {
     await withFixture(async (f) => {
       await withAppTransaction(f.app, f.scope, async (tx) => {
-        await expect(personIdsInGroup(tx, f.groupId)).resolves.toEqual([f.visibleId]);
+        await expect(personIdsInGroup(tx, f.groupId, { childView: "presence" })).resolves.toEqual([
+          f.visibleId,
+        ]);
       });
     });
   });
@@ -407,11 +416,11 @@ describe("hidden contacts in group members", () => {
   it("activeGroupsForPersons leaves out a hidden contact", async () => {
     await withFixture(async (f) => {
       await withAppTransaction(f.app, f.scope, async (tx) => {
-        const groups = await activeGroupsForPersons(tx, [
-          f.visibleId,
-          f.hiddenMemberId,
-          f.hiddenOutsiderId,
-        ]);
+        const groups = await activeGroupsForPersons(
+          tx,
+          [f.visibleId, f.hiddenMemberId, f.hiddenOutsiderId],
+          { childView: "presence" },
+        );
         expect([...groups.keys()]).toEqual([f.visibleId]);
         expect(groups.get(f.visibleId)).toEqual([{ id: f.groupId, name: "Hidden Fixture Choir" }]);
       });
@@ -423,7 +432,7 @@ describe("hidden contacts in group members", () => {
       await withAppTransaction(f.app, f.scope, async (tx) => {
         const csv = await exportRosterCsv(tx, f.kms, KEY_ARN, {
           groupId: f.groupId,
-          includeRestricted: false,
+          childView: "presence",
           actorUserId: f.actorUserId,
         });
         const lines = csv.trim().split(/\r?\n/);
@@ -444,6 +453,7 @@ describe("hidden contacts in group members", () => {
 
         await expect(
           addMember(tx, f.kms, KEY_ARN, {
+            childView: "presence",
             groupId: f.groupId,
             personId: f.hiddenOutsiderId,
             now: NOW,
@@ -455,6 +465,7 @@ describe("hidden contacts in group members", () => {
         expect(await auditCount(tx, "groups.member.added")).toBe(auditBefore);
 
         const added = await addMember(tx, f.kms, KEY_ARN, {
+          childView: "presence",
           groupId: f.groupId,
           personId: f.visibleOutsiderId,
           now: NOW,
@@ -474,6 +485,7 @@ describe("hidden contacts in group members", () => {
 
         await expect(
           removeMember(tx, {
+            childView: "presence",
             groupId: f.groupId,
             personId: f.hiddenMemberId,
             now: NOW,
@@ -486,6 +498,7 @@ describe("hidden contacts in group members", () => {
 
         await expect(
           removeMember(tx, {
+            childView: "presence",
             groupId: f.groupId,
             personId: f.visibleId,
             now: NOW,
@@ -504,6 +517,7 @@ describe("hidden contacts in group members", () => {
 
         await expect(
           setMemberRole(tx, {
+            childView: "presence",
             groupId: f.groupId,
             personId: f.hiddenMemberId,
             role: "leader",
@@ -516,6 +530,7 @@ describe("hidden contacts in group members", () => {
         expect(await auditCount(tx, "groups.member.role_changed")).toBe(auditBefore);
 
         await setMemberRole(tx, {
+          childView: "presence",
           groupId: f.groupId,
           personId: f.visibleId,
           role: "leader",

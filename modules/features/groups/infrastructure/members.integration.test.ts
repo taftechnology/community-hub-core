@@ -147,6 +147,7 @@ describe("group members and leader fact", () => {
           personId = person.personId;
 
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId,
             personId,
             now: NOW,
@@ -163,6 +164,7 @@ describe("group members and leader fact", () => {
         // Delete the member using removeMember
         await withAppTransaction(app, scope, async (tx) => {
           const removed = await removeMember(tx, {
+            childView: "presence",
             groupId,
             personId,
             now: NOW,
@@ -236,6 +238,7 @@ describe("group members and leader fact", () => {
           });
           person1Id = p1.personId;
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group1Id,
             personId: person1Id,
             now: NOW,
@@ -264,6 +267,7 @@ describe("group members and leader fact", () => {
           });
           person2Id = p2.personId;
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group2Id,
             personId: person2Id,
             now: NOW,
@@ -273,13 +277,21 @@ describe("group members and leader fact", () => {
 
         // Under scope1, listMembers for group1 sees person1
         await withAppTransaction(app, scope1, async (tx) => {
-          const m1 = await listMembers(tx, kms, KEY_ARN, { groupId: group1Id, actorUserId });
-          expect(m1).toHaveLength(1);
-          expect(m1[0]?.personId).toBe(person1Id);
+          const m1 = await listMembers(tx, kms, KEY_ARN, {
+            childView: "presence",
+            groupId: group1Id,
+            actorUserId,
+          });
+          expect(m1.members).toHaveLength(1);
+          expect(m1.members[0]?.personId).toBe(person1Id);
 
           // Under scope1, group2 is not found
           await expect(
-            listMembers(tx, kms, KEY_ARN, { groupId: group2Id, actorUserId }),
+            listMembers(tx, kms, KEY_ARN, {
+              childView: "presence",
+              groupId: group2Id,
+              actorUserId,
+            }),
           ).rejects.toBeInstanceOf(GroupsError);
 
           // Direct select under scope1 only sees group1's member
@@ -291,9 +303,13 @@ describe("group members and leader fact", () => {
 
         // Under scope2, listMembers for group2 sees person2
         await withAppTransaction(app, scope2, async (tx) => {
-          const m2 = await listMembers(tx, kms, KEY_ARN, { groupId: group2Id, actorUserId });
-          expect(m2).toHaveLength(1);
-          expect(m2[0]?.personId).toBe(person2Id);
+          const m2 = await listMembers(tx, kms, KEY_ARN, {
+            childView: "presence",
+            groupId: group2Id,
+            actorUserId,
+          });
+          expect(m2.members).toHaveLength(1);
+          expect(m2.members[0]?.personId).toBe(person2Id);
 
           const rlsRows = await tx<
             { group_id: string }[]
@@ -373,6 +389,7 @@ describe("group members and leader fact", () => {
           // Person in another community of same org
           await expect(
             addMember(tx, kms, KEY_ARN, {
+              childView: "presence",
               groupId: groupAId,
               personId: personA2Id,
               now: NOW,
@@ -383,6 +400,7 @@ describe("group members and leader fact", () => {
           // Person in another organisation
           await expect(
             addMember(tx, kms, KEY_ARN, {
+              childView: "presence",
               groupId: groupAId,
               personId: personBId,
               now: NOW,
@@ -393,6 +411,7 @@ describe("group members and leader fact", () => {
           // Non-existent person UUID
           await expect(
             addMember(tx, kms, KEY_ARN, {
+              childView: "presence",
               groupId: groupAId,
               personId: newId(),
               now: NOW,
@@ -463,6 +482,7 @@ describe("group members and leader fact", () => {
 
           // Add p1 before archiving
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId,
             personId: person1Id,
             now: NOW,
@@ -477,6 +497,7 @@ describe("group members and leader fact", () => {
           // Attempt addMember on archived group
           await expect(
             addMember(tx, kms, KEY_ARN, {
+              childView: "presence",
               groupId,
               personId: person2Id,
               now: NOW,
@@ -487,6 +508,7 @@ describe("group members and leader fact", () => {
           // Attempt removeMember on archived group
           await expect(
             removeMember(tx, {
+              childView: "presence",
               groupId,
               personId: person1Id,
               now: NOW,
@@ -497,6 +519,7 @@ describe("group members and leader fact", () => {
           // Attempt setMemberRole on archived group
           await expect(
             setMemberRole(tx, {
+              childView: "presence",
               groupId,
               personId: person1Id,
               role: "leader",
@@ -588,6 +611,7 @@ describe("group members and leader fact", () => {
           leader2Id = pLeader2.personId;
 
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group1Id,
             personId: leader1Id,
             role: "leader",
@@ -596,6 +620,7 @@ describe("group members and leader fact", () => {
           });
 
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group1Id,
             personId: member1Id,
             role: "member",
@@ -604,6 +629,7 @@ describe("group members and leader fact", () => {
           });
 
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group2Id,
             personId: leader2Id,
             role: "leader",
@@ -663,6 +689,7 @@ describe("group members and leader fact", () => {
           });
 
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group.id,
             personId: person.personId,
             now: NOW,
@@ -671,6 +698,7 @@ describe("group members and leader fact", () => {
 
           await expect(
             addMember(tx, kms, KEY_ARN, {
+              childView: "presence",
               groupId: group.id,
               personId: person.personId,
               now: NOW,
@@ -710,6 +738,7 @@ describe("group members and leader fact", () => {
           `;
 
           const removed = await removeMember(tx, {
+            childView: "presence",
             groupId: group.id,
             personId: newId(),
             now: NOW,
@@ -731,7 +760,7 @@ describe("group members and leader fact", () => {
     }
   });
 
-  it("allows a minor to be added and listMembers returns isMinor: true with no name keys", async () => {
+  it("allows a minor to be added by a Community Admin; listMembers shows a label under admin and a count under presence", async () => {
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
     const app = createPlaintextAppSql(roleUrl(runtime, "app"));
@@ -781,6 +810,7 @@ describe("group members and leader fact", () => {
           });
 
           await addMember(tx, kms, KEY_ARN, {
+            childView: "admin",
             groupId: group.id,
             personId: minor.personId,
             role: "member",
@@ -789,6 +819,7 @@ describe("group members and leader fact", () => {
           });
 
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group.id,
             personId: adult.personId,
             role: "leader",
@@ -796,30 +827,46 @@ describe("group members and leader fact", () => {
             actorUserId,
           });
 
+          // Under admin a minor is a row with a label, and no name key.
           const members = await listMembers(tx, kms, KEY_ARN, {
+            childView: "admin",
             groupId: group.id,
             actorUserId,
           });
 
-          expect(members).toHaveLength(2);
+          expect(members.members).toHaveLength(2);
+          expect(members.minorCount).toBe(1);
 
-          // Assert strict shape of result objects: no name keys!
-          for (const m of members) {
-            const keys = Object.keys(m).sort();
-            expect(keys).toEqual(["addedAt", "isMinor", "personId", "role"]);
+          // The adult's keys are unchanged. The minor has one more, the label: still no name keys!
+          const adultKeys = ["addedAt", "isMinor", "personId", "role"];
+          for (const m of members.members) {
+            expect(Object.keys(m).sort()).toEqual(
+              m.isMinor ? [...adultKeys, "label"].sort() : adultKeys,
+            );
             expect(m).not.toHaveProperty("givenName");
             expect(m).not.toHaveProperty("familyName");
           }
 
-          const minorEntry = members.find((m) => m.personId === minor.personId);
+          const minorEntry = members.members.find((m) => m.personId === minor.personId);
           expect(minorEntry).toBeDefined();
           expect(minorEntry?.isMinor).toBe(true);
+          expect(minorEntry?.label).toBe("Child 1");
           expect(minorEntry?.role).toBe("member");
 
-          const adultEntry = members.find((m) => m.personId === adult.personId);
+          const adultEntry = members.members.find((m) => m.personId === adult.personId);
           expect(adultEntry).toBeDefined();
           expect(adultEntry?.isMinor).toBe(false);
           expect(adultEntry?.role).toBe("leader");
+
+          // Under presence the minor is only counted: no row, no id.
+          const presence = await listMembers(tx, kms, KEY_ARN, {
+            childView: "presence",
+            groupId: group.id,
+            actorUserId,
+          });
+          expect(presence.members.map((m) => m.personId)).toEqual([adult.personId]);
+          expect(presence.minorCount).toBe(1);
+          expect(JSON.stringify(presence)).not.toContain(minor.personId);
 
           // No people.person.read audit event was created
           const peopleAuditRows = await tx<{ count: string }[]>`
@@ -871,6 +918,7 @@ describe("group members and leader fact", () => {
           });
 
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group.id,
             personId: p1.personId,
             role: "member",
@@ -879,12 +927,13 @@ describe("group members and leader fact", () => {
           });
 
           const members = await listMembers(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group.id,
             actorUserId,
           });
 
-          expect(members).toHaveLength(1);
-          expect(members[0]?.role).toBe("member");
+          expect(members.members).toHaveLength(1);
+          expect(members.members[0]?.role).toBe("member");
           expect(await groupLeaderFact(tx, group.id, p1.personId)).toBe(false);
         });
       });
@@ -928,6 +977,7 @@ describe("group members and leader fact", () => {
           });
 
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group.id,
             personId: person.personId,
             role: "member",
@@ -937,6 +987,7 @@ describe("group members and leader fact", () => {
 
           // Change role to leader
           await setMemberRole(tx, {
+            childView: "presence",
             groupId: group.id,
             personId: person.personId,
             role: "leader",
@@ -957,6 +1008,7 @@ describe("group members and leader fact", () => {
 
           // Same role is a no-op with no audit
           await setMemberRole(tx, {
+            childView: "presence",
             groupId: group.id,
             personId: person.personId,
             role: "leader",
@@ -975,6 +1027,7 @@ describe("group members and leader fact", () => {
           // Non-member throws person_not_found
           await expect(
             setMemberRole(tx, {
+              childView: "presence",
               groupId: group.id,
               personId: newId(),
               role: "member",
@@ -1024,6 +1077,7 @@ describe("group members and leader fact", () => {
           });
 
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group.id,
             personId: person.personId,
             role: "member",
@@ -1074,6 +1128,7 @@ describe("group members and leader fact", () => {
           // Non-UUID groupId
           await expect(
             addMember(tx, kms, KEY_ARN, {
+              childView: "presence",
               groupId: "bad-uuid",
               personId: newId(),
               now: NOW,
@@ -1084,6 +1139,7 @@ describe("group members and leader fact", () => {
           // Non-UUID personId
           await expect(
             addMember(tx, kms, KEY_ARN, {
+              childView: "presence",
               groupId: newId(),
               personId: "bad-uuid",
               now: NOW,
@@ -1094,6 +1150,7 @@ describe("group members and leader fact", () => {
           // Non-UUID actorUserId
           await expect(
             addMember(tx, kms, KEY_ARN, {
+              childView: "presence",
               groupId: newId(),
               personId: newId(),
               now: NOW,
@@ -1104,6 +1161,7 @@ describe("group members and leader fact", () => {
           // Invalid role
           await expect(
             addMember(tx, kms, KEY_ARN, {
+              childView: "presence",
               groupId: newId(),
               personId: newId(),
               role: "invalid-role" as never,
@@ -1115,6 +1173,7 @@ describe("group members and leader fact", () => {
           // removeMember bad UUIDs
           await expect(
             removeMember(tx, {
+              childView: "presence",
               groupId: "bad",
               personId: newId(),
               now: NOW,
@@ -1125,6 +1184,7 @@ describe("group members and leader fact", () => {
           // setMemberRole bad UUIDs
           await expect(
             setMemberRole(tx, {
+              childView: "presence",
               groupId: "bad",
               personId: newId(),
               role: "leader",
@@ -1136,6 +1196,7 @@ describe("group members and leader fact", () => {
           // listMembers bad UUID
           await expect(
             listMembers(tx, kms, KEY_ARN, {
+              childView: "presence",
               groupId: "bad",
               actorUserId: newId(),
             }),
@@ -1192,6 +1253,7 @@ describe("group members and leader fact", () => {
           });
           personAId = pA.personId;
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: groupAId,
             personId: personAId,
             now,
@@ -1223,6 +1285,7 @@ describe("group members and leader fact", () => {
           });
           personBId = pB.personId;
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: groupBId,
             personId: personBId,
             now,
@@ -1388,6 +1451,7 @@ describe("group members and leader fact", () => {
 
           // 1. Insert pHigh at t1
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group.id,
             personId: pHigh,
             now: t1,
@@ -1396,6 +1460,7 @@ describe("group members and leader fact", () => {
 
           // 2. Insert pMid at t1 (inserted second, but has lower personId than pHigh)
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group.id,
             personId: pMid,
             now: t1,
@@ -1404,6 +1469,7 @@ describe("group members and leader fact", () => {
 
           // 3. Insert pLow at t2 (inserted last, later added_at, but lowest personId)
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group.id,
             personId: pLow,
             now: t2,
@@ -1411,11 +1477,12 @@ describe("group members and leader fact", () => {
           });
 
           const members = await listMembers(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group.id,
             actorUserId,
           });
 
-          expect(members.map((m) => m.personId)).toEqual([pMid, pHigh, pLow]);
+          expect(members.members.map((m) => m.personId)).toEqual([pMid, pHigh, pLow]);
         });
       });
     } finally {
@@ -1478,6 +1545,7 @@ describe("group members and leader fact", () => {
 
           // Call addMember with no role for adult
           const adultRes = await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group.id,
             personId: adult.personId,
             now: NOW,
@@ -1488,6 +1556,7 @@ describe("group members and leader fact", () => {
 
           // Call addMember with no role for minor
           const minorRes = await addMember(tx, kms, KEY_ARN, {
+            childView: "admin",
             groupId: group.id,
             personId: minor.personId,
             now: NOW,
@@ -1537,6 +1606,7 @@ describe("group members and leader fact", () => {
           });
 
           await addMember(tx, kms, KEY_ARN, {
+            childView: "presence",
             groupId: group.id,
             personId: person.personId,
             role: "member",
@@ -1547,6 +1617,7 @@ describe("group members and leader fact", () => {
           // Test removeMember with null actor
           await expect(
             removeMember(tx, {
+              childView: "presence",
               groupId: group.id,
               personId: person.personId,
               now: NOW,
@@ -1557,6 +1628,7 @@ describe("group members and leader fact", () => {
           // Test removeMember with non-UUID actor
           await expect(
             removeMember(tx, {
+              childView: "presence",
               groupId: group.id,
               personId: person.personId,
               now: NOW,
@@ -1582,6 +1654,7 @@ describe("group members and leader fact", () => {
           // Test setMemberRole with null actor
           await expect(
             setMemberRole(tx, {
+              childView: "presence",
               groupId: group.id,
               personId: person.personId,
               role: "leader",
@@ -1593,6 +1666,7 @@ describe("group members and leader fact", () => {
           // Test setMemberRole with non-UUID actor
           await expect(
             setMemberRole(tx, {
+              childView: "presence",
               groupId: group.id,
               personId: person.personId,
               role: "leader",
@@ -1658,6 +1732,7 @@ describe("group members and leader fact", () => {
             });
 
             await addMember(tx, kms, KEY_ARN, {
+              childView: "presence",
               groupId: group.id,
               personId: person.personId,
               now: NOW,
@@ -1669,7 +1744,7 @@ describe("group members and leader fact", () => {
               actorUserId,
             });
 
-            const ids = await personIdsInGroup(tx, group.id);
+            const ids = await personIdsInGroup(tx, group.id, { childView: "presence" });
             expect(ids).toEqual([]);
           });
         });
@@ -1688,8 +1763,12 @@ describe("group members and leader fact", () => {
         return Promise.resolve([]);
       }) as unknown as AppTransaction;
 
-      await personIdsInGroup(stubTx, "11111111-1111-4111-8111-111111111111");
-      await activeGroupsForPersons(stubTx, ["22222222-2222-4222-8222-222222222222"]);
+      await personIdsInGroup(stubTx, "11111111-1111-4111-8111-111111111111", {
+        childView: "presence",
+      });
+      await activeGroupsForPersons(stubTx, ["22222222-2222-4222-8222-222222222222"], {
+        childView: "presence",
+      });
 
       expect(sqlCalls.length).toBe(2);
       for (const sql of sqlCalls) {
@@ -1770,18 +1849,21 @@ describe("group members and leader fact", () => {
             });
 
             await addMember(tx, kms, KEY_ARN, {
+              childView: "presence",
               groupId: gYouth.id,
               personId: p1.personId,
               now: NOW,
               actorUserId,
             });
             await addMember(tx, kms, KEY_ARN, {
+              childView: "presence",
               groupId: gBible.id,
               personId: p1.personId,
               now: NOW,
               actorUserId,
             });
             await addMember(tx, kms, KEY_ARN, {
+              childView: "presence",
               groupId: gArchived.id,
               personId: p1.personId,
               now: NOW,
@@ -1789,6 +1871,7 @@ describe("group members and leader fact", () => {
             });
 
             await addMember(tx, kms, KEY_ARN, {
+              childView: "presence",
               groupId: gChoir.id,
               personId: p2.personId,
               now: NOW,
@@ -1800,7 +1883,9 @@ describe("group members and leader fact", () => {
               actorUserId,
             });
 
-            const map = await activeGroupsForPersons(tx, [p1.personId, p2.personId, p3.personId]);
+            const map = await activeGroupsForPersons(tx, [p1.personId, p2.personId, p3.personId], {
+              childView: "presence",
+            });
 
             expect(map.get(p1.personId)).toEqual([
               { id: gBible.id, name: "Bible Study" },
@@ -1856,6 +1941,7 @@ describe("group members and leader fact", () => {
             });
 
             await addMember(tx, kms, KEY_ARN, {
+              childView: "presence",
               groupId: comm2GroupId,
               personId: person.personId,
               now: NOW,
@@ -1864,7 +1950,7 @@ describe("group members and leader fact", () => {
           });
 
           await withAppTransaction(app, scope1, async (tx) => {
-            const ids = await personIdsInGroup(tx, comm2GroupId);
+            const ids = await personIdsInGroup(tx, comm2GroupId, { childView: "presence" });
             expect(ids).toEqual([]);
           });
         });
@@ -1914,6 +2000,7 @@ describe("group members and leader fact", () => {
             });
 
             await addMember(tx, kms, KEY_ARN, {
+              childView: "presence",
               groupId: org2GroupId,
               personId: person.personId,
               now: NOW,
@@ -1922,7 +2009,7 @@ describe("group members and leader fact", () => {
           });
 
           await withAppTransaction(app, scope1, async (tx) => {
-            const ids = await personIdsInGroup(tx, org2GroupId);
+            const ids = await personIdsInGroup(tx, org2GroupId, { childView: "presence" });
             expect(ids).toEqual([]);
           });
         });
@@ -1937,7 +2024,7 @@ describe("group members and leader fact", () => {
 
     it("activeGroupsForPersons: empty input makes no query", async () => {
       const stubTx = vi.fn() as unknown as AppTransaction;
-      const result = await activeGroupsForPersons(stubTx, []);
+      const result = await activeGroupsForPersons(stubTx, [], { childView: "presence" });
       expect(result.size).toBe(0);
       expect(stubTx).not.toHaveBeenCalled();
     });

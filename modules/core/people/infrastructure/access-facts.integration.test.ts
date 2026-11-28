@@ -4,7 +4,12 @@ import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
-import { applyProductMigrations, newId, withAppTransaction } from "@community-hub/db";
+import {
+  applyProductMigrations,
+  newId,
+  withAppTransaction,
+  type AppTransaction,
+} from "@community-hub/db";
 import {
   createPlaintextAppSql,
   createPlaintextDirectSql,
@@ -14,8 +19,12 @@ import { withRequest } from "@community-hub/kernel";
 
 import {
   createHousehold,
+  createLifeEvent,
   createPerson,
+  guardianLinkChildIsMinor,
   hasGuardianView,
+  householdHasMinor,
+  lifeEventPersonIsMinor,
   linkGuardian,
   personIsMinor,
 } from "../public/index.js";
@@ -216,6 +225,138 @@ describe("access facts", () => {
         }),
       );
     } finally {
+      await platform.end({ timeout: 1 });
+      await app.end({ timeout: 1 });
+    }
+  });
+
+  it("answers whether a family, a guardian link or a life event is about a child, hidden and cross-community cases included", async () => {
+    const runtime = loadRuntime();
+    const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
+    const app = createPlaintextAppSql(roleUrl(runtime, "app"));
+    const direct = createPlaintextDirectSql(runtime.productOnlyUrl);
+    const organisationId = newId();
+    const communityId = newId();
+    const otherCommunityId = newId();
+    const kms = createLocalKmsPort();
+    const inCommunity = <T>(id: string, run: (tx: AppTransaction) => Promise<T>): Promise<T> =>
+      withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(app, { orgId: organisationId, communityId: id }, run),
+      );
+    try {
+      await platform.begin(async (tx) => {
+        await tx`
+          insert into platform.organisations (id, slug, region, kind)
+          values (${organisationId}, ${`access-facts-child-${organisationId}`}, 'au', 'implicit')
+        `;
+        for (const id of [communityId, otherCommunityId]) {
+          await tx`
+            insert into platform.communities (id, organisation_id, slug, region)
+            values (${id}, ${organisationId}, ${`access-facts-child-${id}`}, 'au')
+          `;
+        }
+      });
+
+      const seeded = await inCommunity(communityId, async (tx) => {
+        const family = await createHousehold(tx, kms, KEY_ARN, {
+          now: NOW,
+          label: null,
+          actorUserId: null,
+        });
+        const adultsOnly = await createHousehold(tx, kms, KEY_ARN, {
+          now: NOW,
+          label: null,
+          actorUserId: null,
+        });
+        const person = (householdId: string, declaredAdult: boolean, givenName: string) =>
+          createPerson(tx, kms, KEY_ARN, {
+            now: NOW,
+            declaredAdult,
+            householdId,
+            dateOfBirth: null,
+            givenName,
+            familyName: "Example",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+        const adult = await person(family.householdId, true, "Ada");
+        await person(adultsOnly.householdId, true, "Bea");
+        const child = await person(family.householdId, false, "Quillon");
+        const link = await linkGuardian(tx, {
+          now: NOW,
+          householdId: family.householdId,
+          guardianPersonId: adult.personId,
+          childPersonId: child.personId,
+          consent: true,
+          pickup: false,
+          view: true,
+          manage: false,
+          actorUserId: null,
+        });
+        const event = (personId: string) =>
+          createLifeEvent(tx, kms, KEY_ARN, {
+            personId,
+            type: "baptism",
+            date: "2020-01-01",
+            actorUserId: null,
+            now: NOW,
+          });
+        return {
+          familyId: family.householdId,
+          adultsOnlyId: adultsOnly.householdId,
+          childId: child.personId,
+          linkId: link.linkId,
+          childEventId: (await event(child.personId)).eventId,
+          adultEventId: (await event(adult.personId)).eventId,
+        };
+      });
+      const linkOf = { householdId: seeded.familyId, linkId: seeded.linkId };
+
+      await inCommunity(communityId, async (tx) => {
+        const audits = () => tx<{ n: number }[]>`select count(*)::int as n from app.audit_events`;
+        const before = await audits();
+        expect(await householdHasMinor(tx, seeded.familyId)).toBe(true);
+        expect(await householdHasMinor(tx, seeded.familyId, { lock: "update" })).toBe(true);
+        expect(await householdHasMinor(tx, seeded.adultsOnlyId)).toBe(false);
+        expect(await householdHasMinor(tx, newId())).toBe(false);
+        expect(await guardianLinkChildIsMinor(tx, linkOf)).toBe(true);
+        expect(await guardianLinkChildIsMinor(tx, { ...linkOf, linkId: newId() })).toBeNull();
+        expect(
+          await guardianLinkChildIsMinor(tx, { ...linkOf, householdId: seeded.adultsOnlyId }),
+        ).toBeNull();
+        expect(await lifeEventPersonIsMinor(tx, seeded.childEventId)).toBe(true);
+        expect(await lifeEventPersonIsMinor(tx, seeded.adultEventId)).toBe(false);
+        expect(await lifeEventPersonIsMinor(tx, newId())).toBeNull();
+        expect(await audits()).toEqual(before);
+      });
+
+      // Another community of the same organisation sees none of them.
+      await inCommunity(otherCommunityId, async (tx) => {
+        expect(await householdHasMinor(tx, seeded.familyId)).toBe(false);
+        expect(await guardianLinkChildIsMinor(tx, linkOf)).toBeNull();
+        expect(await lifeEventPersonIsMinor(tx, seeded.childEventId)).toBeNull();
+      });
+
+      // A hidden child is still the family's child, and their link is still a child's link. Their
+      // life events answer as a missing event's do, as updateLifeEvent does. The user triggers
+      // refuse to hide a child today, so it is done as the migrator with them off.
+      await withAppTransaction(direct, { orgId: organisationId, communityId }, async (tx) => {
+        await tx.unsafe("ALTER TABLE app.persons DISABLE TRIGGER USER");
+        await tx`
+          update app.persons
+          set deleted_at = now() - interval '1 hour', deleted_by = ${newId()}::uuid
+          where id = ${seeded.childId}::uuid
+        `;
+        await tx.unsafe("ALTER TABLE app.persons ENABLE TRIGGER USER");
+      });
+      await inCommunity(communityId, async (tx) => {
+        expect(await householdHasMinor(tx, seeded.familyId)).toBe(true);
+        expect(await guardianLinkChildIsMinor(tx, linkOf)).toBe(true);
+        expect(await lifeEventPersonIsMinor(tx, seeded.childEventId)).toBeNull();
+      });
+    } finally {
+      await direct.end({ timeout: 1 });
       await platform.end({ timeout: 1 });
       await app.end({ timeout: 1 });
     }

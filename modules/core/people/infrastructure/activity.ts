@@ -1,18 +1,13 @@
 import type { AppTransaction } from "@community-hub/db";
 
+import { personIsMinor } from "./access-facts.js";
+
 type ActivityView = {
   id: string;
   kind: string;
   actorUserId: string | null;
   occurredAt: Date;
 };
-
-async function personExists(tx: AppTransaction, personId: string): Promise<boolean> {
-  const rows = await tx<{ id: string }[]>`
-    select id::text as id from app.persons where id = ${personId}::uuid and deleted_at is null
-  `;
-  return rows[0] !== undefined;
-}
 
 function timeThenId(left: ActivityView, right: ActivityView): number {
   const difference = left.occurredAt.getTime() - right.occurredAt.getTime();
@@ -28,11 +23,13 @@ function timeThenId(left: ActivityView, right: ActivityView): number {
   return 0;
 }
 
+// A child's activity is not listed: the answer for a minor is the null given for a person that
+// does not exist.
 export async function listPersonActivity(
   tx: AppTransaction,
   personId: string,
 ): Promise<ActivityView[] | null> {
-  if (!(await personExists(tx, personId))) {
+  if ((await personIsMinor(tx, personId)) !== false) {
     return null;
   }
   const rows = await tx<
