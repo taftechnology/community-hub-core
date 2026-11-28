@@ -4,11 +4,12 @@ import {
   listLifeEventsBody,
   updateLifeEventBody,
 } from "@community-hub/contracts/life-events";
-import { appendAuditEvent, withAppTransaction } from "@community-hub/db";
+import { appendAuditEvent, withAppTransaction, type AppTransaction } from "@community-hub/db";
 import { readSession } from "@community-hub/identity";
 import { getRequestContext } from "@community-hub/kernel";
 import {
   createLifeEvent,
+  lifeEventPersonIsMinor,
   listLifeEvents,
   PeopleError,
   personIsMinor,
@@ -187,6 +188,39 @@ export function lifeEventRoutes(deps: LifeEventDeps): GateRoute[] {
     return { ok: true, body, actor, scope };
   }
 
+  // Who may write a life event. A child's is a Community Admin's, on that role alone; anyone else
+  // gets the empty 404 of a record that does not exist, before anything is written (spec Scope 6).
+  // An adult's keeps the permission gate. The gate also comes first for a child, so a caller
+  // without the permissions gets one answer whoever the record is about.
+  async function refuseWrite(
+    tx: AppTransaction,
+    request: Request,
+    userId: string,
+    scope: Scope,
+    readIsMinor: () => Promise<boolean | null>,
+  ): Promise<Response | null> {
+    const isAdmin = await isCommunityAdmin(tx, userId);
+    const isChild = (await readIsMinor()) === true;
+    if (isChild && isAdmin) {
+      return null;
+    }
+    const [canManage, canRestricted] = await Promise.all([
+      holdsPermission(tx, userId, MANAGE),
+      holdsPermission(tx, userId, RESTRICTED),
+    ]);
+    if (!canManage || !canRestricted) {
+      await appendAuditEvent(tx, {
+        actorKind: "user",
+        actorId: userId,
+        action: DENIED,
+        purpose: DENIED,
+        targetIds: [scope.orgId, scope.communityId],
+      });
+      return finish(request, empty(403));
+    }
+    return isChild ? finish(request, empty(404)) : null;
+  }
+
   async function list(request: Request, context: RouteContext): Promise<Response> {
     const prep = await prepare(request, context, listLifeEventsBody);
     if (!prep.ok) {
@@ -245,19 +279,11 @@ export function lifeEventRoutes(deps: LifeEventDeps): GateRoute[] {
     try {
       return await deps.checkout("app", (sql) =>
         withAppTransaction(sql, scope, async (tx) => {
-          const [canManage, canRestricted] = await Promise.all([
-            holdsPermission(tx, actor.userId, MANAGE),
-            holdsPermission(tx, actor.userId, RESTRICTED),
-          ]);
-          if (!canManage || !canRestricted) {
-            await appendAuditEvent(tx, {
-              actorKind: "user",
-              actorId: actor.userId,
-              action: DENIED,
-              purpose: DENIED,
-              targetIds: [scope.orgId, scope.communityId],
-            });
-            return finish(request, empty(403));
+          const refused = await refuseWrite(tx, request, actor.userId, scope, () =>
+            personIsMinor(tx, body.personId),
+          );
+          if (refused !== null) {
+            return refused;
           }
 
           const result = await createLifeEvent(tx, deps.kms, deps.keyArn, {
@@ -293,19 +319,11 @@ export function lifeEventRoutes(deps: LifeEventDeps): GateRoute[] {
     try {
       return await deps.checkout("app", (sql) =>
         withAppTransaction(sql, scope, async (tx) => {
-          const [canManage, canRestricted] = await Promise.all([
-            holdsPermission(tx, actor.userId, MANAGE),
-            holdsPermission(tx, actor.userId, RESTRICTED),
-          ]);
-          if (!canManage || !canRestricted) {
-            await appendAuditEvent(tx, {
-              actorKind: "user",
-              actorId: actor.userId,
-              action: DENIED,
-              purpose: DENIED,
-              targetIds: [scope.orgId, scope.communityId],
-            });
-            return finish(request, empty(403));
+          const refused = await refuseWrite(tx, request, actor.userId, scope, () =>
+            lifeEventPersonIsMinor(tx, body.eventId),
+          );
+          if (refused !== null) {
+            return refused;
           }
 
           const result = await updateLifeEvent(tx, deps.kms, deps.keyArn, {

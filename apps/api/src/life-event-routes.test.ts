@@ -26,6 +26,7 @@ const people = vi.hoisted(() => ({
   createLifeEvent: vi.fn(),
   updateLifeEvent: vi.fn(),
   personIsMinor: vi.fn(),
+  lifeEventPersonIsMinor: vi.fn(),
 }));
 
 const entitlements = vi.hoisted(() => ({
@@ -74,6 +75,7 @@ vi.mock("@community-hub/people", async () => {
     createLifeEvent: people.createLifeEvent,
     updateLifeEvent: people.updateLifeEvent,
     personIsMinor: people.personIsMinor,
+    lifeEventPersonIsMinor: people.lifeEventPersonIsMinor,
   };
 });
 
@@ -208,6 +210,7 @@ describe("life event routes unit tests", () => {
     // Not a Community Admin, and the person is an adult, unless a test says otherwise.
     access.isCommunityAdmin.mockResolvedValue(false);
     people.personIsMinor.mockResolvedValue(false);
+    people.lifeEventPersonIsMinor.mockResolvedValue(false);
     billing.assertWritable.mockResolvedValue(undefined);
     db.withAppTransaction.mockImplementation(async (_sql, _scope, run) => run({} as never));
   });
@@ -427,6 +430,82 @@ describe("life event routes unit tests", () => {
       );
       expect(people.updateLifeEvent).not.toHaveBeenCalled();
     });
+  });
+
+  describe("writes about a child (pin 78)", () => {
+    const writes = [
+      {
+        path: "/v1/people/life-events/create",
+        body: { communitySlug: SLUG, personId: PERSON_ID, type: "baptism", date: "2020-01-01" },
+        lookup: () => people.personIsMinor,
+        write: () => people.createLifeEvent,
+        id: PERSON_ID,
+        status: 201,
+        answer: { eventId: EVENT_ID, version: 1 },
+      },
+      {
+        path: "/v1/people/life-events/update",
+        body: {
+          communitySlug: SLUG,
+          eventId: EVENT_ID,
+          version: 1,
+          type: "baptism",
+          date: "2020-01-01",
+        },
+        lookup: () => people.lifeEventPersonIsMinor,
+        write: () => people.updateLifeEvent,
+        id: EVENT_ID,
+        status: 200,
+        answer: { version: 2 },
+      },
+    ];
+
+    it.each(writes)(
+      "$path: a non-admin gets the 404 of a missing record and nothing is written",
+      async ({ path, body, lookup, write, id }) => {
+        // holdsPermission answers true for every permission.
+        lookup().mockResolvedValue(true);
+        const child = await call(path, body);
+        expect(child.status).toBe(404);
+        expect(await child.text()).toBe("");
+        expect(lookup()).toHaveBeenLastCalledWith(expect.anything(), id);
+        expect(write()).not.toHaveBeenCalled();
+        expect(db.appendAuditEvent).not.toHaveBeenCalled();
+
+        lookup().mockResolvedValue(null);
+        write().mockRejectedValueOnce(new PeopleError("life_event_not_found"));
+        const missing = await call(path, body);
+        expect(missing.status).toBe(404);
+        expect(await missing.text()).toBe("");
+        expect([...missing.headers.entries()]).toEqual([...child.headers.entries()]);
+
+        // A caller without the permissions gets today's refusal, child or not.
+        lookup().mockResolvedValue(true);
+        access.holdsPermission.mockResolvedValue(false);
+        write().mockClear();
+        expect((await call(path, body)).status).toBe(403);
+        expect(write()).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(writes)(
+      "$path: a Community Admin writes a child's record on the role alone, an adult's on the permissions",
+      async ({ path, body, lookup, write, status, answer }) => {
+        access.isCommunityAdmin.mockResolvedValue(true);
+        access.holdsPermission.mockResolvedValue(false);
+        lookup().mockResolvedValue(true);
+        write().mockResolvedValueOnce(answer);
+        const child = await call(path, body);
+        expect(child.status).toBe(status);
+        expect(await child.json()).toEqual(answer);
+
+        // The role adds nothing to an adult's record.
+        lookup().mockResolvedValue(false);
+        write().mockClear();
+        expect((await call(path, body)).status).toBe(403);
+        expect(write()).not.toHaveBeenCalled();
+      },
+    );
   });
 
   describe("happy path execution", () => {

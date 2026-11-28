@@ -62,6 +62,32 @@ describe("access grant privileges", () => {
     }
   });
 
+  // A support operator reads through the app role or not at all (ADR 0017 point 4): the platform
+  // and identity roles hold nothing on the tables a child's records are in.
+  it("pin 82a: platform and identity hold no privilege on persons, households, guardian links or life events", async () => {
+    const runtime = loadRuntime();
+    const sql = createPlaintextDirectSql(runtime.productOnlyUrl);
+    try {
+      const tables = ["persons", "households", "guardian_links", "life_events"] as const;
+      const kinds = ["SELECT", "INSERT", "UPDATE", "DELETE"] as const;
+      const granted: string[] = [];
+      for (const table of tables) {
+        // Control: the table exists and the question can answer true.
+        expect(await privilege(sql, "app", table, "SELECT"), table).toBe(true);
+        for (const role of ["platform", "identity"] as const) {
+          for (const kind of kinds) {
+            if (await privilege(sql, role, table, kind)) {
+              granted.push(`${role} ${kind} app.${table}`);
+            }
+          }
+        }
+      }
+      expect(granted).toEqual([]);
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
   it("enforces RLS and FORCE RLS on organisation_members and invitations (pin 1)", async () => {
     const runtime = loadRuntime();
     const sql = createPlaintextDirectSql(runtime.productOnlyUrl);

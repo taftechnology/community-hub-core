@@ -264,7 +264,12 @@ export const deletedHouseholdsListResponse = z
   .strict();
 export type DeletedHouseholdsListResponse = z.infer<typeof deletedHouseholdsListResponse>;
 
-export const HOUSEHOLD_ERROR_CODES = ["household_has_children", "duplicate_deleted"] as const;
+export const HOUSEHOLD_ERROR_CODES = [
+  "household_has_children",
+  "duplicate_deleted",
+  // 422 from rename and add-minor: the family's label holds a child's given name.
+  "label_contains_child_name",
+] as const;
 export type HouseholdErrorCode = (typeof HOUSEHOLD_ERROR_CODES)[number];
 
 export const householdErrorBody = z
@@ -295,6 +300,8 @@ export type ListHouseholdsResponse = z.infer<typeof listHouseholdsResponse>;
 
 export const householdAdultMember = z
   .object({
+    // The same id as personId.
+    id: uuid,
     personId: uuid,
     givenName: name,
     familyName: name,
@@ -337,6 +344,8 @@ export type HouseholdGuardianRights = z.infer<typeof householdGuardianRights>;
 export const householdGuardianLink = z
   .object({
     linkId: uuid,
+    // The same id as linkId.
+    id: uuid,
     guardianId: uuid,
     childId: uuid,
     // Present only for a Community Admin: the child as an id and a label.

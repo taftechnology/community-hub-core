@@ -101,6 +101,9 @@ const PEOPLE_EXPORTS: Record<string, Entry> = {
   listPersons: ["checked", "adults, or the Community Admin's list of children as labels"],
   hasGuardianView: ["checked", "a fact about a link; no field"],
   personIsMinor: ["checked", "a fact about a person; no field"],
+  householdHasMinor: ["checked", "a fact about a family; no field"],
+  guardianLinkChildIsMinor: ["checked", "a fact about a guardian link; no field"],
+  lifeEventPersonIsMinor: ["checked", "a fact about a life event; no field"],
   moveAdult: ["minor-refused", "a minor cannot be moved"],
   addMinor: ["writer", "returns ids only"],
   addAdult: ["adult-only", "adds an adult; returns an id"],
@@ -583,6 +586,18 @@ add("listDeletedPersons", false, "", (x) =>
 addForEachChild("personIsMinor", false, (x, child) => people.personIsMinor(x.tx, child.id));
 addForEachChild("hasGuardianView", false, (x, child) =>
   people.hasGuardianView(x.tx, x.t.adultId, child.id),
+);
+add("householdHasMinor", false, "", (x) => people.householdHasMinor(x.tx, x.t.householdId));
+for (const slot of [0, 1] as const) {
+  add("guardianLinkChildIsMinor", false, `link ${slot + 1}`, (x) =>
+    people.guardianLinkChildIsMinor(x.tx, {
+      householdId: x.t.householdId,
+      linkId: x.t.linkIds[slot] as string,
+    }),
+  );
+}
+addForEachChild("lifeEventPersonIsMinor", false, (x, child) =>
+  people.lifeEventPersonIsMinor(x.tx, child.eventId),
 );
 addForEachChild("listPersonActivity", false, (x, child) =>
   people.listPersonActivity(x.tx, child.id),

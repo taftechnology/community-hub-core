@@ -220,6 +220,61 @@ export const peopleSummaryResponse = z
   })
   .strict();
 
+// The Community Admin's View of a child (ADR 0017). Every field of a child is hidden until it is
+// asked for, one field at a time, after a fresh second-factor check that the View uses up. The ids
+// travel in the body, never in the URL.
+export const MINOR_VIEW_FIELDS = ["name", "dateOfBirth", "email", "phone"] as const;
+export type MinorViewField = (typeof MINOR_VIEW_FIELDS)[number];
+
+export const MINOR_LIFE_EVENT_VIEW_FIELDS = ["type", "date", "place", "notes"] as const;
+export type MinorLifeEventViewField = (typeof MINOR_LIFE_EVENT_VIEW_FIELDS)[number];
+
+// POST /v1/people/minors/view
+export const minorViewBody = z
+  .object({
+    communitySlug: slug,
+    personId: uuid,
+    field: z.enum(MINOR_VIEW_FIELDS),
+  })
+  .strict();
+
+// POST /v1/people/minors/life-events/view. lifeEventId is the list's eventId.
+export const minorLifeEventViewBody = z
+  .object({
+    communitySlug: slug,
+    personId: uuid,
+    lifeEventId: uuid,
+    field: z.enum(MINOR_LIFE_EVENT_VIEW_FIELDS),
+  })
+  .strict();
+
+// The answer for the name: its two parts, each null when it is not recorded.
+export const minorViewNameResponse = z
+  .object({
+    value: z.object({ given: z.string().nullable(), family: z.string().nullable() }).strict(),
+  })
+  .strict();
+
+// The answer for every other field, of the child or of a life event: null when it is not recorded.
+export const minorViewValueResponse = z.object({ value: z.string().nullable() }).strict();
+
+// A View's 403 with a code: the session needs a fresh second-factor check, or it is in the recovery
+// window and cannot view at all. A caller who is not a Community Admin gets an empty 403.
+export const MINOR_VIEW_ERROR_CODES = ["fresh_required", "recovery_session"] as const;
+export type MinorViewErrorCode = (typeof MINOR_VIEW_ERROR_CODES)[number];
+
+export const minorViewErrorBody = z
+  .object({
+    code: z.enum(MINOR_VIEW_ERROR_CODES),
+  })
+  .strict();
+
+export type MinorViewBody = z.infer<typeof minorViewBody>;
+export type MinorLifeEventViewBody = z.infer<typeof minorLifeEventViewBody>;
+export type MinorViewNameResponse = z.infer<typeof minorViewNameResponse>;
+export type MinorViewValueResponse = z.infer<typeof minorViewValueResponse>;
+export type MinorViewErrorBody = z.infer<typeof minorViewErrorBody>;
+
 export type ListPeopleBody = z.infer<typeof listPeopleBody>;
 export type ReadPersonBody = z.infer<typeof readPersonBody>;
 export type CreatePersonBody = z.infer<typeof createPersonBody>;

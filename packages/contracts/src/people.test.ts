@@ -4,6 +4,11 @@ import {
   createPersonBody,
   deletedPeopleListResponse,
   listPeopleBody,
+  minorLifeEventViewBody,
+  minorViewBody,
+  minorViewErrorBody,
+  minorViewNameResponse,
+  minorViewValueResponse,
   peopleErrorBody,
   peopleSummaryBody,
   peopleSummaryResponse,
@@ -766,5 +771,103 @@ describe("contact delete contracts", () => {
     expect(peopleErrorBody.safeParse({ code: "conflict" }).success).toBe(false);
     expect(peopleErrorBody.safeParse({}).success).toBe(false);
     expect(peopleErrorBody.safeParse({ code: "linked_user", message: "x" }).success).toBe(false);
+  });
+});
+
+describe("the View contracts for a child's fields", () => {
+  const OTHER_UUID = "00000000-0000-4000-8000-000000000002";
+  const person = { communitySlug: "parish-au", personId: VALID_UUID };
+  const lifeEvent = { ...person, lifeEventId: OTHER_UUID };
+  const PERSON_FIELDS = ["name", "dateOfBirth", "email", "phone"];
+  const EVENT_FIELDS = ["type", "date", "place", "notes"];
+
+  it("pin 72: each View body takes only its own fields; the person route refuses notes", () => {
+    expect(minorViewBody.safeParse({ ...person, field: "notes" }).success).toBe(false);
+    for (const field of PERSON_FIELDS) {
+      expect(minorViewBody.safeParse({ ...person, field }).success, field).toBe(true);
+    }
+    for (const field of EVENT_FIELDS) {
+      expect(minorLifeEventViewBody.safeParse({ ...lifeEvent, field }).success, field).toBe(true);
+    }
+    for (const field of [...EVENT_FIELDS, "givenName", "birthdayMd", "all", "", null]) {
+      expect(minorViewBody.safeParse({ ...person, field }).success, String(field)).toBe(false);
+    }
+    for (const field of [...PERSON_FIELDS, "all", "", null]) {
+      expect(minorLifeEventViewBody.safeParse({ ...lifeEvent, field }).success, String(field)).toBe(
+        false,
+      );
+    }
+  });
+
+  it("each View body is strict: one field, the ids as uuids, and nothing else", () => {
+    // One field per View: a list of fields is refused.
+    expect(minorViewBody.safeParse({ ...person, field: ["name", "email"] }).success).toBe(false);
+    expect(minorViewBody.safeParse(person).success).toBe(false);
+    expect(minorViewBody.safeParse({ ...person, personId: "child-1", field: "name" }).success).toBe(
+      false,
+    );
+    expect(minorViewBody.safeParse({ personId: VALID_UUID, field: "name" }).success).toBe(false);
+    for (const extra of [
+      { lifeEventId: OTHER_UUID },
+      { includeRestricted: true },
+      { childView: "admin" },
+      { orgId: OTHER_UUID },
+    ]) {
+      expect(minorViewBody.safeParse({ ...person, field: "name", ...extra }).success).toBe(false);
+    }
+    expect(minorLifeEventViewBody.safeParse({ ...person, field: "type" }).success).toBe(false);
+    expect(
+      minorLifeEventViewBody.safeParse({ ...lifeEvent, lifeEventId: "first", field: "type" })
+        .success,
+    ).toBe(false);
+    expect(
+      minorLifeEventViewBody.safeParse({ ...lifeEvent, field: "type", eventId: OTHER_UUID })
+        .success,
+    ).toBe(false);
+  });
+
+  it("a name View answers its two parts, each of which may be empty, and nothing else", () => {
+    for (const value of [
+      { given: "Zephyrine", family: "Quillonwick" },
+      { given: null, family: "Quillonwick" },
+      { given: "Zephyrine", family: null },
+      { given: null, family: null },
+    ]) {
+      expect(minorViewNameResponse.safeParse({ value }).success).toBe(true);
+    }
+    for (const answer of [
+      { value: null },
+      { value: "Zephyrine" },
+      { value: { given: "Zephyrine" } },
+      { value: { given: "Zephyrine", family: null, dateOfBirth: "2018-05-05" } },
+      { value: { given: null, family: null }, personId: VALID_UUID },
+    ]) {
+      expect(minorViewNameResponse.safeParse(answer).success, JSON.stringify(answer)).toBe(false);
+    }
+  });
+
+  it("every other View answers one string or null, and nothing else", () => {
+    expect(minorViewValueResponse.safeParse({ value: "2018-05-05" }).success).toBe(true);
+    expect(minorViewValueResponse.safeParse({ value: null }).success).toBe(true);
+    for (const answer of [
+      {},
+      { value: 505 },
+      { value: { given: null, family: null } },
+      { value: "a", field: "email" },
+    ]) {
+      expect(minorViewValueResponse.safeParse(answer).success, JSON.stringify(answer)).toBe(false);
+    }
+  });
+
+  it("the View error body is fresh_required or recovery_session and nothing else", () => {
+    for (const code of ["fresh_required", "recovery_session"]) {
+      expect(minorViewErrorBody.safeParse({ code }).success, code).toBe(true);
+    }
+    expect(minorViewErrorBody.safeParse({ code: "forbidden" }).success).toBe(false);
+    expect(minorViewErrorBody.safeParse({ code: "not_fresh" }).success).toBe(false);
+    expect(
+      minorViewErrorBody.safeParse({ code: "fresh_required", personId: VALID_UUID }).success,
+    ).toBe(false);
+    expect(minorViewErrorBody.safeParse({}).success).toBe(false);
   });
 });

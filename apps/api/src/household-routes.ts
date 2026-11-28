@@ -22,12 +22,15 @@ import {
   addAdult,
   addMinor,
   createHousehold,
+  guardianLinkChildIsMinor,
   hideHousehold,
+  householdHasMinor,
   linkGuardian,
   listDeletedHouseholds,
   listHouseholds,
   moveAdult,
   PeopleError,
+  personIsMinor,
   readEmergencyContacts,
   readHouseholdDetail,
   renameHousehold,
@@ -488,6 +491,21 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
             return finish(request, empty(403));
           }
 
+          // A family with a child is a Community Admin's to rename (spec O3). Anyone else is
+          // refused whatever the label, before the label is compared with a child's name, so the
+          // answer cannot be used to guess one.
+          const isAdmin = await isCommunityAdmin(tx, actor.userId);
+          if (!isAdmin && (await householdHasMinor(tx, body.householdId, { lock: "update" }))) {
+            await appendAuditEvent(tx, {
+              actorKind: "user",
+              actorId: actor.userId,
+              action: DENIED,
+              purpose: RESTRICTED,
+              targetIds: [scope.orgId, scope.communityId],
+            });
+            return finish(request, empty(403));
+          }
+
           const result = await renameHousehold(tx, deps.kms, deps.keyArn, {
             householdId: body.householdId,
             version: body.version,
@@ -563,11 +581,11 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
     try {
       return await deps.checkout("app", (sql) =>
         withAppTransaction(sql, scope, async (tx) => {
-          const [canManage, canRestricted] = await Promise.all([
-            holdsPermission(tx, actor.userId, MANAGE),
-            holdsPermission(tx, actor.userId, RESTRICTED),
-          ]);
-          if (!canManage || !canRestricted) {
+          // Adding a child needs the community_admin role in this community, and no permission
+          // key stands in for it (ADR 0017, spec D3).
+          const isAdmin = await isCommunityAdmin(tx, actor.userId);
+          if (!isAdmin) {
+            const canManage = await holdsPermission(tx, actor.userId, MANAGE);
             await appendAuditEvent(tx, {
               actorKind: "user",
               actorId: actor.userId,
@@ -661,19 +679,31 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
     try {
       return await deps.checkout("app", (sql) =>
         withAppTransaction(sql, scope, async (tx) => {
-          const [canManage, canRestricted] = await Promise.all([
-            holdsPermission(tx, actor.userId, MANAGE),
-            holdsPermission(tx, actor.userId, RESTRICTED),
-          ]);
-          if (!canManage || !canRestricted) {
-            await appendAuditEvent(tx, {
-              actorKind: "user",
-              actorId: actor.userId,
-              action: DENIED,
-              purpose: !canManage ? MANAGE_DENIAL_PURPOSE : RESTRICTED,
-              targetIds: [scope.orgId, scope.communityId],
-            });
-            return finish(request, empty(403));
+          // A child's guardian links are a Community Admin's, on that role alone. An adult target
+          // keeps the permission gate (and is then refused as an invalid guardian link). The gate
+          // also comes first for a child, so a caller without the permissions gets one answer
+          // whoever the target is.
+          const isAdmin = await isCommunityAdmin(tx, actor.userId);
+          const isChild = (await personIsMinor(tx, body.childId)) === true;
+          if (!(isChild && isAdmin)) {
+            const [canManage, canRestricted] = await Promise.all([
+              holdsPermission(tx, actor.userId, MANAGE),
+              holdsPermission(tx, actor.userId, RESTRICTED),
+            ]);
+            if (!canManage || !canRestricted) {
+              await appendAuditEvent(tx, {
+                actorKind: "user",
+                actorId: actor.userId,
+                action: DENIED,
+                purpose: !canManage ? MANAGE_DENIAL_PURPOSE : RESTRICTED,
+                targetIds: [scope.orgId, scope.communityId],
+              });
+              return finish(request, empty(403));
+            }
+          }
+          if (isChild && !isAdmin) {
+            // The answer for a person that does not exist: a child's id is not confirmed.
+            return finish(request, empty(404));
           }
 
           const rights =
@@ -723,19 +753,32 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
     try {
       return await deps.checkout("app", (sql) =>
         withAppTransaction(sql, scope, async (tx) => {
-          const [canManage, canRestricted] = await Promise.all([
-            holdsPermission(tx, actor.userId, MANAGE),
-            holdsPermission(tx, actor.userId, RESTRICTED),
-          ]);
-          if (!canManage || !canRestricted) {
-            await appendAuditEvent(tx, {
-              actorKind: "user",
-              actorId: actor.userId,
-              action: DENIED,
-              purpose: !canManage ? MANAGE_DENIAL_PURPOSE : RESTRICTED,
-              targetIds: [scope.orgId, scope.communityId],
-            });
-            return finish(request, empty(403));
+          // A link to a child is a Community Admin's to remove, on that role alone (as for link).
+          const isAdmin = await isCommunityAdmin(tx, actor.userId);
+          const isChild =
+            (await guardianLinkChildIsMinor(tx, {
+              householdId: body.householdId,
+              linkId: body.linkId,
+            })) === true;
+          if (!(isChild && isAdmin)) {
+            const [canManage, canRestricted] = await Promise.all([
+              holdsPermission(tx, actor.userId, MANAGE),
+              holdsPermission(tx, actor.userId, RESTRICTED),
+            ]);
+            if (!canManage || !canRestricted) {
+              await appendAuditEvent(tx, {
+                actorKind: "user",
+                actorId: actor.userId,
+                action: DENIED,
+                purpose: !canManage ? MANAGE_DENIAL_PURPOSE : RESTRICTED,
+                targetIds: [scope.orgId, scope.communityId],
+              });
+              return finish(request, empty(403));
+            }
+          }
+          if (isChild && !isAdmin) {
+            // The answer for a link that does not exist.
+            return finish(request, empty(404));
           }
 
           await unlinkGuardian(tx, {

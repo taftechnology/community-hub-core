@@ -32,6 +32,9 @@ const people = vi.hoisted(() => ({
   addAdult: vi.fn(),
   linkGuardian: vi.fn(),
   unlinkGuardian: vi.fn(),
+  personIsMinor: vi.fn(),
+  guardianLinkChildIsMinor: vi.fn(),
+  householdHasMinor: vi.fn(),
 }));
 
 const entitlements = vi.hoisted(() => ({
@@ -85,6 +88,9 @@ vi.mock("@community-hub/people", async () => {
     addAdult: people.addAdult,
     linkGuardian: people.linkGuardian,
     unlinkGuardian: people.unlinkGuardian,
+    personIsMinor: people.personIsMinor,
+    guardianLinkChildIsMinor: people.guardianLinkChildIsMinor,
+    householdHasMinor: people.householdHasMinor,
   };
 });
 
@@ -271,6 +277,10 @@ describe("household read routes (Task 9: list and read)", () => {
     people.addAdult.mockResolvedValue({ personId: PERSON_ID });
     people.linkGuardian.mockResolvedValue({ linkId: LINK_ID });
     people.unlinkGuardian.mockResolvedValue(undefined);
+    // A family without a child, and an adult target, unless a test says otherwise.
+    people.personIsMinor.mockResolvedValue(false);
+    people.guardianLinkChildIsMinor.mockResolvedValue(false);
+    people.householdHasMinor.mockResolvedValue(false);
   });
 
   describe("Route registration and properties", () => {
@@ -997,6 +1007,43 @@ describe("household read routes (Task 9: list and read)", () => {
         expect(db.appendAuditEvent).not.toHaveBeenCalled();
       });
 
+      it("households/rename: a family with a child is a Community Admin's, refused before the rename runs (pin 76)", async () => {
+        const body = { communitySlug: SLUG, householdId: HOUSEHOLD_ID, version: 1, label: "New" };
+        people.householdHasMinor.mockResolvedValue(true);
+
+        // holdsPermission answers true for every permission, and the caller is not an admin.
+        const refused = await call("/v1/households/rename", body);
+        expect(refused.status).toBe(403);
+        expect(await refused.text()).toBe("");
+        expect(people.renameHousehold).not.toHaveBeenCalled();
+        // The family is locked while it is asked about, so a child being added is counted.
+        expect(people.householdHasMinor).toHaveBeenCalledWith(expect.anything(), HOUSEHOLD_ID, {
+          lock: "update",
+        });
+        expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
+        expect(db.appendAuditEvent).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            action: "people.permission.denied",
+            purpose: "people.restricted.read",
+            targetIds: [ORG, COMMUNITY],
+          }),
+        );
+
+        // A caller without the permissions is refused by today's gate: the family is not asked.
+        access.holdsPermission.mockResolvedValue(false);
+        people.householdHasMinor.mockClear();
+        expect((await call("/v1/households/rename", body)).status).toBe(403);
+        expect(people.householdHasMinor).not.toHaveBeenCalled();
+
+        access.holdsPermission.mockResolvedValue(true);
+        access.isCommunityAdmin.mockResolvedValue(true);
+        db.appendAuditEvent.mockClear();
+        expect((await call("/v1/households/rename", body)).status).toBe(200);
+        expect(people.renameHousehold).toHaveBeenCalledTimes(1);
+        expect(db.appendAuditEvent).not.toHaveBeenCalled();
+      });
+
       it("move-adult: requires BOTH people.manage AND people.restricted.read (Pin 11)", async () => {
         // Caller with manage only -> 403
         access.holdsPermission.mockImplementation(
@@ -1062,78 +1109,56 @@ describe("household read routes (Task 9: list and read)", () => {
         expect(db.appendAuditEvent).not.toHaveBeenCalled();
       });
 
-      it("add-minor: requires BOTH people.manage AND people.restricted.read (Pin 11)", async () => {
-        // Manage only -> 403
-        access.holdsPermission.mockImplementation(
-          async (_tx, _u, perm) => perm === "people.manage",
-        );
-        db.appendAuditEvent.mockClear();
-        const resManageOnly = await call("/v1/households/members/add-minor", {
+      it("add-minor: needs the community_admin role, whatever people permissions the caller holds (pin 74)", async () => {
+        const body = {
           communitySlug: SLUG,
           householdId: HOUSEHOLD_ID,
           givenName: "Tommy",
           familyName: "Smith",
           dateOfBirth: "2015-05-10",
           guardianId: GUARDIAN_ID,
-        });
-        expect(resManageOnly.status).toBe(403);
-        expect(await resManageOnly.text()).toBe("");
-        expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
-        expect(db.appendAuditEvent).toHaveBeenCalledWith(
-          expect.anything(),
-          expect.objectContaining({
-            actorKind: "user",
-            actorId: USER,
-            action: "people.permission.denied",
-            purpose: "people.restricted.read",
-            targetIds: [ORG, COMMUNITY],
-          }),
-        );
+        };
+        // Not a Community Admin: 403 with both permissions, with one, and with neither. The denial
+        // keeps its purpose.
+        for (const [held, purpose] of [
+          [["people.manage", "people.restricted.read"], "people.restricted.read"],
+          [["people.manage"], "people.restricted.read"],
+          [["people.restricted.read"], "people.person.manage"],
+          [[], "people.person.manage"],
+        ] as const) {
+          access.holdsPermission.mockImplementation(async (_tx, _u, perm) =>
+            (held as readonly string[]).includes(perm),
+          );
+          db.appendAuditEvent.mockClear();
+          const refused = await call("/v1/households/members/add-minor", body);
+          expect(refused.status, held.join()).toBe(403);
+          expect(await refused.text()).toBe("");
+          expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
+          expect(db.appendAuditEvent).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({
+              actorKind: "user",
+              actorId: USER,
+              action: "people.permission.denied",
+              purpose,
+              targetIds: [ORG, COMMUNITY],
+            }),
+          );
+        }
+        expect(people.addMinor).not.toHaveBeenCalled();
 
-        // Restricted.read only -> 403
-        access.holdsPermission.mockImplementation(
-          async (_tx, _u, perm) => perm === "people.restricted.read",
-        );
+        // The role alone is enough.
+        access.holdsPermission.mockResolvedValue(false);
+        access.isCommunityAdmin.mockResolvedValue(true);
         db.appendAuditEvent.mockClear();
-        const resRestrictedOnly = await call("/v1/households/members/add-minor", {
-          communitySlug: SLUG,
-          householdId: HOUSEHOLD_ID,
-          givenName: "Tommy",
-          familyName: "Smith",
-          dateOfBirth: "2015-05-10",
-          guardianId: GUARDIAN_ID,
-        });
-        expect(resRestrictedOnly.status).toBe(403);
-        expect(db.appendAuditEvent).toHaveBeenCalledTimes(1);
-        expect(db.appendAuditEvent).toHaveBeenCalledWith(
-          expect.anything(),
-          expect.objectContaining({
-            actorKind: "user",
-            actorId: USER,
-            action: "people.permission.denied",
-            purpose: "people.person.manage",
-            targetIds: [ORG, COMMUNITY],
-          }),
-        );
-
-        // Both -> 201
-        access.holdsPermission.mockImplementation(
-          async (_tx, _u, perm) => perm === "people.manage" || perm === "people.restricted.read",
-        );
-        db.appendAuditEvent.mockClear();
-        const resBoth = await call("/v1/households/members/add-minor", {
-          communitySlug: SLUG,
-          householdId: HOUSEHOLD_ID,
-          givenName: "Tommy",
-          familyName: "Smith",
-          dateOfBirth: "2015-05-10",
-          guardianId: GUARDIAN_ID,
-        });
-        expect(resBoth.status).toBe(201);
+        const added = await call("/v1/households/members/add-minor", body);
+        expect(added.status).toBe(201);
+        expect(await added.json()).toEqual({ personId: PERSON_ID, linkId: LINK_ID });
+        expect(access.isCommunityAdmin).toHaveBeenLastCalledWith(expect.anything(), USER);
         expect(db.appendAuditEvent).not.toHaveBeenCalled();
       });
 
-      it("guardians/link: requires BOTH people.manage AND people.restricted.read (Pin 11)", async () => {
+      it("guardians/link: an adult target needs BOTH people.manage AND people.restricted.read; a child's link is a Community Admin's (Pin 11, pin 75)", async () => {
         // Link with manage only -> 403
         access.holdsPermission.mockImplementation(
           async (_tx, _u, perm) => perm === "people.manage",
@@ -1217,9 +1242,47 @@ describe("household read routes (Task 9: list and read)", () => {
         expect(resBoth.status).toBe(201);
         expect(people.linkGuardian).toHaveBeenCalled();
         expect(db.appendAuditEvent).not.toHaveBeenCalled();
+
+        // The same permissions and a child as the target: the 404 of a missing person.
+        const body = {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          guardianId: GUARDIAN_ID,
+          childId: PERSON_ID,
+        };
+        people.personIsMinor.mockResolvedValue(true);
+        people.linkGuardian.mockClear();
+        const child = await call("/v1/households/guardians/link", body);
+        expect(child.status).toBe(404);
+        expect(await child.text()).toBe("");
+        expect(people.personIsMinor).toHaveBeenLastCalledWith(expect.anything(), PERSON_ID);
+        expect(people.linkGuardian).not.toHaveBeenCalled();
+        expect(db.appendAuditEvent).not.toHaveBeenCalled();
+        people.personIsMinor.mockResolvedValue(null);
+        people.linkGuardian.mockRejectedValueOnce(new PeopleError("not_found"));
+        const missing = await call("/v1/households/guardians/link", body);
+        expect(missing.status).toBe(404);
+        expect(await missing.text()).toBe("");
+        expect([...missing.headers.entries()]).toEqual([...child.headers.entries()]);
+
+        // A Community Admin links the child on the role alone.
+        people.personIsMinor.mockResolvedValue(true);
+        access.isCommunityAdmin.mockResolvedValue(true);
+        access.holdsPermission.mockResolvedValue(false);
+        people.linkGuardian.mockClear();
+        const admin = await call("/v1/households/guardians/link", body);
+        expect(admin.status).toBe(201);
+        expect(await admin.json()).toEqual({ linkId: LINK_ID });
+        expect(people.linkGuardian).toHaveBeenCalledTimes(1);
+
+        // The role adds nothing to an adult target.
+        people.personIsMinor.mockResolvedValue(false);
+        people.linkGuardian.mockClear();
+        expect((await call("/v1/households/guardians/link", body)).status).toBe(403);
+        expect(people.linkGuardian).not.toHaveBeenCalled();
       });
 
-      it("guardians/unlink: requires BOTH people.manage AND people.restricted.read (Pin 11)", async () => {
+      it("guardians/unlink: an adult target needs BOTH people.manage AND people.restricted.read; a child's link is a Community Admin's (Pin 11)", async () => {
         // Unlink with manage only -> 403
         access.holdsPermission.mockImplementation(
           async (_tx, _u, perm) => perm === "people.manage",
@@ -1298,6 +1361,36 @@ describe("household read routes (Task 9: list and read)", () => {
         });
         expect(resBoth.status).toBe(200);
         expect(people.unlinkGuardian).toHaveBeenCalled();
+
+        // The same permissions and a child's link: the 404 of a missing link.
+        const body = { communitySlug: SLUG, householdId: HOUSEHOLD_ID, linkId: LINK_ID };
+        people.guardianLinkChildIsMinor.mockResolvedValue(true);
+        people.unlinkGuardian.mockClear();
+        const child = await call("/v1/households/guardians/unlink", body);
+        expect(child.status).toBe(404);
+        expect(await child.text()).toBe("");
+        expect(people.guardianLinkChildIsMinor).toHaveBeenLastCalledWith(expect.anything(), {
+          householdId: HOUSEHOLD_ID,
+          linkId: LINK_ID,
+        });
+        expect(people.unlinkGuardian).not.toHaveBeenCalled();
+        expect(db.appendAuditEvent).not.toHaveBeenCalled();
+        people.guardianLinkChildIsMinor.mockResolvedValue(null);
+        people.unlinkGuardian.mockRejectedValueOnce(new PeopleError("not_found"));
+        const missing = await call("/v1/households/guardians/unlink", body);
+        expect(missing.status).toBe(404);
+        expect(await missing.text()).toBe("");
+        expect([...missing.headers.entries()]).toEqual([...child.headers.entries()]);
+
+        // A Community Admin unlinks on the role alone.
+        people.guardianLinkChildIsMinor.mockResolvedValue(true);
+        access.isCommunityAdmin.mockResolvedValue(true);
+        access.holdsPermission.mockResolvedValue(false);
+        people.unlinkGuardian.mockClear();
+        const admin = await call("/v1/households/guardians/unlink", body);
+        expect(admin.status).toBe(200);
+        expect(await admin.json()).toEqual({});
+        expect(people.unlinkGuardian).toHaveBeenCalledTimes(1);
         expect(db.appendAuditEvent).not.toHaveBeenCalled();
       });
     });
@@ -1456,6 +1549,8 @@ describe("household read routes (Task 9: list and read)", () => {
       });
 
       it("forwards arguments to addMinor with full rights and without rights", async () => {
+        // Only a Community Admin reaches addMinor.
+        access.isCommunityAdmin.mockResolvedValue(true);
         people.addMinor.mockClear();
         const resPartial = await call("/v1/households/members/add-minor", {
           communitySlug: SLUG,
@@ -1646,6 +1741,8 @@ describe("household read routes (Task 9: list and read)", () => {
       });
 
       it("maps add-minor adult dob to 400 and invalid guardian to 400", async () => {
+        // Only a Community Admin reaches addMinor.
+        access.isCommunityAdmin.mockResolvedValue(true);
         people.addMinor.mockRejectedValueOnce(new PeopleError("invalid_date"));
         const resDob = await call("/v1/households/members/add-minor", {
           communitySlug: SLUG,

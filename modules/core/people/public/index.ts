@@ -119,7 +119,13 @@ export {
   type MinorListItem,
   type PersonListItem,
 } from "../infrastructure/list-persons.js";
-export { hasGuardianView, personIsMinor } from "../infrastructure/access-facts.js";
+export {
+  guardianLinkChildIsMinor,
+  hasGuardianView,
+  householdHasMinor,
+  lifeEventPersonIsMinor,
+  personIsMinor,
+} from "../infrastructure/access-facts.js";
 export {
   moveAdult,
   addMinor,

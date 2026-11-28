@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bootstrapOwner, createCustomRole, grantRole } from "@community-hub/access";
 import { addMember } from "@community-hub/access/testing";
+import { readHouseholdResponse } from "@community-hub/contracts/households";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
 import { applyProductMigrations, newId, withAppTransaction } from "@community-hub/db";
 import {
@@ -170,6 +171,8 @@ describe("household routes real-database integration (finding 4)", () => {
   let viewOnlyToken: string;
   let restrictedOnlyToken: string;
   let manageOnlyToken: string;
+  // An org_admin: people.view, people.manage and people.restricted.read, and not a Community Admin.
+  let orgAdminToken: string;
 
   let householdA1Id: string;
   let minorCharlieId: string;
@@ -352,6 +355,22 @@ describe("household routes real-database integration (finding 4)", () => {
           userId: manageOnlySession.userId,
           roleKey: null,
           customRoleId: role.customRoleId,
+          actorUserId: ownerA1Session.userId,
+        });
+      }),
+    );
+
+    // An organisation admin with no community_admin grant
+    const orgAdminSession = await signIn(`org-admin-${orgIdA.slice(0, 8)}@example.test`);
+    orgAdminToken = orgAdminSession.accessToken;
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: orgIdA, communityId: communityIdA1 }, async (tx) => {
+        await addMember(tx, orgAdminSession.userId);
+        await grantRole(tx, {
+          now,
+          userId: orgAdminSession.userId,
+          roleKey: "org_admin",
+          customRoleId: null,
           actorUserId: ownerA1Session.userId,
         });
       }),
@@ -1779,5 +1798,417 @@ describe("household routes real-database integration (finding 4)", () => {
     expect(res.status).toBe(422);
     expect(await res.text()).toBe('{"code":"label_contains_child_name"}');
     expect(await state()).toEqual(before);
+  });
+
+  type Family = {
+    householdId: string;
+    firstAdultId: string;
+    secondAdultId: string;
+    childId: string | null;
+    // The child's links to the first and the second adult.
+    linkIds: string[];
+  };
+
+  // A family of two adults, with a child linked to the first (and to both when asked).
+  async function seedFamily(
+    scope: { orgId: string; communityId: string },
+    options: { child: boolean; bothLinked?: boolean },
+  ): Promise<Family> {
+    return withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(secondApp, scope, async (tx) => {
+        const household = await createHousehold(tx, kms, KEY_ARN, {
+          now,
+          label: "Wexcombe",
+          actorUserId: null,
+        });
+        const adult = (givenName: string) =>
+          createPerson(tx, kms, KEY_ARN, {
+            now,
+            declaredAdult: true,
+            householdId: household.householdId,
+            dateOfBirth: null,
+            givenName,
+            familyName: "Wexcombe",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+        const first = await adult("Aurelia");
+        const second = await adult("Benedict");
+        const family: Family = {
+          householdId: household.householdId,
+          firstAdultId: first.personId,
+          secondAdultId: second.personId,
+          childId: null,
+          linkIds: [],
+        };
+        if (!options.child) {
+          return family;
+        }
+        const child = await addMinor(tx, kms, KEY_ARN, {
+          now,
+          householdId: household.householdId,
+          givenName: "Zephyrine",
+          familyName: "Wexcombe",
+          dateOfBirth: "2018-05-05",
+          guardianId: first.personId,
+          actorUserId: null,
+        });
+        family.childId = child.personId;
+        family.linkIds.push(child.linkId);
+        if (options.bothLinked === true) {
+          const link = await linkGuardian(tx, {
+            now,
+            householdId: household.householdId,
+            guardianPersonId: second.personId,
+            childPersonId: child.personId,
+            consent: true,
+            pickup: false,
+            view: true,
+            manage: false,
+            actorUserId: null,
+          });
+          family.linkIds.push(link.linkId);
+        }
+        return family;
+      }),
+    );
+  }
+
+  // What a write about one family could change, and the number of audit rows of the community.
+  async function familyState(scope: { orgId: string; communityId: string }, householdId: string) {
+    return withAppTransaction(secondApp, scope, async (tx) => {
+      const [household] = await tx<{ version: number; label: Uint8Array | null }[]>`
+        select version, label from app.households where id = ${householdId}::uuid
+      `;
+      const [persons] = await tx<{ count: number }[]>`
+        select count(*)::int as count from app.persons
+      `;
+      const [links] = await tx<{ count: number }[]>`
+        select count(*)::int as count from app.guardian_links
+      `;
+      const [activity] = await tx<{ count: number }[]>`
+        select count(*)::int as count from app.person_activity
+      `;
+      const [audit] = await tx<{ count: number }[]>`
+        select count(*)::int as count from app.audit_events
+      `;
+      return {
+        rows: {
+          household: household!,
+          persons: persons!.count,
+          links: links!.count,
+          activity: activity!.count,
+        },
+        audit: audit!.count,
+      };
+    });
+  }
+
+  async function lastAudit(scope: { orgId: string; communityId: string }) {
+    return withAppTransaction(secondApp, scope, async (tx) => {
+      const [row] = await tx<{ action: string; purpose: string; target_ids: string[] }[]>`
+        select action, purpose, target_ids from app.audit_events order by seq desc limit 1
+      `;
+      return row!;
+    });
+  }
+
+  // Everything a caller can tell two answers apart by, the date aside.
+  async function answer(res: Response) {
+    const headers = [...res.headers.entries()].filter(([name]) => name !== "date");
+    return { status: res.status, body: await res.text(), headers };
+  }
+
+  // Hides or shows a child the way a later chunk will. The user triggers refuse that today, so it
+  // is done as the migrator with them off (see the other hidden-row tests).
+  async function setChildHidden(
+    scope: { orgId: string; communityId: string },
+    childId: string,
+    hidden: boolean,
+  ): Promise<void> {
+    const direct = createPlaintextDirectSql(loadRuntime().productOnlyUrl);
+    try {
+      await withAppTransaction(direct, scope, async (tx) => {
+        await tx.unsafe("ALTER TABLE app.persons DISABLE TRIGGER USER");
+        await tx`
+          update app.persons
+          set deleted_at = case when ${hidden} then now() - interval '1 hour' end,
+              deleted_by = case when ${hidden} then ${newId()}::uuid end
+          where id = ${childId}::uuid
+        `;
+        await tx.unsafe("ALTER TABLE app.persons ENABLE TRIGGER USER");
+      });
+    } finally {
+      await direct.end({ timeout: 1 });
+    }
+  }
+
+  const addChildBody = (family: Family) => ({
+    communitySlug: slugA1,
+    householdId: family.householdId,
+    givenName: "Quillon",
+    familyName: "Wexcombe",
+    dateOfBirth: "2019-05-05",
+    guardianId: family.firstAdultId,
+  });
+
+  it("pin 74: an org_admin without community_admin gets 403 from add-minor, and no child is written", async () => {
+    const scope = { orgId: orgIdA, communityId: communityIdA1 };
+    const family = await seedFamily(scope, { child: false });
+    // org_admin holds people.manage and people.restricted.read. The Community Admin of another
+    // community of the organisation is not one here.
+    for (const token of [orgAdminToken, ownerA2Token]) {
+      const before = await familyState(scope, family.householdId);
+      const res = await post("/v1/households/members/add-minor", addChildBody(family), token);
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+      const after = await familyState(scope, family.householdId);
+      expect(after.rows).toEqual(before.rows);
+      expect(after.audit).toBe(before.audit + 1);
+      const denial = await lastAudit(scope);
+      expect(denial.action).toBe("people.permission.denied");
+      expect(denial.target_ids).toEqual([orgIdA, communityIdA1]);
+    }
+
+    const added = await post(
+      "/v1/households/members/add-minor",
+      addChildBody(family),
+      ownerA1Token,
+    );
+    expect(added.status).toBe(201);
+    expect(Object.keys((await added.json()) as object).sort()).toEqual(["linkId", "personId"]);
+  });
+
+  it("a holder of community_admin alone adds a child, links and unlinks a guardian, and gets ids only", async () => {
+    // ownerA2 holds community_admin in community A2 and no organisation role.
+    const scope = { orgId: orgIdA, communityId: communityIdA2 };
+    const family = await seedFamily(scope, { child: false });
+
+    const added = await post(
+      "/v1/households/members/add-minor",
+      { ...addChildBody(family), communitySlug: slugA2 },
+      ownerA2Token,
+    );
+    expect(added.status).toBe(201);
+    const child = (await added.json()) as { personId: string; linkId: string };
+    expect(Object.keys(child).sort()).toEqual(["linkId", "personId"]);
+
+    const linked = await post(
+      "/v1/households/guardians/link",
+      {
+        communitySlug: slugA2,
+        householdId: family.householdId,
+        guardianId: family.secondAdultId,
+        childId: child.personId,
+      },
+      ownerA2Token,
+    );
+    expect(linked.status).toBe(201);
+    const link = (await linked.json()) as { linkId: string };
+    expect(Object.keys(link)).toEqual(["linkId"]);
+
+    const unlinked = await post(
+      "/v1/households/guardians/unlink",
+      { communitySlug: slugA2, householdId: family.householdId, linkId: link.linkId },
+      ownerA2Token,
+    );
+    expect(unlinked.status).toBe(200);
+    expect(await unlinked.json()).toEqual({});
+  });
+
+  it("pin 75: a non-admin linking a minor gets the same 404 as for a missing person", async () => {
+    const scope = { orgId: orgIdA, communityId: communityIdA1 };
+    const family = await seedFamily(scope, { child: true });
+    const body = (childId: string) => ({
+      communitySlug: slugA1,
+      householdId: family.householdId,
+      guardianId: family.secondAdultId,
+      childId,
+    });
+    const before = await familyState(scope, family.householdId);
+
+    const child = await answer(
+      await post("/v1/households/guardians/link", body(family.childId!), orgAdminToken),
+    );
+    const missing = await answer(
+      await post("/v1/households/guardians/link", body(newId()), orgAdminToken),
+    );
+    expect(child.status).toBe(404);
+    expect(child.body).toBe("");
+    expect(child).toEqual(missing);
+    expect(await familyState(scope, family.householdId)).toEqual(before);
+
+    // A caller without the permissions gets one answer for a child and for nobody, too.
+    for (const childId of [family.childId!, newId()]) {
+      const res = await post("/v1/households/guardians/link", body(childId), viewOnlyToken);
+      expect(res.status).toBe(403);
+      expect(await res.text()).toBe("");
+    }
+
+    // An adult target keeps its answer.
+    const adult = await post(
+      "/v1/households/guardians/link",
+      body(family.firstAdultId),
+      orgAdminToken,
+    );
+    expect(adult.status).toBe(400);
+
+    const linked = await post("/v1/households/guardians/link", body(family.childId!), ownerA1Token);
+    expect(linked.status).toBe(201);
+    expect(Object.keys((await linked.json()) as object)).toEqual(["linkId"]);
+  });
+
+  it("a non-admin unlinking a child's guardian gets the same 404 as for a missing link, for a hidden child too", async () => {
+    const scope = { orgId: orgIdA, communityId: communityIdA1 };
+    const family = await seedFamily(scope, { child: true, bothLinked: true });
+    const body = (linkId: string) => ({
+      communitySlug: slugA1,
+      householdId: family.householdId,
+      linkId,
+    });
+    const unlink = async (linkId: string, token: string) =>
+      answer(await post("/v1/households/guardians/unlink", body(linkId), token));
+
+    for (const hidden of [false, true]) {
+      await setChildHidden(scope, family.childId!, hidden);
+      const before = await familyState(scope, family.householdId);
+      const childLink = await unlink(family.linkIds[1]!, orgAdminToken);
+      const missing = await unlink(newId(), orgAdminToken);
+      expect(childLink.status, `hidden ${hidden}`).toBe(404);
+      expect(childLink.body).toBe("");
+      expect(childLink).toEqual(missing);
+      expect(await familyState(scope, family.householdId)).toEqual(before);
+      for (const linkId of [family.linkIds[1]!, newId()]) {
+        expect((await unlink(linkId, viewOnlyToken)).status).toBe(403);
+      }
+    }
+    await setChildHidden(scope, family.childId!, false);
+
+    const removed = await unlink(family.linkIds[1]!, ownerA1Token);
+    expect(removed.status).toBe(200);
+    expect(removed.body).toBe("{}");
+  });
+
+  it("pin 76: a non-admin rename of a family with a child answers 403 whatever the label", async () => {
+    const scope = { orgId: orgIdA, communityId: communityIdA1 };
+    const family = await seedFamily(scope, { child: true });
+    const rename = (householdId: string, label: string | null, token: string, version = 1) =>
+      post("/v1/households/rename", { communitySlug: slugA1, householdId, version, label }, token);
+
+    // A hidden child still makes the family one with a child.
+    for (const hidden of [false, true]) {
+      await setChildHidden(scope, family.childId!, hidden);
+      // A neutral label, the child's name, no label, and a stale version: one answer.
+      const attempts: [string | null, number][] = [
+        ["Marazion", 1],
+        ["Zephyrine's family", 1],
+        [null, 1],
+        ["Marazion", 999],
+      ];
+      for (const [label, version] of attempts) {
+        const before = await familyState(scope, family.householdId);
+        const res = await rename(family.householdId, label, orgAdminToken, version);
+        expect(res.status, `${String(label)} version ${version} hidden ${hidden}`).toBe(403);
+        expect(await res.text()).toBe("");
+        const after = await familyState(scope, family.householdId);
+        expect(after.rows).toEqual(before.rows);
+        expect(after.audit).toBe(before.audit + 1);
+        expect(await lastAudit(scope)).toEqual({
+          action: "people.permission.denied",
+          purpose: "people.restricted.read",
+          target_ids: [orgIdA, communityIdA1],
+        });
+      }
+    }
+    await setChildHidden(scope, family.childId!, false);
+
+    // A family with no child keeps today's gate.
+    const adultsOnly = await seedFamily(scope, { child: false });
+    expect((await rename(adultsOnly.householdId, "Marazion", orgAdminToken)).status).toBe(200);
+    // The Community Admin renames the family with a child.
+    expect((await rename(family.householdId, "Marazion", ownerA1Token)).status).toBe(200);
+  });
+
+  it("a non-admin rename waits for a child who is being added, and is then refused", async () => {
+    const scope = { orgId: orgIdA, communityId: communityIdA1 };
+    const family = await seedFamily(scope, { child: false });
+    const direct = createPlaintextDirectSql(loadRuntime().productOnlyUrl);
+    let inserted!: () => void;
+    const childInserted = new Promise<void>((resolve) => {
+      inserted = resolve;
+    });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    try {
+      const adding = withRequest({ requestId: REQUEST_ID }, () =>
+        withAppTransaction(secondApp, scope, async (tx) => {
+          await createPerson(tx, kms, KEY_ARN, {
+            now,
+            declaredAdult: false,
+            householdId: family.householdId,
+            dateOfBirth: "2019-05-05",
+            givenName: "Quillon",
+            familyName: "Wexcombe",
+            email: null,
+            phone: null,
+            actorUserId: null,
+          });
+          inserted();
+          await released;
+        }),
+      );
+      await childInserted;
+
+      let answered = false;
+      const renaming = post(
+        "/v1/households/rename",
+        { communitySlug: slugA1, householdId: family.householdId, version: 1, label: "Marazion" },
+        orgAdminToken,
+      ).then((res) => {
+        answered = true;
+        return res;
+      });
+      // Go on when the rename is waiting for a lock (or has answered without waiting).
+      for (let tries = 0; tries < 500 && !answered; tries += 1) {
+        const [row] = await direct<{ waiting: number }[]>`
+          select count(*)::int as waiting
+          from pg_stat_activity
+          where datname = current_database() and wait_event_type = 'Lock'
+        `;
+        if ((row?.waiting ?? 0) > 0) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      release();
+      await adding;
+
+      const res = await renaming;
+      expect(res.status).toBe(403);
+      expect((await familyState(scope, family.householdId)).rows.household.version).toBe(1);
+    } finally {
+      release();
+      await direct.end({ timeout: 1 });
+    }
+  });
+
+  it("a real household read answer parses with the contract, for a Community Admin and for everyone else", async () => {
+    for (const token of [ownerA1Token, restrictedOnlyToken, viewOnlyToken]) {
+      const res = await post(
+        "/v1/households/read",
+        { communitySlug: slugA1, householdId: householdA1Id },
+        token,
+      );
+      expect(res.status).toBe(200);
+      const parsed = readHouseholdResponse.safeParse(await res.json());
+      expect(parsed.error?.issues ?? []).toEqual([]);
+      expect(parsed.data?.adults.length).toBeGreaterThan(0);
+      if (token === ownerA1Token) {
+        expect(parsed.data?.guardians.length).toBeGreaterThan(0);
+      }
+    }
   });
 });

@@ -476,6 +476,56 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
     await identity?.end({ timeout: 1 });
   });
 
+  // An org_admin of community A1: people.manage and people.restricted.read, no community_admin.
+  async function signInOrgAdmin(): Promise<string> {
+    const manager = await signIn(`org-admin-${newId().slice(-8)}@users.example.test`);
+    const [admin] = await directSql<{ user_id: string }[]>`
+      select user_id::text as user_id
+      from app.community_role_grants
+      where community_id = ${communityIdA1}::uuid and role_key = 'community_admin'
+      limit 1
+    `;
+    if (admin === undefined) {
+      throw new Error("community admin is missing");
+    }
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: orgIdA, communityId: communityIdA1 }, async (tx) => {
+        await addMember(tx, manager.userId);
+        await grantRole(tx, {
+          now,
+          userId: manager.userId,
+          roleKey: "org_admin",
+          customRoleId: null,
+          actorUserId: admin.user_id,
+        });
+      }),
+    );
+    return manager.accessToken;
+  }
+
+  // The child's events, and the audit rows of community A1: a refused write changes neither.
+  async function lifeEventState() {
+    const events = await directSql<{ id: string; version: number }[]>`
+      select id::text as id, version
+      from app.life_events
+      where person_id = ${minorPersonA1.personId}::uuid
+      order by id
+    `;
+    // Counted as the app role, so row security limits the count to community A1.
+    const [audit] = await withAppTransaction(
+      app,
+      { orgId: orgIdA, communityId: communityIdA1 },
+      (tx) => tx<{ count: number }[]>`select count(*)::int as count from app.audit_events`,
+    );
+    return { events: [...events], audit: audit?.count };
+  }
+
+  // Everything a caller can tell two answers apart by, the date aside.
+  async function answerOf(res: Response) {
+    const headers = [...res.headers.entries()].filter(([name]) => name !== "date");
+    return { status: res.status, body: await res.text(), headers };
+  }
+
   it("Pin 6: List refuses without people.restricted.read, records denial audit, no listed audit row", async () => {
     // 1. people.view only
     const viewRes = await postRoute(
@@ -921,6 +971,98 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
       officer.accessToken,
     );
     expect(adultList.status).toBe(200);
+  });
+
+  it("pin 78: a non-admin creating a minor's life event gets 404, the answer for a missing person, and nothing is written", async () => {
+    const manager = await signInOrgAdmin();
+    const body = (personId: string) => ({
+      communitySlug: slugA1,
+      personId,
+      type: "baptism",
+      date: "2019-07-07",
+      place: "Pellucid Abbey",
+      notes: null,
+    });
+    const before = await lifeEventState();
+
+    const child = await answerOf(
+      await postRoute("/v1/people/life-events/create", body(minorPersonA1.personId), manager),
+    );
+    const missing = await answerOf(
+      await postRoute("/v1/people/life-events/create", body(newId()), manager),
+    );
+    expect(child.status).toBe(404);
+    expect(child.body).toBe("");
+    expect(child).toEqual(missing);
+    expect(await lifeEventState()).toEqual(before);
+
+    // A caller without the permissions gets one answer for a child and for nobody.
+    for (const personId of [minorPersonA1.personId, newId()]) {
+      const res = await postRoute("/v1/people/life-events/create", body(personId), viewOnlyToken);
+      expect(res.status).toBe(403);
+    }
+
+    // Control: the same caller writes an adult's event.
+    const adult = await postRoute(
+      "/v1/people/life-events/create",
+      body(adultPersonA1.personId),
+      manager,
+    );
+    expect(adult.status).toBe(201);
+  });
+
+  it("a non-admin updating a minor's life event gets the 404 of a missing event, and nothing changes", async () => {
+    const manager = await signInOrgAdmin();
+    const created = await postRoute(
+      "/v1/people/life-events/create",
+      {
+        communitySlug: slugA1,
+        personId: minorPersonA1.personId,
+        type: "baptism",
+        date: "2019-07-07",
+        place: "Ludgvan Oratory",
+      },
+      allPermissionsToken,
+    );
+    expect(created.status).toBe(201);
+    const createdBody = (await created.json()) as { eventId: string; version: number };
+    expect(Object.keys(createdBody).sort()).toEqual(["eventId", "version"]);
+    const { eventId } = createdBody;
+    const body = (id: string, version: number) => ({
+      communitySlug: slugA1,
+      eventId: id,
+      version,
+      type: "baptism",
+      date: "2019-07-08",
+    });
+    const before = await lifeEventState();
+
+    const missing = await answerOf(
+      await postRoute("/v1/people/life-events/update", body(newId(), 1), manager),
+    );
+    expect(missing.status).toBe(404);
+    // A stale version answers the same, so the version tells nothing either.
+    for (const version of [1, 999]) {
+      const child = await answerOf(
+        await postRoute("/v1/people/life-events/update", body(eventId, version), manager),
+      );
+      expect(child.status, `version ${version}`).toBe(404);
+      expect(child.body).toBe("");
+      expect(child).toEqual(missing);
+    }
+    expect(await lifeEventState()).toEqual(before);
+    for (const id of [eventId, newId()]) {
+      const res = await postRoute("/v1/people/life-events/update", body(id, 1), viewOnlyToken);
+      expect(res.status).toBe(403);
+    }
+
+    const updated = await postRoute(
+      "/v1/people/life-events/update",
+      body(eventId, 1),
+      allPermissionsToken,
+    );
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toEqual({ version: 2 });
   });
 
   it("allows birth and other event types in create, list, and update round trip", async () => {
