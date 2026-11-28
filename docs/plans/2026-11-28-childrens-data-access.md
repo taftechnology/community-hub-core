@@ -5,6 +5,19 @@ Spec: docs/specs/2026-11-28-childrens-data-access.md
 Slug: childrens-data-access
 Status: approved (2026-11-28, Adnan Bin Hossen)
 
+Amendment A6 (2026-11-28, approved by Adnan Bin Hossen, standing instruction): Checkpoint 2 (Claude Haiku 5.5, CHANGES NEEDED, 0 High, 2 Medium, 9 Low; range `276a840..13e4684`). Fix commit C2 comes after Task 9, implemented by Claude Sonnet 5.5:
+
+- M1: the minors list (`/v1/people/list` with `kind: "minors"`) runs the `people.households` entitlement guard after the Community Admin check, and answers its empty 403. This is pin 125.
+- M2: IS accepts a literal `"admin"` only as the true branch of a conditional whose test is an un-negated `isCommunityAdmin`-derived identifier, or under that guard. Must-fail fixtures for `isAdmin ? "presence" : "admin"` and `!isAdmin ? "admin" : "presence"`. This is pin 126 (weakening: the polarity flip in `household-routes.ts`, run against IS).
+- L1: the grants list keeps a user link for a non-admin only when the person is known to be an adult, so an unknown or hidden person fails closed, as the users list does. A test with a trigger-bypassed hidden child. This is pin 127.
+- L2: an answer on a path under `/v1/people/minors/` carries `Cache-Control: no-store` also when the gate answers it (unknown route, wrong host) and when the kernel answers 500. This is pin 128.
+- L3: tests that pin `childView: "presence"` on the people-list group filter (pin 129) and the users-list `childView` polarity (pin 130).
+- L4: on `POST /v1/access/user-links` (today a 500), `POST /v1/access/invitations/create`, `POST /v1/households/members/move-adult` and `POST /v1/households/guardians/link` with a child as the guardian, a child's id gets the same status and body as a missing person. This closes the item A4 recorded. Pins 131 to 134.
+- L5: the route sweep's registry and table include `invitation-routes.ts`. Pin 79 then covers it.
+- L8: the label check also folds combining marks (NFKD, then removing `\p{M}`, then NFKC), so a child "Zoë" refuses "Zoe". This is pin 135.
+- L9: the hidden-child test in MV is renamed to say the refusal comes before the check; the groups export test's audit count filters by its own organisation.
+- Recorded for the pull request, not changed: L6 (the child write gates are in the routes, as every permission check in this codebase is; no in-process caller exists), and L7 (the rename rule counts hidden children by design, and no product path hides a child).
+
 Amendment A5 (2026-11-28, approved by Adnan Bin Hossen, standing instruction): what Task 8 found, all accepted by the reviewer.
 
 - The audit purposes have three segments, because `AUDIT_NAME_RE` (`packages/kernel/src/audit-names.ts:1`), the `check-event-names` checker and the `audit_events_purpose` database check allow no more. They are `people.minor_view.name`, `.date_of_birth`, `.email`, `.phone`, `.life_event_type`, `.life_event_date`, `.life_event_place` and `.life_event_notes`, registered in access `public/`. The action stays `people.minor.field_viewed`. Wherever this plan or the spec writes `people.minor.view.<field>`, read these names.
