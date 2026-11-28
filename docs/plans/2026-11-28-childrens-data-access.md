@@ -5,6 +5,15 @@ Spec: docs/specs/2026-11-28-childrens-data-access.md
 Slug: childrens-data-access
 Status: approved (2026-11-28, Adnan Bin Hossen)
 
+Amendment A4 (2026-11-28, approved by Adnan Bin Hossen, standing instruction): what Tasks 6 and 7 added beyond the plan, all accepted by the reviewer.
+
+- Task 6 locks the family (`for no key update`) in `renameHousehold` before the label check, so a rename that races an add-minor sees the new child. This is pin 60b.
+- Task 7 locks the family in the rename route's child check (`householdHasMinor(..., { lock: "update" })`) for the same race on the Community Admin rule. This is pin 76b.
+- Task 7 adds three people facts on clear columns, `householdHasMinor`, `guardianLinkChildIsMinor` and `lifeEventPersonIsMinor` (`access-facts.ts`, exported from `public/`). They are classified and called by FS.
+- On link, unlink and life-event writes, a caller without `people.manage` + `people.restricted.read` gets 403 for a child and for a missing id alike. Only a permitted non-admin gets the child 404.
+- Pin 82a is run as a patch that grants `select` on `app.persons` to `platform` inside the test database, so `pinrun` runs it.
+- Recorded for the pull request, not changed: `guardians/link` with a child's id as the guardian, and `members/move-adult` with a child's id, answer 400 where a missing id answers 404. Each needs a child's id, which a non-admin is never shown.
+
 Amendment A3 (2026-11-28, approved by Adnan Bin Hossen): Checkpoint 1 (Claude Haiku 5.5, APPROVE WITH NOTES, 1 High, 1 Medium, 3 Low; range `3be1d95..f5a0e2a`). Fix commit C1 comes before Task 5, implemented by Claude Sonnet 5.5:
 
 - M1: a test that a backup-code (recovery) session's TOTP fresh check answers `refused`, and the same for the passkey fresh check. These are pins 120 and 121 (weakening: drop the `recovery_until` guard in `freshCheckTotp`, and in `verifyFreshPasskey`).
