@@ -5,6 +5,14 @@ Spec: docs/specs/2026-11-28-childrens-data-access.md
 Slug: childrens-data-access
 Status: approved (2026-11-28, Adnan Bin Hossen)
 
+Amendment A3 (2026-11-28, approved by Adnan Bin Hossen): Checkpoint 1 (Claude Haiku 5.5, APPROVE WITH NOTES, 1 High, 1 Medium, 3 Low; range `3be1d95..f5a0e2a`). Fix commit C1 comes before Task 5, implemented by Claude Sonnet 5.5:
+
+- M1: a test that a backup-code (recovery) session's TOTP fresh check answers `refused`, and the same for the passkey fresh check. These are pins 120 and 121 (weakening: drop the `recovery_until` guard in `freshCheckTotp`, and in `verifyFreshPasskey`).
+- L1: `consumeFreshFactorInTx`'s one update also requires `access_expires_at > now` and `(kind <> 'tenant' or factor is not null)`, with tests that an expired session and a factor-less tenant session answer `not_fresh`. These are pins 122 and 123.
+- L2: cross-organisation and cross-community cases for the child readers (`listPersons` minors mode, `readHouseholdDetail`, `readLinkedContacts`, `listLifeEvents`, `childLabels` through its callers). Read in organisation A's scope, they never return organisation B's or community B's child ids or labels. Tests only; RLS and the `current_setting` filters already hold.
+- L3: confirm that the people-list route's schema accepts only `kind` `adults` or `minors` and refuses anything else with 400, with a test. If it does not, add that to the route schema. This is pin 124.
+- H1 (the groups readers still returning child names and ids) is Task 5 as planned, and must land before the pull request.
+
 Amendment A2 (2026-11-28, approved by Adnan Bin Hossen), after Task 4:
 
 1. The groups half of the function sweep lives in the groups package, `modules/features/groups/infrastructure/function-sweep.integration.test.ts` (GS), added in Task 5 with the same rules: every export of groups `public/` is classified, and no seeded child value appears in any answer. `@community-hub/people` cannot import `@community-hub/groups`, because groups depends on people. The people sweep (FS) marks the groups exports as covered by GS. Pin 43b: an unclassified groups export fails GS.
