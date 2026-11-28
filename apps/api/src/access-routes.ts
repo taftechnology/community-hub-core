@@ -18,6 +18,7 @@ import {
   grantRole,
   holdsAnyGrant,
   holdsPermission,
+  isCommunityAdmin,
   linkUser,
   revokeRole,
   unlinkUser,
@@ -581,12 +582,16 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
             const personIds = Array.from(new Set(directory.userLinks.map((l) => l.personId)));
             const includePhone = permissions.includes("people.view");
 
+            // Whether a linked user is a child is shown to a Community Admin only (ADR 0017).
+            const isAdmin = await isCommunityAdmin(tx, actor.userId);
+
             let linkedContacts = new Map<string, LinkedContact>();
             if (personIds.length > 0) {
               linkedContacts = await readLinkedContacts(tx, deps.kms, deps.keyArn, {
                 personIds,
                 includePhone,
                 actorUserId: actor.userId,
+                childView: isAdmin ? "admin" : "presence",
               });
             }
 
@@ -613,6 +618,18 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
                 contact?.minor === true || (personId !== null && contact === undefined);
 
               if (isMinor) {
+                if (!isAdmin) {
+                  // A user linked to a child, or to a person who cannot be shown, is listed with
+                  // no linked contact: no person id, no flag and no email.
+                  return {
+                    userId,
+                    personId: null,
+                    name: null,
+                    email: null,
+                    phone: null,
+                    minor: false,
+                  };
+                }
                 return {
                   userId,
                   personId,

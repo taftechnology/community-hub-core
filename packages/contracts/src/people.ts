@@ -252,19 +252,31 @@ export type AdultPersonListItem = {
   groups?: { id: string; name: string }[];
 };
 
+// A child in the Community Admin's list (`kind: "minors"`): an id, the display label "Child n"
+// (numbered inside the family) and the family. It carries no field of the child, the name
+// included. householdLabel is the family's own label, an adult-level field. Everyone who is not a
+// Community Admin gets 403 for this list (ADR 0017).
 export type MinorPersonListItem = {
-  id: string;
   personId: string;
-  isMinor: true;
-  givenName: string;
-  familyName: string;
-  version: number;
+  label: string;
+  householdId: string;
+  householdLabel: string | null;
 };
 
 export type PersonListItem = AdultPersonListItem | MinorPersonListItem;
 
 export type ListPeopleResponse = {
   items: PersonListItem[];
+  nextCursor: string | null;
+};
+
+export type ListAdultsResponse = {
+  items: AdultPersonListItem[];
+  nextCursor: string | null;
+};
+
+export type ListMinorsResponse = {
+  items: MinorPersonListItem[];
   nextCursor: string | null;
 };
 
@@ -284,21 +296,10 @@ export type AdultReadPersonResponse = {
   source: PersonSource;
 };
 
-export type MinorReadPersonResponse = {
-  personId: string;
-  householdId: string | null;
-  isMinor: true;
-  ageBasis: string;
-  birthdayMd: number | null;
-  givenName: string;
-  familyName: string;
-  email: string | null;
-  phone: string | null;
-  dateOfBirth: string | null;
-  version: number;
-};
-
-export type ReadPersonResponse = AdultReadPersonResponse | MinorReadPersonResponse;
+// `/v1/people/read` answers an adult. A minor is answered 404 with an empty body, for every
+// caller, as a person that does not exist: a child's fields are read only through the Community
+// Admin's View (ADR 0017).
+export type ReadPersonResponse = AdultReadPersonResponse;
 
 export type CreatePersonResponse = {
   personId: string;

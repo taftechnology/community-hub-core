@@ -2,16 +2,17 @@ import {
   AccessError,
   deleteBlockers,
   holdsPermission,
+  isCommunityAdmin,
   readPersonForActor,
 } from "@community-hub/access";
 import {
+  type AdultPersonListItem,
   createPersonBody,
   listPeopleBody,
   peopleSummaryBody,
   type PeopleSummaryResponse,
   personDeleteBody,
   type PersonDeleteResponse,
-  type PersonListItem,
   personRestoreBody,
   type PersonRestoreResponse,
   personStatusBody,
@@ -291,8 +292,10 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
         try {
           const isMinorsMode = body.kind === "minors";
           if (isMinorsMode) {
-            const allowed = await holdsPermission(tx, actor.userId, RESTRICTED);
-            if (!allowed) {
+            // The children's list is for a Community Admin only: people.restricted.read covers
+            // adults (ADR 0017). Everyone else gets 403 with an empty body.
+            const isAdmin = await isCommunityAdmin(tx, actor.userId);
+            if (!isAdmin) {
               await appendAuditEvent(tx, {
                 actorKind: "user",
                 actorId: actor.userId,
@@ -306,7 +309,7 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
               kind: "minors",
               cursor: body.cursor ?? null,
               ...(body.limit !== undefined ? { limit: body.limit } : {}),
-              includeRestricted: true,
+              childView: "admin",
               actorUserId: actor.userId,
             });
             return finish(request, noStore(Response.json(result)));
@@ -367,21 +370,14 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
             ...(personIds !== undefined ? { personIds } : {}),
           });
 
-          let items: PersonListItem[] = result.items;
+          let items: AdultPersonListItem[] = result.items;
           if (hasGroups) {
-            const adultIds = result.items
-              .filter((item) => !item.isMinor)
-              .map((item) => item.personId);
+            const adultIds = result.items.map((item) => item.personId);
             const groupsMap = await activeGroupsForPersons(tx, adultIds);
-            items = result.items.map((item): PersonListItem => {
-              if (item.isMinor) {
-                return item;
-              }
-              return {
-                ...item,
-                groups: groupsMap.get(item.personId) ?? [],
-              };
-            });
+            items = result.items.map((item): AdultPersonListItem => ({
+              ...item,
+              groups: groupsMap.get(item.personId) ?? [],
+            }));
           }
 
           sweepAfter = true;

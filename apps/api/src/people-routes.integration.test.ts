@@ -5,7 +5,12 @@ import { fileURLToPath } from "node:url";
 import { bootstrapOwner, createCustomRole, grantRole } from "@community-hub/access";
 import { addMember } from "@community-hub/access/testing";
 import { createLocalKmsPort } from "@community-hub/crypto/testing";
-import { applyProductMigrations, newId, withAppTransaction } from "@community-hub/db";
+import {
+  applyProductMigrations,
+  newId,
+  withAppTransaction,
+  type AppTransaction,
+} from "@community-hub/db";
 import {
   createPlaintextAppSql,
   createPlaintextDirectSql,
@@ -1061,6 +1066,218 @@ describe("people routes real-database integration (finding 3)", () => {
     const body = (await res.json()) as { items: Array<unknown> };
     expect(body.items).toHaveLength(0);
   });
+
+  // A family with one adult and two children whose values are unusual, so a substring hit in a
+  // response is never a coincidence. Returns the children's ids.
+  const CHILD_VALUES = [
+    "Zephyrine",
+    "Quillonwick",
+    "zephyrine.quillonwick@zephyr.example.test",
+    "+61400555101",
+    "2018-05-05",
+    "Quillon",
+    "Zephyrwick",
+    "quillon.zephyrwick@zephyr.example.test",
+    "+61400555102",
+    "2019-06-07",
+  ];
+
+  async function seedChildren(org: { orgId: string; communityId: string; ownerUserId: string }) {
+    return withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: org.orgId, communityId: org.communityId }, async (tx) => {
+        const household = await createHousehold(tx, kms, KEY_ARN, {
+          now,
+          label: "Marchetti",
+          actorUserId: org.ownerUserId,
+        });
+        const adult = await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: true,
+          householdId: household.householdId,
+          dateOfBirth: null,
+          givenName: "Aurelia",
+          familyName: "Marchetti",
+          email: "aurelia.marchetti@parish.example.test",
+          phone: null,
+          actorUserId: org.ownerUserId,
+        });
+        const childOne = await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: false,
+          householdId: household.householdId,
+          dateOfBirth: "2018-05-05",
+          givenName: "Zephyrine",
+          familyName: "Quillonwick",
+          email: "zephyrine.quillonwick@zephyr.example.test",
+          phone: "+61400555101",
+          actorUserId: org.ownerUserId,
+        });
+        const childTwo = await createPerson(tx, kms, KEY_ARN, {
+          now: new Date(now.getTime() + 3_600_000),
+          declaredAdult: false,
+          householdId: household.householdId,
+          dateOfBirth: "2019-06-07",
+          givenName: "Quillon",
+          familyName: "Zephyrwick",
+          email: "quillon.zephyrwick@zephyr.example.test",
+          phone: "+61400555102",
+          actorUserId: org.ownerUserId,
+        });
+        return {
+          householdId: household.householdId,
+          adultId: adult.personId,
+          childOneId: childOne.personId,
+          childTwoId: childTwo.personId,
+        };
+      }),
+    );
+  }
+
+  async function grantedUser(
+    org: { orgId: string; communityId: string; ownerUserId: string },
+    label: string,
+    grant: (tx: AppTransaction, userId: string) => Promise<void>,
+  ) {
+    const session = await signIn(`${label}-${newId().slice(-8)}@users.example.test`);
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: org.orgId, communityId: org.communityId }, async (tx) => {
+        await addMember(tx, session.userId);
+        await grant(tx, session.userId);
+      }),
+    );
+    return session;
+  }
+
+  // The callers of the two children tests: two Community Admins (the bootstrap owner and a plain
+  // community_admin grant) and three that hold people.restricted.read without being one.
+  async function childCallers(slugPrefix: string) {
+    const base = await createOrgAndCommunity(slugPrefix);
+    const org = {
+      orgId: base.orgId,
+      communityId: base.communityId,
+      ownerUserId: base.ownerSession.userId,
+    };
+    const grantTo = (roleKey: string) => async (tx: AppTransaction, userId: string) => {
+      await grantRole(tx, {
+        now,
+        userId,
+        roleKey,
+        customRoleId: null,
+        actorUserId: org.ownerUserId,
+      });
+    };
+    const communityAdmin = await grantedUser(org, "community-admin", grantTo("community_admin"));
+    const orgAdmin = await grantedUser(org, "org-admin", grantTo("org_admin"));
+    const safeguarding = await grantedUser(org, "safeguarding", grantTo("safeguarding_officer"));
+    const everyPermission = await grantedUser(org, "every-permission", async (tx, userId) => {
+      const role = await createCustomRole(tx, {
+        now,
+        key: "every_people_permission",
+        permissions: ["people.view", "people.manage", "people.restricted.read", "people.delete"],
+        actorUserId: org.ownerUserId,
+      });
+      await grantRole(tx, {
+        now,
+        userId,
+        roleKey: null,
+        customRoleId: role.customRoleId,
+        actorUserId: org.ownerUserId,
+      });
+    });
+    const children = await seedChildren(org);
+    return {
+      slug: base.slug,
+      children,
+      communityAdmins: [base.ownerSession, communityAdmin],
+      notAdmins: [orgAdmin, safeguarding, everyPermission],
+    };
+  }
+
+  it("pin 77: only a Community Admin lists the children, and every other role gets 403 with an empty body", async () => {
+    const { slug, children, communityAdmins, notAdmins } = await childCallers("kids-list");
+
+    for (const caller of communityAdmins) {
+      const res = await post(
+        "/v1/people/list",
+        { communitySlug: slug, kind: "minors" },
+        caller.accessToken,
+      );
+      expect(res.status).toBe(200);
+      const text = await res.text();
+      const body = JSON.parse(text) as { items: Record<string, unknown>[]; nextCursor: unknown };
+      expect(body.nextCursor).toBeNull();
+      expect(body.items).toHaveLength(2);
+      for (const item of body.items) {
+        expect(Object.keys(item).sort()).toEqual([
+          "householdId",
+          "householdLabel",
+          "label",
+          "personId",
+        ]);
+        expect(item.householdId).toBe(children.householdId);
+        expect(item.householdLabel).toBe("Marchetti");
+      }
+      expect(body.items.map((item) => item.label).sort()).toEqual(["Child 1", "Child 2"]);
+      expect(body.items.map((item) => item.personId).sort()).toEqual(
+        [children.childOneId, children.childTwoId].sort(),
+      );
+      for (const value of CHILD_VALUES) {
+        expect(text).not.toContain(value);
+      }
+    }
+
+    for (const caller of notAdmins) {
+      const res = await post(
+        "/v1/people/list",
+        { communitySlug: slug, kind: "minors" },
+        caller.accessToken,
+      );
+      expect(res.status).toBe(403);
+      expect(res.headers.get("cache-control")).toBe("no-store");
+      expect(await res.text()).toBe("");
+    }
+  }, 120_000);
+
+  it("a child is read as a person that does not exist, whoever asks, a Community Admin included", async () => {
+    const { slug, children, communityAdmins, notAdmins } = await childCallers("kids-read");
+
+    for (const caller of [...communityAdmins, ...notAdmins]) {
+      const missing = await post(
+        "/v1/people/read",
+        { communitySlug: slug, personId: newId() },
+        caller.accessToken,
+      );
+      expect(missing.status).toBe(404);
+      expect(await missing.text()).toBe("");
+
+      for (const childId of [children.childOneId, children.childTwoId]) {
+        const res = await post(
+          "/v1/people/read",
+          { communitySlug: slug, personId: childId },
+          caller.accessToken,
+        );
+        expect(res.status).toBe(404);
+        const text = await res.text();
+        expect(text).toBe("");
+        expect(res.headers.get("cache-control")).toBe(missing.headers.get("cache-control"));
+        expect([...res.headers.keys()].sort()).toEqual([...missing.headers.keys()].sort());
+        for (const value of CHILD_VALUES) {
+          expect(text).not.toContain(value);
+        }
+      }
+    }
+
+    // Control: the same callers still read an adult.
+    for (const caller of [...communityAdmins, ...notAdmins]) {
+      const res = await post(
+        "/v1/people/read",
+        { communitySlug: slug, personId: children.adultId },
+        caller.accessToken,
+      );
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { givenName: string }).givenName).toBe("Aurelia");
+    }
+  }, 120_000);
 
   it("people status: a minor's id gives 404", async () => {
     const org = await createOrgAndCommunity("minor-status");

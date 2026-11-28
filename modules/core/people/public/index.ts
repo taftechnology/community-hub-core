@@ -59,6 +59,7 @@ defineAuditAction("people.person.listed_deleted");
 defineAuditPurpose("people.person.listed_deleted");
 
 export { PeopleError } from "../domain/error.js";
+export type { ChildView } from "../domain/child-view.js";
 export { ensureCommunityKey, ensureOrganisationKey } from "../infrastructure/keys.js";
 export {
   createHousehold,
@@ -102,11 +103,17 @@ export {
 export {
   listDeletedPersons,
   listPersons,
+  type AdultListItem,
   type DeletedPersonListItem,
+  type ListAdultsInput,
+  type ListAdultsResult,
   type ListDeletedPersonsInput,
   type ListDeletedPersonsResult,
+  type ListMinorsInput,
+  type ListMinorsResult,
   type ListPersonsInput,
   type ListPersonsResult,
+  type MinorListItem,
   type PersonListItem,
 } from "../infrastructure/list-persons.js";
 export { hasGuardianView, personIsMinor } from "../infrastructure/access-facts.js";
@@ -140,8 +147,10 @@ export {
   type CreateLifeEventInput,
   type CreateLifeEventResult,
   type LifeEventItem,
+  type LifeEventListing,
   type ListLifeEventsInput,
   type ListLifeEventsResult,
+  type MinorLifeEventItem,
   type UpdateLifeEventInput,
   type UpdateLifeEventResult,
 } from "../infrastructure/life-event.js";

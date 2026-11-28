@@ -40,6 +40,7 @@ const access = vi.hoisted(() => {
     unlinkUser: vi.fn(),
     holdsAnyGrant: vi.fn(),
     holdsPermission: vi.fn(),
+    isCommunityAdmin: vi.fn(),
   };
 });
 
@@ -82,6 +83,7 @@ vi.mock("@community-hub/access", () => ({
   unlinkUser: access.unlinkUser,
   holdsAnyGrant: access.holdsAnyGrant,
   holdsPermission: access.holdsPermission,
+  isCommunityAdmin: access.isCommunityAdmin,
 }));
 
 vi.mock("./entitlement-guard.js", async () => {
@@ -249,6 +251,8 @@ describe("access routes", () => {
     access.holdsAnyGrant.mockResolvedValue(true);
     access.holdsPermission.mockReset();
     access.holdsPermission.mockResolvedValue(true);
+    access.isCommunityAdmin.mockReset();
+    access.isCommunityAdmin.mockResolvedValue(false);
     entitlementGuard.checkEntitlement.mockReset();
     entitlementGuard.checkEntitlement.mockResolvedValue(true);
     billing.assertWritable.mockReset();
@@ -1223,14 +1227,21 @@ describe("access routes", () => {
       expect(body.users[0]?.email).toBe("staff@example.com");
     });
 
-    it("Pin 3: minor-linked user id never reaches readUserEmails, row has minor: true and nulls", async () => {
+    it("Pin 3: for a Community Admin, a minor-linked user never reaches readUserEmails and the row has minor: true and nulls", async () => {
       const minorPersonId = "00000000-0000-4000-8000-000000000044";
       userLinks = [{ user_id: USER, person_id: minorPersonId }];
+      access.isCommunityAdmin.mockResolvedValue(true);
       people.readLinkedContacts.mockResolvedValueOnce(new Map([[minorPersonId, { minor: true }]]));
 
       const res = await callUsersList({ communitySlug: "parish" });
       expect(res.status).toBe(200);
       expect(identity.readUserEmails).not.toHaveBeenCalled();
+      expect(people.readLinkedContacts).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ childView: "admin", personIds: [minorPersonId] }),
+      );
 
       const body = listUsersResponse.parse(await res.json());
       expect(body.users).toEqual([
@@ -1245,9 +1256,45 @@ describe("access routes", () => {
       ]);
     });
 
+    it("Pin 3b: a caller who is not a Community Admin sees a minor-linked user with no linked contact, no person id and no flag", async () => {
+      const minorPersonId = "00000000-0000-4000-8000-000000000044";
+      userLinks = [{ user_id: USER, person_id: minorPersonId }];
+      // The reader leaves a child out under "presence". A reader that did return the child must
+      // still not reach the answer.
+      for (const readerAnswer of [new Map(), new Map([[minorPersonId, { minor: true }]])]) {
+        identity.readUserEmails.mockClear();
+        people.readLinkedContacts.mockClear();
+        people.readLinkedContacts.mockResolvedValueOnce(readerAnswer);
+
+        const res = await callUsersList({ communitySlug: "parish" });
+        expect(res.status).toBe(200);
+        expect(identity.readUserEmails).not.toHaveBeenCalled();
+        expect(people.readLinkedContacts).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          expect.anything(),
+          expect.objectContaining({ childView: "presence", personIds: [minorPersonId] }),
+        );
+
+        const text = await res.text();
+        expect(text).not.toContain(minorPersonId);
+        expect(listUsersResponse.parse(JSON.parse(text)).users).toEqual([
+          {
+            userId: USER,
+            personId: null,
+            name: null,
+            email: null,
+            phone: null,
+            minor: false,
+          },
+        ]);
+      }
+    });
+
     it("a linked user whose person is not returned is hidden and never reaches readUserEmails", async () => {
       const missingPersonId = "00000000-0000-4000-8000-000000000088";
       userLinks = [{ user_id: USER, person_id: missingPersonId }];
+      access.isCommunityAdmin.mockResolvedValue(true);
       people.readLinkedContacts.mockResolvedValueOnce(new Map());
       identity.readUserEmails.mockResolvedValueOnce(new Map([[USER, "hidden@example.test"]]));
 
@@ -1270,6 +1317,31 @@ describe("access routes", () => {
       for (const call of identity.readUserEmails.mock.calls) {
         expect((call[3] as string[] | undefined) ?? []).not.toContain(USER);
       }
+    });
+
+    it("for a caller who is not a Community Admin, a linked user whose person is not returned has no linked contact and no person id", async () => {
+      const missingPersonId = "00000000-0000-4000-8000-000000000088";
+      userLinks = [{ user_id: USER, person_id: missingPersonId }];
+      people.readLinkedContacts.mockResolvedValueOnce(new Map());
+      identity.readUserEmails.mockResolvedValueOnce(new Map([[USER, "hidden@users.example.test"]]));
+
+      const res = await callUsersList({ communitySlug: "parish" });
+      expect(res.status).toBe(200);
+
+      const text = await res.text();
+      expect(text).not.toContain(missingPersonId);
+      expect(text).not.toContain("hidden@users.example.test");
+      expect(listUsersResponse.parse(JSON.parse(text)).users).toEqual([
+        {
+          userId: USER,
+          personId: null,
+          name: null,
+          email: null,
+          phone: null,
+          minor: false,
+        },
+      ]);
+      expect(identity.readUserEmails).not.toHaveBeenCalled();
     });
 
     it("mixed directory (L3): readUserEmails receives exactly the adult-linked user and unlinked user, never the minor", async () => {

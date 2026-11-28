@@ -1,4 +1,4 @@
-import { holdsPermission } from "@community-hub/access";
+import { holdsPermission, isCommunityAdmin } from "@community-hub/access";
 import {
   createLifeEventBody,
   listLifeEventsBody,
@@ -11,6 +11,7 @@ import {
   createLifeEvent,
   listLifeEvents,
   PeopleError,
+  personIsMinor,
   updateLifeEvent,
 } from "@community-hub/people";
 import { findCommunityBySlug } from "@community-hub/tenancy";
@@ -208,9 +209,17 @@ export function lifeEventRoutes(deps: LifeEventDeps): GateRoute[] {
             return finish(request, empty(403));
           }
 
+          // A child's life events are for a Community Admin only (ADR 0017). Anyone else gets the
+          // same empty 404 as for a person that does not exist, before anything is read.
+          const isAdmin = await isCommunityAdmin(tx, actor.userId);
+          if ((await personIsMinor(tx, body.personId)) === true && !isAdmin) {
+            return finish(request, empty(404));
+          }
+
           const result = await listLifeEvents(tx, deps.kms, deps.keyArn, {
             personId: body.personId,
             actorUserId: actor.userId,
+            childView: isAdmin ? "admin" : "presence",
           });
           return finish(request, Response.json(result));
         }),

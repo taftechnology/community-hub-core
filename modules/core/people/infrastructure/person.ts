@@ -35,19 +35,16 @@ type PersonInput = {
   source?: PersonSource;
 };
 
-type StoredPerson = {
+type StoredAdult = {
   id: string;
   household_id: string | null;
   version: number;
   status: string;
   source: string;
-  is_minor: boolean;
   age_basis: string;
   birthday_md: number | null;
   given_name: string | null;
   family_name: string | null;
-  given_name_restricted: Uint8Array | null;
-  family_name_restricted: Uint8Array | null;
   date_of_birth: Uint8Array | null;
   email: Uint8Array | null;
   phone: Uint8Array | null;
@@ -324,21 +321,10 @@ export type AdultReadPersonResult = {
   source: PersonSource;
 };
 
-export type MinorReadPersonResult = {
-  personId: string;
-  householdId: string | null;
-  isMinor: true;
-  ageBasis: AgeBasis;
-  birthdayMd: number | null;
-  givenName: string;
-  familyName: string;
-  email: string | null;
-  phone: string | null;
-  dateOfBirth: string | null;
-  version: number;
-};
-
-export type ReadPersonResult = AdultReadPersonResult | MinorReadPersonResult | null;
+// An adult, or null. A minor is answered as a person that does not exist: no function reads a
+// child's fields except the Community Admin's View (ADR 0017), so nothing here opens a household
+// key or decrypts a child's value, and nothing is audited as read.
+export type ReadPersonResult = AdultReadPersonResult | null;
 
 export async function readPerson(
   tx: AppTransaction,
@@ -346,24 +332,22 @@ export async function readPerson(
   keyArn: string,
   input: { personId: string; actorUserId: string | null },
 ): Promise<ReadPersonResult> {
-  const rows = await tx<StoredPerson[]>`
+  // is_minor = false is in the query, so a child's row is never loaded: its ciphertext and its
+  // household key stay shut, and the answer is the same null as for a person that is not there.
+  const rows = await tx<StoredAdult[]>`
     select
       p.id::text as id,
       case
-        when p.is_minor = true then p.household_id::text
         when h.id is not null then p.household_id::text
         else null
       end as household_id,
       p.version,
       p.status,
       p.source,
-      p.is_minor,
       p.age_basis,
       p.birthday_md,
       p.given_name,
       p.family_name,
-      p.given_name_restricted,
-      p.family_name_restricted,
       p.date_of_birth,
       p.email,
       p.phone
@@ -374,6 +358,7 @@ export async function readPerson(
       and h.community_id = current_setting('app.community_id')::uuid
       and h.deleted_at is null
     where p.id = ${input.personId}::uuid
+      and p.is_minor = false
       and p.deleted_at is null
   `;
   const row = rows[0];
@@ -382,21 +367,11 @@ export async function readPerson(
   }
   const communityId = await setting(tx, "app.community_id");
   const keys = await derivePersonFieldKeys(tx, kms, keyArn, {
-    isMinor: row.is_minor,
+    isMinor: false,
     householdId: row.household_id,
   });
-  const givenName = row.is_minor
-    ? await openField(row.given_name_restricted, keys.enc, row.id, communityId, "people.given_name")
-    : row.given_name;
-  const familyName = row.is_minor
-    ? await openField(
-        row.family_name_restricted,
-        keys.enc,
-        row.id,
-        communityId,
-        "people.family_name",
-      )
-    : row.family_name;
+  const givenName = row.given_name;
+  const familyName = row.family_name;
   if (givenName === null || familyName === null) {
     throw new Error("person name is missing");
   }
@@ -417,21 +392,6 @@ export async function readPerson(
     purpose: PERSON_READ,
     targetIds: [row.id],
   });
-  if (row.is_minor) {
-    return {
-      personId: row.id,
-      householdId: row.household_id,
-      isMinor: true,
-      ageBasis: ageBasisOf(row.age_basis),
-      birthdayMd: row.birthday_md,
-      givenName,
-      familyName,
-      email,
-      phone,
-      dateOfBirth,
-      version: row.version,
-    };
-  }
   return {
     personId: row.id,
     householdId: row.household_id,

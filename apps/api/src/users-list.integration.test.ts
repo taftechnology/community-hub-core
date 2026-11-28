@@ -641,7 +641,7 @@ describe("users list integration", () => {
     expect(rowA?.email).toBe(rowB?.email);
   });
 
-  it("minors: a minor-linked user returns minor: true and null details for community_admin and staff", async () => {
+  it("minors: a minor-linked user returns minor: true for a Community Admin and no linked contact for staff (pin 81)", async () => {
     const tenant = await createTenant();
     const owner = await setupOwner(tenant);
 
@@ -766,14 +766,17 @@ describe("users list integration", () => {
     expect(staffRawText).not.toContain("MinorGiven");
     const staffBody = JSON.parse(staffRawText) as ListUsersResponse;
     expect(listUsersResponse.safeParse(staffBody).success).toBe(true);
+    // Staff is not a Community Admin: the user is listed with no linked contact, so neither the
+    // child's person id nor the fact that the user is a child is shown.
+    expect(staffRawText).not.toContain(minorPersonId);
     const staffRow = staffBody.users.find((u) => u.userId === minorUser.userId);
     expect(staffRow).toEqual({
       userId: minorUser.userId,
-      personId: minorPersonId,
+      personId: null,
       name: null,
       email: null,
       phone: null,
-      minor: true,
+      minor: false,
     });
   });
 

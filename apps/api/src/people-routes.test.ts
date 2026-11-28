@@ -16,6 +16,7 @@ const tenancy = vi.hoisted(() => ({
 const access = vi.hoisted(() => ({
   holdsPermission: vi.fn(),
   holdsAnyGrant: vi.fn(),
+  isCommunityAdmin: vi.fn(),
   readPersonForActor: vi.fn(),
 }));
 
@@ -61,6 +62,7 @@ vi.mock("@community-hub/access", async () => {
     ...actual,
     holdsPermission: access.holdsPermission,
     holdsAnyGrant: access.holdsAnyGrant,
+    isCommunityAdmin: access.isCommunityAdmin,
     readPersonForActor: access.readPersonForActor,
   };
 });
@@ -219,6 +221,7 @@ describe("people routes (list and read)", () => {
     tenancy.findCommunityBySlug.mockReset();
     access.holdsPermission.mockReset();
     access.holdsAnyGrant.mockReset();
+    access.isCommunityAdmin.mockReset();
     access.readPersonForActor.mockReset();
     billing.assertWritable.mockReset();
     people.listPersons.mockReset();
@@ -249,6 +252,8 @@ describe("people routes (list and read)", () => {
     );
     access.holdsPermission.mockResolvedValue(true);
     access.holdsAnyGrant.mockResolvedValue(true);
+    // Not a Community Admin unless a test says so: people.restricted.read does not make one.
+    access.isCommunityAdmin.mockResolvedValue(false);
     billing.assertWritable.mockResolvedValue("ok");
   });
 
@@ -578,16 +583,15 @@ describe("people routes (list and read)", () => {
       });
     });
 
-    it("lists minors with includeRestricted=true when kind is minors and actor holds people.restricted.read (pin 3)", async () => {
+    it("lists minors with childView admin when kind is minors and the actor is a Community Admin (pin 3)", async () => {
+      access.isCommunityAdmin.mockResolvedValue(true);
       const mockMinorsResult = {
         items: [
           {
-            id: PERSON_ID,
             personId: PERSON_ID,
-            isMinor: true,
-            givenName: "Tommy",
-            familyName: "Smith",
-            version: 1,
+            label: "Child 1",
+            householdId: "00000000-0000-4000-8000-0000000000e1",
+            householdLabel: "Smith",
           },
         ],
         nextCursor: null,
@@ -601,11 +605,7 @@ describe("people routes (list and read)", () => {
 
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual(mockMinorsResult);
-      expect(access.holdsPermission).toHaveBeenCalledWith(
-        expect.anything(),
-        USER,
-        "people.restricted.read",
-      );
+      expect(access.isCommunityAdmin).toHaveBeenCalledWith(expect.anything(), USER);
       expect(people.listPersons).toHaveBeenCalledWith(
         expect.anything(),
         expect.anything(),
@@ -613,16 +613,15 @@ describe("people routes (list and read)", () => {
         {
           kind: "minors",
           cursor: null,
-          includeRestricted: true,
+          childView: "admin",
           actorUserId: USER,
         },
       );
     });
 
-    it("refuses minors mode with 403 and people.permission.denied audit when actor lacks people.restricted.read (pins 3, 4)", async () => {
-      access.holdsPermission.mockImplementation(
-        async (_tx: unknown, _userId: string, perm: string) => perm === "people.view",
-      );
+    it("refuses minors mode with 403 and people.permission.denied audit when the actor is not a Community Admin, even holding people.restricted.read (pins 3, 4)", async () => {
+      // holdsPermission answers true for every permission, people.restricted.read included.
+      access.isCommunityAdmin.mockResolvedValue(false);
 
       const res = await call("/v1/people/list", {
         communitySlug: "parish",
@@ -653,6 +652,7 @@ describe("people routes (list and read)", () => {
       expect(await resAdult.text()).toBe("");
 
       people.listPersons.mockRejectedValueOnce(new PeopleError("invalid_input"));
+      access.isCommunityAdmin.mockResolvedValue(true);
 
       const resMinor = await call("/v1/people/list", {
         communitySlug: "parish",
@@ -693,6 +693,7 @@ describe("people routes (list and read)", () => {
     });
 
     it("forwards cursor and limit to listPersons in minors mode (finding 4)", async () => {
+      access.isCommunityAdmin.mockResolvedValue(true);
       people.listPersons.mockResolvedValueOnce({ items: [], nextCursor: null });
 
       const res = await call("/v1/people/list", {
@@ -711,7 +712,7 @@ describe("people routes (list and read)", () => {
           kind: "minors",
           cursor: "cursor-minors-token",
           limit: 15,
-          includeRestricted: true,
+          childView: "admin",
           actorUserId: USER,
         },
       );

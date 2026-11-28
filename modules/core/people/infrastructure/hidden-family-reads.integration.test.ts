@@ -385,7 +385,7 @@ describe("hidden family reads", () => {
     });
   });
 
-  it("readPerson keeps the family id of a minor", async () => {
+  it("readPerson answers null for a minor and keeps the family id of an adult", async () => {
     const scope = await setupTenant("fr-minor-1");
     const family = await createHouseholdRow(scope, "Minor Fam");
     const adultId = await addAdultPerson(scope, family.householdId, "Mary", "Tester");
@@ -407,11 +407,7 @@ describe("hidden family reads", () => {
     await inScope(scope, async (tx) => {
       await expect(
         readPerson(tx, kms, KEY_ARN, { personId: minorId, actorUserId: ACTOR }),
-      ).resolves.toMatchObject({
-        personId: minorId,
-        isMinor: true,
-        householdId: family.householdId,
-      });
+      ).resolves.toBeNull();
       await expect(
         readPerson(tx, kms, KEY_ARN, { personId: adultId, actorUserId: ACTOR }),
       ).resolves.toMatchObject({

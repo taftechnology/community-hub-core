@@ -323,6 +323,7 @@ describe("hidden reads", () => {
 
     await inScope(scope, async (tx) => {
       const linked = await readLinkedContacts(tx, kms, KEY_ARN, {
+        childView: "presence",
         personIds: [visible, hidden],
         includePhone: true,
         actorUserId: newId(),
@@ -367,11 +368,19 @@ describe("hidden reads", () => {
     await hide(scope, hidden);
 
     await inScope(scope, async (tx) => {
-      const seen = await listLifeEvents(tx, kms, KEY_ARN, { personId: visible, actorUserId: null });
+      const seen = await listLifeEvents(tx, kms, KEY_ARN, {
+        childView: "presence",
+        personId: visible,
+        actorUserId: null,
+      });
       expect(seen.items).toHaveLength(1);
 
       await expect(
-        listLifeEvents(tx, kms, KEY_ARN, { personId: hidden, actorUserId: null }),
+        listLifeEvents(tx, kms, KEY_ARN, {
+          childView: "presence",
+          personId: hidden,
+          actorUserId: null,
+        }),
       ).rejects.toMatchObject({ code: "life_event_not_found" });
     });
   });

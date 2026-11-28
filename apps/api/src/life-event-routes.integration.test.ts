@@ -766,7 +766,7 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
     expect(serialisedCreateAudit).not.toContain("2019-06-01");
     expect(serialisedCreateAudit).not.toContain("baptism");
 
-    // List minor events
+    // List minor events: allPermissionsToken is the Community Admin, so it gets the ids only
     const listRes = await postRoute(
       "/v1/people/life-events/list",
       {
@@ -776,18 +776,11 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
       allPermissionsToken,
     );
     expect(listRes.status).toBe(200);
-    const listData = (await listRes.json()) as {
-      items: {
-        eventId: string;
-        type: string;
-        date: string;
-        place: string | null;
-        notes: string | null;
-      }[];
-    };
-    expect(listData.items).toHaveLength(1);
-    expect(listData.items[0]?.place).toBe(minorPlace);
-    expect(listData.items[0]?.notes).toBe(minorNotes);
+    const listText = await listRes.text();
+    expect(JSON.parse(listText)).toEqual({ items: [{ eventId: minorCreated.eventId }] });
+    for (const forbidden of [minorPlace, minorNotes, "2019-06-01", "baptism"]) {
+      expect(listText).not.toContain(forbidden);
+    }
 
     // Verify list audit row
     const [listAudit] = await directSql<{ action: string; target_ids: string[] }[]>`
@@ -843,6 +836,91 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
     );
     expect(staleRes.status).toBe(409);
     expect(await staleRes.text()).toBe("");
+  });
+
+  it("pin 37b: a child's life events are listed to a Community Admin only; a safeguarding officer gets the 404 of a missing person and no event id", async () => {
+    const officer = await signIn(`safeguarding-${newId().slice(-8)}@users.example.test`);
+    // The Community Admin of community A1 grants the role.
+    const [admin] = await directSql<{ user_id: string }[]>`
+      select user_id::text as user_id
+      from app.community_role_grants
+      where community_id = ${communityIdA1}::uuid and role_key = 'community_admin'
+      limit 1
+    `;
+    if (admin === undefined) {
+      throw new Error("community admin is missing");
+    }
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, { orgId: orgIdA, communityId: communityIdA1 }, async (tx) => {
+        await addMember(tx, officer.userId);
+        await grantRole(tx, {
+          now,
+          userId: officer.userId,
+          roleKey: "safeguarding_officer",
+          customRoleId: null,
+          actorUserId: admin.user_id,
+        });
+      }),
+    );
+
+    // A child's event, written by the Community Admin
+    const place = "Chapel of the Quillonwick Family";
+    const created = await postRoute(
+      "/v1/people/life-events/create",
+      {
+        communitySlug: slugA1,
+        personId: minorPersonA1.personId,
+        type: "first_communion",
+        date: "2025-05-18",
+        place,
+        notes: null,
+      },
+      allPermissionsToken,
+    );
+    expect(created.status).toBe(201);
+    const { eventId } = (await created.json()) as { eventId: string };
+
+    // The Community Admin lists it, as an id
+    const adminList = await postRoute(
+      "/v1/people/life-events/list",
+      { communitySlug: slugA1, personId: minorPersonA1.personId },
+      allPermissionsToken,
+    );
+    expect(adminList.status).toBe(200);
+    const adminText = await adminList.text();
+    const adminItems = (JSON.parse(adminText) as { items: Record<string, unknown>[] }).items;
+    expect(adminItems.map((item) => item.eventId)).toContain(eventId);
+    expect(adminItems.every((item) => Object.keys(item).join() === "eventId")).toBe(true);
+    expect(adminText).not.toContain(place);
+
+    // The safeguarding officer holds people.restricted.read and is not a Community Admin
+    const officerList = await postRoute(
+      "/v1/people/life-events/list",
+      { communitySlug: slugA1, personId: minorPersonA1.personId },
+      officer.accessToken,
+    );
+    expect(officerList.status).toBe(404);
+    const officerText = await officerList.text();
+    expect(officerText).toBe("");
+    expect(officerText).not.toContain(eventId);
+
+    // ...and that is the answer for a person that does not exist
+    const missing = await postRoute(
+      "/v1/people/life-events/list",
+      { communitySlug: slugA1, personId: newId() },
+      officer.accessToken,
+    );
+    expect(missing.status).toBe(404);
+    expect(await missing.text()).toBe("");
+    expect([...missing.headers.keys()].sort()).toEqual([...officerList.headers.keys()].sort());
+
+    // Control: the officer still lists an adult's events
+    const adultList = await postRoute(
+      "/v1/people/life-events/list",
+      { communitySlug: slugA1, personId: adultPersonA1.personId },
+      officer.accessToken,
+    );
+    expect(adultList.status).toBe(200);
   });
 
   it("allows birth and other event types in create, list, and update round trip", async () => {

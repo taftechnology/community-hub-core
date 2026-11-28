@@ -22,6 +22,7 @@ describe("readLinkedContacts unit", () => {
 
   it("an empty input returns an empty map with no SQL and no KMS call", async () => {
     const result = await readLinkedContacts(dummyTx, dummyKms, keyArn, {
+      childView: "presence",
       personIds: [],
       includePhone: false,
       actorUserId: validActorId,
@@ -41,6 +42,7 @@ describe("readLinkedContacts unit", () => {
     for (const invalidBatch of invalidBatches) {
       await expect(
         readLinkedContacts(dummyTx, dummyKms, keyArn, {
+          childView: "presence",
           personIds: invalidBatch,
           includePhone: false,
           actorUserId: validActorId,
@@ -53,6 +55,7 @@ describe("readLinkedContacts unit", () => {
     const goodId = newId();
     await expect(
       readLinkedContacts(dummyTx, dummyKms, keyArn, {
+        childView: "presence",
         personIds: [goodId, "not-a-uuid"],
         includePhone: false,
         actorUserId: validActorId,
@@ -63,6 +66,7 @@ describe("readLinkedContacts unit", () => {
   it("throws PeopleError with code invalid_input for non-UUID actorUserId", async () => {
     await expect(
       readLinkedContacts(dummyTx, dummyKms, keyArn, {
+        childView: "presence",
         personIds: [newId()],
         includePhone: false,
         actorUserId: "invalid-actor-uuid",
@@ -74,6 +78,7 @@ describe("readLinkedContacts unit", () => {
     const ids = Array.from({ length: 501 }, () => newId());
     await expect(
       readLinkedContacts(dummyTx, dummyKms, keyArn, {
+        childView: "presence",
         personIds: ids,
         includePhone: false,
         actorUserId: validActorId,
@@ -85,6 +90,7 @@ describe("readLinkedContacts unit", () => {
     const ids = Array.from({ length: 500 }, () => newId());
     await expect(
       readLinkedContacts(dummyTx, dummyKms, keyArn, {
+        childView: "presence",
         personIds: ids,
         includePhone: false,
         actorUserId: validActorId,
@@ -101,6 +107,7 @@ describe("readLinkedContacts unit", () => {
     }) as unknown as AppTransaction;
 
     await readLinkedContacts(fakeTx, dummyKms, keyArn, {
+      childView: "presence",
       personIds: [newId()],
       includePhone: false,
       actorUserId: validActorId,
@@ -128,6 +135,7 @@ describe("readLinkedContacts unit", () => {
     }) as unknown as AppTransaction;
 
     await readLinkedContacts(fakeTx, dummyKms, keyArn, {
+      childView: "presence",
       personIds: [newId()],
       includePhone: false,
       actorUserId: validActorId,
@@ -148,6 +156,7 @@ describe("readLinkedContacts unit", () => {
     }) as unknown as AppTransaction;
 
     await readLinkedContacts(fakeTx, dummyKms, keyArn, {
+      childView: "presence",
       personIds: [newId()],
       includePhone: false,
       actorUserId: validActorId,

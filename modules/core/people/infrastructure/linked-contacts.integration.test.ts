@@ -190,6 +190,7 @@ describe("readLinkedContacts integration", () => {
 
         await withAppTransaction(app, scope, async (tx) => {
           const result = await readLinkedContacts(tx, kms, KEY_ARN, {
+            childView: "presence",
             personIds: [adultId],
             includePhone: true,
             actorUserId,
@@ -253,6 +254,7 @@ describe("readLinkedContacts integration", () => {
         await withAppTransaction(app, scope, async (tx) => {
           const wrappedTx = recordTx(tx, statements);
           const result = await readLinkedContacts(wrappedTx, kms, KEY_ARN, {
+            childView: "admin",
             personIds: [minorId],
             includePhone: true,
             actorUserId,
@@ -320,6 +322,7 @@ describe("readLinkedContacts integration", () => {
 
         await withAppTransaction(app, scope, async (tx) => {
           const result = await readLinkedContacts(tx, kms, KEY_ARN, {
+            childView: "presence",
             personIds: [adultId],
             includePhone: false,
             actorUserId,
@@ -419,6 +422,7 @@ describe("readLinkedContacts integration", () => {
         await directSql`delete from app.audit_events where org_id = ${scope.orgId}::uuid`;
         await withAppTransaction(app, scope, async (tx) => {
           const result = await readLinkedContacts(tx, kms, KEY_ARN, {
+            childView: "presence",
             personIds: [adultWithoutPhoneId],
             includePhone: true,
             actorUserId,
@@ -438,6 +442,7 @@ describe("readLinkedContacts integration", () => {
         // 2. When one adult has a phone and one does not: exactly one audit row written with target_ids = [adultWithPhoneId]
         await withAppTransaction(app, scope, async (tx) => {
           const result = await readLinkedContacts(tx, kms, KEY_ARN, {
+            childView: "admin",
             personIds: [adultWithPhoneId, adultWithoutPhoneId, minorId],
             includePhone: true,
             actorUserId,
@@ -531,6 +536,7 @@ describe("readLinkedContacts integration", () => {
       await withAppTransaction(app, scope1, async (tx) => {
         try {
           await readLinkedContacts(tx, kms, KEY_ARN, {
+            childView: "presence",
             personIds: [adultId1],
             includePhone: true,
             actorUserId,
@@ -595,6 +601,7 @@ describe("readLinkedContacts integration", () => {
       await withAppTransaction(app, scope2, async (tx) => {
         try {
           await readLinkedContacts(tx, kms, KEY_ARN, {
+            childView: "presence",
             personIds: [personId2],
             includePhone: true,
             actorUserId,
@@ -692,6 +699,7 @@ describe("readLinkedContacts integration", () => {
         // Read from scopeA (community 1)
         await withAppTransaction(app, scopeA, async (tx) => {
           const result = await readLinkedContacts(tx, kms, KEY_ARN, {
+            childView: "presence",
             personIds: [adultA1Id, adultA2Id, adultBId],
             includePhone: false,
             actorUserId,

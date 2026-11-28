@@ -688,7 +688,7 @@ describe("listPersons", () => {
     }
   });
 
-  it("minors mode pages by id, resolves names with includeRestricted, and audits (pin 7)", async () => {
+  it("minors mode pages by id, returns labels and no names, and audits (pin 7)", async () => {
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
     const app = createPlaintextAppSql(roleUrl(runtime, "app"));
@@ -742,11 +742,11 @@ describe("listPersons", () => {
         { orgId: scope.orgId, communityId: scope.communityId },
         async (tx) => {
           await withRequest({ requestId: REQUEST_ID }, async () => {
-            // 1. Minors mode without includeRestricted = true throws invalid_input with no audit row (Deviation 7)
+            // 1. Minors mode without childView "admin" throws invalid_input with no audit row (Deviation 7)
             await expect(
               listPersons(tx, kms, KEY_ARN, {
                 kind: "minors",
-                includeRestricted: false,
+                childView: "presence",
                 actorUserId,
               }),
             ).rejects.toMatchObject({ code: "invalid_input" });
@@ -755,7 +755,7 @@ describe("listPersons", () => {
               listPersons(tx, kms, KEY_ARN, {
                 kind: "minors",
                 actorUserId,
-              }),
+              } as never),
             ).rejects.toMatchObject({ code: "invalid_input" });
 
             const auditsBefore = await tx<{ n: number }[]>`
@@ -765,24 +765,26 @@ describe("listPersons", () => {
             `;
             expect(auditsBefore).toEqual([{ n: 0 }]);
 
-            // 2. Minors mode with includeRestricted: names decrypted
-            const resDecrypted = await listPersons(tx, kms, KEY_ARN, {
+            // 2. Minors mode with childView "admin": labels, no names
+            const resLabelled = await listPersons(tx, kms, KEY_ARN, {
               kind: "minors",
-              includeRestricted: true,
+              childView: "admin",
               actorUserId,
             });
-            expect(resDecrypted.items).toHaveLength(2);
-            expect(resDecrypted.items[0]?.version).toBe(1);
-            expect(resDecrypted.items[1]?.version).toBe(1);
-            const names = resDecrypted.items.map((it) => `${it.givenName} ${it.familyName}`);
-            expect(names).toContain("ChildOne MinorFamily");
-            expect(names).toContain("ChildTwo MinorFamily");
+            expect(resLabelled.items).toHaveLength(2);
+            expect(resLabelled.items.map((it) => it.label).sort()).toEqual(["Child 1", "Child 2"]);
+            expect(resLabelled.items.every((it) => it.householdLabel === "Minor Household")).toBe(
+              true,
+            );
+            for (const forbidden of ["ChildOne", "ChildTwo", "MinorFamily"]) {
+              expect(JSON.stringify(resLabelled)).not.toContain(forbidden);
+            }
 
             // 3. Minors mode keyset paging by id
             const page1 = await listPersons(tx, kms, KEY_ARN, {
               kind: "minors",
               limit: 1,
-              includeRestricted: true,
+              childView: "admin",
               actorUserId,
             });
             expect(page1.items).toHaveLength(1);
@@ -792,12 +794,12 @@ describe("listPersons", () => {
               kind: "minors",
               limit: 1,
               cursor: page1.nextCursor,
-              includeRestricted: true,
+              childView: "admin",
               actorUserId,
             });
             expect(page2.items).toHaveLength(1);
             expect(page2.nextCursor).toBeNull();
-            expect(page2.items[0]!.id).not.toBe(page1.items[0]!.id);
+            expect(page2.items[0]!.personId).not.toBe(page1.items[0]!.personId);
           });
         },
       );
@@ -827,14 +829,9 @@ describe("listPersons", () => {
         expect(Array.isArray(ev.target_ids)).toBe(true);
       }
 
-      // Check that people.person.read was recorded by readRosterNames on decrypt
+      // Nothing of a child is decrypted any more, so no people.person.read event is written
       const readEvents = auditRows.filter((r) => r.action === "people.person.read");
-      expect(readEvents.length).toBeGreaterThanOrEqual(1);
-      for (const ev of readEvents) {
-        expect(ev.purpose).toBe("people.person.read");
-        expect(Array.isArray(ev.target_ids)).toBe(true);
-        expect(ev.target_ids.length).toBeGreaterThan(0);
-      }
+      expect(readEvents).toHaveLength(0);
     } finally {
       await cleanScope(directSql, scope);
       await directSql.end({ timeout: 1 });
@@ -1435,7 +1432,7 @@ describe("listPersons", () => {
     }
   });
 
-  it("listPersons: a minor item has exactly the minor keys", async () => {
+  it("listPersons: a minor item has exactly the label keys", async () => {
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
     const app = createPlaintextAppSql(roleUrl(runtime, "app"));
@@ -1477,19 +1474,12 @@ describe("listPersons", () => {
           await withRequest({ requestId: REQUEST_ID }, async () => {
             const res = await listPersons(tx, kms, KEY_ARN, {
               kind: "minors",
-              includeRestricted: true,
+              childView: "admin",
               actorUserId,
             });
             expect(res.items).toHaveLength(1);
             const item = res.items[0]!;
-            const expectedKeys = [
-              "familyName",
-              "givenName",
-              "id",
-              "isMinor",
-              "personId",
-              "version",
-            ].sort();
+            const expectedKeys = ["householdId", "householdLabel", "label", "personId"].sort();
             expect(Object.keys(item).sort()).toEqual(expectedKeys);
           });
         },
@@ -1776,7 +1766,7 @@ describe("listPersons", () => {
     }
   });
 
-  it("listPersons: the minors list is unchanged", async () => {
+  it("listPersons: the minors list carries no field of a child", async () => {
     const runtime = loadRuntime();
     const platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
     const app = createPlaintextAppSql(roleUrl(runtime, "app"));
@@ -1818,18 +1808,32 @@ describe("listPersons", () => {
           await withRequest({ requestId: REQUEST_ID }, async () => {
             const res = await listPersons(tx, kms, KEY_ARN, {
               kind: "minors",
-              includeRestricted: true,
+              childView: "admin",
               actorUserId,
             });
             expect(res.items).toHaveLength(1);
             const itm = res.items[0]!;
-            expect(itm.isMinor).toBe(true);
-            expect(itm).not.toHaveProperty("email");
-            expect(itm).not.toHaveProperty("phone");
-            expect(itm).not.toHaveProperty("age");
-            expect(itm).not.toHaveProperty("createdAt");
-            expect(itm).not.toHaveProperty("status");
-            expect(itm).not.toHaveProperty("source");
+            expect(itm.label).toBe("Child 1");
+            for (const field of [
+              "isMinor",
+              "id",
+              "givenName",
+              "familyName",
+              "version",
+              "email",
+              "phone",
+              "dateOfBirth",
+              "age",
+              "createdAt",
+              "status",
+              "source",
+            ]) {
+              expect(itm).not.toHaveProperty(field);
+            }
+            // The family label (set above) names the child; the item itself must not.
+            expect(JSON.stringify({ ...itm, householdLabel: null })).not.toContain(
+              "UnchangedMinor",
+            );
 
             const events = await tx<{ id: string }[]>`
               select id::text as id

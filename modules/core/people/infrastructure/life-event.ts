@@ -4,6 +4,7 @@ import { decrypt, encrypt, type Ciphertext, type KmsPort } from "@community-hub/
 import { appendAuditEvent, newId, type AppTransaction } from "@community-hub/db";
 import { recordSuccess } from "@community-hub/usage";
 
+import { type ChildView, isChildView } from "../domain/child-view.js";
 import { PeopleError } from "../domain/error.js";
 import { validateLifeEventInput, type LifeEventType } from "../domain/life-event.js";
 import { derivePersonFieldKeys } from "./person-keys.js";
@@ -15,6 +16,7 @@ const LIFE_EVENT_UPDATED = "people.life_event.updated";
 export type ListLifeEventsInput = {
   personId: string;
   actorUserId: string | null;
+  childView: ChildView;
   now?: Date;
 };
 
@@ -29,6 +31,16 @@ export type LifeEventItem = {
 
 export type ListLifeEventsResult = {
   items: LifeEventItem[];
+};
+
+// A child's life event as the Community Admin's list shows it: the id and nothing else. Type, date,
+// place and notes are read one at a time through the View (ADR 0017).
+export type MinorLifeEventItem = {
+  eventId: string;
+};
+
+export type LifeEventListing = {
+  items: (LifeEventItem | MinorLifeEventItem)[];
 };
 
 export type CreateLifeEventInput = {
@@ -143,12 +155,30 @@ async function openField(
   return new TextDecoder().decode(plain);
 }
 
+// Under "presence" only an adult's events can be listed, so the rows are always LifeEventItem. A
+// child's events are refused as for a person that does not exist. Under "admin" a child's events
+// come back as ids only.
+export async function listLifeEvents(
+  tx: AppTransaction,
+  kms: KmsPort,
+  keyArn: string,
+  input: ListLifeEventsInput & { childView: "presence" },
+): Promise<ListLifeEventsResult>;
 export async function listLifeEvents(
   tx: AppTransaction,
   kms: KmsPort,
   keyArn: string,
   input: ListLifeEventsInput,
-): Promise<ListLifeEventsResult> {
+): Promise<LifeEventListing>;
+export async function listLifeEvents(
+  tx: AppTransaction,
+  kms: KmsPort,
+  keyArn: string,
+  input: ListLifeEventsInput,
+): Promise<LifeEventListing> {
+  if (!isChildView(input.childView)) {
+    throw new PeopleError("invalid_input");
+  }
   const persons = await tx<
     {
       id: string;
@@ -166,6 +196,32 @@ export async function listLifeEvents(
   const person = persons[0];
   if (person === undefined) {
     throw new PeopleError("life_event_not_found");
+  }
+
+  if (person.is_minor) {
+    if (input.childView !== "admin") {
+      throw new PeopleError("life_event_not_found");
+    }
+    const ids = await tx<{ id: string }[]>`
+      select id::text as id
+      from app.life_events
+      where person_id = ${person.id}::uuid
+        and org_id = current_setting('app.org_id')::uuid
+        and community_id = current_setting('app.community_id')::uuid
+      order by id asc
+    `;
+    if (ids.length > 50) {
+      throw new PeopleError("too_many");
+    }
+    const childRecorded = actor(input.actorUserId);
+    await appendAuditEvent(tx, {
+      actorKind: childRecorded.actorKind,
+      actorId: childRecorded.actorId,
+      action: LIFE_EVENT_LISTED,
+      purpose: LIFE_EVENT_LISTED,
+      targetIds: ids.length === 0 ? [person.id] : ids.map((row) => row.id),
+    });
+    return { items: ids.map((row) => ({ eventId: row.id })) };
   }
 
   const rows = await tx<StoredLifeEvent[]>`
@@ -187,7 +243,7 @@ export async function listLifeEvents(
 
   const communityId = await setting(tx, "app.community_id");
   const keys = await derivePersonFieldKeys(tx, kms, keyArn, {
-    isMinor: person.is_minor,
+    isMinor: false,
     householdId: person.household_id,
   });
 

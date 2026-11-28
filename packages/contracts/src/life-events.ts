@@ -106,9 +106,17 @@ export const lifeEventItemSchema = z
   })
   .strict();
 
+// A child's life event in the list: the id only. Its type, date, place and notes are read one at a
+// time through the Community Admin's View (ADR 0017).
+export const minorLifeEventItemSchema = z
+  .object({
+    eventId: uuid,
+  })
+  .strict();
+
 export const listLifeEventsResponse = z
   .object({
-    items: z.array(lifeEventItemSchema),
+    items: z.array(z.union([lifeEventItemSchema, minorLifeEventItemSchema])),
   })
   .strict();
 
@@ -126,6 +134,7 @@ export const updateLifeEventResponse = z
   .strict();
 
 export type LifeEventItem = z.infer<typeof lifeEventItemSchema>;
+export type MinorLifeEventItem = z.infer<typeof minorLifeEventItemSchema>;
 export type ListLifeEventsResponse = z.infer<typeof listLifeEventsResponse>;
 export type CreateLifeEventResponse = z.infer<typeof createLifeEventResponse>;
 export type UpdateLifeEventResponse = z.infer<typeof updateLifeEventResponse>;
