@@ -19,8 +19,7 @@ import {
   createPlaintextPlatformSql,
 } from "@community-hub/db/plaintext";
 import { assignPlan, upsertPlan } from "@community-hub/entitlements";
-import type { OtpMail } from "@community-hub/identity";
-import { startEmailOtp, verifyEmailOtp } from "@community-hub/identity";
+import { signInWithTotpInProcess } from "./test-support/second-factor.js";
 import { withRequest } from "@community-hub/kernel";
 import {
   addMinor,
@@ -131,15 +130,6 @@ function envFor(port: number): ServiceEnv {
   return read.env;
 }
 
-class MemoryMail implements OtpMail {
-  last: { to: string; code: string } | undefined;
-
-  send(input: { to: string; code: string }): Promise<void> {
-    this.last = input;
-    return Promise.resolve();
-  }
-}
-
 function post(
   pathName: string,
   body: unknown,
@@ -193,7 +183,6 @@ describe("family parity routes against a real database", () => {
   let app: ReturnType<typeof createPlaintextAppSql>;
   let migrator: ReturnType<typeof createPlaintextDirectSql>;
   let kms: ReturnType<typeof createLocalKmsPort>;
-  let mail: MemoryMail;
   let server: Server;
   let counter = 0;
   const userIds: string[] = [];
@@ -212,15 +201,7 @@ describe("family parity routes against a real database", () => {
   };
 
   async function signIn(email: string): Promise<Session> {
-    await startEmailOtp(identity, kms, KEY_ARN, mail, { email, now });
-    const session = await verifyEmailOtp(identity, kms, KEY_ARN, {
-      email,
-      code: mail.last?.code ?? "",
-      now,
-    });
-    if (session === null) {
-      throw new Error(`Failed to sign in for ${email}`);
-    }
+    const session = await signInWithTotpInProcess(identity, kms, KEY_ARN, email, now);
     userIds.push(session.userId);
     return session;
   }
@@ -239,7 +220,6 @@ describe("family parity routes against a real database", () => {
     app = createPlaintextAppSql(roleUrl(runtime, "app"));
     migrator = createPlaintextDirectSql(runtime.productOnlyUrl);
     kms = createLocalKmsPort();
-    mail = new MemoryMail();
     await identity`delete from identity.identity_keys`;
 
     const deps: HouseholdDeps = {
@@ -277,6 +257,8 @@ describe("family parity routes against a real database", () => {
       });
     }
     for (const uid of userIds) {
+      await identity`delete from identity.backup_codes where user_id = ${uid}::uuid`;
+      await identity`delete from identity.totp_credentials where user_id = ${uid}::uuid`;
       await identity`delete from identity.sessions where user_id = ${uid}::uuid`;
       await identity`delete from identity.users where id = ${uid}::uuid`;
     }

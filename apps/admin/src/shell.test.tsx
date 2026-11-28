@@ -140,6 +140,7 @@ describe("Shell and ShellLayout", () => {
       "Dashboard",
       "General Settings",
       "Users & Roles",
+      "Security",
       "Module Toggles",
     ]);
 
@@ -149,6 +150,9 @@ describe("Shell and ShellLayout", () => {
     );
     expect(within(nav).getByRole("link", { name: "Users & Roles" }).getAttribute("href")).toBe(
       "/settings/users",
+    );
+    expect(within(nav).getByRole("link", { name: "Security" }).getAttribute("href")).toBe(
+      "/settings/security",
     );
     expect(within(nav).getByRole("link", { name: "Module Toggles" }).getAttribute("href")).toBe(
       "/settings/modules",
@@ -217,6 +221,7 @@ describe("Shell and ShellLayout", () => {
       "Family Records",
       "General Settings",
       "Users & Roles",
+      "Security",
       "Module Toggles",
     ]);
 
@@ -284,6 +289,7 @@ describe("Shell and ShellLayout", () => {
       "Family Records",
       "General Settings",
       "Users & Roles",
+      "Security",
       "Module Toggles",
     ]);
 

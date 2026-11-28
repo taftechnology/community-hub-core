@@ -17,8 +17,7 @@ import {
 } from "@community-hub/db/plaintext";
 import { getPublishedServiceTimes } from "@community-hub/engagement";
 import { assignPlan, upsertPlan } from "@community-hub/entitlements";
-import type { OtpMail } from "@community-hub/identity";
-import { startEmailOtp, verifyEmailOtp } from "@community-hub/identity";
+import { signInWithTotpInProcess } from "./test-support/second-factor.js";
 import { withRequest } from "@community-hub/kernel";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -118,15 +117,6 @@ function envFor(port: number): ServiceEnv {
   return read.env;
 }
 
-class MemoryMail implements OtpMail {
-  last: { to: string; code: string } | undefined;
-
-  send(input: { to: string; code: string }): Promise<void> {
-    this.last = input;
-    return Promise.resolve();
-  }
-}
-
 describe("engagement routes integration tests (real DB, Round trip)", () => {
   const now = new Date("2026-11-01T12:00:00Z");
   let identity: ReturnType<typeof createPlaintextIdentitySql>;
@@ -134,7 +124,6 @@ describe("engagement routes integration tests (real DB, Round trip)", () => {
   let app: ReturnType<typeof createPlaintextAppSql>;
   let directSql: ReturnType<typeof createPlaintextDirectSql>;
   let kms: ReturnType<typeof createLocalKmsPort>;
-  let mail: MemoryMail;
   let server: Server;
 
   const orgIdA = newId();
@@ -166,15 +155,7 @@ describe("engagement routes integration tests (real DB, Round trip)", () => {
   };
 
   async function signIn(email: string): Promise<{ userId: string; accessToken: string }> {
-    await startEmailOtp(identity, kms, KEY_ARN, mail, { email, now });
-    const session = await verifyEmailOtp(identity, kms, KEY_ARN, {
-      email,
-      code: mail.last?.code ?? "",
-      now,
-    });
-    if (session === null) {
-      throw new Error("Failed to sign in");
-    }
+    const session = await signInWithTotpInProcess(identity, kms, KEY_ARN, email, now);
     userIds.push(session.userId);
     return session;
   }
@@ -210,7 +191,6 @@ describe("engagement routes integration tests (real DB, Round trip)", () => {
     app = createPlaintextAppSql(roleUrl(runtime, "app"));
     directSql = createPlaintextDirectSql(runtime.productOnlyUrl);
     kms = createLocalKmsPort();
-    mail = new MemoryMail();
     await identity`delete from identity.identity_keys`;
 
     const env = envFor(PORT);
@@ -321,6 +301,8 @@ describe("engagement routes integration tests (real DB, Round trip)", () => {
       server?.close(() => resolve());
     });
     if (userIds.length > 0) {
+      await identity`delete from identity.backup_codes where user_id in ${identity(userIds)}`;
+      await identity`delete from identity.totp_credentials where user_id in ${identity(userIds)}`;
       await identity`delete from identity.sessions where user_id in ${identity(userIds)}`;
       await identity`delete from identity.users where id in ${identity(userIds)}`;
     }

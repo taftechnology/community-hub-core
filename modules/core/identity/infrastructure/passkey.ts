@@ -5,7 +5,9 @@ import type { Sql, TransactionSql } from "postgres";
 
 import { decodeCbor, decodeCoseEc2 } from "../domain/cbor.js";
 import { IdentityError } from "../domain/error.js";
-import { createSession, type SessionTokens } from "./session.js";
+import { deriveIdentityEmailKeys } from "./email-lookup.js";
+import { lockSecondFactor } from "./second-factor-lock.js";
+import { createSessionInTransaction, type SessionTokens } from "./session.js";
 
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
 const MAX_CREDENTIAL_ID_BYTES = 1023;
@@ -42,13 +44,14 @@ export type PasskeyBeforeStore = (
 ) => Promise<void> | void;
 
 export async function beginPasskeyRegistration(
-  sql: Sql,
+  sql: Sql | TransactionSql,
   input: {
     userId: string;
     rpId: string;
     now: Date;
-    userVerification?: "preferred" | "required";
-    excludeExisting?: boolean;
+    userVerification?: "preferred" | "required" | undefined;
+    excludeExisting?: boolean | undefined;
+    requireUserVerified?: boolean | undefined;
   },
 ): Promise<PasskeyRegistrationOptions> {
   const users = await sql<{ id: string }[]>`
@@ -78,11 +81,13 @@ export async function beginPasskeyRegistration(
     authenticatorSelection: { userVerification, residentKey: "required" },
   };
   if (input.excludeExisting) {
+    const requireUserVerified = input.requireUserVerified ?? false;
     const existing = await sql<{ credential_id: Uint8Array }[]>`
       select credential_id
       from identity.passkey_credentials
       where user_id = ${input.userId}
         and rp_id = ${input.rpId}
+        and (not ${requireUserVerified} or user_verified)
     `;
     options.excludeCredentials = existing.map((c) => ({
       type: "public-key",
@@ -100,9 +105,10 @@ export async function finishPasskeyRegistration(
     now: Date;
     clientDataJSON: Uint8Array;
     attestationObject: Uint8Array;
-    acceptLegacy?: boolean;
-    onStored?: PasskeyOnStored;
-    beforeStore?: PasskeyBeforeStore;
+    acceptLegacy?: boolean | undefined;
+    requireUvFlag?: boolean | undefined;
+    onStored?: PasskeyOnStored | undefined;
+    beforeStore?: PasskeyBeforeStore | undefined;
   },
 ): Promise<void> {
   const acceptLegacy = input.acceptLegacy ?? true;
@@ -130,7 +136,10 @@ export async function finishPasskeyRegistration(
   if ((auth.flags & UP) === 0 || (auth.flags & AT) === 0) {
     throw new IdentityError("invalid_ceremony");
   }
-  if (row.user_verification === "required" && (auth.flags & UV) === 0) {
+  if (
+    (row.user_verification === "required" || input.requireUvFlag === true) &&
+    (auth.flags & UV) === 0
+  ) {
     throw new IdentityError("invalid_ceremony");
   }
 
@@ -170,14 +179,18 @@ export async function finishPasskeyRegistration(
         await input.beforeStore(tx, { userId: input.userId });
       }
       await tx`
-        insert into identity.passkey_credentials (id, user_id, credential_id, cose_key, sign_count, rp_id)
+        insert into identity.passkey_credentials (
+          id, user_id, credential_id, cose_key, sign_count, rp_id, user_verified, created_at
+        )
         values (
           ${newId()},
           ${input.userId},
           ${credentialId},
           ${coseKey},
           ${auth.signCount},
-          ${input.rpId}
+          ${input.rpId},
+          ${(auth.flags & UV) !== 0},
+          ${now}::timestamptz
         )
       `;
       if (input.onStored !== undefined) {
@@ -193,20 +206,22 @@ export async function finishPasskeyRegistration(
 }
 
 export async function beginPasskeyAuthentication(
-  sql: Sql,
+  sql: Sql | TransactionSql,
   input: {
     rpId: string;
     now: Date;
-    userVerification?: "preferred" | "required";
+    userVerification?: "preferred" | "required" | undefined;
+    challengeUserId?: string | undefined;
   },
 ): Promise<PasskeyAuthenticationOptions> {
   const userVerification = input.userVerification ?? "preferred";
+  const challengeUserId = input.challengeUserId ?? null;
   const challenge = new Uint8Array(32);
   crypto.getRandomValues(challenge);
   const expiresAt = new Date(input.now.getTime() + FIVE_MINUTES_MS).toISOString();
   await sql`
     insert into identity.passkey_challenges (id, user_id, kind, challenge, expires_at, rp_id, user_verification)
-    values (${newId()}, null, 'authenticate', ${challenge}, ${expiresAt}::timestamptz, ${input.rpId}, ${userVerification})
+    values (${newId()}, ${challengeUserId}, 'authenticate', ${challenge}, ${expiresAt}::timestamptz, ${input.rpId}, ${userVerification})
   `;
   const options: PasskeyAuthenticationOptions = { challenge, rpId: input.rpId };
   if (userVerification === "required") {
@@ -215,31 +230,69 @@ export async function beginPasskeyAuthentication(
   return options;
 }
 
-export async function verifyPasskeyAssertion(
-  sql: Sql,
+export type VerifyPasskeyAssertionInput = {
+  rpId: string;
+  now: Date;
+  credentialId: Uint8Array;
+  clientDataJSON: Uint8Array;
+  authenticatorData: Uint8Array;
+  signature: Uint8Array;
+  acceptLegacy?: boolean | undefined;
+  requireUvFlag?: boolean | undefined;
+  requireUserVerified?: boolean | undefined;
+  challengeUserId?: string | undefined;
+  expectedUserId?: string | undefined;
+};
+
+type CredentialLookupRow = {
+  id: string;
+  user_id: string;
+  cose_key: Uint8Array;
+  sign_count: number | string;
+};
+
+async function findPasskeyCredential(
+  db: Sql | TransactionSql,
   input: {
-    rpId: string;
-    now: Date;
     credentialId: Uint8Array;
-    clientDataJSON: Uint8Array;
-    authenticatorData: Uint8Array;
-    signature: Uint8Array;
-    acceptLegacy?: boolean;
+    rpId: string;
+    acceptLegacy: boolean;
+    requireUserVerified: boolean;
   },
-): Promise<{ userId: string } | null> {
+): Promise<CredentialLookupRow[]> {
+  return db<CredentialLookupRow[]>`
+    select id, user_id, cose_key, sign_count
+    from identity.passkey_credentials
+    where credential_id = ${input.credentialId}
+      and (rp_id = ${input.rpId} or (rp_id is null and ${input.acceptLegacy}))
+      and (not ${input.requireUserVerified} or user_verified)
+  `;
+}
+
+type CheckedAssertion = {
+  credentialRowId: string;
+  userId: string;
+  challengeId: string;
+  signCount: number;
+  nowIso: string;
+};
+
+async function checkPasskeyAssertion(
+  db: Sql | TransactionSql,
+  input: VerifyPasskeyAssertionInput,
+): Promise<CheckedAssertion | null> {
   if (input.credentialId.byteLength > MAX_CREDENTIAL_ID_BYTES) {
     return null;
   }
   const acceptLegacy = input.acceptLegacy ?? true;
+  const requireUserVerified = input.requireUserVerified ?? false;
   try {
-    const credentials = await sql<
-      { id: string; user_id: string; cose_key: Uint8Array; sign_count: number | string }[]
-    >`
-      select id, user_id, cose_key, sign_count
-      from identity.passkey_credentials
-      where credential_id = ${input.credentialId}
-        and (rp_id = ${input.rpId} or (rp_id is null and ${acceptLegacy}))
-    `;
+    const credentials = await findPasskeyCredential(db, {
+      credentialId: input.credentialId,
+      rpId: input.rpId,
+      acceptLegacy,
+      requireUserVerified,
+    });
     const credential = credentials[0];
     if (credential === undefined) {
       return null;
@@ -250,15 +303,27 @@ export async function verifyPasskeyAssertion(
     }
     const challenge = decodeBase64Url(client.challenge);
     const now = input.now.toISOString();
-    const rows = await sql<{ id: string; user_verification: string }[]>`
-      select id, user_verification from identity.passkey_challenges
-      where user_id is null
-        and kind = 'authenticate'
-        and challenge = ${challenge}
-        and consumed_at is null
-        and expires_at >= ${now}::timestamptz
-        and (rp_id = ${input.rpId} or (rp_id is null and ${acceptLegacy}))
-    `;
+    const challengeUserId = input.challengeUserId ?? null;
+    const rows =
+      challengeUserId === null
+        ? await db<{ id: string; user_verification: string }[]>`
+            select id, user_verification from identity.passkey_challenges
+            where user_id is null
+              and kind = 'authenticate'
+              and challenge = ${challenge}
+              and consumed_at is null
+              and expires_at >= ${now}::timestamptz
+              and (rp_id = ${input.rpId} or (rp_id is null and ${acceptLegacy}))
+          `
+        : await db<{ id: string; user_verification: string }[]>`
+            select id, user_verification from identity.passkey_challenges
+            where user_id = ${challengeUserId}
+              and kind = 'authenticate'
+              and challenge = ${challenge}
+              and consumed_at is null
+              and expires_at >= ${now}::timestamptz
+              and (rp_id = ${input.rpId} or (rp_id is null and ${acceptLegacy}))
+          `;
     const row = rows[0];
     if (row === undefined) {
       return null;
@@ -267,7 +332,10 @@ export async function verifyPasskeyAssertion(
     if ((auth.flags & UP) === 0 || (auth.flags & AT) !== 0) {
       return null;
     }
-    if (row.user_verification === "required" && (auth.flags & UV) === 0) {
+    if (
+      (row.user_verification === "required" || input.requireUvFlag === true) &&
+      (auth.flags & UV) === 0
+    ) {
       return null;
     }
 
@@ -284,28 +352,16 @@ export async function verifyPasskeyAssertion(
     if (!signCountAccepted(stored, auth.signCount)) {
       return null;
     }
-    const consumed = await sql.begin(async (tx) => {
-      const updated = await tx<{ id: string }[]>`
-        update identity.passkey_challenges
-        set consumed_at = ${now}::timestamptz
-        where id = ${row.id}
-          and consumed_at is null
-        returning id
-      `;
-      if (updated[0] === undefined) {
-        return false;
-      }
-      await tx`
-        update identity.passkey_credentials
-        set sign_count = ${auth.signCount}
-        where id = ${credential.id}
-      `;
-      return true;
-    });
-    if (!consumed) {
+    if (input.expectedUserId !== undefined && credential.user_id !== input.expectedUserId) {
       return null;
     }
-    return { userId: credential.user_id };
+    return {
+      credentialRowId: credential.id,
+      userId: credential.user_id,
+      challengeId: row.id,
+      signCount: auth.signCount,
+      nowIso: now,
+    };
   } catch (error) {
     if (error instanceof IdentityError && error.code === "invalid_ceremony") {
       return null;
@@ -314,6 +370,58 @@ export async function verifyPasskeyAssertion(
   }
 }
 
+async function consumeAssertionInTx(
+  tx: TransactionSql,
+  checked: CheckedAssertion,
+): Promise<{ userId: string; credentialRowId: string } | null> {
+  const updated = await tx<{ id: string }[]>`
+    update identity.passkey_challenges
+    set consumed_at = ${checked.nowIso}::timestamptz
+    where id = ${checked.challengeId}
+      and consumed_at is null
+    returning id
+  `;
+  if (updated[0] === undefined) {
+    return null;
+  }
+  await tx`
+    update identity.passkey_credentials
+    set sign_count = ${checked.signCount}
+    where id = ${checked.credentialRowId}
+  `;
+  return { userId: checked.userId, credentialRowId: checked.credentialRowId };
+}
+
+export async function verifyPasskeyAssertion(
+  sql: Sql,
+  input: VerifyPasskeyAssertionInput,
+): Promise<{ userId: string } | null> {
+  const checked = await checkPasskeyAssertion(sql, input);
+  if (checked === null) {
+    return null;
+  }
+  const consumed = await sql.begin((tx) => consumeAssertionInTx(tx, checked));
+  return consumed === null ? null : { userId: consumed.userId };
+}
+
+// Internal helper; not exported from public/.
+export async function verifyPasskeyAssertionInTx(
+  tx: TransactionSql,
+  input: VerifyPasskeyAssertionInput,
+): Promise<{ userId: string; credentialRowId: string } | null> {
+  const checked = await checkPasskeyAssertion(tx, input);
+  if (checked === null) {
+    return null;
+  }
+  return consumeAssertionInTx(tx, checked);
+}
+
+class TenantAuthRefusedError extends Error {}
+
+// The tenant passkey sign-in, and the only function in this file that creates a session. It has
+// no other mode: the credential must be a user-verified passkey of the admin host, the assertion
+// must carry the user-verified flag, and the session it creates always has its factor and a
+// fresh factor set.
 export async function finishPasskeyAuthentication(
   sql: Sql,
   kms: KmsPort,
@@ -325,14 +433,74 @@ export async function finishPasskeyAuthentication(
     clientDataJSON: Uint8Array;
     authenticatorData: Uint8Array;
     signature: Uint8Array;
-    acceptLegacy?: boolean;
+    tenant: { adminRpId: string };
   },
 ): Promise<SessionTokens | null> {
-  const verified = await verifyPasskeyAssertion(sql, input);
-  if (verified === null) {
+  // The type requires `tenant`. A caller that gets round the type is refused, never given a session.
+  if (!input.tenant || input.rpId !== input.tenant.adminRpId) {
     return null;
   }
-  return createSession(sql, kms, keyArn, { userId: verified.userId, now: input.now });
+  if (input.credentialId.byteLength > MAX_CREDENTIAL_ID_BYTES) {
+    return null;
+  }
+  const adminRpId = input.tenant.adminRpId;
+  const initialRows = await findPasskeyCredential(sql, {
+    credentialId: input.credentialId,
+    rpId: input.rpId,
+    acceptLegacy: false,
+    requireUserVerified: true,
+  });
+  const initial = initialRows[0];
+  if (initial === undefined) {
+    return null;
+  }
+
+  const keys = await deriveIdentityEmailKeys(sql, kms, keyArn);
+  try {
+    return await sql.begin(async (tx) => {
+      await lockSecondFactor(tx, initial.user_id);
+      const verified = await verifyPasskeyAssertionInTx(tx, {
+        rpId: input.rpId,
+        now: input.now,
+        credentialId: input.credentialId,
+        clientDataJSON: input.clientDataJSON,
+        authenticatorData: input.authenticatorData,
+        signature: input.signature,
+        acceptLegacy: false,
+        requireUvFlag: true,
+        requireUserVerified: true,
+      });
+      if (verified === null) {
+        return null;
+      }
+      const rechecked = await findPasskeyCredential(tx, {
+        credentialId: input.credentialId,
+        rpId: adminRpId,
+        acceptLegacy: false,
+        requireUserVerified: true,
+      });
+      const recheckRow = rechecked[0];
+      if (
+        recheckRow === undefined ||
+        recheckRow.id !== verified.credentialRowId ||
+        recheckRow.user_id !== verified.userId
+      ) {
+        throw new TenantAuthRefusedError();
+      }
+      return createSessionInTransaction(tx, keys.bidx, {
+        userId: verified.userId,
+        now: input.now,
+        kind: "tenant",
+        factor: "passkey_uv",
+        freshFactorAt: input.now,
+      });
+    });
+  } catch (error) {
+    if (error instanceof TenantAuthRefusedError) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 function originMatches(origin: string, rpId: string): boolean {

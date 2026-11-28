@@ -3540,6 +3540,45 @@ describe("startOperatorEnrolment and verifyOperatorEnrolment", () => {
       `;
       expect(Number(sessions?.count ?? 0)).toBe(0);
     });
+
+    // Pin 70
+    it("an operator passkey with user_verified false still signs in to ops", async () => {
+      const now = new Date("2026-10-24T12:00:00.000Z");
+      const op = await createActiveOperator("op-pin70@example.test", now);
+      const cred = op.credentials[0]!;
+
+      await directSql`
+        update identity.passkey_credentials
+        set user_verified = false
+        where user_id = ${op.userId}
+          and credential_id = ${cred.credentialId}
+      `;
+
+      const auth = await beginOperatorAuthentication(identitySql, {
+        opsRpId: op.opsRpId,
+        now,
+      });
+      const authData = authenticatorData({ rpId: op.opsRpId, signCount: 1, flags: 0x05 });
+      const client = clientData("webauthn.get", auth.challenge, `https://${op.opsRpId}`);
+      const sig = await cred.key.sign(concat([authData, sha256(client)]));
+
+      const tokens = await finishOperatorAuthentication(identitySql, kms, KEY_ARN, {
+        opsRpId: op.opsRpId,
+        now,
+        credentialId: cred.credentialId,
+        clientDataJSON: client,
+        authenticatorData: authData,
+        signature: sig,
+      });
+      expect(tokens).not.toBeNull();
+      expect(tokens!.userId).toBe(op.userId);
+
+      const read = await readOperatorSession(identitySql, kms, KEY_ARN, {
+        accessToken: tokens!.accessToken,
+        now,
+      });
+      expect(read).toEqual({ userId: op.userId, roles: ["platform_admin"] });
+    });
   });
 
   describe("readOperatorSession, refreshOperatorSession and endOperatorSession", () => {
@@ -3670,6 +3709,7 @@ describe("startOperatorEnrolment and verifyOperatorEnrolment", () => {
           userId: op.userId,
           now,
           kind: "tenant",
+          factor: "otp_totp",
         });
         const tenantRead = await readOperatorSession(identitySql, kms, KEY_ARN, {
           accessToken: tenantSession.accessToken,
@@ -4101,6 +4141,7 @@ describe("startOperatorEnrolment and verifyOperatorEnrolment", () => {
         userId: user.userId,
         now,
         kind: "tenant",
+        factor: "otp_totp",
       });
 
       await endOperatorSession(identitySql, kms, KEY_ARN, {

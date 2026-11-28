@@ -1,15 +1,38 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  adminSessionAnswer,
   endSessionBody,
+  firstFactorBackupCodesAnswer,
+  freshPasskeyOptionsBody,
+  freshPasskeyVerifyBody,
+  freshTotpBody,
+  passkeyAuthenticateOptionsAnswer,
   passkeyAuthenticateOptionsBody,
   passkeyAuthenticateVerifyBody,
+  passkeyRegisterOptionsAnswer,
   passkeyRegisterOptionsBody,
   passkeyRegisterVerifyBody,
   refreshSessionBody,
+  regenerateBackupCodesAnswer,
+  regenerateBackupCodesBody,
+  removePasskeyBody,
+  removeTotpBody,
+  secondFactorListAnswer,
+  secondFactorPasskeyOptionsBody,
+  secondFactorPasskeyVerifyBody,
+  secondFactorVerifyAnswer,
+  secondFactorVerifyBody,
   startEmailOtpBody,
+  totpConfirmBody,
+  totpStartAnswer,
+  totpStartBody,
+  verifyEmailOtpAnswer,
   verifyEmailOtpBody,
 } from "./auth.js";
+
+// A stand-in for a TOTP key. It is built at run time, so no key-shaped literal sits in the source.
+const SYNTHETIC_KEY = "A".repeat(32);
 
 describe("auth bodies", () => {
   it("accepts an email start and rejects an unknown key", () => {
@@ -41,5 +64,230 @@ describe("auth bodies", () => {
     expect(refreshSessionBody.safeParse({ refreshToken: "a", extra: 1 }).success).toBe(false);
     expect(endSessionBody.safeParse({}).success).toBe(true);
     expect(endSessionBody.safeParse({ extra: 1 }).success).toBe(false);
+  });
+
+  it("validates second-factor request bodies strictly", () => {
+    expect(secondFactorVerifyBody.safeParse({ method: "totp", code: "123456" }).success).toBe(true);
+    expect(
+      secondFactorVerifyBody.safeParse({ method: "backup_code", code: "ABCD-EFGH-IJKL" }).success,
+    ).toBe(true);
+    expect(secondFactorVerifyBody.safeParse({ method: "email", code: "12345678" }).success).toBe(
+      false,
+    );
+    expect(
+      secondFactorVerifyBody.safeParse({ method: "totp", code: "123456", extra: true }).success,
+    ).toBe(false);
+
+    expect(secondFactorPasskeyOptionsBody.safeParse({}).success).toBe(true);
+    expect(secondFactorPasskeyOptionsBody.safeParse({ extra: 1 }).success).toBe(false);
+    expect(
+      secondFactorPasskeyVerifyBody.safeParse({
+        credentialId: "a",
+        clientDataJSON: "b",
+        authenticatorData: "c",
+        signature: "d",
+      }).success,
+    ).toBe(true);
+    expect(
+      secondFactorPasskeyVerifyBody.safeParse({
+        credentialId: "a",
+        clientDataJSON: "b",
+        authenticatorData: "c",
+        signature: "d",
+        extra: 1,
+      }).success,
+    ).toBe(false);
+
+    expect(totpStartBody.safeParse({}).success).toBe(true);
+    expect(totpStartBody.safeParse({ extra: 1 }).success).toBe(false);
+    expect(totpConfirmBody.safeParse({ code: "123456" }).success).toBe(true);
+    expect(totpConfirmBody.safeParse({ code: "123456", extra: 1 }).success).toBe(false);
+
+    expect(freshTotpBody.safeParse({ code: "123456" }).success).toBe(true);
+    expect(freshTotpBody.safeParse({ code: "123456", extra: 1 }).success).toBe(false);
+    expect(freshPasskeyOptionsBody.safeParse({}).success).toBe(true);
+    expect(freshPasskeyOptionsBody.safeParse({ extra: 1 }).success).toBe(false);
+    expect(
+      freshPasskeyVerifyBody.safeParse({
+        credentialId: "a",
+        clientDataJSON: "b",
+        authenticatorData: "c",
+        signature: "d",
+        extra: 1,
+      }).success,
+    ).toBe(false);
+
+    expect(removeTotpBody.safeParse({}).success).toBe(true);
+    expect(removeTotpBody.safeParse({ extra: 1 }).success).toBe(false);
+    expect(
+      removePasskeyBody.safeParse({
+        passkeyId: "00000000-0000-4000-8000-000000000001",
+      }).success,
+    ).toBe(true);
+    expect(
+      removePasskeyBody.safeParse({
+        passkeyId: "00000000-0000-4000-8000-000000000001",
+        extra: 1,
+      }).success,
+    ).toBe(false);
+    expect(regenerateBackupCodesBody.safeParse({}).success).toBe(true);
+    expect(regenerateBackupCodesBody.safeParse({ extra: 1 }).success).toBe(false);
+  });
+});
+
+describe("auth answers", () => {
+  it("the email-code verify answer rejects a payload with a refresh token", () => {
+    const valid = {
+      secondFactor: "verify",
+      methods: ["totp", "passkey", "backup_code"],
+      passkeysAvailable: true,
+      accessToken: "access-token",
+      expiresIn: 900,
+    };
+    expect(verifyEmailOtpAnswer.safeParse(valid).success).toBe(true);
+    expect(
+      verifyEmailOtpAnswer.safeParse({
+        ...valid,
+        refreshToken: "refresh-token",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("the factor list answer rejects a payload with a secret", () => {
+    const valid = {
+      totp: { confirmedAt: "2026-11-26T00:00:00.000Z" },
+      passkeys: [
+        {
+          id: "00000000-0000-4000-8000-000000000001",
+          createdAt: "2026-11-26T00:00:00.000Z",
+        },
+      ],
+      backupCodesLeft: 8,
+      freshUntil: "2026-11-26T00:05:00.000Z",
+      recoveryUntil: null,
+    };
+    expect(secondFactorListAnswer.safeParse(valid).success).toBe(true);
+    expect(
+      secondFactorListAnswer.safeParse({
+        ...valid,
+        secret: SYNTHETIC_KEY,
+      }).success,
+    ).toBe(false);
+    expect(
+      secondFactorListAnswer.safeParse({
+        ...valid,
+        totp: {
+          confirmedAt: "2026-11-26T00:00:00.000Z",
+          secret: SYNTHETIC_KEY,
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("the factor list answer carries the recovery window as an ISO time or null", () => {
+    const base = {
+      totp: { confirmedAt: "2026-11-26T00:00:00.000Z" },
+      passkeys: [],
+      backupCodesLeft: 9,
+      freshUntil: null,
+    };
+    expect(
+      secondFactorListAnswer.safeParse({ ...base, recoveryUntil: "2026-11-26T00:10:00.000Z" })
+        .success,
+    ).toBe(true);
+    expect(secondFactorListAnswer.safeParse({ ...base, recoveryUntil: null }).success).toBe(true);
+    // The field is always sent, so an answer without it is not the answer the service gives.
+    expect(secondFactorListAnswer.safeParse(base).success).toBe(false);
+    expect(secondFactorListAnswer.safeParse({ ...base, recoveryUntil: "soon" }).success).toBe(
+      false,
+    );
+    expect(secondFactorListAnswer.safeParse({ ...base, recoveryUntil: 600 }).success).toBe(false);
+    // A recovery window does not make room for a key.
+    expect(
+      secondFactorListAnswer.safeParse({
+        ...base,
+        recoveryUntil: null,
+        secret: SYNTHETIC_KEY,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("validates the remaining strict answer schemas", () => {
+    const adminSession = {
+      userId: "00000000-0000-4000-8000-000000000001",
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresIn: 900,
+    };
+    expect(adminSessionAnswer.safeParse(adminSession).success).toBe(true);
+    expect(adminSessionAnswer.safeParse({ ...adminSession, extra: 1 }).success).toBe(false);
+
+    expect(secondFactorVerifyAnswer.safeParse(adminSession).success).toBe(true);
+    expect(
+      secondFactorVerifyAnswer.safeParse({ ...adminSession, backupCodesLeft: 9 }).success,
+    ).toBe(true);
+    expect(secondFactorVerifyAnswer.safeParse({ ...adminSession, extra: 1 }).success).toBe(false);
+
+    expect(
+      totpStartAnswer.safeParse({
+        secret: SYNTHETIC_KEY,
+        otpauthUri: `otpauth://totp/Community%20Hub?secret=${SYNTHETIC_KEY}&issuer=Community%20Hub&algorithm=SHA1&digits=6&period=30`,
+      }).success,
+    ).toBe(true);
+    expect(
+      totpStartAnswer.safeParse({
+        secret: SYNTHETIC_KEY,
+        otpauthUri: "otpauth://totp/Community%20Hub",
+        extra: 1,
+      }).success,
+    ).toBe(false);
+
+    expect(
+      firstFactorBackupCodesAnswer.safeParse({
+        ...adminSession,
+        backupCodes: ["AAAAAAAAAAAA"],
+      }).success,
+    ).toBe(true);
+    expect(
+      firstFactorBackupCodesAnswer.safeParse({
+        ...adminSession,
+        backupCodes: ["AAAAAAAAAAAA"],
+        extra: 1,
+      }).success,
+    ).toBe(false);
+
+    expect(regenerateBackupCodesAnswer.safeParse({ backupCodes: ["AAAAAAAAAAAA"] }).success).toBe(
+      true,
+    );
+    expect(
+      regenerateBackupCodesAnswer.safeParse({ backupCodes: ["AAAAAAAAAAAA"], extra: 1 }).success,
+    ).toBe(false);
+
+    expect(
+      passkeyAuthenticateOptionsAnswer.safeParse({
+        challenge: "YQ",
+        rpId: "admin.au.example.test",
+        userVerification: "required",
+      }).success,
+    ).toBe(true);
+    expect(
+      passkeyAuthenticateOptionsAnswer.safeParse({
+        challenge: "YQ",
+        rpId: "admin.au.example.test",
+        userVerification: "preferred",
+      }).success,
+    ).toBe(false);
+
+    expect(
+      passkeyRegisterOptionsAnswer.safeParse({
+        challenge: "YQ",
+        rp: { id: "admin.au.example.test", name: "Community Hub" },
+        user: { id: "YQ", name: "ada@example.test", displayName: "ada@example.test" },
+        pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+        attestation: "none",
+        authenticatorSelection: { userVerification: "required", residentKey: "required" },
+        excludeCredentials: [],
+      }).success,
+    ).toBe(true);
   });
 });

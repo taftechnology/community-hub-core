@@ -13,8 +13,7 @@ import {
   createPlaintextPlatformSql,
 } from "@community-hub/db/plaintext";
 import { assignPlan, upsertPlan } from "@community-hub/entitlements";
-import type { OtpMail } from "@community-hub/identity";
-import { startEmailOtp, verifyEmailOtp } from "@community-hub/identity";
+import { signInWithTotpInProcess } from "./test-support/second-factor.js";
 import { createRequestHandler, type RequestLogFields, withRequest } from "@community-hub/kernel";
 import { createHousehold, createPerson, setPersonStatus } from "@community-hub/people";
 import { addMember as addGroupMember, createGroup } from "@community-hub/groups";
@@ -131,15 +130,6 @@ function envFor(port: number): ServiceEnv {
   return read.env;
 }
 
-class MemoryMail implements OtpMail {
-  last: { to: string; code: string } | undefined;
-
-  send(input: { to: string; code: string }): Promise<void> {
-    this.last = input;
-    return Promise.resolve();
-  }
-}
-
 function post(pathName: string, body: unknown, token?: string): Promise<Response> {
   const headers = new Headers({
     "content-type": "application/json",
@@ -169,7 +159,6 @@ describe("people routes real-database integration (finding 3)", () => {
   let platform: ReturnType<typeof createPlaintextPlatformSql>;
   let app: ReturnType<typeof createPlaintextAppSql>;
   let kms: ReturnType<typeof createLocalKmsPort>;
-  let mail: MemoryMail;
   let server: Server;
   const userIds: string[] = [];
   const capturedLogs: Array<{ message: string; fields?: Record<string, unknown> | undefined }> = [];
@@ -187,15 +176,7 @@ describe("people routes real-database integration (finding 3)", () => {
   };
 
   async function signIn(email: string): Promise<{ userId: string; accessToken: string }> {
-    await startEmailOtp(identity, kms, KEY_ARN, mail, { email, now });
-    const session = await verifyEmailOtp(identity, kms, KEY_ARN, {
-      email,
-      code: mail.last?.code ?? "",
-      now,
-    });
-    if (session === null) {
-      throw new Error(`Failed to sign in for ${email}`);
-    }
+    const session = await signInWithTotpInProcess(identity, kms, KEY_ARN, email, now);
     userIds.push(session.userId);
     return session;
   }
@@ -213,7 +194,6 @@ describe("people routes real-database integration (finding 3)", () => {
     platform = createPlaintextPlatformSql(roleUrl(runtime, "platform"));
     app = createPlaintextAppSql(roleUrl(runtime, "app"));
     kms = createLocalKmsPort();
-    mail = new MemoryMail();
     await identity`delete from identity.identity_keys`;
 
     server = startServer({
@@ -247,6 +227,8 @@ describe("people routes real-database integration (finding 3)", () => {
       });
     }
     for (const uid of userIds) {
+      await identity`delete from identity.backup_codes where user_id = ${uid}::uuid`;
+      await identity`delete from identity.totp_credentials where user_id = ${uid}::uuid`;
       await identity`delete from identity.sessions where user_id = ${uid}::uuid`;
       await identity`delete from identity.users where id = ${uid}::uuid`;
     }

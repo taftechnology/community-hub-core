@@ -7,20 +7,18 @@ import { applyProductMigrations, newId } from "@community-hub/db";
 import { createPlaintextDirectSql, createPlaintextIdentitySql } from "@community-hub/db/plaintext";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import type { OtpMail } from "../domain/otp-mail.js";
 import { IdentityError } from "../domain/error.js";
 import { insertIdentityUser } from "./identity-user.js";
-import { createSession } from "./session.js";
-import {
-  endSession,
-  readSession,
-  readSessionWithKind,
-  refreshSession,
-  startEmailOtp,
-  verifyEmailOtp,
-} from "../public/index.js";
+import { endSession, readSession, readSessionWithKind, refreshSession } from "../public/index.js";
 import { deriveIdentityEmailKeys } from "./email-lookup.js";
-import { createSessionInTransaction, sessionAccessHash, type RefreshCheck } from "./session.js";
+import { lockSecondFactor } from "./second-factor-lock.js";
+import {
+  createSession,
+  createSessionInTransaction,
+  endOtherSessions,
+  sessionAccessHash,
+  type RefreshCheck,
+} from "./session.js";
 
 const KEY_ARN = `arn:aws:kms:ap-southeast-2:123456789012:key/mrk-${"ab".repeat(16)}`;
 
@@ -88,15 +86,6 @@ function pauseOnSessionInsert(sql: Sql): {
   return { bound, reached, release: releaseInsert };
 }
 
-class MemoryMail implements OtpMail {
-  last: { to: string; code: string } | undefined;
-
-  send(input: { to: string; code: string }): Promise<void> {
-    this.last = input;
-    return Promise.resolve();
-  }
-}
-
 beforeAll(async () => {
   const runtime = loadRuntime();
   const migration = createPlaintextDirectSql(runtime.productOnlyUrl);
@@ -120,21 +109,20 @@ describe("sessions", () => {
   it("rotates a refresh token and revokes the family when that token is reused", async () => {
     const now = new Date("2026-10-11T00:00:00.000Z");
     const later = new Date(now.getTime() + 15 * 60 * 1000 + 1);
-    const mail = new MemoryMail();
     const kms = createLocalKmsPort();
     const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
     try {
       await clearIdentity(sql);
-      await startEmailOtp(sql, kms, KEY_ARN, mail, { email: "ada@example.com", now });
-      const opened = await verifyEmailOtp(sql, kms, KEY_ARN, {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
         email: "ada@example.com",
-        code: mail.last?.code ?? "",
+      });
+      const opened = await createSession(sql, kms, KEY_ARN, {
+        userId,
         now,
+        kind: "tenant",
+        factor: "otp_totp",
       });
       expect(opened).toMatchObject({ userId: expect.any(String), expiresIn: 900 });
-      if (opened === null) {
-        throw new Error("session was not opened");
-      }
 
       expect(
         await readSession(sql, kms, KEY_ARN, { accessToken: opened.accessToken, now }),
@@ -169,15 +157,12 @@ describe("sessions", () => {
         await readSession(sql, kms, KEY_ARN, { accessToken: rotated.accessToken, now }),
       ).toBeNull();
 
-      await startEmailOtp(sql, kms, KEY_ARN, mail, { email: "ada@example.com", now });
-      const expired = await verifyEmailOtp(sql, kms, KEY_ARN, {
-        email: "ada@example.com",
-        code: mail.last?.code ?? "",
+      const expired = await createSession(sql, kms, KEY_ARN, {
+        userId,
         now,
+        kind: "tenant",
+        factor: "otp_totp",
       });
-      if (expired === null) {
-        throw new Error("session was not opened");
-      }
       expect(
         await refreshSession(sql, kms, KEY_ARN, {
           refreshToken: expired.refreshToken,
@@ -193,20 +178,19 @@ describe("sessions", () => {
   it("returns null and creates no row when a refresh token is past refresh_expires_at", async () => {
     const now = new Date("2026-10-11T00:00:00.000Z");
     const later = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000 + 1);
-    const mail = new MemoryMail();
     const kms = createLocalKmsPort();
     const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
     try {
       await clearIdentity(sql);
-      await startEmailOtp(sql, kms, KEY_ARN, mail, { email: "ada@example.com", now });
-      const opened = await verifyEmailOtp(sql, kms, KEY_ARN, {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
         email: "ada@example.com",
-        code: mail.last?.code ?? "",
-        now,
       });
-      if (opened === null) {
-        throw new Error("session was not opened");
-      }
+      const opened = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+        factor: "otp_totp",
+      });
       const before = await sql<{ n: number }[]>`
         select count(*)::int as n from identity.sessions
       `;
@@ -225,7 +209,6 @@ describe("sessions", () => {
 
   it("returns one session when one refresh token is presented twice in parallel", async () => {
     const now = new Date("2026-10-11T00:00:00.000Z");
-    const mail = new MemoryMail();
     const kms = createLocalKmsPort();
     const runtime = loadRuntime();
     const url = identityUrl(runtime);
@@ -235,15 +218,15 @@ describe("sessions", () => {
     let pending: Promise<Awaited<ReturnType<typeof refreshSession>>[]> = Promise.resolve([]);
     try {
       await clearIdentity(sql);
-      await startEmailOtp(sql, kms, KEY_ARN, mail, { email: "ada@example.com", now });
-      const opened = await verifyEmailOtp(sql, kms, KEY_ARN, {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
         email: "ada@example.com",
-        code: mail.last?.code ?? "",
-        now,
       });
-      if (opened === null) {
-        throw new Error("session was not opened");
-      }
+      const opened = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+        factor: "otp_totp",
+      });
       let locked: () => void = () => undefined;
       const lockHeld = new Promise<void>((resolve) => {
         locked = resolve;
@@ -290,7 +273,6 @@ describe("sessions", () => {
 
   it("leaves no live row when reuse is detected during a rotation", async () => {
     const now = new Date("2026-10-11T00:00:00.000Z");
-    const mail = new MemoryMail();
     const kms = createLocalKmsPort();
     const runtime = loadRuntime();
     const sql = postgres(identityUrl(runtime), {
@@ -304,15 +286,15 @@ describe("sessions", () => {
     let release = (): void => undefined;
     try {
       await clearIdentity(sql);
-      await startEmailOtp(sql, kms, KEY_ARN, mail, { email: "ada@example.com", now });
-      const opened = await verifyEmailOtp(sql, kms, KEY_ARN, {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
         email: "ada@example.com",
-        code: mail.last?.code ?? "",
-        now,
       });
-      if (opened === null) {
-        throw new Error("session was not opened");
-      }
+      const opened = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+        factor: "otp_totp",
+      });
       const rotated = await refreshSession(sql, kms, KEY_ARN, {
         refreshToken: opened.refreshToken,
         now,
@@ -569,7 +551,11 @@ describe("session kinds and absolute expiry", () => {
       const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
         email: `pin2b-${newId()}@example.test`,
       });
-      const tenantSession = await createSession(sql, kms, KEY_ARN, { userId, now });
+      const tenantSession = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        factor: "otp_totp",
+      });
       const enSession1 = await createSession(sql, kms, KEY_ARN, { userId, now, kind: "enrolment" });
       const enSession2 = await createSession(sql, kms, KEY_ARN, { userId, now, kind: "enrolment" });
 
@@ -709,7 +695,7 @@ describe("session kinds and absolute expiry", () => {
         email: `expires-in-${newId()}@example.test`,
       });
 
-      const tenant = await createSession(sql, kms, KEY_ARN, { userId, now });
+      const tenant = await createSession(sql, kms, KEY_ARN, { userId, now, factor: "otp_totp" });
       expect(tenant.expiresIn).toBe(900);
 
       const operator = await createSession(sql, kms, KEY_ARN, {
@@ -748,7 +734,11 @@ describe("session kinds and absolute expiry", () => {
       const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
         email: `tenant-def-${newId()}@example.test`,
       });
-      const session = await createSession(sql, kms, KEY_ARN, { userId, now });
+      const session = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        factor: "otp_totp",
+      });
 
       const rows = await sql<{ kind: string; absolute_expires_at: Date | null }[]>`
         select kind, absolute_expires_at from identity.sessions where user_id = ${userId}
@@ -786,7 +776,12 @@ describe("session kinds and absolute expiry", () => {
         email: `rswk-${newId()}@example.test`,
       });
       const absExp = new Date(now.getTime() + 60 * 60 * 1000);
-      const tenant = await createSession(sql, kms, KEY_ARN, { userId, now, kind: "tenant" });
+      const tenant = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+        factor: "otp_totp",
+      });
       const op = await createSession(sql, kms, KEY_ARN, {
         userId,
         now,
@@ -878,6 +873,7 @@ describe("session kinds and absolute expiry", () => {
           userId,
           now,
           kind: "tenant",
+          factor: "otp_totp",
           absoluteExpiresAt: new Date(now.getTime() + 1000),
         }),
       ).rejects.toBeInstanceOf(IdentityError);
@@ -1142,6 +1138,7 @@ describe("session kinds and absolute expiry", () => {
         userId,
         now,
         kind: "tenant",
+        factor: "otp_totp",
       });
 
       let tenantCheckReceived: { userId: string; absoluteExpiresAt: Date | null } | undefined;
@@ -1195,6 +1192,7 @@ describe("session kinds and absolute expiry", () => {
         userId,
         now,
         kind: "tenant",
+        factor: "otp_totp",
       });
       const normalTenantHash = await sessionAccessHash(sql, kms, KEY_ARN, normalTenant.accessToken);
       const [normalTenantRow] = await sql<
@@ -1214,6 +1212,7 @@ describe("session kinds and absolute expiry", () => {
           userId,
           now,
           kind: "tenant",
+          factor: "otp_totp",
         }),
       );
       const txTenantHash = await sessionAccessHash(sql, kms, KEY_ARN, txTenant.accessToken);
@@ -1389,6 +1388,7 @@ describe("session kinds and absolute expiry", () => {
         userId,
         now,
         kind: "tenant",
+        factor: "otp_totp",
       });
       const computedHash = await sessionAccessHash(sql, kms, KEY_ARN, session.accessToken);
       expect(computedHash).not.toBeNull();
@@ -1415,6 +1415,7 @@ describe("session kinds and absolute expiry", () => {
         userId,
         now,
         kind: "tenant",
+        factor: "otp_totp",
       });
 
       const s2 = await refreshSession(sql, kms, KEY_ARN, {
@@ -1468,6 +1469,7 @@ describe("session kinds and absolute expiry", () => {
         userId,
         now,
         kind: "tenant",
+        factor: "otp_totp",
       });
 
       // Pass now > access_expires_at (20 mins past creation; expiry is 15 mins)
@@ -1543,11 +1545,13 @@ describe("session kinds and absolute expiry", () => {
         userId,
         now,
         kind: "tenant",
+        factor: "otp_totp",
       });
       const sessionB = await createSession(sql, kms, KEY_ARN, {
         userId,
         now,
         kind: "tenant",
+        factor: "otp_totp",
       });
 
       await endSession(sql, kms, KEY_ARN, {
@@ -1600,6 +1604,7 @@ describe("session kinds and absolute expiry", () => {
         userId,
         now,
         kind: "tenant",
+        factor: "otp_totp",
       });
 
       const famRows = await sql<{ refresh_family: string }[]>`
@@ -1711,6 +1716,7 @@ describe("session kinds and absolute expiry", () => {
         userId,
         now,
         kind: "tenant",
+        factor: "otp_totp",
       });
 
       const randomBytes = new Uint8Array(32);
@@ -1736,6 +1742,870 @@ describe("session kinds and absolute expiry", () => {
       });
       expect(refreshed).not.toBeNull();
       expect(refreshed!.userId).toBe(userId);
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+});
+
+describe("second_factor sessions and the 2fa lock", () => {
+  const kms = createLocalKmsPort();
+
+  afterAll(async () => {
+    const runtime = loadRuntime();
+    const sql = createPlaintextIdentitySql(identityUrl(runtime));
+    try {
+      await sql`delete from identity.identity_keys`;
+      await sql`delete from identity.sessions`;
+      await sql`delete from identity.users`;
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  // Pin 17
+  it("refuses to refresh a second_factor session", async () => {
+    const now = new Date("2026-10-22T00:00:00.000Z");
+    const later = new Date(now.getTime() + 60 * 1000);
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `sf-ref-${newId()}@example.test`,
+      });
+      const tenantSession = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        factor: "otp_totp",
+      });
+      const sfSession1 = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "second_factor",
+      });
+      const sfSession2 = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "second_factor",
+      });
+
+      const tenantRefreshed = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: tenantSession.refreshToken,
+        now: later,
+      });
+      expect(tenantRefreshed).not.toBeNull();
+
+      expect(
+        await refreshSession(sql, kms, KEY_ARN, {
+          refreshToken: sfSession1.refreshToken,
+          now: later,
+        }),
+      ).toBeNull();
+
+      expect(
+        await refreshSession(sql, kms, KEY_ARN, {
+          refreshToken: sfSession1.refreshToken,
+          now: later,
+          kinds: ["second_factor"],
+        }),
+      ).toBeNull();
+
+      expect(
+        await refreshSession(sql, kms, KEY_ARN, {
+          refreshToken: sfSession2.refreshToken,
+          now: later,
+          kinds: ["tenant", "operator", "second_factor"],
+        }),
+      ).toBeNull();
+
+      const sfRows = await sql<{ replaced_by: string | null; revoked_at: Date | null }[]>`
+        select replaced_by, revoked_at
+        from identity.sessions
+        where user_id = ${userId} and kind = 'second_factor'
+      `;
+      expect(sfRows).toHaveLength(2);
+      for (const row of sfRows) {
+        expect(row.replaced_by).toBeNull();
+        expect(row.revoked_at).toBeNull();
+      }
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  // Pin 18
+  it("gives a second_factor session no refresh lifetime", async () => {
+    const now = new Date("2026-10-22T00:00:00.000Z");
+    const expectedExpiry = new Date(now.getTime() + 15 * 60 * 1000);
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `sf-life-${newId()}@example.test`,
+      });
+      const { bidx } = await deriveIdentityEmailKeys(sql, kms, KEY_ARN);
+
+      const session = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "second_factor",
+      });
+      expect(session.expiresIn).toBe(900);
+
+      const txSession = await sql.begin((tx) =>
+        createSessionInTransaction(tx, bidx, {
+          userId,
+          now,
+          kind: "second_factor",
+        }),
+      );
+      expect(txSession.expiresIn).toBe(900);
+
+      const rows = await sql<
+        {
+          kind: string;
+          absolute_expires_at: Date | null;
+          access_expires_at: Date;
+          refresh_expires_at: Date;
+        }[]
+      >`
+        select kind, absolute_expires_at, access_expires_at, refresh_expires_at
+        from identity.sessions
+        where user_id = ${userId}
+      `;
+      expect(rows).toHaveLength(2);
+      for (const row of rows) {
+        expect(row.kind).toBe("second_factor");
+        expect(row.absolute_expires_at).toBeNull();
+        expect(row.access_expires_at).toEqual(expectedExpiry);
+        expect(row.refresh_expires_at).toEqual(row.access_expires_at);
+      }
+
+      await expect(
+        createSession(sql, kms, KEY_ARN, {
+          userId,
+          now,
+          kind: "second_factor",
+          absoluteExpiresAt: new Date(now.getTime() + 60_000),
+        }),
+      ).rejects.toMatchObject({ code: "invalid_ceremony" });
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  // Pin 19
+  it("carries the factor to the refresh successor", async () => {
+    const now = new Date("2026-10-22T00:00:00.000Z");
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `factor-carry-${newId()}@example.test`,
+      });
+      const { bidx } = await deriveIdentityEmailKeys(sql, kms, KEY_ARN);
+
+      const s1 = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+        factor: "otp_totp",
+      });
+      const s1Hash = await sessionAccessHash(sql, kms, KEY_ARN, s1.accessToken);
+      const [s1Row] = await sql<{ factor: string | null }[]>`
+        select factor from identity.sessions where access_hash = ${s1Hash}
+      `;
+      expect(s1Row?.factor).toBe("otp_totp");
+
+      const s2 = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: s1.refreshToken,
+        now: new Date(now.getTime() + 10_000),
+      });
+      expect(s2).not.toBeNull();
+      const s2Hash = await sessionAccessHash(sql, kms, KEY_ARN, s2!.accessToken);
+      const [s2Row] = await sql<{ factor: string | null }[]>`
+        select factor from identity.sessions where access_hash = ${s2Hash}
+      `;
+      expect(s2Row?.factor).toBe("otp_totp");
+
+      const s3 = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: s2!.refreshToken,
+        now: new Date(now.getTime() + 20_000),
+      });
+      expect(s3).not.toBeNull();
+      const s3Hash = await sessionAccessHash(sql, kms, KEY_ARN, s3!.accessToken);
+      const [s3Row] = await sql<{ factor: string | null }[]>`
+        select factor from identity.sessions where access_hash = ${s3Hash}
+      `;
+      expect(s3Row?.factor).toBe("otp_totp");
+
+      const txS1 = await sql.begin((tx) =>
+        createSessionInTransaction(tx, bidx, {
+          userId,
+          now,
+          kind: "tenant",
+          factor: "passkey_uv",
+        }),
+      );
+      const txS2 = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: txS1.refreshToken,
+        now: new Date(now.getTime() + 30_000),
+      });
+      expect(txS2).not.toBeNull();
+      const txS2Hash = await sessionAccessHash(sql, kms, KEY_ARN, txS2!.accessToken);
+      const [txS2Row] = await sql<{ factor: string | null }[]>`
+        select factor from identity.sessions where access_hash = ${txS2Hash}
+      `;
+      expect(txS2Row?.factor).toBe("passkey_uv");
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  // Pin 20
+  it("does not carry fresh_factor_at or recovery_until on refresh", async () => {
+    const now = new Date("2026-10-22T00:00:00.000Z");
+    const freshAt = new Date(now.getTime() - 10_000);
+    const recoveryUntil = new Date(now.getTime() + 10 * 60 * 1000);
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `no-carry-${newId()}@example.test`,
+      });
+      const { bidx } = await deriveIdentityEmailKeys(sql, kms, KEY_ARN);
+
+      const freshSession = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+        factor: "otp_totp",
+        freshFactorAt: freshAt,
+      });
+      const freshHash = await sessionAccessHash(sql, kms, KEY_ARN, freshSession.accessToken);
+      const [freshRow] = await sql<{ fresh_factor_at: Date | null; recovery_until: Date | null }[]>`
+        select fresh_factor_at, recovery_until
+        from identity.sessions
+        where access_hash = ${freshHash}
+      `;
+      expect(freshRow?.fresh_factor_at).toEqual(freshAt);
+      expect(freshRow?.recovery_until).toBeNull();
+
+      const freshRotated = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: freshSession.refreshToken,
+        now: new Date(now.getTime() + 30_000),
+      });
+      expect(freshRotated).not.toBeNull();
+      const freshRotatedHash = await sessionAccessHash(
+        sql,
+        kms,
+        KEY_ARN,
+        freshRotated!.accessToken,
+      );
+      const [freshRotatedRow] = await sql<
+        { factor: string | null; fresh_factor_at: Date | null; recovery_until: Date | null }[]
+      >`
+        select factor, fresh_factor_at, recovery_until
+        from identity.sessions
+        where access_hash = ${freshRotatedHash}
+      `;
+      expect(freshRotatedRow?.factor).toBe("otp_totp");
+      expect(freshRotatedRow?.fresh_factor_at).toBeNull();
+      expect(freshRotatedRow?.recovery_until).toBeNull();
+
+      const recoverySession = await sql.begin((tx) =>
+        createSessionInTransaction(tx, bidx, {
+          userId,
+          now,
+          kind: "tenant",
+          factor: "otp_backup_code",
+          recoveryUntil,
+        }),
+      );
+      const recHash = await sessionAccessHash(sql, kms, KEY_ARN, recoverySession.accessToken);
+      const [recRow] = await sql<{ fresh_factor_at: Date | null; recovery_until: Date | null }[]>`
+        select fresh_factor_at, recovery_until
+        from identity.sessions
+        where access_hash = ${recHash}
+      `;
+      expect(recRow?.fresh_factor_at).toBeNull();
+      expect(recRow?.recovery_until).toEqual(recoveryUntil);
+
+      const recRotated = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: recoverySession.refreshToken,
+        now: new Date(now.getTime() + 40_000),
+      });
+      expect(recRotated).not.toBeNull();
+      const recRotatedHash = await sessionAccessHash(sql, kms, KEY_ARN, recRotated!.accessToken);
+      const [recRotatedRow] = await sql<
+        { factor: string | null; fresh_factor_at: Date | null; recovery_until: Date | null }[]
+      >`
+        select factor, fresh_factor_at, recovery_until
+        from identity.sessions
+        where access_hash = ${recRotatedHash}
+      `;
+      expect(recRotatedRow?.factor).toBe("otp_backup_code");
+      expect(recRotatedRow?.fresh_factor_at).toBeNull();
+      expect(recRotatedRow?.recovery_until).toBeNull();
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  // Pin 21
+  it("sign-out ends a second_factor session", async () => {
+    const now = new Date("2026-10-22T00:00:00.000Z");
+    const endNow = new Date(now.getTime() + 60_000);
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `sf-end-${newId()}@example.test`,
+      });
+      const sf = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "second_factor",
+      });
+
+      expect(
+        await readSessionWithKind(sql, kms, KEY_ARN, {
+          accessToken: sf.accessToken,
+          now,
+          kinds: ["second_factor"],
+        }),
+      ).toEqual({ userId, kind: "second_factor" });
+
+      await endSession(sql, kms, KEY_ARN, {
+        accessToken: sf.accessToken,
+        now: endNow,
+      });
+
+      expect(
+        await readSessionWithKind(sql, kms, KEY_ARN, {
+          accessToken: sf.accessToken,
+          now: endNow,
+          kinds: ["second_factor"],
+        }),
+      ).toBeNull();
+
+      const rows = await sql<{ revoked_at: Date | null }[]>`
+        select revoked_at from identity.sessions where user_id = ${userId}
+      `;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.revoked_at).toEqual(endNow);
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  // Pin 22
+  it("endOtherSessions leaves operator, enrolment and the current session", async () => {
+    const now = new Date("2026-10-22T00:00:00.000Z");
+    const priorRevoke = new Date(now.getTime() + 10_000);
+    const later = new Date(now.getTime() + 60_000);
+    const absExp = new Date(now.getTime() + 60 * 60 * 1000);
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `eos-${newId()}@example.test`,
+      });
+      const { userId: otherUserId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `eos-other-${newId()}@example.test`,
+      });
+
+      const currentTenant = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+        factor: "otp_totp",
+      });
+      const otherTenant = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+        factor: "passkey_uv",
+      });
+      const otherSf = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "second_factor",
+      });
+      const opSession = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "operator",
+        absoluteExpiresAt: absExp,
+      });
+      const enrolSession = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "enrolment",
+      });
+      const alreadyEnded = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+        factor: "otp_totp",
+      });
+      await endSession(sql, kms, KEY_ARN, {
+        accessToken: alreadyEnded.accessToken,
+        now: priorRevoke,
+      });
+      const unrelatedTenant = await createSession(sql, kms, KEY_ARN, {
+        userId: otherUserId,
+        now,
+        kind: "tenant",
+        factor: "otp_totp",
+      });
+
+      const currentHash = await sessionAccessHash(sql, kms, KEY_ARN, currentTenant.accessToken);
+      const [currentRow] = await sql<{ id: string }[]>`
+        select id from identity.sessions where access_hash = ${currentHash}
+      `;
+      const keepSessionId = currentRow!.id;
+
+      await sql.begin((tx) => endOtherSessions(tx, userId, keepSessionId));
+
+      expect(
+        await readSession(sql, kms, KEY_ARN, {
+          accessToken: currentTenant.accessToken,
+          now: later,
+        }),
+      ).toEqual({ userId });
+      expect(
+        await readSessionWithKind(sql, kms, KEY_ARN, {
+          accessToken: opSession.accessToken,
+          now: later,
+          kinds: ["operator"],
+        }),
+      ).toEqual({ userId, kind: "operator" });
+      expect(
+        await readSessionWithKind(sql, kms, KEY_ARN, {
+          accessToken: enrolSession.accessToken,
+          now: later,
+          kinds: ["enrolment"],
+        }),
+      ).toEqual({ userId, kind: "enrolment" });
+      expect(
+        await readSession(sql, kms, KEY_ARN, {
+          accessToken: unrelatedTenant.accessToken,
+          now: later,
+        }),
+      ).toEqual({ userId: otherUserId });
+
+      expect(
+        await readSession(sql, kms, KEY_ARN, { accessToken: otherTenant.accessToken, now: later }),
+      ).toBeNull();
+      expect(
+        await refreshSession(sql, kms, KEY_ARN, {
+          refreshToken: otherTenant.refreshToken,
+          now: later,
+        }),
+      ).toBeNull();
+      expect(
+        await readSessionWithKind(sql, kms, KEY_ARN, {
+          accessToken: otherSf.accessToken,
+          now: later,
+          kinds: ["second_factor"],
+        }),
+      ).toBeNull();
+
+      const alreadyHash = await sessionAccessHash(sql, kms, KEY_ARN, alreadyEnded.accessToken);
+      const [alreadyRow] = await sql<{ revoked_at: Date | null }[]>`
+        select revoked_at from identity.sessions where access_hash = ${alreadyHash}
+      `;
+      expect(alreadyRow?.revoked_at).toEqual(priorRevoke);
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  // Pin 23
+  it("readSession refuses a second_factor session by default", async () => {
+    const now = new Date("2026-10-22T00:00:00.000Z");
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `rs-sf-${newId()}@example.test`,
+      });
+      const sf = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "second_factor",
+      });
+
+      expect(await readSession(sql, kms, KEY_ARN, { accessToken: sf.accessToken, now })).toBeNull();
+
+      expect(
+        await readSession(sql, kms, KEY_ARN, {
+          accessToken: sf.accessToken,
+          now,
+          kinds: ["second_factor"],
+        }),
+      ).toEqual({ userId });
+
+      expect(
+        await readSessionWithKind(sql, kms, KEY_ARN, {
+          accessToken: sf.accessToken,
+          now,
+          kinds: ["second_factor"],
+        }),
+      ).toEqual({ userId, kind: "second_factor" });
+
+      expect(
+        await readSessionWithKind(sql, kms, KEY_ARN, {
+          accessToken: sf.accessToken,
+          now,
+          kinds: ["tenant"],
+        }),
+      ).toBeNull();
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  // Pin 24
+  it("a tenant refresh waits for the second factor lock", async () => {
+    const now = new Date("2026-10-22T00:00:00.000Z");
+    const runtime = loadRuntime();
+    const sql = createPlaintextIdentitySql(identityUrl(runtime));
+    const holder = createPlaintextIdentitySql(identityUrl(runtime));
+    const observer = createPlaintextDirectSql(runtime.productOnlyUrl);
+
+    let releaseHolder: () => void = () => undefined;
+    const holderGate = new Promise<void>((resolve) => {
+      releaseHolder = resolve;
+    });
+    let lockAcquiredNotify: () => void = () => undefined;
+    const lockAcquired = new Promise<void>((resolve) => {
+      lockAcquiredNotify = resolve;
+    });
+    let holderPid = 0;
+    let settled = false;
+    let holderPromise: Promise<void> | undefined;
+    let refreshPromise: Promise<Awaited<ReturnType<typeof refreshSession>>> | undefined;
+
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `lock-2fa-${newId()}@example.test`,
+      });
+      const session = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+        factor: "otp_totp",
+      });
+
+      holderPromise = holder.begin(async (tx) => {
+        const pidRows = await tx<{ pid: number }[]>`select pg_backend_pid() as pid`;
+        holderPid = pidRows[0]!.pid;
+        await lockSecondFactor(tx, userId);
+        lockAcquiredNotify();
+        await holderGate;
+      });
+
+      await Promise.race([lockAcquired, holderPromise]);
+
+      refreshPromise = refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: session.refreshToken,
+        now: new Date(now.getTime() + 60_000),
+      }).finally(() => {
+        settled = true;
+      });
+
+      const pollStart = Date.now();
+      let waiterFound = false;
+      while (Date.now() - pollStart < 5_000) {
+        if (settled) {
+          break;
+        }
+        const waitingRows = await observer<{ pid: number }[]>`
+          with lock_key as (
+            select hashtextextended('2fa:' || ${userId}::text, 0) as key
+          )
+          select l.pid
+          from pg_locks l, lock_key
+          where l.locktype = 'advisory'
+            and l.objsubid = 1
+            and not l.granted
+            and l.classid::bigint = ((lock_key.key >> 32) & 4294967295::bigint)
+            and l.objid::bigint = (lock_key.key & 4294967295::bigint)
+            and l.pid <> ${holderPid}
+        `;
+        if (waitingRows.length > 0) {
+          waiterFound = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 15));
+      }
+
+      expect(waiterFound).toBe(true);
+      expect(settled).toBe(false);
+
+      releaseHolder();
+      await holderPromise;
+      const rotated = await refreshPromise;
+      expect(settled).toBe(true);
+      expect(rotated).not.toBeNull();
+      expect(rotated?.userId).toBe(userId);
+    } finally {
+      releaseHolder();
+      await refreshPromise?.catch(() => undefined);
+      await holderPromise?.catch(() => undefined);
+      await holder.end({ timeout: 1 });
+      await observer.end({ timeout: 1 });
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("operator refresh does not wait for the second factor lock", async () => {
+    const now = new Date("2026-10-22T00:00:00.000Z");
+    const absExp = new Date(now.getTime() + 60 * 60 * 1000);
+    const runtime = loadRuntime();
+    const sql = createPlaintextIdentitySql(identityUrl(runtime));
+    const holder = createPlaintextIdentitySql(identityUrl(runtime));
+
+    let releaseHolder: () => void = () => undefined;
+    const holderGate = new Promise<void>((resolve) => {
+      releaseHolder = resolve;
+    });
+    let lockAcquiredNotify: () => void = () => undefined;
+    const lockAcquired = new Promise<void>((resolve) => {
+      lockAcquiredNotify = resolve;
+    });
+    let holderPromise: Promise<void> | undefined;
+
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `op-nolock-${newId()}@example.test`,
+      });
+      const opSession = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "operator",
+        absoluteExpiresAt: absExp,
+      });
+
+      holderPromise = holder.begin(async (tx) => {
+        await lockSecondFactor(tx, userId);
+        lockAcquiredNotify();
+        await holderGate;
+      });
+
+      await Promise.race([lockAcquired, holderPromise]);
+
+      const refreshed = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: opSession.refreshToken,
+        now: new Date(now.getTime() + 60_000),
+        kinds: ["operator"],
+      });
+      expect(refreshed).not.toBeNull();
+      expect(refreshed?.userId).toBe(userId);
+
+      releaseHolder();
+      await holderPromise;
+    } finally {
+      releaseHolder();
+      await holderPromise?.catch(() => undefined);
+      await holder.end({ timeout: 1 });
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  it("a waiting tenant refresh returns null when endOtherSessions revokes it under the lock", async () => {
+    const now = new Date("2026-10-22T00:00:00.000Z");
+    const runtime = loadRuntime();
+    const sql = createPlaintextIdentitySql(identityUrl(runtime));
+    const holder = createPlaintextIdentitySql(identityUrl(runtime));
+    const observer = createPlaintextDirectSql(runtime.productOnlyUrl);
+
+    let releaseHolder: () => void = () => undefined;
+    const holderGate = new Promise<void>((resolve) => {
+      releaseHolder = resolve;
+    });
+    let lockAcquiredNotify: () => void = () => undefined;
+    const lockAcquired = new Promise<void>((resolve) => {
+      lockAcquiredNotify = resolve;
+    });
+    let holderPid = 0;
+    let settled = false;
+    let holderPromise: Promise<void> | undefined;
+    let refreshPromise: Promise<Awaited<ReturnType<typeof refreshSession>>> | undefined;
+
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `wait-revoked-${newId()}@example.test`,
+      });
+      const session = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+        factor: "otp_totp",
+      });
+
+      holderPromise = holder.begin(async (tx) => {
+        const pidRows = await tx<{ pid: number }[]>`select pg_backend_pid() as pid`;
+        holderPid = pidRows[0]!.pid;
+        await lockSecondFactor(tx, userId);
+        await endOtherSessions(tx, userId, newId());
+        lockAcquiredNotify();
+        await holderGate;
+      });
+
+      await Promise.race([lockAcquired, holderPromise]);
+
+      refreshPromise = refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: session.refreshToken,
+        now: new Date(now.getTime() + 60_000),
+      }).finally(() => {
+        settled = true;
+      });
+
+      const pollStart = Date.now();
+      let waiterFound = false;
+      while (Date.now() - pollStart < 5_000) {
+        if (settled) {
+          break;
+        }
+        const waitingRows = await observer<{ pid: number }[]>`
+          with lock_key as (
+            select hashtextextended('2fa:' || ${userId}::text, 0) as key
+          )
+          select l.pid
+          from pg_locks l, lock_key
+          where l.locktype = 'advisory'
+            and l.objsubid = 1
+            and not l.granted
+            and l.classid::bigint = ((lock_key.key >> 32) & 4294967295::bigint)
+            and l.objid::bigint = (lock_key.key & 4294967295::bigint)
+            and l.pid <> ${holderPid}
+        `;
+        if (waitingRows.length > 0) {
+          waiterFound = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 15));
+      }
+
+      expect(waiterFound).toBe(true);
+
+      releaseHolder();
+      await holderPromise;
+      const rotated = await refreshPromise;
+      expect(rotated).toBeNull();
+
+      const countRows = await sql<{ n: number }[]>`
+        select count(*)::int as n from identity.sessions where user_id = ${userId}
+      `;
+      expect(countRows[0]?.n).toBe(1);
+    } finally {
+      releaseHolder();
+      await refreshPromise?.catch(() => undefined);
+      await holderPromise?.catch(() => undefined);
+      await holder.end({ timeout: 1 });
+      await observer.end({ timeout: 1 });
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  // A tenant row with no factor is what an image from before the second factor left behind. The
+  // service no longer mints one, so a test makes a normal session and clears its factor.
+  async function tenantSessionWithoutFactor(
+    sql: Sql,
+    userId: string,
+    now: Date,
+  ): Promise<Awaited<ReturnType<typeof createSession>>> {
+    const tokens = await createSession(sql, kms, KEY_ARN, {
+      userId,
+      now,
+      kind: "tenant",
+      factor: "otp_totp",
+    });
+    const accessHash = await sessionAccessHash(sql, kms, KEY_ARN, tokens.accessToken);
+    await sql`update identity.sessions set factor = null where access_hash = ${accessHash}`;
+    return tokens;
+  }
+
+  // Pin 115
+  it("refuses to refresh a tenant session with no factor", async () => {
+    const now = new Date("2026-11-26T00:00:00.000Z");
+    const later = new Date(now.getTime() + 60_000);
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `pin115-${newId()}@example.test`,
+      });
+
+      // Positive control: a tenant session with a factor refreshes and keeps its factor.
+      const withFactor = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+        factor: "otp_totp",
+      });
+      const rotated = await refreshSession(sql, kms, KEY_ARN, {
+        refreshToken: withFactor.refreshToken,
+        now: later,
+      });
+      expect(rotated).not.toBeNull();
+      const rotatedHash = await sessionAccessHash(sql, kms, KEY_ARN, rotated!.accessToken);
+      const [rotatedRow] = await sql<{ kind: string; factor: string | null }[]>`
+        select kind, factor from identity.sessions where access_hash = ${rotatedHash}
+      `;
+      expect(rotatedRow).toEqual({ kind: "tenant", factor: "otp_totp" });
+
+      // A tenant row with no factor does not refresh: no successor, no claim, no revoke.
+      const factorless = await tenantSessionWithoutFactor(sql, userId, now);
+      const rowsBefore = await sql<
+        { id: string; revoked_at: Date | null; replaced_by: string | null }[]
+      >`
+        select id, revoked_at, replaced_by from identity.sessions
+        where user_id = ${userId}
+        order by id
+      `;
+      expect(rowsBefore).toHaveLength(3);
+      await expect(
+        refreshSession(sql, kms, KEY_ARN, { refreshToken: factorless.refreshToken, now: later }),
+      ).resolves.toBeNull();
+      const rowsAfter = await sql<
+        { id: string; revoked_at: Date | null; replaced_by: string | null }[]
+      >`
+        select id, revoked_at, replaced_by from identity.sessions
+        where user_id = ${userId}
+        order by id
+      `;
+      expect(rowsAfter).toEqual(rowsBefore);
+      const factorlessHash = await sessionAccessHash(sql, kms, KEY_ARN, factorless.accessToken);
+      const [factorlessRow] = await sql<{ factor: string | null; revoked_at: Date | null }[]>`
+        select factor, revoked_at from identity.sessions where access_hash = ${factorlessHash}
+      `;
+      expect(factorlessRow).toEqual({ factor: null, revoked_at: null });
+    } finally {
+      await sql.end({ timeout: 1 });
+    }
+  });
+
+  // Pin 86
+  it("readSessionWithKind with the tenant kind refuses a session with no factor", async () => {
+    const now = new Date("2026-10-11T00:00:00.000Z");
+    const sql = createPlaintextIdentitySql(identityUrl(loadRuntime()));
+    try {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: `pin86-${newId()}@example.test`,
+      });
+      const factorless = await tenantSessionWithoutFactor(sql, userId, now);
+
+      expect(
+        await readSessionWithKind(sql, kms, KEY_ARN, {
+          accessToken: factorless.accessToken,
+          now,
+          kinds: ["tenant"],
+        }),
+      ).toBeNull();
+
+      expect(
+        await readSessionWithKind(sql, kms, KEY_ARN, {
+          accessToken: factorless.accessToken,
+          now,
+          kinds: ["tenant", "second_factor"],
+        }),
+      ).toBeNull();
     } finally {
       await sql.end({ timeout: 1 });
     }

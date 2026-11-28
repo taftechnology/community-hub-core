@@ -132,5 +132,76 @@ export async function verifyEmailOtp(
     return null;
   }
   const { userId } = await findOrCreateUserByKeys(sql, keys, email, emailBidx);
-  return createSession(sql, kms, keyArn, { userId, now: input.now });
+  return createSession(sql, kms, keyArn, { userId, now: input.now, kind: "second_factor" });
+}
+
+export type EmailOtpSecondFactorMethod = "totp" | "passkey" | "backup_code";
+
+export type EmailOtpSecondFactorState = {
+  secondFactor: "verify" | "setup";
+  methods: EmailOtpSecondFactorMethod[];
+};
+
+export async function readSecondFactorPrompt(
+  sql: Sql,
+  input: { userId: string; adminRpId: string | null },
+): Promise<EmailOtpSecondFactorState> {
+  const totpRows = await sql<{ id: string }[]>`
+    select id
+    from identity.totp_credentials
+    where user_id = ${input.userId}
+      and confirmed_at is not null
+    limit 1
+  `;
+  const hasTotp = totpRows[0] !== undefined;
+
+  const hasPasskey = input.adminRpId
+    ? (
+        await sql<{ id: string }[]>`
+          select id
+          from identity.passkey_credentials
+          where user_id = ${input.userId}
+            and user_verified = true
+            and rp_id = ${input.adminRpId}
+          limit 1
+        `
+      )[0] !== undefined
+    : (
+        await sql<{ id: string }[]>`
+          select id
+          from identity.passkey_credentials
+          where user_id = ${input.userId}
+            and user_verified = true
+          limit 1
+        `
+      )[0] !== undefined;
+
+  if (!hasTotp && !hasPasskey) {
+    return {
+      secondFactor: "setup",
+      methods: input.adminRpId ? ["totp", "passkey"] : ["totp"],
+    };
+  }
+
+  const backupRows = await sql<{ id: string }[]>`
+    select id
+    from identity.backup_codes
+    where user_id = ${input.userId}
+      and used_at is null
+    limit 1
+  `;
+  const methods: EmailOtpSecondFactorMethod[] = [];
+  if (hasTotp) {
+    methods.push("totp");
+  }
+  if (input.adminRpId && hasPasskey) {
+    methods.push("passkey");
+  }
+  if (backupRows[0] !== undefined) {
+    methods.push("backup_code");
+  }
+  return {
+    secondFactor: "verify",
+    methods,
+  };
 }

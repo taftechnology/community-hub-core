@@ -21,6 +21,14 @@ Create infra/regions/au/env/staging.local.tfvars. It is gitignored. It holds aws
 2. git rev-parse HEAD equals the SHA named for that apply, and that SHA is on origin.
 3. terraform init uses -lockfile=readonly.
 
+### Apply order for `Two-factor for staff`
+
+The service image from before `Two-factor for staff` refuses to start when `ADMIN_ORIGIN` is set and `BILLING_SECRET_ARN` is not (`apps/api/src/env.ts`). The Terraform change in `infra/modules/aws-ingress/main.tf` passes `ADMIN_ORIGIN` without the billing condition. So the new image goes first, and the Terraform change after it, wherever the change is applied:
+
+1. Deploy the new image. `service_image` names a digest from a `main` commit that contains `Two-factor for staff`, confirmed as in **SES sign-in proof → Prerequisites**, and the running task reports that digest (**SES sign-in proof → Running-task check**).
+2. Apply the Terraform change that passes `ADMIN_ORIGIN` without the billing condition. Staging stays parked after `Two-factor for staff` merges, so it takes the change at the next apply that starts a task (Apply 1 of a proof run), and that apply sets `service_image` in the same plan. In an environment with no billing secret, never apply the change while `service_image` names an image from before `Two-factor for staff`.
+3. To roll back, revert the Terraform change and apply it first, then roll the image back.
+
 ## Bootstrap
 
 This is a one-time step and it is already complete.
@@ -576,6 +584,14 @@ Unset helper variables:
 
 Proofs P1–P5 verify transactional email delivery, authentication flow, error isolation, first-owner provisioning, and log hygiene.
 
+#### Second step (every sign-in by email code)
+
+Since `Two-factor for staff` ([ADR 0022](docs/adr/0022-second-factor-for-staff.md)), a right email code gives only a restricted token. It lasts 15 minutes, allows five tries, has no refresh token, and works only for the second step, the set-up of a factor and sign-out. The second step is the six-digit code from an authenticator app. Every step in this runbook that signs in by email code and then calls a route that needs a session, or that refreshes a session, passes the second step first.
+
+The project owner sets up an authenticator app by hand, once for each synthetic staging user: the owner address in this section, which **Admin screens proof** calls U1, and U2 there. A park deletes the database and the keys with it, so the set-up is done again after each unpark. A user's first sign-in answers `setup` where later ones answer `verify`. In the browser the admin then shows "Set up two-step sign-in": the owner chooses "Use an authenticator app", adds the key to the app by hand (scanning the picture or typing the key shown), types the code the app shows, ticks "I have saved these codes" and chooses Continue. In the shell, P2 shows the commands. The set-up is part of that first sign-in and costs no extra email code.
+
+Each step that needs a code pauses for the owner to type the current code, at a silent prompt in the shell or into the sign-in page. These steps do not run unattended. No authenticator key, backup code or `otpauth` link is written to a file, a script, an evidence line or this runbook; evidence says yes or no for each set-up. The ten backup codes are not kept, because the user is deleted at the next park. A code works once, so when two steps follow each other the owner waits for the app to show the next code. A reload of the sign-in page between the email code and the second step loses the restricted token and costs another email code, so the owner types the code at once.
+
 #### P1: Start challenge for verified owner address
 
 Before P1, set the proof window start timestamp in epoch milliseconds:
@@ -612,7 +628,7 @@ Rule (a): if no mail arrives within 5 minutes, the assistant counts the `mail` l
 
 Rule (b): a 204 with no new `mail` line is the five-an-hour limit (`modules/core/identity/infrastructure/email-otp.ts:63-71`): stop.
 
-#### P2: Verify challenge with code and call session route
+#### P2: Verify challenge, pass the second step and call session route
 
 Verify within 10 minutes of the mail. A 401 or 403 is a stop. Do not retry with a guessed code.
 
@@ -625,6 +641,54 @@ Prompt for the eight-digit code from the received email. Type the prompt and the
 Call the verify endpoint:
 
     TOKENS=$(curl -s -S -X POST "https://${AUTH_HOST}/v1/auth/email-otp/verify" -H 'content-type: application/json' -d "{\"email\":\"${OWNER_EMAIL}\",\"code\":\"${OTP_CODE}\"}")
+
+Read the restricted token. It is not an admin token: it works for the second step, the set-up of a factor and sign-out only, and lasts 15 minutes:
+
+    PRE_TOKEN=$(print -r -- "${TOKENS}" | jq -r '.accessToken')
+
+Read which step the answer asks for:
+
+    print -r -- "${TOKENS}" | jq -r '.secondFactor'
+
+Expected: `verify` for a user with an authenticator app, or `setup` for a user with none. Do **If `verify`** or **If `setup`** below, then continue at "Read the access token".
+
+**If `verify`:** prompt for the current code from the authenticator app. The owner types it:
+
+    read -rs "TOTP_CODE?Authenticator code: "
+
+    print
+
+Call the second-step endpoint:
+
+    TOKENS=$(curl -s -S -X POST "https://${AUTH_HOST}/v1/auth/second-factor/verify" -H "authorization: Bearer ${PRE_TOKEN}" -H 'content-type: application/json' -d "{\"method\":\"totp\",\"code\":\"${TOTP_CODE}\"}")
+
+    unset TOTP_CODE
+
+A 401 means a wrong or already used code: the owner waits for the next code and runs the prompt and this call once more. A second 401, or any 429, is a stop.
+
+**If `setup`** (a user's first sign-in only): start the set-up with the restricted token:
+
+    SETUP=$(curl -s -S -X POST "https://${AUTH_HOST}/v1/auth/second-factor/totp/start" -H "authorization: Bearer ${PRE_TOKEN}" -H 'content-type: application/json' -d '{}')
+
+Show the key on screen only (one line of upper-case letters and digits). The owner adds it by hand to an authenticator app as a time-based key (six digits, 30 seconds), and does not copy it, save it or paste it anywhere:
+
+    print -r -- "${SETUP}" | jq -r '.secret'
+
+    unset SETUP
+
+Prompt for the first code the app shows:
+
+    read -rs "TOTP_CODE?Authenticator code: "
+
+    print
+
+Confirm it. The answer is the admin session. It also holds ten backup codes, which are never printed or kept:
+
+    TOKENS=$(curl -s -S -X POST "https://${AUTH_HOST}/v1/auth/second-factor/totp/confirm" -H "authorization: Bearer ${PRE_TOKEN}" -H 'content-type: application/json' -d "{\"code\":\"${TOTP_CODE}\"}")
+
+    unset TOTP_CODE
+
+A 401 means the code was wrong (check the time on the phone): the owner runs the prompt and this call once more. A second 401, or any 429, is a stop.
 
 Read the access token:
 
@@ -721,6 +785,8 @@ Run privacy counts against service logs (one command per value; expected `0` eac
 
     print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${ACCESS_TOKEN}"
 
+    print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "${PRE_TOKEN}"
+
     print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "Bearer"
 
     print -r -- "${SERVICE_MSGS}" | grep -c -i -F -- "@"
@@ -738,6 +804,8 @@ Run privacy counts against API access logs (one command per value; expected `0` 
     print -r -- "${ACCESS_MSGS}" | grep -c -i -F -- "${COMMUNITY_SLUG}"
 
     print -r -- "${ACCESS_MSGS}" | grep -c -i -F -- "${ACCESS_TOKEN}"
+
+    print -r -- "${ACCESS_MSGS}" | grep -c -i -F -- "${PRE_TOKEN}"
 
     print -r -- "${ACCESS_MSGS}" | grep -c -i -F -- "Bearer"
 
@@ -761,7 +829,7 @@ Expected: prints exactly `["level","message","operation","outcome"]` for each `o
 
 Finish by unsetting all test and helper variables:
 
-    unset SERVICE_MSGS ACCESS_MSGS OWNER_EMAIL UNVERIFIED_EMAIL OTP_CODE ORG_SLUG COMMUNITY_SLUG ACCESS_TOKEN TOKENS
+    unset SERVICE_MSGS ACCESS_MSGS OWNER_EMAIL UNVERIFIED_EMAIL OTP_CODE ORG_SLUG COMMUNITY_SLUG ACCESS_TOKEN PRE_TOKEN TOKENS
 
 ### Apply 2 — Re-park
 
@@ -1737,6 +1805,7 @@ Hold these in the shell. Never record their values.
 | `${COMMUNITY_SLUG}`          | Community synthetic slug (generated once with `COMMUNITY_SLUG="proof-$(openssl rand -hex 4)"`)   |
 | `${ACCESS_TOKEN}`            | Current session access token (never recorded)                                                    |
 | `${REFRESH_TOKEN}`           | Current session refresh token (never recorded)                                                   |
+| `${PRE_TOKEN}`               | Restricted second-step token from `verify` (never recorded)                                      |
 | `${TOKENS}`                  | Session response JSON payload (never recorded)                                                   |
 | `${ACCESS_TOKENS}`           | zsh array of every token held, so S12 counts earlier tokens too                                  |
 | `${REFRESH_TOKENS}`          | zsh array of every token held, so S12 counts earlier tokens too                                  |
@@ -2184,8 +2253,11 @@ Expected: output lists all four of `ADMIN_ORIGIN`, `BILLING_SECRET_ARN`, `MAIL_F
 Run sign-in using the **SES sign-in proof → P1 and P2** commands with these changes:
 
 - each `start` increments `${START_CALLS}`;
-- each code is appended to `${OTP_CODES}`, including the codes typed into the browser, at a silent prompt;
-- after verify, `REFRESH_TOKEN=$(print -r -- "${TOKENS}" | jq -r '.refreshToken')`, and both tokens are appended to `${ACCESS_TOKENS}` and `${REFRESH_TOKENS}`.
+- each email code is appended to `${OTP_CODES}`, including the codes typed into the browser, at a silent prompt;
+- the restricted token from `verify` is appended to `${ACCESS_TOKENS}`;
+- after the second step, `REFRESH_TOKEN=$(print -r -- "${TOKENS}" | jq -r '.refreshToken')`, and both tokens are appended to `${ACCESS_TOKENS}` and `${REFRESH_TOKENS}`.
+
+Every sign-in below, in the shell or the browser, ends with the second step (**SES sign-in proof → Second step**): the owner types the current authenticator code, and the owner address's first sign-in of the run also sets the app up. The second step and the set-up cost no email code, so the sign-in budget below does not change. Authenticator codes are not added to `${OTP_CODES}`; each is unset after its call.
 
 Cap: `${START_CALLS}` at most 5 for the run, and at most 5 in any 60 minutes. Browser sign-ins count, and the owner increments the counter for each.
 
@@ -2223,6 +2295,24 @@ Expected: `204`.
 
     TOKENS=$(curl -s -S -X POST "https://${AUTH_HOST}/v1/auth/email-otp/verify" -H 'content-type: application/json' -d "{\"email\":\"${OWNER_EMAIL}\",\"code\":\"${OTP_CODE}\"}")
 
+    PRE_TOKEN=$(print -r -- "${TOKENS}" | jq -r '.accessToken')
+
+    ACCESS_TOKENS+=("${PRE_TOKEN}")
+
+    print -r -- "${TOKENS}" | jq -r '.secondFactor'
+
+Expected: `setup` on the owner address's first sign-in of the run, because a fresh database has no authenticator app, and `verify` after that. For `setup`, run **SES sign-in proof → P2 → If `setup`** instead of the prompt and second-step call below, then continue at `ACCESS_TOKEN`.
+
+    read -rs "TOTP_CODE?Authenticator code: "
+
+    print
+
+    TOKENS=$(curl -s -S -X POST "https://${AUTH_HOST}/v1/auth/second-factor/verify" -H "authorization: Bearer ${PRE_TOKEN}" -H 'content-type: application/json' -d "{\"method\":\"totp\",\"code\":\"${TOTP_CODE}\"}")
+
+    unset TOTP_CODE
+
+A 401 is handled as in P2: one more try with the next code, then a stop.
+
     ACCESS_TOKEN=$(print -r -- "${TOKENS}" | jq -r '.accessToken')
 
     REFRESH_TOKEN=$(print -r -- "${TOKENS}" | jq -r '.refreshToken')
@@ -2242,7 +2332,9 @@ The owner types the verified email into the browser sign-in page, receives the c
 
     OTP_CODES+=("${OTP_CODE}")
 
-Refresh block (run before each shell proof group):
+The page then shows "Confirm it's you", and the owner types the current authenticator code. It is not recorded in the shell, and the app was set up at Sign-in 1. The owner does not reload between the two codes: a reload loses the restricted token and costs another email code, which counts toward the cap.
+
+Refresh block (run before each shell proof group). The refresh token is the one the second step returned: the `verify` answer carries none, and a restricted token cannot be refreshed:
 
     TOKENS=$(curl -s -S -X POST "https://${AUTH_HOST}/v1/auth/session/refresh" -H 'content-type: application/json' -d "{\"refreshToken\":\"${REFRESH_TOKEN}\"}")
 
@@ -2623,7 +2715,7 @@ Expected: `0` for every single check.
 
 Finish by unsetting all held values:
 
-    unset SERVICE_MSGS ACCESS_MSGS OWNER_EMAIL PROOF_EMAIL PROOF_NAME ORG_SLUG COMMUNITY_SLUG ACCESS_TOKEN REFRESH_TOKEN TOKENS OTP_CODE OTP_CODES ACCESS_TOKENS REFRESH_TOKENS START_CALLS WINDOW_START_MS WINDOW_END_MS STRIPE_CALLS_FLOOR STRIPE_OK_COUNT TASK_ARN
+    unset SERVICE_MSGS ACCESS_MSGS OWNER_EMAIL PROOF_EMAIL PROOF_NAME ORG_SLUG COMMUNITY_SLUG ACCESS_TOKEN REFRESH_TOKEN PRE_TOKEN TOKENS OTP_CODE OTP_CODES ACCESS_TOKENS REFRESH_TOKENS START_CALLS WINDOW_START_MS WINDOW_END_MS STRIPE_CALLS_FLOOR STRIPE_OK_COUNT TASK_ARN
 
 ### Apply 2
 
@@ -4333,6 +4425,8 @@ Browser work runs in sessions of 14 minutes or less in one tab, with every reloa
 
 **Code count rule:** Codes are capped at 5 per address per rolling 60 minutes. U1 signs in for B1–B5 and B7 (6 codes); U2 signs in for B6 and B8 (2 codes). The developer records request times. No address requests a 5th code within 60 minutes of its first in a window: B5 starts at least 60 minutes after B1's code; B7 starts at least 60 minutes after B2's code. Reserve sessions B4b and B5b each use one U1 code under the same rule. If a code does not arrive, wait out the 60-minute window; never resend.
 
+**Second step:** every sign-in below is an email code followed by the second step (**SES sign-in proof → Second step**): the owner, not the developer, types the current authenticator code on "Confirm it's you". It costs no email code, so the code count rule is unchanged. U1's first sign-in (B1) and U2's first sign-in (B6) also set the app up by hand, on "Set up two-step sign-in". The developer does not reload between the email code and the second step: a reload loses the restricted token and costs another email code, which counts toward the cap. A code works once, so when two sign-ins by the same user are close together, the owner waits for the app to show the next code.
+
 **Expected 4xx (not failures, subtracted from failed-request counts):**
 
 - Browser `GET /favicon.ico` on the admin host (admin ships no favicon).
@@ -4345,7 +4439,7 @@ Browser work runs in sessions of 14 minutes or less in one tab, with every reloa
 | -------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
 | B0       | —    | Baseline: the developer opens `/` on the admin host in the proof profile. The agent records the console baseline (count of messages, by source host only) and sign-in's axe result (recorded, not required to be 0; spec A10) before sign-in.                                                                                                                                                                                                                                                                                                                                         | Baseline         |
 | B1       | U1   | Sign in; type the slug; open General Settings → Billing; subscribe. The developer types the Stripe test card and the synthetic Checkout values by hand, declining every autofill. While the tab is on the admin origin (from sign-in to the click that opens Checkout, and again from arrival at `/?billing=done`, `apps/api/src/billing-routes.ts:254`), the agent records the distinct request hosts other than the admin host (count), the methods of requests to the API and auth hosts, CSP violations and CORS failures. Nothing is counted while the tab is on Stripe's pages. | P1, P2, P3 (1–2) |
-| B2       | U1   | After the webhook check: sign in at `/`; record `state` and `planKey` from the billing status response and stop unless `ok` and `starter`; the three nav items show; add the six adults in All Contacts; create the three households; add each household's adults.                                                                                                                                                                                                                                                                                                                    | P3 (5), P4       |
+| B2       | U1   | After the webhook check: sign in at `/` (email code, then the authenticator code); record `state` and `planKey` from the billing status response and stop unless `ok` and `starter`; the three nav items show; add the six adults in All Contacts; create the three households; add each household's adults.                                                                                                                                                                                                                                                                          | P3 (5), P4       |
 | B3       | U1   | Add the two minors; link the guardian; add the two life events; save the Mass Times text, navigate away and back.                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | P4, P6           |
 | B4       | U1   | The A10 views at 1280px, light; P5 checks and screenshots; positive control: Family Details for `Tolland household` shows Pip Tolland and the guardian link (booleans).                                                                                                                                                                                                                                                                                                                                                                                                               | P5               |
 | B5       | U1   | The A10 views at 375px, dark; P5 checks and screenshots; Users & Roles role-query assertions (no screenshot).                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | P5               |
@@ -4369,7 +4463,7 @@ Browser work runs in sessions of 14 minutes or less in one tab, with every reloa
 - **B0 Baseline:** Console message count by source host recorded. Sign-in axe violations recorded.
 - **B1 (P1, P2, P3 1–2):**
   - Published build (P1): served `index.html` names the one `assets/index-*.js` script in the bucket; exactly two distinct request hosts other than the admin host (API host and auth host; count 2); methods `POST` plus `OPTIONS` preflights; 0 CSP violations; 0 CORS failures.
-  - Sign-in (P2): U1 signs in by email code from `/`; shell loads the community.
+  - Sign-in (P2): U1 signs in by email code from `/`, then sets up the authenticator app by hand on "Set up two-step sign-in" (U1's first sign-in); shell loads the community.
   - Checkout (P3 1–2): General Settings → Billing → subscribe; test card `4242 4242 4242 4242` and synthetic Checkout values; Checkout redirects to `/?billing=done`; admin strips query; "Payment received, your plan will appear shortly" shows once.
 - **Webhook check (between B1 and B2, assistant):**
   Set `WINDOW_START_MS` before B1. Within 5 minutes of Checkout, check webhook outcomes in the service logs as in **Stripe billing proof → S4**:
@@ -4383,7 +4477,7 @@ Browser work runs in sessions of 14 minutes or less in one tab, with every reloa
   Expected: `checkout.session.completed` shows `processed` with no `errorCode`; key set has exactly `["level","message","operation","organisationId","outcome","stripeEventId","stripeEventType"]`; any `failed` line or `errorCode` is a stop (Deviation 3). Stripe dashboard shows 2xx for deliveries.
 
 - **B2 (P3 5, P4):**
-  - Sign in at `/`; `/v1/billing/status` returns `state` `ok` and `planKey` `starter` (stop unless both match).
+  - Sign in at `/` (email code, then the authenticator code); `/v1/billing/status` returns `state` `ok` and `planKey` `starter` (stop unless both match).
   - All Contacts, Family Records, and Mass Times show in navigation.
   - Add 6 adults in All Contacts; create 3 households; add adults to households: all writes answer 2xx.
 - **B3 (P4, P6):**
@@ -4403,7 +4497,7 @@ Browser work runs in sessions of 14 minutes or less in one tab, with every reloa
 Follow the restricted caller proof procedure:
 
 1. **B6 (U2 first sign-in):**
-   - Developer opens `/` in the proof profile and signs in as U2 (`${HELD_U2_EMAIL}`).
+   - Developer opens `/` in the proof profile and signs in as U2 (`${HELD_U2_EMAIL}`): the email code, then "Set up two-step sign-in", where the owner sets up the authenticator app by hand and types the code.
    - U2 has no grant. Confirm U2 sees no people screen.
    - Expected: U2 sees no people navigation item and cannot open people screens.
    - U2 signs out.
@@ -4440,7 +4534,7 @@ Follow the restricted caller proof procedure:
    Expected: describe prints `0`. Record yes.
 
 3. **B7 (U1 grants role to U2):**
-   - Developer signs in as U1 at `/`.
+   - Developer signs in as U1 at `/`: the email code, then the owner types the current authenticator code.
    - Opens Users & Roles. Creates custom role `proof_people` with `people.view` and `people.manage` only (no `people.restricted.read`).
    - Checks that U2's id is not on the owner's grant line.
    - Pastes U2's id into Users & Roles → Grant with role `proof_people`.
@@ -4448,7 +4542,7 @@ Follow the restricted caller proof procedure:
    - U1 signs out. A reload at `/` asks for sign-in (P9).
 
 4. **B8 (U2 restricted checks and adult add):**
-   - Developer signs in as U2 at `/`.
+   - Developer signs in as U2 at `/`: the email code, then the owner types the current authenticator code.
    - P7 checks:
      - All Contacts has no Minors button.
      - Family Records shows the alert "Household names and children are hidden for your role."
@@ -4594,7 +4688,7 @@ Follow **Ops console proof → Apply 2** from `infra/regions/au` on the pushed T
 - Screenshots kept: 39. The script hid the community picker in all 39. All 39 were checked by text recognition for addresses, slugs, hostnames and ids, and none was found; 8 were also checked by eye.
 - **Deviations (run by the project owner):**
   - Abdus ran the run in place of the developer. The browser was a separate Playwright-driven Chrome for Testing window, not the playwriter profile. The sign-in page's CSP blocks injecting axe any other way.
-  - B2–B5 ran inside the B1 sign-in. U1 used 2 codes in total (B1 and B7), and U2 used 2 (B6 and B8).
+  - B2–B5 ran inside the B1 sign-in. U1 used 2 codes in total (B1 and B7), and U2 used 2 (B6 and B8). These are email codes: the run was before `Two-factor for staff`, so no sign-in had a second step.
   - The Add minor form requires a date of birth and pre-selects a guardian. So Wren Barrah has the date 2018-07-02, and Hester was auto-selected with no rights ticked.
   - P1: Playwright doesn't see CORS preflights, so OPTIONS isn't counted. 0 CORS failures were logged.
   - The restricted alert renders with role="status", not role="alert". Its text is exact.

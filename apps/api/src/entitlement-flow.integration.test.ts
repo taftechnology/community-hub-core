@@ -12,8 +12,7 @@ import {
   createPlaintextPlatformSql,
 } from "@community-hub/db/plaintext";
 import { assignPlan, upsertPlan } from "@community-hub/entitlements";
-import type { OtpMail } from "@community-hub/identity";
-import { startEmailOtp, verifyEmailOtp } from "@community-hub/identity";
+import { signInWithTotpInProcess } from "./test-support/second-factor.js";
 import { withRequest } from "@community-hub/kernel";
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -42,15 +41,6 @@ function loadRuntime(): Runtime {
 function roleUrl(runtime: Runtime, role: "app" | "identity" | "platform"): string {
   const password = encodeURIComponent(runtime.passwords[role]);
   return `postgres://${role}:${password}@127.0.0.1:5432/hub_product_only`;
-}
-
-class MemoryMail implements OtpMail {
-  last: { to: string; code: string } | undefined;
-
-  send(input: { to: string; code: string }): Promise<void> {
-    this.last = input;
-    return Promise.resolve();
-  }
 }
 
 function request(pathName: string, body: unknown, authorization: string): Request {
@@ -115,16 +105,7 @@ describe("entitlement flow", () => {
     }
 
     async function signIn(email: string): Promise<{ userId: string; accessToken: string }> {
-      const mail = new MemoryMail();
-      await startEmailOtp(identity, kms, KEY_ARN, mail, { email, now });
-      const session = await verifyEmailOtp(identity, kms, KEY_ARN, {
-        email,
-        code: mail.last?.code ?? "",
-        now,
-      });
-      if (session === null) {
-        throw new Error("session");
-      }
+      const session = await signInWithTotpInProcess(identity, kms, KEY_ARN, email, now);
       userIds.push(session.userId);
       return session;
     }
@@ -339,6 +320,8 @@ describe("entitlement flow", () => {
       }
     } finally {
       for (const userId of userIds) {
+        await identity`delete from identity.backup_codes where user_id = ${userId}::uuid`;
+        await identity`delete from identity.totp_credentials where user_id = ${userId}::uuid`;
         await identity`delete from identity.sessions where user_id = ${userId}::uuid`;
         await identity`delete from identity.users where id = ${userId}::uuid`;
       }

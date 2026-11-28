@@ -6,12 +6,15 @@ import type { Sql, TransactionSql } from "postgres";
 import { IdentityError } from "../domain/error.js";
 import { hmac } from "./hmac.js";
 import { ensureIdentityKey } from "./identity-key.js";
+import { lockSecondFactor } from "./second-factor-lock.js";
 
 const CONTEXT = { key_kind: "identity", region: "au", key_version: "1" } as const;
 const ACCESS_MS = 15 * 60 * 1000;
 const REFRESH_MS = 30 * 24 * 60 * 60 * 1000;
 
-export type SessionKind = "tenant" | "operator" | "enrolment";
+export type SessionKind = "tenant" | "operator" | "enrolment" | "second_factor";
+
+export type SessionFactor = "passkey_uv" | "otp_totp" | "otp_passkey" | "otp_backup_code";
 
 export type SessionTokens = {
   userId: string;
@@ -41,8 +44,8 @@ function accessExpiresInSeconds(now: Date, accessExpiresAt: Date): number {
 
 function computeSessionExpiries(input: {
   now: Date;
-  kind?: SessionKind;
-  absoluteExpiresAt?: Date;
+  kind?: SessionKind | undefined;
+  absoluteExpiresAt?: Date | undefined;
 }): {
   kind: SessionKind;
   accessExpiresAt: Date;
@@ -58,7 +61,7 @@ function computeSessionExpiries(input: {
     if (input.absoluteExpiresAt !== undefined) {
       throw new IdentityError("invalid_ceremony");
     }
-    if (kind !== "tenant" && kind !== "enrolment") {
+    if (kind !== "tenant" && kind !== "enrolment" && kind !== "second_factor") {
       throw new IdentityError("invalid_ceremony");
     }
   }
@@ -69,7 +72,7 @@ function computeSessionExpiries(input: {
     const absMs = input.absoluteExpiresAt!.getTime();
     accessExpiresAt = new Date(Math.min(input.now.getTime() + ACCESS_MS, absMs));
     refreshExpiresAt = new Date(Math.min(input.now.getTime() + REFRESH_MS, absMs));
-  } else if (kind === "enrolment") {
+  } else if (kind === "enrolment" || kind === "second_factor") {
     accessExpiresAt = new Date(input.now.getTime() + ACCESS_MS);
     refreshExpiresAt = accessExpiresAt;
   } else {
@@ -85,20 +88,41 @@ function computeSessionExpiries(input: {
   };
 }
 
+export type CreateSessionTenantInput = {
+  userId: string;
+  now: Date;
+  refreshFamily?: string;
+  kind?: "tenant" | undefined;
+  absoluteExpiresAt?: Date;
+  // A tenant session always has a factor. A tenant row with none is a row from before the second
+  // factor, and reads and refresh refuse it.
+  factor: SessionFactor;
+  freshFactorAt?: Date | null;
+  recoveryUntil?: Date | null;
+};
+
+export type CreateSessionNonTenantInput = {
+  userId: string;
+  now: Date;
+  refreshFamily?: string;
+  kind: "operator" | "enrolment" | "second_factor";
+  absoluteExpiresAt?: Date;
+  factor?: SessionFactor | null;
+  freshFactorAt?: Date | null;
+  recoveryUntil?: Date | null;
+};
+
 export async function createSession(
   sql: Sql,
   kms: KmsPort,
   keyArn: string,
-  input: {
-    userId: string;
-    now: Date;
-    refreshFamily?: string;
-    kind?: SessionKind;
-    absoluteExpiresAt?: Date;
-  },
+  input: CreateSessionTenantInput | CreateSessionNonTenantInput,
 ): Promise<SessionTokens> {
   const { kind, accessExpiresAt, refreshExpiresAt, absoluteExpiresAt } =
     computeSessionExpiries(input);
+  if (kind === "tenant" && input.factor === undefined) {
+    throw new IdentityError("invalid_ceremony");
+  }
   const minted = await mint(sql, kms, keyArn);
   const refreshFamily = input.refreshFamily ?? newId();
   await insertSession(sql, {
@@ -111,6 +135,9 @@ export async function createSession(
     refreshExpiresAt,
     kind,
     absoluteExpiresAt,
+    factor: input.factor ?? null,
+    freshFactorAt: input.freshFactorAt ?? null,
+    recoveryUntil: input.recoveryUntil ?? null,
   });
   return {
     userId: input.userId,
@@ -124,16 +151,13 @@ export async function createSession(
 export async function createSessionInTransaction(
   tx: TransactionSql,
   bidx: webcrypto.CryptoKey,
-  input: {
-    userId: string;
-    now: Date;
-    refreshFamily?: string;
-    kind?: SessionKind;
-    absoluteExpiresAt?: Date;
-  },
+  input: CreateSessionTenantInput | CreateSessionNonTenantInput,
 ): Promise<SessionTokens> {
   const { kind, accessExpiresAt, refreshExpiresAt, absoluteExpiresAt } =
     computeSessionExpiries(input);
+  if (kind === "tenant" && input.factor === undefined) {
+    throw new IdentityError("invalid_ceremony");
+  }
   const minted = await mintWithBidx(bidx);
   const refreshFamily = input.refreshFamily ?? newId();
   await insertSession(tx, {
@@ -146,6 +170,9 @@ export async function createSessionInTransaction(
     refreshExpiresAt,
     kind,
     absoluteExpiresAt,
+    factor: input.factor ?? null,
+    freshFactorAt: input.freshFactorAt ?? null,
+    recoveryUntil: input.recoveryUntil ?? null,
   });
   return {
     userId: input.userId,
@@ -193,6 +220,7 @@ export async function readSession(
       and revoked_at is null
       and access_expires_at > ${now}::timestamptz
       and kind = any(${sql.array([...kinds])})
+      and (kind <> 'tenant' or factor is not null)
   `;
   const row = rows[0];
   return row === undefined ? null : { userId: row.user_id };
@@ -220,6 +248,7 @@ export async function readSessionWithKind(
       and revoked_at is null
       and access_expires_at > ${now}::timestamptz
       and kind = any(${sql.array([...input.kinds])})
+      and (kind <> 'tenant' or factor is not null)
   `;
   const row = rows[0];
   return row === undefined ? null : { userId: row.user_id, kind: row.kind };
@@ -240,26 +269,33 @@ export async function refreshSession(
   if (raw === null) {
     return null;
   }
-  const kinds = (input.kinds ?? ["tenant"]).filter((k) => k !== "enrolment");
+  const kinds = (input.kinds ?? ["tenant"]).filter(
+    (k) => k !== "enrolment" && k !== "second_factor",
+  );
   if (kinds.length === 0) {
     return null;
   }
   const bidx = await bidxKey(sql, kms, keyArn);
   const refreshHash = await hmac(bidx, "identity.refresh", raw);
   const now = input.now.toISOString();
-  const located = await sql<{ refresh_family: string }[]>`
-    select refresh_family
+  const located = await sql<{ refresh_family: string; user_id: string; kind: SessionKind }[]>`
+    select refresh_family, user_id, kind
     from identity.sessions
     where refresh_hash = ${refreshHash}
       and kind = any(${sql.array([...kinds])})
+      and (kind <> 'tenant' or factor is not null)
   `;
-  const family = located[0]?.refresh_family;
-  if (family === undefined) {
+  const target = located[0];
+  if (target === undefined) {
     return null;
   }
+  const family = target.refresh_family;
   const minted = await mint(sql, kms, keyArn);
   const successorId = newId();
   const claimed = await sql.begin(async (tx) => {
+    if (target.kind === "tenant") {
+      await lockSecondFactor(tx, target.user_id);
+    }
     await tx`
       select pg_advisory_xact_lock(hashtextextended('family:' || ${family}::text, 0))
     `;
@@ -288,6 +324,7 @@ export async function refreshSession(
         refresh_family: string;
         kind: SessionKind;
         absolute_expires_at: Date | null;
+        factor: SessionFactor | null;
       }[]
     >`
       update identity.sessions
@@ -296,9 +333,11 @@ export async function refreshSession(
         and refresh_expires_at > ${now}::timestamptz
         and replaced_by is null
         and revoked_at is null
-        -- Intentional defence in depth: the locate select already refuses other kinds.
+        -- Intentional defence in depth: the locate select already refuses other kinds and a
+        -- tenant row with no factor.
         and kind = any(${sql.array([...kinds])})
-      returning id, user_id, refresh_family, kind, absolute_expires_at
+        and (kind <> 'tenant' or factor is not null)
+      returning id, user_id, refresh_family, kind, absolute_expires_at, factor
     `;
     const row = rows[0];
     if (row !== undefined) {
@@ -315,7 +354,7 @@ export async function refreshSession(
       await tx`
         insert into identity.sessions (
           id, user_id, refresh_family, access_hash, refresh_hash,
-          access_expires_at, refresh_expires_at, kind, absolute_expires_at
+          access_expires_at, refresh_expires_at, kind, absolute_expires_at, factor
         )
         values (
           ${successorId},
@@ -326,7 +365,8 @@ export async function refreshSession(
           ${accessExpiresAt.toISOString()}::timestamptz,
           ${refreshExpiresAt.toISOString()}::timestamptz,
           ${row.kind},
-          ${row.absolute_expires_at ? row.absolute_expires_at.toISOString() : null}::timestamptz
+          ${row.absolute_expires_at ? row.absolute_expires_at.toISOString() : null}::timestamptz,
+          ${row.factor}
         )
       `;
       return { userId: row.user_id, accessExpiresAt };
@@ -373,7 +413,7 @@ export async function endSession(
     select id, user_id, refresh_family
     from identity.sessions
     where access_hash = ${accessHash}
-      and kind = 'tenant'
+      and kind in ('tenant', 'second_factor')
     limit 1
   `;
   const row = rows[0];
@@ -393,6 +433,24 @@ export async function endSession(
         and revoked_at is null
     `;
   });
+}
+
+// Internal helper; not exported from public/.
+export async function endOtherSessions(
+  tx: TransactionSql,
+  userId: string,
+  keepSessionId: string,
+  now?: Date,
+): Promise<void> {
+  const revokedAt = now ? now.toISOString() : null;
+  await tx`
+    update identity.sessions
+    set revoked_at = coalesce(${revokedAt}::timestamptz, now())
+    where user_id = ${userId}
+      and id <> ${keepSessionId}
+      and kind in ('tenant', 'second_factor')
+      and revoked_at is null
+  `;
 }
 
 async function mintWithBidx(bidx: webcrypto.CryptoKey): Promise<{
@@ -437,12 +495,16 @@ async function insertSession(
     refreshExpiresAt: Date;
     kind: SessionKind;
     absoluteExpiresAt: Date | null;
+    factor: SessionFactor | null;
+    freshFactorAt: Date | null;
+    recoveryUntil: Date | null;
   },
 ): Promise<void> {
   await sql`
     insert into identity.sessions (
       id, user_id, refresh_family, access_hash, refresh_hash,
-      access_expires_at, refresh_expires_at, kind, absolute_expires_at
+      access_expires_at, refresh_expires_at, kind, absolute_expires_at,
+      factor, fresh_factor_at, recovery_until
     )
     values (
       ${input.id},
@@ -453,7 +515,10 @@ async function insertSession(
       ${input.accessExpiresAt.toISOString()}::timestamptz,
       ${input.refreshExpiresAt.toISOString()}::timestamptz,
       ${input.kind},
-      ${input.absoluteExpiresAt ? input.absoluteExpiresAt.toISOString() : null}::timestamptz
+      ${input.absoluteExpiresAt ? input.absoluteExpiresAt.toISOString() : null}::timestamptz,
+      ${input.factor},
+      ${input.freshFactorAt ? input.freshFactorAt.toISOString() : null}::timestamptz,
+      ${input.recoveryUntil ? input.recoveryUntil.toISOString() : null}::timestamptz
     )
   `;
 }

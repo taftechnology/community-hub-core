@@ -172,13 +172,14 @@ export function readServiceEnv(
 
   const billingSecretArn = text(source, "BILLING_SECRET_ARN");
   const adminOrigin = text(source, "ADMIN_ORIGIN");
-  if ((billingSecretArn === undefined) !== (adminOrigin === undefined)) {
+  if (billingSecretArn !== undefined && adminOrigin === undefined) {
     return { ok: false };
   }
-  if (billingSecretArn !== undefined && adminOrigin !== undefined) {
-    if (!BILLING_SECRET_ARN.test(billingSecretArn) || !isValidAdminOrigin(adminOrigin)) {
-      return { ok: false };
-    }
+  if (adminOrigin !== undefined && !isValidAdminOrigin(adminOrigin)) {
+    return { ok: false };
+  }
+  if (billingSecretArn !== undefined && !BILLING_SECRET_ARN.test(billingSecretArn)) {
+    return { ok: false };
   }
 
   const hostnames = [
@@ -186,6 +187,7 @@ export function readServiceEnv(
     values.AUTH_HOSTNAME,
     values.WEBHOOKS_HOSTNAME,
     values.OPS_HOSTNAME,
+    ...(adminOrigin !== undefined ? [new URL(adminOrigin).hostname] : []),
   ].map((hostname) => (hostname ?? "").toLowerCase());
   if (new Set(hostnames).size !== hostnames.length) {
     return { ok: false };
@@ -227,9 +229,12 @@ export function readServiceEnv(
     env.SES_CONFIGURATION_SET = sesConfigSet;
   }
 
+  if (adminOrigin !== undefined) {
+    env.ADMIN_ORIGIN = adminOrigin;
+  }
+
   if (billingSecretArn !== undefined && adminOrigin !== undefined) {
     env.BILLING_SECRET_ARN = billingSecretArn;
-    env.ADMIN_ORIGIN = adminOrigin;
   }
 
   const opsStaticDir = text(source, "OPS_STATIC_DIR");

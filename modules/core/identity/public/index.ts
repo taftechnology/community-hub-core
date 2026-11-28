@@ -1,6 +1,19 @@
 export { IdentityError } from "../domain/error.js";
 export { OtpMailUnavailable, rejectingOtpMail, type OtpMail } from "../domain/otp-mail.js";
-export { startEmailOtp, verifyEmailOtp, type OtpPurpose } from "../infrastructure/email-otp.js";
+export {
+  rejectingSecondFactorNotice,
+  SecondFactorNoticeUnavailable,
+  type SecondFactorNotice,
+  type SecondFactorNoticeKind,
+} from "../domain/second-factor-notice.js";
+export {
+  readSecondFactorPrompt,
+  startEmailOtp,
+  verifyEmailOtp,
+  type EmailOtpSecondFactorMethod,
+  type EmailOtpSecondFactorState,
+  type OtpPurpose,
+} from "../infrastructure/email-otp.js";
 export { ensureIdentityKey } from "../infrastructure/identity-key.js";
 export { findOrCreateUserByEmail, findUserByEmail } from "../infrastructure/email-lookup.js";
 export { readUserEmails } from "../infrastructure/user-emails.js";
@@ -15,7 +28,6 @@ export {
 export {
   beginPasskeyAuthentication,
   beginPasskeyRegistration,
-  finishPasskeyAuthentication,
   finishPasskeyRegistration,
   verifyPasskeyAssertion,
   type PasskeyAuthenticationOptions,
@@ -23,6 +35,7 @@ export {
   type PasskeyOnStored,
   type PasskeyRegistrationOnStored,
   type PasskeyRegistrationOptions,
+  type VerifyPasskeyAssertionInput,
 } from "../infrastructure/passkey.js";
 export {
   endSession,
@@ -61,3 +74,54 @@ export {
   type VerifyOperatorEnrolmentInput,
   type VerifyOperatorEnrolmentResult,
 } from "../infrastructure/operator.js";
+export {
+  beginFreshPasskey,
+  beginSecondStepPasskey,
+  beginTenantPasskeyRegistration,
+  confirmTotpSetup,
+  finishTenantPasskeyRegistration,
+  freshCheckTotp,
+  listSecondFactors,
+  regenerateBackupCodes,
+  removePasskey,
+  removeTotp,
+  signInWithPasskey,
+  startTotpSetup,
+  verifyFreshPasskey,
+  verifySecondStep,
+  verifySecondStepPasskey,
+  type BeginFreshPasskeyInput,
+  type BeginFreshPasskeyResult,
+  type BeginSecondStepPasskeyInput,
+  type BeginSecondStepPasskeyResult,
+  type BeginTenantPasskeyRegistrationInput,
+  type BeginTenantPasskeyRegistrationResult,
+  type ConfirmTotpSetupInput,
+  type ConfirmTotpSetupResult,
+  type FinishTenantPasskeyRegistrationInput,
+  type FinishTenantPasskeyRegistrationResult,
+  type FreshCheckTotpInput,
+  type FreshCheckTotpResult,
+  type ListedPasskey,
+  type ListSecondFactorsInput,
+  type ListSecondFactorsResult,
+  type RegenerateBackupCodesInput,
+  type RegenerateBackupCodesResult,
+  type RemovePasskeyInput,
+  type RemovePasskeyResult,
+  type RemoveTotpInput,
+  type RemoveTotpResult,
+  type SecondFactorNoticeDeps,
+  type SecondFactorNoticeLogFields,
+  type SignInWithPasskeyInput,
+  type SignInWithPasskeyResult,
+  type StartTotpSetupInput,
+  type StartTotpSetupResult,
+  type VerifyFreshPasskeyInput,
+  type VerifyFreshPasskeyResult,
+  type VerifySecondStepInput,
+  type VerifySecondStepMethod,
+  type VerifySecondStepPasskeyInput,
+  type VerifySecondStepPasskeyResult,
+  type VerifySecondStepResult,
+} from "../infrastructure/second-factor.js";

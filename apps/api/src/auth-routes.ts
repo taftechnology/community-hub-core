@@ -10,16 +10,19 @@ import {
 } from "@community-hub/contracts";
 import {
   beginPasskeyAuthentication,
-  beginPasskeyRegistration,
+  beginTenantPasskeyRegistration,
   endSession,
-  finishPasskeyAuthentication,
-  finishPasskeyRegistration,
+  finishTenantPasskeyRegistration,
   IdentityError,
-  readSession,
+  readSecondFactorPrompt,
   refreshSession,
+  signInWithPasskey,
   startEmailOtp,
   verifyEmailOtp,
   type OtpMail,
+  type SecondFactorNotice,
+  type SecondFactorNoticeDeps,
+  type SessionKind,
   type SessionTokens,
 } from "@community-hub/identity";
 import type { GateRoute } from "./gate.js";
@@ -35,16 +38,18 @@ export type AuthDeps = {
   kms: IdentityKms;
   keyArn: string;
   mail: OtpMail;
+  notice: SecondFactorNotice;
   now: () => Date;
   authHostname: string;
+  adminOrigin?: string | undefined;
   log: AuthLog;
 };
 
-function empty(status: number): Response {
+export function empty(status: number): Response {
   return new Response(null, { status });
 }
 
-function presentedHostname(request: Request): string | undefined {
+export function presentedHostname(request: Request): string | undefined {
   const raw = request.headers.get("x-community-hub-hostname");
   if (raw === null || raw === "") {
     return undefined;
@@ -60,7 +65,7 @@ function jsonMediaType(request: Request): boolean {
   return raw.split(";")[0]?.trim().toLowerCase() === "application/json";
 }
 
-async function parse<T>(
+export async function parse<T>(
   request: Request,
   schema: {
     safeParse(data: unknown): { success: true; data: T } | { success: false };
@@ -79,7 +84,7 @@ async function parse<T>(
   return parsed.success ? parsed.data : undefined;
 }
 
-function bearer(request: Request): string | undefined {
+export function bearer(request: Request): string | undefined {
   const raw = request.headers.get("authorization");
   if (raw === null) {
     return undefined;
@@ -88,17 +93,47 @@ function bearer(request: Request): string | undefined {
   return match?.[1];
 }
 
-function base64url(bytes: Uint8Array): string {
+export function base64url(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64url");
 }
 
-function bytesFrom(value: string): Uint8Array {
+export function bytesFrom(value: string): Uint8Array {
   return new Uint8Array(Buffer.from(value, "base64url"));
 }
 
-function tokens(value: SessionTokens): Response {
+export function adminRpIdFrom(adminOrigin: string | undefined): string | null {
+  if (adminOrigin === undefined || adminOrigin === "") {
+    return null;
+  }
+  return new URL(adminOrigin).hostname;
+}
+
+export function noticeDepsFor(deps: AuthDeps): SecondFactorNoticeDeps {
+  return {
+    notice: deps.notice,
+    log: (fields) => {
+      deps.log(fields.event, { kind: fields.kind });
+    },
+  };
+}
+
+function tokens(
+  value: SessionTokens,
+  options: { kind?: SessionKind; extra?: Record<string, unknown> } = {},
+): Response {
+  if (options.kind === "second_factor") {
+    return Response.json(
+      {
+        ...options.extra,
+        accessToken: value.accessToken,
+        expiresIn: value.expiresIn,
+      },
+      { headers: { "cache-control": "no-store" } },
+    );
+  }
   return Response.json(
     {
+      ...options.extra,
       userId: value.userId,
       accessToken: value.accessToken,
       refreshToken: value.refreshToken,
@@ -106,6 +141,13 @@ function tokens(value: SessionTokens): Response {
     },
     { headers: { "cache-control": "no-store" } },
   );
+}
+
+export function adminTokensResponse(
+  value: SessionTokens,
+  extra?: Record<string, unknown>,
+): Response {
+  return tokens(value, extra === undefined ? {} : { extra });
 }
 
 function statusFor(error: unknown): Response | undefined {
@@ -179,14 +221,34 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
         if (body === undefined) {
           return empty(400);
         }
-        const session = await identity((sql) =>
-          verifyEmailOtp(sql, deps.kms, deps.keyArn, {
+        const rpId = adminRpIdFrom(deps.adminOrigin);
+        const verified = await identity(async (sql) => {
+          const session = await verifyEmailOtp(sql, deps.kms, deps.keyArn, {
             email: body.email,
             code: body.code,
             now: deps.now(),
-          }),
-        );
-        return session === null ? empty(401) : tokens(session);
+          });
+          if (session === null) {
+            return null;
+          }
+          const prompt = await readSecondFactorPrompt(sql, {
+            userId: session.userId,
+            adminRpId: rpId,
+          });
+          return { session, prompt };
+        });
+        if (verified === null) {
+          deps.log("auth", { route: "/v1/auth/email-otp/verify", status: 401 });
+          return empty(401);
+        }
+        return tokens(verified.session, {
+          kind: "second_factor",
+          extra: {
+            secondFactor: verified.prompt.secondFactor,
+            methods: verified.prompt.methods,
+            passkeysAvailable: rpId !== null,
+          },
+        });
       },
     },
     {
@@ -199,6 +261,10 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
         if (denied !== undefined) {
           return denied;
         }
+        const rpId = adminRpIdFrom(deps.adminOrigin);
+        if (rpId === null) {
+          return empty(404);
+        }
         const body = await parse(request, passkeyRegisterOptionsBody);
         if (body === undefined) {
           return empty(400);
@@ -207,26 +273,22 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
         if (token === undefined) {
           return empty(401);
         }
-        const session = await identity((sql) =>
-          readSession(sql, deps.kms, deps.keyArn, {
+        const result = await identity((sql) =>
+          beginTenantPasskeyRegistration(sql, deps.kms, deps.keyArn, {
             accessToken: token,
             now: deps.now(),
+            adminRpId: rpId,
           }),
         );
-        if (session === null) {
+        if (result.outcome !== "started") {
+          deps.log("second_factor", { route: "/v1/auth/passkey/register/options", status: 401 });
           return empty(401);
         }
-        try {
-          const options = await identity((sql) =>
-            beginPasskeyRegistration(sql, {
-              userId: session.userId,
-              rpId: deps.authHostname,
-              now: deps.now(),
-            }),
-          );
-          return Response.json({
+        const { options } = result;
+        return Response.json(
+          {
             challenge: base64url(options.challenge),
-            rp: options.rp,
+            rp: { id: options.rp.id, name: "Community Hub" },
             user: {
               id: base64url(options.user.id),
               name: options.user.name,
@@ -235,14 +297,13 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
             pubKeyCredParams: options.pubKeyCredParams,
             attestation: options.attestation,
             authenticatorSelection: options.authenticatorSelection,
-          });
-        } catch (error) {
-          const response = statusFor(error);
-          if (response !== undefined) {
-            return response;
-          }
-          throw error;
-        }
+            excludeCredentials: (options.excludeCredentials ?? []).map((cred) => ({
+              type: cred.type,
+              id: base64url(cred.id),
+            })),
+          },
+          { headers: { "cache-control": "no-store" } },
+        );
       },
     },
     {
@@ -255,6 +316,10 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
         if (denied !== undefined) {
           return denied;
         }
+        const rpId = adminRpIdFrom(deps.adminOrigin);
+        if (rpId === null) {
+          return empty(404);
+        }
         const body = await parse(request, passkeyRegisterVerifyBody);
         if (body === undefined) {
           return empty(400);
@@ -263,33 +328,29 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
         if (token === undefined) {
           return empty(401);
         }
-        const session = await identity((sql) =>
-          readSession(sql, deps.kms, deps.keyArn, {
-            accessToken: token,
-            now: deps.now(),
-          }),
-        );
-        if (session === null) {
-          return empty(401);
-        }
-        try {
-          await identity((sql) =>
-            finishPasskeyRegistration(sql, {
-              userId: session.userId,
-              rpId: deps.authHostname,
+        const result = await identity((sql) =>
+          finishTenantPasskeyRegistration(
+            sql,
+            deps.kms,
+            deps.keyArn,
+            {
+              accessToken: token,
               now: deps.now(),
+              adminRpId: rpId,
               clientDataJSON: bytesFrom(body.clientDataJSON),
               attestationObject: bytesFrom(body.attestationObject),
-            }),
-          );
-        } catch (error) {
-          const response = statusFor(error);
-          if (response !== undefined) {
-            return response;
-          }
-          throw error;
+            },
+            noticeDepsFor(deps),
+          ),
+        );
+        if (result.outcome !== "enrolled") {
+          deps.log("second_factor", { route: "/v1/auth/passkey/register/verify", status: 401 });
+          return empty(401);
         }
-        return empty(204);
+        if (result.backupCodes !== undefined && result.tokens !== undefined) {
+          return tokens(result.tokens, { extra: { backupCodes: result.backupCodes } });
+        }
+        return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
       },
     },
     {
@@ -302,20 +363,29 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
         if (denied !== undefined) {
           return denied;
         }
+        const rpId = adminRpIdFrom(deps.adminOrigin);
+        if (rpId === null) {
+          return empty(404);
+        }
         const body = await parse(request, passkeyAuthenticateOptionsBody);
         if (body === undefined) {
           return empty(400);
         }
         const options = await identity((sql) =>
           beginPasskeyAuthentication(sql, {
-            rpId: deps.authHostname,
+            rpId,
             now: deps.now(),
+            userVerification: "required",
           }),
         );
-        return Response.json({
-          challenge: base64url(options.challenge),
-          rpId: options.rpId,
-        });
+        return Response.json(
+          {
+            challenge: base64url(options.challenge),
+            rpId: options.rpId,
+            userVerification: options.userVerification ?? "required",
+          },
+          { headers: { "cache-control": "no-store" } },
+        );
       },
     },
     {
@@ -328,13 +398,17 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
         if (denied !== undefined) {
           return denied;
         }
+        const rpId = adminRpIdFrom(deps.adminOrigin);
+        if (rpId === null) {
+          return empty(404);
+        }
         const body = await parse(request, passkeyAuthenticateVerifyBody);
         if (body === undefined) {
           return empty(400);
         }
-        const session = await identity((sql) =>
-          finishPasskeyAuthentication(sql, deps.kms, deps.keyArn, {
-            rpId: deps.authHostname,
+        const result = await identity((sql) =>
+          signInWithPasskey(sql, deps.kms, deps.keyArn, {
+            adminRpId: rpId,
             now: deps.now(),
             credentialId: bytesFrom(body.credentialId),
             clientDataJSON: bytesFrom(body.clientDataJSON),
@@ -342,7 +416,11 @@ export function authRoutes(deps: AuthDeps): GateRoute[] {
             signature: bytesFrom(body.signature),
           }),
         );
-        return session === null ? empty(401) : tokens(session);
+        if (result.outcome !== "signed_in") {
+          deps.log("second_factor", { route: "/v1/auth/passkey/authenticate/verify", status: 401 });
+          return empty(401);
+        }
+        return tokens(result.tokens);
       },
     },
     {

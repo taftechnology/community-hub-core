@@ -12,8 +12,7 @@ import {
   createPlaintextPlatformSql,
 } from "@community-hub/db/plaintext";
 import { assignPlan, upsertPlan } from "@community-hub/entitlements";
-import type { OtpMail } from "@community-hub/identity";
-import { startEmailOtp, verifyEmailOtp } from "@community-hub/identity";
+import { signInWithTotpInProcess } from "./test-support/second-factor.js";
 import { withRequest } from "@community-hub/kernel";
 import { createHousehold } from "@community-hub/people";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -130,15 +129,6 @@ function envFor(port: number): ServiceEnv {
   return read.env;
 }
 
-class MemoryMail implements OtpMail {
-  last: { to: string; code: string } | undefined;
-
-  send(input: { to: string; code: string }): Promise<void> {
-    this.last = input;
-    return Promise.resolve();
-  }
-}
-
 function post(pathName: string, body: unknown, token?: string): Promise<Response> {
   const headers = new Headers({
     "content-type": "application/json",
@@ -171,8 +161,8 @@ describe("household routes atomicity (finding IA)", () => {
   let app: ReturnType<typeof createPlaintextAppSql>;
   let secondApp: ReturnType<typeof createPlaintextAppSql>;
   let kms: ReturnType<typeof createLocalKmsPort>;
-  let mail: MemoryMail;
   let server: Server;
+  const userIds: string[] = [];
 
   const orgId = newId();
   const communityId = newId();
@@ -191,15 +181,8 @@ describe("household routes atomicity (finding IA)", () => {
   };
 
   async function signIn(email: string): Promise<{ userId: string; accessToken: string }> {
-    await startEmailOtp(identity, kms, KEY_ARN, mail, { email, now });
-    const session = await verifyEmailOtp(identity, kms, KEY_ARN, {
-      email,
-      code: mail.last?.code ?? "",
-      now,
-    });
-    if (session === null) {
-      throw new Error("Failed to sign in");
-    }
+    const session = await signInWithTotpInProcess(identity, kms, KEY_ARN, email, now);
+    userIds.push(session.userId);
     return session;
   }
 
@@ -210,7 +193,6 @@ describe("household routes atomicity (finding IA)", () => {
     app = createPlaintextAppSql(roleUrl(runtime, "app"));
     secondApp = createPlaintextAppSql(roleUrl(runtime, "app"));
     kms = createLocalKmsPort();
-    mail = new MemoryMail();
     await identity`delete from identity.identity_keys`;
 
     const env = envFor(PORT);
@@ -294,6 +276,13 @@ describe("household routes atomicity (finding IA)", () => {
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
     });
+    for (const uid of userIds) {
+      await identity`delete from identity.backup_codes where user_id = ${uid}::uuid`;
+      await identity`delete from identity.totp_credentials where user_id = ${uid}::uuid`;
+      await identity`delete from identity.sessions where user_id = ${uid}::uuid`;
+      await identity`delete from identity.users where id = ${uid}::uuid`;
+    }
+    await identity`delete from identity.identity_keys`;
     await identity.end({ timeout: 1 });
     await platform.end({ timeout: 1 });
     await app.end({ timeout: 1 });

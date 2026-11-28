@@ -20,7 +20,7 @@ import {
   createPlaintextPlatformSql,
 } from "@community-hub/db/plaintext";
 import { assignPlan, upsertPlan } from "@community-hub/entitlements";
-import type { OtpMail } from "@community-hub/identity";
+import { rejectingSecondFactorNotice, type OtpMail } from "@community-hub/identity";
 import * as identityApi from "@community-hub/identity";
 import { withRequest } from "@community-hub/kernel";
 import { createHousehold, createPerson } from "@community-hub/people";
@@ -31,7 +31,9 @@ import { identityInvitationAddresses } from "./invitation-addresses.js";
 import { authRoutes } from "./auth-routes.js";
 import type { Role } from "./checkout.js";
 import { readServiceEnv, type ServiceEnv } from "./env.js";
+import { secondFactorRoutes } from "./second-factor-routes.js";
 import { startServer } from "./server.js";
+import { signInWithTotp } from "./test-support/second-factor.js";
 
 const KEY_ARN = `arn:aws:kms:ap-southeast-2:123456789012:key/mrk-${"ab".repeat(16)}`;
 const API_HOSTNAME = "au.api.example.test";
@@ -126,6 +128,8 @@ function post(
 }
 
 async function cleanIdentity(sql: ReturnType<typeof createPlaintextIdentitySql>): Promise<void> {
+  await sql`delete from identity.backup_codes`;
+  await sql`delete from identity.totp_credentials`;
   await sql`delete from identity.sessions`;
   await sql`delete from identity.passkey_credentials`;
   await sql`delete from identity.passkey_challenges`;
@@ -186,6 +190,17 @@ describe("users list integration", () => {
           kms,
           keyArn: KEY_ARN,
           mail,
+          notice: rejectingSecondFactorNotice,
+          now: () => now,
+          authHostname: AUTH_HOSTNAME,
+          log: () => undefined,
+        }),
+        ...secondFactorRoutes({
+          checkout,
+          kms,
+          keyArn: KEY_ARN,
+          mail,
+          notice: rejectingSecondFactorNotice,
           now: () => now,
           authHostname: AUTH_HOSTNAME,
           log: () => undefined,
@@ -275,14 +290,12 @@ describe("users list integration", () => {
   }
 
   async function createSession(email: string) {
-    const started = await post(AUTH_HOSTNAME, "/v1/auth/email-otp/start", { email });
-    expect(started.status).toBe(204);
-    const verified = await post(AUTH_HOSTNAME, "/v1/auth/email-otp/verify", {
-      email,
-      code: mail.last?.code ?? "",
+    const session = await signInWithTotp(fetch, email, {
+      origin: `http://127.0.0.1:${PORT}`,
+      hostname: AUTH_HOSTNAME,
+      readEmailCode: () => mail.last?.code ?? "",
+      now: () => now,
     });
-    expect(verified.status).toBe(200);
-    const session = (await verified.json()) as { userId: string; accessToken: string };
     return {
       userId: session.userId,
       accessToken: session.accessToken,

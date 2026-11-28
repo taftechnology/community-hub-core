@@ -4,10 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 const identity = vi.hoisted(() => ({
   startEmailOtp: vi.fn(),
   verifyEmailOtp: vi.fn(),
-  beginPasskeyRegistration: vi.fn(),
-  finishPasskeyRegistration: vi.fn(),
+  readSecondFactorPrompt: vi.fn(),
+  beginTenantPasskeyRegistration: vi.fn(),
+  finishTenantPasskeyRegistration: vi.fn(),
   beginPasskeyAuthentication: vi.fn(),
-  finishPasskeyAuthentication: vi.fn(),
+  signInWithPasskey: vi.fn(),
   readSession: vi.fn(),
   refreshSession: vi.fn(),
   endSession: vi.fn(),
@@ -29,21 +30,27 @@ vi.mock("@community-hub/billing", async () => {
   return { ...actual, assertWritable: billing.assertWritable };
 });
 
-import { OtpMailUnavailable } from "@community-hub/identity";
+import { OtpMailUnavailable, rejectingSecondFactorNotice } from "@community-hub/identity";
 
 import { authRoutes, type AuthDeps } from "./auth-routes.js";
 
 const AUTH_HOSTNAME = "auth.au.example.test";
 const API_HOSTNAME = "au.api.example.test";
+const ADMIN_ORIGIN = "https://admin.au.example.test";
 
-function deps(log: AuthDeps["log"] = () => undefined): AuthDeps {
+function deps(
+  log: AuthDeps["log"] = () => undefined,
+  adminOrigin: string | undefined = ADMIN_ORIGIN,
+): AuthDeps {
   return {
     checkout: (_role, run) => run({} as never),
     kms: {} as AuthDeps["kms"],
     keyArn: "arn:aws:kms:ap-southeast-2:123456789012:key/mrk-example",
     mail: { send: () => Promise.resolve() },
+    notice: rejectingSecondFactorNotice,
     now: () => new Date("2026-10-11T00:00:00.000Z"),
     authHostname: AUTH_HOSTNAME,
+    adminOrigin,
     log,
   };
 }
@@ -148,6 +155,10 @@ describe("auth routes", () => {
       refreshToken: "refresh-token",
       expiresIn: 900,
     });
+    identity.readSecondFactorPrompt.mockResolvedValueOnce({
+      secondFactor: "verify",
+      methods: ["totp", "passkey", "backup_code"],
+    });
     const verified = await route("/v1/auth/email-otp/verify").handle(
       request("/v1/auth/email-otp/verify", AUTH_HOSTNAME, {
         email: "ada@example.com",
@@ -157,9 +168,10 @@ describe("auth routes", () => {
     expect(verified.status).toBe(200);
     expect(verified.headers.get("cache-control")).toBe("no-store");
     expect(await verified.json()).toEqual({
-      userId: "user-1",
+      secondFactor: "verify",
+      methods: ["totp", "passkey", "backup_code"],
+      passkeysAvailable: true,
       accessToken: "access-token",
-      refreshToken: "refresh-token",
       expiresIn: 900,
     });
   });
@@ -183,8 +195,8 @@ describe("auth routes", () => {
   });
 
   it("rejects register and verify when the bearer is missing or invalid", async () => {
-    identity.readSession.mockClear();
-    identity.finishPasskeyRegistration.mockClear();
+    identity.beginTenantPasskeyRegistration.mockClear();
+    identity.finishTenantPasskeyRegistration.mockClear();
     for (const path of ["/v1/auth/passkey/register/options", "/v1/auth/passkey/register/verify"]) {
       for (const authorization of [undefined, "Basic abc", "Bearer"]) {
         const body = path.endsWith("/verify")
@@ -197,18 +209,18 @@ describe("auth routes", () => {
         expect(await response.text()).toBe("");
       }
     }
-    expect(identity.readSession).not.toHaveBeenCalled();
-    expect(identity.finishPasskeyRegistration).not.toHaveBeenCalled();
+    expect(identity.beginTenantPasskeyRegistration).not.toHaveBeenCalled();
+    expect(identity.finishTenantPasskeyRegistration).not.toHaveBeenCalled();
   });
 
   it("returns 401 for register options without a bearer token", async () => {
-    identity.beginPasskeyRegistration.mockClear();
+    identity.beginTenantPasskeyRegistration.mockClear();
     const response = await route("/v1/auth/passkey/register/options").handle(
       request("/v1/auth/passkey/register/options", AUTH_HOSTNAME, {}),
     );
     expect(response.status).toBe(401);
     expect(await response.text()).toBe("");
-    expect(identity.beginPasskeyRegistration).not.toHaveBeenCalled();
+    expect(identity.beginTenantPasskeyRegistration).not.toHaveBeenCalled();
   });
 
   it("sends no-store on passkey and refresh token responses", async () => {
@@ -218,7 +230,10 @@ describe("auth routes", () => {
       refreshToken: "refresh-token",
       expiresIn: 900 as const,
     };
-    identity.finishPasskeyAuthentication.mockResolvedValueOnce(session);
+    identity.signInWithPasskey.mockResolvedValueOnce({
+      outcome: "signed_in",
+      tokens: session,
+    });
     const authenticated = await route("/v1/auth/passkey/authenticate/verify").handle(
       request("/v1/auth/passkey/authenticate/verify", AUTH_HOSTNAME, {
         credentialId: "YQ",

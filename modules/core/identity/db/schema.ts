@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   bigint,
+  boolean,
   check,
   customType,
   index,
@@ -82,6 +83,8 @@ export function identityTables(identity: PgSchema) {
       coseKey: bytea("cose_key").notNull(),
       signCount: bigint("sign_count", { mode: "number" }).notNull(),
       rpId: text("rp_id"),
+      userVerified: boolean("user_verified").notNull().default(false),
+      createdAt: tz("created_at"),
     },
     (t) => [
       unique("passkey_credentials_credential_id_unique").on(t.credentialId),
@@ -127,15 +130,30 @@ export function identityTables(identity: PgSchema) {
       revokedAt: tz("revoked_at"),
       kind: text("kind").notNull().default("tenant"),
       absoluteExpiresAt: tz("absolute_expires_at"),
+      factor: text("factor"),
+      freshFactorAt: tz("fresh_factor_at"),
+      recoveryUntil: tz("recovery_until"),
+      secondFactorAttempts: integer("second_factor_attempts").notNull().default(0),
     },
     (t) => [
       unique("sessions_access_hash_unique").on(t.accessHash),
       unique("sessions_refresh_hash_unique").on(t.refreshHash),
       index("sessions_refresh_family_idx").on(t.refreshFamily),
-      check("sessions_kind", sql`${t.kind} in ('tenant', 'operator', 'enrolment')`),
+      check(
+        "sessions_kind_v2",
+        sql`${t.kind} in ('tenant', 'operator', 'enrolment', 'second_factor')`,
+      ),
       check(
         "sessions_absolute_expiry",
         sql`(${t.kind} = 'operator') = (${t.absoluteExpiresAt} is not null)`,
+      ),
+      check(
+        "sessions_factor",
+        sql`${t.factor} is null or ${t.factor} in ('passkey_uv', 'otp_totp', 'otp_passkey', 'otp_backup_code')`,
+      ),
+      check(
+        "sessions_second_factor_attempts",
+        sql`${t.secondFactorAttempts} >= 0 and ${t.secondFactorAttempts} <= 5`,
       ),
     ],
   );
@@ -218,6 +236,53 @@ export function identityTables(identity: PgSchema) {
     ],
   );
 
+  const totpCredentials = identity.table(
+    "totp_credentials",
+    {
+      id: uuid("id").primaryKey(),
+      userId: uuid("user_id")
+        .notNull()
+        .references(() => users.id),
+      secret: bytea("secret").notNull(),
+      pendingSecret: bytea("pending_secret"),
+      lastUsedStep: bigint("last_used_step", { mode: "number" }),
+      confirmedAt: tz("confirmed_at"),
+      createdAt: tz("created_at").notNull(),
+    },
+    (t) => [unique("totp_credentials_user_id_unique").on(t.userId)],
+  );
+
+  const backupCodes = identity.table(
+    "backup_codes",
+    {
+      id: uuid("id").primaryKey(),
+      userId: uuid("user_id")
+        .notNull()
+        .references(() => users.id),
+      codeHash: bytea("code_hash").notNull(),
+      usedAt: tz("used_at"),
+      createdAt: tz("created_at").notNull(),
+    },
+    (t) => [unique("backup_codes_user_id_code_hash_unique").on(t.userId, t.codeHash)],
+  );
+
+  const secondFactorEvents = identity.table(
+    "second_factor_events",
+    {
+      id: uuid("id").primaryKey(),
+      userId: uuid("user_id").notNull(),
+      event: text("event").notNull(),
+      occurredAt: tz("occurred_at").notNull(),
+    },
+    (t) => [
+      check(
+        "second_factor_events_event",
+        sql`${t.event} in ('totp_enrolled', 'totp_removed', 'passkey_enrolled', 'passkey_removed', 'backup_codes_generated', 'backup_code_used', 'verify_failed')`,
+      ),
+      index("second_factor_events_user_id_occurred_at_idx").on(t.userId, t.occurredAt),
+    ],
+  );
+
   return {
     users,
     identityKeys,
@@ -228,5 +293,8 @@ export function identityTables(identity: PgSchema) {
     operatorGrants,
     operatorEvents,
     invitationEmails,
+    totpCredentials,
+    backupCodes,
+    secondFactorEvents,
   };
 }
