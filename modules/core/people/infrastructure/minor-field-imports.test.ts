@@ -381,8 +381,8 @@ describe("childView admin call sites (pin 42)", () => {
 // without this test failing.
 const OPEN_MINOR_FIELD = "openMinorField";
 const MINOR_FIELD_MODULE = /(^|\/)minor-field(\.js|\.ts)?$/;
-// Where it is defined, where @community-hub/people re-exports it, and the one file that uses it.
-// The View service (Task 8) does not exist yet, so today nothing imports it.
+// Where it is defined, where @community-hub/people re-exports it, and the one file that uses it:
+// the Community Admin's View service.
 const OPEN_MINOR_FIELD_FILES = new Set([
   "modules/core/people/infrastructure/minor-field.ts",
   "modules/core/people/public/index.ts",
@@ -458,12 +458,13 @@ describe("openMinorField import allow-list (pin 41)", () => {
       }
     }
     expect(problems).toEqual([]);
-    // The scan can see the real mentions: the definition and the re-export are found, and nothing
-    // else is. (minor-view.ts joins this list when the View service is added, in Task 8.)
+    // The scan can see the real mentions: the definition, the re-export and the View service are
+    // found, and nothing else is.
     const outsideTheListed = mentioning.filter((rel) => !OPEN_MINOR_FIELD_FILES.has(rel));
     expect(outsideTheListed).toEqual([]);
     expect(mentioning).toContain("modules/core/people/infrastructure/minor-field.ts");
     expect(mentioning).toContain("modules/core/people/public/index.ts");
+    expect(mentioning).toContain("modules/core/access/infrastructure/minor-view.ts");
   });
 
   describe("the check itself (must-fail fixtures)", () => {

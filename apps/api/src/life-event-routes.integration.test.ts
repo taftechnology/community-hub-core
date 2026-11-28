@@ -558,13 +558,14 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
     const denialAudits = await directSql<{ action: string; purpose: string }[]>`
       select action, purpose from app.audit_events
       where action = 'people.permission.denied' and purpose = 'people.permission.denied'
+        and org_id = ${orgIdA}::uuid
     `;
     expect(denialAudits.length).toBeGreaterThanOrEqual(1);
 
     // Verify no people.life_event.listed row exists
     const listAudits = await directSql<{ count: number }[]>`
       select count(*)::int from app.audit_events
-      where action = 'people.life_event.listed'
+      where action = 'people.life_event.listed' and org_id = ${orgIdA}::uuid
     `;
     expect(listAudits[0]?.count).toBe(0);
   });
@@ -805,7 +806,7 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
     // Verify create audit row
     const [createAudit] = await directSql<{ action: string; target_ids: string[] }[]>`
       select action, target_ids from app.audit_events
-      where action = 'people.life_event.created'
+      where action = 'people.life_event.created' and org_id = ${orgIdA}::uuid
       order by seq desc limit 1
     `;
     expect(createAudit?.action).toBe("people.life_event.created");
@@ -835,7 +836,7 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
     // Verify list audit row
     const [listAudit] = await directSql<{ action: string; target_ids: string[] }[]>`
       select action, target_ids from app.audit_events
-      where action = 'people.life_event.listed'
+      where action = 'people.life_event.listed' and org_id = ${orgIdA}::uuid
       order by seq desc limit 1
     `;
     expect(listAudit?.action).toBe("people.life_event.listed");
@@ -864,7 +865,7 @@ describe("life event routes integration tests (Pins 6, 7, 8, 9, 11, 14)", () => 
     // Verify update audit row
     const [updateAudit] = await directSql<{ action: string; target_ids: string[] }[]>`
       select action, target_ids from app.audit_events
-      where action = 'people.life_event.updated'
+      where action = 'people.life_event.updated' and org_id = ${orgIdA}::uuid
       order by seq desc limit 1
     `;
     expect(updateAudit?.action).toBe("people.life_event.updated");

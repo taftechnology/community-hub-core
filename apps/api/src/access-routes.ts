@@ -27,7 +27,7 @@ import { appendAuditEvent, withAppTransaction, type AppTransaction } from "@comm
 import { bundle, catalogue, decide } from "@community-hub/policy";
 import { findCommunityBySlug } from "@community-hub/tenancy";
 import { readSession, readUserEmails } from "@community-hub/identity";
-import { readLinkedContacts, type LinkedContact } from "@community-hub/people";
+import { personIsMinor, readLinkedContacts, type LinkedContact } from "@community-hub/people";
 import { getRequestContext } from "@community-hub/kernel";
 
 import type { Checkout } from "./checkout.js";
@@ -364,6 +364,20 @@ function listBody(
   };
 }
 
+// A user's link names a person by id. A link to a child is for a Community Admin only (ADR 0017),
+// so anyone else gets the directory without it, and with it no child's id. Only a link to a child
+// is left out: an adult's link is listed as before. (The product no longer links a user to a child,
+// so a link like this is a record from before that rule.)
+async function withoutChildLinks(tx: AppTransaction, directory: Directory): Promise<Directory> {
+  const userLinks: Directory["userLinks"] = [];
+  for (const link of directory.userLinks) {
+    if ((await personIsMinor(tx, link.personId)) !== true) {
+      userLinks.push(link);
+    }
+  }
+  return { ...directory, userLinks };
+}
+
 export function accessRoutes(deps: AccessDeps): GateRoute[] {
   function foreignHost(request: Request): Response | undefined {
     if (presentedHostname(request) !== deps.apiHostname.toLowerCase()) {
@@ -490,7 +504,10 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
           if (!allows(directory, actor.userId, VIEW)) {
             return deny(tx, actor.userId, VIEW);
           }
-          return listBody(directory, callerPermissions(directory, actor.userId));
+          const visible = (await isCommunityAdmin(tx, actor.userId))
+            ? directory
+            : await withoutChildLinks(tx, directory);
+          return listBody(visible, callerPermissions(visible, actor.userId));
         });
         return finish(outcome, (value) => Response.json(value));
       },
