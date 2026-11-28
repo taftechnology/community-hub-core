@@ -300,10 +300,9 @@ export function AllContactsPage() {
   const [items, setItems] = useState<ContactItem[] | null>(null);
   const [minorItems, setMinorItems] = useState<MinorRow[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
-  // Whether the service lets this caller see the children's list. It answers a Community Admin and
-  // refuses everyone else, and the capabilities list does not say which a caller is, so it is asked
-  // once for each community, and only of a caller who holds the key and the entitlement it needs.
-  const [minorsAllowed, setMinorsAllowed] = useState(false);
+  // Set when the service refuses the children's list to a caller the capabilities named a
+  // Community Admin, so the tab goes until the capabilities are read again.
+  const [minorsRefused, setMinorsRefused] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
   const [paymentRequired, setPaymentRequired] = useState(false);
@@ -445,7 +444,7 @@ export function AllContactsPage() {
 
       if (kind === "minors" && response.status === 403) {
         // Not a Community Admin here (any more): the tab goes, and the adults' list comes back.
-        setMinorsAllowed(false);
+        setMinorsRefused(true);
         setMinorItems(null);
         setActiveTab("adults");
         return;
@@ -647,42 +646,18 @@ export function AllContactsPage() {
     fetchSummary,
   ]);
 
-  const wantsMinors =
+  // The tab is for the Community Admin, whom the capabilities answer names. Nothing is asked of the
+  // service to find that out: a request for the children's list is audited, whoever it is answered to.
+  useEffect(() => {
+    setMinorsRefused(false);
+  }, [access, slug]);
+  const minorsAllowed =
+    access.roles.communityAdmin &&
+    !minorsRefused &&
     Boolean(access.permissions["people.restricted.read"]) &&
     Boolean(access.entitlements["people.households"]) &&
     Boolean(access.permissions["people.view"]) &&
     Boolean(access.entitlements["people.directory"]);
-  // The community the children's list was last asked about. A new community starts with no answer,
-  // so the tab is gone until the service says this caller may see its children. The same community
-  // asked again keeps the answer it has until the new one arrives, so a refresh does not move
-  // anyone off the tab.
-  const probedSlug = useRef("");
-  useEffect(() => {
-    if (!token || !slug || !wantsMinors) {
-      probedSlug.current = "";
-      setMinorsAllowed(false);
-      return;
-    }
-    if (probedSlug.current !== slug) {
-      probedSlug.current = slug;
-      setMinorsAllowed(false);
-    }
-    let live = true;
-    void (async () => {
-      const response = await post("/v1/people/list", {
-        communitySlug: slug,
-        kind: "minors",
-        limit: 1,
-      });
-      if (live) {
-        setMinorsAllowed(response !== "unavailable" && response.status === 200);
-      }
-    })();
-    return () => {
-      live = false;
-    };
-  }, [token, slug, version, wantsMinors]);
-
   useEffect(() => {
     if (!minorsAllowed && activeTab === "minors") {
       setActiveTab("adults");

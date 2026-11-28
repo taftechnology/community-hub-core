@@ -203,6 +203,7 @@ function installBoth() {
             "people.households": true,
             "module.engagement": false,
           },
+          roles: { communityAdmin: true },
         });
       case "/v1/billing/status":
         return json(200, {

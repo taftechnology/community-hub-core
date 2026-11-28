@@ -672,6 +672,7 @@ describe("access routes", () => {
     it("returns 200 with all permissions and entitlements when caller has grants", async () => {
       access.holdsAnyGrant.mockResolvedValueOnce(true);
       access.holdsPermission.mockResolvedValue(true);
+      access.isCommunityAdmin.mockResolvedValue(true);
       entitlementGuard.checkEntitlement.mockResolvedValue(true);
 
       const res = await route("/v1/access/capabilities").handle(
@@ -697,6 +698,7 @@ describe("access routes", () => {
           "people.households": true,
           "module.engagement": true,
         },
+        roles: { communityAdmin: true },
       });
 
       // Pin 17: response key set equals the constant allow-list
@@ -723,6 +725,27 @@ describe("access routes", () => {
         { orgId: ORG, communityId: COMMUNITY },
         "module.engagement",
       );
+    });
+
+    it("pin 136: takes roles.communityAdmin from isCommunityAdmin, not from people.restricted.read", async () => {
+      access.holdsAnyGrant.mockResolvedValueOnce(true);
+      access.holdsPermission.mockResolvedValue(true);
+      access.isCommunityAdmin.mockResolvedValue(false);
+      entitlementGuard.checkEntitlement.mockResolvedValue(true);
+
+      const res = await route("/v1/access/capabilities").handle(
+        request(
+          "/v1/access/capabilities",
+          API_HOSTNAME,
+          { communitySlug: "parish" },
+          `Bearer ${TOKEN}`,
+        ),
+      );
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as CapabilitiesResponse;
+      expect(data.permissions["people.restricted.read"]).toBe(true);
+      expect(data.roles).toEqual({ communityAdmin: false });
+      expect(access.isCommunityAdmin).toHaveBeenCalledTimes(1);
     });
 
     it("returns 200 with all permissions false when caller has role grant with no people permissions (finding 2)", async () => {

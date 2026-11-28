@@ -152,6 +152,7 @@ type AuditRow = {
 describe("the Community Admin's View routes (pins 64, 67b, 68, 69, 70, 71)", () => {
   const now = new Date("2026-11-01T12:00:00Z");
   let identity: ReturnType<typeof createPlaintextIdentitySql>;
+  const userIds: string[] = [];
   let platform: ReturnType<typeof createPlaintextPlatformSql>;
   let app: ReturnType<typeof createPlaintextAppSql>;
   let directSql: ReturnType<typeof createPlaintextDirectSql>;
@@ -206,6 +207,7 @@ describe("the Community Admin's View routes (pins 64, 67b, 68, 69, 70, 71)", () 
       `${label}-${newId().slice(-8)}@users.example.test`,
       now,
     );
+    userIds.push(session.userId);
     await setFresh(session.userId, now);
     return { userId: session.userId, accessToken: session.accessToken };
   }
@@ -527,6 +529,16 @@ describe("the Community Admin's View routes (pins 64, 67b, 68, 69, 70, 71)", () 
       server?.close(() => resolve());
       server?.closeAllConnections();
     });
+    // Leave no identity user behind: a later file's `delete from identity.users` would fail on the
+    // TOTP credentials, backup codes and sessions that still point at these.
+    if (identity !== undefined) {
+      for (const uid of userIds) {
+        await identity`delete from identity.backup_codes where user_id = ${uid}::uuid`;
+        await identity`delete from identity.totp_credentials where user_id = ${uid}::uuid`;
+        await identity`delete from identity.sessions where user_id = ${uid}::uuid`;
+        await identity`delete from identity.users where id = ${uid}::uuid`;
+      }
+    }
     await Promise.all([
       identity?.end({ timeout: 1 }),
       platform?.end({ timeout: 1 }),

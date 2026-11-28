@@ -203,6 +203,7 @@ describe("Shell and ShellLayout", () => {
         "people.households": true,
         "module.engagement": false,
       },
+      roles: { communityAdmin: false },
     };
 
     render(
@@ -270,6 +271,7 @@ describe("Shell and ShellLayout", () => {
         "people.households": true,
         "module.engagement": true,
       },
+      roles: { communityAdmin: false },
     };
 
     render(
@@ -738,6 +740,7 @@ describe("Shell and ShellLayout", () => {
         "people.households": true,
         "module.engagement": false,
       },
+      roles: { communityAdmin: false },
     };
 
     render(

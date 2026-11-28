@@ -59,6 +59,7 @@ const fullAccess: PeopleAccess = {
     "people.households": true,
     "module.engagement": true,
   },
+  roles: { communityAdmin: false },
 };
 
 function mockResponse(status: number, body?: unknown) {
@@ -763,6 +764,7 @@ describe("ServiceTimesPage", () => {
         "people.households": true,
         "module.engagement": false,
       },
+      roles: { communityAdmin: false },
     };
 
     renderServiceTimesPage({ access: noAccess });
@@ -785,6 +787,7 @@ describe("ServiceTimesPage", () => {
         "people.households": true,
         "module.engagement": true,
       },
+      roles: { communityAdmin: false },
     };
 
     renderServiceTimesPage({ access: accessWithoutPermission });
@@ -807,6 +810,7 @@ describe("ServiceTimesPage", () => {
         "people.households": true,
         "module.engagement": false,
       },
+      roles: { communityAdmin: false },
     };
 
     renderServiceTimesPage({ access: accessWithoutEntitlement });

@@ -118,6 +118,7 @@ function mockServer(options: Options = {}) {
           "people.delete": true,
         },
         entitlements: { "people.directory": true, "people.households": true },
+        roles: { communityAdmin: options.canRestricted ?? true },
       });
     }
     if (route === BILLING) {
@@ -1609,6 +1610,7 @@ describe("Emergency contacts panel", () => {
           "people.households": true,
           "module.engagement": false,
         },
+        roles: { communityAdmin: true },
       };
       const lost: PeopleAccess = {
         ...full,

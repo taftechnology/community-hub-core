@@ -755,7 +755,14 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
                 async (perm) => [perm, await holdsPermission(tx, actor.userId, perm)] as const,
               ),
             );
-            return Object.fromEntries(permissionEntries) as CapabilitiesResponse["permissions"];
+            // The role flag comes from the grant itself, not from a permission the
+            // owner and admin roles also hold (children's data access, amendment A7).
+            return {
+              permissions: Object.fromEntries(
+                permissionEntries,
+              ) as CapabilitiesResponse["permissions"],
+              roles: { communityAdmin: await isCommunityAdmin(tx, actor.userId) },
+            };
           }),
         );
 
@@ -781,8 +788,9 @@ export function accessRoutes(deps: AccessDeps): GateRoute[] {
         ) as CapabilitiesResponse["entitlements"];
 
         const response: CapabilitiesResponse = {
-          permissions: perms,
+          permissions: perms.permissions,
           entitlements,
+          roles: perms.roles,
         };
 
         return Response.json(response);

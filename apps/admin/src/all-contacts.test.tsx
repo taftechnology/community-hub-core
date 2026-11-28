@@ -22,6 +22,7 @@ type CapabilitiesInput =
       canView?: boolean;
       canManage?: boolean;
       canReadMinors?: boolean;
+      communityAdmin?: boolean;
     }
   | number;
 
@@ -56,6 +57,7 @@ function mockCapabilitiesResponse(input: CapabilitiesInput = {}): Response {
         "people.directory": input.directoryEnabled ?? true,
         "people.households": input.householdsEnabled ?? true,
       },
+      roles: { communityAdmin: input.communityAdmin ?? input.canReadMinors ?? true },
     }),
     {
       status: 200,
@@ -923,20 +925,20 @@ describe("All Contacts Screen", () => {
     expect(screen.queryByRole("button", { name: "Next page" })).toBeNull();
   });
 
-  it("Minors tab is hidden for a caller the service refuses the children's list, even with people.restricted.read (Pin 93)", async () => {
+  it("Minors tab is hidden for a caller who is not a Community Admin, even with people.restricted.read, and nothing is asked (Pin 93)", async () => {
     sessionStorage.setItem("community-hub.access-token", TOKEN);
     const minorsCalls: Record<string, unknown>[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
       const path = String(info).replace(/^https?:\/\/[^/]+/, "");
       const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
       if (path === "/v1/access/capabilities") {
-        return mockCapabilitiesResponse();
+        // A safeguarding officer, or an organisation admin who is not also a Community Admin
+        // here, holds the same keys and is not named a Community Admin.
+        return mockCapabilitiesResponse({ communityAdmin: false });
       }
       if (path === "/v1/people/list") {
         if (body.kind === "minors") {
           minorsCalls.push(body);
-          // Only a Community Admin is answered. A safeguarding officer, or an organisation admin
-          // who is not also a Community Admin here, holds the same keys and is refused.
           return new Response(null, { status: 403 });
         }
         return new Response(JSON.stringify({ items: [], nextCursor: null }), {
@@ -954,11 +956,84 @@ describe("All Contacts Screen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Set" }));
 
     await screen.findByText("No contacts yet");
-    // The service has answered the question of who may see the children.
-    await waitFor(() => expect(minorsCalls).toHaveLength(1));
     await act(async () => {});
     expect(screen.queryByRole("button", { name: "Minors" })).toBeNull();
-    expect(minorsCalls[0]).toEqual({ communitySlug: SLUG, kind: "minors", limit: 1 });
+    expect(minorsCalls).toHaveLength(0);
+  });
+
+  it("pin 137: a Community Admin loading All Contacts sends no children's list request until the tab is opened", async () => {
+    // Every request for the children's list is audited, so asking it on load to find out who the
+    // caller is would write a row for a list nobody looked at.
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    const minorsCalls: Record<string, unknown>[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
+      const path = String(info).replace(/^https?:\/\/[^/]+/, "");
+      const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ communityAdmin: true });
+      }
+      if (path === "/v1/people/list") {
+        if (body.kind === "minors") {
+          minorsCalls.push(body);
+          return new Response(JSON.stringify({ items: [childRow(1)], nextCursor: null }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ items: [], nextCursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    await showContacts();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    await screen.findByText("No contacts yet");
+    const tab = await screen.findByRole("button", { name: "Minors" });
+    await act(async () => {});
+    expect(minorsCalls).toHaveLength(0);
+
+    fireEvent.click(tab);
+    expect(await screen.findByText("Child 1")).toBeTruthy();
+    expect(minorsCalls).toHaveLength(1);
+    expect(minorsCalls[0]).toEqual({ communitySlug: SLUG, kind: "minors" });
+  });
+
+  it("the Minors tab goes when the service refuses the list to a caller the capabilities named a Community Admin", async () => {
+    sessionStorage.setItem("community-hub.access-token", TOKEN);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
+      const path = String(info).replace(/^https?:\/\/[^/]+/, "");
+      const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+      if (path === "/v1/access/capabilities") {
+        return mockCapabilitiesResponse({ communityAdmin: true });
+      }
+      if (path === "/v1/people/list") {
+        if (body.kind === "minors") {
+          return new Response(null, { status: 403 });
+        }
+        return new Response(JSON.stringify({ items: [], nextCursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    await showContacts();
+    fireEvent.change(screen.getByRole("textbox", { name: "Community" }), {
+      target: { value: SLUG },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Minors" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Minors" })).toBeNull());
+    expect(await screen.findByText("No contacts yet")).toBeTruthy();
   });
 
   it("Minors tab appears only with people.restricted.read: without it nothing about children is asked (Pin 15)", async () => {
@@ -1421,17 +1496,13 @@ describe("All Contacts Screen", () => {
     await waitFor(() =>
       expect(recordedBodies.some((b) => b.kind === "minors" && b.limit === undefined)).toBe(true),
     );
-    // The one question that decides whether the tab shows has a limit of one. Every call that lists
-    // the children for the tab itself has no search and no limit.
+    // Every call that lists the children is for the tab itself: no search, no limit, no probe.
     const minorsCalls = recordedBodies.filter((b) => b.kind === "minors");
-    const tabCalls = minorsCalls.filter((b) => b.limit === undefined);
-    expect(tabCalls.length).toBeGreaterThanOrEqual(1);
-    for (const body of tabCalls) {
+    expect(minorsCalls.length).toBeGreaterThanOrEqual(1);
+    for (const body of minorsCalls) {
       expect(body.search).toBeUndefined();
+      expect(body.limit).toBeUndefined();
       expect(Object.keys(body).sort()).toEqual(["communitySlug", "kind"].sort());
-    }
-    for (const body of minorsCalls.filter((b) => b.limit !== undefined)) {
-      expect(Object.keys(body).sort()).toEqual(["communitySlug", "kind", "limit"].sort());
     }
 
     // Verify all request bodies never contain forbidden fields
@@ -1521,10 +1592,6 @@ describe("All Contacts Screen", () => {
     for (const call of callsB) {
       const init = call[1] as RequestInit | undefined;
       const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
-      if (body.kind === "minors" && body.limit === 1) {
-        // The question of whether this caller may see the children, asked afresh for each community.
-        continue;
-      }
       expect(body.cursor).toBeUndefined();
       expect(body.search).toBeUndefined();
       expect(body.kind).toBe("adults");

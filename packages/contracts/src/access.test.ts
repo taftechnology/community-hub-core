@@ -116,18 +116,22 @@ describe("access bodies", () => {
         "people.households": false,
         "module.engagement": true,
       };
-      expect(capabilitiesResponse.safeParse({ permissions, entitlements }).success).toBe(true);
+      const roles = { communityAdmin: false };
+      expect(capabilitiesResponse.safeParse({ permissions, entitlements, roles }).success).toBe(
+        true,
+      );
       expect(CAPABILITIES_ALLOW_LIST.permissions).toContain("people.delete");
 
       const without: Record<string, boolean> = { ...permissions };
       delete without["people.delete"];
-      expect(capabilitiesResponse.safeParse({ permissions: without, entitlements }).success).toBe(
-        false,
-      );
+      expect(
+        capabilitiesResponse.safeParse({ permissions: without, entitlements, roles }).success,
+      ).toBe(false);
       expect(
         capabilitiesResponse.safeParse({
           permissions: { ...permissions, "people.delete": "yes" },
           entitlements,
+          roles,
         }).success,
       ).toBe(false);
     });
@@ -146,6 +150,7 @@ describe("access bodies", () => {
           "people.households": false,
           "module.engagement": true,
         },
+        roles: { communityAdmin: true },
       };
 
       const parsed = capabilitiesResponse.safeParse(validResponse);
@@ -244,6 +249,23 @@ describe("access bodies", () => {
           entitlements: missingEngagementEnt,
         }).success,
       ).toBe(false);
+
+      // The role flag is required, a boolean, and nothing else sits beside it (C3)
+      const withoutRoles: Record<string, unknown> = { ...validResponse };
+      delete withoutRoles.roles;
+      expect(capabilitiesResponse.safeParse(withoutRoles).success).toBe(false);
+      expect(
+        capabilitiesResponse.safeParse({ ...validResponse, roles: { communityAdmin: "yes" } })
+          .success,
+      ).toBe(false);
+      expect(capabilitiesResponse.safeParse({ ...validResponse, roles: {} }).success).toBe(false);
+      expect(
+        capabilitiesResponse.safeParse({
+          ...validResponse,
+          roles: { communityAdmin: true, orgOwner: true },
+        }).success,
+      ).toBe(false);
+      expect(Object.keys(capabilitiesResponse.shape.roles.shape)).toEqual(["communityAdmin"]);
 
       // Outer .strict() rejects top-level unknown keys (finding 3)
       expect(

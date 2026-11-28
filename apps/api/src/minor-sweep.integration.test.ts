@@ -882,6 +882,7 @@ type Result = {
 describe("the route sweep (pins 79, 80)", () => {
   const now = new Date("2026-11-01T12:00:00Z");
   let identity: ReturnType<typeof createPlaintextIdentitySql>;
+  const userIds: string[] = [];
   let platform: ReturnType<typeof createPlaintextPlatformSql>;
   let app: ReturnType<typeof createPlaintextAppSql>;
   let directSql: ReturnType<typeof createPlaintextDirectSql>;
@@ -932,6 +933,7 @@ describe("the route sweep (pins 79, 80)", () => {
       `${label}-${newId().slice(-8)}@users.example.test`,
       now,
     );
+    userIds.push(session.userId);
     return { userId: session.userId, accessToken: session.accessToken };
   }
 
@@ -1347,6 +1349,16 @@ describe("the route sweep (pins 79, 80)", () => {
       server?.close(() => resolve());
       server?.closeAllConnections();
     });
+    // Leave no identity user behind: a later file's `delete from identity.users` would fail on the
+    // TOTP credentials, backup codes and sessions that still point at these.
+    if (identity !== undefined) {
+      for (const uid of userIds) {
+        await identity`delete from identity.backup_codes where user_id = ${uid}::uuid`;
+        await identity`delete from identity.totp_credentials where user_id = ${uid}::uuid`;
+        await identity`delete from identity.sessions where user_id = ${uid}::uuid`;
+        await identity`delete from identity.users where id = ${uid}::uuid`;
+      }
+    }
     await Promise.all([
       identity?.end({ timeout: 1 }),
       platform?.end({ timeout: 1 }),
@@ -1620,6 +1632,30 @@ describe("the route sweep (pins 79, 80)", () => {
     expect(
       pick("org_admin", "POST /v1/households/read", "the family", "own, second community").status,
     ).toBe(200);
+  });
+
+  it("pin 136: the capabilities answer names the Community Admin role, and no one else holds it", () => {
+    const route = "POST /v1/access/capabilities";
+    const rolesOf = (caller: CallerName | "community_admin", aim: string): unknown => {
+      const found = results.find((r) => r.caller === caller && r.route === route && r.aim === aim);
+      expect(found, `${caller} ${aim}`).toBeDefined();
+      expect(found?.status, `${caller} ${aim}`).toBe(200);
+      return (JSON.parse(found?.text ?? "{}") as { roles?: unknown }).roles;
+    };
+    // The Community Admin of the community
+    expect(rolesOf("community_admin", "own")).toEqual({ communityAdmin: true });
+    // An organisation admin holds the same permissions, here and in the second community,
+    // and is not a Community Admin in either
+    expect(rolesOf("org_admin", "own")).toEqual({ communityAdmin: false });
+    expect(rolesOf("org_admin", "own, second community")).toEqual({ communityAdmin: false });
+    // A safeguarding officer reads restricted data and is not a Community Admin
+    expect(rolesOf("safeguarding_officer", "own")).toEqual({ communityAdmin: false });
+    const officer = results.find(
+      (r) => r.caller === "safeguarding_officer" && r.route === route && r.aim === "own",
+    );
+    expect(JSON.parse(officer?.text ?? "{}")).toMatchObject({
+      permissions: { "people.restricted.read": true },
+    });
   });
 
   it("a rename probe with a child's given name answers as one without", () => {

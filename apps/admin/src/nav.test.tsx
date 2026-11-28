@@ -26,6 +26,7 @@ function renderNav(
       "module.engagement": false,
       ...access.entitlements,
     },
+    roles: { communityAdmin: false },
   };
 
   return render(

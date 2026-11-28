@@ -26,6 +26,7 @@ type CapabilitiesInput =
       canView?: boolean;
       canManage?: boolean;
       canReadMinors?: boolean;
+      communityAdmin?: boolean;
     }
   | number;
 
@@ -60,6 +61,7 @@ function mockCapabilitiesResponse(input: CapabilitiesInput = {}): Response {
         "people.directory": input.directoryEnabled ?? true,
         "people.households": input.householdsEnabled ?? true,
       },
+      roles: { communityAdmin: input.communityAdmin ?? input.canReadMinors ?? true },
     }),
     {
       status: 200,
@@ -1748,6 +1750,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
               "people.delete": false,
               "service_times.manage": false,
             },
+            roles: { communityAdmin: true },
           }}
           isReadOnly={false}
         />
@@ -1785,6 +1788,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
               "people.delete": false,
               "service_times.manage": false,
             },
+            roles: { communityAdmin: false },
           }}
           isReadOnly={false}
         />
@@ -1814,6 +1818,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
               "people.delete": false,
               "service_times.manage": false,
             },
+            roles: { communityAdmin: true },
           }}
           isReadOnly={true}
         />
@@ -2852,6 +2857,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
             "people.households": true,
             "module.engagement": false,
           },
+          roles: { communityAdmin: false },
         }}
         isReadOnly={false}
       />,
@@ -2878,6 +2884,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
             "people.households": true,
             "module.engagement": false,
           },
+          roles: { communityAdmin: false },
         }}
         isReadOnly={false}
       />,
@@ -2903,6 +2910,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
             "people.households": true,
             "module.engagement": false,
           },
+          roles: { communityAdmin: false },
         }}
         isReadOnly={false}
       />,
@@ -2928,6 +2936,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
             "people.households": true,
             "module.engagement": false,
           },
+          roles: { communityAdmin: true },
         }}
         isReadOnly={false}
       />,
@@ -2954,6 +2963,7 @@ describe("Family Records Actions - Capabilities & Controls Gating (Pin 21)", () 
             "people.households": true,
             "module.engagement": false,
           },
+          roles: { communityAdmin: true },
         }}
         isReadOnly={false}
       />,
@@ -5562,6 +5572,7 @@ describe("Family forms restyle & security pins (Task 10)", () => {
       "people.households": true,
       "module.engagement": false,
     },
+    roles: { communityAdmin: true },
   };
 
   const accessWithoutRestricted: PeopleAccess = {
@@ -5570,6 +5581,8 @@ describe("Family forms restyle & security pins (Task 10)", () => {
       ...fullAccess.permissions,
       "people.restricted.read": false,
     },
+    // A Community Admin holds the key, so a caller without it is not one
+    roles: { communityAdmin: false },
   };
 
   it("renders move adult target select with data-slot and aria-describedby referencing target hint (and paged notice when paged)", async () => {
@@ -6420,6 +6433,7 @@ describe("Family Records - Create new adult", () => {
       "people.households": true,
       "module.engagement": false,
     },
+    roles: { communityAdmin: true },
   };
 
   type Recorded = Array<{ path: string; body: unknown }>;
@@ -7001,6 +7015,7 @@ describe("Family Records status, delete and restore (Task 8)", () => {
             "people.delete": options.canDelete ?? true,
           },
           entitlements: { "people.directory": true, "people.households": true },
+          roles: { communityAdmin: options.canRestricted ?? true },
         });
       }
       if (path === "/v1/billing/status") {
@@ -7252,6 +7267,7 @@ describe("Family Records status, delete and restore (Task 8)", () => {
           "people.households": true,
           "module.engagement": false,
         },
+        roles: { communityAdmin: true },
       };
       function tree(access: PeopleAccess) {
         return (
@@ -8206,6 +8222,7 @@ describe("Family Records status, delete and restore (Task 8)", () => {
         "people.households": true,
         "module.engagement": false,
       },
+      roles: { communityAdmin: true },
     };
     function accessTree(access: PeopleAccess) {
       return (
@@ -9037,7 +9054,7 @@ describe("Children are hidden until a View, which needs a fresh check (ADR 0017)
   });
 
   it("pin 91: a family with a child has no rename control for anyone but a Community Admin", async () => {
-    install({ details: [presenceDetail(2)] });
+    install({ access: { communityAdmin: false }, details: [presenceDetail(2)] });
     await openFamily();
     await screen.findByText("2 children in this family");
     expect(screen.queryByRole("button", { name: "Rename household" })).toBeNull();
@@ -9058,12 +9075,24 @@ describe("Children are hidden until a View, which needs a fresh check (ADR 0017)
   });
 
   it("only a Community Admin sees Add minor, Link guardian and Unlink", async () => {
-    install({ details: [presenceDetail(1)] });
+    install({ access: { communityAdmin: false }, details: [presenceDetail(1)] });
     await openFamily();
     await screen.findByText("1 child in this family");
     for (const name of ["Add minor", "Link guardian", /^Unlink/]) {
       expect(screen.queryByRole("button", { name })).toBeNull();
     }
+    cleanup();
+    vi.restoreAllMocks();
+
+    // The capabilities name the role and the service is still the authority: a Community Admin
+    // whose family read carries no children is shown the count, and no control for them.
+    install({ access: { communityAdmin: true }, details: [presenceDetail(1)] });
+    await openFamily();
+    await screen.findByText("1 child in this family");
+    for (const name of ["Add minor", "Link guardian", /^Unlink/]) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
+    expect(screen.queryByText("Child 1")).toBeNull();
     cleanup();
     vi.restoreAllMocks();
 
@@ -9216,6 +9245,7 @@ describe("Children are hidden until a View, which needs a fresh check (ADR 0017)
               "people.households": false,
               "module.engagement": false,
             },
+            roles: { communityAdmin: true },
           }}
           isReadOnly={false}
         />

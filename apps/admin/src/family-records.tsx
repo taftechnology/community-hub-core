@@ -316,11 +316,12 @@ function childCountText(count: number): string {
   return `${count} ${count === 1 ? "child" : "children"} in this family`;
 }
 
-// A Community Admin is the only one the service sends the children to, as ids and labels. A family
-// read with no `children` is a family read by someone else, and a caller without
-// people.restricted.read never shows one even if an answer carried them.
-function isChildAdmin(detail: HouseholdDetail | null, canRestricted: boolean): boolean {
-  return canRestricted && detail?.minors?.children !== undefined;
+// A Community Admin is the only one the service sends the children to, as ids and labels, and the
+// capabilities answer says who that is. The service stays the authority: a family read with no
+// `children` shows the count only, whoever reads it, and a caller who is not a Community Admin never
+// shows a child even if an answer carried them.
+function isChildAdmin(detail: HouseholdDetail | null, communityAdmin: boolean): boolean {
+  return communityAdmin && detail?.minors?.children !== undefined;
 }
 
 export type MinorsSectionProps = {
@@ -372,14 +373,13 @@ export function MinorsSection({
 }: MinorsSectionProps) {
   const minors = detailHousehold.minors;
   const canManage = canManageProp ?? Boolean(access.permissions["people.manage"]);
-  const canRestricted = Boolean(access.permissions["people.restricted.read"]);
   if (minors === undefined) {
     return null;
   }
 
   // Everyone but a Community Admin sees how many children there are, and nothing else of them: no
   // label, no id, no guardian link.
-  if (!isChildAdmin(detailHousehold, canRestricted)) {
+  if (!isChildAdmin(detailHousehold, access.roles.communityAdmin)) {
     return minors.childCount === 0 ? null : (
       <Panel title="Children" level={3}>
         <p>{childCountText(minors.childCount)}</p>
@@ -757,12 +757,13 @@ export function FamilyRecordsPage() {
   const canRestricted = Boolean(access.permissions["people.restricted.read"]);
   const canReadLifeEvents = canRestricted && Boolean(access.entitlements["people.households"]);
   // Only a Community Admin is sent the children, as ids and labels. Everyone else is sent a count.
-  const childAdmin = isChildAdmin(detailHousehold, canRestricted);
+  const communityAdmin = access.roles.communityAdmin;
+  const childAdmin = isChildAdmin(detailHousehold, communityAdmin);
   const hasChildren = (detailHousehold?.minors?.childCount ?? 0) > 0;
 
   const canCreate = canManage && !hideWrites;
   // A family with a child is renamed by a Community Admin only: the service refuses anyone else.
-  const canRename = canManage && canRestricted && !hideWrites && (!hasChildren || childAdmin);
+  const canRename = canManage && canRestricted && !hideWrites && (!hasChildren || communityAdmin);
   const canMoveAdult = canManage && canRestricted && !hideWrites;
   const canAddAdult = canMoveAdult && Boolean(access.entitlements["people.directory"]);
   const canAddMinor = childAdmin && canManage && !hideWrites;

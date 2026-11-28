@@ -150,6 +150,7 @@ export const capabilitiesResponse = z
         "module.engagement": z.boolean(),
       })
       .strict(),
+    roles: z.object({ communityAdmin: z.boolean() }).strict(),
   })
   .strict();
 
