@@ -80,6 +80,11 @@ export function statusForHouseholds(error: PeopleError): Response | undefined {
   if (error.code === "duplicate_deleted" || error.code === "household_has_children") {
     return Response.json({ code: error.code }, { status: 409 });
   }
+  // A family label that holds a child's given name: rename and add-minor refuse it (spec O3). The
+  // body is the code alone, with no name and no label.
+  if (error.code === "label_contains_child_name") {
+    return Response.json({ code: error.code }, { status: 422 });
+  }
   if (
     error.code === "conflict" ||
     error.code === "duplicate_guardian_link" ||

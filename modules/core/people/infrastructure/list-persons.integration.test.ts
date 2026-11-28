@@ -1783,7 +1783,8 @@ describe("listPersons", () => {
           await withRequest({ requestId: REQUEST_ID }, async () => {
             const hh = await createHousehold(tx, kms, KEY_ARN, {
               now: NOW,
-              label: "UnchangedMinor Family",
+              // Not the child's name: a family label that holds it is refused (spec O3).
+              label: "Unchanged Family",
               actorUserId,
             });
             await createPerson(tx, kms, KEY_ARN, {
@@ -1830,10 +1831,8 @@ describe("listPersons", () => {
             ]) {
               expect(itm).not.toHaveProperty(field);
             }
-            // The family label (set above) names the child; the item itself must not.
-            expect(JSON.stringify({ ...itm, householdLabel: null })).not.toContain(
-              "UnchangedMinor",
-            );
+            // Nothing in the item, the family label included, holds the child's name.
+            expect(JSON.stringify(itm)).not.toContain("UnchangedMinor");
 
             const events = await tx<{ id: string }[]>`
               select id::text as id

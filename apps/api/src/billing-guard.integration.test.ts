@@ -1139,7 +1139,8 @@ describe("billing guard against a real database", () => {
               async (tx) => {
                 const h = await createHousehold(tx, kms, KEY_ARN, {
                   now: setup.now,
-                  label: "Household Minor",
+                  // Not the child's name: a family label that holds it is refused (spec O3).
+                  label: "Household Add Dependant",
                   actorUserId: setup.ownerUserId,
                 });
                 householdId = h.householdId;
@@ -1287,7 +1288,8 @@ describe("billing guard against a real database", () => {
               async (tx) => {
                 const h = await createHousehold(tx, kms, KEY_ARN, {
                   now: setup.now,
-                  label: "Household Unlink Guardian",
+                  // Not the child's name: a family label that holds it is refused (spec O3).
+                  label: "Household Remove Guardian",
                   actorUserId: setup.ownerUserId,
                 });
                 householdId = h.householdId;

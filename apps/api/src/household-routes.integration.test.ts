@@ -1676,4 +1676,108 @@ describe("household routes real-database integration (finding 4)", () => {
       });
     }
   });
+
+  it("rename answers 422 label_contains_child_name and nothing else, and changes nothing", async () => {
+    const scopeA1 = { orgId: orgIdA, communityId: communityIdA1 };
+    const householdId = await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(secondApp, scopeA1, async (tx) => {
+        const household = await createHousehold(tx, kms, KEY_ARN, {
+          now,
+          label: "Quillonwick",
+          actorUserId: null,
+        });
+        await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: false,
+          householdId: household.householdId,
+          dateOfBirth: "2018-05-05",
+          givenName: "Zephyrine",
+          familyName: "Quillonwick",
+          email: null,
+          phone: null,
+          actorUserId: null,
+        });
+        return household.householdId;
+      }),
+    );
+    const state = () =>
+      withAppTransaction(secondApp, scopeA1, async (tx) => {
+        const [household] = await tx<{ version: number }[]>`
+          select version from app.households where id = ${householdId}::uuid
+        `;
+        const [audit] = await tx<{ count: number }[]>`
+          select count(*)::int as count from app.audit_events
+        `;
+        return { version: household!.version, audit: audit!.count };
+      });
+    const before = await state();
+
+    // ownerA1 is the Community Admin of this community.
+    const res = await post(
+      "/v1/households/rename",
+      { communitySlug: slugA1, householdId, version: 1, label: "Zephyrine's family" },
+      ownerA1Token,
+    );
+
+    expect(res.status).toBe(422);
+    expect(await res.text()).toBe('{"code":"label_contains_child_name"}');
+    expect(await state()).toEqual(before);
+  });
+
+  it("add-minor answers 422 label_contains_child_name and nothing else onto a label naming the child", async () => {
+    const scopeA1 = { orgId: orgIdA, communityId: communityIdA1 };
+    const family = await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(secondApp, scopeA1, async (tx) => {
+        // A new family has no children, so its label is not checked when it is created.
+        const household = await createHousehold(tx, kms, KEY_ARN, {
+          now,
+          label: "Quillonwick (Zephyrine)",
+          actorUserId: null,
+        });
+        const adult = await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: true,
+          householdId: household.householdId,
+          dateOfBirth: null,
+          givenName: "Aurelia",
+          familyName: "Quillonwick",
+          email: null,
+          phone: null,
+          actorUserId: null,
+        });
+        return { householdId: household.householdId, adultId: adult.personId };
+      }),
+    );
+    const state = () =>
+      withAppTransaction(secondApp, scopeA1, async (tx) => {
+        const [persons] = await tx<{ count: number }[]>`
+          select count(*)::int as count from app.persons
+        `;
+        const [links] = await tx<{ count: number }[]>`
+          select count(*)::int as count from app.guardian_links
+        `;
+        const [audit] = await tx<{ count: number }[]>`
+          select count(*)::int as count from app.audit_events
+        `;
+        return { persons: persons!.count, links: links!.count, audit: audit!.count };
+      });
+    const before = await state();
+
+    const res = await post(
+      "/v1/households/members/add-minor",
+      {
+        communitySlug: slugA1,
+        householdId: family.householdId,
+        givenName: "Zephyrine",
+        familyName: "Quillonwick",
+        dateOfBirth: "2018-05-05",
+        guardianId: family.adultId,
+      },
+      ownerA1Token,
+    );
+
+    expect(res.status).toBe(422);
+    expect(await res.text()).toBe('{"code":"label_contains_child_name"}');
+    expect(await state()).toEqual(before);
+  });
 });

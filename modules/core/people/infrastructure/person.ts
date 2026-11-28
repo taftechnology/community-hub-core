@@ -17,6 +17,8 @@ import {
 } from "../domain/person.js";
 import { findDuplicateHolder } from "./duplicate-holder.js";
 import { lockVisibleHousehold } from "./household-lock.js";
+import { openHouseholdLabel } from "./household.js";
+import { assertLabelFreeOfChildNames } from "./label-check.js";
 import { derivePersonFieldKeys } from "./person-keys.js";
 
 const PERSON_CREATED = "people.person.created";
@@ -191,6 +193,18 @@ export async function createPerson(
   const familyName = normaliseName(input.familyName);
   const email = input.email === null ? null : normaliseEmail(input.email);
   const phone = input.phone === null ? null : normalisePhone(input.phone);
+  // A child may not join a family whose label holds the child's given name (spec D5, O3). The
+  // family is locked above, so the label read here still stands when the child is written.
+  if (minor && input.householdId !== null) {
+    const family = await openHouseholdLabel(tx, kms, keyArn, input.householdId);
+    if (family !== null && family.label !== null) {
+      await assertLabelFreeOfChildNames(tx, kms, keyArn, {
+        householdId: input.householdId,
+        label: family.label,
+        newChildGivenName: givenName,
+      });
+    }
+  }
   const personId = newId();
   const communityId = await setting(tx, "app.community_id");
   const keys = await derivePersonFieldKeys(tx, kms, keyArn, {

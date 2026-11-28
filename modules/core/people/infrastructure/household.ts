@@ -19,6 +19,7 @@ import { normaliseName } from "../domain/person.js";
 import { childLabels } from "./child-labels.js";
 import type { HouseholdStatus } from "./household-status.js";
 import { ensureCommunityKey } from "./keys.js";
+import { assertLabelFreeOfChildNames } from "./label-check.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const HOUSEHOLD_CREATED = "people.household.created";
@@ -377,6 +378,19 @@ export async function renameHousehold(
   const label = input.label === null ? null : normaliseName(input.label);
   let labelBytes: Uint8Array | null = null;
   if (label !== null) {
+    // The new label may not hold the given name of a child of this family (spec D5, O3). A child
+    // being added holds a share lock on the family (createPerson), so the family is locked first:
+    // this waits for that child to be committed, and the check sees them. The version is not
+    // tested here; the update below still refuses a stale one.
+    await tx`
+      select id
+      from app.households
+      where id = ${input.householdId}::uuid
+        and org_id = current_setting('app.org_id')::uuid
+        and community_id = current_setting('app.community_id')::uuid
+      for no key update
+    `;
+    await assertLabelFreeOfChildNames(tx, kms, keyArn, { householdId: input.householdId, label });
     const { enc, keyId } = await householdFieldKeys(tx, kms, keyArn, input.householdId);
     const communityId = await setting(tx, "app.community_id");
     const ciphertext = await encrypt(enc, new TextEncoder().encode(label), uuidToBytes(keyId), {
