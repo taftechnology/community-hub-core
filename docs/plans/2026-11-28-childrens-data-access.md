@@ -5,6 +5,14 @@ Spec: docs/specs/2026-11-28-childrens-data-access.md
 Slug: childrens-data-access
 Status: approved (2026-11-28, Adnan Bin Hossen)
 
+Amendment A2 (2026-11-28, approved by Adnan Bin Hossen), after Task 4:
+
+1. The groups half of the function sweep lives in the groups package, `modules/features/groups/infrastructure/function-sweep.integration.test.ts` (GS), added in Task 5 with the same rules: every export of groups `public/` is classified, and no seeded child value appears in any answer. `@community-hub/people` cannot import `@community-hub/groups`, because groups depends on people. The people sweep (FS) marks the groups exports as covered by GS. Pin 43b: an unclassified groups export fails GS.
+2. Task 7 also adds `id` to the household contract's adult-member and guardian-link shapes (`packages/contracts/src/households.ts`), with a contract test that a real household answer with an adult parses. The strict shapes lacked `id` on `main` while the API returns it. Found by the Task 4 implementer (Claude Sonnet 5.5) and recorded in the pull request as a fix found on the way.
+3. Task 4 added pin 42b, the `"admin"` call site in `household-routes.ts`, which is already in IS.
+
+From Task 3 on, the implementer is Claude Sonnet 5.5 (max effort), at the chunk owner's request on 2026-11-28. Antigravity was stopped during Task 3 after two hung searches, and nothing of its Task 3 work was committed. The checkpoint reviews and the second review therefore run on Claude Haiku 5.5 or Fable.
+
 Amendment A1 (2026-11-28, approved by Adnan Bin Hossen): `readPersonForActor` throws `AccessError("forbidden")` for a minor, the same as for a missing, hidden or cross-community person (`modules/core/access/infrastructure/restricted-read.ts:42`), and audits the denial the same way. `/v1/people/read` still answers 404 with an empty body (`apps/api/src/people-routes.ts:435-440`). Pins 19 and 20 assert `forbidden`. The spec's "not_found" for `readPersonForActor` (Scope 1 table) means "the same answer as a missing person", and Task 10 adds a spec status note saying so. P6 is corrected to match. Found by the Task 2 implementer (Gemini 4 Hydrogen xhigh), which stopped before editing, as its brief requires.
 
 Revision 3 (2026-11-28) applied a delta check of revision 2 (Claude Haiku 5.5, NOT READY, 3 High, 6 Medium, 9 Low). All were applied:
