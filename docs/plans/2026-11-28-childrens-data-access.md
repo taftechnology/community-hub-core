@@ -5,6 +5,13 @@ Spec: docs/specs/2026-11-28-childrens-data-access.md
 Slug: childrens-data-access
 Status: approved (2026-11-28, Adnan Bin Hossen)
 
+Amendment A5 (2026-11-28, approved by Adnan Bin Hossen, standing instruction): what Task 8 found, all accepted by the reviewer.
+
+- The audit purposes have three segments, because `AUDIT_NAME_RE` (`packages/kernel/src/audit-names.ts:1`), the `check-event-names` checker and the `audit_events_purpose` database check allow no more. They are `people.minor_view.name`, `.date_of_birth`, `.email`, `.phone`, `.life_event_type`, `.life_event_date`, `.life_event_place` and `.life_event_notes`, registered in access `public/`. The action stays `people.minor.field_viewed`. Wherever this plan or the spec writes `people.minor.view.<field>`, read these names.
+- The entitlement refusal on the View routes is the shared `guardEntitlement` empty 403, as on every household, people and life-event route (`apps/api/src/entitlement-guard.ts:58-68`). 402 is only the billing read-only guard on write routes, and the View routes are `billing: "read"`. Pins 68 and 71 assert 403. Wherever this plan or the spec says 402 for the View routes, read 403.
+- The route sweep found that `POST /v1/access/grants/list` gave a non-admin holding `access.roles.view` a child's person id, through a user-to-child link from before links to children were refused. A non-admin now gets the list without links to a child (`withoutChildLinks`, `apps/api/src/access-routes.ts`). This is pin 80b. A link to a hidden child is not filtered; the database refuses hiding a child.
+- Task 8 also mounts the routes in `apps/api/src/index.ts` (route count 81), classifies them in `second-factor-gate.integration.test.ts`, and scopes five audit queries in `life-event-routes.integration.test.ts` to the test's own organisation, so the sweep's audit rows in the shared test database cannot break them.
+
 Amendment A4 (2026-11-28, approved by Adnan Bin Hossen, standing instruction): what Tasks 6 and 7 added beyond the plan, all accepted by the reviewer.
 
 - Task 6 locks the family (`for no key update`) in `renameHousehold` before the label check, so a rename that races an add-minor sees the new child. This is pin 60b.
@@ -134,7 +141,7 @@ D1 to D6 and O1 to O4 in the spec header. In short:
 
 - **P2. Child labels.** One SQL helper, `childLabels(tx, householdIds)`, in people. It numbers children over `is_minor and deleted_at is null` by `created_at, id`. Hiding a person sets `deleted_at` (`person-delete.ts:160`); there is no other hidden column. Every reader that shows a child label calls it, including an adult's guardian links for a Community Admin.
 - **P3. The View order.** `minor-view.ts` exports two functions, and the route calls them in this order:
-  1. The entitlement guard (402).
+  1. The entitlement guard (403, A5).
   2. Transaction A, `prepareMinorView`: `isCommunityAdmin`, else `forbidden`. Then load the child (a minor, not deleted, in the scoped community; the life event must belong to the child), else `not_found`.
   3. `consumeFreshFactor({ sql, kms, keyArn, accessToken, now })` (the same dependencies as `freshCheckTotp`, `second-factor.ts:971`): `recovery`, `not_fresh` or `consumed`.
   4. Transaction B, `finishMinorView`: `isCommunityAdmin` again, else `forbidden`. Then `openMinorField` (which refuses a deleted child or a mismatched event), then `appendAuditEvent`.
