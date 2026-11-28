@@ -5,6 +5,8 @@ Spec: docs/specs/2026-11-28-childrens-data-access.md
 Slug: childrens-data-access
 Status: approved (2026-11-28, Adnan Bin Hossen)
 
+Amendment A1 (2026-11-28, approved by Adnan Bin Hossen): `readPersonForActor` throws `AccessError("forbidden")` for a minor, the same as for a missing, hidden or cross-community person (`modules/core/access/infrastructure/restricted-read.ts:42`), and audits the denial the same way. `/v1/people/read` still answers 404 with an empty body (`apps/api/src/people-routes.ts:435-440`). Pins 19 and 20 assert `forbidden`. The spec's "not_found" for `readPersonForActor` (Scope 1 table) means "the same answer as a missing person", and Task 10 adds a spec status note saying so. P6 is corrected to match. Found by the Task 2 implementer (Gemini 4 Hydrogen xhigh), which stopped before editing, as its brief requires.
+
 Revision 3 (2026-11-28) applied a delta check of revision 2 (Claude Haiku 5.5, NOT READY, 3 High, 6 Medium, 9 Low). All were applied:
 
 - H1, M1, L9. Each task now names every test file that calls a signature it changes or asserts a behaviour it removes ("Test files to classify"). The implementer classifies each test in them in the report (kept, flipped old → new, or replaced).
@@ -119,7 +121,7 @@ D1 to D6 and O1 to O4 in the spec header. In short:
   - `consumeFreshFactor` takes `{ sql, kms, keyArn, accessToken, now }`, the same dependencies as `freshCheckTotp`, where the spec showed `{ accessToken, now }`;
   - `isCommunityAdmin(tx, userId)` takes no community argument and relies on the `community_isolation` policy (migration `0007:63`), where the spec showed a `communityId` parameter.
 - **P5. The users-list flag.** `readLinkedContacts` takes `childView` (P1). With `"presence"`, a minor-linked user's contact is `null`, as for an unlinked user.
-- **P6. Return shapes.** For a minor, `readPerson` returns `null`, its existing not-found value (`person.ts:380`). Life-event rows keep the existing field name `eventId` (`life-event.ts:21-28`). The spec's `lifeEventId` is the same value, and the View body field is named `lifeEventId`. `readPersonForActor` throws `AccessError("not_found")`, as it does for a missing person. `readHousehold` gains `childCount`, like `readHouseholdDetail`.
+- **P6. Return shapes.** For a minor, `readPerson` returns `null`, its existing not-found value (`person.ts:380`). Life-event rows keep the existing field name `eventId` (`life-event.ts:21-28`). The spec's `lifeEventId` is the same value, and the View body field is named `lifeEventId`. `readPersonForActor` throws `AccessError("forbidden")`, as it does for a missing person (A1). `readHousehold` gains `childCount`, like `readHouseholdDetail`.
 - **P7. `decide`.** After Task 2, the guardian override (`decide.ts:64-67`) no longer reaches a minor. Guardian links only ever point at minors (`guardian.ts:108-109`), so it is dead. It is left in place, with a comment pointing at the member-portal chunk, which rebuilds guardian read. Removing it would change `packages/policy`, which this chunk otherwise does not touch.
 
 ## Security pins
@@ -173,8 +175,8 @@ Files:
 | 13  | Community Admin grant required                              | Accept any community role                                                                                              | CA   | `staff` in the community is not a Community Admin                                                                                                                                                      |
 | 16  | Organisation roles do not count                             | Also accept `org_owner` / `org_admin` grants                                                                           | CA   | an `org_owner` with no community grant is not a Community Admin                                                                                                                                        |
 | 17  | Custom permissions do not count                             | Accept a custom role holding `people.restricted.read`                                                                  | CA   | a custom role with every permission is not a Community Admin                                                                                                                                           |
-| 19  | `readPersonForActor` refuses a minor (O4)                   | Restore the minor branch                                                                                               | RR   | a guardian with `view = true` gets `not_found` for their child                                                                                                                                         |
-| 20  | Refusal holds for every role                                | Return the minor for `community_admin`                                                                                 | RR   | a Community Admin gets `not_found` from `readPersonForActor` for a minor                                                                                                                               |
+| 19  | `readPersonForActor` refuses a minor (O4)                   | Restore the minor branch                                                                                               | RR   | a guardian with `view = true` gets `forbidden` for their child                                                                                                                                         |
+| 20  | Refusal holds for every role                                | Return the minor for `community_admin`                                                                                 | RR   | a Community Admin gets `forbidden` from `readPersonForActor` for a minor                                                                                                                               |
 | 21  | `readPerson` refuses a minor                                | Return the decrypted minor                                                                                             | PR   | `readPerson` of a minor answers `null`                                                                                                                                                                 |
 | 22  | Minors list carries no fields                               | Restore the name decrypt in minors mode                                                                                | PR   | minors-mode rows have only `personId`, `label` and `householdId`                                                                                                                                       |
 | 23  | Minors list skips deleted                                   | Drop `deleted_at is null`                                                                                              | PR   | a deleted minor is not in minors mode                                                                                                                                                                  |
@@ -279,7 +281,7 @@ Files:
 - [ ] CA first: pins 13, 16 and 17, plus the tests-only rows (two organisations, two communities, a deleted grant, every role key).
 - [ ] RR changes first: pins 19 and 20, with flips `:157` and `:232`.
 - [ ] `isCommunityAdmin(tx, userId)` takes no community argument. It reads `app.community_role_grants` for that user with `role_key = 'community_admin'`, and RLS limits it to the scoped organisation and community.
-- [ ] `readPersonForActor`: a minor answers `not_found` for every actor, and the refusal is audited as a denial, as today. Add the P7 comment in `decide.ts`.
+- [ ] `readPersonForActor`: a minor throws `AccessError("forbidden")` for every actor, as a missing person does (A1), and the refusal is audited as a denial, as today. Add the P7 comment in `decide.ts`.
 - [ ] Test files to classify: `restricted-read.integration.test.ts`, `apps/api/src/people-delete-routes.integration.test.ts` (`:1085` calls `/v1/people/read`), and any `/v1/people/read` minor case in `people-routes.integration.test.ts`.
 - [ ] Gate.
 
@@ -413,7 +415,7 @@ Tests: HR, `household-routes.test.ts` (flips `:1023,1094,1180`), OP (new) and PV
   - the Laravel import row gaining the label check;
   - open items: a View on the staging hostname at the next unpark; org owners need `community_admin`; nickname labels as a residual; the guardian narrowing; and the existing group-name guidance;
 - `AGENTS.md`: the repository-state line;
-- `docs/specs/2026-11-28-childrens-data-access.md`: a status note on Scope 1 and Scope 4 for the P4b deviations (a note only; the approved text stays).
+- `docs/specs/2026-11-28-childrens-data-access.md`: a status note on Scope 1 and Scope 4 for the P4b deviations and A1 (a note only; the approved text stays).
 
 - [ ] Prettier and the docs checks in the gate. No test.
 - [ ] `rm -f docs/plans/*-report.md`, and `git status --short` shows no scratch.
