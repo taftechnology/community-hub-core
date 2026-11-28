@@ -1151,8 +1151,13 @@ describe("people routes real-database integration (finding 3)", () => {
 
   // The callers of the two children tests: two Community Admins (the bootstrap owner and a plain
   // community_admin grant) and three that hold people.restricted.read without being one.
-  async function childCallers(slugPrefix: string) {
-    const base = await createOrgAndCommunity(slugPrefix);
+  // The community holds people.households by default: the children's list needs it (checkpoint 2,
+  // M1), and a test that wants it off passes the plan's entitlements itself.
+  async function childCallers(
+    slugPrefix: string,
+    entitlements: string[] = ["people.directory", "groups.basic", "people.households"],
+  ) {
+    const base = await createOrgAndCommunity(slugPrefix, entitlements);
     const org = {
       orgId: base.orgId,
       communityId: base.communityId,
@@ -1238,6 +1243,58 @@ describe("people routes real-database integration (finding 3)", () => {
       expect(await res.text()).toBe("");
     }
   }, 120_000);
+
+  it("pin 125: the children's list needs people.households: a Community Admin gets an empty 403 without it and the list with it", async () => {
+    const off = await childCallers("kids-list-off", ["people.directory", "groups.basic"]);
+    const on = await childCallers("kids-list-on");
+
+    // Without the entitlement every Community Admin is refused, with the empty no-store 403 of the
+    // other children routes. The community's adults are still listed: only the Minors tab is gated.
+    for (const caller of off.communityAdmins) {
+      const res = await post(
+        "/v1/people/list",
+        { communitySlug: off.slug, kind: "minors" },
+        caller.accessToken,
+      );
+      expect(res.status).toBe(403);
+      expect(res.headers.get("cache-control")).toBe("no-store");
+      expect(await res.text()).toBe("");
+
+      const adults = await post(
+        "/v1/people/list",
+        { communitySlug: off.slug, kind: "adults" },
+        caller.accessToken,
+      );
+      expect(adults.status).toBe(200);
+    }
+    // A caller who is not a Community Admin is refused whatever the community holds: the role
+    // comes first, so the entitlement tells them nothing.
+    for (const parish of [off, on]) {
+      for (const caller of parish.notAdmins) {
+        const res = await post(
+          "/v1/people/list",
+          { communitySlug: parish.slug, kind: "minors" },
+          caller.accessToken,
+        );
+        expect(res.status).toBe(403);
+        expect(await res.text()).toBe("");
+      }
+    }
+
+    // With it, the same Community Admins get the children.
+    for (const caller of on.communityAdmins) {
+      const res = await post(
+        "/v1/people/list",
+        { communitySlug: on.slug, kind: "minors" },
+        caller.accessToken,
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { items: Array<{ personId: string }> };
+      expect(body.items.map((item) => item.personId).sort()).toEqual(
+        [on.children.childOneId, on.children.childTwoId].sort(),
+      );
+    }
+  }, 180_000);
 
   it("a child is read as a person that does not exist, whoever asks, a Community Admin included", async () => {
     const { slug, children, communityAdmins, notAdmins } = await childCallers("kids-read");

@@ -861,11 +861,13 @@ describe("exportRosterCsv", () => {
         }),
       );
 
-      // No groups.roster.exported audit row is written
+      // No groups.roster.exported audit row is written for this test's two organisations. The count
+      // is scoped to them: other tests in the shared database write the same action for their own.
       const auditRows = await directSql<{ count: string }[]>`
         select count(*)::text as count
         from app.audit_events
         where action = 'groups.roster.exported'
+          and org_id in (${scopes.orgA.id}::uuid, ${scopes.orgB.id}::uuid)
       `;
       expect(Number(auditRows[0]?.count ?? "0")).toBe(0);
 

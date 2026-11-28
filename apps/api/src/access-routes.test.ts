@@ -572,6 +572,47 @@ describe("access routes", () => {
     expect(await linkRes.text()).toBe('{"error":"user_not_member"}');
   });
 
+  it("pin 131: a child's person id on POST /v1/access/user-links answers the empty 404 of a missing person, and a grant to a user linked to a child keeps its 409 (checkpoint 2, L4)", async () => {
+    const userId = "00000000-0000-4000-8000-000000000030";
+    const personId = "00000000-0000-4000-8000-000000000031";
+    const link = () =>
+      route("/v1/access/user-links").handle(
+        request(
+          "/v1/access/user-links",
+          API_HOSTNAME,
+          { communitySlug: "parish", userId, personId },
+          `Bearer ${TOKEN}`,
+        ),
+      );
+
+    // The module refuses a child with minor_forbidden, and a missing person with not_found. The
+    // route answers both the same way, so a child's id is not confirmed to a caller who guesses it.
+    access.linkUser.mockReset();
+    access.linkUser.mockRejectedValueOnce(new access.AccessError("minor_forbidden"));
+    const child = await link();
+    access.linkUser.mockRejectedValueOnce(new access.AccessError("not_found"));
+    const missing = await link();
+    expect(missing.status).toBe(404);
+    expect(child.status).toBe(404);
+    expect(await child.text()).toBe("");
+    expect(await missing.text()).toBe("");
+    expect([...child.headers.entries()]).toEqual([...missing.headers.entries()]);
+
+    // A role grant to a user who is already linked to a child is another case, and stays a 409.
+    access.grantRole.mockReset();
+    access.grantRole.mockRejectedValue(new access.AccessError("minor_forbidden"));
+    const grant = await route("/v1/access/grants").handle(
+      request(
+        "/v1/access/grants",
+        API_HOSTNAME,
+        { communitySlug: "parish", userId, roleKey: "member" },
+        `Bearer ${TOKEN}`,
+      ),
+    );
+    expect(grant.status).toBe(409);
+    expect(await grant.text()).toBe("");
+  });
+
   it("a member without access.roles.manage gets 402 on POST /v1/access/grants in read_only and 403 in ok", async () => {
     access.grantRole.mockRejectedValue(new access.AccessError("forbidden"));
     billing.assertWritable.mockRejectedValue(new BillingReadOnly("read_only"));
@@ -1288,6 +1329,35 @@ describe("access routes", () => {
             minor: false,
           },
         ]);
+      }
+    });
+
+    it("pin 130: the users list asks for the admin view for a Community Admin and the presence view for everyone else (checkpoint 2, L3)", async () => {
+      // The route's own isAdmin branches give one answer under either view, so a flipped polarity
+      // cannot be seen in the body. The argument is the setting, and it is checked here, once for
+      // each side, with an adult-linked user so no other branch decides the answer.
+      const personId = "00000000-0000-4000-8000-000000000044";
+      userLinks = [{ user_id: USER, person_id: personId }];
+      for (const [isAdmin, view] of [
+        [true, "admin"],
+        [false, "presence"],
+      ] as const) {
+        access.isCommunityAdmin.mockResolvedValue(isAdmin);
+        people.readLinkedContacts.mockClear();
+        people.readLinkedContacts.mockResolvedValueOnce(
+          new Map([[personId, { minor: false, given: "Ada", family: "Lovelace", phone: null }]]),
+        );
+
+        const res = await callUsersList({ communitySlug: "parish" });
+
+        expect(res.status, view).toBe(200);
+        expect(people.readLinkedContacts).toHaveBeenCalledTimes(1);
+        expect(people.readLinkedContacts).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          expect.anything(),
+          expect.objectContaining({ childView: view }),
+        );
       }
     });
 

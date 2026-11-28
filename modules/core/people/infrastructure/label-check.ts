@@ -21,9 +21,17 @@ const SEPARATORS = /[\p{White_Space}\p{Pd}]+/u;
 const LETTER = /\p{L}/gu;
 const MIN_LETTERS = 2;
 
-// Case and compatibility forms (full-width letters, composed or combining accents) do not matter.
+// Case, compatibility forms (full-width letters) and accents do not matter: "Zoë" and "Zoe" are one
+// name. The text is decomposed (NFKD), its combining marks are dropped, and it is composed again
+// (NFKC) before the case is folded. Both sides, the label and every given name, go through here.
+const COMBINING_MARKS = /\p{M}/gu;
+
 function normalise(value: string): string {
-  return value.normalize("NFKC").toLocaleLowerCase("und");
+  return value
+    .normalize("NFKD")
+    .replace(COMBINING_MARKS, "")
+    .normalize("NFKC")
+    .toLocaleLowerCase("und");
 }
 
 function nameParts(givenName: string): string[] {

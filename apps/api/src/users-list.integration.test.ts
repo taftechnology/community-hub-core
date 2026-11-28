@@ -780,6 +780,113 @@ describe("users list integration", () => {
     });
   });
 
+  it("pin 127: the grants list leaves out a user's link to a hidden child for a caller who is not a Community Admin (checkpoint 2, L1)", async () => {
+    const tenant = await createTenant();
+    const owner = await setupOwner(tenant);
+    const scope = { orgId: tenant.organisationId, communityId: tenant.communityId };
+
+    let adultId = "";
+    let hiddenChildId = "";
+    await withRequest({ requestId: REQUEST_ID }, () =>
+      withAppTransaction(app, scope, async (tx) => {
+        const hh = await createHousehold(tx, kms, KEY_ARN, {
+          now,
+          label: "Household Hidden Child",
+          actorUserId: owner.userId,
+        });
+        const adult = await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: true,
+          householdId: hh.householdId,
+          dateOfBirth: null,
+          givenName: "AdultGiven",
+          familyName: "AdultFamily",
+          email: null,
+          phone: null,
+          actorUserId: owner.userId,
+        });
+        adultId = adult.personId;
+        const child = await createPerson(tx, kms, KEY_ARN, {
+          now,
+          declaredAdult: false,
+          householdId: hh.householdId,
+          dateOfBirth: "2015-05-05",
+          givenName: "Hidingchild",
+          familyName: "Hidingfamily",
+          email: null,
+          phone: null,
+          actorUserId: owner.userId,
+        });
+        hiddenChildId = child.personId;
+      }),
+    );
+
+    const childUser = await createSession(uniqueEmail("hiddenlinked"));
+    const adultUser = await createSession(uniqueEmail("adultlinked"));
+    const staffUser = await createSession(uniqueEmail("staff"));
+    for (const user of [childUser, adultUser, staffUser]) {
+      await makeMember(tenant, user.userId);
+    }
+    const grantStaff = await post(
+      API_HOSTNAME,
+      "/v1/access/grants",
+      { communitySlug: tenant.slug, userId: staffUser.userId, roleKey: "staff" },
+      owner.bearer,
+    );
+    expect(grantStaff.status).toBe(200);
+
+    // A child cannot be hidden through the product (the user triggers refuse it), and the product
+    // no longer links a user to a child, so the test does both as the migrator with the user
+    // triggers off, as the other hidden-child tests do. The link is a record from before that rule.
+    const direct = createPlaintextDirectSql(runtime.productOnlyUrl);
+    try {
+      await withAppTransaction(direct, scope, async (tx) => {
+        await tx.unsafe("ALTER TABLE app.persons DISABLE TRIGGER USER");
+        await tx`
+          update app.persons
+          set deleted_at = now() - interval '1 hour', deleted_by = ${newId()}::uuid
+          where id = ${hiddenChildId}::uuid
+        `;
+        await tx.unsafe("ALTER TABLE app.persons ENABLE TRIGGER USER");
+      });
+      await direct`
+        insert into app.user_links (id, org_id, community_id, user_id, person_id)
+        values
+          (${newId()}, ${tenant.organisationId}, ${tenant.communityId}, ${childUser.userId}, ${hiddenChildId}),
+          (${newId()}, ${tenant.organisationId}, ${tenant.communityId}, ${adultUser.userId}, ${adultId})
+      `;
+    } finally {
+      await direct.end({ timeout: 1 });
+    }
+
+    type Links = { userLinks: Array<{ userId: string; personId: string }> };
+    const listFor = async (caller: {
+      bearer: string;
+    }): Promise<{ text: string; links: Links["userLinks"] }> => {
+      const res = await post(
+        API_HOSTNAME,
+        "/v1/access/grants/list",
+        { communitySlug: tenant.slug },
+        caller.bearer,
+      );
+      expect(res.status).toBe(200);
+      const text = await res.text();
+      return { text, links: (JSON.parse(text) as Links).userLinks };
+    };
+
+    // Staff may view roles and is not a Community Admin. The link to the hidden child is not in
+    // their list, and neither is the child's id anywhere in the answer. The adult's link is.
+    const staff = await listFor(staffUser);
+    expect(staff.links.some((link) => link.personId === hiddenChildId)).toBe(false);
+    expect(staff.text).not.toContain(hiddenChildId);
+    expect(staff.links.some((link) => link.personId === adultId)).toBe(true);
+
+    // The Community Admin sees both, so the filter is not simply dropping every link.
+    const admin = await listFor(owner);
+    expect(admin.links.some((link) => link.personId === hiddenChildId)).toBe(true);
+    expect(admin.links.some((link) => link.personId === adultId)).toBe(true);
+  });
+
   it("amendment A1 on a real database: minor person in community 2 linked in community 1 returns minor: true and email is omitted from body", async () => {
     const tenant = await createTenant();
     const owner = await setupOwner(tenant);

@@ -103,16 +103,6 @@ function isCommunityAdminCall(expr: ts.Expression): boolean {
   );
 }
 
-function identifiersIn(expr: ts.Node, into: Set<string>): Set<string> {
-  if (ts.isIdentifier(expr)) {
-    into.add(expr.text);
-  }
-  ts.forEachChild(expr, (child) => {
-    identifiersIn(child, into);
-  });
-  return into;
-}
-
 // Follows one level of `const name = ...` so a variable that holds "admin" is judged by its value.
 function resolveValue(expr: ts.Expression, consts: ConstDeclaration[], beforePos: number) {
   let current = strip(expr);
@@ -146,13 +136,13 @@ function mayBeAdmin(expr: ts.Expression, consts: ConstDeclaration[], beforePos: 
   return true;
 }
 
-// `if (!name) { ... return | throw ... }` before the call.
+// `if (!name) { ... return | throw ... }` that ends before the call, so the call is not inside it.
 function hasGuard(fn: ts.Node, name: string, beforePos: number): boolean {
   let guarded = false;
   walkOwnBody(fn, (node) => {
     if (
       guarded ||
-      node.pos >= beforePos ||
+      node.end > beforePos ||
       !ts.isIfStatement(node) ||
       !ts.isPrefixUnaryExpression(node.expression) ||
       node.expression.operator !== ts.SyntaxKind.ExclamationToken ||
@@ -176,6 +166,66 @@ function hasGuard(fn: ts.Node, name: string, beforePos: number): boolean {
     guarded = exits;
   });
   return guarded;
+}
+
+// The plain flag: an identifier that is, through consts declared earlier in the function, the
+// isCommunityAdmin( result. A negation, a comparison or a mix with another value is not the flag.
+function isAdminFlag(expr: ts.Expression, consts: ConstDeclaration[], beforePos: number): boolean {
+  const inner = strip(expr);
+  return ts.isIdentifier(inner) && isCommunityAdminCall(resolveValue(inner, consts, beforePos));
+}
+
+// Whether the call sits inside the then-branch of an `if (flag) { ... }` in the same function.
+function insideAdminIf(
+  node: ts.Node,
+  fn: ts.Node,
+  consts: ConstDeclaration[],
+  beforePos: number,
+): boolean {
+  let child: ts.Node = node;
+  for (
+    let current = node.parent;
+    current !== undefined && current !== fn;
+    current = current.parent
+  ) {
+    if (
+      ts.isIfStatement(current) &&
+      current.thenStatement === child &&
+      isAdminFlag(current.expression, consts, beforePos)
+    ) {
+      return true;
+    }
+    child = current;
+  }
+  return false;
+}
+
+// Checkpoint 2, M2. True when "admin" can only come out for a Community Admin: a literal "admin"
+// stands only under a guard (`underGuard`) or as the true branch of a conditional whose test is the
+// un-negated flag. The false branch gets no cover from its own test, so `isAdmin ? "presence" :
+// "admin"` and `!isAdmin ? "admin" : "presence"` are refused. A value that is not a literal, a
+// conditional or a forwarded childView may be "admin" and is refused.
+function onlyForAdmins(
+  expr: ts.Expression,
+  consts: ConstDeclaration[],
+  beforePos: number,
+  underGuard: boolean,
+): boolean {
+  const value = resolveValue(expr, consts, beforePos);
+  if (!mayBeAdmin(value, consts, beforePos)) {
+    return true;
+  }
+  if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) {
+    return underGuard;
+  }
+  if (ts.isConditionalExpression(value)) {
+    const flagged = isAdminFlag(value.condition, consts, beforePos);
+    return (
+      onlyForAdmins(value.whenTrue, consts, beforePos, underGuard || flagged) &&
+      onlyForAdmins(value.whenFalse, consts, beforePos, underGuard)
+    );
+  }
+  return false;
 }
 
 function propertyName(prop: ts.ObjectLiteralElementLike): string | undefined {
@@ -231,14 +281,12 @@ export function auditChildViewAdmin(
           );
           continue;
         }
-        const resolved = resolveValue(value, consts, prop.pos);
-        const used = identifiersIn(resolved, new Set<string>());
-        const derived = adminConsts.some((c) => used.has(c.name));
-        const literalAdmin = ts.isStringLiteral(resolved) && resolved.text === "admin";
-        const guarded = adminConsts.some((c) => hasGuard(fn, c.name, prop.pos));
-        if (!derived && !(literalAdmin && guarded)) {
+        const underGuard =
+          adminConsts.some((c) => hasGuard(fn, c.name, prop.pos)) ||
+          insideAdminIf(prop, fn, consts, prop.pos);
+        if (!onlyForAdmins(value, consts, prop.pos, underGuard)) {
           problems.push(
-            `${where}: childView "admin" does not come from the isCommunityAdmin( result, and no guard refuses a non-admin first`,
+            `${where}: childView "admin" is not limited to the true branch of the un-negated isCommunityAdmin( flag, and no guard or if (flag) holds the call`,
           );
         }
       }
@@ -344,6 +392,85 @@ describe("childView admin call sites (pin 42)", () => {
         `async function other(tx) { const isAdmin = await isCommunityAdmin(tx, u); return isAdmin; } async function f(tx) { return listPersons(tx, k, a, { childView: "admin" }); }`,
       );
       expect(result.problems).toHaveLength(1);
+    });
+
+    // Checkpoint 2, M2 (pin 126). A conditional that merely mentions the isCommunityAdmin( result
+    // is not enough: "admin" must be the branch taken when the caller IS a Community Admin.
+    it('refuses "admin" as the false branch of an un-negated isCommunityAdmin( conditional', () => {
+      const result = auditChildViewAdmin(
+        LISTED,
+        `async function f(tx) { const isAdmin = await isCommunityAdmin(tx, u); return listPersons(tx, k, a, { childView: isAdmin ? "presence" : "admin" }); }`,
+      );
+      expect(result.problems).toHaveLength(1);
+      expect(result.passesAdmin).toBe(true);
+    });
+
+    it('refuses "admin" as the true branch of a negated isCommunityAdmin( conditional', () => {
+      const result = auditChildViewAdmin(
+        LISTED,
+        `async function f(tx) { const isAdmin = await isCommunityAdmin(tx, u); return listPersons(tx, k, a, { childView: !isAdmin ? "admin" : "presence" }); }`,
+      );
+      expect(result.problems).toHaveLength(1);
+      expect(result.passesAdmin).toBe(true);
+    });
+
+    it('refuses "admin" under a conditional whose test is more than the isCommunityAdmin( result', () => {
+      for (const test of ["isAdmin && other", "isAdmin || other", "other", "isAdmin === false"]) {
+        const result = auditChildViewAdmin(
+          LISTED,
+          `async function f(tx) { const isAdmin = await isCommunityAdmin(tx, u); return listPersons(tx, k, a, { childView: ${test} ? "admin" : "presence" }); }`,
+        );
+        expect(result.problems.length, test).toBe(1);
+      }
+    });
+
+    it('refuses "admin" in either branch when the conditional is nested the wrong way round', () => {
+      const result = auditChildViewAdmin(
+        LISTED,
+        `async function f(tx) { const isAdmin = await isCommunityAdmin(tx, u); return listPersons(tx, k, a, { childView: other ? "presence" : isAdmin ? "presence" : "admin" }); }`,
+      );
+      expect(result.problems).toHaveLength(1);
+    });
+
+    it('accepts "admin" as the true branch of an un-negated isCommunityAdmin( conditional', () => {
+      for (const view of [
+        `isAdmin ? "admin" : "presence"`,
+        `(isAdmin) ? "admin" : "presence"`,
+        // The flag may be held in another const first.
+        `canSee ? "admin" : "presence"`,
+        // A nested conditional keeps "admin" under the flag.
+        `other ? "presence" : isAdmin ? "admin" : "presence"`,
+      ]) {
+        const result = auditChildViewAdmin(
+          LISTED,
+          `async function f(tx) { const isAdmin = await isCommunityAdmin(tx, u); const canSee = isAdmin; return listPersons(tx, k, a, { childView: ${view} }); }`,
+        );
+        expect(result.problems, view).toEqual([]);
+        expect(result.passesAdmin, view).toBe(true);
+      }
+    });
+
+    it('accepts a literal "admin" inside an if that tests the isCommunityAdmin( result', () => {
+      const result = auditChildViewAdmin(
+        LISTED,
+        `async function f(tx) { const isAdmin = await isCommunityAdmin(tx, u); if (isAdmin) { return listPersons(tx, k, a, { childView: "admin" }); } return null; }`,
+      );
+      expect(result.problems).toEqual([]);
+      expect(result.passesAdmin).toBe(true);
+    });
+
+    it('refuses a literal "admin" inside an if (!isAdmin) block, or in the else of an if (isAdmin)', () => {
+      for (const body of [
+        `if (!isAdmin) { return listPersons(tx, k, a, { childView: "admin" }); } return null;`,
+        `if (isAdmin) { return null; } else { return listPersons(tx, k, a, { childView: "admin" }); }`,
+        `if (isAdmin && other) { return listPersons(tx, k, a, { childView: "admin" }); } return null;`,
+      ]) {
+        const result = auditChildViewAdmin(
+          LISTED,
+          `async function f(tx) { const isAdmin = await isCommunityAdmin(tx, u); ${body} }`,
+        );
+        expect(result.problems.length, body).toBe(1);
+      }
     });
 
     it("accepts a value derived from the isCommunityAdmin( result", () => {

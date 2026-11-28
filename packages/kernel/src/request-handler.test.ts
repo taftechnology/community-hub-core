@@ -181,6 +181,32 @@ describe("createRequestHandler", () => {
     }
   });
 
+  it("pin 128b: a 500 the kernel answers carries no-store and no body (checkpoint 2, L2)", async () => {
+    // A path under /v1/people/minors/ is a View path, and a View answer is never stored, errors
+    // included. The kernel does not know the path, so the empty 500 is no-store whatever it is.
+    for (const target of [
+      "https://example.test/boom",
+      "https://example.test/v1/people/minors/view",
+    ]) {
+      const run = createRequestHandler({ info: vi.fn(), pathFor }, async () => {
+        throw new Error("marker-500-e41c");
+      });
+      const response = await run(new Request(target, { method: "POST" }));
+      expect(response.status, target).toBe(500);
+      expect(response.headers.get("cache-control"), target).toBe("no-store");
+      expect(await response.text(), target).toBe("");
+    }
+
+    // A handler's own answer is left alone: the kernel adds the header only to the 500 it makes.
+    const run = createRequestHandler(
+      { info: vi.fn(), pathFor },
+      () => new Response(null, { status: 204 }),
+    );
+    const own = await run(new Request("https://example.test/ok"));
+    expect(own.status).toBe(204);
+    expect(own.headers.get("cache-control")).toBeNull();
+  });
+
   describe("a thrown error", () => {
     const MARKERS = {
       message: "marker-message-3f9a",

@@ -223,6 +223,12 @@ function statusFor(error: AccessError, route?: "grants" | "user-links"): Respons
   if (error.code === "not_found") {
     return empty(404);
   }
+  // A link to a child answers as a link to a person that does not exist, whoever asks: a child's id
+  // is not confirmed to a caller who guesses it (spec Scope 6). A grant to a user who is already
+  // linked to a child is another case, and stays a conflict.
+  if (error.code === "minor_forbidden" && route === "user-links") {
+    return empty(404);
+  }
   if (CONFLICT.has(error.code)) {
     return empty(409);
   }
@@ -365,13 +371,15 @@ function listBody(
 }
 
 // A user's link names a person by id. A link to a child is for a Community Admin only (ADR 0017),
-// so anyone else gets the directory without it, and with it no child's id. Only a link to a child
-// is left out: an adult's link is listed as before. (The product no longer links a user to a child,
-// so a link like this is a record from before that rule.)
+// so anyone else gets the directory without it, and with it no child's id. A link is kept only when
+// the person is known to be an adult: an unknown person, or one who is hidden (personIsMinor reads
+// visible persons only), fails closed, as the users list does. An adult's link is listed as before.
+// (The product no longer links a user to a child, so a link like this is a record from before that
+// rule.)
 async function withoutChildLinks(tx: AppTransaction, directory: Directory): Promise<Directory> {
   const userLinks: Directory["userLinks"] = [];
   for (const link of directory.userLinks) {
-    if ((await personIsMinor(tx, link.personId)) !== true) {
+    if ((await personIsMinor(tx, link.personId)) === false) {
       userLinks.push(link);
     }
   }

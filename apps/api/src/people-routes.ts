@@ -55,6 +55,7 @@ const RESTRICTED = "people.restricted.read";
 const ADULT_VIEW_PURPOSE = "people.person.view";
 const DIRECTORY_ENTITLEMENT = "people.directory";
 const GROUPS_BASIC_ENTITLEMENT = "groups.basic";
+const HOUSEHOLDS_ENTITLEMENT = "people.households";
 
 type Scope = { orgId: string; communityId: string };
 
@@ -304,6 +305,17 @@ export function peopleRoutes(deps: PeopleDeps): GateRoute[] {
                 targetIds: [scope.orgId, scope.communityId],
               });
               return finish(request, noStore(empty(403)));
+            }
+            // The Minors tab sits behind people.households, as every other children route does.
+            // It comes after the role check, so a caller who is not a Community Admin is refused
+            // and audited whatever the community holds.
+            const blockedEntitlement = await guardEntitlement(
+              { checkout: deps.checkout, now: deps.now, guardLog: deps.guardLog },
+              scope,
+              HOUSEHOLDS_ENTITLEMENT,
+            );
+            if (blockedEntitlement !== null) {
+              return finish(request, noStore(blockedEntitlement));
             }
             const result = await listPersons(tx, deps.kms, deps.keyArn, {
               kind: "minors",

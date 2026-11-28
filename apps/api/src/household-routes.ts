@@ -98,13 +98,14 @@ export function statusForHouseholds(error: PeopleError): Response | undefined {
   ) {
     return empty(409);
   }
-  if (error.code === "not_found") {
+  // A child cannot be moved, and a child's id is not confirmed to a caller who guesses it: the
+  // answer is the one for a person that does not exist (spec Scope 6).
+  if (error.code === "not_found" || error.code === "minor_not_movable") {
     return empty(404);
   }
   if (
     error.code === "invalid_input" ||
     error.code === "invalid_guardian" ||
-    error.code === "minor_not_movable" ||
     error.code === "invalid_date" ||
     error.code === "invalid_name" ||
     error.code === "invalid_declaration" ||
@@ -703,6 +704,11 @@ export function householdRoutes(deps: HouseholdDeps): GateRoute[] {
           }
           if (isChild && !isAdmin) {
             // The answer for a person that does not exist: a child's id is not confirmed.
+            return finish(request, empty(404));
+          }
+          // A child's id is not a guardian's either, and it gets the same answer from every caller
+          // who passed the gate above, a Community Admin included (spec Scope 6).
+          if ((await personIsMinor(tx, body.guardianId)) === true) {
             return finish(request, empty(404));
           }
 

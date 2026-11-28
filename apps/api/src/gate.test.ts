@@ -156,6 +156,54 @@ describe("createGate", () => {
     },
   );
 
+  it("pin 128: a 404 the gate answers carries no-store, for an unknown route under /v1/people/minors/, an unknown hostname and a missing hostname header (checkpoint 2, L2)", async () => {
+    // Every View answer carries no-store, errors included (spec, View errors). The gate answers
+    // before a View route can, so its empty 404s carry the header too.
+    const { gate } = setup();
+    const refused: Array<[string, string | undefined, string, string]> = [
+      // An unknown route under the View prefix, on a host the gate knows (the kernel's handler).
+      ["POST", HOSTS.api, "/v1/people/minors/no-such-view", "unknown route"],
+      // The View paths, on a hostname the gate does not know and with none at all.
+      ["POST", "evil.example", "/v1/people/minors/view", "unknown hostname"],
+      ["POST", undefined, "/v1/people/minors/life-events/view", "missing hostname header"],
+      // A tenant route reached on the ops hostname, which the gate refuses before the route.
+      ["GET", HOSTS.ops, "/tenant-only", "tenant route on the ops hostname"],
+    ];
+    for (const [method, header, path, why] of refused) {
+      const response = await call(gate, "10.0.0.8", header, method, path);
+      expect(response.status, why).toBe(404);
+      expect(response.headers.get("cache-control"), why).toBe("no-store");
+      expect(await response.text(), why).toBe("");
+    }
+    // The ops wrap keeps the header it was given.
+    const ops = await call(gate, "10.0.0.8", HOSTS.ops, "POST", "/v1/people/minors/view");
+    expect(ops.status).toBe(404);
+    expect(ops.headers.get("cache-control")).toBe("no-store");
+    expect(ops.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("a View route that throws answers 500 with no-store through the gate and the kernel (checkpoint 2, L2)", async () => {
+    const gate = createGate({
+      hostnames: HOSTS,
+      routes: [
+        {
+          method: "POST",
+          pattern: "/v1/people/minors/view",
+          surface: "tenant",
+          billing: "read",
+          handle: () => {
+            throw new Error("marker-view-7d2a");
+          },
+        },
+      ],
+      info: () => undefined,
+    });
+    const response = await call(gate, "10.0.0.8", HOSTS.api, "POST", "/v1/people/minors/view");
+    expect(response.status).toBe(500);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.text()).toBe("");
+  });
+
   it("logs a gateway request id on a known-host refusal and omits an unknown hostname", async () => {
     const { gate, lines } = setup();
     const refused = await call(gate, "10.0.0.8", "au.api.example.test", "GET", "/ops-only", {

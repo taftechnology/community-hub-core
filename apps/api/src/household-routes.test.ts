@@ -1265,8 +1265,9 @@ describe("household read routes (Task 9: list and read)", () => {
         expect(await missing.text()).toBe("");
         expect([...missing.headers.entries()]).toEqual([...child.headers.entries()]);
 
-        // A Community Admin links the child on the role alone.
-        people.personIsMinor.mockResolvedValue(true);
+        // A Community Admin links the child on the role alone. Only the child's id is a minor here:
+        // a guardian who were one is refused as a missing person (pin 134, below).
+        people.personIsMinor.mockImplementation(async (_tx, id) => id === PERSON_ID);
         access.isCommunityAdmin.mockResolvedValue(true);
         access.holdsPermission.mockResolvedValue(false);
         people.linkGuardian.mockClear();
@@ -1279,6 +1280,52 @@ describe("household read routes (Task 9: list and read)", () => {
         people.personIsMinor.mockResolvedValue(false);
         people.linkGuardian.mockClear();
         expect((await call("/v1/households/guardians/link", body)).status).toBe(403);
+        expect(people.linkGuardian).not.toHaveBeenCalled();
+      });
+
+      it("guardians/link: a guardian who is a child gets the 404 of a missing guardian, whoever asks, and the permission gate still comes first (checkpoint 2, L4, pin 134)", async () => {
+        const body = {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          guardianId: GUARDIAN_ID,
+          childId: PERSON_ID,
+        };
+        const link = () => call("/v1/households/guardians/link", body);
+        const permitted = async (_tx: unknown, _userId: string, perm: string) =>
+          perm === "people.manage" || perm === "people.restricted.read";
+
+        for (const [who, isAdmin] of [
+          ["a permitted caller who is not a Community Admin", false],
+          ["a Community Admin", true],
+        ] as const) {
+          access.isCommunityAdmin.mockResolvedValue(isAdmin);
+          access.holdsPermission.mockImplementation(permitted);
+
+          // The guardian is the child here, and the target child is an adult's id, so the child
+          // gate cannot be what answers.
+          people.personIsMinor.mockImplementation(async (_tx, id) => id === GUARDIAN_ID);
+          people.linkGuardian.mockClear();
+          const asChild = await link();
+          expect(asChild.status, who).toBe(404);
+          expect(await asChild.text(), who).toBe("");
+          expect(people.linkGuardian, who).not.toHaveBeenCalled();
+
+          // A guardian who does not exist: the module answers not_found.
+          people.personIsMinor.mockImplementation(async () => null);
+          people.linkGuardian.mockRejectedValueOnce(new PeopleError("not_found"));
+          const asMissing = await link();
+          expect(asMissing.status, who).toBe(404);
+          expect(await asMissing.text(), who).toBe("");
+          expect([...asChild.headers.entries()], who).toEqual([...asMissing.headers.entries()]);
+        }
+
+        // A caller without the permissions is refused first, whoever the guardian is.
+        access.isCommunityAdmin.mockResolvedValue(false);
+        access.holdsPermission.mockResolvedValue(false);
+        people.personIsMinor.mockImplementation(async (_tx, id) => id === GUARDIAN_ID);
+        people.linkGuardian.mockClear();
+        const refused = await link();
+        expect(refused.status).toBe(403);
         expect(people.linkGuardian).not.toHaveBeenCalled();
       });
 
@@ -1718,7 +1765,7 @@ describe("household read routes (Task 9: list and read)", () => {
         expect(await resNotFound.text()).toBe("");
       });
 
-      it("maps move-adult guardian links to 409 and minor to 400", async () => {
+      it("maps move-adult guardian links to 409 and a minor to the 404 of a missing person (checkpoint 2, L4, pin 133)", async () => {
         people.moveAdult.mockRejectedValueOnce(new PeopleError("adult_cannot_move_with_links"));
         const resLinks = await call("/v1/households/members/move-adult", {
           communitySlug: SLUG,
@@ -1729,6 +1776,8 @@ describe("household read routes (Task 9: list and read)", () => {
         expect(resLinks.status).toBe(409);
         expect(await resLinks.text()).toBe("");
 
+        // A child's id is not confirmed to a caller who guesses it: the answer, headers included, is
+        // the one for a person that does not exist.
         people.moveAdult.mockRejectedValueOnce(new PeopleError("minor_not_movable"));
         const resMinor = await call("/v1/households/members/move-adult", {
           communitySlug: SLUG,
@@ -1736,8 +1785,17 @@ describe("household read routes (Task 9: list and read)", () => {
           personId: PERSON_ID,
           version: 1,
         });
-        expect(resMinor.status).toBe(400);
+        people.moveAdult.mockRejectedValueOnce(new PeopleError("not_found"));
+        const resMissing = await call("/v1/households/members/move-adult", {
+          communitySlug: SLUG,
+          householdId: HOUSEHOLD_ID,
+          personId: PERSON_ID,
+          version: 1,
+        });
+        expect(resMinor.status).toBe(404);
         expect(await resMinor.text()).toBe("");
+        expect(resMissing.status).toBe(404);
+        expect([...resMinor.headers.entries()]).toEqual([...resMissing.headers.entries()]);
       });
 
       it("maps add-minor adult dob to 400 and invalid guardian to 400", async () => {
@@ -1818,7 +1876,7 @@ describe("household read routes (Task 9: list and read)", () => {
         ["not_found", 404],
         ["invalid_input", 400],
         ["invalid_guardian", 400],
-        ["minor_not_movable", 400],
+        ["minor_not_movable", 404],
         ["invalid_date", 400],
         ["invalid_name", 400],
         ["invalid_declaration", 400],

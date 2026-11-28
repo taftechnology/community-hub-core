@@ -585,11 +585,10 @@ describe("the Community Admin's View of one child field", () => {
     });
   });
 
-  it("a child hidden after the check answers not_found from finish, with no View row", async () => {
-    const parish = await seedParish((await newScopes()).a1);
-    // A child cannot be hidden through the product (the user triggers refuse it), so the test sets
-    // deleted_at in a short committed transaction as the migrator with the user triggers off, as
-    // the other hidden-child tests do.
+  // A child cannot be hidden through the product (the user triggers refuse it), so the tests set
+  // deleted_at in a short committed transaction as the migrator with the user triggers off, as the
+  // other hidden-child tests do.
+  async function hideChild(parish: Parish): Promise<void> {
     await withAppTransaction(directSql, parish.scope, async (tx) => {
       await tx.unsafe("ALTER TABLE app.persons DISABLE TRIGGER USER");
       await tx`
@@ -599,9 +598,31 @@ describe("the Community Admin's View of one child field", () => {
       `;
       await tx.unsafe("ALTER TABLE app.persons ENABLE TRIGGER USER");
     });
+  }
+
+  it("a child hidden after the check answers not_found from finish, with no View row", async () => {
+    const parish = await seedParish((await newScopes()).a1);
+    await hideChild(parish);
     await inScope(parish.scope, async (tx) => {
       await expect(
         finishMinorView(tx, kms, KEY_ARN, {
+          actorUserId: parish.owner,
+          personId: parish.childOneId,
+          field: "name",
+        }),
+      ).rejects.toMatchObject({ code: "not_found" });
+      expect(await auditRows(tx, VIEWED)).toEqual([]);
+    });
+  });
+
+  it("a hidden child is refused by prepare, before the check is used, with no View row (checkpoint 2, L9)", async () => {
+    const parish = await seedParish((await newScopes()).a1);
+    await hideChild(parish);
+    await inScope(parish.scope, async (tx) => {
+      // prepare is the step that runs before the fresh check is consumed, so a hidden child costs
+      // the caller no check. A name and a life event of the child are both refused.
+      await expect(
+        prepareMinorView(tx, {
           actorUserId: parish.owner,
           personId: parish.childOneId,
           field: "name",
@@ -611,7 +632,8 @@ describe("the Community Admin's View of one child field", () => {
         prepareMinorView(tx, {
           actorUserId: parish.owner,
           personId: parish.childOneId,
-          field: "name",
+          lifeEventId: parish.eventOneId,
+          field: "place",
         }),
       ).rejects.toMatchObject({ code: "not_found" });
       expect(await auditRows(tx, VIEWED)).toEqual([]);

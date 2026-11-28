@@ -2,15 +2,25 @@ import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { bootstrapOwner, createCustomRole, grantRole, linkUser } from "@community-hub/access";
+import {
+  bootstrapOwner,
+  createCustomRole,
+  grantRole,
+  linkUser,
+  type InvitationMail,
+} from "@community-hub/access";
 import { addMember } from "@community-hub/access/testing";
 import {
+  acceptInvitationBody,
   capabilitiesBody,
   createCustomRoleBody,
+  createInvitationBody,
   deleteCustomRoleBody,
   grantBody,
+  invitationActionBody,
   linkUserBody,
   listGrantsBody,
+  listInvitationsBody,
   listUsersBody,
   revokeGrantBody,
   unlinkUserBody,
@@ -73,6 +83,7 @@ import type { Role } from "./checkout.js";
 import { readServiceEnv, type ServiceEnv } from "./env.js";
 import type { GateRoute } from "./gate.js";
 import { householdRoutes } from "./household-routes.js";
+import { invitationRoutes } from "./invitation-routes.js";
 import { lifeEventRoutes } from "./life-event-routes.js";
 import { minorViewRoutes } from "./minor-view-routes.js";
 import { peopleRoutes } from "./people-routes.js";
@@ -362,10 +373,11 @@ function idLeaks(text: string, children: readonly SeededChild[]): string[] {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The route table (pin 79). One row per route in the five route files: the contract that checks
+// The route table (pin 79). One row per route in the six route files: the contract that checks
 // every body before it is sent, what each caller who is not a Community Admin sends, and, for a
-// list or read route, what the Community Admin sends. A write route is called with a version that
-// does not exist, so a path that gets past its guards still changes nothing.
+// list or read route and for the four routes that answer a child's id as a missing person's (L4),
+// what the Community Admin sends. A write route is called with a version that does not exist or
+// an id that names nothing, so a path that gets past its guards still changes nothing.
 // ---------------------------------------------------------------------------------------------
 
 type Call = { label: string; body: Record<string, unknown> };
@@ -375,15 +387,20 @@ type RouteSpec = {
   schema: { parse(data: unknown): unknown };
   nonAdmin: (ctx: Context) => Call[];
   admin?: (ctx: Context) => Call[];
+  // True for a route whose body has no community slug (the invitation accept route takes a token).
+  bare?: boolean;
 };
 
 const NO_VERSION = 9999;
+// An id that belongs to no person, invitation or user in any community of the sweep.
+const NO_SUCH_ID = newId();
 const call = (label: string, body: Record<string, unknown> = {}): Call => ({ label, body });
 
 const PEOPLE_FILE = "people-routes.ts";
 const HOUSEHOLD_FILE = "household-routes.ts";
 const LIFE_EVENT_FILE = "life-event-routes.ts";
 const ACCESS_FILE = "access-routes.ts";
+const INVITATION_FILE = "invitation-routes.ts";
 const MINOR_VIEW_FILE = "minor-view-routes.ts";
 
 const ROUTES: Record<string, RouteSpec> = {
@@ -521,6 +538,25 @@ const ROUTES: Record<string, RouteSpec> = {
         personId: target.adultId,
         version: NO_VERSION,
       }),
+      call("a person that does not exist", {
+        householdId: target.householdId,
+        personId: NO_SUCH_ID,
+        version: NO_VERSION,
+      }),
+    ],
+    // The Community Admin sends the child and the missing person too (checkpoint 2, L4: a child's
+    // id gets the answer of a missing person from every caller). Neither changes anything.
+    admin: ({ target }) => [
+      call("a child", {
+        householdId: target.householdId,
+        personId: target.childIds[0],
+        version: NO_VERSION,
+      }),
+      call("a person that does not exist", {
+        householdId: target.householdId,
+        personId: NO_SUCH_ID,
+        version: NO_VERSION,
+      }),
     ],
   },
   "POST /v1/households/members/add-minor": {
@@ -555,6 +591,30 @@ const ROUTES: Record<string, RouteSpec> = {
         householdId: target.householdId,
         guardianId: target.adultId,
         childId: target.childIds[0],
+      }),
+      // The guardian is a child, and the person they would guard is an adult's id, so the gate on
+      // the child cannot be what answers (checkpoint 2, L4).
+      call("a child as the guardian", {
+        householdId: target.householdId,
+        guardianId: target.childIds[0],
+        childId: target.adultId,
+      }),
+      call("a guardian that does not exist", {
+        householdId: target.householdId,
+        guardianId: NO_SUCH_ID,
+        childId: target.adultId,
+      }),
+    ],
+    admin: ({ target }) => [
+      call("a child as the guardian", {
+        householdId: target.householdId,
+        guardianId: target.childIds[0],
+        childId: target.adultId,
+      }),
+      call("a guardian that does not exist", {
+        householdId: target.householdId,
+        guardianId: NO_SUCH_ID,
+        childId: target.adultId,
       }),
     ],
   },
@@ -694,12 +754,68 @@ const ROUTES: Record<string, RouteSpec> = {
     schema: linkUserBody,
     nonAdmin: ({ target, memberUserId }) => [
       call("a user to a child", { userId: memberUserId, personId: target.childIds[0] }),
+      call("a user to a person that does not exist", {
+        userId: memberUserId,
+        personId: NO_SUCH_ID,
+      }),
+    ],
+    // The Community Admin too (checkpoint 2, L4). Neither call links anyone.
+    admin: ({ target, memberUserId }) => [
+      call("a user to a child", { userId: memberUserId, personId: target.childIds[0] }),
+      call("a user to a person that does not exist", {
+        userId: memberUserId,
+        personId: NO_SUCH_ID,
+      }),
     ],
   },
   "POST /v1/access/user-links/delete": {
     file: ACCESS_FILE,
     schema: unlinkUserBody,
     nonAdmin: () => [call("a user with no link", { userId: newId() })],
+  },
+
+  // --- invitation-routes.ts (checkpoint 2, L5). Invitations are access routes by path. A child
+  // cannot be invited, so no answer here may carry a child's data, and a child's id gets the answer
+  // of a person that does not exist.
+  "POST /v1/access/invitations/create": {
+    file: INVITATION_FILE,
+    schema: createInvitationBody,
+    nonAdmin: ({ target }) => [
+      call("a child", { email: "sweep.invitee@sweep.example.test", personId: target.childIds[0] }),
+      call("a person that does not exist", {
+        email: "sweep.invitee@sweep.example.test",
+        personId: NO_SUCH_ID,
+      }),
+    ],
+    admin: ({ target }) => [
+      call("a child", { email: "sweep.invitee@sweep.example.test", personId: target.childIds[0] }),
+      call("a person that does not exist", {
+        email: "sweep.invitee@sweep.example.test",
+        personId: NO_SUCH_ID,
+      }),
+    ],
+  },
+  "POST /v1/access/invitations/list": {
+    file: INVITATION_FILE,
+    schema: listInvitationsBody,
+    nonAdmin: () => [call("the invitations")],
+    admin: () => [call("the invitations")],
+  },
+  "POST /v1/access/invitations/resend": {
+    file: INVITATION_FILE,
+    schema: invitationActionBody,
+    nonAdmin: () => [call("an invitation that does not exist", { invitationId: NO_SUCH_ID })],
+  },
+  "POST /v1/access/invitations/revoke": {
+    file: INVITATION_FILE,
+    schema: invitationActionBody,
+    nonAdmin: () => [call("an invitation that does not exist", { invitationId: NO_SUCH_ID })],
+  },
+  "POST /v1/invitations/accept": {
+    file: INVITATION_FILE,
+    schema: acceptInvitationBody,
+    bare: true,
+    nonAdmin: () => [call("a token that names no invitation", { token: "sweep-no-invitation" })],
   },
 
   // --- minor-view-routes.ts
@@ -930,7 +1046,7 @@ describe("the route sweep (pins 79, 80)", () => {
     slug: string,
     one: Call,
   ): Promise<void> => {
-    const body = { communitySlug: slug, ...one.body };
+    const body = spec.bare === true ? one.body : { communitySlug: slug, ...one.body };
     // A body outside the contract would be refused before the route did anything, and the sweep
     // would pass without testing it. Every body is checked against the route's own contract.
     try {
@@ -989,11 +1105,24 @@ describe("the route sweep (pins 79, 80)", () => {
       log: logFn,
       guardLog: logFn,
     };
+    // The sweep sends no mail. A mail stub that fails, and an origin to build links from, make the
+    // invitation routes configured, so a call that got as far as sending would answer 503 and show.
+    const sweepMail: InvitationMail = {
+      send: () => Promise.reject(new Error("the sweep sends no mail")),
+    };
     const byFile: Array<[string, GateRoute[]]> = [
       [PEOPLE_FILE, peopleRoutes(deps)],
       [HOUSEHOLD_FILE, householdRoutes(deps)],
       [LIFE_EVENT_FILE, lifeEventRoutes(deps)],
       [ACCESS_FILE, accessRoutes(deps)],
+      [
+        INVITATION_FILE,
+        invitationRoutes({
+          ...deps,
+          adminOrigin: "https://admin.sweep.example.test",
+          mail: sweepMail,
+        }),
+      ],
       [MINOR_VIEW_FILE, minorViewRoutes(deps)],
     ];
     registry = byFile.flatMap(([file, routes]) =>
@@ -1198,7 +1327,8 @@ describe("the route sweep (pins 79, 80)", () => {
         }
       }
     }
-    // The Community Admin calls the list and read routes only, on its own community.
+    // The Community Admin calls the list and read routes, and the child-or-missing pairs of the
+    // four routes of checkpoint 2, L4, on its own community.
     for (const [route, spec] of Object.entries(ROUTES)) {
       if (spec.admin === undefined) {
         continue;
@@ -1227,7 +1357,7 @@ describe("the route sweep (pins 79, 80)", () => {
 
   const everyTarget = (): Target[] => [targets.a1, targets.a2, targets.b1];
 
-  it("pin 79: every route in the people, household, life-event, access and minor-view route files is in the sweep", () => {
+  it("pin 79: every route in the people, household, life-event, access, invitation and minor-view route files is in the sweep", () => {
     const registered = registry.map((entry) => `${entry.file} ${entry.key}`).sort();
     const unlisted = registry
       .filter((entry) => ROUTES[entry.key] === undefined || ROUTES[entry.key]?.file !== entry.file)
@@ -1237,10 +1367,17 @@ describe("the route sweep (pins 79, 80)", () => {
     // And no row stands for a route that is not registered.
     const keys = new Set(registry.map((entry) => entry.key));
     expect(Object.keys(ROUTES).filter((key) => !keys.has(key))).toEqual([]);
-    // Five files, and every route is registered once.
+    // Six files, and every route is registered once.
     expect(new Set(registered).size).toBe(registered.length);
     expect(new Set(registry.map((entry) => entry.file))).toEqual(
-      new Set([PEOPLE_FILE, HOUSEHOLD_FILE, LIFE_EVENT_FILE, ACCESS_FILE, MINOR_VIEW_FILE]),
+      new Set([
+        PEOPLE_FILE,
+        HOUSEHOLD_FILE,
+        LIFE_EVENT_FILE,
+        ACCESS_FILE,
+        INVITATION_FILE,
+        MINOR_VIEW_FILE,
+      ]),
     );
   });
 
@@ -1313,6 +1450,102 @@ describe("the route sweep (pins 79, 80)", () => {
     const adminLinks = linksFor("community_admin", "own");
     expect(adminLinks.some((link) => link.personId === child)).toBe(true);
     expect(adminLinks.some((link) => link.personId === adult)).toBe(true);
+  });
+
+  // Checkpoint 2, L4 (spec Scope 6). A child's id gets the same status and body as a person who does
+  // not exist, from every caller: a non-admin who guesses an id learns nothing, and neither does a
+  // Community Admin's route tell the two apart by an error code. `reached` are the callers whose
+  // permissions carry the call past its gates, so the comparison is never between two refusals.
+  const REACHED = ["custom_all", "community_admin"] as const;
+  function expectChildAnsweredAsMissing(
+    route: string,
+    childLabel: string,
+    missingLabel: string,
+    bodyOfMissing: string,
+  ): void {
+    const answerOf = (caller: CallerName | "community_admin", label: string): Result | undefined =>
+      results.find(
+        (r) => r.route === route && r.caller === caller && r.aim === "own" && r.label === label,
+      );
+    const callers: Array<CallerName | "community_admin"> = [...NON_ADMIN, "community_admin"];
+    for (const caller of callers) {
+      const child = answerOf(caller, childLabel);
+      const missing = answerOf(caller, missingLabel);
+      expect(child, `${caller} ${route} ${childLabel}`).toBeDefined();
+      expect(missing, `${caller} ${route} ${missingLabel}`).toBeDefined();
+      expect([child?.status, child?.text], `${caller} ${route}`).toEqual([
+        missing?.status,
+        missing?.text,
+      ]);
+    }
+    // The callers with every permission got past the gates, to the answer for a missing person.
+    for (const caller of REACHED) {
+      const missing = answerOf(caller, missingLabel);
+      expect([missing?.status, missing?.text], `${caller} reached ${route}`).toEqual([
+        404,
+        bodyOfMissing,
+      ]);
+    }
+  }
+
+  it("pin 131: POST /v1/access/user-links answers a child's id as a person that does not exist, for every caller", () => {
+    expectChildAnsweredAsMissing(
+      "POST /v1/access/user-links",
+      "a user to a child",
+      "a user to a person that does not exist",
+      "",
+    );
+  });
+
+  it("pin 132: POST /v1/access/invitations/create answers a child's id as a person that does not exist, for every caller", () => {
+    expectChildAnsweredAsMissing(
+      "POST /v1/access/invitations/create",
+      "a child",
+      "a person that does not exist",
+      JSON.stringify({ error: "person_not_found" }),
+    );
+  });
+
+  it("pin 133: POST /v1/households/members/move-adult answers a child's id as a person that does not exist, for every caller", () => {
+    expectChildAnsweredAsMissing(
+      "POST /v1/households/members/move-adult",
+      "a child",
+      "a person that does not exist",
+      "",
+    );
+  });
+
+  it("pin 134: POST /v1/households/guardians/link answers a child as the guardian as a guardian that does not exist, for every caller", () => {
+    expectChildAnsweredAsMissing(
+      "POST /v1/households/guardians/link",
+      "a child as the guardian",
+      "a guardian that does not exist",
+      "",
+    );
+  });
+
+  it("the invitation routes answered, and no invitation was made or mailed by the sweep", () => {
+    // A call that got as far as mail would answer 503, and one that made an invitation 201.
+    const invitations = results.filter((r) => r.route.startsWith("POST /v1/access/invitations/"));
+    expect(invitations.length).toBeGreaterThan(30);
+    expect(invitations.filter((r) => r.status === 201 || r.status === 503)).toEqual([]);
+    // The list route answered the callers who may view users and roles, with no child in it.
+    const list = results.find(
+      (r) =>
+        r.route === "POST /v1/access/invitations/list" &&
+        r.caller === "community_admin" &&
+        r.label === "the invitations",
+    );
+    expect(list?.status).toBe(200);
+    expect(JSON.parse(list?.text ?? "{}")).toEqual({ invitations: [] });
+    // The accept route took a token and answered it as an unknown invitation.
+    const accept = results.find(
+      (r) => r.route === "POST /v1/invitations/accept" && r.caller === "custom_all",
+    );
+    expect([accept?.status, accept?.text]).toEqual([
+      404,
+      JSON.stringify({ error: "invitation_invalid" }),
+    ]);
   });
 
   it("a Community Admin's list and read answers carry no child field value", () => {

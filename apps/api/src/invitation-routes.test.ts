@@ -906,6 +906,39 @@ describe("invitation routes", () => {
       expect(lastTx().rolledBack).toBe(true);
       expect(lastTx().committed).toBe(false);
     });
+
+    it("pin 132: create with a child's person id answers the 404 person_not_found of a missing person (checkpoint 2, L4)", async () => {
+      // A child's id is not confirmed to anyone: the answer is the one for a person that does not
+      // exist, in the status, the body and the headers.
+      const create = () =>
+        withRequest({ requestId: REQUEST_ID }, () =>
+          route("/v1/access/invitations/create").handle(
+            request(
+              "/v1/access/invitations/create",
+              API_HOSTNAME,
+              { communitySlug: "parish", email: "user@example.test", personId: PERSON_ID },
+              `Bearer ${TOKEN}`,
+            ),
+            {
+              method: "POST",
+              pattern: "/v1/access/invitations/create",
+              surface: "tenant",
+              billing: "write",
+            },
+          ),
+        );
+
+      access.createInvitation.mockRejectedValueOnce(new access.AccessError("person_minor"));
+      const child = await create();
+      access.createInvitation.mockRejectedValueOnce(new access.AccessError("person_not_found"));
+      const missing = await create();
+
+      expect(child.status).toBe(404);
+      expect(accessErrorBody.parse(await child.json())).toEqual({ error: "person_not_found" });
+      expect(missing.status).toBe(404);
+      expect(accessErrorBody.parse(await missing.json())).toEqual({ error: "person_not_found" });
+      expect([...child.headers.entries()]).toEqual([...missing.headers.entries()]);
+    });
   });
 
   describe("Handler flows and edge cases", () => {

@@ -455,6 +455,49 @@ describe("the family label check (O3)", () => {
     }
   });
 
+  it("pin 135: accents do not matter: a child Zoë refuses Zoe and ZOE, a child Zoe refuses Zoë (checkpoint 2, L8)", async () => {
+    const scope = await newScope();
+    // ë as one letter (U+00EB), and as e with a combining diaeresis (U+0308).
+    const composed = "Zoë";
+    const decomposed = "Zoë";
+
+    // A child with the accent refuses the spelling without it, in any case, and both accented forms.
+    const accented = await seedFamily(scope, {
+      label: null,
+      adults: ["Linh"],
+      children: [composed],
+    });
+    for (const label of ["Zoe", "ZOE", "zoe Nguyen", "Nguyen (Zoe)", composed, "ZOË", decomposed]) {
+      expect(await tryRename(scope, accented.householdId, label), label).toBe(REFUSED);
+    }
+    // A child written without the accent refuses the accented spellings.
+    const plain = await seedFamily(scope, { label: null, adults: ["Linh"], children: ["Zoe"] });
+    for (const label of [composed, "ZOË", decomposed, `${composed} house`]) {
+      expect(await tryRename(scope, plain.householdId, label), label).toBe(REFUSED);
+    }
+    // A whole word is still a whole word once the marks are gone: Zoey, Zoella and Zoëy are other
+    // words than Zoe.
+    for (const label of ["Zoey", "Zoella Nguyen", "Zoëy"]) {
+      expect(await tryRename(scope, plain.householdId, label), label).toBe("resolved");
+    }
+
+    // The same check runs when a child is added to a family whose label holds the other spelling.
+    const labelled = await seedFamily(scope, { label: "Nguyen (Zoe)", adults: ["Linh"] });
+    expect(await tryAddChild(scope, labelled.householdId, composed)).toBe(REFUSED);
+    expect(await tryAddChild(scope, labelled.householdId, "Bo")).toBe("resolved");
+
+    // A name an adult of the family holds is still skipped, whichever way it is spelled.
+    const shared = await seedFamily(scope, {
+      label: null,
+      adults: ["José", "Mary"],
+      children: ["Jose"],
+    });
+    expect(await tryRename(scope, shared.householdId, "Jose and Mary Nguyen")).toBe("resolved");
+    // And a name only the child holds is refused beside it.
+    expect(await tryAddChild(scope, shared.householdId, "Zoë")).toBe("resolved");
+    expect(await tryRename(scope, shared.householdId, "Jose, Mary and Zoe")).toBe(REFUSED);
+  });
+
   it("pin 56: a child called Mary Jane refuses a label holding Jane", async () => {
     const scope = await newScope();
     const family = await seedFamily(scope, {

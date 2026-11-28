@@ -171,6 +171,13 @@ async function releaseUnreadBody(request: Request): Promise<void> {
   }
 }
 
+// An empty 404 the gate or the kernel's handler makes. A View path (/v1/people/minors/) answers
+// no-store in every case, errors included, and these answers come before a View route can set it. The
+// body is empty, so the header costs nothing on any other path.
+function notFound(): Response {
+  return new Response(null, { status: 404, headers: { "cache-control": "no-store" } });
+}
+
 export function createGate(options: {
   hostnames: Hostnames;
   routes: readonly GateRoute[];
@@ -198,7 +205,7 @@ export function createGate(options: {
     (request) => {
       const route = match(request);
       if (route === undefined) {
-        return releaseUnreadBody(request).then(() => new Response(null, { status: 404 }));
+        return releaseUnreadBody(request).then(() => notFound());
       }
       return route.handle(request, { billing: route.billing, pattern: route.pattern });
     },
@@ -247,7 +254,7 @@ export function createGate(options: {
         fields.gatewayRequestId = gatewayId;
       }
       options.info("request", fields);
-      response = new Response(null, { status: 404 });
+      response = notFound();
     } else if (request.method === "OPTIONS" && (header === known.api || header === known.auth)) {
       await releaseUnreadBody(request);
       options.info("request", {
