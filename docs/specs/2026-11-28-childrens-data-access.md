@@ -92,6 +92,8 @@ In:
 
    Every exported function in both `public/` indexes is in this table. Each reader is also in the function sweep (Risks). A new export fails a test until it is classified.
 
+   Status note (2026-11-28, written with the last task): two things differ from the text above. `isCommunityAdmin(tx, userId)` takes no community argument and relies on the `community_isolation` policy (migration `0007`), where Scope 1 shows a `communityId` parameter. `readPersonForActor` throws `AccessError("forbidden")` for a minor, the same as for a missing, hidden or cross-community person, where the table says `not_found` (plan amendment A1); `/v1/people/read` still answers 404 with an empty body. Later differences are in plan amendments A5 to A7: the audit purposes have three segments (`people.minor_view.<field>`), the View entitlement refusal is the shared empty 403, a child's id answers as a missing person on every route, the label check also folds accents, and the capabilities answer carries `roles.communityAdmin`.
+
 2. **Presence only for everyone else.** Other staff who can see the household see only the number of children in it. They get no id, label, name, date of birth, age, email, phone, guardian link, group membership or life event of a child. Guardian links to minors stay omitted for them, as today (`household.ts:589-616`).
 3. **The Community Admin's View.** A Community Admin sees each child as an id and a label with every field hidden.
    - The label is `Child n`, numbered within the child's own household over the children not hidden, in order of `created_at`, then id. At any one moment it is the same on every screen, including list rows and an adult's guardian links. It is a display label only and may change when a sibling is hidden, restored or added. Every request uses `personId`.
@@ -104,6 +106,8 @@ In:
    - otherwise `consumed`, after clearing `fresh_factor_at` in one conditional update.
 
    Two Views racing on one check get one `consumed`. The sign-in second step by app or passkey, or a passkey sign-in, already counts as a fresh check for 5 minutes (ADR 0022 point 4). So the first View soon after sign-in needs no panel.
+
+   Status note (2026-11-28, written with the last task): `consumeFreshFactor` takes `{ sql, kms, keyArn, accessToken, now }`, the same dependencies as `freshCheckTotp`, where Scope 4 shows `{ accessToken, now }` (plan P4b). The View routes' entitlement refusal and audit purposes differ as recorded in plan amendment A5; see the note under Scope 1.
 
 5. **Attempt limit (O1, approved).** A correct fresh check gives back the attempt it took, never below 0, for both `freshCheckTotp` and `verifyFreshPasskey`. A refused code still counts. After 5 refused codes in a session, fresh checks answer `limited` for the rest of that session and the session is not ended, as today (`second-factor.ts:993-996,1584-1587`). The hourly limit of 10 failures per user and the sign-in second step are unchanged.
 6. **Writes about a child (D3, O2).** These need the `community_admin` role in that community instead of `people.manage` plus `people.restricted.read`, under the `people.households` entitlement (`household-routes.ts:555-561,655-657,717-719`):
