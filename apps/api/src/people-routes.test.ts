@@ -309,6 +309,41 @@ describe("people routes (list and read)", () => {
       expect(resUpdate.status).toBe(400);
     });
 
+    it("returns 400 with an empty body for a list kind other than adults or minors, and reaches no reader (checkpoint 1, L3)", async () => {
+      // A Community Admin, who may list children, so the kind alone can be the reason for the 400.
+      access.isCommunityAdmin.mockResolvedValue(true);
+
+      for (const kind of [
+        "everyone",
+        "Minors",
+        "MINORS",
+        "adult",
+        "children",
+        "",
+        null,
+        1,
+        true,
+        ["minors"],
+        { kind: "minors" },
+      ]) {
+        const res = await call("/v1/people/list", { communitySlug: "parish", kind });
+        expect(res.status).toBe(400);
+        expect(await res.text()).toBe("");
+      }
+      expect(people.listPersons).not.toHaveBeenCalled();
+      expect(access.isCommunityAdmin).not.toHaveBeenCalled();
+      expect(db.withAppTransaction).not.toHaveBeenCalled();
+
+      // Control: the same body with either accepted kind is answered, so the 400s above are the
+      // kind's and not some other part of the body.
+      people.listPersons.mockResolvedValue({ items: [], nextCursor: null });
+      for (const kind of ["adults", "minors"]) {
+        const res = await call("/v1/people/list", { communitySlug: "parish", kind });
+        expect(res.status).toBe(200);
+      }
+      expect(people.listPersons).toHaveBeenCalledTimes(2);
+    });
+
     it("answers unknown communities like unauthorised ones with 403 (finding 1, Deviation 12)", async () => {
       tenancy.findCommunityBySlug.mockResolvedValueOnce(null);
       const resListUnknown = await call("/v1/people/list", { communitySlug: "nonexistent" });

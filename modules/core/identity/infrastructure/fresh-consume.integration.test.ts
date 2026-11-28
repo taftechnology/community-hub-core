@@ -617,6 +617,143 @@ describe("consumeFreshFactor", () => {
     });
   });
 
+  // Pin 122
+  it("a session whose access token has expired answers not_fresh and keeps its fresh check", async () => {
+    const now = new Date("2026-11-28T00:00:00.000Z");
+    await withSql(async (sql) => {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: "fc-pin122@example.test",
+      });
+
+      // Two identical rows. Each one gets a fresh check that is one minute old at the moment its
+      // access token expires, so the expiry is the only reason the second row can be refused.
+      async function sessionWithFreshCheckBeforeExpiry(): Promise<{
+        accessToken: string;
+        sessionId: string;
+        accessExpiresAt: Date;
+        freshFactorAt: Date;
+      }> {
+        const created = await createSession(sql, kms, KEY_ARN, {
+          userId,
+          now,
+          kind: "tenant",
+          factor: "otp_totp",
+          freshFactorAt: now,
+        });
+        const sessionId = await sessionIdForToken(sql, kms, created.accessToken);
+        const [row] = await sql<{ access_expires_at: Date; fresh_factor_at: Date }[]>`
+          update identity.sessions
+          set fresh_factor_at = access_expires_at - interval '1 minute'
+          where id = ${sessionId}
+          returning access_expires_at, fresh_factor_at
+        `;
+        if (row === undefined) {
+          throw new Error("session row missing");
+        }
+        return {
+          accessToken: created.accessToken,
+          sessionId,
+          accessExpiresAt: row.access_expires_at,
+          freshFactorAt: row.fresh_factor_at,
+        };
+      }
+
+      // Control: one millisecond before the expiry the same kind of row is consumed.
+      const control = await sessionWithFreshCheckBeforeExpiry();
+      await expect(
+        consumeFreshFactor({
+          sql,
+          kms,
+          keyArn: KEY_ARN,
+          accessToken: control.accessToken,
+          now: new Date(control.accessExpiresAt.getTime() - 1),
+        }),
+      ).resolves.toEqual({ outcome: "consumed" });
+
+      // At the expiry instant and after it, the fresh check is still inside its window and is
+      // still not consumed.
+      const expired = await sessionWithFreshCheckBeforeExpiry();
+      for (const at of [
+        expired.accessExpiresAt,
+        new Date(expired.accessExpiresAt.getTime() + 1000),
+      ]) {
+        await expect(
+          consumeFreshFactor({
+            sql,
+            kms,
+            keyArn: KEY_ARN,
+            accessToken: expired.accessToken,
+            now: at,
+          }),
+        ).resolves.toEqual({ outcome: "not_fresh" });
+      }
+
+      const [after] = await sql<{ fresh_factor_at: Date | null }[]>`
+        select fresh_factor_at from identity.sessions where id = ${expired.sessionId}
+      `;
+      expect(after?.fresh_factor_at).toEqual(expired.freshFactorAt);
+    });
+  });
+
+  // Pin 123
+  it("a tenant session with no factor answers not_fresh and keeps its fresh check", async () => {
+    const now = new Date("2026-11-28T00:00:00.000Z");
+    await withSql(async (sql) => {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: "fc-pin123@example.test",
+      });
+
+      // Control: a tenant session with a factor and a fresh check is consumed.
+      const control = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+        factor: "otp_totp",
+        freshFactorAt: now,
+      });
+      await expect(
+        consumeFreshFactor({
+          sql,
+          kms,
+          keyArn: KEY_ARN,
+          accessToken: control.accessToken,
+          now,
+        }),
+      ).resolves.toEqual({ outcome: "consumed" });
+
+      // A tenant row with no factor is what an image from before the second factor left behind.
+      // The service no longer mints one, so the test clears the factor of a fresh session.
+      const factorless = await createSession(sql, kms, KEY_ARN, {
+        userId,
+        now,
+        kind: "tenant",
+        factor: "otp_totp",
+        freshFactorAt: now,
+      });
+      const factorlessId = await sessionIdForToken(sql, kms, factorless.accessToken);
+      await sql`update identity.sessions set factor = null where id = ${factorlessId}`;
+
+      await expect(
+        consumeFreshFactor({
+          sql,
+          kms,
+          keyArn: KEY_ARN,
+          accessToken: factorless.accessToken,
+          now,
+        }),
+      ).resolves.toEqual({ outcome: "not_fresh" });
+
+      const [row] = await sql<
+        { kind: string; factor: string | null; fresh_factor_at: Date | null }[]
+      >`
+        select kind, factor, fresh_factor_at from identity.sessions where id = ${factorlessId}
+      `;
+      expect(row?.kind).toBe("tenant");
+      expect(row?.factor).toBeNull();
+      expect(row?.fresh_factor_at).toEqual(now);
+    });
+  });
+
   it("answers not_fresh for a missing check or unknown token and consumes a sign-in second step once", async () => {
     const now = new Date("2026-11-28T00:00:00.000Z");
     await withSql(async (sql) => {

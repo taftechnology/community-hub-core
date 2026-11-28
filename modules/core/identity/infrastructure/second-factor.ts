@@ -1033,7 +1033,9 @@ export async function freshCheckTotp(
 /**
  * Atomically consumes a fresh second-factor check on a session row without taking an advisory lock.
  * Exported for concurrency tests only; not exported from public/.
- * Guards live in the conditional UPDATE so concurrent callers serialize on the row lock.
+ * Every guard lives in the one conditional UPDATE so concurrent callers serialize on the row lock.
+ * They are the ones `readActiveSessionInTx` applies (not revoked, access token not expired, a
+ * tenant session has a factor), then no recovery session and a fresh check within five minutes.
  */
 export async function consumeFreshFactorInTx(
   tx: TransactionSql,
@@ -1045,6 +1047,8 @@ export async function consumeFreshFactorInTx(
     where id = ${input.sessionId}
       and kind = 'tenant'
       and revoked_at is null
+      and access_expires_at > ${input.now.toISOString()}::timestamptz
+      and (kind <> 'tenant' or factor is not null)
       and recovery_until is null
       and fresh_factor_at >= ${input.now.toISOString()}::timestamptz - interval '5 minutes'
     returning id

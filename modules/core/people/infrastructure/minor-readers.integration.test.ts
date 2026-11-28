@@ -26,6 +26,7 @@ import {
   createTag,
   detachTag,
   hidePerson,
+  linkGuardian,
   listDeletedPersons,
   listLifeEvents,
   listPersonActivity,
@@ -33,6 +34,8 @@ import {
   listPersonTags,
   openPersonFieldKeys,
   PeopleError,
+  readHousehold,
+  readHouseholdDetail,
   readLinkedContacts,
   readPerson,
 } from "../public/index.js";
@@ -795,5 +798,319 @@ describe("child labels", () => {
       });
       expect(labels).toHaveLength(4);
     });
+  });
+});
+
+// Checkpoint 1, L2. Organisation A has two communities (A1 and A2) and organisation B has one (B1).
+// Each community holds a family: an adult, two children with unusual names, a guardian link to each
+// child and a life event for each child. A Community Admin's view in one community must never show
+// a child, a label, a household or a life event of another community or of another organisation.
+// The readers filter on the scope's org_id and community_id and RLS backs both, so these are tests
+// and not pins: there is no source line to weaken. The people readers take the admin view as a
+// parameter (the role check is isCommunityAdmin's, in the access package, with its own tests), so
+// the actor here is simply the admin of the community being read.
+
+// A second community in an organisation that exists already.
+async function newCommunityIn(orgId: string): Promise<Scope> {
+  const communityId = newId();
+  await platform.begin(async (tx) => {
+    await tx`
+      insert into platform.communities (id, organisation_id, slug, region)
+      values (${communityId}, ${orgId}, ${`minor-readers-comm-${communityId}`}, 'au')
+    `;
+  });
+  return { orgId, communityId };
+}
+
+type IsolationChildSpec = {
+  givenName: string;
+  familyName: string;
+  email: string;
+  phone: string;
+  dateOfBirth: string;
+  place: string;
+  notes: string;
+};
+
+function isolationChild(
+  givenName: string,
+  familyName: string,
+  phone: string,
+  dateOfBirth: string,
+): IsolationChildSpec {
+  return {
+    givenName,
+    familyName,
+    email: `${givenName}.${familyName}@isolation.example.test`.toLowerCase(),
+    phone,
+    dateOfBirth,
+    place: `${familyName} Chapel`,
+    notes: `${givenName} godparents`,
+  };
+}
+
+type IsolationChild = { personId: string; eventId: string };
+
+type IsolationFamily = {
+  scope: Scope;
+  label: string;
+  householdId: string;
+  adultId: string;
+  children: IsolationChild[];
+  // Every id of the family, and every value of its children and its household label, so a text
+  // search of an answer can show that none of them is there.
+  ids: string[];
+  values: string[];
+};
+
+async function seedIsolationFamily(
+  scope: Scope,
+  actorUserId: string,
+  spec: {
+    label: string;
+    adultGivenName: string;
+    adultFamilyName: string;
+    children: [IsolationChildSpec, IsolationChildSpec];
+  },
+): Promise<IsolationFamily> {
+  return inScope(scope, async (tx) => {
+    const household = await createHousehold(tx, baseKms, KEY_ARN, {
+      now: NOW,
+      label: spec.label,
+      actorUserId,
+    });
+    const adult = await createPerson(tx, baseKms, KEY_ARN, {
+      now: NOW,
+      declaredAdult: true,
+      householdId: household.householdId,
+      dateOfBirth: null,
+      givenName: spec.adultGivenName,
+      familyName: spec.adultFamilyName,
+      email: `${spec.adultGivenName}.${spec.adultFamilyName}@isolation.example.test`.toLowerCase(),
+      phone: null,
+      actorUserId,
+    });
+    const children: IsolationChild[] = [];
+    for (const [index, child] of spec.children.entries()) {
+      const created = await createPerson(tx, baseKms, KEY_ARN, {
+        // The second child is created an hour later, so the labels are Child 1 and Child 2 by
+        // created_at and do not depend on id order.
+        now: new Date(NOW.getTime() + index * 3_600_000),
+        declaredAdult: false,
+        householdId: household.householdId,
+        dateOfBirth: child.dateOfBirth,
+        givenName: child.givenName,
+        familyName: child.familyName,
+        email: child.email,
+        phone: child.phone,
+        actorUserId,
+      });
+      await linkGuardian(tx, {
+        now: NOW,
+        householdId: household.householdId,
+        guardianPersonId: adult.personId,
+        childPersonId: created.personId,
+        consent: true,
+        pickup: true,
+        view: true,
+        manage: false,
+        actorUserId: null,
+      });
+      const event = await createLifeEvent(tx, baseKms, KEY_ARN, {
+        personId: created.personId,
+        type: index === 0 ? "baptism" : "first_communion",
+        date: "2021-02-02",
+        place: child.place,
+        notes: child.notes,
+        actorUserId,
+        now: NOW,
+      });
+      children.push({ personId: created.personId, eventId: event.eventId });
+    }
+    return {
+      scope,
+      label: spec.label,
+      householdId: household.householdId,
+      adultId: adult.personId,
+      children,
+      ids: [
+        household.householdId,
+        adult.personId,
+        ...children.flatMap((child) => [child.personId, child.eventId]),
+      ],
+      values: [
+        spec.label,
+        ...spec.children.flatMap((child) => [
+          child.givenName,
+          child.familyName,
+          child.email,
+          child.phone,
+          child.dateOfBirth,
+          child.place,
+          child.notes,
+        ]),
+      ],
+    };
+  });
+}
+
+// Reads every child reader in `reader`'s scope as its Community Admin and shows that only the
+// reader's own family comes back, and that no other family's id, label or value does.
+async function expectNoChildOfAnotherScope(
+  reader: IsolationFamily,
+  others: IsolationFamily[],
+  adminUserId: string,
+): Promise<void> {
+  const ownChildIds = reader.children.map((child) => child.personId).sort();
+  const everyone = [reader, ...others].flatMap((family) => [
+    family.adultId,
+    ...family.children.map((child) => child.personId),
+  ]);
+
+  await inScope(reader.scope, async (tx) => {
+    // listPersons, minors mode: the reader's two children, each in the reader's household.
+    const list = await listPersons(tx, baseKms, KEY_ARN, {
+      kind: "minors",
+      childView: "admin",
+      actorUserId: adminUserId,
+    });
+    expect(list.nextCursor).toBeNull();
+    expect(list.items.map((item) => item.personId).sort()).toEqual(ownChildIds);
+    expect(list.items.map((item) => item.label).sort()).toEqual(["Child 1", "Child 2"]);
+    expect(list.items.every((item) => item.householdId === reader.householdId)).toBe(true);
+    expect(list.items.every((item) => item.householdLabel === reader.label)).toBe(true);
+
+    // readHouseholdDetail: the reader's own household shows its own children and links, and a
+    // household of another community or organisation is not there, as if it did not exist.
+    const own = await readHouseholdDetail(tx, baseKms, KEY_ARN, {
+      householdId: reader.householdId,
+      includeRestricted: true,
+      childView: "admin",
+      actorUserId: adminUserId,
+    });
+    expect(own?.minors.childCount).toBe(2);
+    expect(own?.minors.children?.map((child) => child.personId).sort()).toEqual(ownChildIds);
+    expect(own?.guardians.map((link) => link.childId).sort()).toEqual(ownChildIds);
+    expect(own?.guardians.map((link) => link.child?.personId).sort()).toEqual(ownChildIds);
+    const foreignDetails = [];
+    for (const other of others) {
+      const detail = await readHouseholdDetail(tx, baseKms, KEY_ARN, {
+        householdId: other.householdId,
+        includeRestricted: true,
+        childView: "admin",
+        actorUserId: adminUserId,
+      });
+      const summary = await readHousehold(tx, baseKms, KEY_ARN, {
+        householdId: other.householdId,
+        childView: "admin",
+        actorUserId: adminUserId,
+      });
+      expect(detail).toBeNull();
+      expect(summary).toBeNull();
+      foreignDetails.push(detail, summary);
+    }
+
+    // readLinkedContacts: only the reader's own people have an entry, and each child is only
+    // { minor: true }. Another scope's adult and children have none, as if they did not exist.
+    const contacts = await readLinkedContacts(tx, baseKms, KEY_ARN, {
+      personIds: everyone,
+      includePhone: true,
+      actorUserId: adminUserId,
+      childView: "admin",
+    });
+    expect([...contacts.keys()].sort()).toEqual([reader.adultId, ...ownChildIds].sort());
+    for (const childId of ownChildIds) {
+      expect(contacts.get(childId)).toEqual({ minor: true });
+    }
+
+    // listLifeEvents: the reader's own children list their event ids, and a child of another
+    // scope is refused as a person that does not exist.
+    const ownEvents = [];
+    for (const child of reader.children) {
+      const events = await listLifeEvents(tx, baseKms, KEY_ARN, {
+        personId: child.personId,
+        actorUserId: adminUserId,
+        childView: "admin",
+      });
+      expect(events.items).toEqual([{ eventId: child.eventId }]);
+      ownEvents.push(events);
+    }
+    for (const other of others) {
+      for (const child of other.children) {
+        await expect(
+          listLifeEvents(tx, baseKms, KEY_ARN, {
+            personId: child.personId,
+            actorUserId: adminUserId,
+            childView: "admin",
+          }),
+        ).rejects.toMatchObject({ code: "life_event_not_found" });
+      }
+    }
+
+    // No id and no value of another scope's family is anywhere in what the readers returned.
+    const answers = JSON.stringify({
+      list,
+      own,
+      foreignDetails,
+      contacts: [...contacts.entries()],
+      ownEvents,
+    });
+    for (const other of others) {
+      for (const id of other.ids) {
+        expect(answers).not.toContain(id);
+      }
+      for (const value of other.values) {
+        expect(answers).not.toContain(value);
+      }
+    }
+  });
+}
+
+describe("child readers never cross a community or an organisation (checkpoint 1, L2)", () => {
+  it("a Community Admin of A1 reads no child, label, household or life event of A2 or B1", async () => {
+    const a1 = await newScope();
+    const a2 = await newCommunityIn(a1.orgId);
+    const b1 = await newScope();
+    expect(a2.orgId).toBe(a1.orgId);
+    expect(a2.communityId).not.toBe(a1.communityId);
+    expect(b1.orgId).not.toBe(a1.orgId);
+
+    const adminA1 = newId();
+    const adminA2 = newId();
+    const adminB1 = newId();
+    const familyA1 = await seedIsolationFamily(a1, adminA1, {
+      label: "Brackenhallow household",
+      adultGivenName: "Marguerite",
+      adultFamilyName: "Ashcombe",
+      children: [
+        isolationChild("Ignatia", "Brackenhallow", "+61400555201", "2017-03-03"),
+        isolationChild("Jerrold", "Brackenhallow", "+61400555202", "2018-04-04"),
+      ],
+    });
+    const familyA2 = await seedIsolationFamily(a2, adminA2, {
+      label: "Fenwhistle household",
+      adultGivenName: "Lucinda",
+      adultFamilyName: "Fenwhistle",
+      children: [
+        isolationChild("Ottoline", "Fenwhistle", "+61400555211", "2016-05-05"),
+        isolationChild("Perrin", "Fenwhistle", "+61400555212", "2019-06-06"),
+      ],
+    });
+    const familyB1 = await seedIsolationFamily(b1, adminB1, {
+      label: "Thornquist household",
+      adultGivenName: "Cordelia",
+      adultFamilyName: "Thornquist",
+      children: [
+        isolationChild("Rosalind", "Thornquist", "+61400555221", "2015-07-07"),
+        isolationChild("Tobias", "Thornquist", "+61400555222", "2020-08-08"),
+      ],
+    });
+
+    // The required case: A1's admin sees A1's two children and nothing of A2 or B1.
+    await expectNoChildOfAnotherScope(familyA1, [familyA2, familyB1], adminA1);
+
+    // The same from the other two communities, so the isolation is not one-directional.
+    await expectNoChildOfAnotherScope(familyA2, [familyA1, familyB1], adminA2);
+    await expectNoChildOfAnotherScope(familyB1, [familyA1, familyA2], adminB1);
   });
 });

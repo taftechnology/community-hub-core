@@ -2543,6 +2543,161 @@ describe("second-factor service: TOTP, backup codes, second step, limits", () =>
     });
   });
 
+  // Pin 120
+  it("a recovery session answers refused to a correct TOTP fresh check and stays without a fresh factor", async () => {
+    const now = new Date("2026-11-28T00:00:00.000Z");
+    const t1 = new Date(now.getTime() + 30_000);
+    const t2 = new Date(t1.getTime() + 30_000);
+    // After the ten-minute window, and still inside the 15-minute life of the access token.
+    const t3 = new Date(t1.getTime() + TEN_MINUTES_MS + 30_000);
+    await withSql(async (sql) => {
+      const enrolled = await enrolTotpForTest(sql, kms, KEY_ARN, {
+        email: "pin120-recovery-totp@example.test",
+        now,
+        adminRpId: ADMIN_RP_ID,
+      });
+      const userId = enrolled.tokens.userId;
+
+      // A real backup-code sign-in opens the recovery session.
+      const sf = await createSession(sql, kms, KEY_ARN, { userId, now: t1, kind: "second_factor" });
+      const recovery = await verifySecondStep(sql, kms, KEY_ARN, {
+        accessToken: sf.accessToken,
+        now: t1,
+        method: "backup_code",
+        code: enrolled.backupCodes[0]!,
+      });
+      if (recovery.outcome !== "verified") {
+        throw new Error("expected a backup-code sign-in");
+      }
+      const recoveryHash = await sessionAccessHash(sql, kms, KEY_ARN, recovery.tokens.accessToken);
+      const readRecovery = async () => {
+        const [row] = await sql<
+          { factor: string | null; fresh_factor_at: Date | null; recovery_until: Date | null }[]
+        >`
+          select factor, fresh_factor_at, recovery_until
+          from identity.sessions
+          where access_hash = ${recoveryHash}
+        `;
+        return row;
+      };
+      const before = await readRecovery();
+      expect(before?.factor).toBe("otp_backup_code");
+      expect(before?.fresh_factor_at).toBeNull();
+      expect(before?.recovery_until).toEqual(new Date(t1.getTime() + TEN_MINUTES_MS));
+
+      // A correct code, inside the recovery window, is refused.
+      await expect(
+        freshCheckTotp(sql, kms, KEY_ARN, {
+          accessToken: recovery.tokens.accessToken,
+          now: t2,
+          code: totpCode(enrolled.key, stepAt(t2)),
+        }),
+      ).resolves.toEqual({ outcome: "refused" });
+
+      // Control: the same code from the user's ordinary tenant session is fresh, so the code was
+      // right and the recovery session is the only thing wrong with the check above.
+      await expect(
+        freshCheckTotp(sql, kms, KEY_ARN, {
+          accessToken: enrolled.tokens.accessToken,
+          now: t2,
+          code: totpCode(enrolled.key, stepAt(t2)),
+        }),
+      ).resolves.toEqual({ outcome: "fresh" });
+
+      // After the window has ended, recovery_until stays set and the session still never passes.
+      await expect(
+        freshCheckTotp(sql, kms, KEY_ARN, {
+          accessToken: recovery.tokens.accessToken,
+          now: t3,
+          code: totpCode(enrolled.key, stepAt(t3)),
+        }),
+      ).resolves.toEqual({ outcome: "refused" });
+
+      expect((await readRecovery())?.fresh_factor_at).toBeNull();
+    });
+  });
+
+  // Pin 121
+  it("a recovery session answers refused to a correct passkey fresh check and stays without a fresh factor", async () => {
+    const now = new Date("2026-11-28T00:00:00.000Z");
+    const t1 = new Date(now.getTime() + 30_000);
+    const t2 = new Date(t1.getTime() + 30_000);
+    await withSql(async (sql) => {
+      const { userId } = await insertIdentityUser(sql, kms, KEY_ARN, {
+        email: "pin121-recovery-pk@example.test",
+      });
+      const enrolled = await registerTenantPasskeyForTest(sql, kms, userId, now);
+
+      // A real backup-code sign-in opens the recovery session.
+      const sf = await createSession(sql, kms, KEY_ARN, { userId, now: t1, kind: "second_factor" });
+      const recovery = await verifySecondStep(sql, kms, KEY_ARN, {
+        accessToken: sf.accessToken,
+        now: t1,
+        method: "backup_code",
+        code: enrolled.backupCodes[0]!,
+      });
+      if (recovery.outcome !== "verified") {
+        throw new Error("expected a backup-code sign-in");
+      }
+      const recoveryHash = await sessionAccessHash(sql, kms, KEY_ARN, recovery.tokens.accessToken);
+      const readRecovery = async () => {
+        const [row] = await sql<
+          { factor: string | null; fresh_factor_at: Date | null; recovery_until: Date | null }[]
+        >`
+          select factor, fresh_factor_at, recovery_until
+          from identity.sessions
+          where access_hash = ${recoveryHash}
+        `;
+        return row;
+      };
+      const before = await readRecovery();
+      expect(before?.factor).toBe("otp_backup_code");
+      expect(before?.fresh_factor_at).toBeNull();
+      expect(before?.recovery_until).toEqual(new Date(t1.getTime() + TEN_MINUTES_MS));
+
+      // The recovery session cannot ask for a challenge, but a challenge belongs to the user and
+      // not to a session. The user's ordinary session asks for one, and the recovery session
+      // answers it with a valid user-verified assertion.
+      const opts = await beginFreshPasskey(sql, kms, KEY_ARN, {
+        accessToken: enrolled.tokens.accessToken,
+        now: t2,
+        adminRpId: ADMIN_RP_ID,
+      });
+      if (opts.outcome !== "started") {
+        throw new Error("expected started");
+      }
+      const authData = authenticatorDataBytes({ rpId: ADMIN_RP_ID, signCount: 1, flags: 0x05 });
+      const client = clientDataBytes("webauthn.get", opts.options.challenge, ADMIN_ORIGIN);
+      const assertion = {
+        adminRpId: ADMIN_RP_ID,
+        credentialId: enrolled.credentialId,
+        clientDataJSON: client,
+        authenticatorData: authData,
+        signature: await enrolled.key.sign(concatBytes([authData, await sha256Bytes(client)])),
+      };
+
+      await expect(
+        verifyFreshPasskey(sql, kms, KEY_ARN, {
+          accessToken: recovery.tokens.accessToken,
+          now: t2,
+          ...assertion,
+        }),
+      ).resolves.toEqual({ outcome: "refused" });
+      expect((await readRecovery())?.fresh_factor_at).toBeNull();
+
+      // Control: the same assertion answered by the user's ordinary tenant session is fresh, so
+      // the assertion was valid and the recovery session is the only thing wrong with the answer
+      // above. The refusal also left the challenge unused.
+      await expect(
+        verifyFreshPasskey(sql, kms, KEY_ARN, {
+          accessToken: enrolled.tokens.accessToken,
+          now: t2,
+          ...assertion,
+        }),
+      ).resolves.toEqual({ outcome: "fresh" });
+    });
+  });
+
   // Tests-only floor check
   it("second_factor_attempts stays at zero after a correct fresh check", async () => {
     const now = new Date("2026-11-28T00:00:00.000Z");
@@ -2727,6 +2882,7 @@ async function registerTenantPasskeyForTest(
   credentialId: Uint8Array;
   key: Awaited<ReturnType<typeof generatePasskeySigner>>;
   tokens: SessionTokens;
+  backupCodes: string[];
 }> {
   const sf = await createSession(sql, kms, KEY_ARN, { userId, now, kind: "second_factor" });
   const started = await beginTenantPasskeyRegistration(sql, kms, KEY_ARN, {
@@ -2762,5 +2918,5 @@ async function registerTenantPasskeyForTest(
   if (enrolled.outcome !== "enrolled" || !enrolled.tokens) {
     throw new Error("expected first-factor passkey enrolment");
   }
-  return { credentialId, key, tokens: enrolled.tokens };
+  return { credentialId, key, tokens: enrolled.tokens, backupCodes: enrolled.backupCodes };
 }
