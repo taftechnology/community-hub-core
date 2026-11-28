@@ -57,6 +57,7 @@ export {
 } from "../infrastructure/grants.js";
 export { holdsAnyGrant } from "../infrastructure/holds-any-grant.js";
 export { holdsPermission } from "../infrastructure/holds-permission.js";
+export { isCommunityAdmin } from "../infrastructure/community-admin.js";
 export {
   createInvitation,
   listInvitations,
